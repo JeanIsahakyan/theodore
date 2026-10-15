@@ -85,6 +85,33 @@ part when the work is done and you are about to push.
 If something is genuinely broken and I asked you to push anyway, say what is red
 in the same message as the push.
 
+## Commit messages: Conventional Commits
+
+Every commit header is `<type>(<scope>)?!?: <subject>`. The `commit-msg` hook
+(lefthook) rejects anything else.
+
+| Type | For |
+| --- | --- |
+| `feat` | new behavior a user or caller can see |
+| `fix` | a bug fix |
+| `refactor` | code change with no behavior change |
+| `perf` | performance |
+| `test` | tests only |
+| `docs` | docs only |
+| `style` | formatting only |
+| `build` / `ci` | build system, dependencies, pipelines |
+| `chore` | everything else (tooling, config) |
+| `revert` | reverting a commit |
+
+- Scope is optional, lowercase, names the area touched: `feat(api): ...`.
+- `!` after type/scope marks a breaking change: `feat(api)!: drop v1 endpoints`.
+- Subject: imperative ("add", not "added"), no trailing period, header ≤ 72 chars.
+- Body (optional) explains why, not what. PR titles follow the same format —
+  a squash merge uses it as the commit header.
+
+Hooks live in `lefthook.yml`; run `lefthook install` once per clone. Never bypass
+them with `--no-verify` — fix what they report.
+
 ## Draw it, don't describe it
 
 Anything with a sequence, a flow, a state change or a before/after is a diagram,

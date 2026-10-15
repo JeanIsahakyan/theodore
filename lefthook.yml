@@ -1,0 +1,18 @@
+# Git hooks. Install once per clone: `lefthook install`.
+# Skip in an emergency: `LEFTHOOK=0 git commit ...`.
+
+pre-commit:
+  parallel: true
+  commands:
+    whitespace-and-conflicts:
+      # Trailing whitespace, blank lines at EOF, leftover conflict markers.
+      run: git diff --cached --check
+    large-files:
+      run: scripts/check-large-files.sh {staged_files}
+    # Add language-specific formatter / linter commands here once the stack exists,
+    # scoped to {staged_files} with `glob:`.
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: scripts/check-commit-msg.sh {1}
