@@ -1,0 +1,169 @@
+[
+  {
+    "summary": {
+      "pr": {
+        "repo": {
+          "host": "github",
+          "owner": "octo",
+          "name": "webhooks"
+        },
+        "number": 101,
+        "host_id": "gh_101"
+      },
+      "title": "Add retry with backoff for webhook delivery",
+      "author": {
+        "login": "dana",
+        "name": "Dana Reyes",
+        "avatar_url": null
+      },
+      "state": "open",
+      "base_ref": "main",
+      "head_ref": "dana/webhook-retry",
+      "head_sha": "head-479-1",
+      "additions": 21,
+      "deletions": 2,
+      "changed_files": 3,
+      "reasons": [
+        "review_requested"
+      ],
+      "checks": "pending",
+      "approvals": 0,
+      "required_approvals": 1,
+      "updated_at": 1700000000000,
+      "url": "https://example.com/octo/webhooks/pull/101"
+    },
+    "body": "Retries webhook delivery with exponential backoff, dead-letters after 5 attempts.",
+    "base_sha": "base-main",
+    "commits": [
+      {
+        "sha": "head-479-1",
+        "title": "webhook retry with backoff",
+        "author": {
+          "login": "dana",
+          "name": "Dana Reyes",
+          "avatar_url": null
+        },
+        "at": 1700000000000
+      }
+    ],
+    "checks": [
+      {
+        "id": "build",
+        "name": "build",
+        "status": "pass",
+        "url": null,
+        "duration_ms": 70000
+      },
+      {
+        "id": "unit",
+        "name": "unit",
+        "status": "pending",
+        "url": null,
+        "duration_ms": null
+      }
+    ],
+    "reviewers": [
+      {
+        "person": {
+          "login": "max",
+          "name": "Max Oyelaran",
+          "avatar_url": null
+        },
+        "state": "requested",
+        "team": null
+      }
+    ],
+    "assignees": [
+      {
+        "login": "dana",
+        "name": "Dana Reyes",
+        "avatar_url": null
+      }
+    ],
+    "labels": [
+      "webhooks"
+    ],
+    "threads": [],
+    "viewed": []
+  },
+  {
+    "summary": {
+      "pr": {
+        "repo": {
+          "host": "github",
+          "owner": "octo",
+          "name": "api"
+        },
+        "number": 7,
+        "host_id": "gh_7"
+      },
+      "title": "Fix off-by-one in pagination cursor",
+      "author": {
+        "login": "priya",
+        "name": "Priya Shah",
+        "avatar_url": null
+      },
+      "state": "open",
+      "base_ref": "main",
+      "head_ref": "priya/paginate-fix",
+      "head_sha": "head-211-1",
+      "additions": 3,
+      "deletions": 2,
+      "changed_files": 1,
+      "reasons": [
+        "assigned"
+      ],
+      "checks": "pass",
+      "approvals": 1,
+      "required_approvals": 1,
+      "updated_at": 1700100000000,
+      "url": "https://example.com/octo/api/pull/7"
+    },
+    "body": "`next` leaked past the last page; return `null` once the cursor runs out.",
+    "base_sha": "base-main-api",
+    "commits": [
+      {
+        "sha": "head-211-1",
+        "title": "fix pagination cursor",
+        "author": {
+          "login": "priya",
+          "name": "Priya Shah",
+          "avatar_url": null
+        },
+        "at": 1700100000000
+      }
+    ],
+    "checks": [
+      {
+        "id": "unit",
+        "name": "unit",
+        "status": "pass",
+        "url": null,
+        "duration_ms": 32000
+      }
+    ],
+    "reviewers": [
+      {
+        "person": {
+          "login": "max",
+          "name": "Max Oyelaran",
+          "avatar_url": null
+        },
+        "state": "commented",
+        "team": null
+      }
+    ],
+    "assignees": [
+      {
+        "login": "priya",
+        "name": "Priya Shah",
+        "avatar_url": null
+      }
+    ],
+    "labels": [
+      "api"
+    ],
+    "threads": [],
+    "viewed": []
+  }
+]

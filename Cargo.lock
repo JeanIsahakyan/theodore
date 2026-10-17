@@ -4595,6 +4595,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "theodore-fixtures"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "theodore-contract",
+ "theodore-domain",
+ "theodore-ports",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "theodore-git"
 version = "0.0.1"
 dependencies = [
