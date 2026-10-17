@@ -1,0 +1,224 @@
+@import 'tailwindcss';
+@import '@heroui/styles';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* Only HeroUI's own tokens. One radius drives HeroUI's whole scale (sm…4xl). */
+:root {
+  --radius: 0.25rem;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, Menlo, monospace;
+  --diff-add: color-mix(in oklab, var(--success) 9%, transparent);
+  --diff-del: color-mix(in oklab, var(--danger) 9%, transparent);
+  --tk-k: var(--accent);
+  --tk-s: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --tk-c: var(--muted);
+  --tk-n: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+  --tk-t: color-mix(in oklab, var(--accent) 45%, var(--foreground));
+  --tk-f: var(--foreground);
+  --tk-d: var(--warning);
+  /* Shiki's css-variables theme, mapped onto the same token colors */
+  --shiki-foreground: var(--foreground);
+  --shiki-background: transparent;
+  --shiki-token-keyword: var(--tk-k);
+  --shiki-token-string: var(--tk-s);
+  --shiki-token-string-expression: var(--tk-s);
+  --shiki-token-comment: var(--tk-c);
+  --shiki-token-constant: var(--tk-n);
+  --shiki-token-function: var(--tk-t);
+  --shiki-token-parameter: var(--foreground);
+  --shiki-token-punctuation: color-mix(
+    in oklab,
+    var(--muted) 70%,
+    var(--foreground)
+  );
+  --shiki-token-link: var(--accent);
+  --diff-add-word: color-mix(in oklab, var(--success) 26%, transparent);
+  --diff-del-word: color-mix(in oklab, var(--danger) 24%, transparent);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01', 'tnum';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── code / diff: domain-specific, kept as plain CSS ───────────── */
+.lines {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+.ln {
+  display: grid;
+  grid-template-columns: 44px 44px 20px minmax(0, 1fr) auto;
+  position: relative;
+}
+.ln:hover {
+  filter: brightness(0.97);
+}
+.dark .ln:hover {
+  filter: brightness(1.18);
+}
+.ln.t-add {
+  background: var(--diff-add);
+}
+.ln.t-del {
+  background: var(--diff-del);
+}
+.ln .no {
+  text-align: right;
+  padding-right: 8px;
+  color: var(--muted);
+  opacity: 0.7;
+  user-select: none;
+  font-size: 11.5px;
+}
+.ln .mark {
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+}
+.ln .src {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ln-act {
+  display: none;
+  gap: 2px;
+  padding-right: 6px;
+  align-items: center;
+}
+.ln:hover .ln-act {
+  display: flex;
+}
+.ln .wd {
+  border-radius: 3px;
+}
+.ln.t-add .wd,
+.side.t-add .wd {
+  background: var(--diff-add-word);
+}
+.ln.t-del .wd,
+.side.t-del .wd {
+  background: var(--diff-del-word);
+}
+.ln.in-range {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--accent) 10%, transparent),
+    color-mix(in oklab, var(--accent) 10%, transparent)
+  );
+}
+.ln.expanded {
+  background: color-mix(in oklab, var(--default) 35%, transparent);
+}
+.ln.expanded .src {
+  opacity: 0.85;
+}
+/* side by side: two halves, each with its own number, mark and code */
+.ln.split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.ln.split > .side {
+  display: grid;
+  grid-template-columns: 44px 20px minmax(0, 1fr) auto;
+  min-width: 0;
+}
+.ln.split > .side + .side {
+  border-left: 1px solid var(--separator);
+}
+.ln.split.t-add,
+.ln.split.t-del {
+  background: none;
+}
+.side.t-add {
+  background: var(--diff-add);
+}
+.side.t-del {
+  background: var(--diff-del);
+}
+.side.t-none {
+  background: color-mix(in oklab, var(--default) 40%, transparent);
+}
+.ln.split:hover .ln-act {
+  display: none;
+}
+.ln.split .side:hover .ln-act {
+  display: flex;
+}
+body.cmd .lines .src span:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ln.flash {
+  animation: flash 1.6s ease-out;
+}
+@keyframes flash {
+  0%,
+  40% {
+    box-shadow: inset 0 0 0 999px
+      color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 999px transparent;
+  }
+}
+.suggestion .ln {
+  grid-template-columns: 20px 1fr;
+}
+.tk-k {
+  color: var(--tk-k);
+}
+.tk-s {
+  color: var(--tk-s);
+}
+.tk-c {
+  color: var(--tk-c);
+  font-style: italic;
+}
+.tk-n {
+  color: var(--tk-n);
+}
+.tk-t {
+  color: var(--tk-t);
+}
+.tk-f {
+  color: var(--tk-f);
+}
+.tk-d {
+  color: var(--tk-d);
+}
+.rich code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--default);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+/* big PRs: the browser skips layout and paint for file cards off screen */
+.file {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
+/* Tabs on a white surface: no grey track, the selected tab is a soft grey pill */
+[data-plain] .tabs__list-container,
+[data-plain] .tabs__list {
+  background: transparent;
+}
+[data-plain] .tabs__indicator {
+  background: var(--default);
+  box-shadow: none;
+}
+[data-plain] .tabs__separator {
+  display: none;
+}
