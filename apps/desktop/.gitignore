@@ -1,0 +1,2 @@
+# Capability/ACL JSON schemas tauri-build regenerates on every build.
+/gen/schemas
