@@ -1,0 +1,139 @@
+name: Release
+
+# Plan §11.1/§11.2. Builds the macOS (aarch64) app, signs it (ad-hoc by
+# default; Developer ID + notarization when the secrets below are set),
+# packages a DMG, and publishes the updater manifest the app polls.
+#
+# One-time setup for all of this to work: docs/releasing.md.
+#
+# Secrets:
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  (required)
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+#   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID  (optional)
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: verify tag == Cargo.toml version == tauri.conf.json version
+        run: |
+          tag_ver="${GITHUB_REF#refs/tags/v}"
+          cargo_ver=$(awk '
+            /^\[workspace\.package\]/ { in_block = 1; next }
+            /^\[/ { in_block = 0 }
+            in_block && /^version = "/ { gsub(/version = "|"/, ""); print; exit }
+          ' Cargo.toml)
+          tauri_ver=$(jq -r .version apps/desktop/tauri.conf.json)
+          echo "tag=$tag_ver cargo=$cargo_ver tauri=$tauri_ver"
+          if [ "$tag_ver" != "$cargo_ver" ] || [ "$tag_ver" != "$tauri_ver" ]; then
+            echo "✗ version mismatch: tag v$tag_ver, Cargo.toml $cargo_ver, tauri.conf.json $tauri_ver" >&2
+            echo "  run scripts/bump-version.sh $tag_ver, commit, then re-tag." >&2
+            exit 1
+          fi
+          echo "VERSION=$tag_ver" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('ui/package.json') != ''
+
+      - uses: actions/setup-node@v4
+        if: hashFiles('ui/package.json') != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: build ui
+        if: hashFiles('ui/package.json') != ''
+        run: |
+          pnpm -C ui install --frozen-lockfile
+          pnpm -C ui build
+
+      # Developer ID signing + notarization (tauri-bundler reads these env
+      # vars itself — see crates/tauri-bundler/src/bundle/macos/sign.rs).
+      # Loaded only when the secret exists, so an absent secret never leaks
+      # an empty APPLE_CERTIFICATE into the build step below (which would
+      # make tauri-bundler try, and fail, to import an empty certificate).
+      - name: load Developer ID secrets
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        run: |
+          echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}" >> "$GITHUB_ENV"
+          echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_ENV"
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> "$GITHUB_ENV"
+          echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> "$GITHUB_ENV"
+
+      # Builds + ad-hoc codesigns (tauri.conf.json's `bundle.macOS.signingIdentity:
+      # "-"`, i.e. `codesign --force --deep -s -`) unless the step above loaded
+      # a real Developer ID, in which case tauri-bundler signs and notarizes
+      # with that instead. Also produces the DMG and the updater artifacts
+      # (`.app.tar.gz` + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY).
+      - name: build app, dmg and updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: cargo tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: locate bundle artifacts
+        id: artifacts
+        run: |
+          bundle="target/aarch64-apple-darwin/release/bundle"
+          dmg=$(find "$bundle/dmg" -name '*.dmg' | head -n1)
+          tarball=$(find "$bundle/macos" -name '*.app.tar.gz' | head -n1)
+          sig="$tarball.sig"
+          test -f "$dmg" && test -f "$tarball" && test -f "$sig"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+
+      - name: build latest.json
+        run: |
+          tarball_name=$(basename "${{ steps.artifacts.outputs.tarball }}")
+          signature=$(cat "${{ steps.artifacts.outputs.sig }}")
+          pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$pub_date" \
+            --arg signature "$signature" \
+            --arg url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/$tarball_name" \
+            '{
+              version: $version,
+              notes: "See the GitHub release notes.",
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $signature, url: $url }
+              }
+            }' > latest.json
+
+      - name: publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "v$VERSION" \
+            --generate-notes \
+            "${{ steps.artifacts.outputs.dmg }}" \
+            "${{ steps.artifacts.outputs.tarball }}" \
+            "${{ steps.artifacts.outputs.sig }}" \
+            latest.json
