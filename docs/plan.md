@@ -1,0 +1,549 @@
+# Theodore — build plan
+
+Theodore is a standalone desktop app for code review. Local AI agents regroup a
+pull request by meaning, so the reviewer reads it as logical steps, not as an
+alphabetical list of files. The agents help; the reviewer decides.
+
+---
+
+## 1. Decisions
+
+| # | Decision | Status |
+| --- | --- | --- |
+| D1 | Everything in Rust except the UI | decided |
+| D2 | UI = React + HeroUI | decided |
+| D3 | Shell = Tauri 2; no Node sidecar | decided |
+| D4 | UI ⇄ core is local-first sync: transactions up, sync log deltas down | decided |
+| D5 | No server in v1. The "backend" is the local Rust core | decided |
+| D6 | Code hosts behind a `HostAdapter` with capabilities; GitHub first | decided |
+| D7 | Own HTTP client for hosts (`reqwest` + `cynic`); `gh` only as a token source | proposed |
+| D8 | Agents = the user's installed CLIs (`claude`, `codex`, `gemini`), spawned by core | proposed |
+| D9 | MCP `review-tools` served by core over localhost HTTP, one token per run | proposed |
+| D10 | git through the git CLI, not libgit2 | proposed |
+| D11 | SQLite for state; OS keychain for secrets | proposed |
+| D12 | macOS (Apple Silicon) first | proposed |
+| D13 | UI state = MobX object pool + a small `resource()` cache; no TanStack Query, no router | decided |
+
+---
+
+## 2. Architecture
+
+### 2.1 Layers
+
+```
+┌─ shell ───────── Tauri 2: windows, menus, updater, deep links, signing
+│
+├─ ui ──────────── React + HeroUI + MobX object pool
+│        │  knows only the contract — no fetch, no fs
+│        ▼
+├─ contract ────── commands, sync actions, ephemeral events → generated TS types
+│        ▼
+├─ app ─────────── use cases: openPr, group, runSkill, submitReview, onPush …
+│        │         sync engine (apply → sync log → deltas), outbox, scheduler
+│        ▼
+├─ domain ──────── pure logic, no I/O, unit-tested
+│                  groups + invariants, read → viewed, anchors, interdiff,
+│                  findings merge, task lifecycle, snooze, budget
+│        ▲
+├─ ports ───────── traits: Host · Git · Agent · Store · Secrets · Clock
+│        ▲
+└─ adapters ────── host-github · git-cli · agent CLIs · mcp · sqlite · keychain
+```
+
+Rules:
+- `domain` depends on nothing but std/serde. No tokio, no I/O.
+- `app` depends on `domain` and `ports` only. Adapters are injected.
+- The core is headless: the same `app` runs inside Tauri, inside the CLI, and
+  behind a WebSocket server for browser dev mode.
+
+### 2.2 Processes
+
+```
+┌──────────────── Theodore.app ─────────────────┐
+│ WKWebView (ui) ◀── Tauri IPC ──▶ Rust core     │
+│                                   │  │  │      │
+└───────────────────────────────────┼──┼──┼──────┘
+                                    │  │  └──▶ GitHub API (HTTPS)
+                                    │  └─────▶ git CLI ──▶ ~/.theodore/{repos,wt}
+                                    ▼
+                    claude / codex / gemini CLI   (cwd = PR worktree)
+                                    │
+                                    └──▶ http://127.0.0.1:<port>/mcp  (review-tools)
+```
+
+### 2.3 Repository layout
+
+```
+crates/
+  domain/        models, invariants, diff/interdiff, anchors
+  contract/      command + sync types; generates ui/src/gen/*.ts
+  app/           use cases, sync engine, outbox, scheduler
+  host/          HostAdapter traits, capabilities, models, shared HTTP client
+  host-github/   GraphQL (cynic) + REST, notifications polling, ETag
+  host-gitlab/   M7
+  git/           clone, worktree, diff → hunks, blobs
+  agents/        CLI runners, stream parsers, process lifecycle, cost
+  mcp/           review-tools server (rmcp), stdio bridge
+  store/         SQLite schema, migrations, sync log
+  secrets/       keychain
+apps/
+  desktop/       Tauri app
+  cli/           `theodore …` headless commands (grouping eval, debugging)
+  devserver/     axum WebSocket host for the UI in a plain browser
+ui/              React app + sync client
+docs/
+```
+
+---
+
+## 3. Sync model (UI ⇄ core)
+
+### 3.1 Flow
+
+```
+UI                                   core                                   GitHub
+──                                   ────                                   ──────
+edit ─▶ ObjectPool (instant)
+   └─▶ TransactionQueue ──invoke──▶ validate (domain) ─▶ SQLite + sync log N
+                                       │
+   ◀── event sync{actions, N} ─────────┤
+                                       └─▶ outbox ──────────────────────▶ mutation
+                                              ◀── ok: mark done
+                                              ◀── fail: compensating action N+1 ─▶ UI
+agent / poller ──────────────────────▶ same apply path ─▶ sync log ─▶ UI
+```
+
+- Every change — user, agent, GitHub poll — becomes a `SyncAction` with a
+  monotonically increasing `syncId`. The UI has one model and one inbound stream.
+- UI reload: bootstrap from core, then catch up from `lastSyncId`.
+- Undo/redo: an undo queue that replays inverse changes as new transactions.
+
+### 3.2 What goes through the sync log
+
+| Synced (mutable, persisted) | Not synced |
+| --- | --- |
+| PR list rows, inbox state, snooze | Diff hunks and file contents — immutable per commit, fetched by query |
+| Read state per hunk, Viewed per file | Agent token stream — ephemeral `agent:delta` events; only the final message is synced |
+| Groups (and regroupings) | Skill run log lines — ephemeral, last N kept in memory |
+| Threads, comments, drafts | Syntax highlighting — computed in UI |
+| Findings, fixes, tasks | |
+| Chat messages (final), skill run status, usage | |
+| Settings | |
+
+### 3.3 Sync design choices
+
+| Choice | Why |
+| --- | --- |
+| No client-side database | core is local; bootstrap over IPC is fast |
+| Tauri events as transport; WebSocket only in browser dev mode | one process boundary, no network stack in production |
+| Subscription per open PR | PR models load lazily, only when opened |
+| Single window | no cross-tab locking needed |
+| Sync log + apply path in Rust (`app` + `store`) on SQLite | core is the single source of truth |
+| MobX models, object pool, transaction queue, undo queue in `ui/src/sync` | instant UI, per-object re-render |
+| `resource(key, load)` for immutable data (hunks, file contents): dedup, loading/error, LRU | data keyed by sha never needs invalidation, so no query library |
+| Navigation = tab state in the pool, no router | a desktop app has no address bar |
+
+### 3.4 External truth
+
+GitHub owns threads, comments, Viewed, reviews, checks. Core applies the local
+change first, sends it through the outbox, and reconciles:
+- success → nothing to do (or merge server ids into the model);
+- user-visible failure → compensating action + toast;
+- conflict on poll (someone else changed it) → GitHub wins, UI gets the delta.
+
+Offline / 401 / rate limit → outbox pauses; reads come from SQLite.
+
+---
+
+## 4. Domain model
+
+```
+Repo 1─* Pr ─* PrRevision (head sha) ─* File ─* Hunk ─(group)─▶ Group
+              │                               ▲
+              │                               └─ HunkRead (per user, per hunk)
+              ├─* Thread ─* Comment          Anchor = revision + path + side + line[..line]
+              ├─* Draft ─────────────────────▶ Anchor
+              ├─* Finding ─▶ Anchor, agents[], skill, severity, Fix?
+              ├─* Task ─▶ Anchor?, Thread?, assignee (human | agent)
+              ├─* SkillRun, ChatMessage, Usage
+              └── Snooze, Baseline (last reviewed revision)
+```
+
+Key rules (all in `domain`, all unit-tested):
+
+| Rule | Detail |
+| --- | --- |
+| Hunk in exactly one group | Grouping output is rejected unless it is a partition of the hunk ids |
+| Viewed from reads | A file is Viewed only when every hunk of it is read, across groups |
+| Push dismisses | A changed hunk loses its read mark; its file goes `DISMISSED` |
+| Anchor is host-neutral | `rev`, `path`, `side` (old/new), `line`, `start?`; adapters map it to the host's position format (§6.3) |
+| Anchors move | After a push, anchors are remapped through the old→new diff; a deleted line makes the anchor outdated |
+| Findings merge | Same file + overlapping lines + similar title → one finding, `agents[]` grows |
+| Task lifecycle | `todo → progress → review → done`; accept resolves the linked thread |
+| Fix target | Own or local PR → commit + push; someone else's PR → suggestion draft |
+
+Hunk identity across revisions: `(path, normalized content hash)`, with a
+fallback match by overlapping new-side range. Needed for read state, groups and
+anchors to survive pushes.
+
+---
+
+## 5. Grouping (core risk)
+
+This is the part the product stands on, and the least proven. Build and
+measure it first, before any UI work.
+
+### 5.1 Pipeline
+
+```
+diff ─▶ hunks with ids
+   ─▶ deterministic pre-pass
+        • hidden: lockfiles, linguist-generated, vendored, snapshots
+        • skim candidates: pure renames, formatting-only, import-only
+   ─▶ agent call (PR title, body, commits, hunk list) ─▶ JSON
+   ─▶ validate (partition, known ids, order, required fields)
+        ├─ ok ─▶ groups
+        └─ errors ─▶ one repair call with the error list
+                       └─ still bad ─▶ leftovers go to group "Other"
+```
+
+Output schema per group: `id` (stable slug), `title`, `why`, `kind`
+(`normal | skim | hidden`), `risk?`, `check[]`, `hunks[]`, `outliers[]`, plus a
+global reading order.
+
+### 5.2 Large PRs
+
+- Hunk list sent as headers + a few lines each; the agent reads full code with
+  its own read/grep tools in the PR worktree when it needs to.
+- Above a size threshold: split by top-level directory, group each part, then a
+  merge pass over group summaries.
+
+### 5.3 Re-grouping after a push
+
+Unchanged hunks keep their group. Only new and changed hunks are sent, together
+with the existing groups, and the agent assigns them or proposes new groups.
+Group ids stay stable.
+
+### 5.4 Eval harness (`apps/cli`)
+
+```
+theodore group <pr-url> [--agent claude] [--json] [--save fixtures/]
+theodore eval fixtures/            # replays saved PRs, prints a table
+```
+
+| Metric | Target for M1 exit |
+| --- | --- |
+| Valid partition on first call | ≥ 90 % |
+| Valid after repair | 100 % (with "Other" fallback) |
+| Latency, PR ≤ 50 files | ≤ 60 s |
+| Cost per PR | recorded; budget decided after M1 |
+| Human rating 1–5 on 10 real PRs | ≥ 4 average |
+
+---
+
+## 6. Code hosts
+
+### 6.1 Crates
+
+```
+app ──▶ host::HostAdapter (traits, host-neutral models, capabilities)
+            │
+            ├─ host-github     GraphQL (cynic, typed against the schema) + REST
+            ├─ host-gitlab     REST v4 (+ GraphQL where it is simpler)   — M7
+            └─ host-bitbucket  REST 2.0                                   — later
+            │
+            └─ host::http   one client for all adapters:
+                 auth injection · ETag cache · rate limiter · retry/backoff ·
+                 token redaction in logs
+```
+
+`reqwest` + `cynic`, no `octocrab`: we need full control over ETags, limits and
+retries, and would use a fraction of it.
+
+### 6.2 Adapter
+
+Split by area, not one monolith:
+
+```
+HostAdapter
+  ├─ capabilities() ─▶ { viewed, pending_review, suggestions, merge_queue, auto_merge, … }
+  ├─ inbox      changed_since(cursor) · search(section)
+  ├─ pulls      get(ref, etag) · files · commits · checks
+  ├─ reviews    submit(ReviewDraft) · set_viewed
+  ├─ threads    reply · resolve · edit · delete · react
+  └─ merge      merge · enqueue · auto_merge · update_branch
+```
+
+- A missing feature returns `Unsupported`; the UI hides it up front from
+  `capabilities()`.
+- The interface is validated against GitLab before it is frozen (M7), not
+  derived from GitHub alone.
+
+### 6.3 Host-neutral models
+
+The adapter translates both ways; the domain never sees host formats.
+
+| Domain | GitHub | GitLab | Bitbucket |
+| --- | --- | --- | --- |
+| `Anchor{rev, path, side, line, start?}` | `commit_id, path, side, line, start_line, start_side` | `position{base_sha, start_sha, head_sha, old/new_path, old/new_line}` | `inline{path, from, to}` |
+| `PrRef` | node id + `owner/repo#n` | project id + iid | workspace/repo + id |
+
+Host ids are opaque strings inside the domain.
+
+### 6.4 Capabilities by host
+
+| Feature | GitHub | GitLab | Bitbucket Cloud |
+| --- | --- | --- | --- |
+| Viewed per file on the server | `markFileAsViewed` | no (kept locally) | no (kept locally) |
+| Batched review (drafts → submit) | pending review | draft notes + bulk publish | emulated by the outbox (to verify) |
+| Resolve thread | yes | yes (discussions) | yes |
+| Suggestions | yes | yes | to verify |
+| Merge queue | yes | merge trains | no |
+| Checks | checks + statuses | pipelines | build statuses |
+
+Where the host has no server-side Viewed, it is stored locally and does not
+sync with the host's web UI.
+
+### 6.5 GitHub operations
+
+| Area | Calls |
+| --- | --- |
+| Read | GraphQL `pullRequest{files{viewerViewedState} reviewThreads reviewRequests commits statusCheckRollup}`, `search` for inbox sections |
+| Viewed | `markFileAsViewed`, `unmarkFileAsViewed` |
+| Review | one `addPullRequestReview` with all `threads` inline → `submitPullRequestReview` |
+| Threads | `addPullRequestReviewThreadReply`, `resolveReviewThread`, `unresolveReviewThread`; REST edit/delete/react |
+| Suggestions | `createCommitOnBranch` («Apply N suggestions») |
+| People | `requestReviews`, REST remove requested reviewer |
+| Merge | `mergePullRequest`, `enqueuePullRequest`, `enable/disablePullRequestAutoMerge`, `updatePullRequestBranch`, `markPullRequestReadyForReview` |
+| Checks | REST rerequest check run, commit status |
+
+Sending all threads in one mutation avoids N calls and the secondary limit on
+content creation.
+
+### 6.6 Change detection (no webhooks)
+
+```
+GitHub:    GET /notifications  (If-Modified-Since, honours X-Poll-Interval)
+              └─ something changed ─▶ GraphQL for the changed PRs only
+           open PR: GET /pulls/{n} with ETag every 10–30 s (304s are free)
+GitLab:    ?updated_after=<cursor>
+Bitbucket: q=updated_on><cursor>
+```
+
+GraphQL is POST, so it has no conditional requests: polling the inbox through
+GraphQL `search` is expensive, notifications are nearly free.
+
+The notifications API needs a classic token (`gh`, OAuth app, classic PAT) with
+`notifications` or `repo` scope; fine-grained PATs and GitHub App tokens don't
+get it. For those, fall back to GraphQL `search` on a slow interval.
+
+### 6.7 Outbox, idempotency, errors
+
+- Every host write goes through the outbox as resumable steps. Where the host
+  has no batch (Bitbucket), comments are posted one by one and the outbox
+  resumes from the last confirmed step.
+- No idempotency keys on GitHub: each comment body carries
+  `<!-- theodore:<draft-id> -->` (invisible when rendered). After a timeout the
+  outbox looks for it before retrying, so nothing is posted twice.
+- One error type for all adapters:
+  `Auth · RateLimited{reset_at} · NotFound · Conflict · Validation · Network · Unsupported`.
+  The outbox decides from it: wait, retry, or roll back with a compensating action.
+
+### 6.8 Auth (no server)
+
+| Host | Method |
+| --- | --- |
+| GitHub | `gh auth token` if present → else OAuth device flow (client id only) → else PAT |
+| GitLab | OAuth + PKCE or PAT |
+| Bitbucket Cloud | API token |
+
+Tokens live in the keychain. Never in `.git/config`, never in process arguments,
+never in the webview.
+
+### 6.9 Tests
+
+- One contract test suite, run against every adapter on recorded HTTP fixtures
+  (wiremock).
+- Opt-in live smoke test against a sandbox repo.
+
+---
+
+## 7. Git
+
+```
+~/.theodore/
+  repos/<host>/<owner>/<repo>.git      bare clone
+  wt/<host>-<owner>-<repo>-<n>/        worktree per PR at pull/<n>/head
+  theodore.db                          SQLite
+```
+
+- All via `git` CLI under `tokio::process`, with `GIT_TERMINAL_PROMPT=0` and a
+  credential helper that reads the token from core (`git -c credential.helper=…`).
+- `diff --no-color --find-renames -U<n> base...head` parsed into files and hunks;
+  binary, LFS, submodule and generated files flagged, not dropped.
+- Size limits per file and per PR; oversize files collapsed with a reason.
+- Never: hard reset of user branches, deleting unmerged branches, writing tokens
+  to disk.
+- Worktree GC: drop worktrees of closed PRs after N days; locked while an agent
+  runs in it.
+
+---
+
+## 8. Agents
+
+### 8.1 Runners
+
+| Agent | Invocation | Stream |
+| --- | --- | --- |
+| Claude Code | `claude -p --output-format stream-json --verbose --mcp-config <json>` | JSON lines |
+| Codex | `codex exec --json` (+ MCP config) | JSON lines |
+| Gemini CLI | `gemini -p --output-format stream-json` (+ MCP settings) | JSON lines |
+
+Exact flags and MCP-over-HTTP support per CLI are verified in M1/M4. If a CLI
+only speaks stdio MCP, it gets `theodore mcp-bridge --url … --token …` — our own
+binary as a stdio→HTTP proxy.
+
+Each runner normalizes its stream into one event type:
+`Text · Thinking · ToolCall · ToolResult · Usage · Done · Error`.
+
+### 8.2 Lifecycle
+
+```
+spawn (cwd = worktree) ─▶ stream ─▶ Done
+   │                                      │
+   ├─ cancel ─▶ SIGTERM ─▶ 5 s ─▶ SIGKILL │
+   ├─ silent 90 s ─▶ stalled (UI: restart / switch agent)
+   └─ exit ≠ 0 ─▶ failed with stderr tail
+```
+
+- Credentials: each CLI uses its own login. Core does not read or copy them.
+- Reading code: agents use their own read/grep tools in the worktree; MCP adds
+  only what the worktree cannot give (PR context, groups, base files, findings).
+- Env: Theodore's own secrets are removed from the child env; the agent's own
+  auth variables (e.g. `ANTHROPIC_API_KEY`) are passed through.
+- Permissions: review runs are read-only (tool allowlist: read, grep, MCP).
+  Fix runs may edit, only inside the PR worktree.
+- Pinned minimum CLI versions; stream parsers covered by recorded fixtures.
+
+### 8.3 MCP `review-tools`
+
+| Tool | Returns / does |
+| --- | --- |
+| `get_pr_context()` | title, body, commits, files, groups |
+| `get_group(id)` | group with its hunks |
+| `get_base_file(path)` | file at the base revision (the worktree has only head) |
+| `add_finding(file, line, severity, title, body)` | creates a finding → sync log → UI |
+| `propose_patch(file, before, after, note)` | attaches a fix to a finding |
+
+### 8.4 Skills, chat, cost
+
+- Skills: `SKILL.md` from `~/.claude/skills` and the repo's `.claude/skills`.
+  Claude loads them natively; other agents get the text in the prompt.
+- A skill can run on several agents in parallel; findings merge (§4).
+- Chat: questions about the PR, a group, or a line; replies stream as ephemeral
+  events and are stored when complete.
+- Usage: tokens and USD per run, per PR budget, hard stop at the limit.
+
+---
+
+## 9. Storage and secrets
+
+- SQLite via `rusqlite` (WAL), migrations in `store`, applied on start; one DB
+  per user profile.
+- Tables: models from §4 + `sync_log(id, model, model_id, action, data)` +
+  `outbox(id, op, payload, attempts, status)`.
+- Keychain: one item for all Theodore secrets (one prompt). On macOS through
+  `/usr/bin/security` so the prompt survives rebuilds; secret passed on stdin,
+  not as an argument.
+
+---
+
+## 10. UI
+
+| Part | Plan |
+| --- | --- |
+| Screens | Inbox + peek, My PRs, All PRs (list ↔ board), Tasks, Review (groups │ diff │ AI/tasks/threads), Settings, Onboarding |
+| Look | HeroUI, own colour tokens, Shiki highlighting, Geist fonts, Gravity UI icons |
+| Types | generated from the Rust contract, never hand-written |
+| State | MobX object pool fed by the sync stream; `resource()` for immutable data; no business logic in the UI |
+| Actions | every action is a transaction or a command; nothing is faked with timers |
+| Fake core | a TS implementation of the contract with fixture data, for dev and e2e |
+| E2E | independent Playwright tests against the fake core, not one long script |
+
+Every component subscribes to the objects it reads, not to the whole state.
+
+---
+
+## 11. Shell, packaging, release
+
+- Tauri 2, one main window, `titleBarStyle: Overlay`.
+- Strict CSP (no remote scripts; Shiki and fonts bundled). Capabilities scoped
+  to the commands the UI needs.
+- Release: `.app` → sign → notarize → DMG → sign → notarize; updater manifest
+  on a public releases repo. Updater key generated once and never rotated.
+- Deep link `theodore://` for OAuth callbacks and "open PR in Theodore".
+
+---
+
+## 12. Quality gates
+
+| Part | Checks |
+| --- | --- |
+| Rust | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` |
+| UI | `tsc --noEmit`, lint, Prettier, unit tests, Playwright e2e on the fake core |
+| Contract | generated TS is up to date (CI diff check) |
+| Grouping | `theodore eval fixtures/` — no regression in validity |
+| Agents | stream parser fixture tests per CLI version |
+
+All wired into lefthook pre-push and CI.
+
+---
+
+## 13. Milestones
+
+```
+M0 scaffold ─▶ M1 grouping spike ─▶ M2 core + sync + UI ─▶ M3 GitHub ─▶ M4 agents
+                                                               │
+                         M7 GitLab ◀─ M6 ship ◀─ M5 re-review ◀┘
+```
+
+| M | Scope | Exit | Sessions |
+| --- | --- | --- | --- |
+| M0 | Cargo workspace, `ui/` package, Tauri hello window, contract codegen, checks in lefthook | `cargo test` + `tsc` green; window opens | 1 |
+| M1 | `domain` diff model, `git` (clone, worktree, diff), minimal GitHub read (token from `gh`), minimal Claude runner (JSON in the final message, no MCP yet), grouping + validation, `theodore group/eval` | §5.4 targets on 10 real PRs | 1–2 |
+| M2 | `store`, sync engine, `app` skeleton, Tauri wiring, UI with observable object pool, fake core, devserver | real PR opens read-only in the app, grouped | 2 |
+| M3 | Inbox sections, Viewed sync, threads, drafts → submit, notifications + ETag polling, outbox, offline | full review round-trip on a real PR | 1–2 |
+| M4 | MCP server, skill runs on several agents, findings merge, chat, fixes, tasks, budget | skill → findings → draft/task/fix works on claude + codex | 1–2 |
+| M5 | Push detection, interdiff, DISMISSED, incremental regroup, anchor remap, snooze by event | author push handled without losing reads or comments | 1 |
+| M6 | Onboarding, layered settings, keychain, signing, notarization, updater, big-PR performance | signed DMG installs and updates on a clean Mac | 1–2 |
+| M7 | GitLab adapter; freeze `HostAdapter` | same review round-trip on GitLab | 1 |
+
+Total: ~10–13 sessions to v1 on GitHub, +1 for GitLab.
+
+Later: Bitbucket, LSP go-to-definition, Linear integration, merge queue UI,
+org settings via repo file, Windows/Linux.
+
+---
+
+## 14. Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Grouping quality, latency or cost is not good enough | M1 is a gate: measure before building the rest |
+| CLI output formats change | pinned minimum versions, fixture tests, one normalizer per CLI |
+| A CLI lacks HTTP MCP | stdio bridge in our binary |
+| GitHub rate limits with many PRs | notifications + ETag (304s are free), adaptive poll intervals, one-mutation reviews |
+| Huge PRs (10k+ lines) freeze the UI | virtualized diff, size limits, lazy hunk loading |
+| Anchors drift after force-push | remap via diff; fall back to "outdated" like GitHub |
+| Agents touching files they shouldn't | read-only allowlist for review, edits only in the worktree |
+| WKWebView quirks vs Chrome | e2e also in WebKit |
+
+---
+
+## 15. Open questions
+
+1. Default agent for grouping: Claude only, or user's choice from day one?
+2. Accounts, billing, licensing — needed for v1 or never?
+3. Data directory name and location (`~/.theodore` assumed).
+4. Linux/Windows timeline.
+5. Telemetry: none, or opt-in crash reports?
