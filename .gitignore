@@ -1,0 +1,7 @@
+/target/
+node_modules/
+dist/
+.context/
+.DS_Store
+*.log
+/ui/src/gen/*.tmp

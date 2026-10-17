@@ -1,0 +1,14 @@
+[package]
+name = "theodore-app"
+description = "Use cases, sync engine, outbox, scheduler."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-contract.workspace = true
+
+[lints]
+workspace = true

@@ -85,11 +85,13 @@ crates/
   domain/        models, invariants, diff/interdiff, anchors
   contract/      command + sync types; specta generates ui/src/gen/*.ts
   app/           use cases, sync engine, outbox, scheduler
-  host/          HostAdapter traits, capabilities, models, shared HTTP client
+  ports/         port traits: HostAdapter, GitPort, AgentPort, Store, Secrets, Clock
+  host-http/     shared HTTP client for host adapters: auth, ETag, limits, retry
   host-github/   GraphQL (cynic) + REST, notifications polling, ETag
   host-gitlab/   M7
   git/           clone, worktree, diff → hunks, blobs
   agents/        CLI runners, stream parsers, process lifecycle, cost
+  grouping/      grouping pipeline: pre-pass, prompt, validation, repair, eval
   mcp/           review-tools server (rmcp), stdio bridge
   store/         SQLite schema, migrations, sync log
   secrets/       keychain

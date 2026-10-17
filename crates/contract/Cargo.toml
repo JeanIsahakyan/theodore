@@ -1,0 +1,18 @@
+[package]
+name = "theodore-contract"
+description = "UI ⇄ core wire types: transactions, sync frames, commands, ephemeral events. Exported to TS with specta."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-domain = { workspace = true, features = ["specta"] }
+serde.workspace = true
+serde_json.workspace = true
+specta.workspace = true
+specta-typescript.workspace = true
+specta-serde.workspace = true
+specta-util.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "theodore-mcp"
+description = "MCP review-tools server over localhost HTTP, plus the stdio bridge."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+
+[lints]
+workspace = true

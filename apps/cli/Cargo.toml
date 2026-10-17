@@ -1,0 +1,16 @@
+[package]
+name = "theodore-cli"
+description = "Headless `theodore` commands: grouping eval, debugging."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "theodore"
+path = "src/main.rs"
+
+[dependencies]
+theodore-domain.workspace = true
+
+[lints]
+workspace = true

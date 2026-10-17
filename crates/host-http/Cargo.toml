@@ -1,0 +1,12 @@
+[package]
+name = "theodore-host-http"
+description = "Shared HTTP client for host adapters: auth, ETag cache, rate limits, retry, redaction."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-ports.workspace = true
+
+[lints]
+workspace = true

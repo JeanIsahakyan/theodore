@@ -1,0 +1,95 @@
+//! Store port (plan §3, §9): models as JSON rows + sync log + outbox.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SyncActionCode {
+    /// insert
+    I,
+    /// full update
+    U,
+    /// partial update (changed fields only)
+    C,
+    /// archive
+    A,
+    /// delete
+    D,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncAction {
+    pub id: u64,
+    pub model: String,
+    pub model_id: String,
+    pub action: SyncActionCode,
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewAction {
+    pub model: String,
+    pub model_id: String,
+    pub action: SyncActionCode,
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelRow {
+    pub model: String,
+    pub id: String,
+    pub data: serde_json::Value,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutboxStatus {
+    Pending,
+    InFlight,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutboxItem {
+    pub id: u64,
+    pub op: String,
+    pub payload: serde_json::Value,
+    pub attempts: u32,
+    pub status: OutboxStatus,
+    pub not_before: i64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("sqlite: {0}")]
+    Db(String),
+    #[error("serde: {0}")]
+    Serde(String),
+    #[error("migration: {0}")]
+    Migration(String),
+}
+
+pub type StoreResult<T> = Result<T, StoreError>;
+
+/// Synchronous on purpose (rusqlite); `app` calls it via `spawn_blocking`.
+pub trait Store: Send + Sync {
+    /// Apply atomically: write model rows, append to the sync log, return the
+    /// actions with their assigned ids.
+    fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>>;
+    fn last_sync_id(&self) -> StoreResult<u64>;
+    fn since(&self, sync_id: u64, limit: u32) -> StoreResult<Vec<SyncAction>>;
+    fn get(&self, model: &str, id: &str) -> StoreResult<Option<ModelRow>>;
+    /// All rows of `model` whose JSON `data.<field>` equals `value` (e.g. pr id).
+    fn query(&self, model: &str, field: &str, value: &str) -> StoreResult<Vec<ModelRow>>;
+    fn all(&self, model: &str) -> StoreResult<Vec<ModelRow>>;
+
+    fn outbox_push(&self, op: &str, payload: serde_json::Value) -> StoreResult<u64>;
+    /// Next pending item with `not_before <= now`, marked in-flight.
+    fn outbox_take(&self, now: i64) -> StoreResult<Option<OutboxItem>>;
+    fn outbox_done(&self, id: u64) -> StoreResult<()>;
+    fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()>;
+    fn outbox_fail(&self, id: u64) -> StoreResult<()>;
+
+    fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>>;
+    fn kv_set(&self, key: &str, value: &serde_json::Value) -> StoreResult<()>;
+}
