@@ -2167,8 +2167,14 @@ dependencies = [
 name = "theodore-git"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
  "theodore-domain",
  "theodore-ports",
+ "tokio",
 ]
 
 [[package]]
