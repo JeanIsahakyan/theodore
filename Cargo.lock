@@ -4538,6 +4538,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "theodore-domain",
+ "theodore-git",
  "theodore-grouping",
  "theodore-mcp",
  "theodore-ports",

@@ -18,6 +18,7 @@ theodore-domain.workspace = true
 theodore-ports.workspace = true
 theodore-grouping.workspace = true
 theodore-mcp.workspace = true
+theodore-git.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

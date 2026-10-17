@@ -210,3 +210,23 @@ impl GitPort for GitCli {
         self.show_op(repo, rev, path).await
     }
 }
+
+/// Parse a standalone patch (e.g. `git diff > f.patch`) without a repository:
+/// counts come from the hunks and no `.gitattributes` apply.
+pub fn parse_patch(
+    text: &str,
+    base: &theodore_domain::Sha,
+    head: &theodore_domain::Sha,
+    max_file_lines: u32,
+) -> theodore_domain::Revision {
+    let attrs = generated::GitAttributes::parse("");
+    let files = parse::parse_unified_diff(text, &[], &attrs, max_file_lines)
+        .into_iter()
+        .map(|p| p.file)
+        .collect();
+    theodore_domain::Revision {
+        base: base.clone(),
+        head: head.clone(),
+        files,
+    }
+}
