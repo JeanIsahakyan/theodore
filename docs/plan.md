@@ -16,13 +16,20 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D4 | UI ⇄ core is local-first sync: transactions up, sync log deltas down | decided |
 | D5 | No server in v1. The "backend" is the local Rust core | decided |
 | D6 | Code hosts behind a `HostAdapter` with capabilities; GitHub first | decided |
-| D7 | Own HTTP client for hosts (`reqwest` + `cynic`); `gh` only as a token source | proposed |
-| D8 | Agents = the user's installed CLIs (`claude`, `codex`, `gemini`), spawned by core | proposed |
-| D9 | MCP `review-tools` served by core over localhost HTTP, one token per run | proposed |
-| D10 | git through the git CLI, not libgit2 | proposed |
-| D11 | SQLite for state; OS keychain for secrets | proposed |
-| D12 | macOS (Apple Silicon) first | proposed |
+| D7 | Own HTTP client for hosts (`reqwest` + `cynic`); `gh` only as a token source | decided |
+| D8 | Agents = the user's installed CLIs (`claude`, `codex`, `gemini`), spawned by core | decided |
+| D9 | MCP `review-tools` served by core over localhost HTTP, one token per run; stdio bridge for CLIs without HTTP MCP | decided |
+| D10 | git through the git CLI, not libgit2 | decided |
+| D11 | SQLite for state; OS keychain for secrets | decided |
+| D12 | macOS (Apple Silicon) first | decided |
 | D13 | UI state = MobX object pool + a small `resource()` cache; no TanStack Query, no router | decided |
+| D14 | UI runs only inside Tauri; no browser mode, no fake core — dev and e2e use the real core with fixture adapters | decided |
+| D15 | Agent per task is a setting (grouping, chat, skills, fixes), default Claude | decided |
+| D16 | Auto-update from this repo's GitHub Releases, built in from the first version | decided |
+| D17 | Data lives in `~/.theodore` | decided |
+| D18 | Later, not v1: accounts and billing, telemetry, Linux and Windows | decided |
+| D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
+| D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
 
 ---
 
@@ -53,8 +60,8 @@ alphabetical list of files. The agents help; the reviewer decides.
 Rules:
 - `domain` depends on nothing but std/serde. No tokio, no I/O.
 - `app` depends on `domain` and `ports` only. Adapters are injected.
-- The core is headless: the same `app` runs inside Tauri, inside the CLI, and
-  behind a WebSocket server for browser dev mode.
+- The core is headless: the same `app` runs inside Tauri and inside the CLI.
+  The UI runs only inside the Tauri app; there is no browser mode.
 
 ### 2.2 Processes
 
@@ -76,7 +83,7 @@ Rules:
 ```
 crates/
   domain/        models, invariants, diff/interdiff, anchors
-  contract/      command + sync types; generates ui/src/gen/*.ts
+  contract/      command + sync types; specta generates ui/src/gen/*.ts
   app/           use cases, sync engine, outbox, scheduler
   host/          HostAdapter traits, capabilities, models, shared HTTP client
   host-github/   GraphQL (cynic) + REST, notifications polling, ETag
@@ -89,7 +96,6 @@ crates/
 apps/
   desktop/       Tauri app
   cli/           `theodore …` headless commands (grouping eval, debugging)
-  devserver/     axum WebSocket host for the UI in a plain browser
 ui/              React app + sync client
 docs/
 ```
@@ -135,7 +141,7 @@ agent / poller ─────────────────────�
 | Choice | Why |
 | --- | --- |
 | No client-side database | core is local; bootstrap over IPC is fast |
-| Tauri events as transport; WebSocket only in browser dev mode | one process boundary, no network stack in production |
+| Tauri IPC and events as the only transport | one process boundary, no network stack between UI and core |
 | Subscription per open PR | PR models load lazily, only when opened |
 | Single window | no cross-tab locking needed |
 | Sync log + apply path in Rust (`app` + `store`) on SQLite | core is the single source of truth |
@@ -444,6 +450,21 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
   events and are stored when complete.
 - Usage: tokens and USD per run, per PR budget, hard stop at the limit.
 
+### 8.5 Agent selection
+
+Which agent does what is a setting, layered user → repo:
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `agents.grouping` | `claude` | one agent |
+| `agents.chat` | `claude` | switchable per message in the UI |
+| `agents.skills` | `[claude]` | a list: skills can run on several agents at once |
+| `agents.fix` | `claude` | one agent; edits only in the PR worktree |
+| `agents.<id>.enabled`, `.path`, `.model` | detected on onboarding | CLI path and model override |
+
+`theodore group --agent <id>` overrides the setting for evals. M1 ships the
+Claude runner; the others follow in M4 behind the same runner trait.
+
 ---
 
 ## 9. Storage and secrets
@@ -467,8 +488,7 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 | Types | generated from the Rust contract, never hand-written |
 | State | MobX object pool fed by the sync stream; `resource()` for immutable data; no business logic in the UI |
 | Actions | every action is a transaction or a command; nothing is faked with timers |
-| Fake core | a TS implementation of the contract with fixture data, for dev and e2e |
-| E2E | independent Playwright tests against the fake core, not one long script |
+| Dev and e2e | the real Rust core with fixture adapters (§12.1); no fake core in TS |
 
 Every component subscribes to the objects it reads, not to the whole state.
 
@@ -479,9 +499,57 @@ Every component subscribes to the objects it reads, not to the whole state.
 - Tauri 2, one main window, `titleBarStyle: Overlay`.
 - Strict CSP (no remote scripts; Shiki and fonts bundled). Capabilities scoped
   to the commands the UI needs.
-- Release: `.app` → sign → notarize → DMG → sign → notarize; updater manifest
-  on a public releases repo. Updater key generated once and never rotated.
 - Deep link `theodore://` for OAuth callbacks and "open PR in Theodore".
+
+### 11.1 Updates (from the first version)
+
+The updater ships in M0, so every build ever released can update itself.
+
+```
+git tag v0.3.0 ──▶ CI release workflow
+                    build .app ─▶ sign ─▶ [notarize] ─▶ DMG ─▶ sign ─▶ [notarize]
+                    .app.tar.gz + .sig (updater key)
+                    latest.json {version, notes, url, signature}
+                    └─▶ GitHub Release v0.3.0 on JeanIsahakyan/theodore (public)
+
+app ──▶ on launch + every 6 h
+        GET github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json
+        newer? ─▶ download in background ─▶ verify signature
+               ─▶ "Restart to update" (never forced)
+               ─▶ restart waits until: no agent running, outbox empty
+```
+
+| Topic | Rule |
+| --- | --- |
+| Mechanism | `tauri-plugin-updater` + `tauri-plugin-process`; manifest from GitHub Releases, no server |
+| Signing key | generated once, private key + password in CI secrets, public key in `tauri.conf.json`. **Never rotated**: a new key orphans every installed build |
+| Channels | `stable` = `/releases/latest/` (GitHub skips pre-releases there); `beta` = a fixed pre-release tag `channel-beta` whose `latest.json` is overwritten. Setting `updates.channel` |
+| Versioning | semver; the tag must equal the version in `Cargo.toml` and `tauri.conf.json` (CI check) |
+| Tags | never re-tag a published release; ship a new patch instead |
+| Data | SQLite migrations forward-only; DB copied to `theodore.db.bak-<version>` before migrating; downgrade not supported |
+| UX | Settings → About: version, channel, "Check now", release notes of the pending update |
+| Failure | download or signature failure → keep the current version, retry next check, show nothing scary |
+| Test | every release workflow run also tests the update path: install N-1, update to N, app starts |
+
+Platform: `darwin-aarch64` only in v1; the manifest format already allows more
+platforms later.
+
+### 11.2 Signing without an Apple Developer ID (now)
+
+| Step | Now (ad-hoc) | With Developer ID (later) |
+| --- | --- | --- |
+| Code signature | `codesign -s -` (ad-hoc, required on Apple Silicon) | Developer ID Application + hardened runtime |
+| Notarization | none | `notarytool` + staple, app and DMG |
+| First install | Gatekeeper blocks it: System Settings → Privacy & Security → "Open Anyway", or `xattr -dr com.apple.quarantine /Applications/Theodore.app` | opens normally |
+| Updates | work: the updater downloads outside the browser, so no quarantine flag, and checks its own signature | same |
+| Keychain prompt after update | none: secrets go through Apple-signed `/usr/bin/security`, not our changing signature | same |
+
+- The release workflow has the Developer ID and notarization steps from day one,
+  skipped while the secrets are absent. Adding the secrets turns them on; no
+  other change.
+- Switching to Developer ID later does not break the update chain: the updater
+  trusts its own key, not the Apple identity.
+- README gets an "Install" section with the first-launch steps until then.
 
 ---
 
@@ -490,12 +558,29 @@ Every component subscribes to the objects it reads, not to the whole state.
 | Part | Checks |
 | --- | --- |
 | Rust | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` |
-| UI | `tsc --noEmit`, lint, Prettier, unit tests, Playwright e2e on the fake core |
+| UI | `tsc --noEmit`, lint, Prettier, unit tests |
+| E2E | the Tauri app on the real core with fixture adapters (§12.1) |
 | Contract | generated TS is up to date (CI diff check) |
 | Grouping | `theodore eval fixtures/` — no regression in validity |
 | Agents | stream parser fixture tests per CLI version |
 
 All wired into lefthook pre-push and CI.
+
+### 12.1 Fixture adapters
+
+Dev runs and e2e use the real `app` + `domain` with adapters swapped by config:
+
+```
+Tauri app ──▶ app + domain (real)
+               ├─ host:   fixture — PRs, threads, checks from JSON
+               ├─ git:    recorded repos in fixtures/
+               ├─ agents: replay of recorded CLI streams
+               └─ clock:  controlled time (snooze, polling, stalls)
+```
+
+Demo events (author push, checks green, agent crash) are fixture triggers, not
+UI code. E2E drives the app through `tauri-driver` (WebDriver). It has no macOS
+driver for WKWebView, so e2e runs on Linux CI.
 
 ---
 
@@ -509,19 +594,19 @@ M0 scaffold ─▶ M1 grouping spike ─▶ M2 core + sync + UI ─▶ M3 GitHub
 
 | M | Scope | Exit | Sessions |
 | --- | --- | --- | --- |
-| M0 | Cargo workspace, `ui/` package, Tauri hello window, contract codegen, checks in lefthook | `cargo test` + `tsc` green; window opens | 1 |
+| M0 | Cargo workspace, `ui/` package, Tauri hello window, contract codegen, checks in lefthook, updater + release workflow | `cargo test` + `tsc` green; window opens; v0.0.1 → v0.0.2 updates itself from GitHub Releases | 1–2 |
 | M1 | `domain` diff model, `git` (clone, worktree, diff), minimal GitHub read (token from `gh`), minimal Claude runner (JSON in the final message, no MCP yet), grouping + validation, `theodore group/eval` | §5.4 targets on 10 real PRs | 1–2 |
-| M2 | `store`, sync engine, `app` skeleton, Tauri wiring, UI with observable object pool, fake core, devserver | real PR opens read-only in the app, grouped | 2 |
+| M2 | `store`, sync engine, `app` skeleton, Tauri wiring, UI with MobX object pool, fixture adapters | real PR opens read-only in the app, grouped | 2 |
 | M3 | Inbox sections, Viewed sync, threads, drafts → submit, notifications + ETag polling, outbox, offline | full review round-trip on a real PR | 1–2 |
 | M4 | MCP server, skill runs on several agents, findings merge, chat, fixes, tasks, budget | skill → findings → draft/task/fix works on claude + codex | 1–2 |
 | M5 | Push detection, interdiff, DISMISSED, incremental regroup, anchor remap, snooze by event | author push handled without losing reads or comments | 1 |
-| M6 | Onboarding, layered settings, keychain, signing, notarization, updater, big-PR performance | signed DMG installs and updates on a clean Mac | 1–2 |
+| M6 | Onboarding, layered settings UI, keychain, beta channel, big-PR performance | signed DMG installs and updates on a clean Mac | 1–2 |
 | M7 | GitLab adapter; freeze `HostAdapter` | same review round-trip on GitLab | 1 |
 
-Total: ~10–13 sessions to v1 on GitHub, +1 for GitLab.
+Total: ~11–14 sessions to v1 on GitHub, +1 for GitLab.
 
 Later: Bitbucket, LSP go-to-definition, Linear integration, merge queue UI,
-org settings via repo file, Windows/Linux.
+org settings via repo file, Windows/Linux, accounts and billing, telemetry.
 
 ---
 
@@ -536,14 +621,10 @@ org settings via repo file, Windows/Linux.
 | Huge PRs (10k+ lines) freeze the UI | virtualized diff, size limits, lazy hunk loading |
 | Anchors drift after force-push | remap via diff; fall back to "outdated" like GitHub |
 | Agents touching files they shouldn't | read-only allowlist for review, edits only in the worktree |
-| WKWebView quirks vs Chrome | e2e also in WebKit |
+| No WebDriver for WKWebView on macOS | e2e on Linux CI (WebKitGTK); manual smoke on macOS per release |
 
 ---
 
 ## 15. Open questions
 
-1. Default agent for grouping: Claude only, or user's choice from day one?
-2. Accounts, billing, licensing — needed for v1 or never?
-3. Data directory name and location (`~/.theodore` assumed).
-4. Linux/Windows timeline.
-5. Telemetry: none, or opt-in crash reports?
+None right now.
