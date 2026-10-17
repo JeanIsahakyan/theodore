@@ -1,3 +1,99 @@
-//! AgentPort: runs claude / codex / gemini CLIs and normalizes their streams.
+//! AgentPort (plan §8): runs the `claude` / `codex` / `gemini` CLIs and
+//! normalizes their JSON streams into `AgentEvent`.
 //!
-//! Placeholder from the scaffold; implemented by its slice (docs/plan.md).
+//! `AgentCli` owns per-agent binary configs (path override, extra args,
+//! model) and dispatches `AgentRequest` to the matching builder + parser in
+//! `claude` / `codex` / `gemini`. Process lifecycle (spawn, stdin, stall
+//! detection, cancellation) is shared in `process`; it is CLI-agnostic.
+//!
+//! Neither CLI needed the `theodore mcp-bridge` stdio→HTTP proxy the plan
+//! sketches as a fallback: Claude Code takes an inline HTTP MCP server via
+//! `--mcp-config`, and Codex's `-c mcp_servers.<name>.url=...` override also
+//! speaks HTTP directly (confirmed against installed `codex exec --help` /
+//! `codex mcp add --help`). Gemini is settings-file only but that's still
+//! native HTTP (`httpUrl`), not stdio. If a future CLI only speaks stdio MCP,
+//! the bridge becomes necessary and is a separate slice.
+
+pub mod claude;
+pub mod codex;
+pub mod config;
+pub mod detect;
+pub mod env;
+pub mod gemini;
+pub mod process;
+
+use async_trait::async_trait;
+use theodore_domain::AgentId;
+use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun};
+
+pub use config::{AgentBinaryConfig, AgentCliConfig};
+
+/// `AgentPort` over local CLI processes.
+#[derive(Debug, Clone, Default)]
+pub struct AgentCli {
+    configs: AgentCliConfig,
+}
+
+impl AgentCli {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_config(mut self, id: AgentId, cfg: AgentBinaryConfig) -> Self {
+        self.configs.set(id, cfg);
+        self
+    }
+}
+
+#[async_trait]
+impl AgentPort for AgentCli {
+    async fn detect(&self) -> Vec<AgentInfo> {
+        let mut out = Vec::with_capacity(AgentId::ALL.len());
+        for id in AgentId::ALL {
+            let cfg = self.configs.get(id);
+            out.push(detect::detect_one(id, &cfg).await);
+        }
+        out
+    }
+
+    async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
+        let cfg = self.configs.get(req.agent);
+        let program =
+            detect::locate_binary(req.agent, &cfg).ok_or(AgentError::NotInstalled(req.agent))?;
+        let mut child_env = env::filtered_env();
+        let mut guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
+
+        let args = match req.agent {
+            AgentId::Claude => claude::build_args(&req, &cfg),
+            AgentId::Codex => {
+                if let Some(mcp) = &req.mcp {
+                    child_env.push((codex::MCP_TOKEN_ENV_VAR.to_string(), mcp.token.clone()));
+                }
+                codex::build_args(&req, &cfg)
+            }
+            AgentId::Gemini => {
+                let (extra_env, guard) =
+                    gemini::settings_env(&req).map_err(|e| AgentError::Spawn(e.to_string()))?;
+                child_env.extend(extra_env);
+                guards.push(Box::new(guard));
+                gemini::build_args(&req, &cfg)
+            }
+        };
+
+        let parser: Box<dyn process::LineParser> = match req.agent {
+            AgentId::Claude => Box::new(claude::ClaudeParser::new()),
+            AgentId::Codex => Box::new(codex::CodexParser::new()),
+            AgentId::Gemini => Box::new(gemini::GeminiParser::new()),
+        };
+
+        let spec = process::SpawnSpec {
+            program,
+            args,
+            cwd: req.cwd.clone(),
+            env: child_env,
+            stall_after_ms: req.stall_after_ms,
+            guards,
+        };
+        process::spawn_and_stream(spec, parser)
+    }
+}
