@@ -1,0 +1,846 @@
+//! In-memory fakes for every port, plus small fixture builders, so `app`
+//! can be tested without any adapter crate.
+
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use theodore_domain::{
+    Anchor, CheckRollup, FileDiff, FileStatus, Group, GroupId, GroupKind, Grouping, Hunk, HunkId,
+    LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, Revision, Sha, Side,
+};
+use theodore_ports::{
+    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, Capabilities, Changes,
+    Clock, DiffOptions, Fetched, GitPort, GitResult, HostAdapter, HostError, HostResult,
+    InboxSection, ModelRow, NewAction, OutboxItem, OutboxStatus, ReviewSubmission, Secrets,
+    SecretsError, Store, StoreError, StoreResult, SubmittedReview, SyncAction, SyncActionCode,
+    Worktree,
+};
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+
+use crate::deps::{Deps, Grouper};
+use crate::error::GrouperError;
+
+// ── clock ─────────────────────────────────────────────────────────────────
+
+pub struct FakeClock {
+    now: Mutex<Millis>,
+    notify: Notify,
+}
+
+impl FakeClock {
+    pub fn new(start: Millis) -> Arc<Self> {
+        Arc::new(Self {
+            now: Mutex::new(start),
+            notify: Notify::new(),
+        })
+    }
+
+    pub fn advance(&self, by_ms: i64) {
+        {
+            let mut g = self.now.lock().unwrap();
+            *g += by_ms;
+        }
+        self.notify.notify_waiters();
+    }
+}
+
+#[async_trait]
+impl Clock for FakeClock {
+    fn now(&self) -> Millis {
+        *self.now.lock().unwrap()
+    }
+
+    async fn sleep(&self, d: Duration) {
+        let target = self.now() + d.as_millis() as i64;
+        loop {
+            let notified = self.notify.notified();
+            if self.now() >= target {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+// ── store ─────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+struct StoreState {
+    next_id: u64,
+    log: Vec<SyncAction>,
+    models: HashMap<(String, String), ModelRow>,
+    outbox: Vec<OutboxItem>,
+    next_outbox_id: u64,
+    kv: HashMap<String, serde_json::Value>,
+}
+
+pub struct FakeStore(Mutex<StoreState>);
+
+impl FakeStore {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self(Mutex::new(StoreState::default())))
+    }
+
+    /// Test-only inspection, not part of `Store`.
+    pub fn outbox_snapshot(&self) -> Vec<OutboxItem> {
+        self.0.lock().unwrap().outbox.clone()
+    }
+}
+
+impl Store for FakeStore {
+    fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {
+        let mut s = self.0.lock().unwrap();
+        let mut out = Vec::new();
+        for a in actions {
+            let key = (a.model.clone(), a.model_id.clone());
+            let logged = match a.action {
+                SyncActionCode::I => {
+                    if s.models.contains_key(&key) {
+                        // Retried create whose first attempt committed.
+                        continue;
+                    }
+                    let data = a.data.unwrap_or(serde_json::Value::Null);
+                    s.models.insert(
+                        key,
+                        ModelRow {
+                            model: a.model.clone(),
+                            id: a.model_id.clone(),
+                            data: data.clone(),
+                            archived: false,
+                        },
+                    );
+                    Some(data)
+                }
+                SyncActionCode::U => {
+                    let archived = s.models.get(&key).map(|r| r.archived).unwrap_or(false);
+                    let data = a.data.unwrap_or(serde_json::Value::Null);
+                    s.models.insert(
+                        key,
+                        ModelRow {
+                            model: a.model.clone(),
+                            id: a.model_id.clone(),
+                            data: data.clone(),
+                            archived,
+                        },
+                    );
+                    Some(data)
+                }
+                SyncActionCode::C => {
+                    let Some(existing) = s.models.get(&key).cloned() else {
+                        return Err(StoreError::Db(format!(
+                            "{}/{} not found",
+                            a.model, a.model_id
+                        )));
+                    };
+                    let mut merged = existing.data;
+                    if let Some(patch) = a.data.as_ref().and_then(|d| d.as_object()) {
+                        if let Some(obj) = merged.as_object_mut() {
+                            for (k, v) in patch {
+                                obj.insert(k.clone(), v.clone());
+                            }
+                        } else {
+                            merged = a.data.clone().unwrap_or(serde_json::Value::Null);
+                        }
+                    }
+                    s.models.insert(
+                        key,
+                        ModelRow {
+                            model: a.model.clone(),
+                            id: a.model_id.clone(),
+                            data: merged.clone(),
+                            archived: existing.archived,
+                        },
+                    );
+                    Some(merged)
+                }
+                SyncActionCode::A => {
+                    let Some(existing) = s.models.get_mut(&key) else {
+                        continue;
+                    };
+                    existing.archived = true;
+                    None
+                }
+                SyncActionCode::D => {
+                    if s.models.remove(&key).is_none() {
+                        continue;
+                    }
+                    None
+                }
+            };
+            s.next_id += 1;
+            let action = SyncAction {
+                id: s.next_id,
+                model: a.model,
+                model_id: a.model_id,
+                action: a.action,
+                data: logged,
+            };
+            s.log.push(action.clone());
+            out.push(action);
+        }
+        Ok(out)
+    }
+
+    fn last_sync_id(&self) -> StoreResult<u64> {
+        Ok(self.0.lock().unwrap().next_id)
+    }
+
+    fn since(&self, sync_id: u64, limit: u32) -> StoreResult<Vec<SyncAction>> {
+        let s = self.0.lock().unwrap();
+        Ok(s.log
+            .iter()
+            .filter(|a| a.id > sync_id)
+            .take(limit as usize)
+            .cloned()
+            .collect())
+    }
+
+    fn get(&self, model: &str, id: &str) -> StoreResult<Option<ModelRow>> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .models
+            .get(&(model.to_string(), id.to_string()))
+            .cloned())
+    }
+
+    fn query(&self, model: &str, field: &str, value: &str) -> StoreResult<Vec<ModelRow>> {
+        let s = self.0.lock().unwrap();
+        Ok(s.models
+            .values()
+            .filter(|r| {
+                r.model == model && r.data.get(field).and_then(|v| v.as_str()) == Some(value)
+            })
+            .cloned()
+            .collect())
+    }
+
+    fn all(&self, model: &str) -> StoreResult<Vec<ModelRow>> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .models
+            .values()
+            .filter(|r| r.model == model)
+            .cloned()
+            .collect())
+    }
+
+    fn outbox_push(&self, op: &str, payload: serde_json::Value) -> StoreResult<u64> {
+        let mut s = self.0.lock().unwrap();
+        s.next_outbox_id += 1;
+        let id = s.next_outbox_id;
+        s.outbox.push(OutboxItem {
+            id,
+            op: op.to_string(),
+            payload,
+            attempts: 0,
+            status: OutboxStatus::Pending,
+            not_before: 0,
+        });
+        Ok(id)
+    }
+
+    fn outbox_take(&self, now: i64) -> StoreResult<Option<OutboxItem>> {
+        let mut s = self.0.lock().unwrap();
+        if let Some(item) = s
+            .outbox
+            .iter_mut()
+            .find(|i| i.status == OutboxStatus::Pending && i.not_before <= now)
+        {
+            item.status = OutboxStatus::InFlight;
+            return Ok(Some(item.clone()));
+        }
+        Ok(None)
+    }
+
+    fn outbox_done(&self, id: u64) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        if let Some(item) = s.outbox.iter_mut().find(|i| i.id == id) {
+            item.status = OutboxStatus::Done;
+        }
+        Ok(())
+    }
+
+    fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        if let Some(item) = s.outbox.iter_mut().find(|i| i.id == id) {
+            item.attempts += 1;
+            item.not_before = not_before;
+            item.status = OutboxStatus::Pending;
+        }
+        Ok(())
+    }
+
+    fn outbox_fail(&self, id: u64) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        if let Some(item) = s.outbox.iter_mut().find(|i| i.id == id) {
+            item.status = OutboxStatus::Failed;
+        }
+        Ok(())
+    }
+
+    fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>> {
+        Ok(self.0.lock().unwrap().kv.get(key).cloned())
+    }
+
+    fn kv_set(&self, key: &str, value: &serde_json::Value) -> StoreResult<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .kv
+            .insert(key.to_string(), value.clone());
+        Ok(())
+    }
+}
+
+// ── secrets ───────────────────────────────────────────────────────────────
+
+pub struct FakeSecrets(Mutex<HashMap<String, String>>);
+
+impl FakeSecrets {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self(Mutex::new(HashMap::new())))
+    }
+}
+
+impl Secrets for FakeSecrets {
+    fn get(&self, key: &str) -> Result<Option<String>, SecretsError> {
+        Ok(self.0.lock().unwrap().get(key).cloned())
+    }
+    fn set(&self, key: &str, value: &str) -> Result<(), SecretsError> {
+        self.0
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), value.to_string());
+        Ok(())
+    }
+    fn delete(&self, key: &str) -> Result<(), SecretsError> {
+        self.0.lock().unwrap().remove(key);
+        Ok(())
+    }
+}
+
+// ── git ───────────────────────────────────────────────────────────────────
+
+pub struct FakeGit {
+    pub repo_path: PathBuf,
+    head: Mutex<Sha>,
+    revision: Mutex<Revision>,
+    files: Mutex<HashMap<(String, String), Vec<u8>>>,
+}
+
+impl FakeGit {
+    pub fn new(head: Sha, revision: Revision) -> Arc<Self> {
+        Arc::new(Self {
+            repo_path: PathBuf::from("/tmp/theodore-fake-repo"),
+            head: Mutex::new(head),
+            revision: Mutex::new(revision),
+            files: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub fn set_head(&self, head: Sha) {
+        *self.head.lock().unwrap() = head;
+    }
+
+    pub fn set_revision(&self, revision: Revision) {
+        *self.revision.lock().unwrap() = revision;
+    }
+
+    pub fn put_file(&self, rev: &Sha, path: &str, content: &[u8]) {
+        self.files
+            .lock()
+            .unwrap()
+            .insert((rev.0.clone(), path.to_string()), content.to_vec());
+    }
+}
+
+#[async_trait]
+impl GitPort for FakeGit {
+    async fn ensure_repo(&self, _repo: &theodore_domain::RepoRef) -> GitResult<PathBuf> {
+        Ok(self.repo_path.clone())
+    }
+    async fn fetch_pr(&self, _pr: &PrRef) -> GitResult<Sha> {
+        Ok(self.head.lock().unwrap().clone())
+    }
+    async fn worktree(&self, _pr: &PrRef, head: &Sha) -> GitResult<Worktree> {
+        Ok(Worktree {
+            path: PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0)),
+            head: head.clone(),
+        })
+    }
+    async fn remove_worktree(&self, _pr: &PrRef) -> GitResult<()> {
+        Ok(())
+    }
+    async fn gc_worktrees(&self, _keep: &[PrRef]) -> GitResult<u32> {
+        Ok(0)
+    }
+    async fn merge_base(&self, _repo: &Path, a: &Sha, _b: &Sha) -> GitResult<Sha> {
+        Ok(a.clone())
+    }
+    async fn diff(
+        &self,
+        _repo: &Path,
+        _base: &Sha,
+        _head: &Sha,
+        _opts: &DiffOptions,
+    ) -> GitResult<Revision> {
+        Ok(self.revision.lock().unwrap().clone())
+    }
+    async fn show(&self, _repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>> {
+        Ok(self
+            .files
+            .lock()
+            .unwrap()
+            .get(&(rev.0.clone(), path.to_string()))
+            .cloned())
+    }
+}
+
+// ── host ──────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct FakeHost {
+    pub get_pr_responses: Mutex<VecDeque<HostResult<Fetched<PrDetail>>>>,
+    pub set_viewed_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub submit_review_responses: Mutex<VecDeque<HostResult<SubmittedReview>>>,
+    pub find_marker_responses: Mutex<VecDeque<HostResult<Option<theodore_domain::CommentId>>>>,
+    pub changed_since_responses: Mutex<VecDeque<HostResult<Changes>>>,
+}
+
+impl FakeHost {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    pub fn push_get_pr(&self, r: HostResult<Fetched<PrDetail>>) {
+        self.get_pr_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_set_viewed(&self, r: HostResult<()>) {
+        self.set_viewed_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_submit_review(&self, r: HostResult<SubmittedReview>) {
+        self.submit_review_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_find_marker(&self, r: HostResult<Option<theodore_domain::CommentId>>) {
+        self.find_marker_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_changed_since(&self, r: HostResult<Changes>) {
+        self.changed_since_responses.lock().unwrap().push_back(r);
+    }
+}
+
+#[async_trait]
+impl HostAdapter for FakeHost {
+    fn kind(&self) -> theodore_domain::HostKind {
+        theodore_domain::HostKind::Github
+    }
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            viewed: true,
+            pending_review: true,
+            suggestions: true,
+            resolve_threads: true,
+            merge_queue: false,
+            auto_merge: false,
+            reactions: true,
+        }
+    }
+    async fn changed_since(&self, _cursor: Option<&str>) -> HostResult<Changes> {
+        self.changed_since_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(Changes {
+                prs: vec![],
+                cursor: "0".into(),
+                poll_after_ms: Some(60_000),
+            }))
+    }
+    async fn search(&self, _section: &InboxSection) -> HostResult<Vec<PrSummary>> {
+        Ok(vec![])
+    }
+    async fn list_repos(&self) -> HostResult<Vec<theodore_domain::RepoRef>> {
+        Ok(vec![])
+    }
+    async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
+        self.get_pr_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(HostError::NotFound("no fixture queued".into())))
+    }
+    async fn set_viewed(&self, _pr: &PrRef, _path: &str, _viewed: bool) -> HostResult<()> {
+        self.set_viewed_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn submit_review(
+        &self,
+        _pr: &PrRef,
+        _review: &ReviewSubmission,
+    ) -> HostResult<SubmittedReview> {
+        self.submit_review_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(SubmittedReview {
+                review_id: "r1".into(),
+                threads: vec![],
+            }))
+    }
+    async fn find_marker(
+        &self,
+        _pr: &PrRef,
+        _marker: &str,
+    ) -> HostResult<Option<theodore_domain::CommentId>> {
+        self.find_marker_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(None))
+    }
+    async fn reply(
+        &self,
+        _pr: &PrRef,
+        _thread: &theodore_domain::ThreadId,
+        _body: &str,
+    ) -> HostResult<theodore_domain::CommentId> {
+        Ok(theodore_domain::CommentId::new("c1"))
+    }
+    async fn resolve(
+        &self,
+        _pr: &PrRef,
+        _thread: &theodore_domain::ThreadId,
+        _resolved: bool,
+    ) -> HostResult<()> {
+        Ok(())
+    }
+    async fn edit_comment(
+        &self,
+        _pr: &PrRef,
+        _comment: &theodore_domain::CommentId,
+        _body: &str,
+    ) -> HostResult<()> {
+        Ok(())
+    }
+    async fn delete_comment(
+        &self,
+        _pr: &PrRef,
+        _comment: &theodore_domain::CommentId,
+    ) -> HostResult<()> {
+        Ok(())
+    }
+}
+
+// ── agents ────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct FakeAgent {
+    scripts: Mutex<VecDeque<Vec<AgentEvent>>>,
+    hang_next: Mutex<bool>,
+    /// Keeps a run's sender alive forever so its `events.recv()` never
+    /// resolves (used to test cancellation deterministically).
+    kept_alive: Mutex<Vec<tokio::sync::mpsc::Sender<AgentEvent>>>,
+}
+
+impl FakeAgent {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    pub fn push_script(&self, events: Vec<AgentEvent>) {
+        self.scripts.lock().unwrap().push_back(events);
+    }
+    /// The next `run()` call never emits anything and never closes, until
+    /// the whole fake is dropped.
+    pub fn hang_next_run(&self) {
+        *self.hang_next.lock().unwrap() = true;
+    }
+}
+
+#[async_trait]
+impl AgentPort for FakeAgent {
+    async fn detect(&self) -> Vec<AgentInfo> {
+        vec![]
+    }
+    async fn run(&self, _req: AgentRequest) -> Result<AgentRun, AgentError> {
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let hang = std::mem::take(&mut *self.hang_next.lock().unwrap());
+        if hang {
+            self.kept_alive.lock().unwrap().push(tx);
+        } else {
+            let events = self.scripts.lock().unwrap().pop_front().unwrap_or_else(|| {
+                vec![AgentEvent::Done {
+                    final_text: "ok".into(),
+                    usage: theodore_domain::Usage::default(),
+                }]
+            });
+            tokio::spawn(async move {
+                for e in events {
+                    if tx.send(e).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        Ok(AgentRun {
+            events: rx,
+            cancel: CancellationToken::new(),
+        })
+    }
+}
+
+// ── grouper ───────────────────────────────────────────────────────────────
+
+pub struct FakeGrouper(Mutex<Grouping>);
+
+impl FakeGrouper {
+    pub fn new(grouping: Grouping) -> Arc<Self> {
+        Arc::new(Self(Mutex::new(grouping)))
+    }
+    pub fn set(&self, grouping: Grouping) {
+        *self.0.lock().unwrap() = grouping;
+    }
+}
+
+#[async_trait]
+impl Grouper for FakeGrouper {
+    async fn group(
+        &self,
+        _rev: &Revision,
+        _pr: &PrDetail,
+        _worktree: &Path,
+    ) -> Result<Grouping, GrouperError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+    async fn regroup(
+        &self,
+        prev: &Grouping,
+        _rev: &Revision,
+        _pr: &PrDetail,
+        _worktree: &Path,
+    ) -> Result<Grouping, GrouperError> {
+        let _ = prev;
+        Ok(self.0.lock().unwrap().clone())
+    }
+}
+
+// ── fixtures ──────────────────────────────────────────────────────────────
+
+pub struct Fixtures {
+    pub clock: Arc<FakeClock>,
+    pub store: Arc<FakeStore>,
+    pub host: Arc<FakeHost>,
+    pub git: Arc<FakeGit>,
+    pub agents: Arc<FakeAgent>,
+    pub secrets: Arc<FakeSecrets>,
+    pub grouper: Arc<FakeGrouper>,
+}
+
+impl Fixtures {
+    pub fn deps(&self) -> Deps {
+        Deps {
+            host: self.host.clone(),
+            git: self.git.clone(),
+            agents: self.agents.clone(),
+            store: self.store.clone(),
+            secrets: self.secrets.clone(),
+            clock: self.clock.clone(),
+            grouper: self.grouper.clone(),
+        }
+    }
+}
+
+/// A fresh set of fakes wired to one sample PR: one file, two hunks (so
+/// "viewed" only flips once both are read).
+pub fn fixtures() -> Fixtures {
+    let base = Sha::new("base000");
+    let head = Sha::new("head111");
+    let revision = two_hunk_revision(&base, &head, "src/lib.rs");
+    Fixtures {
+        clock: FakeClock::new(1_000_000),
+        store: FakeStore::new(),
+        host: FakeHost::new(),
+        git: FakeGit::new(head, revision),
+        agents: FakeAgent::new(),
+        secrets: FakeSecrets::new(),
+        grouper: FakeGrouper::new(Grouping {
+            rev: Sha::new("head111"),
+            groups: vec![],
+        }),
+    }
+}
+
+pub fn line_ctx(old_no: u32, new_no: u32, text: &str) -> theodore_domain::DiffLine {
+    theodore_domain::DiffLine {
+        kind: LineKind::Ctx,
+        text: text.into(),
+        old_no: Some(old_no),
+        new_no: Some(new_no),
+    }
+}
+
+pub fn line_add(new_no: u32, text: &str) -> theodore_domain::DiffLine {
+    theodore_domain::DiffLine {
+        kind: LineKind::Add,
+        text: text.into(),
+        old_no: None,
+        new_no: Some(new_no),
+    }
+}
+
+pub fn make_hunk(
+    path: &str,
+    old_start: u32,
+    old_lines: u32,
+    new_start: u32,
+    new_lines: u32,
+    lines: Vec<theodore_domain::DiffLine>,
+) -> Hunk {
+    let id = theodore_domain::interdiff::hunk_id(path, &lines);
+    Hunk {
+        id,
+        path: path.into(),
+        old_start,
+        old_lines,
+        new_start,
+        new_lines,
+        header: String::new(),
+        lines,
+    }
+}
+
+/// One file with two independent hunks.
+pub fn two_hunk_revision(base: &Sha, head: &Sha, path: &str) -> Revision {
+    let h1 = make_hunk(
+        path,
+        1,
+        1,
+        1,
+        2,
+        vec![line_ctx(1, 1, "a"), line_add(2, "b1")],
+    );
+    let h2 = make_hunk(
+        path,
+        10,
+        1,
+        11,
+        2,
+        vec![line_ctx(10, 11, "z"), line_add(12, "b2")],
+    );
+    let file = FileDiff {
+        path: path.into(),
+        old_path: None,
+        status: FileStatus::Modified,
+        similarity: None,
+        old_mode: None,
+        new_mode: None,
+        flags: vec![],
+        additions: 2,
+        deletions: 0,
+        hunks: vec![h1, h2],
+    };
+    Revision {
+        base: base.clone(),
+        head: head.clone(),
+        files: vec![file],
+    }
+}
+
+pub fn hunk_ids(rev: &Revision) -> Vec<HunkId> {
+    rev.hunks().map(|h| h.id.clone()).collect()
+}
+
+pub fn sample_pr_ref(owner: &str, repo: &str, number: u64) -> PrRef {
+    PrRef {
+        repo: theodore_domain::RepoRef {
+            host: theodore_domain::HostKind::Github,
+            owner: owner.into(),
+            name: repo.into(),
+        },
+        number,
+        host_id: Some(format!("node-{number}")),
+    }
+}
+
+pub fn sample_person(login: &str) -> Person {
+    Person {
+        login: login.into(),
+        name: None,
+        avatar_url: None,
+    }
+}
+
+pub fn sample_pr_summary(pr_ref: &PrRef, head: &Sha) -> PrSummary {
+    PrSummary {
+        pr: pr_ref.clone(),
+        title: "Sample PR".into(),
+        author: sample_person("author"),
+        state: PrState::Open,
+        base_ref: "main".into(),
+        head_ref: "feature".into(),
+        head_sha: head.clone(),
+        additions: 2,
+        deletions: 0,
+        changed_files: 1,
+        reasons: vec![],
+        checks: CheckRollup::None,
+        approvals: 0,
+        required_approvals: Some(1),
+        updated_at: 0,
+        url: format!(
+            "https://github.com/{}/{}/pull/{}",
+            pr_ref.repo.owner, pr_ref.repo.name, pr_ref.number
+        ),
+    }
+}
+
+pub fn sample_pr_detail(pr_ref: &PrRef, base: &Sha, head: &Sha) -> PrDetail {
+    PrDetail {
+        summary: sample_pr_summary(pr_ref, head),
+        body: "body".into(),
+        base_sha: base.clone(),
+        commits: vec![],
+        checks: vec![],
+        reviewers: vec![],
+        assignees: vec![],
+        labels: vec![],
+        threads: vec![],
+        viewed: vec![],
+    }
+}
+
+pub fn sample_grouping(rev: &Sha, revision: &Revision) -> Grouping {
+    Grouping {
+        rev: rev.clone(),
+        groups: vec![Group {
+            id: GroupId::new("g1"),
+            title: "All changes".into(),
+            why: "sample".into(),
+            kind: GroupKind::Normal,
+            risk: None,
+            check: vec![],
+            hunks: hunk_ids(revision),
+            outliers: vec![],
+        }],
+    }
+}
+
+pub fn sample_anchor(path: &str, line: u32) -> Anchor {
+    Anchor {
+        rev: Sha::new("head111"),
+        path: path.into(),
+        side: Side::New,
+        line,
+        start_line: None,
+        start_side: None,
+    }
+}

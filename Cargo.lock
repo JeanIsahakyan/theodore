@@ -4522,9 +4522,18 @@ dependencies = [
 name = "theodore-app"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
  "theodore-contract",
  "theodore-domain",
  "theodore-ports",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "url",
+ "uuid",
 ]
 
 [[package]]
