@@ -1,0 +1,1242 @@
+{
+  "pr": {
+    "title": "Org-level limits for invoices, seats and API calls",
+    "body": "Org-level limits for invoices, seats and API calls. `limit = null` means unlimited. Over the limit the API returns 402 and billing gets an email.",
+    "commits": [
+      "add OrgLimit table and LimitKind enum",
+      "checkLimit + LimitExceededError",
+      "record usage with kind",
+      "rename countUsage -> count",
+      "map LimitExceededError to 402",
+      "limit-reached email",
+      "index on UsageEvent(orgId, kind)"
+    ]
+  },
+  "revision": {
+    "base": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "head": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "files": [
+      {
+        "path": "prisma/migrations/20261012_org_limits/migration.sql",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 11,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "65fbdffc432976aa",
+            "path": "prisma/migrations/20261012_org_limits/migration.sql",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 11,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "CREATE TYPE \"LimitKind\" AS ENUM ('INVOICES', 'SEATS', 'API_CALLS');",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "CREATE TABLE \"OrgLimit\" (",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "  \"orgId\"  TEXT NOT NULL REFERENCES \"Org\"(\"id\") ON DELETE CASCADE,",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "  \"kind\"   \"LimitKind\" NOT NULL,",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  \"limit\"  INTEGER,",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "  PRIMARY KEY (\"orgId\", \"kind\")",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": ");",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "ALTER TABLE \"UsageEvent\" ADD COLUMN \"kind\" \"LimitKind\" NOT NULL DEFAULT 'API_CALLS';",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "CREATE INDEX \"UsageEvent_orgId_kind_idx\" ON \"UsageEvent\" (\"orgId\", \"kind\");",
+                "old_no": null,
+                "new_no": 11
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "prisma/schema.prisma",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "cdf8b057859dbe93",
+            "path": "prisma/schema.prisma",
+            "old_start": 14,
+            "old_lines": 5,
+            "new_start": 14,
+            "new_lines": 15,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "model Org {",
+                "old_no": 14,
+                "new_no": 14
+              },
+              {
+                "kind": "ctx",
+                "text": "  id        String   @id",
+                "old_no": 15,
+                "new_no": 15
+              },
+              {
+                "kind": "ctx",
+                "text": "  name      String",
+                "old_no": 16,
+                "new_no": 16
+              },
+              {
+                "kind": "add",
+                "text": "  limits    OrgLimit[]",
+                "old_no": null,
+                "new_no": 17
+              },
+              {
+                "kind": "ctx",
+                "text": "  createdAt DateTime @default(now())",
+                "old_no": 17,
+                "new_no": 18
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 18,
+                "new_no": 19
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 20
+              },
+              {
+                "kind": "add",
+                "text": "model OrgLimit {",
+                "old_no": null,
+                "new_no": 21
+              },
+              {
+                "kind": "add",
+                "text": "  orgId String",
+                "old_no": null,
+                "new_no": 22
+              },
+              {
+                "kind": "add",
+                "text": "  kind  LimitKind",
+                "old_no": null,
+                "new_no": 23
+              },
+              {
+                "kind": "add",
+                "text": "  limit Int?",
+                "old_no": null,
+                "new_no": 24
+              },
+              {
+                "kind": "add",
+                "text": "  org   Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)",
+                "old_no": null,
+                "new_no": 25
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 26
+              },
+              {
+                "kind": "add",
+                "text": "  @@id([orgId, kind])",
+                "old_no": null,
+                "new_no": 27
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 28
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/billing/types.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 6,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "59ea3df900b7ab9a",
+            "path": "src/billing/types.ts",
+            "old_start": 1,
+            "old_lines": 1,
+            "new_start": 1,
+            "new_lines": 7,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "export type OrgId = string;",
+                "old_no": 1,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "export enum LimitKind {",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "  Invoices = 'INVOICES',",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "  Seats = 'SEATS',",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  ApiCalls = 'API_CALLS',",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 7
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/billing/limits.ts",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 25,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "b43bff7b2c07bc2b",
+            "path": "src/billing/limits.ts",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 25,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import { AppError } from '../errors';",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "import { LimitKind } from './types';",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "import { usage } from './usage.service';",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "import { limits } from './limits.repo';",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "import { notifyLimitReached } from '../notifications/limit-reached';",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "import type { Org } from '../db';",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "export class LimitExceededError extends Error {",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "  constructor(",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "    public kind: LimitKind,",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "    public limit: number,",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "  ) {",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "add",
+                "text": "    super(`limit exceeded: ${kind}`);",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "add",
+                "text": "export async function checkLimit(org: Org, kind: LimitKind) {",
+                "old_no": null,
+                "new_no": 17
+              },
+              {
+                "kind": "add",
+                "text": "  const limit = (await limits.get(org.id, kind)) ?? 0;",
+                "old_no": null,
+                "new_no": 18
+              },
+              {
+                "kind": "add",
+                "text": "  const used = await usage.count(org.id, kind);",
+                "old_no": null,
+                "new_no": 19
+              },
+              {
+                "kind": "add",
+                "text": "  if (used >= limit) {",
+                "old_no": null,
+                "new_no": 20
+              },
+              {
+                "kind": "add",
+                "text": "    void notifyLimitReached(org, kind);",
+                "old_no": null,
+                "new_no": 21
+              },
+              {
+                "kind": "add",
+                "text": "    throw new LimitExceededError(kind, limit);",
+                "old_no": null,
+                "new_no": 22
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 23
+              },
+              {
+                "kind": "add",
+                "text": "  return { used, limit, remaining: limit - used };",
+                "old_no": null,
+                "new_no": 24
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 25
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/billing/usage.service.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 7,
+        "deletions": 5,
+        "hunks": [
+          {
+            "id": "96975965e6bb060b",
+            "path": "src/billing/usage.service.ts",
+            "old_start": 8,
+            "old_lines": 8,
+            "new_start": 8,
+            "new_lines": 10,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "export const usage = {",
+                "old_no": 8,
+                "new_no": 8
+              },
+              {
+                "kind": "del",
+                "text": "  async countUsage(orgId: string) {",
+                "old_no": 9,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    return db.usageEvent.count({ where: { orgId } });",
+                "old_no": 10,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  async count(orgId: string, kind?: LimitKind) {",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "    return db.usageEvent.count({ where: { orgId, ...(kind && { kind }) } });",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "ctx",
+                "text": "  },",
+                "old_no": 11,
+                "new_no": 11
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 12,
+                "new_no": 12
+              },
+              {
+                "kind": "del",
+                "text": "  async record(orgId: string, qty = 1) {",
+                "old_no": 13,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    return db.usageEvent.create({ data: { orgId, qty } });",
+                "old_no": 14,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  async record(orgId: string, kind: LimitKind, qty = 1) {",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "    const org = await orgs.get(orgId);",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "    await checkLimit(org, kind);",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "add",
+                "text": "    return db.usageEvent.create({ data: { orgId, kind, qty } });",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": "  },",
+                "old_no": 15,
+                "new_no": 17
+              }
+            ]
+          },
+          {
+            "id": "26bf1fe34476e8fa",
+            "path": "src/billing/usage.service.ts",
+            "old_start": 31,
+            "old_lines": 4,
+            "new_start": 33,
+            "new_lines": 4,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  async summary(orgId: string) {",
+                "old_no": 31,
+                "new_no": 33
+              },
+              {
+                "kind": "del",
+                "text": "    const total = await this.countUsage(orgId);",
+                "old_no": 32,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    const total = await this.count(orgId);",
+                "old_no": null,
+                "new_no": 34
+              },
+              {
+                "kind": "ctx",
+                "text": "    return { orgId, total };",
+                "old_no": 33,
+                "new_no": 35
+              },
+              {
+                "kind": "ctx",
+                "text": "  },",
+                "old_no": 34,
+                "new_no": 36
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/routes/invoice.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "23f5ceeb505e791d",
+            "path": "src/routes/invoice.ts",
+            "old_start": 21,
+            "old_lines": 5,
+            "new_start": 21,
+            "new_lines": 6,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "router.post('/orgs/:orgId/invoices', auth(), async (req, res) => {",
+                "old_no": 21,
+                "new_no": 21
+              },
+              {
+                "kind": "ctx",
+                "text": "  const org = await orgs.get(req.params.orgId);",
+                "old_no": 22,
+                "new_no": 22
+              },
+              {
+                "kind": "add",
+                "text": "  await usage.record(org.id, LimitKind.Invoices);",
+                "old_no": null,
+                "new_no": 23
+              },
+              {
+                "kind": "ctx",
+                "text": "  const invoice = await invoices.create(org, req.body);",
+                "old_no": 23,
+                "new_no": 24
+              },
+              {
+                "kind": "ctx",
+                "text": "  res.status(201).json(invoice);",
+                "old_no": 24,
+                "new_no": 25
+              },
+              {
+                "kind": "ctx",
+                "text": "});",
+                "old_no": 25,
+                "new_no": 26
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/errors.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 3,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "4a95c47213c2e599",
+            "path": "src/errors.ts",
+            "old_start": 30,
+            "old_lines": 4,
+            "new_start": 30,
+            "new_lines": 7,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "export function toHttp(err: unknown): HttpError {",
+                "old_no": 30,
+                "new_no": 30
+              },
+              {
+                "kind": "ctx",
+                "text": "  if (err instanceof AppError) return { status: err.status, code: err.code };",
+                "old_no": 31,
+                "new_no": 31
+              },
+              {
+                "kind": "add",
+                "text": "  if (err instanceof LimitExceededError) {",
+                "old_no": null,
+                "new_no": 32
+              },
+              {
+                "kind": "add",
+                "text": "    return { status: 402, code: 'limit_exceeded', meta: { kind: err.kind, limit: err.limit } };",
+                "old_no": null,
+                "new_no": 33
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 34
+              },
+              {
+                "kind": "ctx",
+                "text": "  return { status: 500, code: 'internal' };",
+                "old_no": 32,
+                "new_no": 35
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 33,
+                "new_no": 36
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/notifications/limit-reached.ts",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 7,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "2ad7129896495ddd",
+            "path": "src/notifications/limit-reached.ts",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 7,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import { mailer } from '../mailer';",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "import type { Org } from '../db';",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "import type { LimitKind } from '../billing/types';",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "export async function notifyLimitReached(org: Org, kind: LimitKind) {",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  await mailer.send(org.billingEmail, 'limit-reached', { org: org.name, kind });",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 7
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/billing/limits.test.ts",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 18,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "42b64b0abde127ba",
+            "path": "test/billing/limits.test.ts",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 18,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import { describe, it, expect } from 'vitest';",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "import { checkLimit, LimitExceededError } from '../../src/billing/limits';",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "import { LimitKind } from '../../src/billing/types';",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "import { makeOrg, seedUsage } from '../fixtures';",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "describe('checkLimit', () => {",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "  it('passes under the limit', async () => {",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "    const org = await makeOrg({ limits: { INVOICES: 10 } });",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "    await seedUsage(org, LimitKind.Invoices, 3);",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "    await expect(checkLimit(org, LimitKind.Invoices)).resolves.toMatchObject({ remaining: 7 });",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "  });",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "add",
+                "text": "  it('throws at the limit', async () => {",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "    const org = await makeOrg({ limits: { INVOICES: 3 } });",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "    await seedUsage(org, LimitKind.Invoices, 3);",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "add",
+                "text": "    await expect(checkLimit(org, LimitKind.Invoices)).rejects.toBeInstanceOf(LimitExceededError);",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "add",
+                "text": "  });",
+                "old_no": null,
+                "new_no": 17
+              },
+              {
+                "kind": "add",
+                "text": "});",
+                "old_no": null,
+                "new_no": 18
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/routes/invoice.test.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 7,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "b2eb0908577206a8",
+            "path": "test/routes/invoice.test.ts",
+            "old_start": 40,
+            "old_lines": 3,
+            "new_start": 40,
+            "new_lines": 10,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  it('creates an invoice', async () => {",
+                "old_no": 40,
+                "new_no": 40
+              },
+              {
+                "kind": "ctx",
+                "text": "    await api.post(`/orgs/${org.id}/invoices`).send(invoiceBody).expect(201);",
+                "old_no": 41,
+                "new_no": 41
+              },
+              {
+                "kind": "ctx",
+                "text": "  });",
+                "old_no": 42,
+                "new_no": 42
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 43
+              },
+              {
+                "kind": "add",
+                "text": "  it('returns 402 when the invoice limit is reached', async () => {",
+                "old_no": null,
+                "new_no": 44
+              },
+              {
+                "kind": "add",
+                "text": "    const org = await makeOrg({ limits: { INVOICES: 1 } });",
+                "old_no": null,
+                "new_no": 45
+              },
+              {
+                "kind": "add",
+                "text": "    await api.post(`/orgs/${org.id}/invoices`).send(invoiceBody).expect(201);",
+                "old_no": null,
+                "new_no": 46
+              },
+              {
+                "kind": "add",
+                "text": "    const res = await api.post(`/orgs/${org.id}/invoices`).send(invoiceBody).expect(402);",
+                "old_no": null,
+                "new_no": 47
+              },
+              {
+                "kind": "add",
+                "text": "    expect(res.body.code).toBe('limit_exceeded');",
+                "old_no": null,
+                "new_no": 48
+              },
+              {
+                "kind": "add",
+                "text": "  });",
+                "old_no": null,
+                "new_no": 49
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/jobs/rollup.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "d9ef5fdd24f2eb7f",
+            "path": "src/jobs/rollup.ts",
+            "old_start": 17,
+            "old_lines": 4,
+            "new_start": 17,
+            "new_lines": 4,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  for (const org of await orgs.all()) {",
+                "old_no": 17,
+                "new_no": 17
+              },
+              {
+                "kind": "del",
+                "text": "    const n = await usage.countUsage(org.id);",
+                "old_no": 18,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    const n = await usage.count(org.id);",
+                "old_no": null,
+                "new_no": 18
+              },
+              {
+                "kind": "ctx",
+                "text": "    await rollups.upsert(org.id, day, n);",
+                "old_no": 19,
+                "new_no": 19
+              },
+              {
+                "kind": "ctx",
+                "text": "  }",
+                "old_no": 20,
+                "new_no": 20
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/admin/report.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "2d9c0acd2de84665",
+            "path": "src/admin/report.ts",
+            "old_start": 52,
+            "old_lines": 3,
+            "new_start": 52,
+            "new_lines": 3,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  const rows = await Promise.all(",
+                "old_no": 52,
+                "new_no": 52
+              },
+              {
+                "kind": "del",
+                "text": "    orgIds.map(async (id) => ({ id, usage: await usage.countUsage(id) })),",
+                "old_no": 53,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    orgIds.map(async (id) => ({ id, usage: await usage.count(id) })),",
+                "old_no": null,
+                "new_no": 53
+              },
+              {
+                "kind": "ctx",
+                "text": "  );",
+                "old_no": 54,
+                "new_no": 54
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "pnpm-lock.yaml",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "lockfile"
+          }
+        ],
+        "additions": 2,
+        "deletions": 2,
+        "hunks": [
+          {
+            "id": "4e2f9b387f60a951",
+            "path": "pnpm-lock.yaml",
+            "old_start": 1204,
+            "old_lines": 3,
+            "new_start": 1204,
+            "new_lines": 3,
+            "header": "",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "  /@prisma/client@6.4.0:",
+                "old_no": 1204,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    resolution: {integrity: sha512-8Hq1...}",
+                "old_no": 1205,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  /@prisma/client@6.6.1:",
+                "old_no": null,
+                "new_no": 1204
+              },
+              {
+                "kind": "add",
+                "text": "    resolution: {integrity: sha512-Lm2c...}",
+                "old_no": null,
+                "new_no": 1205
+              },
+              {
+                "kind": "ctx",
+                "text": "    engines: {node: '>=18.18'}",
+                "old_no": 1206,
+                "new_no": 1206
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/generated/prisma/index.d.ts",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "prisma generated client"
+          }
+        ],
+        "additions": 5,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "d2a8cd5019447b38",
+            "path": "src/generated/prisma/index.d.ts",
+            "old_start": 880,
+            "old_lines": 0,
+            "new_start": 880,
+            "new_lines": 5,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "export type OrgLimit = {",
+                "old_no": null,
+                "new_no": 880
+              },
+              {
+                "kind": "add",
+                "text": "  orgId: string",
+                "old_no": null,
+                "new_no": 881
+              },
+              {
+                "kind": "add",
+                "text": "  kind: $Enums.LimitKind",
+                "old_no": null,
+                "new_no": 882
+              },
+              {
+                "kind": "add",
+                "text": "  limit: number | null",
+                "old_no": null,
+                "new_no": 883
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 884
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
