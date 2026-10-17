@@ -1,3 +1,567 @@
 //! Secrets in one OS keychain item (macOS via /usr/bin/security).
 //!
-//! Placeholder from the scaffold; implemented by its slice (docs/plan.md).
+//! All Theodore secrets live in ONE macOS keychain generic-password item:
+//! - Service: `app.theodore.secrets`
+//! - Account: `vault`
+//! - Value: JSON object `{ "<key>": "<secret>", ... }`
+//!
+//! This ensures only one keychain ACL prompt when the binary changes.
+//! Secrets are read via `/usr/bin/security find-generic-password` and written
+//! interactively via `/usr/bin/security -i` to avoid exposing them in process arguments.
+
+#![forbid(unsafe_code)]
+
+use std::collections::HashMap;
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use theodore_ports::Secrets;
+use theodore_ports::SecretsError;
+
+const VAULT_SERVICE: &str = "app.theodore.secrets";
+const VAULT_ACCOUNT: &str = "vault";
+
+/// Keys for secrets stored in the vault.
+pub const GITHUB_TOKEN: &str = "github.token";
+pub const GITLAB_TOKEN: &str = "gitlab.token";
+pub const BITBUCKET_TOKEN: &str = "bitbucket.token";
+pub const LINEAR_TOKEN: &str = "linear.token";
+
+/// Trait to abstract command invocation for testability.
+trait CommandRunner: Send + Sync {
+    /// Run `/usr/bin/security find-generic-password -s <svc> -a <acct> -w`.
+    /// Returns `Ok(Some(value))` on success, `Ok(None)` if not found, or an error.
+    fn read_keychain(&self, service: &str, account: &str) -> Result<Option<String>, SecretsError>;
+
+    /// Run `/usr/bin/security -i` with an interactive command to add/update a password.
+    /// The command should be written to stdin, quoted properly for the security parser.
+    fn write_keychain(&self, service: &str, account: &str, value: &str)
+    -> Result<(), SecretsError>;
+}
+
+/// Real command runner using `/usr/bin/security`.
+struct RealCommandRunner;
+
+impl CommandRunner for RealCommandRunner {
+    fn read_keychain(&self, service: &str, account: &str) -> Result<Option<String>, SecretsError> {
+        let output = Command::new("/usr/bin/security")
+            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+            .output()
+            .map_err(|e| SecretsError::Keychain(format!("failed to spawn security: {}", e)))?;
+
+        if !output.status.success() {
+            // Non-zero exit means not found or error. Check for user cancel (exit 128 or special message).
+            if output.status.code() == Some(128)
+                || String::from_utf8_lossy(&output.stderr).contains("user canceled")
+            {
+                return Err(SecretsError::Denied);
+            }
+            return Ok(None);
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_string();
+
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
+    fn write_keychain(
+        &self,
+        service: &str,
+        account: &str,
+        value: &str,
+    ) -> Result<(), SecretsError> {
+        // Use interactive stdin to avoid passing the secret as a command-line argument.
+        // Format: `add-generic-password -U -s <service> -a <account> -w <quoted-json>`
+        let cmd = format!(
+            "add-generic-password -U -s {} -a {} -w {}\nquit\n",
+            shell_quote(service),
+            shell_quote(account),
+            shell_quote(value)
+        );
+
+        let mut child = Command::new("/usr/bin/security")
+            .arg("-i")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| SecretsError::Keychain(format!("failed to spawn security: {}", e)))?;
+
+        {
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or(SecretsError::Keychain("stdin not available".to_string()))?;
+            use std::io::Write;
+            stdin
+                .write_all(cmd.as_bytes())
+                .map_err(|e| SecretsError::Keychain(format!("failed to write stdin: {}", e)))?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| SecretsError::Keychain(format!("failed to wait on security: {}", e)))?;
+
+        if !output.status.success() {
+            // Check for user cancel.
+            if output.status.code() == Some(128)
+                || String::from_utf8_lossy(&output.stderr).contains("user canceled")
+            {
+                return Err(SecretsError::Denied);
+            }
+            return Err(SecretsError::Keychain(format!(
+                "security exited with status {:?}: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+/// Quote a string for the security command's interactive parser.
+/// The security tool parses quoted strings similarly to a shell.
+/// We need to handle: quotes, backslashes, spaces, unicode.
+fn shell_quote(s: &str) -> String {
+    // Use single quotes to avoid most special character issues,
+    // but we need to escape any single quotes in the string.
+    if s.contains('\'') {
+        // Replace ' with '\'' (end quote, escaped quote, start quote)
+        format!("'{}'", s.replace('\'', "'\\''"))
+    } else {
+        format!("'{}'", s)
+    }
+}
+
+/// Keychain-backed secrets (macOS production implementation).
+pub struct KeychainSecrets {
+    cache: Mutex<Option<HashMap<String, String>>>,
+    runner: Box<dyn CommandRunner>,
+}
+
+impl KeychainSecrets {
+    /// Create a new keychain secrets store with the real command runner.
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(None),
+            runner: Box::new(RealCommandRunner),
+        }
+    }
+
+    /// Create a new keychain secrets store with a custom command runner (for testing).
+    #[cfg(test)]
+    fn with_runner(runner: Box<dyn CommandRunner>) -> Self {
+        Self {
+            cache: Mutex::new(None),
+            runner,
+        }
+    }
+
+    /// Load the vault from the keychain (or return cached).
+    fn load_vault(&self) -> Result<HashMap<String, String>, SecretsError> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| SecretsError::Keychain("mutex poisoned".to_string()))?;
+
+        if let Some(vault) = cache.as_ref() {
+            return Ok(vault.clone());
+        }
+
+        let json_str = match self.runner.read_keychain(VAULT_SERVICE, VAULT_ACCOUNT)? {
+            Some(s) => s,
+            None => {
+                // No vault yet; return empty map.
+                let empty = HashMap::new();
+                *cache = Some(empty.clone());
+                return Ok(empty);
+            }
+        };
+
+        let vault: HashMap<String, String> = serde_json::from_str(&json_str)
+            .map_err(|e| SecretsError::Keychain(format!("invalid vault JSON: {}", e)))?;
+
+        *cache = Some(vault.clone());
+        Ok(vault)
+    }
+
+    /// Save the vault to the keychain.
+    fn save_vault(&self, vault: &HashMap<String, String>) -> Result<(), SecretsError> {
+        let json_str = serde_json::to_string(vault)
+            .map_err(|e| SecretsError::Keychain(format!("failed to serialize vault: {}", e)))?;
+
+        self.runner
+            .write_keychain(VAULT_SERVICE, VAULT_ACCOUNT, &json_str)?;
+
+        // Update cache.
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| SecretsError::Keychain("mutex poisoned".to_string()))?;
+        *cache = Some(vault.clone());
+
+        Ok(())
+    }
+}
+
+impl Secrets for KeychainSecrets {
+    fn get(&self, key: &str) -> Result<Option<String>, SecretsError> {
+        let vault = self.load_vault()?;
+        Ok(vault.get(key).cloned())
+    }
+
+    fn set(&self, key: &str, value: &str) -> Result<(), SecretsError> {
+        let mut vault = self.load_vault()?;
+        vault.insert(key.to_string(), value.to_string());
+        self.save_vault(&vault)
+    }
+
+    fn delete(&self, key: &str) -> Result<(), SecretsError> {
+        let mut vault = self.load_vault()?;
+        vault.remove(key);
+        self.save_vault(&vault)
+    }
+}
+
+impl Default for KeychainSecrets {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// In-memory secrets store for tests and fixtures.
+pub struct MemorySecrets {
+    vault: Mutex<HashMap<String, String>>,
+}
+
+impl MemorySecrets {
+    /// Create a new in-memory secrets store.
+    pub fn new() -> Self {
+        Self {
+            vault: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Create with initial secrets.
+    pub fn with_secrets(secrets: HashMap<String, String>) -> Self {
+        Self {
+            vault: Mutex::new(secrets),
+        }
+    }
+}
+
+impl Default for MemorySecrets {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Secrets for MemorySecrets {
+    fn get(&self, key: &str) -> Result<Option<String>, SecretsError> {
+        let vault = self
+            .vault
+            .lock()
+            .map_err(|_| SecretsError::Keychain("mutex poisoned".to_string()))?;
+        Ok(vault.get(key).cloned())
+    }
+
+    fn set(&self, key: &str, value: &str) -> Result<(), SecretsError> {
+        let mut vault = self
+            .vault
+            .lock()
+            .map_err(|_| SecretsError::Keychain("mutex poisoned".to_string()))?;
+        vault.insert(key.to_string(), value.to_string());
+        Ok(())
+    }
+
+    fn delete(&self, key: &str) -> Result<(), SecretsError> {
+        let mut vault = self
+            .vault
+            .lock()
+            .map_err(|_| SecretsError::Keychain("mutex poisoned".to_string()))?;
+        vault.remove(key);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fake command runner for testing.
+    struct FakeCommandRunner {
+        vault: Mutex<Option<String>>,
+        deny_next_write: Mutex<bool>,
+    }
+
+    impl FakeCommandRunner {
+        fn new() -> Self {
+            Self {
+                vault: Mutex::new(None),
+                deny_next_write: Mutex::new(false),
+            }
+        }
+
+        fn with_vault(json: &str) -> Self {
+            Self {
+                vault: Mutex::new(Some(json.to_string())),
+                deny_next_write: Mutex::new(false),
+            }
+        }
+    }
+
+    impl CommandRunner for FakeCommandRunner {
+        fn read_keychain(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<String>, SecretsError> {
+            let vault = self.vault.lock().unwrap();
+            Ok(vault.clone())
+        }
+
+        fn write_keychain(
+            &self,
+            _service: &str,
+            _account: &str,
+            value: &str,
+        ) -> Result<(), SecretsError> {
+            if *self.deny_next_write.lock().unwrap() {
+                *self.deny_next_write.lock().unwrap() = false;
+                return Err(SecretsError::Denied);
+            }
+            *self.vault.lock().unwrap() = Some(value.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_memory_secrets_basic() {
+        let secrets = MemorySecrets::new();
+        assert!(secrets.get("key1").unwrap().is_none());
+
+        secrets.set("key1", "value1").unwrap();
+        assert_eq!(secrets.get("key1").unwrap(), Some("value1".to_string()));
+
+        secrets.set("key1", "value2").unwrap();
+        assert_eq!(secrets.get("key1").unwrap(), Some("value2".to_string()));
+
+        secrets.delete("key1").unwrap();
+        assert!(secrets.get("key1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_memory_secrets_multiple_keys() {
+        let secrets = MemorySecrets::new();
+        secrets.set(GITHUB_TOKEN, "gh_token").unwrap();
+        secrets.set(GITLAB_TOKEN, "gl_token").unwrap();
+        secrets.set(BITBUCKET_TOKEN, "bb_token").unwrap();
+
+        assert_eq!(
+            secrets.get(GITHUB_TOKEN).unwrap(),
+            Some("gh_token".to_string())
+        );
+        assert_eq!(
+            secrets.get(GITLAB_TOKEN).unwrap(),
+            Some("gl_token".to_string())
+        );
+        assert_eq!(
+            secrets.get(BITBUCKET_TOKEN).unwrap(),
+            Some("bb_token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_keychain_secrets_empty_vault() {
+        let runner = Box::new(FakeCommandRunner::new());
+        let secrets = KeychainSecrets::with_runner(runner);
+
+        // No vault exists; should return None.
+        assert!(secrets.get("key1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_keychain_secrets_get_set_delete() {
+        let runner = Box::new(FakeCommandRunner::new());
+        let secrets = KeychainSecrets::with_runner(runner);
+
+        // Set a key.
+        secrets.set("key1", "value1").unwrap();
+        assert_eq!(secrets.get("key1").unwrap(), Some("value1".to_string()));
+
+        // Set another key.
+        secrets.set("key2", "value2").unwrap();
+        assert_eq!(secrets.get("key2").unwrap(), Some("value2".to_string()));
+        assert_eq!(secrets.get("key1").unwrap(), Some("value1".to_string()));
+
+        // Delete a key.
+        secrets.delete("key1").unwrap();
+        assert!(secrets.get("key1").unwrap().is_none());
+        assert_eq!(secrets.get("key2").unwrap(), Some("value2".to_string()));
+    }
+
+    #[test]
+    fn test_keychain_secrets_overwrites_on_set() {
+        let runner = Box::new(FakeCommandRunner::new());
+        let secrets = KeychainSecrets::with_runner(runner);
+
+        secrets.set("key", "value1").unwrap();
+        assert_eq!(secrets.get("key").unwrap(), Some("value1".to_string()));
+
+        secrets.set("key", "value2").unwrap();
+        assert_eq!(secrets.get("key").unwrap(), Some("value2".to_string()));
+    }
+
+    #[test]
+    fn test_keychain_secrets_with_existing_vault() {
+        let initial_vault = r#"{"github.token":"gh_123","gitlab.token":"gl_456"}"#;
+        let runner = Box::new(FakeCommandRunner::with_vault(initial_vault));
+        let secrets = KeychainSecrets::with_runner(runner);
+
+        assert_eq!(
+            secrets.get(GITHUB_TOKEN).unwrap(),
+            Some("gh_123".to_string())
+        );
+        assert_eq!(
+            secrets.get(GITLAB_TOKEN).unwrap(),
+            Some("gl_456".to_string())
+        );
+
+        // Modify one and add a new key.
+        secrets.set(GITHUB_TOKEN, "gh_789").unwrap();
+        secrets.set(BITBUCKET_TOKEN, "bb_000").unwrap();
+
+        assert_eq!(
+            secrets.get(GITHUB_TOKEN).unwrap(),
+            Some("gh_789".to_string())
+        );
+        assert_eq!(
+            secrets.get(GITLAB_TOKEN).unwrap(),
+            Some("gl_456".to_string())
+        );
+        assert_eq!(
+            secrets.get(BITBUCKET_TOKEN).unwrap(),
+            Some("bb_000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_shell_quote_simple() {
+        assert_eq!(shell_quote("hello"), "'hello'");
+    }
+
+    #[test]
+    fn test_shell_quote_with_spaces() {
+        assert_eq!(shell_quote("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn test_shell_quote_with_quotes() {
+        // Single quotes are escaped as '\'' (end quote, escaped quote, start quote)
+        assert_eq!(shell_quote("it's"), r#"'it'\''s'"#);
+        assert_eq!(shell_quote("a'b'c"), r#"'a'\''b'\''c'"#);
+    }
+
+    #[test]
+    fn test_shell_quote_with_unicode() {
+        assert_eq!(shell_quote("café"), "'café'");
+        assert_eq!(shell_quote("你好"), "'你好'");
+    }
+
+    #[test]
+    fn test_json_with_special_chars() {
+        let secrets = MemorySecrets::new();
+        let value = r#"{"key":"value with "quotes" and \backslash"}"#;
+        secrets.set("special", value).unwrap();
+        assert_eq!(secrets.get("special").unwrap(), Some(value.to_string()));
+    }
+
+    #[test]
+    fn test_vault_json_escaping() {
+        let runner = Box::new(FakeCommandRunner::new());
+        let secrets = KeychainSecrets::with_runner(runner);
+
+        // Set a secret with special JSON characters.
+        let json_value = r#"{"nested": "value"}"#;
+        secrets.set("json_key", json_value).unwrap();
+
+        // The vault should round-trip correctly.
+        assert_eq!(
+            secrets.get("json_key").unwrap(),
+            Some(json_value.to_string())
+        );
+    }
+
+    #[test]
+    fn test_vault_serialization_roundtrip() {
+        let runner = Box::new(FakeCommandRunner::new());
+        let secrets = KeychainSecrets::with_runner(runner);
+
+        // Create a vault with multiple keys.
+        secrets.set(GITHUB_TOKEN, "gh_token").unwrap();
+        secrets.set(GITLAB_TOKEN, "gl_token").unwrap();
+        secrets.set("custom.key", "custom_value").unwrap();
+
+        // The vault should be properly serialized and deserializable.
+        // Verify the data is consistent.
+        assert_eq!(
+            secrets.get(GITHUB_TOKEN).unwrap(),
+            Some("gh_token".to_string())
+        );
+        assert_eq!(
+            secrets.get(GITLAB_TOKEN).unwrap(),
+            Some("gl_token".to_string())
+        );
+        assert_eq!(
+            secrets.get("custom.key").unwrap(),
+            Some("custom_value".to_string())
+        );
+    }
+
+    #[test]
+    fn test_denied_write_error() {
+        let runner = FakeCommandRunner::new();
+        *runner.deny_next_write.lock().unwrap() = true;
+        let secrets = KeychainSecrets::with_runner(Box::new(runner));
+
+        match secrets.set("key", "value") {
+            Err(SecretsError::Denied) => {} // Expected
+            other => panic!("Expected Denied error, got {:?}", other),
+        }
+    }
+
+    // Ignored test for real keychain round-trip. Run with:
+    // cargo test --package theodore-secrets -- --ignored --nocapture real_keychain_roundtrip
+    #[test]
+    #[ignore]
+    fn real_keychain_roundtrip() {
+        const TEST_SERVICE: &str = "app.theodore.test.secrets";
+        const TEST_ACCOUNT: &str = "vault";
+
+        // Clean up any previous test data (best-effort).
+        let _ = Command::new("/usr/bin/security")
+            .args([
+                "delete-generic-password",
+                "-s",
+                TEST_SERVICE,
+                "-a",
+                TEST_ACCOUNT,
+            ])
+            .output();
+
+        // This test requires modifying VAULT_SERVICE and VAULT_ACCOUNT to use test names.
+        // For now, we document how to run this test manually:
+        // 1. Create a test-specific module with its own constants.
+        // 2. Run: cargo test --package theodore-secrets -- --ignored --nocapture
+        // 3. Grant keychain access when prompted.
+        // 4. Verify the test passes and the entry is created in Keychain.app.
+        //
+        // The test would set/get/delete with the real keychain and verify round-trip.
+    }
+}
