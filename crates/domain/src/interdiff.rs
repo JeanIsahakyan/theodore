@@ -21,7 +21,7 @@ pub fn hunk_id(path: &str, lines: &[crate::model::DiffLine]) -> HunkId {
         };
         h.update([tag]);
         h.update(l.text.trim_end().as_bytes());
-        h.update([b'\n']);
+        h.update(b"\n");
     }
     HunkId(hex::encode(&h.finalize()[..8]))
 }
