@@ -1,0 +1,306 @@
+//! The `review-tools` MCP server: a Streamable HTTP endpoint on
+//! `127.0.0.1:<random>`, one bearer token per registered run (plan §8.3, §9).
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
+
+use axum::Router;
+use axum::body::Body;
+use axum::extract::Request;
+use axum::http::StatusCode;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use rmcp::ErrorData;
+use rmcp::handler::server::tool::{Extension, ToolRouter};
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use theodore_ports::McpEndpoint;
+use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use crate::backend::{BackendError, ReviewToolsBackend, RunContext};
+use crate::tools::{
+    AddFindingParams, AddFindingResult, BaseFileResult, GetBaseFileParams, GetGroupParams,
+    GroupResult, PrContextResult, ProposePatchParams, ProposePatchResult,
+};
+
+/// Live run registrations: bearer token → run context. Shared between the auth
+/// middleware (which resolves the token) and nothing else — tools only ever see
+/// the resolved [`RunContext`], never the token map.
+#[derive(Default)]
+struct RunRegistry {
+    runs: RwLock<HashMap<String, RunContext>>,
+}
+
+impl RunRegistry {
+    fn resolve(&self, token: &str) -> Option<RunContext> {
+        self.runs
+            .read()
+            .expect("run registry lock poisoned")
+            .get(token)
+            .cloned()
+    }
+
+    fn insert(&self, token: String, ctx: RunContext) {
+        self.runs
+            .write()
+            .expect("run registry lock poisoned")
+            .insert(token, ctx);
+    }
+
+    fn remove(&self, token: &str) {
+        self.runs
+            .write()
+            .expect("run registry lock poisoned")
+            .remove(token);
+    }
+}
+
+/// Rejects requests without a valid `Authorization: Bearer <token>`; resolves
+/// the token to its [`RunContext`] and attaches it to the request's HTTP
+/// extensions, where tool handlers read it back via `Extension<http::request::Parts>`.
+async fn auth_layer(
+    axum::extract::State(registry): axum::extract::State<Arc<RunRegistry>>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let Some(token) = token else {
+        return (StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
+    };
+    let Some(ctx) = registry.resolve(token) else {
+        return (StatusCode::UNAUTHORIZED, "unknown token").into_response();
+    };
+    req.extensions_mut().insert(ctx);
+    next.run(req).await
+}
+
+fn run_context(parts: &http::request::Parts) -> Result<RunContext, ErrorData> {
+    parts
+        .extensions
+        .get::<RunContext>()
+        .cloned()
+        .ok_or_else(|| ErrorData::internal_error("missing run context", None))
+}
+
+fn backend_error_result(err: BackendError) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(err.to_string())])
+}
+
+#[derive(Clone)]
+struct ReviewToolsServer {
+    backend: Arc<dyn ReviewToolsBackend>,
+    tool_router: ToolRouter<Self>,
+}
+
+#[tool_router(router = tool_router)]
+impl ReviewToolsServer {
+    fn new(backend: Arc<dyn ReviewToolsBackend>) -> Self {
+        Self {
+            backend,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    #[tool(
+        description = "Title, body, commits, files, and the current grouping of the PR under review."
+    )]
+    async fn get_pr_context(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let run = run_context(&parts)?;
+        match self.backend.get_pr_context(&run).await {
+            Ok(ctx) => {
+                let result = PrContextResult::from(&ctx);
+                Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
+            }
+            Err(err) => Ok(backend_error_result(err)),
+        }
+    }
+
+    #[tool(
+        description = "A group from the current grouping, with its hunks rendered as unified diff text."
+    )]
+    async fn get_group(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(params): Parameters<GetGroupParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let run = run_context(&parts)?;
+        match self.backend.get_group(&run, &params.id).await {
+            Ok(group) => {
+                let result = GroupResult::from(&group);
+                Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
+            }
+            Err(err) => Ok(backend_error_result(err)),
+        }
+    }
+
+    #[tool(description = "File contents at the base revision (the worktree only has head).")]
+    async fn get_base_file(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(params): Parameters<GetBaseFileParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let run = run_context(&parts)?;
+        match self.backend.get_base_file(&run, &params.path).await {
+            Ok(content) => {
+                let result = BaseFileResult {
+                    path: params.path,
+                    exists: content.is_some(),
+                    content: content.unwrap_or_default(),
+                };
+                Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
+            }
+            Err(err) => Ok(backend_error_result(err)),
+        }
+    }
+
+    #[tool(
+        description = "Report a review finding: file, line, severity, title, body. Returns a finding id."
+    )]
+    async fn add_finding(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(params): Parameters<AddFindingParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let run = run_context(&parts)?;
+        match self.backend.add_finding(&run, params.into()).await {
+            Ok(id) => {
+                let result = AddFindingResult {
+                    finding_id: id.to_string(),
+                };
+                Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
+            }
+            Err(err) => Ok(backend_error_result(err)),
+        }
+    }
+
+    #[tool(description = "Attach a proposed fix to an existing finding.")]
+    async fn propose_patch(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(params): Parameters<ProposePatchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let run = run_context(&parts)?;
+        match self
+            .backend
+            .propose_patch(&run, params.into_new_patch())
+            .await
+        {
+            Ok(()) => {
+                let result = ProposePatchResult { ok: true };
+                Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
+            }
+            Err(err) => Ok(backend_error_result(err)),
+        }
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for ReviewToolsServer {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("theodore-review-tools", "0.1.0"))
+    }
+}
+
+/// A registered agent run: its MCP endpoint (URL + bearer token).
+pub type RegisteredEndpoint = McpEndpoint;
+
+/// A running `review-tools` MCP server. Dropping this does not stop the
+/// server; call [`McpHandle::shutdown`] for a graceful stop.
+pub struct McpHandle {
+    addr: SocketAddr,
+    registry: Arc<RunRegistry>,
+    shutdown: CancellationToken,
+    join: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl McpHandle {
+    /// Local address the server is listening on.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Registers a new agent run and returns the endpoint it should be given
+    /// (URL + bearer token). Call [`Self::unregister_run`] when the run ends.
+    pub fn register_run(&self, ctx: RunContext) -> McpEndpoint {
+        let token = Uuid::new_v4().to_string();
+        self.registry.insert(token.clone(), ctx);
+        McpEndpoint {
+            url: format!("http://{}/mcp", self.addr),
+            token,
+        }
+    }
+
+    /// Revokes a token; further requests carrying it get 401.
+    pub fn unregister_run(&self, token: &str) {
+        self.registry.remove(token);
+    }
+
+    /// Stops accepting requests and waits for the server task to exit.
+    pub async fn shutdown(mut self) {
+        self.shutdown.cancel();
+        if let Some(join) = self.join.take() {
+            let _ = join.await;
+        }
+    }
+}
+
+/// Serves the `review-tools` MCP server over Streamable HTTP on
+/// `127.0.0.1:<random port>`. Each agent run gets its own token via
+/// [`McpHandle::register_run`]; requests must carry `Authorization: Bearer <token>`.
+pub struct McpServer;
+
+impl McpServer {
+    pub async fn start(backend: Arc<dyn ReviewToolsBackend>) -> std::io::Result<McpHandle> {
+        let registry = Arc::new(RunRegistry::default());
+        let shutdown = CancellationToken::new();
+
+        let http_config = StreamableHttpServerConfig::default()
+            .with_cancellation_token(shutdown.clone())
+            .with_sse_keep_alive(None);
+        let session_manager = Arc::new(LocalSessionManager::default());
+        let service: StreamableHttpService<ReviewToolsServer, LocalSessionManager> =
+            StreamableHttpService::new(
+                {
+                    let backend = backend.clone();
+                    move || Ok(ReviewToolsServer::new(backend.clone()))
+                },
+                session_manager,
+                http_config,
+            );
+
+        let app = Router::new()
+            .nest_service("/mcp", service)
+            .layer(middleware::from_fn_with_state(registry.clone(), auth_layer));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let shutdown_for_task = shutdown.clone();
+        let join = tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move { shutdown_for_task.cancelled().await })
+                .await;
+        });
+
+        Ok(McpHandle {
+            addr,
+            registry,
+            shutdown,
+            join: Some(join),
+        })
+    }
+}
