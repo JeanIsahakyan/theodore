@@ -8,11 +8,12 @@ use theodore_ports::Clock;
 
 /// Controlled clock: `now()` returns a value, `advance()` moves time forward.
 /// `sleep()` resolves when advanced past its target.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ManualClock {
     state: Arc<Mutex<ClockState>>,
 }
 
+#[derive(Debug)]
 struct ClockState {
     now_ms: Millis,
     sleepers: Vec<(Millis, tokio::sync::mpsc::Sender<()>)>,
@@ -110,7 +111,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_clock_sleep_completes_immediately_if_time_passed() {
+        // `sleep` computes `deadline = now() + d`, so the only way the
+        // deadline is already due is `d == 0`. This must resolve without
+        // registering a sleeper that nothing will ever wake.
         let clock = ManualClock::new(100);
-        clock.sleep(Duration::from_millis(50)).await;
+        clock.sleep(Duration::from_millis(0)).await;
     }
 }

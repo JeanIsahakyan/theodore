@@ -4,57 +4,59 @@
       "pr": {
         "repo": {
           "host": "github",
-          "owner": "test",
-          "name": "demo"
+          "owner": "octo",
+          "name": "webhooks"
         },
-        "number": 1,
-        "host_id": "gh_1"
+        "number": 101,
+        "host_id": "gh_101"
       },
-      "title": "Add webhook retry with exponential backoff",
+      "title": "Add retry with backoff for webhook delivery",
       "author": {
-        "login": "alice",
-        "name": "Alice Developer",
-        "avatar_url": "https://example.com/alice.jpg"
+        "login": "dana",
+        "name": "Dana Reyes",
+        "avatar_url": null
       },
       "state": "open",
       "base_ref": "main",
-      "head_ref": "feat/webhook-retry",
-      "head_sha": "abc123def456",
-      "additions": 45,
-      "deletions": 12,
+      "head_ref": "dana/webhook-retry",
+      "head_sha": "head-479-1",
+      "additions": 21,
+      "deletions": 2,
       "changed_files": 3,
-      "reasons": ["review_requested"],
+      "reasons": [
+        "review_requested"
+      ],
       "checks": "pending",
       "approvals": 0,
       "required_approvals": 1,
-      "updated_at": 1697587200000,
-      "url": "https://github.com/test/demo/pull/1"
+      "updated_at": 1700000000000,
+      "url": "https://example.com/octo/webhooks/pull/101"
     },
-    "body": "Implements exponential backoff retry logic for webhook delivery with a dead-letter queue after 5 failed attempts.",
-    "base_sha": "main_sha",
+    "body": "Retries webhook delivery with exponential backoff, dead-letters after 5 attempts.",
+    "base_sha": "base-main",
     "commits": [
       {
-        "sha": "abc123def456",
-        "title": "Add webhook retry with exponential backoff",
+        "sha": "head-479-1",
+        "title": "webhook retry with backoff",
         "author": {
-          "login": "alice",
-          "name": "Alice Developer",
-          "avatar_url": "https://example.com/alice.jpg"
+          "login": "dana",
+          "name": "Dana Reyes",
+          "avatar_url": null
         },
-        "at": 1697587200000
+        "at": 1700000000000
       }
     ],
     "checks": [
       {
-        "id": "test-1",
-        "name": "unit tests",
+        "id": "build",
+        "name": "build",
         "status": "pass",
-        "url": "https://ci.example.com/runs/1",
-        "duration_ms": 45000
+        "url": null,
+        "duration_ms": 70000
       },
       {
-        "id": "lint-1",
-        "name": "lint",
+        "id": "unit",
+        "name": "unit",
         "status": "pending",
         "url": null,
         "duration_ms": null
@@ -63,9 +65,9 @@
     "reviewers": [
       {
         "person": {
-          "login": "bob",
-          "name": "Bob Reviewer",
-          "avatar_url": "https://example.com/bob.jpg"
+          "login": "max",
+          "name": "Max Oyelaran",
+          "avatar_url": null
         },
         "state": "requested",
         "team": null
@@ -73,12 +75,14 @@
     ],
     "assignees": [
       {
-        "login": "alice",
-        "name": "Alice Developer",
-        "avatar_url": "https://example.com/alice.jpg"
+        "login": "dana",
+        "name": "Dana Reyes",
+        "avatar_url": null
       }
     ],
-    "labels": ["enhancement", "webhooks"],
+    "labels": [
+      "webhooks"
+    ],
     "threads": [],
     "viewed": []
   },
@@ -87,97 +91,78 @@
       "pr": {
         "repo": {
           "host": "github",
-          "owner": "test",
-          "name": "demo"
+          "owner": "octo",
+          "name": "api"
         },
-        "number": 2,
-        "host_id": "gh_2"
+        "number": 7,
+        "host_id": "gh_7"
       },
-      "title": "Refactor auth module with middleware pattern",
+      "title": "Fix off-by-one in pagination cursor",
       "author": {
-        "login": "charlie",
-        "name": "Charlie Dev",
-        "avatar_url": "https://example.com/charlie.jpg"
+        "login": "priya",
+        "name": "Priya Shah",
+        "avatar_url": null
       },
       "state": "open",
       "base_ref": "main",
-      "head_ref": "refactor/auth-middleware",
-      "head_sha": "def789ghi012",
-      "additions": 234,
-      "deletions": 189,
-      "changed_files": 8,
-      "reasons": ["assigned"],
+      "head_ref": "priya/paginate-fix",
+      "head_sha": "head-211-1",
+      "additions": 3,
+      "deletions": 2,
+      "changed_files": 1,
+      "reasons": [
+        "assigned"
+      ],
       "checks": "pass",
-      "approvals": 0,
-      "required_approvals": 2,
-      "updated_at": 1697673600000,
-      "url": "https://github.com/test/demo/pull/2"
+      "approvals": 1,
+      "required_approvals": 1,
+      "updated_at": 1700100000000,
+      "url": "https://example.com/octo/api/pull/7"
     },
-    "body": "Major refactor of the authentication module to use a middleware pattern. Improves testability and code organization.",
-    "base_sha": "main_sha",
+    "body": "`next` leaked past the last page; return `null` once the cursor runs out.",
+    "base_sha": "base-main-api",
     "commits": [
       {
-        "sha": "def789ghi012",
-        "title": "Refactor auth module with middleware pattern",
+        "sha": "head-211-1",
+        "title": "fix pagination cursor",
         "author": {
-          "login": "charlie",
-          "name": "Charlie Dev",
-          "avatar_url": "https://example.com/charlie.jpg"
+          "login": "priya",
+          "name": "Priya Shah",
+          "avatar_url": null
         },
-        "at": 1697673600000
+        "at": 1700100000000
       }
     ],
     "checks": [
       {
-        "id": "test-2",
-        "name": "unit tests",
+        "id": "unit",
+        "name": "unit",
         "status": "pass",
-        "url": "https://ci.example.com/runs/2",
-        "duration_ms": 62000
-      },
-      {
-        "id": "lint-2",
-        "name": "lint",
-        "status": "pass",
-        "url": "https://ci.example.com/runs/3",
-        "duration_ms": 18000
-      },
-      {
-        "id": "build-2",
-        "name": "build",
-        "status": "pass",
-        "url": "https://ci.example.com/runs/4",
-        "duration_ms": 85000
+        "url": null,
+        "duration_ms": 32000
       }
     ],
     "reviewers": [
       {
         "person": {
-          "login": "dave",
-          "name": "Dave Reviewer",
-          "avatar_url": "https://example.com/dave.jpg"
+          "login": "max",
+          "name": "Max Oyelaran",
+          "avatar_url": null
         },
-        "state": "requested",
+        "state": "commented",
         "team": null
-      },
-      {
-        "person": {
-          "login": "eve",
-          "name": "Eve Lead",
-          "avatar_url": "https://example.com/eve.jpg"
-        },
-        "state": "requested",
-        "team": "core"
       }
     ],
     "assignees": [
       {
-        "login": "charlie",
-        "name": "Charlie Dev",
-        "avatar_url": "https://example.com/charlie.jpg"
+        "login": "priya",
+        "name": "Priya Shah",
+        "avatar_url": null
       }
     ],
-    "labels": ["refactor", "core"],
+    "labels": [
+      "api"
+    ],
     "threads": [],
     "viewed": []
   }

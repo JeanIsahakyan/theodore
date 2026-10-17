@@ -1,78 +1,93 @@
-//! Programmatic triggers for fixture demo events.
+//! Programmatic triggers for fixture demo events (plan §12.1).
+//!
+//! These are the only writers of PR/head state besides the host's own
+//! review-write calls: they mutate the same `SharedState` that `FixtureHost`
+//! and `FixtureGit` read, so the effect is visible through the ports, not
+//! just through `Triggers` itself.
 
-use std::sync::Mutex;
-use theodore_domain::{PrRef, Sha};
+use std::sync::{Arc, Mutex};
 
-/// Triggers for demo events: author push, checks green, agent crash.
-pub struct Triggers {
-    pending: Mutex<Vec<TriggerEvent>>,
+use theodore_domain::{AgentId, CheckRollup, CheckStatus, PrRef, Sha};
+
+use crate::state::SharedState;
+
+#[derive(Debug, thiserror::Error)]
+pub enum TriggerError {
+    #[error("unknown pr {0}")]
+    UnknownPr(String),
+    #[error("no revision recorded for head {0}")]
+    UnknownHead(Sha),
 }
 
-#[derive(Debug, Clone)]
-pub enum TriggerEvent {
-    /// Author pushed a new commit to the PR.
-    AuthorPush { pr: PrRef, new_head: Sha },
-    /// Checks turned green for a PR.
-    ChecksGreen { pr: PrRef },
-    /// Agent crashed on the next run.
-    AgentCrash { agent_name: String },
+pub type TriggerResult<T> = Result<T, TriggerError>;
+
+/// Fires demo events against the fixture state shared with `FixtureHost`
+/// and `FixtureGit`.
+#[derive(Debug)]
+pub struct Triggers {
+    state: Arc<Mutex<SharedState>>,
 }
 
 impl Triggers {
-    /// Create a new trigger manager.
-    pub fn new() -> Self {
-        Self {
-            pending: Mutex::new(Vec::new()),
+    pub(crate) fn new(state: Arc<Mutex<SharedState>>) -> Self {
+        Self { state }
+    }
+
+    /// Author pushed: the PR's head moves to `new_head` (which must already
+    /// be a revision loaded from `git/<sanitized-pr-id>/<new_head>.json`),
+    /// and the PR is reported by the next `changed_since`, with a new
+    /// `get_pr` ETag.
+    pub fn author_push(&self, pr: &PrRef, new_head: Sha) -> TriggerResult<()> {
+        let mut state = self.state.lock().unwrap();
+        let pr_id = pr.id();
+
+        if !state.revisions_by_head.contains_key(&new_head) {
+            return Err(TriggerError::UnknownHead(new_head));
         }
-    }
-
-    /// Register an author push event.
-    pub fn author_push(&self, pr: PrRef, new_head: Sha) {
-        self.pending
-            .lock()
-            .unwrap()
-            .push(TriggerEvent::AuthorPush { pr, new_head });
-    }
-
-    /// Register a checks-green event.
-    pub fn checks_green(&self, pr: PrRef) {
-        self.pending
-            .lock()
-            .unwrap()
-            .push(TriggerEvent::ChecksGreen { pr });
-    }
-
-    /// Register an agent crash event for the next run of that agent.
-    pub fn agent_crash(&self, agent_name: String) {
-        self.pending
-            .lock()
-            .unwrap()
-            .push(TriggerEvent::AgentCrash { agent_name });
-    }
-
-    /// Pop the next pending trigger event.
-    pub fn pop(&self) -> Option<TriggerEvent> {
-        let mut pending = self.pending.lock().unwrap();
-        if pending.is_empty() {
-            None
-        } else {
-            Some(pending.remove(0))
+        if !state.prs.contains_key(&pr_id) {
+            return Err(TriggerError::UnknownPr(pr_id.to_string()));
         }
+
+        state.heads.insert(pr_id.clone(), new_head.clone());
+
+        let revision = state.revisions_by_head.get(&new_head).cloned();
+        if let Some(detail) = state.prs.get_mut(&pr_id) {
+            detail.summary.head_sha = new_head;
+            if let Some(revision) = revision {
+                detail.summary.changed_files = revision.files.len() as u32;
+                detail.summary.additions = revision.files.iter().map(|f| f.additions).sum();
+                detail.summary.deletions = revision.files.iter().map(|f| f.deletions).sum();
+            }
+            // A push dismisses previously viewed files (plan §4).
+            for v in &mut detail.viewed {
+                v.state = theodore_domain::ViewedState::Dismissed;
+            }
+        }
+
+        state.change_log.push(pr.clone());
+        Ok(())
     }
 
-    /// Get all pending triggers without removing them.
-    pub fn pending(&self) -> Vec<TriggerEvent> {
-        self.pending.lock().unwrap().clone()
+    /// Checks turn green for `pr`.
+    pub fn checks_green(&self, pr: &PrRef) -> TriggerResult<()> {
+        let mut state = self.state.lock().unwrap();
+        let pr_id = pr.id();
+        let detail = state
+            .prs
+            .get_mut(&pr_id)
+            .ok_or_else(|| TriggerError::UnknownPr(pr_id.to_string()))?;
+
+        detail.summary.checks = CheckRollup::Pass;
+        for check in &mut detail.checks {
+            check.status = CheckStatus::Pass;
+        }
+
+        state.change_log.push(pr.clone());
+        Ok(())
     }
 
-    /// Clear all pending triggers.
-    pub fn clear(&self) {
-        self.pending.lock().unwrap().clear();
-    }
-}
-
-impl Default for Triggers {
-    fn default() -> Self {
-        Self::new()
+    /// The next `run()` of `agent` fails instead of playing its script.
+    pub fn agent_crash(&self, agent: AgentId) {
+        self.state.lock().unwrap().crash_next.insert(agent);
     }
 }
