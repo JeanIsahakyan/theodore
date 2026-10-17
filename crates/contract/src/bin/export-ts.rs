@@ -2,7 +2,9 @@
 //! `cargo run -p theodore-contract --bin export-ts`.
 
 fn main() {
-    let out = std::env::args().nth(1).unwrap_or_else(|| "ui/src/gen/contract.ts".into());
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "ui/src/gen/contract.ts".into());
     if let Some(dir) = std::path::Path::new(&out).parent() {
         std::fs::create_dir_all(dir).expect("create output dir");
     }
