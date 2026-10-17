@@ -10,7 +10,6 @@ mod outbox;
 mod poller;
 mod reading;
 mod settings;
-mod shims;
 mod sync;
 mod usecases;
 mod wire;

@@ -148,9 +148,9 @@ impl Core {
             .filter_map(|r| serde_json::from_value(r.data.clone()).ok())
             .collect();
 
-        let (action, merged) = match crate::shims::merge_findings(&existing, finding) {
-            crate::shims::MergeOutcome::New(f) => (SyncActionCode::I, f),
-            crate::shims::MergeOutcome::MergedInto(f) => (SyncActionCode::U, f),
+        let (action, merged) = match theodore_domain::findings::merge(&existing, finding) {
+            theodore_domain::findings::MergeOutcome::New(f) => (SyncActionCode::I, f),
+            theodore_domain::findings::MergeOutcome::MergedInto(f) => (SyncActionCode::U, f),
         };
         let data = serde_json::to_value(&merged).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {

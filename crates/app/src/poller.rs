@@ -125,28 +125,20 @@ async fn handle_push(
     };
 
     if let Some(old_rev) = &old_rev {
-        let classes = crate::shims::classify(old_rev, &new_rev);
+        let classes = theodore_domain::interdiff::classify(old_rev, &new_rev);
         // Reads are recorded against the *old* hunk id; only a `Changed`
         // hunk has one (a `New` hunk never had a prior read to clear).
         let mut changed_new_ids: BTreeSet<HunkId> = BTreeSet::new();
         let mut stale_old_ids: BTreeSet<HunkId> = BTreeSet::new();
         for (new_id, change) in &classes {
             match change {
-                crate::shims::HunkChange::Unchanged => {}
-                crate::shims::HunkChange::New => {
+                theodore_domain::interdiff::HunkChange::Unchanged => {}
+                theodore_domain::interdiff::HunkChange::New => {
                     changed_new_ids.insert(new_id.clone());
                 }
-                crate::shims::HunkChange::Changed { previous } => {
+                theodore_domain::interdiff::HunkChange::Changed { previous } => {
                     changed_new_ids.insert(new_id.clone());
-                    if let Some(new_hunk) = new_rev.hunks().find(|h| &h.id == new_id)
-                        && let Some(old_hunk) = old_rev
-                            .files
-                            .iter()
-                            .find(|f| f.path == new_hunk.path)
-                            .and_then(|f| f.hunks.get(*previous))
-                    {
-                        stale_old_ids.insert(old_hunk.id.clone());
-                    }
+                    stale_old_ids.insert(previous.clone());
                 }
             }
         }
@@ -328,7 +320,7 @@ async fn wake_next_push(core: &Core, pr: &PrId) {
         return;
     };
     let Some(snooze) = &state.snooze else { return };
-    if crate::shims::wakes(snooze, &PrEvent::Pushed) {
+    if theodore_domain::snooze::wakes(snooze, &PrEvent::Pushed) {
         let data = serde_json::to_value(InboxState {
             pr: pr.clone(),
             done: state.done,

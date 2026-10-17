@@ -6,7 +6,7 @@ use theodore_contract::{HunkRead, MutationOp, models};
 use theodore_domain::{Draft, Task, TaskStatus};
 
 use crate::core::Core;
-use crate::shims;
+use theodore_domain::tasks::{TaskEvent, transition};
 
 pub(super) async fn validate_op(core: &Core, op: &MutationOp) -> Result<(), String> {
     let model = match op {
@@ -64,8 +64,7 @@ async fn validate_draft(core: &Core, data: &serde_json::Value) -> Result<(), Str
     let Some(entry) = revisions.get(&(draft.pr.clone(), head)) else {
         return Err("draft: revision not cached".into());
     };
-    let a = &draft.anchor;
-    if shims::is_commentable(&a.path, a.side, a.line, a.start_line, &entry.revision) {
+    if theodore_domain::anchors::is_commentable(&draft.anchor, &entry.revision) {
         Ok(())
     } else {
         Err("draft: anchor is not inside the current diff".into())
@@ -93,11 +92,13 @@ async fn validate_task_update(
     };
     let task: Task = serde_json::from_value(row.data).map_err(|e| format!("bad task row: {e}"))?;
     let event = match requested {
-        TaskStatus::Progress => shims::TaskEvent::Start,
-        TaskStatus::Review => shims::TaskEvent::FixReady,
-        TaskStatus::Done => shims::TaskEvent::Accept,
-        TaskStatus::Todo if task.status == TaskStatus::Review => shims::TaskEvent::Reject,
-        TaskStatus::Todo => shims::TaskEvent::Reopen,
+        TaskStatus::Progress => TaskEvent::Start,
+        TaskStatus::Review => TaskEvent::FixReady,
+        TaskStatus::Done => TaskEvent::Accept,
+        TaskStatus::Todo if task.status == TaskStatus::Review => TaskEvent::Reject,
+        TaskStatus::Todo => TaskEvent::Reopen,
     };
-    shims::task_transition(&task, event).map(|_| ())
+    transition(&task, event)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }

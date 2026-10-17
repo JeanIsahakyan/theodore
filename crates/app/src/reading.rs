@@ -56,7 +56,10 @@ async fn handle_pr_reads(core: &Core, pr: &PrId, new_hunks: Vec<HunkId>) {
     let new_set: BTreeSet<HunkId> = new_hunks.into_iter().collect();
     let before: BTreeSet<HunkId> = after.difference(&new_set).cloned().collect();
 
-    let paths = crate::shims::newly_viewed(&revision, &before, &after);
+    let paths = {
+        use theodore_domain::reading::{ReadSet, newly_viewed};
+        newly_viewed(&revision, &ReadSet(before), &ReadSet(after))
+    };
     for path in paths {
         let row_id = format!("{}:{}", pr.0, path);
         let payload = FileViewedRow {
