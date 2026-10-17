@@ -9,10 +9,25 @@ pre-commit:
       run: git diff --cached --check
     large-files:
       run: scripts/check-large-files.sh {staged_files}
-    # Add language-specific formatter / linter commands here once the stack exists,
-    # scoped to {staged_files} with `glob:`.
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt -- --check {staged_files}
 
 commit-msg:
   commands:
     conventional-commit:
       run: scripts/check-commit-msg.sh {1}
+
+# Slower checks: full workspace, not just what's staged. Run before sharing
+# work, not on every commit.
+pre-push:
+  commands:
+    rust-clippy:
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    rust-test:
+      run: cargo test --workspace
+    ui-typecheck:
+      # No-op until ui/ is scaffolded.
+      run: '[ ! -f ui/package.json ] || pnpm -C ui typecheck'
+    ui-lint:
+      run: '[ ! -f ui/package.json ] || pnpm -C ui lint'
