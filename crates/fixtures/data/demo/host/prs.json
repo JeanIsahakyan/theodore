@@ -1,0 +1,184 @@
+[
+  {
+    "summary": {
+      "pr": {
+        "repo": {
+          "host": "github",
+          "owner": "test",
+          "name": "demo"
+        },
+        "number": 1,
+        "host_id": "gh_1"
+      },
+      "title": "Add webhook retry with exponential backoff",
+      "author": {
+        "login": "alice",
+        "name": "Alice Developer",
+        "avatar_url": "https://example.com/alice.jpg"
+      },
+      "state": "open",
+      "base_ref": "main",
+      "head_ref": "feat/webhook-retry",
+      "head_sha": "abc123def456",
+      "additions": 45,
+      "deletions": 12,
+      "changed_files": 3,
+      "reasons": ["review_requested"],
+      "checks": "pending",
+      "approvals": 0,
+      "required_approvals": 1,
+      "updated_at": 1697587200000,
+      "url": "https://github.com/test/demo/pull/1"
+    },
+    "body": "Implements exponential backoff retry logic for webhook delivery with a dead-letter queue after 5 failed attempts.",
+    "base_sha": "main_sha",
+    "commits": [
+      {
+        "sha": "abc123def456",
+        "title": "Add webhook retry with exponential backoff",
+        "author": {
+          "login": "alice",
+          "name": "Alice Developer",
+          "avatar_url": "https://example.com/alice.jpg"
+        },
+        "at": 1697587200000
+      }
+    ],
+    "checks": [
+      {
+        "id": "test-1",
+        "name": "unit tests",
+        "status": "pass",
+        "url": "https://ci.example.com/runs/1",
+        "duration_ms": 45000
+      },
+      {
+        "id": "lint-1",
+        "name": "lint",
+        "status": "pending",
+        "url": null,
+        "duration_ms": null
+      }
+    ],
+    "reviewers": [
+      {
+        "person": {
+          "login": "bob",
+          "name": "Bob Reviewer",
+          "avatar_url": "https://example.com/bob.jpg"
+        },
+        "state": "requested",
+        "team": null
+      }
+    ],
+    "assignees": [
+      {
+        "login": "alice",
+        "name": "Alice Developer",
+        "avatar_url": "https://example.com/alice.jpg"
+      }
+    ],
+    "labels": ["enhancement", "webhooks"],
+    "threads": [],
+    "viewed": []
+  },
+  {
+    "summary": {
+      "pr": {
+        "repo": {
+          "host": "github",
+          "owner": "test",
+          "name": "demo"
+        },
+        "number": 2,
+        "host_id": "gh_2"
+      },
+      "title": "Refactor auth module with middleware pattern",
+      "author": {
+        "login": "charlie",
+        "name": "Charlie Dev",
+        "avatar_url": "https://example.com/charlie.jpg"
+      },
+      "state": "open",
+      "base_ref": "main",
+      "head_ref": "refactor/auth-middleware",
+      "head_sha": "def789ghi012",
+      "additions": 234,
+      "deletions": 189,
+      "changed_files": 8,
+      "reasons": ["assigned"],
+      "checks": "pass",
+      "approvals": 0,
+      "required_approvals": 2,
+      "updated_at": 1697673600000,
+      "url": "https://github.com/test/demo/pull/2"
+    },
+    "body": "Major refactor of the authentication module to use a middleware pattern. Improves testability and code organization.",
+    "base_sha": "main_sha",
+    "commits": [
+      {
+        "sha": "def789ghi012",
+        "title": "Refactor auth module with middleware pattern",
+        "author": {
+          "login": "charlie",
+          "name": "Charlie Dev",
+          "avatar_url": "https://example.com/charlie.jpg"
+        },
+        "at": 1697673600000
+      }
+    ],
+    "checks": [
+      {
+        "id": "test-2",
+        "name": "unit tests",
+        "status": "pass",
+        "url": "https://ci.example.com/runs/2",
+        "duration_ms": 62000
+      },
+      {
+        "id": "lint-2",
+        "name": "lint",
+        "status": "pass",
+        "url": "https://ci.example.com/runs/3",
+        "duration_ms": 18000
+      },
+      {
+        "id": "build-2",
+        "name": "build",
+        "status": "pass",
+        "url": "https://ci.example.com/runs/4",
+        "duration_ms": 85000
+      }
+    ],
+    "reviewers": [
+      {
+        "person": {
+          "login": "dave",
+          "name": "Dave Reviewer",
+          "avatar_url": "https://example.com/dave.jpg"
+        },
+        "state": "requested",
+        "team": null
+      },
+      {
+        "person": {
+          "login": "eve",
+          "name": "Eve Lead",
+          "avatar_url": "https://example.com/eve.jpg"
+        },
+        "state": "requested",
+        "team": "core"
+      }
+    ],
+    "assignees": [
+      {
+        "login": "charlie",
+        "name": "Charlie Dev",
+        "avatar_url": "https://example.com/charlie.jpg"
+      }
+    ],
+    "labels": ["refactor", "core"],
+    "threads": [],
+    "viewed": []
+  }
+]

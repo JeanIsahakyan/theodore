@@ -1,0 +1,6 @@
+{"type": "text", "text": "Analyzing PR #1 for grouping...", "delay_ms": 100}
+{"type": "thinking", "text": "This PR adds webhook retry logic. The changes are:\n1. Delivery retry logic with exponential backoff\n2. Backoff calculation utilities\n3. Tests for the retry behavior\n\nI should group these logically.", "delay_ms": 200}
+{"type": "tool_call", "id": "call_1", "name": "add_finding", "input": {"anchor": {"rev": "abc123def456", "path": "src/webhooks/deliver.ts", "side": "new", "line": 12}, "severity": "info", "title": "Good error handling", "body": "The retry logic properly handles different HTTP status codes.", "state": "open"}, "delay_ms": 150}
+{"type": "tool_result", "id": "call_1", "ok": true, "output": "{\"finding_id\": \"f1\"}", "delay_ms": 100}
+{"type": "text", "text": "Grouping complete.", "delay_ms": 0}
+{"type": "done", "final_text": "Grouped into 2 semantic groups:\n1. **Retry with backoff**: Core delivery retry logic with exponential backoff (2 hunks)\n2. **Tests**: Comprehensive test coverage for retry behavior (1 hunk)", "usage": {"input_tokens": 1500, "output_tokens": 450}, "delay_ms": 0}
