@@ -1,0 +1,436 @@
+{
+  "pr": {
+    "title": "Banner on the billing page near the invoice limit",
+    "body": "Banner on the billing page when an org is close to its plan limit.",
+    "commits": [
+      "LimitBanner",
+      "move UsageBar to billing",
+      "new empty-state image"
+    ]
+  },
+  "revision": {
+    "base": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "head": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "files": [
+      {
+        "path": "src/billing/LimitBanner.tsx",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 15,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "c9d88d790b1ada7c",
+            "path": "src/billing/LimitBanner.tsx",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 15,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import { usePlanUsage } from './usePlanUsage';",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "import { UsageBar } from './UsageBar';",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "import './limit-banner.css';",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "export function LimitBanner({ orgId }: { orgId: string }) {",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  const usage = usePlanUsage(orgId);",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "  if (!usage || usage.ratio < 0.8) return null;",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "  return (",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "    <div className=\"limit-banner\" role=\"status\">",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "      <UsageBar value={usage.used} max={usage.limit} />",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "      <span>{usage.used} of {usage.limit} invoices this month</span>",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "      <a href=\"/billing/plan\">Raise limit</a>",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "add",
+                "text": "    </div>",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "  );",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 15
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/billing/limit-banner.css",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 7,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "83d9f422d8af070e",
+            "path": "src/billing/limit-banner.css",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 7,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": ".limit-banner {",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "  display: flex;",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "  gap: 12px;",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "  padding: 10px 16px;",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "  border-radius: 8px;",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  background: var(--warning-soft);",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 7
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/billing/BillingPage.tsx",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "b59fa93383d3cde8",
+            "path": "src/billing/BillingPage.tsx",
+            "old_start": 14,
+            "old_lines": 4,
+            "new_start": 14,
+            "new_lines": 4,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  return (",
+                "old_no": 14,
+                "new_no": 14
+              },
+              {
+                "kind": "ctx",
+                "text": "    <Page title=\"Billing\">",
+                "old_no": 15,
+                "new_no": 15
+              },
+              {
+                "kind": "del",
+                "text": "      <OldQuotaNotice org={org} />",
+                "old_no": 16,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "      <LimitBanner orgId={org.id} />",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": "      <Invoices org={org} />",
+                "old_no": 17,
+                "new_no": 17
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/billing/UsageBar.tsx",
+        "old_path": "src/components/UsageBar.tsx",
+        "status": "renamed",
+        "similarity": 91,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 2,
+        "deletions": 2,
+        "hunks": [
+          {
+            "id": "ad96e019dfc64575",
+            "path": "src/billing/UsageBar.tsx",
+            "old_start": 3,
+            "old_lines": 3,
+            "new_start": 3,
+            "new_lines": 3,
+            "header": "",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "export function UsageBar({ value, total }: Props) {",
+                "old_no": 3,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  const pct = Math.round((value / total) * 100);",
+                "old_no": 4,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "export function UsageBar({ value, max }: Props) {",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "  const pct = Math.round((value / max) * 100);",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": "  return <progress value={pct} max={100} />;",
+                "old_no": 5,
+                "new_no": 5
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/components/OldQuotaNotice.tsx",
+        "old_path": null,
+        "status": "deleted",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 0,
+        "deletions": 7,
+        "hunks": [
+          {
+            "id": "fca2f2a00bec078e",
+            "path": "src/components/OldQuotaNotice.tsx",
+            "old_start": 1,
+            "old_lines": 7,
+            "new_start": 0,
+            "new_lines": 0,
+            "header": "",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "import { useQuota } from '../hooks/useQuota';",
+                "old_no": 1,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 2,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "export function OldQuotaNotice({ org }: { org: Org }) {",
+                "old_no": 3,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  const quota = useQuota(org.id);",
+                "old_no": 4,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  if (!quota.exceeded) return null;",
+                "old_no": 5,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  return <div className=\"quota-notice\">Quota exceeded</div>;",
+                "old_no": 6,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "}",
+                "old_no": 7,
+                "new_no": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "src/gql/generated.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "graphql-codegen"
+          }
+        ],
+        "additions": 6,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "0d0bcd3aa30fea72",
+            "path": "src/gql/generated.ts",
+            "old_start": 812,
+            "old_lines": 0,
+            "new_start": 812,
+            "new_lines": 6,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "export type PlanUsage = {",
+                "old_no": null,
+                "new_no": 812
+              },
+              {
+                "kind": "add",
+                "text": "  __typename?: 'PlanUsage';",
+                "old_no": null,
+                "new_no": 813
+              },
+              {
+                "kind": "add",
+                "text": "  used: Scalars['Int']['output'];",
+                "old_no": null,
+                "new_no": 814
+              },
+              {
+                "kind": "add",
+                "text": "  limit: Maybe<Scalars['Int']['output']>;",
+                "old_no": null,
+                "new_no": 815
+              },
+              {
+                "kind": "add",
+                "text": "  kind: LimitKind;",
+                "old_no": null,
+                "new_no": 816
+              },
+              {
+                "kind": "add",
+                "text": "};",
+                "old_no": null,
+                "new_no": 817
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
