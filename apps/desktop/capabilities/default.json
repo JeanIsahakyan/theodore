@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../node_modules/@tauri-apps/cli/schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the main Theodore window: core events, updater, process exit.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "updater:default",
+    "process:default"
+  ]
+}

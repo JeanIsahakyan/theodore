@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    # Every crate (incl. the Tauri shell) targets macOS; run the whole
+    # workspace there rather than installing Linux GTK/WebKit dev packages
+    # just to compile a macOS-only app.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: contract + bindings TS up to date
+        run: |
+          cargo run -p theodore-contract --bin export-ts
+          cargo run -p theodore-desktop -- --export-bindings
+          git diff --exit-code -- ui/src/gen
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ui
+        name: check for ui/ package
+        run: |
+          if [ -f ui/package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.ui.outputs.present == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.ui.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: install
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui install --frozen-lockfile
+
+      - name: typecheck
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui typecheck
+
+      - name: lint
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui lint
+
+      - name: test
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui test
+
+      - name: build
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui build
+
+      - name: skipped (no ui/package.json yet)
+        if: steps.ui.outputs.present != 'true'
+        run: echo "ui/ not scaffolded yet, skipping"
