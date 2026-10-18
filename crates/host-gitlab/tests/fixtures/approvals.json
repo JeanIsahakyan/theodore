@@ -1,0 +1,6 @@
+{
+  "approved_by": [
+    { "user": { "id": 3, "username": "carol", "name": "Carol", "avatar_url": null } }
+  ],
+  "approvals_required": 1
+}

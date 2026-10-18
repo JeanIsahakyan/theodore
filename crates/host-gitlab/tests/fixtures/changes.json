@@ -1,0 +1,9 @@
+{
+  "changes": [
+    {
+      "old_path": "src/lib.rs",
+      "new_path": "src/lib.rs",
+      "diff": "@@ -1,2 +1,3 @@\n context\n-old line\n+new line\n+another added line\n"
+    }
+  ]
+}

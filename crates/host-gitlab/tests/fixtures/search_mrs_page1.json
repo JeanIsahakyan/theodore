@@ -1,0 +1,22 @@
+[
+  {
+    "iid": 99,
+    "project_id": 7,
+    "title": "Fix the thing",
+    "description": "",
+    "state": "opened",
+    "draft": false,
+    "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/99",
+    "source_branch": "fix-thing",
+    "target_branch": "main",
+    "sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "author": { "id": 1, "username": "alice", "name": "Alice", "avatar_url": null },
+    "assignees": [],
+    "reviewers": [],
+    "labels": [],
+    "updated_at": "2024-01-03T00:00:00.000Z",
+    "diff_refs": null,
+    "head_pipeline": null,
+    "changes_count": "3"
+  }
+]

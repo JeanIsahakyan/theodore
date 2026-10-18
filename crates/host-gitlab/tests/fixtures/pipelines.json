@@ -1,0 +1,4 @@
+[
+  { "id": 501, "status": "success", "ref": "feature-x", "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "web_url": "https://ci.example/501" },
+  { "id": 502, "status": "failed", "ref": "feature-x", "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "web_url": "https://ci.example/502" }
+]

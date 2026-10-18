@@ -1,0 +1,24 @@
+{
+  "iid": 42,
+  "project_id": 7,
+  "title": "Add feature X",
+  "description": "This MR adds feature X.",
+  "state": "opened",
+  "draft": false,
+  "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/42",
+  "source_branch": "feature-x",
+  "target_branch": "main",
+  "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "author": { "id": 1, "username": "alice", "name": "Alice", "avatar_url": "https://avatars/alice.png" },
+  "assignees": [{ "id": 2, "username": "bob", "name": "Bob", "avatar_url": null }],
+  "reviewers": [{ "id": 3, "username": "carol", "name": "Carol", "avatar_url": null }],
+  "labels": ["bug"],
+  "updated_at": "2024-01-02T03:04:05.000Z",
+  "diff_refs": {
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "start_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "head_pipeline": { "status": "success" },
+  "changes_count": "1"
+}
