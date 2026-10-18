@@ -92,4 +92,11 @@ pub trait Store: Send + Sync {
 
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>>;
     fn kv_set(&self, key: &str, value: &serde_json::Value) -> StoreResult<()>;
+
+    /// Outbox items not yet `Done`/`Failed` (plan §3.4 `is_idle`: an update
+    /// must not restart while a host write is still in flight). `0` by
+    /// default; an implementation may override it when it can answer cheaply.
+    fn outbox_pending_count(&self) -> StoreResult<u64> {
+        Ok(0)
+    }
 }
