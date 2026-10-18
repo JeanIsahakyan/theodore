@@ -323,8 +323,10 @@ const GroupCard = observer(function GroupCard({
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   if (!g) return null;
   const n =
-    (store.models.groupings.get(pr)?.groups.findIndex((x) => x.id === g.id) ??
-      -1) + 1;
+    store.models
+      .groupsOf(pr)
+      .filter((x) => x.kind !== 'hidden')
+      .findIndex((x) => x.id === g.id) + 1;
   const read = store.models.hunkReads
     .where((r) => r.pr === pr)
     .map((r) => r.hunk);
@@ -346,7 +348,7 @@ const GroupCard = observer(function GroupCard({
             className="shrink-0 gap-1"
           >
             <TriangleExclamation className="size-3.5" />
-            {g.risk}
+            {rich(g.risk)}
           </Chip>
         )}
         <span className="flex-1" />
@@ -363,7 +365,7 @@ const GroupCard = observer(function GroupCard({
       {g.risk && g.risk.length > RISK_CHIP_MAX && (
         <p className="flex max-w-[78ch] gap-2 text-sm leading-relaxed text-warning">
           <TriangleExclamation className="mt-1 size-4 shrink-0" />
-          <span>{g.risk}</span>
+          <span>{rich(g.risk)}</span>
         </p>
       )}
       <p className="rich flex max-w-[78ch] gap-2 text-sm leading-relaxed">
@@ -388,7 +390,7 @@ const GroupCard = observer(function GroupCard({
                 <Checkbox.Control>
                   <Checkbox.Indicator />
                 </Checkbox.Control>
-                {c}
+                <span>{rich(c)}</span>
               </Checkbox.Content>
             </Checkbox>
           ))}

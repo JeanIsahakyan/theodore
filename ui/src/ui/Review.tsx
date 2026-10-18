@@ -103,8 +103,9 @@ function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
 export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const ui = useUi();
+  // Grouped by default — the point of the product; Files is the fallback view.
   const [mode, setMode] = useState<ReviewMode>({
-    mode: 'files',
+    mode: 'groups',
     group: null,
     file: null,
   });
@@ -172,6 +173,15 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     ? groupsForRevision(store, pr, revision.data)
     : [];
   const orderedGroupIds = orderedGroups.map((g) => g.id).join();
+
+  // Like the prototype: in grouped mode a group is always selected.
+  useEffect(() => {
+    const first = orderedGroups[0];
+    if (mode.mode === 'groups' && !mode.group && first) {
+      setMode((m) => ({ ...m, group: first.id }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode.mode, mode.group, orderedGroupIds]);
 
   // Tour drives group selection; keep `mode` in sync with the tour cursor.
   useEffect(() => {
