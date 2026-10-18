@@ -12,7 +12,7 @@ import {
 } from 'mobx';
 import type { PrId } from '../gen/contract';
 
-export type SettingsPage = 'agents' | 'updates' | 'about';
+export type SettingsPage = 'account' | 'agents' | 'updates' | 'about';
 
 export type Route =
   | { name: 'inbox' }

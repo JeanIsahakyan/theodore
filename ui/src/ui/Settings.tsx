@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Gear, Sparkles } from '@gravity-ui/icons';
+import { ArrowLeft, Gear, Lock, LogoGithub, Sparkles } from '@gravity-ui/icons';
 import {
+  Alert,
   Button,
+  Input,
+  Label,
   ListBox,
   Select,
   Separator,
   Switch,
+  TextField,
   Toolbar,
   Typography,
 } from '@heroui/react';
@@ -14,9 +18,10 @@ import type {
   AgentId,
   AgentStatus,
   AppInfo,
+  HostAuthStatus,
   UpdateInfo,
 } from '../gen/contract';
-import { api } from '../core/api';
+import { api, CommandFailure } from '../core/api';
 import { setSetting } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
@@ -31,10 +36,18 @@ const AI_TITLE: Record<(typeof AI_KEYS)[number], string> = {
 };
 
 const PAGES: { id: Page; title: string }[] = [
+  { id: 'account', title: 'Account' },
   { id: 'agents', title: 'Agents' },
   { id: 'updates', title: 'Updates' },
   { id: 'about', title: 'About' },
 ];
+
+const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
+  keychain: 'a saved token',
+  gh: 'your gh CLI login',
+  env: 'GITHUB_TOKEN',
+  none: 'nothing',
+};
 
 export const SettingsNav = observer(function SettingsNav({
   page,
@@ -91,6 +104,121 @@ function settingValue(
 ): unknown {
   return store.models.settings.get(`${scope}:${key}`)?.value;
 }
+
+const AccountPage = observer(function AccountPage() {
+  const [status, setStatus] = useState<HostAuthStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [token, setToken] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setBusy(true);
+    void api
+      .hostStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null))
+      .finally(() => setBusy(false));
+  };
+  useEffect(load, []);
+
+  const setToken_ = (value: string | null) => {
+    setError(null);
+    setBusy(true);
+    void api
+      .setHostToken({ host: 'github', token: value })
+      .then((s) => {
+        setStatus(s);
+        setEditing(false);
+        setToken('');
+      })
+      .catch((e) =>
+        setError(e instanceof CommandFailure ? e.message : String(e)),
+      )
+      .finally(() => setBusy(false));
+  };
+
+  if (!status)
+    return busy ? (
+      <Spinner />
+    ) : (
+      <p className="text-sm text-muted">Not available.</p>
+    );
+
+  return (
+    <div className="flex max-w-[640px] flex-col gap-6">
+      <section className="flex flex-col gap-3">
+        <Typography.Heading level={6}>GitHub</Typography.Heading>
+        {status.connected ? (
+          <Alert status="success">
+            <Alert.Indicator>
+              <LogoGithub className="size-4" />
+            </Alert.Indicator>
+            <Alert.Content>
+              <Alert.Title>
+                Signed in {status.login ? `as ${status.login}` : ''}
+              </Alert.Title>
+              <Alert.Description>
+                Using {SOURCE_LABEL[status.source]}.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
+        ) : (
+          <Alert status="warning">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>Not connected</Alert.Title>
+            </Alert.Content>
+          </Alert>
+        )}
+        {editing ? (
+          <div className="flex flex-col gap-3">
+            <TextField value={token} onChange={setToken} type="password">
+              <Label>Personal access token</Label>
+              <Input placeholder="ghp_…" className="font-mono" />
+            </TextField>
+            {error && <span className="text-xs text-danger">{error}</span>}
+            <div className="flex gap-2">
+              <Btn
+                tone="primary"
+                isDisabled={token.trim().length < 8}
+                isPending={busy}
+                onPress={() => setToken_(token.trim())}
+              >
+                Save
+              </Btn>
+              <Btn tone="ghost" onPress={() => setEditing(false)}>
+                Cancel
+              </Btn>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <Btn
+              tone="tertiary"
+              icon={<Lock />}
+              onPress={() => setEditing(true)}
+            >
+              Replace token
+            </Btn>
+            <Btn tone="tertiary" onPress={load} isPending={busy}>
+              Check again
+            </Btn>
+            {status.connected && (
+              <Btn
+                tone="danger-soft"
+                isPending={busy}
+                onPress={() => setToken_(null)}
+              >
+                Remove
+              </Btn>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+});
 
 const AgentsPage = observer(function AgentsPage() {
   const store = useRootStore();
@@ -270,6 +398,7 @@ export const SettingsPage = observer(function SettingsPage({
       <Typography.Heading level={5} className="mb-6">
         {title}
       </Typography.Heading>
+      {page === 'account' && <AccountPage />}
       {page === 'agents' && <AgentsPage />}
       {page === 'updates' && <UpdatesPage />}
       {page === 'about' && <AboutPage />}
