@@ -40,7 +40,7 @@ impl GitlabAdapter {
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
-            http: HttpClient::new(base, token, clock.clone()),
+            http: HttpClient::new(base, token, clock.clone()).with_accept("application/json"),
             clock,
             viewer_username: tokio::sync::OnceCell::new(),
         }

@@ -74,6 +74,8 @@ pub struct HttpClient {
     rate: Mutex<RateState>,
     retry: RetryConfig,
     user_agent: String,
+    /// `accept` sent with requests that carry a body.
+    accept: String,
 }
 
 impl HttpClient {
@@ -99,11 +101,18 @@ impl HttpClient {
             rate: Mutex::new(RateState::default()),
             retry: RetryConfig::default(),
             user_agent: "theodore".to_string(),
+            accept: "application/vnd.github+json".to_string(),
         }
     }
 
     pub fn with_retry(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
+        self
+    }
+
+    /// Media type for requests with a body (default: GitHub's).
+    pub fn with_accept(mut self, accept: impl Into<String>) -> Self {
+        self.accept = accept.into();
         self
     }
 
@@ -245,6 +254,20 @@ impl HttpClient {
         }
     }
 
+    /// POST, ignoring any response body (204 / empty on success).
+    pub async fn post_no_content<B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> HostResult<()> {
+        let json =
+            serde_json::to_string(body).map_err(|e| HostError::Protocol(format!("encode: {e}")))?;
+        match self.execute(Method::POST, path, Some(json), &[]).await? {
+            Outcome::Ok { .. } => Ok(()),
+            Outcome::NotModified(_) => unreachable!("no conditional header sent"),
+        }
+    }
+
     /// DELETE, ignoring any response body (GitHub returns 204/empty on
     /// success for comment deletion etc).
     pub async fn delete(&self, path: &str) -> HostResult<()> {
@@ -286,7 +309,7 @@ impl HttpClient {
                 req = req.bearer_auth(token);
             }
             if method != Method::GET || body.is_some() {
-                req = req.header("accept", "application/vnd.github+json");
+                req = req.header("accept", &self.accept);
             }
             for (name, value) in extra_headers {
                 req = req.header(*name, value.clone());

@@ -134,25 +134,13 @@ pub(crate) async fn bulk_publish_draft_notes(
     iid: u64,
 ) -> HostResult<()> {
     let path = format!("projects/{project}/merge_requests/{iid}/draft_notes/bulk_publish");
-    // GitLab answers this one with 204 and an empty body; `post_json` always
-    // decodes the response as JSON (unlike `delete`, host-http has no
-    // body-ignoring POST), so an empty-body decode failure here means the
-    // call itself succeeded.
-    match http
-        .post_json::<_, serde_json::Value>(&path, &serde_json::json!({}))
-        .await
-    {
-        Ok(_) => Ok(()),
-        Err(HostError::Protocol(msg)) if msg.contains("EOF while parsing a value") => Ok(()),
-        Err(e) => Err(e),
-    }
+    // GitLab answers this one with 204 and an empty body.
+    http.post_no_content(&path, &serde_json::json!({})).await
 }
 
 pub(crate) async fn approve(http: &HttpClient, project: &str, iid: u64) -> HostResult<()> {
     let path = format!("projects/{project}/merge_requests/{iid}/approve");
-    let _: theodore_host_http::HttpResponse<serde_json::Value> =
-        http.post_json(&path, &serde_json::json!({})).await?;
-    Ok(())
+    http.post_no_content(&path, &serde_json::json!({})).await
 }
 
 pub(crate) async fn reply_to_discussion(
