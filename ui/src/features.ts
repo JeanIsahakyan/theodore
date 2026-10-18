@@ -17,6 +17,9 @@ export const FEATURES = {
   symbolPeek: false,
   /** No Linear integration command. */
   linear: false,
+  /** Threads live inside `pr_detail` (host truth); no reply/resolve command
+   *  sends them to the host yet. */
+  threadWrites: false,
   /** No command returns `PrDetail` (body, commits, checks list, reviewers,
    *  assignees, labels) — only the `PrSummary` rollup and the diff (`Revision`)
    *  are reachable today. Checks/commits tabs and the reviewer strip are

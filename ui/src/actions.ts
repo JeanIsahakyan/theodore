@@ -100,7 +100,7 @@ export function replyThread(
   body: string,
 ): void {
   const t = store.models.threads.get(thread);
-  if (!t) return;
+  if (!t || !FEATURES.threadWrites) return;
   void store.sync.queue.transact([
     {
       op: 'update',
@@ -127,6 +127,7 @@ export function resolveThread(
   thread: string,
   resolved: boolean,
 ): void {
+  if (!FEATURES.threadWrites) return;
   void store.sync.queue.transact([
     { op: 'update', model: 'thread', id: thread, data: { resolved } },
   ]);

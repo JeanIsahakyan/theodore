@@ -3,33 +3,31 @@
  * `crates/contract`); this is the UI's side of that contract — the set of
  * model names it knows how to pool, and the row shape each one carries.
  *
- * NOTE for the store/app crates: these strings must match what `app`/`store`
- * write into the sync log. There is no shared enum today (see final report,
- * "contract changes needed") — keep this list and the Rust side in sync by
- * hand until there is one.
+ * The names match `theodore_contract::models` (Rust). `pr`, `pr_detail` and
+ * `grouping` rows are keyed by the PR id; threads live inside `pr_detail`.
  */
 import type {
   ChatMessage,
   Draft,
   FileViewedRow,
   Finding,
-  Group,
+  Grouping,
   HunkRead,
   InboxState,
+  PrDetail,
   PrSummary,
   Setting,
   SkillRun,
   Task,
-  Thread,
 } from '../gen/contract';
 
 export const MODEL_NAMES = [
-  'pr_summary',
+  'pr',
+  'pr_detail',
+  'grouping',
   'inbox_state',
   'hunk_read',
   'file_viewed',
-  'group',
-  'thread',
   'draft',
   'finding',
   'task',
@@ -47,12 +45,12 @@ type WithId<T> = T & { id: string };
 
 /** Row shape stored in the pool for each model name. */
 export interface ModelRows {
-  pr_summary: WithId<PrSummary>;
+  pr: WithId<PrSummary>;
+  pr_detail: WithId<PrDetail>;
+  grouping: WithId<Grouping>;
   inbox_state: WithId<InboxState>;
   hunk_read: WithId<HunkRead>;
   file_viewed: WithId<FileViewedRow>;
-  group: WithId<Group>;
-  thread: WithId<Thread>;
   draft: WithId<Draft>;
   finding: WithId<Finding>;
   task: WithId<Task>;

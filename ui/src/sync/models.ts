@@ -1,6 +1,16 @@
 /** Typed, per-model accessors over the pool — the ergonomic front door for components. */
+import type { Group, Thread } from '../gen/contract';
 import type { ObjectPool } from './ObjectPool';
 import type { ModelRows } from './types';
+
+/** Read-only accessor over rows derived from other models. */
+function derived<T extends { id: string }>(rows: () => T[]) {
+  return {
+    get: (id: string) => rows().find((r) => r.id === id),
+    all: rows,
+    where: (pred: (row: T) => boolean) => rows().filter(pred),
+  };
+}
 
 export function modelAccessors(pool: ObjectPool) {
   const of = <K extends keyof ModelRows>(model: K) => ({
@@ -9,12 +19,20 @@ export function modelAccessors(pool: ObjectPool) {
     where: (pred: (row: ModelRows[K]) => boolean) => pool.where(model, pred),
   });
   return {
-    prSummaries: of('pr_summary'),
+    prSummaries: of('pr'),
+    prDetails: of('pr_detail'),
+    groupings: of('grouping'),
     inboxStates: of('inbox_state'),
     hunkReads: of('hunk_read'),
     fileViews: of('file_viewed'),
-    groups: of('group'),
-    threads: of('thread'),
+    /** Groups of every loaded grouping, in reading order. */
+    groups: derived<Group & { id: string }>(() =>
+      pool.all('grouping').flatMap((g) => g.groups),
+    ),
+    /** Review threads of every loaded PR (they live inside `pr_detail`). */
+    threads: derived<Thread & { id: string }>(() =>
+      pool.all('pr_detail').flatMap((d) => d.threads),
+    ),
     drafts: of('draft'),
     findings: of('finding'),
     tasks: of('task'),

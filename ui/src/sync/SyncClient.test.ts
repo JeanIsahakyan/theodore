@@ -155,7 +155,7 @@ describe('SyncClient', () => {
 
     transport.queueResult('bootstrap', {
       last_sync_id: 0,
-      rows: [row('thread', 'th1', { id: 'th1' })],
+      rows: [row('draft', 'd1', { id: 'd1' })],
     } satisfies Bootstrap);
     await Promise.all([client.openPr('pr1'), client.openPr('pr1')]);
 

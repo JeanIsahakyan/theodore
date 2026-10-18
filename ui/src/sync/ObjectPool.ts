@@ -46,10 +46,12 @@ export class ObjectPool {
 
   /**
    * Insert or fully replace a row. `id` is always stamped onto the stored
-   * object — some rows (`pr_summary`, `setting`) carry no `id` field of
+   * object — some rows (`pr`, `setting`) carry no `id` field of
    * their own; the pool key is the only place it lives.
    */
   put(model: ModelName, id: string, data: unknown, archived = false): void {
+    // Rows of models this UI doesn't know (a newer core) are ignored.
+    if (!this.live.has(model)) return;
     const row = { ...(data as object), id };
     runInAction(() => {
       if (archived) {
@@ -69,6 +71,7 @@ export class ObjectPool {
   }
 
   remove(model: ModelName, id: string): unknown {
+    if (!this.live.has(model)) return undefined;
     const row = this.get(model, id);
     runInAction(() => {
       this.live.get(model)!.delete(id);
