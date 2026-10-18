@@ -82,9 +82,14 @@ fn is_infra_file(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let base = lower.rsplit('/').next().unwrap_or(&lower);
     base.starts_with(".env")
+        // catches "Dockerfile", "Dockerfile.unified", "Dockerfile.prod", ...
+        // but not an unrelated file like "dockerfile_parser.rs".
         || base == "dockerfile"
+        || base.starts_with("dockerfile.")
         || base.ends_with(".dockerfile")
-        || base == "changelog.md"
+        // a changelog entry is often its own dated file inside a
+        // `changelog/` directory, not literally named `CHANGELOG.md`.
+        || lower.contains("changelog")
         || base == "readme.md"
         || lower.contains("/.github/workflows/")
         || lower.starts_with(".github/workflows/")
@@ -342,6 +347,19 @@ mod tests {
                 "{id} should have joined the merged infra group"
             );
         }
+    }
+
+    /// Regression, found on the same real PR: a multi-stage Dockerfile is
+    /// often named `Dockerfile.unified` / `Dockerfile.prod`, not literally
+    /// `Dockerfile`, and a changelog entry is often its own dated file
+    /// inside a `changelog/` directory, not `CHANGELOG.md`. Both must still
+    /// be recognized as the shared infra area.
+    #[test]
+    fn recognizes_suffixed_dockerfiles_and_directory_based_changelogs() {
+        assert!(is_infra_file("Dockerfile.unified"));
+        assert!(is_infra_file("apps/shell/Dockerfile.prod"));
+        assert!(is_infra_file("changelog/2026-10-15-some-change.md"));
+        assert!(!is_infra_file("src/dockerfile_parser.rs"));
     }
 
     #[test]
