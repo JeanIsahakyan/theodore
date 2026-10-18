@@ -2,9 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react';
 import {
   ArrowLeft,
   ArrowRotateRight,
+  ChevronRight,
   CircleCheckFill,
   CircleInfo,
   Cpu,
+  Folder,
   Gear,
   Lock,
   LogoGithub,
@@ -15,6 +17,7 @@ import {
   Card,
   Chip,
   Input,
+  InputGroup,
   Label,
   ListBox,
   Select,
@@ -40,6 +43,7 @@ import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
+import { projectLabel } from './Projects';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 const AI_KEYS = ['agents.grouping', 'agents.chat', 'agents.fix'] as const;
@@ -48,11 +52,14 @@ const AI_TITLE: Record<(typeof AI_KEYS)[number], string> = {
   'agents.chat': 'Chat questions',
   'agents.fix': 'Finding fixes',
 };
+/** `PrSpend.budget_usd` — agent runs stop once a PR's spend reaches this. */
+const BUDGET_KEY = 'budget.per_pr_usd';
 
 /** Settings pages. */
 const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'account', title: 'Account', icon: <LogoGithub /> },
   { id: 'agents', title: 'Agents', icon: <Cpu /> },
+  { id: 'projects', title: 'Projects', icon: <Folder /> },
   { id: 'updates', title: 'Updates', icon: <ArrowRotateRight /> },
   { id: 'about', title: 'About', icon: <CircleInfo /> },
 ];
@@ -60,6 +67,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
 const SUB: Record<Page, string> = {
   account: 'GitHub sign-in. Tokens live in the system keychain.',
   agents: 'Agent CLIs on this computer, and which one handles each task.',
+  projects: 'Connected repositories and the settings effective in each.',
   updates: 'Check for and install new versions of Theodore.',
   about: 'Version and release channel.',
 };
@@ -411,7 +419,65 @@ const AgentsPage = observer(function AgentsPage() {
           })}
         </Card>
       </section>
+      <Separator />
+      <section className="flex flex-col gap-2">
+        <Typography.Heading level={6}>Budget</Typography.Heading>
+        <Card variant="secondary" className="gap-0 p-0">
+          <BudgetRow />
+        </Card>
+      </section>
     </>
+  );
+});
+
+/** `budget.per_pr_usd`, user scope — effective per-repo value shown read-only
+ *  in Settings → Projects → ⟨repo⟩. Empty clears the setting (no limit). */
+const BudgetRow = observer(function BudgetRow() {
+  const store = useRootStore();
+  const raw = settingValue(store, 'user', BUDGET_KEY);
+  const [text, setText] = useState(
+    typeof raw === 'number' ? String(raw) : '',
+  );
+  useEffect(() => {
+    setText(typeof raw === 'number' ? String(raw) : '');
+  }, [raw]);
+  const commit = () => {
+    const t = text.trim();
+    if (!t) {
+      setSetting(store, 'user', BUDGET_KEY, null);
+      return;
+    }
+    const n = Number(t);
+    if (Number.isFinite(n) && n > 0) setSetting(store, 'user', BUDGET_KEY, n);
+  };
+  return (
+    <div className="set-row budget-per-pr flex items-center gap-4 px-4 py-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm font-medium">Budget per PR (USD)</span>
+        <span className="text-xs text-muted">
+          Agent runs stop once a PR's spend reaches this. Empty = no limit.
+        </span>
+      </div>
+      <TextField
+        value={text}
+        onChange={setText}
+        aria-label="Budget per PR (USD)"
+        className="w-28"
+      >
+        <InputGroup className="rounded-xl">
+          <InputGroup.Prefix className="text-xs text-muted">
+            $
+          </InputGroup.Prefix>
+          <InputGroup.Input
+            placeholder="No limit"
+            inputMode="decimal"
+            className="text-right text-sm"
+            onBlur={commit}
+            onKeyDown={(e) => e.key === 'Enter' && commit()}
+          />
+        </InputGroup>
+      </TextField>
+    </div>
   );
 });
 
@@ -496,6 +562,124 @@ const UpdatesPage = observer(function UpdatesPage() {
   );
 });
 
+/** What `key` resolves to for `scope`, and where that value came from. */
+function effectiveOf(
+  store: ReturnType<typeof useRootStore>,
+  scope: string,
+  key: string,
+): { value: unknown; source: 'repo' | 'user' | 'default' } {
+  const repoVal = settingValue(store, scope, key);
+  if (repoVal !== undefined) return { value: repoVal, source: 'repo' };
+  const userVal = settingValue(store, 'user', key);
+  if (userVal !== undefined) return { value: userVal, source: 'user' };
+  return { value: undefined, source: 'default' };
+}
+
+const SOURCE_NOTE: Record<'repo' | 'user' | 'default', string> = {
+  repo: 'from .review/config.yaml in this repo',
+  user: 'from your user settings',
+  default: 'default',
+};
+
+/** Settings → Projects → ⟨repo⟩: the settings effective for this repo and
+ *  where each came from. Repo values are read-only here — they live in the
+ *  repo's own `.review/config.yaml` and change by editing that file, not
+ *  through this app. */
+const RepoSettingsPage = observer(function RepoSettingsPage({
+  project,
+  onBack,
+}: {
+  project: { id: string; repo: { owner: string; name: string } };
+  onBack: () => void;
+}) {
+  const store = useRootStore();
+  const scope = `repo:${project.repo.owner}/${project.repo.name}`;
+  const rows: { key: string; title: string }[] = [
+    ...AI_KEYS.map((key) => ({ key, title: AI_TITLE[key] })),
+    { key: BUDGET_KEY, title: 'Budget per PR (USD)' },
+  ];
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="repo-settings-back w-fit gap-2 px-2 text-muted"
+        onPress={onBack}
+      >
+        <ArrowLeft className="size-4" />
+        Projects
+      </Button>
+      <section className="flex flex-col gap-2">
+        <Typography.Heading level={6}>Effective settings</Typography.Heading>
+        <Card variant="secondary" className="gap-0 p-0">
+          {rows.map((r) => {
+            const eff = effectiveOf(store, scope, r.key);
+            return (
+              <div
+                key={r.key}
+                className="set-row flex items-center gap-4 border-b border-separator px-4 py-3 last:border-b-0"
+              >
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="text-sm font-medium">{r.title}</span>
+                  <span className="text-xs text-muted">
+                    {SOURCE_NOTE[eff.source]}
+                  </span>
+                </div>
+                <span className="text-sm tabular-nums text-muted">
+                  {eff.value == null ? '—' : String(eff.value)}
+                </span>
+              </div>
+            );
+          })}
+        </Card>
+        <span className="text-xs text-muted">
+          Repo values are read-only here — edit .review/config.yaml in the
+          repo to change them.
+        </span>
+      </section>
+    </>
+  );
+});
+
+const ProjectsPage = observer(function ProjectsPage() {
+  const store = useRootStore();
+  const projects = store.models.projects.all();
+  const [sel, setSel] = useState<string | null>(null);
+  const project = sel ? store.models.projects.get(sel) : undefined;
+  if (project) {
+    return <RepoSettingsPage project={project} onBack={() => setSel(null)} />;
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <Typography.Heading level={6}>
+        Connected repositories
+      </Typography.Heading>
+      {projects.length === 0 ? (
+        <span className="text-sm text-muted">
+          No projects yet — add one from the sidebar.
+        </span>
+      ) : (
+        <Card variant="secondary" className="gap-0 p-0">
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="repo-row flex w-full items-center gap-3 border-b border-separator px-4 py-3 text-left last:border-b-0 hover:bg-default/50"
+              onClick={() => setSel(p.id)}
+            >
+              <Folder className="size-4 text-muted" />
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {projectLabel(p)}
+              </span>
+              <ChevronRight className="size-4 text-muted" />
+            </button>
+          ))}
+        </Card>
+      )}
+    </section>
+  );
+});
+
 const AboutPage = observer(function AboutPage() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   useEffect(() => {
@@ -553,6 +737,8 @@ export const SettingsPage = observer(function SettingsPage({
           <AccountPage />
         ) : page === 'agents' ? (
           <AgentsPage />
+        ) : page === 'projects' ? (
+          <ProjectsPage />
         ) : page === 'updates' ? (
           <UpdatesPage />
         ) : (
