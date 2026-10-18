@@ -1146,7 +1146,7 @@ const Line = observer(function Line({
       },
       {
         id: 'comment-range',
-        label: 'Comment on range',
+        label: 'Start a comment range here',
         onAction: () =>
           setRangeStart({ path, side: anchor.side, line: anchor.line }),
       },

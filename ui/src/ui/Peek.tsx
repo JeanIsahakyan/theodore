@@ -209,7 +209,9 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         </dd>
         <dt>Approvals</dt>
         <dd>
-          {p.approvals}/{p.required_approvals ?? '–'}
+          {p.required_approvals != null
+            ? `${p.approvals}/${p.required_approvals}`
+            : p.approvals}
         </dd>
         {reviewers.length > 0 && (
           <>

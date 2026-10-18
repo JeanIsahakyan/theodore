@@ -375,6 +375,17 @@ const SkillRunView = observer(function SkillRunView({
             >
               Restart
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onPress={() =>
+                void store.sync.queue.transact([
+                  { op: 'archive', model: 'skill_run', id: r.id },
+                ])
+              }
+            >
+              Dismiss
+            </Button>
             {other && (
               <Button
                 size="sm"

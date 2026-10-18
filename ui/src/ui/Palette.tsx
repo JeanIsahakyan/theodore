@@ -199,7 +199,63 @@ export const SnoozeMenu = observer(function SnoozeMenu() {
 export const CommandMenu = observer(function CommandMenu() {
   const ui = useUi();
   const store = useRootStore();
+  const r = ui.route;
+  // Review shortcuts live in Review.tsx's key handler; replay the key there.
+  const press = (key: string) => () =>
+    setTimeout(
+      () => window.dispatchEvent(new KeyboardEvent('keydown', { key })),
+      0,
+    );
+  const prItems: Item[] =
+    r.name === 'review'
+      ? [
+          {
+            group: 'This PR',
+            label: 'Submit review…',
+            icon: <Check />,
+            run: () => ui.openModal('submit'),
+          },
+          {
+            group: 'This PR',
+            label: 'Start / stop tour',
+            icon: <Check />,
+            keys: 'T',
+            run: press('t'),
+          },
+          {
+            group: 'This PR',
+            label: 'Unified / split diff',
+            icon: <Check />,
+            keys: 'S',
+            run: press('s'),
+          },
+          {
+            group: 'This PR',
+            label: 'Ask the agent or run a skill',
+            icon: <Check />,
+            keys: '/',
+            run: press('/'),
+          },
+          {
+            group: 'This PR',
+            label: 'Open on GitHub',
+            icon: <Check />,
+            run: () => {
+              const url = store.models.prSummaries.get(r.pr)?.url;
+              if (url) window.open(url, '_blank');
+            },
+          },
+        ]
+      : [];
   const items: Item[] = [
+    ...prItems,
+    {
+      group: 'Go to',
+      label: 'New tab — paste a PR link',
+      icon: <Tray />,
+      keys: '⌘T',
+      run: () => ui.newTab(),
+    },
     {
       group: 'Go to',
       label: 'Inbox',
