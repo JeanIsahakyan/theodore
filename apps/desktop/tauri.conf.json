@@ -4,9 +4,9 @@
   "identifier": "app.theodore.desktop",
   "build": {
     "frontendDist": "../../ui/dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm -C ../../ui dev",
-    "beforeBuildCommand": "pnpm -C ../../ui build"
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm -C ../ui dev",
+    "beforeBuildCommand": "pnpm -C ../ui build"
   },
   "app": {
     "windows": [
