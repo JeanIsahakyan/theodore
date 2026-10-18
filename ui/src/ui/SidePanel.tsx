@@ -4,11 +4,13 @@ import {
   Check,
   CircleStop,
   ListCheck,
+  Plus,
   Sparkles,
 } from '@gravity-ui/icons';
 import {
   Button,
   Card,
+  Chip,
   EmptyState,
   InputGroup,
   ListBox,
@@ -17,12 +19,15 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Finding, PrId } from '../gen/contract';
+import type { Finding, PrId, SkillInfo, Thread } from '../gen/contract';
+import { api } from '../core/api';
 import {
   ask,
   cancelRun,
   findingToDraft,
+  findingToTask,
   ignoreFinding,
+  replyThread,
   resolveThread,
   runSkill,
 } from '../actions';
@@ -40,7 +45,8 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   const open = store.models.findings.where(
     (f) => f.pr === pr && f.state === 'open',
   ).length;
-  const unresolved = store.models.threads.where((t) => !t.resolved).length;
+  const threads = store.models.prDetails.get(pr)?.threads ?? [];
+  const unresolved = threads.filter((t) => !t.resolved).length;
   const tasksOpen = store.models.tasks.where(
     (t) => t.pr === pr && t.status !== 'done',
   ).length;
@@ -110,6 +116,11 @@ const FindingCard = observer(function FindingCard({
         {f.agents.map((a) => (
           <AgentTag key={a} id={a} />
         ))}
+        {f.agents.length > 1 && (
+          <Chip size="sm" variant="soft" color="accent">
+            {f.agents.length === 2 ? 'both found it' : 'all found it'}
+          </Chip>
+        )}
       </div>
       <div className="rich text-sm text-muted">{rich(f.body)}</div>
       {f.fix?.patch && (
@@ -132,6 +143,13 @@ const FindingCard = observer(function FindingCard({
           >
             Add to review
           </Btn>
+          <Btn
+            tone="secondary"
+            icon={<Plus />}
+            onPress={() => findingToTask(store, pr, f)}
+          >
+            Add to tasks
+          </Btn>
           <Btn tone="tertiary" onPress={() => ignoreFinding(store, f.id)}>
             Ignore
           </Btn>
@@ -141,9 +159,18 @@ const FindingCard = observer(function FindingCard({
   );
 });
 
+/** Skills matching what's typed after `/`, nothing once a space ends the name. */
+function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
+  if (!text.startsWith('/') || /\s/.test(text)) return null;
+  const q = text.slice(1).toLowerCase();
+  return skills.filter((s) => s.id.toLowerCase().includes(q));
+}
+
 const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const [text, setText] = useState('');
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [hi, setHi] = useState(0);
   const end = useRef<HTMLDivElement>(null);
   const messages = store.models.chatMessages
     .where((m) => m.pr === pr)
@@ -152,10 +179,28 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
   }, [messages.length]);
+  useEffect(() => {
+    void api
+      .listSkills(pr)
+      .then(setSkills)
+      .catch(() => setSkills([]));
+  }, [pr]);
+
+  const matches = matchSkills(skills, text);
+  useEffect(() => setHi(0), [text]);
+
+  const runMatch = (s: SkillInfo) => {
+    void runSkill(store, pr, s.id);
+    setText('');
+  };
 
   const send = () => {
     const t = text.trim();
     if (!t) return;
+    if (matches && matches[hi]) {
+      runMatch(matches[hi]!);
+      return;
+    }
     if (t.startsWith('/')) {
       void runSkill(store, pr, t.slice(1).split(' ')[0] ?? '');
     } else {
@@ -176,7 +221,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         {messages.length === 0 && runs.length === 0 && (
           <div className="m-auto flex flex-col items-center gap-2 text-center text-sm text-muted">
             <Sparkles className="size-5" />
-            Ask about this PR, or type /skill-name to run a skill.
+            Ask about this PR, or type / to run a skill.
           </div>
         )}
         {runs.map((r) => (
@@ -203,7 +248,28 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         ))}
         <div ref={end} />
       </div>
-      <div className="chat-input flex flex-col gap-2 border-t border-separator px-4 pb-3 pt-3">
+      <div className="chat-input relative flex flex-col gap-2 border-t border-separator px-4 pb-3 pt-3">
+        {matches && matches.length > 0 && (
+          <div className="skill-menu absolute inset-x-4 bottom-full z-10 mb-1.5 max-h-48 overflow-auto rounded-2xl border border-separator bg-surface p-1 shadow-overlay">
+            {matches.map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`flex w-full flex-col gap-0.5 rounded-xl px-3 py-1.5 text-left ${i === hi ? 'bg-default' : ''}`}
+                onMouseEnter={() => setHi(i)}
+                onClick={() => runMatch(s)}
+              >
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  /{s.id}
+                  <span className="text-xs text-muted">{s.source}</span>
+                </span>
+                <span className="truncate text-xs text-muted">
+                  {s.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <TextField
           fullWidth
           aria-label="Ask the agent"
@@ -217,8 +283,25 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
             <InputGroup.TextArea
               rows={2}
               className="w-full resize-none px-4 py-0"
-              placeholder="Ask about the code, or /skill-name to run a skill"
+              placeholder="Ask about the code, or / to run a skill"
               onKeyDown={(e) => {
+                if (matches && matches.length > 0) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setHi((n) => Math.min(matches.length - 1, n + 1));
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setHi((n) => Math.max(0, n - 1));
+                    return;
+                  }
+                  if (e.key === 'Tab') {
+                    e.preventDefault();
+                    setText(`/${matches[hi]!.id} `);
+                    return;
+                  }
+                }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   send();
@@ -254,6 +337,7 @@ const SkillRunView = observer(function SkillRunView({
   const store = useRootStore();
   const r = store.models.skillRuns.get(run);
   const log = store.ephemeral.runLog.get(run) ?? [];
+  const liveText = store.ephemeral.agentText.get(run);
   const findings = store.models.findings.where(
     (f) => f.pr === pr && f.skill === r?.skill,
   );
@@ -275,6 +359,11 @@ const SkillRunView = observer(function SkillRunView({
           </Button>
         )}
       </div>
+      {r.status === 'running' && liveText && (
+        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+          {rich(liveText)}
+        </div>
+      )}
       {r.status === 'running' && log.length > 0 && (
         <pre className="runlog max-h-32 overflow-auto rounded-xl bg-background-secondary px-3 py-2 font-mono text-xs text-muted">
           {log.join('\n')}
@@ -317,12 +406,11 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   );
 });
 
-// `pr` is unused until `Thread` carries one (see the final report) — kept in
-// the signature so this becomes a one-line fix once the contract has it.
-const Threads = observer(function Threads({ pr: _pr }: { pr: PrId }) {
+const Threads = observer(function Threads({ pr }: { pr: PrId }) {
   const store = useRootStore();
-  const open = store.models.threads.where((t) => !t.resolved);
-  const resolved = store.models.threads.where((t) => t.resolved);
+  const threads = store.models.prDetails.get(pr)?.threads ?? [];
+  const open = threads.filter((t) => !t.resolved);
+  const resolved = threads.filter((t) => t.resolved);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
       {open.length === 0 && resolved.length === 0 && (
@@ -331,26 +419,74 @@ const Threads = observer(function Threads({ pr: _pr }: { pr: PrId }) {
         </Typography.Paragraph>
       )}
       {[...open, ...resolved].map((t) => (
-        <Card key={t.id} className="flex flex-col gap-2 p-3">
-          <div className="flex items-center gap-2 text-xs">
-            <Avatar person={t.comments[0]!.author} size={18} />
-            <span className="font-medium">{t.comments[0]!.author.login}</span>
-            <span className="flex-1" />
-            {!t.resolved && (
-              <Btn
-                tone="tertiary"
-                icon={<Check />}
-                onPress={() => resolveThread(store, t.id, true)}
-              >
-                Resolve
-              </Btn>
-            )}
-          </div>
-          <p className="line-clamp-3 text-sm text-muted">
-            {t.comments.at(-1)!.body}
-          </p>
-        </Card>
+        <ThreadCard key={t.id} pr={pr} thread={t} />
       ))}
     </div>
   );
 });
+
+function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
+  const store = useRootStore();
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+  const send = () => {
+    const body = reply.trim();
+    if (!body) return;
+    setBusy(true);
+    void replyThread(store, pr, thread.id, body)
+      .then(() => setReply(''))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Card className="flex flex-col gap-2 p-3">
+      <div className="flex items-center gap-2 text-xs">
+        <Avatar person={thread.comments[0]!.author} size={18} />
+        <span className="font-medium">{thread.comments[0]!.author.login}</span>
+        <span className="flex-1" />
+        {thread.outdated && <span className="text-muted">outdated</span>}
+        {!thread.resolved && (
+          <Btn
+            tone="tertiary"
+            icon={<Check />}
+            onPress={() => void resolveThread(store, pr, thread.id, true)}
+          >
+            Resolve
+          </Btn>
+        )}
+      </div>
+      <p className="line-clamp-3 text-sm text-muted">
+        {thread.comments.at(-1)!.body}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <TextField
+          aria-label="Reply"
+          value={reply}
+          onChange={setReply}
+          className="flex-1"
+        >
+          <InputGroup fullWidth className="rounded-2xl">
+            <InputGroup.Input
+              placeholder="Reply…"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+            />
+          </InputGroup>
+        </TextField>
+        <Button
+          isIconOnly
+          size="sm"
+          aria-label="Send reply"
+          isPending={busy}
+          isDisabled={!reply.trim()}
+          onPress={send}
+        >
+          <ArrowUp className="size-4" />
+        </Button>
+      </div>
+    </Card>
+  );
+}

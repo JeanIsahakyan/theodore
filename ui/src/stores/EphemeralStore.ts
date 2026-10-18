@@ -5,10 +5,11 @@
 import {
   makeObservable,
   observable,
+  observableRef,
   observableShallow,
   runInAction,
 } from 'mobx';
-import type { Ephemeral, ToastLevel } from '../gen/contract';
+import type { Ephemeral, Person, ToastLevel } from '../gen/contract';
 
 const LOG_LIMIT = 500;
 
@@ -35,6 +36,8 @@ export class EphemeralStore {
     rateLimitedUntil: null,
     authOk: true,
   };
+  /** The authenticated host user, cached once fetched via `viewer`. */
+  viewer: Person | null = null;
 
   private nextToastId = 1;
 
@@ -44,6 +47,13 @@ export class EphemeralStore {
       runLog: observableShallow,
       toasts: observableShallow,
       hostStatus: observable,
+      viewer: observableRef,
+    });
+  }
+
+  setViewer(p: Person): void {
+    runInAction(() => {
+      this.viewer = p;
     });
   }
 

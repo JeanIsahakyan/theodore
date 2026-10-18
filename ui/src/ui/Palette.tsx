@@ -6,10 +6,22 @@ import {
   Modal,
   ScrollShadow,
 } from '@heroui/react';
-import { Check, Clock, Gear, ListCheck, Moon, Tray } from '@gravity-ui/icons';
+import {
+  ArrowRotateLeft,
+  ArrowUturnCcwLeft,
+  Check,
+  Clock,
+  CodePullRequest,
+  Gear,
+  Keyboard,
+  ListCheck,
+  Moon,
+  Tray,
+} from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { SnoozeUntil } from '../gen/contract';
-import { snoozePrs } from '../actions';
+import { refreshInbox, snoozePrs } from '../actions';
+import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { toggleTheme } from '../stores/UiStore';
 import { K } from './bits';
@@ -186,6 +198,7 @@ export const SnoozeMenu = observer(function SnoozeMenu() {
 
 export const CommandMenu = observer(function CommandMenu() {
   const ui = useUi();
+  const store = useRootStore();
   const items: Item[] = [
     {
       group: 'Go to',
@@ -194,6 +207,17 @@ export const CommandMenu = observer(function CommandMenu() {
       keys: 'G I',
       run: () => ui.go({ name: 'inbox' }),
     },
+    ...(FEATURES.currentUser
+      ? [
+          {
+            group: 'Go to',
+            label: 'My PRs',
+            icon: <CodePullRequest />,
+            keys: 'G M',
+            run: () => ui.go({ name: 'mine' }),
+          },
+        ]
+      : []),
     {
       group: 'Go to',
       label: 'Tasks',
@@ -209,6 +233,25 @@ export const CommandMenu = observer(function CommandMenu() {
       run: () => ui.go({ name: 'settings', page: 'agents' }),
     },
     {
+      group: 'Go to',
+      label: 'Settings → Account',
+      icon: <Gear />,
+      run: () => ui.go({ name: 'settings', page: 'account' }),
+    },
+    {
+      group: 'General',
+      label: 'Refresh inbox',
+      icon: <ArrowRotateLeft />,
+      run: () => void refreshInbox(store),
+    },
+    {
+      group: 'General',
+      label: 'Keyboard shortcuts',
+      icon: <Keyboard />,
+      keys: '?',
+      run: () => ui.openModal('help'),
+    },
+    {
       group: 'General',
       label: 'Light / dark theme',
       icon: <Moon />,
@@ -220,6 +263,13 @@ export const CommandMenu = observer(function CommandMenu() {
       icon: <Check />,
       keys: '[',
       run: () => ui.toggleSidebar(),
+    },
+    {
+      group: 'General',
+      label: 'Undo',
+      icon: <ArrowUturnCcwLeft />,
+      keys: '⌘Z',
+      run: () => void store.sync.undo.undo(),
     },
   ];
   return (
@@ -262,17 +312,20 @@ export function useGlobalKeys() {
         (e.target as HTMLElement).closest('input,textarea,select')
       ) {
         return;
-      } else if (inSequence() && /^[itsa]$/.test(e.key)) {
+      } else if (inSequence() && /^[itsam]$/.test(e.key)) {
         gAt = 0;
         if (e.key === 'i') ui.go({ name: 'inbox' });
         if (e.key === 't') ui.go({ name: 'tasks' });
         if (e.key === 's') ui.go({ name: 'settings', page: 'agents' });
+        if (e.key === 'm' && FEATURES.currentUser) ui.go({ name: 'mine' });
       } else if (e.key === 'g') {
         gAt = Date.now();
       } else if (e.key === '[') {
         ui.toggleSidebar();
       } else if (e.key === ']' && ui.route.name === 'review') {
         ui.toggleAside();
+      } else if (e.key === '?') {
+        ui.openModal('help');
       } else {
         return;
       }

@@ -12,9 +12,10 @@ export interface ReviewMode {
 
 const short = (p: string) => p.split('/').slice(-2).join('/');
 
-/** Groups loaded for this PR whose hunks are part of the open revision —
- *  see the final report on why `Group` needs its own `pr` field. */
-function groupsForRevision(
+/** Groups loaded for this PR whose hunks are part of the open revision, in
+ *  reading order — see the final report on why `Group` needs its own `pr`
+ *  field. Exported so Review can drive Tour mode over the same ordering. */
+export function groupsForRevision(
   store: ReturnType<typeof useRootStore>,
   rev: Revision,
 ) {

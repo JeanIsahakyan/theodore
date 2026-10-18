@@ -2,6 +2,7 @@ import { getTransport } from '../core/transport';
 import { resourceCache, type ResourceCache } from '../core/resource';
 import { SyncClient, modelAccessors, type ModelAccessors } from '../sync';
 import type { Ephemeral, Revision } from '../gen/contract';
+import { loadViewer } from '../actions';
 import { EphemeralStore } from './EphemeralStore';
 import { UiStore } from './UiStore';
 
@@ -24,6 +25,7 @@ export class RootStore {
       (e) => this.ephemeral.handle(e),
     );
     await this.sync.start();
+    void loadViewer(this);
   }
 
   dispose(): void {

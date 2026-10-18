@@ -1,16 +1,23 @@
-import { useEffect } from 'react';
-import { Disclosure, Header, ListBox } from '@heroui/react';
+import { useEffect, useState } from 'react';
+import { Button, Dropdown, Header, ListBox, TextField } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { Key } from 'react';
-import { ArrowUturnCcwLeft, Check, ListCheck } from '@gravity-ui/icons';
-import type { Task, TaskStatus } from '../gen/contract';
-import { setTaskStatus } from '../actions';
+import {
+  ArrowUturnCcwLeft,
+  Check,
+  ListCheck,
+  Sparkles,
+} from '@gravity-ui/icons';
+import type { AgentId, Task, TaskStatus } from '../gen/contract';
+import { decideTask, delegateTask } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { AgentTag, Btn, Empty, Hints, K, Spinner } from './bits';
 import { PatchView } from './Patch';
 import { ViewHeader } from './List';
 import { useViewKeys } from './keys';
 import { TaskIcon } from './StatusIcon';
+
+const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 
 const ORDER: TaskStatus[] = ['review', 'todo', 'progress', 'done'];
 const TITLE: Record<TaskStatus, string> = {
@@ -32,6 +39,26 @@ export const TaskRow = observer(function TaskRow({
   const store = useRootStore();
   const ui = useUi();
   const pr = store.models.prSummaries.get(t.pr);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const accept = () => {
+    setBusy(true);
+    void decideTask(store, t.id, true).finally(() => setBusy(false));
+  };
+  const sendReject = () => {
+    setBusy(true);
+    void decideTask(store, t.id, false, reason.trim() || null).finally(() => {
+      setBusy(false);
+      setRejecting(false);
+      setReason('');
+    });
+  };
+  const delegate = (agent: AgentId | null) => {
+    void delegateTask(store, t.id, agent);
+  };
+
   return (
     <div
       id={`T-${t.id}`}
@@ -58,46 +85,91 @@ export const TaskRow = observer(function TaskRow({
           </div>
         )}
         {t.fix?.patch && t.status === 'review' && (
-          <Disclosure
-            className="task-patch mt-1.5"
+          <div
+            className="task-patch mt-1.5 max-w-[720px]"
             onClick={(e) => e.stopPropagation()}
           >
-            <Disclosure.Heading>
-              <Disclosure.Trigger className="flex items-center gap-1.5 text-xs text-accent">
-                View fix
-                <Disclosure.Indicator />
-              </Disclosure.Trigger>
-            </Disclosure.Heading>
-            <Disclosure.Content>
-              <Disclosure.Body className="max-w-[720px] pb-1 pt-2">
-                <PatchView patch={t.fix.patch} />
-              </Disclosure.Body>
-            </Disclosure.Content>
-          </Disclosure>
+            <PatchView patch={t.fix.patch} status={t.fix.status} />
+          </div>
+        )}
+        {rejecting && (
+          <div
+            className="mt-1.5 flex items-center gap-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <TextField
+              aria-label="Why is this rejected"
+              value={reason}
+              onChange={setReason}
+              className="max-w-[320px] flex-1"
+              autoFocus
+            >
+              <input
+                className="w-full rounded-xl border border-separator bg-background px-2.5 py-1 text-xs outline-none"
+                placeholder="Why (goes back to the agent)…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') sendReject();
+                  if (e.key === 'Escape') setRejecting(false);
+                }}
+              />
+            </TextField>
+            <Btn tone="danger-soft" isPending={busy} onPress={sendReject}>
+              Send back
+            </Btn>
+            <Btn tone="ghost" onPress={() => setRejecting(false)}>
+              Cancel
+            </Btn>
+          </div>
         )}
       </div>
       <span
         className={`task-act flex gap-1 ${t.status === 'review' || sel ? '' : 'opacity-0 group-hover:opacity-100'}`}
         onClick={(e) => e.stopPropagation()}
       >
-        {t.status === 'review' && (
+        {t.status === 'review' && !rejecting && (
           <>
             <Btn
               tone="success"
               kbd="Y"
               icon={<Check />}
-              onPress={() => setTaskStatus(store, t.id, 'done')}
+              isPending={busy}
+              onPress={accept}
             >
               Accept
             </Btn>
             <Btn
               tone="tertiary"
               icon={<ArrowUturnCcwLeft />}
-              onPress={() => setTaskStatus(store, t.id, 'todo')}
+              onPress={() => setRejecting(true)}
             >
-              Send back
+              Reject
             </Btn>
           </>
+        )}
+        {t.status === 'todo' && (
+          <Dropdown>
+            <Button size="sm" variant="tertiary" className="gap-1.5">
+              <Sparkles className="size-3.5" />
+              Delegate
+            </Button>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu
+                aria-label="Delegate to"
+                onAction={(k) =>
+                  delegate(k === 'default' ? null : (k as AgentId))
+                }
+              >
+                <Dropdown.Item id="default" textValue="Default agent">
+                  Default agent
+                </Dropdown.Item>
+                {AGENTS.map((a) => (
+                  <Dropdown.Item key={a} id={a} textValue={a}>
+                    {a}
+                  </Dropdown.Item>
+                ))}
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         )}
       </span>
       <span className="flex min-w-[50px] items-center justify-end gap-1.5">
@@ -128,7 +200,7 @@ function useTaskKeys(order: string[]) {
       else if (e.key === 'k' || e.key === 'ArrowUp') move(-1);
       else if (e.key === 'Enter' && t) ui.go({ name: 'review', pr: t.pr });
       else if (e.key === 'y' && t?.status === 'review')
-        setTaskStatus(store, t.id, 'done');
+        void decideTask(store, t.id, true);
       else return false;
     },
     [order.join()],

@@ -9,20 +9,19 @@ export const FEATURES = {
   /** No host-write commands exist yet: take/decline/reassign/merge/auto-merge,
    *  "Ready for review", re-request review, update branch, conflict resolution. */
   hostWrites: false,
-  /** No command returns "who am I" — My PRs can't tell mine from anyone's. */
-  currentUser: false,
+  /** `viewer` returns the authenticated host user — My PRs filters on it. */
+  currentUser: true,
   /** No command adds/clones a project/repo; PRs arrive only via `open_pr`. */
   projects: false,
   /** No go-to-definition / find-references command (LSP was mock-only). */
   symbolPeek: false,
   /** No Linear integration command. */
   linear: false,
-  /** Threads live inside `pr_detail` (host truth); no reply/resolve command
-   *  sends them to the host yet. */
-  threadWrites: false,
-  /** No command returns `PrDetail` (body, commits, checks list, reviewers,
-   *  assignees, labels) — only the `PrSummary` rollup and the diff (`Revision`)
-   *  are reachable today. Checks/commits tabs and the reviewer strip are
-   *  parked behind this until such a command exists. */
-  prDetail: false,
+  /** `reply_thread` / `resolve_thread` send to the host; the comment lands
+   *  back in `pr_detail.threads` on the next sync frame. */
+  threadWrites: true,
+  /** `pr_detail` rows (body, commits, checks, reviewers, assignees, labels)
+   *  sync like any other model — Checks/Commits tabs, the reviewer strip and
+   *  the description disclosure in Review read them. */
+  prDetail: true,
 } as const;

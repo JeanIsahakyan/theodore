@@ -1,4 +1,5 @@
 import {
+  CodePullRequest,
   Gear,
   Keyboard,
   LayoutSideContentLeft,
@@ -10,6 +11,7 @@ import {
 import { Button, ListBox, Separator, Toolbar, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
+import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
 import { K } from './bits';
@@ -63,6 +65,11 @@ export const Sidebar = observer(function Sidebar() {
   }).length;
   const tasksOpen = store.models.tasks.where((t) => t.status !== 'done').length;
 
+  const viewer = store.ephemeral.viewer;
+  const mineOpen = prs.filter(
+    (p) => viewer && p.author.login === viewer.login && p.state !== 'merged',
+  ).length;
+
   const items: NavItem[] = [
     {
       key: routeKey({ name: 'inbox' }),
@@ -71,6 +78,17 @@ export const Sidebar = observer(function Sidebar() {
       n: inboxCount,
       route: { name: 'inbox' },
     },
+    ...(FEATURES.currentUser
+      ? [
+          {
+            key: routeKey({ name: 'mine' }),
+            icon: <CodePullRequest />,
+            label: 'My PRs',
+            n: mineOpen,
+            route: { name: 'mine' } as Route,
+          },
+        ]
+      : []),
     {
       key: routeKey({ name: 'tasks' }),
       icon: <ListCheck />,

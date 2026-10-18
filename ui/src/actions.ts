@@ -3,7 +3,7 @@
  * faked with a timer. Functions take the `RootStore` explicitly so they are
  * easy to call from components and from tests alike.
  */
-import { api } from './core/api';
+import { api, CommandFailure } from './core/api';
 import { FEATURES } from './features';
 import type {
   AgentId,
@@ -92,45 +92,44 @@ export function removeDraft(store: RootStore, id: string): void {
   void store.sync.queue.transact([{ op: 'delete', model: 'draft', id }]);
 }
 
-export function replyThread(
+/** Sends a reply to the host; the comment lands in `pr_detail.threads` once
+ *  sync catches up, so there's nothing to apply optimistically here. */
+export async function replyThread(
   store: RootStore,
-  thread: string,
   pr: PrId,
-  author: { kind: 'me' } | { kind: 'agent'; agent: AgentId },
+  thread: string,
   body: string,
-): void {
-  const t = store.models.threads.get(thread);
-  if (!t || !FEATURES.threadWrites) return;
-  void store.sync.queue.transact([
-    {
-      op: 'update',
-      model: 'thread',
-      id: thread,
-      data: {
-        comments: [
-          ...t.comments,
-          {
-            id: crypto.randomUUID(),
-            author,
-            body,
-            created_at: Date.now(),
-            edited: false,
-          },
-        ],
-      },
-    },
-  ]);
+): Promise<void> {
+  try {
+    await api.replyThread({ pr, thread, body });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure ? e.message : 'Could not send the reply.',
+    });
+  }
 }
 
-export function resolveThread(
+export async function resolveThread(
   store: RootStore,
+  pr: PrId,
   thread: string,
   resolved: boolean,
-): void {
-  if (!FEATURES.threadWrites) return;
-  void store.sync.queue.transact([
-    { op: 'update', model: 'thread', id: thread, data: { resolved } },
-  ]);
+): Promise<void> {
+  try {
+    await api.resolveThread({ pr, thread, resolved });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure
+          ? e.message
+          : 'Could not update the thread.',
+    });
+  }
 }
 
 // A brand-new thread (GitHub's "single comment", outside a review) has no
@@ -158,6 +157,33 @@ export function findingToDraft(
       model: 'finding',
       id: finding.id,
       data: { state: 'drafted' },
+    },
+  ]);
+}
+
+export function findingToTask(
+  store: RootStore,
+  pr: PrId,
+  finding: { id: string; anchor: Anchor; title: string; body: string },
+): void {
+  const id = crypto.randomUUID();
+  void store.sync.queue.transact([
+    {
+      op: 'create',
+      model: 'task',
+      id,
+      data: {
+        id,
+        pr,
+        title: finding.title,
+        body: finding.body,
+        anchor: finding.anchor,
+        thread: null,
+        status: 'todo',
+        assignee: { kind: 'human', id: 'me' },
+        fix: null,
+        created_at: Date.now(),
+      },
     },
   ]);
 }
@@ -217,6 +243,51 @@ export function assignTask(
   ]);
 }
 
+/** Hands a task to an agent CLI, which fixes it in the PR worktree (Edit
+ *  mode). The task's own status moves to `progress`/`review` via sync, not
+ *  locally — this only kicks the run off. Returns the run id, or `null` on
+ *  a graceful failure (toast, no crash). */
+export async function delegateTask(
+  store: RootStore,
+  task: string,
+  agent: AgentId | null = null,
+): Promise<string | null> {
+  try {
+    return await api.delegateTask({ task, agent });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure
+          ? e.message
+          : 'Could not delegate the task.',
+    });
+    return null;
+  }
+}
+
+/** Accept: own/local PR commits + pushes the fix, else drafts it as a
+ *  suggestion; resolves the linked thread. Reject: back to `todo`, `reason`
+ *  goes to the agent on the next attempt. */
+export async function decideTask(
+  store: RootStore,
+  task: string,
+  accept: boolean,
+  reason: string | null = null,
+): Promise<void> {
+  try {
+    await api.decideTask({ task, accept, reason });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure ? e.message : 'Could not decide the task.',
+    });
+  }
+}
+
 // ── inbox triage ─────────────────────────────────────────────────────────────
 
 export function markDone(store: RootStore, ids: PrId[]): void {
@@ -255,6 +326,35 @@ export function unsnooze(store: RootStore, pr: PrId): void {
   void store.sync.queue.transact([
     { op: 'update', model: 'inbox_state', id: pr, data: { snooze: null } },
   ]);
+}
+
+// ── inbox / viewer ───────────────────────────────────────────────────────────
+
+/** Asks the core to run the inbox searches again; rows land via `sync`.
+ *  A command the core doesn't have yet degrades to a toast, not a crash. */
+export async function refreshInbox(store: RootStore): Promise<void> {
+  try {
+    await api.refreshInbox();
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure
+          ? e.message
+          : 'Could not refresh the inbox.',
+    });
+  }
+}
+
+/** Fetches and caches the authenticated host user, for "My PRs" and "you" labels. */
+export async function loadViewer(store: RootStore): Promise<void> {
+  if (store.ephemeral.viewer) return;
+  try {
+    store.ephemeral.setViewer(await api.viewer());
+  } catch {
+    // No host connected yet (onboarding not finished) — My PRs stays empty.
+  }
 }
 
 // ── opening a PR ─────────────────────────────────────────────────────────────

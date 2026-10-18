@@ -3,6 +3,7 @@ import { Surface, Toast, toast } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { useRootStore, useUi } from '../stores/context';
 import { Inbox } from './List';
+import { Mine } from './Mine';
 import { Modals } from './Modals';
 import { useGlobalKeys } from './Palette';
 import { Review } from './Review';
@@ -48,12 +49,14 @@ export const App = observer(function App() {
           <div className="flex min-h-0 flex-1">
             {r.name === 'inbox' ? (
               <Inbox />
+            ) : r.name === 'mine' ? (
+              <Mine />
             ) : r.name === 'tasks' ? (
               <Tasks />
             ) : r.name === 'settings' ? (
               <SettingsPage page={r.page} />
             ) : (
-              <Review pr={r.pr} />
+              <Review key={r.pr} pr={r.pr} />
             )}
           </div>
         </Surface>
