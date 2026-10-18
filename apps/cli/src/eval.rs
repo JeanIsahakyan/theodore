@@ -42,6 +42,10 @@ pub struct EvalArgs {
     pub fixtures_dir: PathBuf,
     #[arg(long, value_enum, default_value = "claude")]
     pub agent: crate::group::AgentChoice,
+    /// Model override passed to the agent CLI (e.g. "sonnet", "haiku").
+    /// Omit to use the agent's own default.
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 /// Load every `*.json` fixture in `dir`, sorted by file name.
@@ -90,11 +94,24 @@ pub async fn run_eval(
     fixtures: &[(String, Fixture)],
     cwd: &Path,
 ) -> Vec<EvalRow> {
+    run_eval_with_model(agent, agent_id, None, fixtures, cwd).await
+}
+
+/// Same as `run_eval`, with an optional model override (`--model`)
+/// forwarded to `GroupingOptions::model` for every fixture.
+pub async fn run_eval_with_model(
+    agent: &dyn AgentPort,
+    agent_id: AgentId,
+    model: Option<String>,
+    fixtures: &[(String, Fixture)],
+    cwd: &Path,
+) -> Vec<EvalRow> {
     let mut rows = Vec::with_capacity(fixtures.len());
     for (name, fx) in fixtures {
         let pr: PrMeta = fx.pr.clone().into();
         let opts = GroupingOptions {
             agent: agent_id,
+            model: model.clone(),
             ..Default::default()
         };
         match group_revision(agent, &pr, &fx.revision, cwd, &opts).await {

@@ -38,7 +38,15 @@ async fn run_group(args: group::GroupArgs) -> anyhow::Result<()> {
         _ => group::load_input(&args)?,
     };
     let agent_id: AgentId = args.agent.into();
-    let report = group::run(deps.agent.as_ref(), agent_id, &pr, &rev, &cwd).await?;
+    let report = group::run_with_model(
+        deps.agent.as_ref(),
+        agent_id,
+        args.model.clone(),
+        &pr,
+        &rev,
+        &cwd,
+    )
+    .await?;
     if let Some(path) = &args.save_fixture {
         let meta = group::FixtureMeta {
             title: pr.title.clone(),
@@ -56,7 +64,14 @@ async fn run_eval(args: eval::EvalArgs) -> anyhow::Result<()> {
     let agent_id: AgentId = args.agent.into();
     let deps = deps::real_deps();
     let cwd = std::env::current_dir()?;
-    let rows = eval::run_eval(deps.agent.as_ref(), agent_id, &fixtures, &cwd).await;
+    let rows = eval::run_eval_with_model(
+        deps.agent.as_ref(),
+        agent_id,
+        args.model.clone(),
+        &fixtures,
+        &cwd,
+    )
+    .await;
     let summary = eval::print_table(&rows);
     if !summary.meets_targets() {
         anyhow::bail!(

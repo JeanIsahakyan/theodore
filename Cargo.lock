@@ -4921,6 +4921,7 @@ name = "theodore-grouping"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "futures",
  "serde",
  "serde_json",
  "theodore-domain",

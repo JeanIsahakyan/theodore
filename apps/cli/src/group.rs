@@ -38,6 +38,10 @@ pub struct GroupArgs {
     pub diff_file: Option<PathBuf>,
     #[arg(long, value_enum, default_value = "claude")]
     pub agent: AgentChoice,
+    /// Model override passed to the agent CLI (e.g. "sonnet", "haiku").
+    /// Omit to use the agent's own default.
+    #[arg(long)]
+    pub model: Option<String>,
     #[arg(long)]
     pub json: bool,
     /// Save the resulting grouping as JSON under this directory.
@@ -129,8 +133,22 @@ pub async fn run(
     rev: &Revision,
     cwd: &Path,
 ) -> Result<GroupingReport> {
+    run_with_model(agent, agent_id, None, pr, rev, cwd).await
+}
+
+/// Same as `run`, with an optional model override (`--model`) forwarded to
+/// `GroupingOptions::model`.
+pub async fn run_with_model(
+    agent: &dyn AgentPort,
+    agent_id: AgentId,
+    model: Option<String>,
+    pr: &PrMeta,
+    rev: &Revision,
+    cwd: &Path,
+) -> Result<GroupingReport> {
     let opts = GroupingOptions {
         agent: agent_id,
+        model,
         ..Default::default()
     };
     group_revision(agent, pr, rev, cwd, &opts)

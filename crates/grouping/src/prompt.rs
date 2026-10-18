@@ -49,13 +49,43 @@ pub struct PromptChunk {
     pub hunk_ids: Vec<HunkId>,
 }
 
-fn system_prompt() -> String {
-    "You are reviewing a pull request. Split its diff into small, focused \
-groups that each explain one intent, so a reviewer can read the PR as a \
-sequence of logical steps instead of an alphabetical file list.\n\n\
+/// `part_of_larger` is the chunk's own top-level directory when a large PR
+/// was split by directory (plan §5.2); `None` for a whole-PR single prompt.
+fn system_prompt(
+    target: (usize, usize),
+    total_hunks: usize,
+    part_of_larger: Option<&str>,
+) -> String {
+    let (lo, hi) = target;
+    let mut out = String::new();
+    match part_of_larger {
+        None => {
+            let _ = write!(
+                out,
+                "You are reviewing a pull request with {total_hunks} changed hunk(s). \
+Split its diff into about {lo}-{hi} groups, each one logical step a reviewer \
+can approve as a unit."
+            );
+        }
+        Some(dir) => {
+            let _ = write!(
+                out,
+                "You are reviewing one part (`{dir}`) of a larger pull request, \
+split by directory for size; this part has {total_hunks} changed hunk(s). \
+Aim for about {lo}-{hi} groups in THIS part — a later pass orders and merges \
+every part's groups together, so do not worry about the rest of the PR."
+            );
+        }
+    }
+    out.push_str(
+        "\n\nA logical step is one coherent change a reviewer approves as a unit, \
+not one file or one kind of file: config, env, CI and docs edits that exist \
+to support a single change belong inside that change's group, not split out \
+on their own just because they are a different file type. Prefer a few \
+well-explained groups over many tiny ones.\n\n\
 Order groups in reading order: foundations first (schema, models, types), \
 then the code that uses them, then tests, then anything mechanical or \
-generated last. Prefer several small groups over one big one.\n\n\
+generated last.\n\n\
 Respond with JSON only — no prose, no markdown fence — matching exactly:\n\
 {\n  \"groups\": [\n    {\n      \"id\": \"kebab-case-slug, unique\",\n      \
 \"title\": \"short title\",\n      \"why\": \"1-3 sentences: what changed and why\",\n      \
@@ -65,13 +95,18 @@ Respond with JSON only — no prose, no markdown fence — matching exactly:\n\
 Rules: every hunk id listed below must appear in exactly one group's \"hunks\"; \
 do not invent hunk ids; \"outliers\" must be a subset of that same group's \"hunks\"; \
 use \"skim\" for mechanical changes (pure renames, formatting, import-only) and \
-\"hidden\" only for lockfiles/generated/vendored content you were not shown in full."
-        .to_string()
+\"hidden\" only for lockfiles/generated/vendored content you were not shown in full.",
+    );
+    out
 }
 
-fn excerpt(hunk: &Hunk, budget: &PromptBudget) -> String {
+/// `lines`/`max_chars` are resolved by the caller from `PromptBudget`,
+/// shrunk for hunks the pre-pass already flagged as a skim candidate — the
+/// model doesn't need a full excerpt of a rename or an import block to
+/// confirm the hint (goal: trim the prompt for speed/cost on large PRs).
+fn excerpt(hunk: &Hunk, lines: usize, max_chars: usize) -> String {
     let n = hunk.lines.len();
-    let show_all = n <= budget.excerpt_lines * 2;
+    let show_all = n <= lines * 2;
     let mut out = String::new();
     let push_line = |out: &mut String, idx: usize| {
         let l = &hunk.lines[idx];
@@ -87,19 +122,19 @@ fn excerpt(hunk: &Hunk, budget: &PromptBudget) -> String {
             push_line(&mut out, i);
         }
     } else {
-        for i in 0..budget.excerpt_lines {
+        for i in 0..lines {
             push_line(&mut out, i);
         }
         out.push_str("…\n");
-        for i in (n - budget.excerpt_lines)..n {
+        for i in (n - lines)..n {
             push_line(&mut out, i);
         }
     }
-    if out.len() > budget.excerpt_max_chars {
+    if out.len() > max_chars {
         // `String::truncate` panics unless the cut point lies on a char
         // boundary — back off until it does (a multi-byte char, including
         // the "…" this function itself inserts above, can straddle the cap).
-        let mut cut = budget.excerpt_max_chars;
+        let mut cut = max_chars;
         while cut > 0 && !out.is_char_boundary(cut) {
             cut -= 1;
         }
@@ -146,13 +181,22 @@ fn write_files_and_hunks(
     for file in files {
         let _ = writeln!(out, "\n## {} ({:?})", file.path, file.status);
         for hunk in &file.hunks {
-            let hint = prepass
-                .skim
-                .get(&hunk.id)
+            let skim_hint = prepass.skim.get(&hunk.id);
+            let hint = skim_hint
                 .map(|c| format!(" [skim candidate: {}]", c.label()))
                 .unwrap_or_default();
             let _ = writeln!(out, "\n### hunk {} — {}{hint}", hunk.id, hunk.header);
-            out.push_str(&excerpt(hunk, budget));
+            let (lines, max_chars) = if skim_hint.is_some() {
+                // already flagged mechanical by the pre-pass: a short peek
+                // is enough for the model to confirm it, not a full excerpt.
+                (
+                    (budget.excerpt_lines / 2).max(1),
+                    budget.excerpt_max_chars / 2,
+                )
+            } else {
+                (budget.excerpt_lines, budget.excerpt_max_chars)
+            };
+            out.push_str(&excerpt(hunk, lines, max_chars));
         }
     }
 }
@@ -171,12 +215,13 @@ fn user_prompt(
 }
 
 fn top_level_dir(path: &str) -> String {
-    path.split('/').next().unwrap_or(path).to_string()
+    crate::area::top_level_dir(path).to_string()
 }
 
 /// Build one prompt per chunk. A single chunk covers the whole PR unless the
 /// estimated prompt size is over budget, in which case files are split by
-/// top-level directory (plan §5.2).
+/// top-level directory (plan §5.2). Each prompt tells the model the
+/// PR-size-scaled group count it should aim for (`target::target_group_count`).
 pub fn build_prompts(
     pr: &PrMeta,
     rev: &Revision,
@@ -188,6 +233,8 @@ pub fn build_prompts(
         .iter()
         .filter(|f| !prepass.is_hidden(&f.path))
         .collect();
+    let total_hunks: usize = visible_files.iter().map(|f| f.hunks.len()).sum();
+    let whole_target = crate::target::target_group_count(total_hunks);
 
     let whole = user_prompt(pr, &visible_files, prepass, budget);
     if whole.len() <= budget.max_chars || visible_files.len() <= 1 {
@@ -198,7 +245,7 @@ pub fn build_prompts(
         return vec![PromptChunk {
             label: String::new(),
             prompt: PromptPart {
-                system: system_prompt(),
+                system: system_prompt(whole_target, total_hunks, None),
                 user: whole,
             },
             hunk_ids,
@@ -213,15 +260,18 @@ pub fn build_prompts(
     by_dir
         .into_iter()
         .map(|(dir, files)| {
+            let chunk_hunks: usize = files.iter().map(|f| f.hunks.len()).sum();
+            let chunk_target =
+                crate::target::scaled_for_chunk(whole_target, chunk_hunks, total_hunks);
             let user = user_prompt(pr, &files, prepass, budget);
             let hunk_ids = files
                 .iter()
                 .flat_map(|f| f.hunks.iter().map(|h| h.id.clone()))
                 .collect();
             PromptChunk {
-                label: dir,
+                label: dir.clone(),
                 prompt: PromptPart {
-                    system: system_prompt(),
+                    system: system_prompt(chunk_target, chunk_hunks, Some(&dir)),
                     user,
                 },
                 hunk_ids,
@@ -253,8 +303,9 @@ pub fn repair_prompt(known_ids: &[HunkId], previous_text: &str, errors: &[String
         user,
         "\nReturn corrected JSON only, same schema as before, fixing exactly these problems."
     );
+    let target = crate::target::target_group_count(known_ids.len());
     PromptPart {
-        system: system_prompt(),
+        system: system_prompt(target, known_ids.len(), None),
         user,
     }
 }
@@ -394,7 +445,7 @@ mod tests {
     fn excerpt_caps_long_hunks() {
         let h = mk_hunk("h1", 100);
         let budget = PromptBudget::default();
-        let e = excerpt(&h, &budget);
+        let e = excerpt(&h, budget.excerpt_lines, budget.excerpt_max_chars);
         assert!(e.len() <= budget.excerpt_max_chars + 1);
         assert!(e.contains('…'));
     }
@@ -433,7 +484,7 @@ mod tests {
             lines,
         };
         let budget = PromptBudget::default();
-        let e = excerpt(&h, &budget); // must not panic
+        let e = excerpt(&h, budget.excerpt_lines, budget.excerpt_max_chars); // must not panic
         assert!(e.ends_with('…'));
         assert!(e.is_char_boundary(e.len()));
     }
@@ -454,5 +505,46 @@ mod tests {
         assert_eq!(chunks.len(), 1);
         assert!(!chunks[0].prompt.user.contains("hunk h1"));
         assert!(chunks[0].prompt.user.contains("pnpm-lock.yaml"));
+    }
+
+    /// Speed/cost goal: a hunk the pre-pass already flagged as mechanical
+    /// (pure rename / whitespace / import-only) needs only a short peek, not
+    /// the full excerpt — trims the prompt on PRs with many such hunks.
+    #[test]
+    fn skim_candidate_hunks_get_a_shorter_excerpt() {
+        let budget = PromptBudget::default();
+        let long = mk_hunk("h1", budget.excerpt_lines * 4);
+        let normal = excerpt(&long, budget.excerpt_lines, budget.excerpt_max_chars);
+        let shrunk = excerpt(
+            &long,
+            (budget.excerpt_lines / 2).max(1),
+            budget.excerpt_max_chars / 2,
+        );
+        assert!(
+            shrunk.len() < normal.len(),
+            "skim excerpt ({}) should be shorter than the full one ({})",
+            shrunk.len(),
+            normal.len()
+        );
+    }
+
+    /// Prompt-size goal: the system prompt tells the model a PR-size-scaled
+    /// target group count and spells out what "one logical step" means
+    /// (config/env/CI/docs belong with the change they support).
+    #[test]
+    fn system_prompt_states_the_scaled_target_and_logical_step_rule() {
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![mk_file("src/a.ts", vec![mk_hunk("h1", 3)])],
+        };
+        let prepass = PrePass::default();
+        let chunks = build_prompts(&PrMeta::default(), &rev, &prepass, &PromptBudget::default());
+        assert_eq!(chunks.len(), 1);
+        let system = &chunks[0].prompt.system;
+        let (lo, hi) = crate::target::target_group_count(1);
+        assert!(system.contains(&format!("{lo}-{hi} groups")));
+        assert!(system.contains("logical step"));
+        assert!(system.contains("config, env, CI and docs"));
     }
 }
