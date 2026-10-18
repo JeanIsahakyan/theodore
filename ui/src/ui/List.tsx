@@ -45,7 +45,7 @@ const SECTIONS: { id: string; title: string; reasons: InboxReason[] }[] = [
   { id: 'authored', title: 'Authored by you', reasons: ['authored'] },
 ];
 
-function ago(ms: number): string {
+export function ago(ms: number): string {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 60) return `${Math.round(s)}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;

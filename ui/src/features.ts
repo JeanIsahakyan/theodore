@@ -20,9 +20,8 @@ export const FEATURES = {
   /** Threads live inside `pr_detail` (host truth); no reply/resolve command
    *  sends them to the host yet. */
   threadWrites: false,
-  /** No command returns `PrDetail` (body, commits, checks list, reviewers,
-   *  assignees, labels) — only the `PrSummary` rollup and the diff (`Revision`)
-   *  are reachable today. Checks/commits tabs and the reviewer strip are
-   *  parked behind this until such a command exists. */
-  prDetail: false,
+  /** `pr_detail` rows (body, commits, checks, reviewers, assignees, labels)
+   *  sync like any other model — Checks/Commits tabs, the reviewer strip and
+   *  the description disclosure in Review read them. */
+  prDetail: true,
 } as const;
