@@ -15,6 +15,13 @@ configure({ enforceActions: 'observed' });
 initialTheme();
 loadShiki();
 
+// Our own ContextMenu replaces the webview's native one everywhere; in dev,
+// ⌥+right-click is left alone so it still opens the devtools inspector.
+window.addEventListener('contextmenu', (e) => {
+  if (import.meta.env.DEV && e.altKey) return;
+  e.preventDefault();
+});
+
 const store = new RootStore();
 void store.start();
 

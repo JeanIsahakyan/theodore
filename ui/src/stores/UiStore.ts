@@ -11,8 +11,15 @@ import {
   runInAction,
 } from 'mobx';
 import type { PrId } from '../gen/contract';
+import type { ContextMenuItem } from '../ui/ContextMenu';
 
 export type SettingsPage = 'account' | 'agents' | 'updates' | 'about';
+
+export interface ContextMenuState {
+  x: number;
+  y: number;
+  items: ContextMenuItem[];
+}
 
 export type Route =
   | { name: 'inbox' }
@@ -45,6 +52,8 @@ export class UiStore {
     localStorage.getItem(LS_DIFF_VIEW) === 'split' ? 'split' : 'unified';
   modal: ModalName | null = null;
   snoozeTargets: PrId[] = [];
+  /** The one custom context menu, open at a pointer point — see `ContextMenu.tsx`. */
+  contextMenu: ContextMenuState | null = null;
 
   constructor() {
     makeObservable(this, {
@@ -60,6 +69,7 @@ export class UiStore {
       diffView: observable,
       modal: observableRef,
       snoozeTargets: observableShallow,
+      contextMenu: observableRef,
     });
   }
 
@@ -175,6 +185,18 @@ export class UiStore {
   closeModal(): void {
     runInAction(() => {
       this.modal = null;
+    });
+  }
+
+  openContextMenu(x: number, y: number, items: ContextMenuItem[]): void {
+    runInAction(() => {
+      this.contextMenu = { x, y, items };
+    });
+  }
+
+  closeContextMenu(): void {
+    runInAction(() => {
+      this.contextMenu = null;
     });
   }
 }

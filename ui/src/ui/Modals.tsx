@@ -63,7 +63,9 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
             <Btn
               tone="primary"
               onPress={() => {
-                void submitReview(store, pr, event, body.trim());
+                void submitReview(store, pr, event, body.trim()).catch(() => {
+                  // toasted by api.ts
+                });
                 ui.closeModal();
                 ui.goBack();
               }}

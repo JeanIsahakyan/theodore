@@ -103,7 +103,8 @@ export const Sidebar = observer(function Sidebar() {
     <aside className="sidebar flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
       <Toolbar
         aria-label="Workspace"
-        className="flex w-full items-center gap-2.5 px-5 pb-3 pt-4"
+        data-tauri-drag-region
+        className="flex min-h-[38px] w-full items-center gap-2.5 pb-3 pe-5 ps-20 pt-4"
       >
         <span className="grid size-6 place-items-center rounded-xl bg-foreground text-xs font-semibold text-background">
           T
