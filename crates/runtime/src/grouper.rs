@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_app::{Grouper, GrouperError};
-use theodore_domain::{Grouping, PrDetail, Revision};
+use theodore_domain::{AgentId, Grouping, PrDetail, Revision};
 use theodore_grouping::{GroupingOptions, PrMeta};
 use theodore_ports::AgentPort;
 
@@ -47,8 +47,11 @@ impl Grouper for GroupingGrouper {
         rev: &Revision,
         pr: &PrDetail,
         worktree: &Path,
+        agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
-        theodore_grouping::group_revision(&*self.agents, &meta(pr), rev, worktree, &self.opts)
+        let mut opts = self.opts.clone();
+        opts.agent = agent;
+        theodore_grouping::group_revision(&*self.agents, &meta(pr), rev, worktree, &opts)
             .await
             .map(|r| r.grouping)
             .map_err(err)
@@ -60,7 +63,10 @@ impl Grouper for GroupingGrouper {
         rev: &Revision,
         pr: &PrDetail,
         worktree: &Path,
+        agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
+        let mut opts = self.opts.clone();
+        opts.agent = agent;
         // The previous grouping's hunk ids stand in for the old revision:
         // unchanged hunks keep their ids, so anything not in `prev` is new.
         let known: std::collections::BTreeSet<_> = prev
@@ -86,7 +92,7 @@ impl Grouper for GroupingGrouper {
             rev,
             &changes,
             worktree,
-            &self.opts,
+            &opts,
         )
         .await
         .map(|r| r.grouping)

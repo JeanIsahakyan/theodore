@@ -2,12 +2,22 @@
 
 use std::sync::{Arc, Mutex};
 
+use theodore_contract::TokenSource as ContractTokenSource;
 use theodore_domain::RepoRef;
 use theodore_ports::{CredentialSource, Secrets};
 
+/// A cached `gh`/env fallback lookup, remembering which of the two (if any)
+/// answered, so `HostToken::source` can report it (plan §6.8).
+#[derive(Clone)]
+enum Fallback {
+    Gh(String),
+    Env(String),
+    None,
+}
+
 pub struct HostToken {
     secrets: Arc<dyn Secrets>,
-    fallback: Mutex<Option<Option<String>>>,
+    fallback: Mutex<Option<Fallback>>,
 }
 
 impl HostToken {
@@ -18,14 +28,22 @@ impl HostToken {
         }
     }
 
-    fn fallback(&self) -> Option<String> {
+    fn fallback(&self) -> Fallback {
         let mut cached = self.fallback.lock().unwrap_or_else(|p| p.into_inner());
-        cached.get_or_insert_with(gh_or_env).clone()
+        cached.get_or_insert_with(compute_fallback).clone()
+    }
+
+    /// Drops the cached `gh`/env lookup, so the next read re-checks the
+    /// environment. Call this after the keychain token changes (set or
+    /// removed) — a stale cache would otherwise keep answering with
+    /// whatever the fallback was before the keychain token existed.
+    pub fn invalidate_fallback(&self) {
+        *self.fallback.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 }
 
-fn gh_or_env() -> Option<String> {
-    let gh = std::process::Command::new("gh")
+fn gh_token() -> Option<String> {
+    std::process::Command::new("gh")
         .args(["auth", "token"])
         .stderr(std::process::Stdio::null())
         .output()
@@ -33,15 +51,31 @@ fn gh_or_env() -> Option<String> {
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    gh.or_else(|| std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()))
+        .filter(|s| !s.is_empty())
+}
+
+fn env_token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty())
+}
+
+fn compute_fallback() -> Fallback {
+    if let Some(t) = gh_token() {
+        return Fallback::Gh(t);
+    }
+    if let Some(t) = env_token() {
+        return Fallback::Env(t);
+    }
+    Fallback::None
 }
 
 impl theodore_host_http::TokenSource for HostToken {
     fn token(&self) -> Option<String> {
         match self.secrets.get(theodore_secrets::GITHUB_TOKEN) {
             Ok(Some(t)) => Some(t),
-            _ => self.fallback(),
+            _ => match self.fallback() {
+                Fallback::Gh(t) | Fallback::Env(t) => Some(t),
+                Fallback::None => None,
+            },
         }
     }
 }
@@ -49,5 +83,25 @@ impl theodore_host_http::TokenSource for HostToken {
 impl CredentialSource for HostToken {
     fn token_for(&self, _repo: &RepoRef) -> Option<String> {
         theodore_host_http::TokenSource::token(self)
+    }
+}
+
+impl theodore_app::TokenStatus for HostToken {
+    fn source(&self) -> ContractTokenSource {
+        if matches!(
+            self.secrets.get(theodore_secrets::GITHUB_TOKEN),
+            Ok(Some(_))
+        ) {
+            return ContractTokenSource::Keychain;
+        }
+        match self.fallback() {
+            Fallback::Gh(_) => ContractTokenSource::Gh,
+            Fallback::Env(_) => ContractTokenSource::Env,
+            Fallback::None => ContractTokenSource::None,
+        }
+    }
+
+    fn invalidate(&self) {
+        self.invalidate_fallback();
     }
 }
