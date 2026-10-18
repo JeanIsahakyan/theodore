@@ -29,8 +29,9 @@ import type {
   PrId,
   Revision,
 } from '../gen/contract';
-import { setFileViewed } from '../actions';
-import { useRootStore } from '../stores/context';
+import { ask, markGroupRead, setFileViewed } from '../actions';
+import { useRootStore, useUi } from '../stores/context';
+import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
 
 export interface ReviewMode {
@@ -84,6 +85,7 @@ export const GroupsPane = observer(function GroupsPane({
   setMode,
   since,
   sinceOnly,
+  onTourFrom,
 }: {
   pr: PrId;
   rev: Revision;
@@ -91,8 +93,11 @@ export const GroupsPane = observer(function GroupsPane({
   setMode: (m: ReviewMode) => void;
   since: Map<HunkId, SinceKind> | null;
   sinceOnly: boolean;
+  /** Starts the tour at this group — wired from `Review.tsx`'s own tour state. */
+  onTourFrom?: (groupId: string) => void;
 }) {
   const store = useRootStore();
+  const ui = useUi();
   const summary = store.models.prSummaries.get(pr);
   const local = summary?.pr.repo.host === 'local';
   const groups = groupsForRevision(store, rev);
@@ -207,7 +212,38 @@ export const GroupsPane = observer(function GroupsPane({
                     />
                   )}
                   <Accordion.Heading>
-                    <Accordion.Trigger className="grp-h flex w-full items-start gap-3 rounded-2xl px-2 py-2 text-left hover:bg-default/50">
+                    <Accordion.Trigger
+                      className="grp-h flex w-full items-start gap-3 rounded-2xl px-2 py-2 text-left hover:bg-default/50"
+                      onContextMenu={contextMenuHandler(ui, (): ContextMenuItem[] => [
+                        {
+                          id: 'mark-read',
+                          label: 'Mark read',
+                          isDisabled: read === hs.length,
+                          disabledReason: 'Already read',
+                          onAction: () => markGroupRead(store, pr, hs),
+                        },
+                        {
+                          id: 'tour-from-here',
+                          label: 'Tour from here',
+                          isDisabled: !onTourFrom,
+                          onAction: () => onTourFrom?.(g.id),
+                        },
+                        {
+                          id: 'ask-agent',
+                          label: 'Ask agent',
+                          onAction: () =>
+                            void ask(store, {
+                              pr,
+                              question: `about the "${g.title}" group`,
+                              about: null,
+                              group: g.id,
+                              agent: null,
+                            }).catch(() => {
+                              // toasted by api.ts
+                            }),
+                        },
+                      ])}
+                    >
                       <span
                         className={`relative z-[1] grid size-[30px] shrink-0 place-items-center rounded-full border text-xs font-semibold tabular-nums ${
                           state === 'done'

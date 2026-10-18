@@ -37,10 +37,11 @@ import type {
   Severity,
   Side,
 } from '../gen/contract';
-import { ask, markGroupRead, setFileViewed } from '../actions';
+import { ask, markGroupRead, markHunkRead, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn } from './bits';
 import { Composer, DraftView, plural, ThreadView } from './Comments';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import {
   gapsAbove,
   gapTail,
@@ -636,6 +637,39 @@ function FileBlock({
   const local =
     store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const [shown, setShown] = useState(false);
+  const generatedFlag = file.flags.find((f) => f.kind === 'generated');
+  const summaryForMenu = store.models.prSummaries.get(pr);
+  // Hooks must run unconditionally, so this is built before the early
+  // return below (the file header — and its menu — still renders either way).
+  const fileMenu = useContextMenu((): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [
+      {
+        id: 'mark-viewed',
+        label: isViewed ? 'Mark not viewed' : 'Mark viewed',
+        onAction: () => setFileViewed(store, pr, file.path, !isViewed),
+      },
+      {
+        id: 'copy-path',
+        label: 'Copy path',
+        onAction: () => void navigator.clipboard.writeText(file.path),
+      },
+    ];
+    if (summaryForMenu) {
+      items.push({
+        id: 'open-github',
+        label: 'Open on GitHub',
+        onAction: () => window.open(`${summaryForMenu.url}/files`, '_blank'),
+      });
+    }
+    if (generatedFlag || file.status === 'deleted') {
+      items.push({
+        id: 'collapse',
+        label: shown ? 'Collapse' : 'Expand',
+        onAction: () => setShown((v) => !v),
+      });
+    }
+    return items;
+  });
 
   const flag = file.flags.find(
     (f) => f.kind === 'oversize' || f.kind === 'binary',
@@ -652,7 +686,6 @@ function FileBlock({
     );
   }
 
-  const generatedFlag = file.flags.find((f) => f.kind === 'generated');
   const collapsedFile = (!!generatedFlag || file.status === 'deleted') && !shown;
   const others =
     groupHunkIds && mode.mode === 'groups'
@@ -665,7 +698,10 @@ function FileBlock({
 
   return (
     <Card className="file mb-4 gap-0 overflow-hidden p-0">
-      <header className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm">
+      <header
+        className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm"
+        onContextMenu={fileMenu}
+      >
         <FileCode className="size-4 shrink-0 text-muted" />
         <span className="min-w-0 truncate font-mono text-[13px]">
           {file.old_path && (
@@ -844,6 +880,35 @@ function HunkView({
     0;
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const focused = focusHunk === h.id;
+  const hunkMenu = useContextMenu((): ContextMenuItem[] => [
+    {
+      id: 'mark-read',
+      label: 'Mark read',
+      isDisabled: read,
+      disabledReason: 'Already read',
+      onAction: () => markHunkRead(store, pr, h.id),
+    },
+    {
+      id: 'ask-agent',
+      label: 'Ask agent',
+      onAction: () =>
+        void ask(store, {
+          pr,
+          question: `about the hunk at ${path}:${h.new_start}`,
+          about: null,
+          group: null,
+          agent: null,
+        }).catch(() => {
+          // toasted by api.ts
+        }),
+    },
+    {
+      id: 'copy-hunk',
+      label: 'Copy hunk',
+      onAction: () =>
+        void navigator.clipboard.writeText(h.lines.map((l) => l.text).join('\n')),
+    },
+  ]);
   return (
     <div
       className={`hunk border-t border-separator first:border-t-0 ${focused ? 'focus' : ''} ${read ? 'read' : ''}`}
@@ -851,6 +916,7 @@ function HunkView({
     >
       <div
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
+        onContextMenu={hunkMenu}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
         {h.header && <span className="truncate text-muted/70">{h.header}</span>}
@@ -1028,6 +1094,50 @@ const Line = observer(function Line({
     composing && anchor ? lineAnchor(rev, path, l, composer!.startLine) : null;
   const lineNo = l.new_no ?? l.old_no ?? 0;
   const peekHere = !!peek && peek.path === path && peek.line === lineNo;
+  const summary = store.models.prSummaries.get(pr);
+  const lineMenu = useContextMenu((): ContextMenuItem[] => {
+    if (!anchor) return [];
+    const items: ContextMenuItem[] = [
+      {
+        id: 'comment',
+        label: 'Comment',
+        onAction: () => setComposer({ path, side: anchor.side, line: anchor.line }),
+      },
+      {
+        id: 'comment-range',
+        label: 'Comment on range',
+        onAction: () => setRangeStart({ path, side: anchor.side, line: anchor.line }),
+      },
+      {
+        id: 'ask-agent',
+        label: 'Ask agent',
+        onAction: () =>
+          void ask(store, {
+            pr,
+            question: `about ${path}:${lineNo}`,
+            about: anchor,
+            group: null,
+            agent: null,
+          }).catch(() => {
+            // toasted by api.ts
+          }),
+      },
+      {
+        id: 'copy-line',
+        label: 'Copy line',
+        onAction: () => void navigator.clipboard.writeText(l.text),
+      },
+    ];
+    if (summary) {
+      items.push({
+        id: 'copy-permalink',
+        label: 'Copy permalink',
+        onAction: () =>
+          void navigator.clipboard.writeText(`${summary.url}#diff-${path}L${lineNo}`),
+      });
+    }
+    return items;
+  });
   return (
     <>
       <div
@@ -1039,6 +1149,7 @@ const Line = observer(function Line({
           e.preventDefault();
           setPeek({ name, path, line: lineNo });
         }}
+        onContextMenu={lineMenu}
       >
         <span className="no">{l.old_no ?? ''}</span>
         <span className="no">{l.new_no ?? ''}</span>

@@ -518,6 +518,10 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             setMode={setMode}
             since={since}
             sinceOnly={sinceOnly && sinceCount > 0}
+            onTourFrom={(groupId) => {
+              const idx = orderedGroups.findIndex((g) => g.id === groupId);
+              if (idx >= 0) setTour(idx);
+            }}
           />
           {tab === 'checks' ? (
             <Checks pr={pr} checks={checks} />

@@ -17,6 +17,7 @@ import {
 import { Dropdown } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { useUi } from '../stores/context';
+import type { UiStore } from '../stores/UiStore';
 
 export interface ContextMenuItem {
   id: string;
@@ -148,10 +149,29 @@ export const ContextMenuHost = observer(function ContextMenuHost() {
 });
 
 /**
+ * The non-hook core: build an `onContextMenu` handler from a `UiStore`
+ * instance directly. Use this (not `useContextMenu`) for a menu built inside
+ * a list's `.map()` — hooks can't be called per-iteration there.
+ */
+export function contextMenuHandler(
+  ui: UiStore,
+  items: ContextMenuItem[] | (() => ContextMenuItem[]),
+) {
+  return (e: ReactMouseEvent) => {
+    if (import.meta.env.DEV && e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const resolved = typeof items === 'function' ? items() : items;
+    if (resolved.length) ui.openContextMenu(e.clientX, e.clientY, resolved);
+  };
+}
+
+/**
  * Attach the returned handler to any element's `onContextMenu`. In dev,
  * ⌥+right-click is left alone so it still opens the webview devtools; `items`
  * may be a fixed array or computed lazily (so it can read fresh state at
- * open time, e.g. the hunk under the pointer).
+ * open time, e.g. the hunk under the pointer). For a menu built per-row
+ * inside a `.map()`, use `contextMenuHandler` instead.
  */
 export function useContextMenu(
   items: ContextMenuItem[] | (() => ContextMenuItem[]),
