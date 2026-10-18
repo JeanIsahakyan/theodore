@@ -63,6 +63,49 @@ pub enum GroupingPipelineError {
     NoDone,
     #[error("agent run failed: {0}")]
     AgentRun(String),
+    /// `theodore_domain::interdiff::hunk_id` identifies a hunk by `(path,
+    /// normalized added/deleted line text)` — deliberately not by line
+    /// position, so the id survives context shifts across pushes (plan §4).
+    /// That means two *different* physical hunks in the same file collide
+    /// to one `HunkId` whenever a PR repeats a mechanically-identical
+    /// one-line edit more than once in it — seen on real PRs (tokio#8587,
+    /// rust-analyzer#23173: the same find/replace line applied at several
+    /// call sites in one file). `grouping::validate`'s known-id set is a
+    /// `BTreeSet<&HunkId>`, so it can't tell those apart either: without
+    /// this check it would report "valid" while silently dropping every
+    /// occurrence but one from the grouping. Caught here instead, before
+    /// any agent call, rather than producing that misleadingly "valid"
+    /// result.
+    #[error(
+        "revision has {} hunk id(s) shared by more than one physical hunk — \
+         a mechanically-identical edit repeated in one file, which the \
+         (path, content) hunk id can't distinguish (not a grouping bug): {}",
+        .0.len(),
+        display_ids(.0)
+    )]
+    DuplicateHunkIds(Vec<HunkId>),
+}
+
+fn display_ids(ids: &[HunkId]) -> String {
+    ids.iter()
+        .map(HunkId::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Hunk ids that label more than one physical hunk in `rev`. Should always
+/// be empty — `HunkId` is meant to be unique per physical hunk — but nothing
+/// upstream of this pipeline currently guarantees it.
+fn duplicate_hunk_ids(rev: &Revision) -> Vec<HunkId> {
+    let mut counts: BTreeMap<&HunkId, u32> = BTreeMap::new();
+    for h in rev.hunks() {
+        *counts.entry(&h.id).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 /// Run the full grouping pipeline against one revision.
@@ -74,6 +117,10 @@ pub async fn group_revision(
     opts: &GroupingOptions,
 ) -> Result<GroupingReport, GroupingPipelineError> {
     let start = Instant::now();
+    let dupes = duplicate_hunk_ids(rev);
+    if !dupes.is_empty() {
+        return Err(GroupingPipelineError::DuplicateHunkIds(dupes));
+    }
     let prepass = prepass::run(rev);
     let chunks = prompt::build_prompts(pr, rev, &prepass, &opts.budget);
 
@@ -215,6 +262,7 @@ async fn run_chunk(
         Ok(()) => return Ok((grouping, 1, false, usage)),
         Err(errors) => errors,
     };
+    debug_log_validation_failure(&errors, &text);
     let known: Vec<HunkId> = sub_rev.hunks().map(|h| h.id.clone()).collect();
     let repair = prompt::repair_prompt(&known, &text, &display_errors(&errors));
     let (text2, u2) = call_agent(agent, opts, cwd, &repair.system, &repair.user).await?;
@@ -234,6 +282,20 @@ async fn run_chunk(
 
 fn display_errors(errors: &[GroupingError]) -> Vec<String> {
     errors.iter().map(|e| e.to_string()).collect()
+}
+
+/// Opt-in diagnostic for why a first attempt needed repair (set
+/// `THEODORE_GROUPING_DEBUG=1`). Off by default: never fires in tests or
+/// normal runs, so it adds no noise and no dependency on a logging crate.
+fn debug_log_validation_failure(errors: &[GroupingError], raw_response: &str) {
+    if std::env::var_os("THEODORE_GROUPING_DEBUG").is_none() {
+        return;
+    }
+    eprintln!("[grouping] first attempt failed validation:");
+    for e in errors {
+        eprintln!("  - {e}");
+    }
+    eprintln!("[grouping] raw response:\n{raw_response}");
 }
 
 /// Ask the agent for the final reading order across chunk group summaries.
@@ -354,6 +416,67 @@ mod tests {
     fn valid_json() -> &'static str {
         r#"{"groups": [{"id": "g1", "title": "Change", "why": "does a thing",
             "kind": "normal", "check": [], "hunks": ["h1", "h2"], "outliers": []}]}"#
+    }
+
+    fn file(path: &str, hunks: Vec<Hunk>) -> FileDiff {
+        FileDiff {
+            path: path.into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            similarity: None,
+            old_mode: None,
+            new_mode: None,
+            flags: vec![],
+            additions: 1,
+            deletions: 0,
+            hunks,
+        }
+    }
+
+    /// Regression: two real PRs (tokio#8587, rust-analyzer#23173) each
+    /// repeat a mechanically-identical one-line edit several times in the
+    /// same file, which collides to the same `HunkId` under
+    /// `theodore_domain::interdiff::hunk_id` (identity is `(path, content)`,
+    /// not position, by design — plan §4). `grouping::validate`'s
+    /// `BTreeSet<&HunkId>` can't tell the colliding hunks apart either, so
+    /// it would have reported "valid" while quietly dropping all but one of
+    /// them. The pipeline must refuse to run rather than produce that
+    /// misleadingly "valid" result.
+    #[tokio::test]
+    async fn duplicate_hunk_ids_across_files_are_rejected_before_calling_the_agent() {
+        let rev = Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files: vec![
+                file("a.rs", vec![mk_hunk("dup")]),
+                file("b.rs", vec![mk_hunk("dup")]),
+                file("c.rs", vec![mk_hunk("unique")]),
+            ],
+        };
+        let agent = FakeAgentPort::new([valid_json()]);
+        let err = group_revision(
+            &agent,
+            &PrMeta::default(),
+            &rev,
+            Path::new("."),
+            &GroupingOptions::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, GroupingPipelineError::DuplicateHunkIds(ref ids) if ids == &[HunkId::new("dup")])
+        );
+        assert_eq!(
+            agent.calls_made(),
+            0,
+            "must not spend an agent call on bad input"
+        );
+    }
+
+    #[test]
+    fn duplicate_hunk_ids_is_empty_for_well_formed_input() {
+        let rev = small_revision();
+        assert!(duplicate_hunk_ids(&rev).is_empty());
     }
 
     #[tokio::test]
