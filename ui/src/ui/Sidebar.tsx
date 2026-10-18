@@ -20,10 +20,13 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
+import { refreshProject, removeProject } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
 import { Avatar, K } from './bits';
+import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
+import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
 
 interface NavItem {
   key: string;
@@ -33,6 +36,7 @@ interface NavItem {
   route?: Route;
   isDisabled?: boolean;
   onPress?: () => void;
+  contextMenu?: ContextMenuItem[];
 }
 
 interface NavGroup {
@@ -88,6 +92,7 @@ export const Sidebar = observer(function Sidebar() {
   ).length;
 
   const localBranches = prs.filter((p) => p.pr.repo.host === 'local');
+  const projects = store.models.projects.all();
 
   const groups: NavGroup[] = [
     {
@@ -124,14 +129,30 @@ export const Sidebar = observer(function Sidebar() {
       id: 'projects',
       title: 'Projects',
       items: [
+        ...projects.map((p): NavItem => ({
+          key: routeKey({ name: 'project', id: p.id }),
+          icon: <ProjectStatusDot p={p} />,
+          label: projectLabel(p),
+          route: { name: 'project', id: p.id },
+          contextMenu: projectContextMenu({
+            onRefresh: () => void refreshProject(store, p.id),
+            onRemove: () => {
+              if (
+                window.confirm(
+                  `Remove ${projectLabel(p)}? Its local clone is deleted; your own folder (if local) is untouched.`,
+                )
+              ) {
+                void removeProject(store, p.id);
+              }
+            },
+          }),
+        })),
         {
           key: 'add-project',
           icon: <Plus />,
           label: 'Add project',
           isDisabled: !FEATURES.projects,
-          onPress: () => {
-            // no add-repo command yet; PRs arrive only via `open_pr`
-          },
+          onPress: () => ui.openModal('add-project'),
         },
       ],
     },
@@ -204,6 +225,9 @@ export const Sidebar = observer(function Sidebar() {
                 id={i.key}
                 textValue={i.label}
                 isDisabled={i.isDisabled}
+                onContextMenu={
+                  i.contextMenu && contextMenuHandler(ui, i.contextMenu)
+                }
                 className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
               >
                 <span className="grid size-4 place-items-center text-muted [&>svg]:size-4">

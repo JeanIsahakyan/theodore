@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import {
+  Alert,
   Button,
   Label,
-  Modal,
   Radio,
   RadioGroup,
   Table,
@@ -13,43 +13,9 @@ import type { ReviewEvent } from '../gen/contract';
 import { submitReview } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
-import { AgentTag, K } from './bits';
+import { AgentTag, K, Shell } from './bits';
 import { CommandMenu, SnoozeMenu } from './Palette';
-
-/** Shared modal frame — same shell every dialog in this file uses. */
-function Shell({
-  title,
-  children,
-  size = 'md',
-  footer,
-  onClose,
-}: {
-  title: string;
-  children: ReactNode;
-  size?: 'md' | 'lg';
-  footer?: ReactNode;
-  onClose: () => void;
-}) {
-  return (
-    <Modal.Backdrop isOpen onOpenChange={(open) => !open && onClose()}>
-      <Modal.Container
-        size={size}
-        placement="top"
-        scroll="inside"
-        className="mt-[8vh]"
-      >
-        <Modal.Dialog
-          aria-label={title}
-          className={`modal flex flex-col gap-3 p-4 ${size === 'lg' ? 'w-[760px] max-w-[92vw]' : 'w-[520px] max-w-[92vw]'}`}
-        >
-          <Modal.Heading>{title}</Modal.Heading>
-          {children}
-          {footer && <div className="flex justify-end gap-2">{footer}</div>}
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
-  );
-}
+import { AddProjectModal } from './Projects';
 
 const EVENT_OPTS: [ReviewEvent, string, string][] = [
   ['COMMENT', 'Comment', 'no verdict'],
@@ -65,6 +31,7 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
   const [sending, setSending] = useState(false);
   if (ui.route.name !== 'review') return null;
   const pr = ui.route.pr;
+  const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const drafts = store.models.drafts.where((d) => d.pr === pr);
   const reads = new Set(
     store.models.hunkReads.where((r) => r.pr === pr).map((r) => r.hunk),
@@ -87,30 +54,42 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
         value={body}
         onChange={(e) => setBody(e.target.value)}
       />
-      <RadioGroup
-        value={event}
-        onChange={(v) => setEvent(v as ReviewEvent)}
-        orientation="horizontal"
-        aria-label="Verdict"
-      >
-        {EVENT_OPTS.map(([v, t, d]) => (
-          <Radio
-            key={v}
-            value={v}
-            className={`event flex-1 rounded-2xl border p-2.5 ${event === v ? 'border-accent bg-accent-soft' : 'border-separator'}`}
-          >
-            <Radio.Content>
-              <Radio.Control>
-                <Radio.Indicator />
-              </Radio.Control>
-              <div>
-                <b>{t}</b>
-                <div className="text-xs text-muted">{d}</div>
-              </div>
-            </Radio.Content>
-          </Radio>
-        ))}
-      </RadioGroup>
+      {local ? (
+        <Alert status="accent">
+          <Alert.Content>
+            <Alert.Title>Local review — comments stay in Theodore.</Alert.Title>
+            <Alert.Description>
+              No host to send a verdict to; pending comments below are kept
+              here.
+            </Alert.Description>
+          </Alert.Content>
+        </Alert>
+      ) : (
+        <RadioGroup
+          value={event}
+          onChange={(v) => setEvent(v as ReviewEvent)}
+          orientation="horizontal"
+          aria-label="Verdict"
+        >
+          {EVENT_OPTS.map(([v, t, d]) => (
+            <Radio
+              key={v}
+              value={v}
+              className={`event flex-1 rounded-2xl border p-2.5 ${event === v ? 'border-accent bg-accent-soft' : 'border-separator'}`}
+            >
+              <Radio.Content>
+                <Radio.Control>
+                  <Radio.Indicator />
+                </Radio.Control>
+                <div>
+                  <b>{t}</b>
+                  <div className="text-xs text-muted">{d}</div>
+                </div>
+              </Radio.Content>
+            </Radio>
+          ))}
+        </RadioGroup>
+      )}
       <Label className="text-sm font-medium">
         Pending comments ({drafts.length})
       </Label>
@@ -155,11 +134,11 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
           Cancel
         </Button>
         <Button
-          variant={event === 'REQUEST_CHANGES' ? 'danger' : 'primary'}
+          variant={!local && event === 'REQUEST_CHANGES' ? 'danger' : 'primary'}
           isDisabled={sending}
           onPress={() => {
             setSending(true);
-            void submitReview(store, pr, event, body.trim())
+            void submitReview(store, pr, local ? 'COMMENT' : event, body.trim())
               .catch(() => {
                 // toasted by api.ts
               })
@@ -168,7 +147,7 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
             ui.goBack();
           }}
         >
-          {sending ? 'Sending…' : 'Submit'}
+          {sending ? 'Sending…' : local ? 'Done' : 'Submit'}
         </Button>
       </div>
     </Shell>
@@ -257,6 +236,8 @@ export const Modals = observer(function Modals() {
       return <SubmitReviewModal />;
     case 'help':
       return <HelpModal />;
+    case 'add-project':
+      return <AddProjectModal />;
     default:
       return null;
   }

@@ -11,6 +11,7 @@ import { Inbox } from './List';
 import { Mine } from './Mine';
 import { Modals } from './Modals';
 import { useGlobalKeys } from './Palette';
+import { ProjectView } from './Projects';
 import { Review } from './Review';
 import { Sidebar } from './Sidebar';
 import { SettingsNav, SettingsPage } from './Settings';
@@ -156,6 +157,8 @@ export const App = observer(function App() {
               <SettingsPage page={r.page} />
             ) : r.name === 'new' ? (
               <NewTab key={r.id} route={r} />
+            ) : r.name === 'project' ? (
+              <ProjectView key={r.id} id={r.id} />
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}

@@ -28,10 +28,12 @@ export type Route =
   | { name: 'tasks' }
   | { name: 'settings'; page: SettingsPage }
   | { name: 'review'; pr: PrId }
+  /** A connected repository: header, Pull requests and Branches tabs. */
+  | { name: 'project'; id: string }
   /** A blank tab: paste a PR link to turn it into a review. */
   | { name: 'new'; id: string };
 
-export type ModalName = 'help' | 'submit' | 'snooze' | 'cmdk';
+export type ModalName = 'help' | 'submit' | 'snooze' | 'cmdk' | 'add-project';
 
 export const sameRoute = (a: Route, b: Route): boolean =>
   JSON.stringify(a) === JSON.stringify(b);

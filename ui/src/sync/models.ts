@@ -42,6 +42,7 @@ export function modelAccessors(pool: ObjectPool) {
     skillRuns: of('skill_run'),
     chatMessages: of('chat_message'),
     settings: of('setting'),
+    projects: of('project'),
   };
 }
 

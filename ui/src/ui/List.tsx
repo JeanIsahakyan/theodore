@@ -46,7 +46,7 @@ import { PRIcon, prStatusLabel } from './StatusIcon';
 import { useViewKeys } from './keys';
 
 /** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
-type InboxPr = PrSummary & { id: PrId };
+export type InboxPr = PrSummary & { id: PrId };
 
 const REASON_LABEL: Record<InboxReason, string> = {
   review_requested: 'review requested',
@@ -73,7 +73,7 @@ const SECTIONS: { id: string; title: string; reasons: InboxReason[] }[] = [
   { id: 'authored', title: 'Authored by you', reasons: ['authored'] },
 ];
 
-const STATUS_ORDER: PrState[] = ['draft', 'open', 'merged', 'closed'];
+export const STATUS_ORDER: PrState[] = ['draft', 'open', 'merged', 'closed'];
 
 export function ago(ms: number): string {
   const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -97,7 +97,7 @@ export const ROW_PROPS: RowProp[] = [
   'age',
 ];
 
-const PROP_LABEL: Record<RowProp, string> = {
+export const PROP_LABEL: Record<RowProp, string> = {
   id: 'Number',
   reasons: 'Reason',
   checks: 'Checks',
@@ -105,7 +105,7 @@ const PROP_LABEL: Record<RowProp, string> = {
   age: 'Age',
 };
 
-const COL: Record<RowProp, string> = {
+export const COL: Record<RowProp, string> = {
   id: '72px',
   reasons: '150px',
   checks: '16px',
@@ -379,7 +379,7 @@ export const PrRow = observer(function PrRow({
 });
 
 /** A section header inside a HeroUI ListBox; the caret collapses the section. */
-function SectionHeader({
+export function SectionHeader({
   title,
   count,
   open,
@@ -413,7 +413,7 @@ function SectionHeader({
 }
 
 /** A Linear-style list as one HeroUI ListBox: sections, single selection, ⏎ / double-click opens. */
-function RowList({
+export function RowList({
   groups,
   sel,
   closed,
@@ -471,7 +471,7 @@ function RowList({
   );
 }
 
-function BulkBar({
+export function BulkBar({
   n,
   onDone,
   onSnooze,
@@ -509,7 +509,7 @@ function BulkBar({
   );
 }
 
-function DisplayRow({
+export function DisplayRow({
   label,
   children,
 }: {
@@ -524,7 +524,7 @@ function DisplayRow({
   );
 }
 
-function Picker<T extends string>({
+export function Picker<T extends string>({
   label,
   value,
   options,
@@ -675,7 +675,13 @@ function DisplayButton({
   );
 }
 
-function PeekToggle({ on, toggle }: { on: boolean; toggle: () => void }) {
+export function PeekToggle({
+  on,
+  toggle,
+}: {
+  on: boolean;
+  toggle: () => void;
+}) {
   return (
     <ToggleButton
       size="sm"

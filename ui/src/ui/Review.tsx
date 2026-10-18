@@ -327,24 +327,26 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         <Btn tone="primary" onPress={() => ui.openModal('submit')}>
           Submit review
         </Btn>
-        <Tooltip>
-          <Btn
-            tone={mergeBlock ? 'tertiary' : 'success'}
-            icon={<CodeMerge />}
-            className="merge-btn"
-            isDisabled={!FEATURES.hostWrites}
-            onPress={() => setMergeOpen(true)}
-          >
-            Merge
-          </Btn>
-          <Tooltip.Content>
-            {!FEATURES.hostWrites
-              ? 'Not available yet'
-              : mergeBlock
-                ? `Blocked: ${mergeBlock} — you can enable auto-merge`
-                : 'Merge'}
-          </Tooltip.Content>
-        </Tooltip>
+        {!local && (
+          <Tooltip>
+            <Btn
+              tone={mergeBlock ? 'tertiary' : 'success'}
+              icon={<CodeMerge />}
+              className="merge-btn"
+              isDisabled={!FEATURES.hostWrites}
+              onPress={() => setMergeOpen(true)}
+            >
+              Merge
+            </Btn>
+            <Tooltip.Content>
+              {!FEATURES.hostWrites
+                ? 'Not available yet'
+                : mergeBlock
+                  ? `Blocked: ${mergeBlock} — you can enable auto-merge`
+                  : 'Merge'}
+            </Tooltip.Content>
+          </Tooltip>
+        )}
         <Tooltip>
           <ToggleButton
             isIconOnly
@@ -378,16 +380,18 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 Code
                 <Tabs.Indicator />
               </Tabs.Tab>
-              <Tabs.Tab id="checks" className="gap-1.5">
-                <CheckIcon
-                  s={failing ? 'fail' : pending ? 'pending' : 'pass'}
-                />
-                Checks
-                <span className="tabular-nums text-muted">
-                  {passed}/{checks.length}
-                </span>
-                <Tabs.Indicator />
-              </Tabs.Tab>
+              {!local && (
+                <Tabs.Tab id="checks" className="gap-1.5">
+                  <CheckIcon
+                    s={failing ? 'fail' : pending ? 'pending' : 'pass'}
+                  />
+                  Checks
+                  <span className="tabular-nums text-muted">
+                    {passed}/{checks.length}
+                  </span>
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              )}
               <Tabs.Tab id="commits" className="gap-1.5">
                 <CodeCommit className="size-4" />
                 Commits
@@ -438,7 +442,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </ToggleButtonGroup>
         )}
         <span className="flex-1" />
-        {detail && detail.reviewers.length > 0 && (
+        {!local && detail && detail.reviewers.length > 0 && (
           <>
             <ReviewerStrip reviewers={detail.reviewers} />
             <Separator orientation="vertical" className="h-5" />
