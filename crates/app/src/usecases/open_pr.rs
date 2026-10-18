@@ -14,6 +14,10 @@ impl Core {
     pub async fn open_pr(&self, req: OpenPrRequest) -> AppResult<OpenPrResponse> {
         let pr_ref = parse_pr_ref(&req.url)?;
         let _guard = self.0.open_lock.lock().await;
+        let id = pr_ref.id();
+        if let Some(head) = self.0.current_head.read().await.get(&id).cloned() {
+            return Ok(OpenPrResponse { pr: id, head });
+        }
         self.open_ref(pr_ref).await
     }
 
@@ -96,39 +100,94 @@ impl Core {
         self.apply(actions).await?;
 
         // Group in the background; the UI gets it as a `grouping` sync row.
-        let core = self.clone();
-        let worktree_path = worktree.path.clone();
-        tokio::spawn(async move {
-            let agent = core.setting_agent("agents.grouping", AgentId::Claude).await;
-            match core
-                .0
-                .deps
-                .grouper
-                .group(&revision, &detail, &worktree_path, agent)
-                .await
-            {
-                Ok(grouping) => {
-                    if let Ok(data) = serde_json::to_value(&grouping) {
-                        let action = NewAction {
-                            model: models::GROUPING.into(),
-                            model_id: pr_id.0.clone(),
-                            action: SyncActionCode::I,
-                            data: Some(data),
-                        };
-                        let _ = core.apply(vec![action]).await;
-                    }
-                }
-                Err(e) => core.emit(Ephemeral::Toast {
-                    level: ToastLevel::Error,
-                    text: format!("grouping failed: {e}"),
-                }),
-            }
-        });
+        self.spawn_grouping(pr_id, head.clone(), revision, detail, worktree.path.clone());
 
         Ok(OpenPrResponse {
             pr: pr_ref.id(),
             head,
         })
+    }
+}
+
+impl Core {
+    /// Group `revision` unless a grouping for this head is stored or one is
+    /// already running. Emits `Ephemeral::Grouping` around the run.
+    pub(crate) fn spawn_grouping(
+        &self,
+        pr: PrId,
+        head: theodore_domain::Sha,
+        revision: theodore_domain::Revision,
+        detail: theodore_domain::PrDetail,
+        worktree: std::path::PathBuf,
+    ) {
+        let core = self.clone();
+        tokio::spawn(async move {
+            let store = core.0.deps.store.clone();
+            let id = pr.0.clone();
+            let stored = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &id))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .and_then(|r| serde_json::from_value::<theodore_domain::Grouping>(r.data).ok());
+            if stored.is_some_and(|g| g.rev == head) {
+                return;
+            }
+            {
+                let mut inflight = core
+                    .0
+                    .grouping_inflight
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                if !inflight.insert(pr.clone()) {
+                    return;
+                }
+            }
+            core.emit(Ephemeral::Grouping {
+                pr: pr.clone(),
+                running: true,
+                error: None,
+            });
+            let agent = core.setting_agent("agents.grouping", AgentId::Claude).await;
+            let result = core
+                .0
+                .deps
+                .grouper
+                .group(&revision, &detail, &worktree, agent)
+                .await;
+            let error = match result {
+                Ok(grouping) => match serde_json::to_value(&grouping) {
+                    Ok(data) => core
+                        .apply(vec![NewAction {
+                            model: models::GROUPING.into(),
+                            model_id: pr.0.clone(),
+                            action: SyncActionCode::U,
+                            data: Some(data),
+                        }])
+                        .await
+                        .err()
+                        .map(|e| e.to_string()),
+                    Err(e) => Some(e.to_string()),
+                },
+                Err(e) => Some(e.to_string()),
+            };
+            core.0
+                .grouping_inflight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&pr);
+            if let Some(e) = &error {
+                core.emit(Ephemeral::Toast {
+                    level: ToastLevel::Error,
+                    text: format!("grouping failed: {e}"),
+                });
+            }
+            core.emit(Ephemeral::Grouping {
+                pr,
+                running: false,
+                error,
+            });
+        });
     }
 }
 

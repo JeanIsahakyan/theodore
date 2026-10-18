@@ -47,6 +47,8 @@ pub(crate) struct Inner {
     pub shutdown: CancellationToken,
     /// Serializes PR opens so two callers never clone/fetch the same PR twice.
     pub open_lock: tokio::sync::Mutex<()>,
+    /// PRs whose grouping is running, so a PR is never grouped twice at once.
+    pub grouping_inflight: std::sync::Mutex<std::collections::HashSet<PrId>>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -79,6 +81,7 @@ impl Core {
             outbox_notify: Notify::new(),
             shutdown: CancellationToken::new(),
             open_lock: tokio::sync::Mutex::new(()),
+            grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 
         let core = Core(inner.clone());

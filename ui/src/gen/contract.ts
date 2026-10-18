@@ -116,7 +116,9 @@ export type Draft = {
 
 export type DraftId = string;
 
-export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } | { type: "toast"; level: ToastLevel; text: string } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean };
+export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } | { type: "toast"; level: ToastLevel; text: string } |
+/**  Grouping of a PR started or finished (no sync row until it's done). */
+{ type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean };
 
 export type FileDiff = {
 	path: string,

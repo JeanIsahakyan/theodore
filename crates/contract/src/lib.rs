@@ -303,6 +303,12 @@ pub enum Ephemeral {
         level: ToastLevel,
         text: String,
     },
+    /// Grouping of a PR started or finished (no sync row until it's done).
+    Grouping {
+        pr: PrId,
+        running: bool,
+        error: Option<String>,
+    },
     HostStatus {
         online: bool,
         rate_limited_until: Option<Millis>,
