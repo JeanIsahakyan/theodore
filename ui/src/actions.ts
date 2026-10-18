@@ -243,6 +243,51 @@ export function assignTask(
   ]);
 }
 
+/** Hands a task to an agent CLI, which fixes it in the PR worktree (Edit
+ *  mode). The task's own status moves to `progress`/`review` via sync, not
+ *  locally — this only kicks the run off. Returns the run id, or `null` on
+ *  a graceful failure (toast, no crash). */
+export async function delegateTask(
+  store: RootStore,
+  task: string,
+  agent: AgentId | null = null,
+): Promise<string | null> {
+  try {
+    return await api.delegateTask({ task, agent });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure
+          ? e.message
+          : 'Could not delegate the task.',
+    });
+    return null;
+  }
+}
+
+/** Accept: own/local PR commits + pushes the fix, else drafts it as a
+ *  suggestion; resolves the linked thread. Reject: back to `todo`, `reason`
+ *  goes to the agent on the next attempt. */
+export async function decideTask(
+  store: RootStore,
+  task: string,
+  accept: boolean,
+  reason: string | null = null,
+): Promise<void> {
+  try {
+    await api.decideTask({ task, accept, reason });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure ? e.message : 'Could not decide the task.',
+    });
+  }
+}
+
 // ── inbox triage ─────────────────────────────────────────────────────────────
 
 export function markDone(store: RootStore, ids: PrId[]): void {
