@@ -11,12 +11,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use theodore_domain::{
-    Comment, CommentId, FileViewed, Person, PrDetail, PrRef, PrSummary, RepoRef, ThreadId,
-    ViewedState,
+    Comment, CommentId, FileViewed, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, Reviewer,
+    ReviewerState, Sha, ThreadId, ViewedState,
 };
 use theodore_ports::{
-    Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    ReviewSubmission, SubmittedReview,
+    Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
+    MergeState, MergeStatus, ReviewSubmission, SubmittedReview,
 };
 
 use crate::state::SharedState;
@@ -86,9 +86,9 @@ impl HostAdapter for FixtureHost {
             pending_review: true,
             suggestions: true,
             resolve_threads: true,
-            merge_queue: false,
-            auto_merge: false,
-            reactions: false,
+            merge_queue: true,
+            auto_merge: true,
+            reactions: true,
         }
     }
 
@@ -352,5 +352,244 @@ impl HostAdapter for FixtureHost {
         } else {
             Err(HostError::NotFound(comment.to_string()))
         }
+    }
+
+    async fn add_reaction(&self, pr: &PrRef, comment: &CommentId, emoji: &str) -> HostResult<()> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "add_reaction".to_string(),
+            pr_id: Some(pr.id().to_string()),
+            details: format!("comment={comment}, emoji={emoji}"),
+        });
+        Ok(())
+    }
+
+    async fn remove_reaction(
+        &self,
+        pr: &PrRef,
+        comment: &CommentId,
+        emoji: &str,
+    ) -> HostResult<()> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "remove_reaction".to_string(),
+            pr_id: Some(pr.id().to_string()),
+            details: format!("comment={comment}, emoji={emoji}"),
+        });
+        Ok(())
+    }
+
+    async fn assignable_users(&self, repo: &RepoRef) -> HostResult<Vec<Person>> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "assignable_users".to_string(),
+            pr_id: None,
+            details: format!("repo={}", repo.slug()),
+        });
+        let mut people: Vec<Person> = Vec::new();
+        for detail in state.prs.values().filter(|d| &d.summary.pr.repo == repo) {
+            for p in std::iter::once(&detail.summary.author)
+                .chain(detail.assignees.iter())
+                .chain(detail.reviewers.iter().map(|r| &r.person))
+            {
+                if !people.iter().any(|q| q.login == p.login) {
+                    people.push(p.clone());
+                }
+            }
+        }
+        Ok(people)
+    }
+
+    async fn request_reviewers(
+        &self,
+        pr: &PrRef,
+        users: &[String],
+        teams: &[String],
+    ) -> HostResult<()> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "request_reviewers".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: format!("users={users:?}, teams={teams:?}"),
+        });
+        let detail = state
+            .prs
+            .get_mut(&pr_id)
+            .ok_or_else(|| HostError::NotFound(pr_id.to_string()))?;
+        for login in users {
+            if !detail
+                .reviewers
+                .iter()
+                .any(|r| r.person.login == *login && r.team.is_none())
+            {
+                detail.reviewers.push(Reviewer {
+                    person: Person {
+                        login: login.clone(),
+                        name: None,
+                        avatar_url: None,
+                    },
+                    state: ReviewerState::Requested,
+                    team: None,
+                });
+            }
+        }
+        for team in teams {
+            if !detail
+                .reviewers
+                .iter()
+                .any(|r| r.team.as_deref() == Some(team.as_str()))
+            {
+                detail.reviewers.push(Reviewer {
+                    person: Person {
+                        login: team.clone(),
+                        name: Some(team.clone()),
+                        avatar_url: None,
+                    },
+                    state: ReviewerState::Requested,
+                    team: Some(team.clone()),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn remove_reviewer(&self, pr: &PrRef, user: &str) -> HostResult<()> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "remove_reviewer".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: format!("user={user}"),
+        });
+        let detail = state
+            .prs
+            .get_mut(&pr_id)
+            .ok_or_else(|| HostError::NotFound(pr_id.to_string()))?;
+        detail.reviewers.retain(|r| r.person.login != user);
+        Ok(())
+    }
+
+    async fn mark_ready(&self, pr: &PrRef) -> HostResult<()> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "mark_ready".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: String::new(),
+        });
+        let detail = state
+            .prs
+            .get_mut(&pr_id)
+            .ok_or_else(|| HostError::NotFound(pr_id.to_string()))?;
+        detail.summary.state = PrState::Open;
+        Ok(())
+    }
+
+    async fn convert_to_draft(&self, pr: &PrRef) -> HostResult<()> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "convert_to_draft".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: String::new(),
+        });
+        let detail = state
+            .prs
+            .get_mut(&pr_id)
+            .ok_or_else(|| HostError::NotFound(pr_id.to_string()))?;
+        detail.summary.state = PrState::Draft;
+        Ok(())
+    }
+
+    async fn update_branch(&self, pr: &PrRef) -> HostResult<()> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "update_branch".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: String::new(),
+        });
+        if !state.prs.contains_key(&pr_id) {
+            return Err(HostError::NotFound(pr_id.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn merge_status(&self, pr: &PrRef) -> HostResult<MergeStatus> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "merge_status".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: String::new(),
+        });
+        let detail = state
+            .prs
+            .get(&pr_id)
+            .ok_or_else(|| HostError::NotFound(pr_id.to_string()))?;
+        Ok(MergeStatus {
+            mergeable: Some(true),
+            state: MergeState::Clean,
+            allowed_methods: vec![MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase],
+            auto_merge_enabled: false,
+            in_queue: false,
+            required_approvals: detail.summary.required_approvals,
+        })
+    }
+
+    async fn merge(
+        &self,
+        pr: &PrRef,
+        method: MergeMethod,
+        title: Option<String>,
+        body: Option<String>,
+    ) -> HostResult<Sha> {
+        let pr_id = pr.id();
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "merge".to_string(),
+            pr_id: Some(pr_id.to_string()),
+            details: format!(
+                "method={method:?}, title={title:?}, body_set={}",
+                body.is_some()
+            ),
+        });
+        let detail = state
+            .prs
+            .get_mut(&pr_id)
+            .ok_or_else(|| HostError::NotFound(pr_id.to_string()))?;
+        detail.summary.state = PrState::Merged;
+        Ok(Sha::new(format!("merged-{}", pr_id.as_str())))
+    }
+
+    async fn enable_auto_merge(&self, pr: &PrRef, method: MergeMethod) -> HostResult<()> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "enable_auto_merge".to_string(),
+            pr_id: Some(pr.id().to_string()),
+            details: format!("method={method:?}"),
+        });
+        Ok(())
+    }
+
+    async fn disable_auto_merge(&self, pr: &PrRef) -> HostResult<()> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "disable_auto_merge".to_string(),
+            pr_id: Some(pr.id().to_string()),
+            details: String::new(),
+        });
+        Ok(())
+    }
+
+    async fn enqueue(&self, pr: &PrRef) -> HostResult<()> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "enqueue".to_string(),
+            pr_id: Some(pr.id().to_string()),
+            details: String::new(),
+        });
+        Ok(())
     }
 }
