@@ -874,3 +874,26 @@ pub(crate) async fn list_repos(http: &HttpClient) -> HostResult<Vec<GqlRepo>> {
     })
     .await
 }
+
+// ── viewer ───────────────────────────────────────────────────────────────
+
+const VIEWER_QUERY: &str = r#"
+query {
+  viewer {
+    login
+    name
+    avatarUrl
+  }
+}
+"#;
+
+/// The authenticated user (plan §6.5). Doubles as a token-validity probe:
+/// an unauthenticated or rejected token fails here with `HostError::Auth`.
+pub(crate) async fn viewer(http: &HttpClient) -> HostResult<GqlActor> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        viewer: GqlActor,
+    }
+    let data: Data = graphql(http, VIEWER_QUERY, json!({})).await?;
+    Ok(data.viewer)
+}

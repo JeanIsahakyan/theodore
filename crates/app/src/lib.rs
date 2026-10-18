@@ -22,7 +22,7 @@ pub mod testkit;
 mod tests;
 
 pub use core::{Core, Receivers};
-pub use deps::{Deps, Grouper, RunTools};
+pub use deps::{Deps, Grouper, RunTools, TokenStatus};
 pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::open_pr::parse_pr_ref;

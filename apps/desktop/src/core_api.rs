@@ -4,11 +4,12 @@
 
 use async_trait::async_trait;
 use theodore_contract::{
-    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, FileRequest,
-    OpenPrRequest, OpenPrResponse, RevisionRequest, RunSkillRequest, SubmitReviewRequest,
-    SyncFrame, Transaction, TransactionResult, UpdateInfo,
+    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, DelegateRequest,
+    FileRequest, HostAuthStatus, OpenPrRequest, OpenPrResponse, ReplyRequest, ResolveRequest,
+    RevisionRequest, RunSkillRequest, SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame,
+    TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
-use theodore_domain::{PrId, Revision};
+use theodore_domain::{Person, PrId, Revision};
 
 fn not_ready() -> CommandError {
     CommandError {
@@ -36,6 +37,15 @@ pub trait CoreApi: Send + Sync {
     async fn app_info(&self) -> Result<AppInfo, CommandError>;
     async fn check_update(&self) -> Result<Option<UpdateInfo>, CommandError>;
     async fn install_update(&self) -> Result<(), CommandError>;
+    async fn refresh_inbox(&self) -> Result<(), CommandError>;
+    async fn viewer(&self) -> Result<Person, CommandError>;
+    async fn host_status(&self) -> Result<HostAuthStatus, CommandError>;
+    async fn set_host_token(&self, req: SetTokenRequest) -> Result<HostAuthStatus, CommandError>;
+    async fn reply_thread(&self, req: ReplyRequest) -> Result<(), CommandError>;
+    async fn resolve_thread(&self, req: ResolveRequest) -> Result<(), CommandError>;
+    async fn list_skills(&self, pr: Option<PrId>) -> Result<Vec<SkillInfo>, CommandError>;
+    async fn delegate_task(&self, req: DelegateRequest) -> Result<String, CommandError>;
+    async fn decide_task(&self, req: TaskDecision) -> Result<(), CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -98,6 +108,33 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn install_update(&self) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn refresh_inbox(&self) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn viewer(&self) -> Result<Person, CommandError> {
+        Err(not_ready())
+    }
+    async fn host_status(&self) -> Result<HostAuthStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn set_host_token(&self, _req: SetTokenRequest) -> Result<HostAuthStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn reply_thread(&self, _req: ReplyRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn resolve_thread(&self, _req: ResolveRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn list_skills(&self, _pr: Option<PrId>) -> Result<Vec<SkillInfo>, CommandError> {
+        Err(not_ready())
+    }
+    async fn delegate_task(&self, _req: DelegateRequest) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    async fn decide_task(&self, _req: TaskDecision) -> Result<(), CommandError> {
         Err(not_ready())
     }
 }

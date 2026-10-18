@@ -2,7 +2,7 @@
 //! spawned per the `AgentPort`, their stream becomes ephemeral events, and
 //! only the final result is synced.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use theodore_contract::{
     AskRequest, ChatMessage, Ephemeral, RunSkillRequest, RunStatus, SkillRun, models,
@@ -229,7 +229,7 @@ async fn drive_skill_run(
             .map(|t| t.register(&run_id, &pr, agent));
         let req = AgentRequest {
             agent,
-            prompt: skill_prompt(&skill),
+            prompt: skill_prompt(&skill, agent, &cwd),
             system: None,
             cwd: cwd.clone(),
             mode: AgentMode::ReadOnly,
@@ -293,10 +293,11 @@ async fn drive_skill_run(
     core.0.runs.write().await.remove(&run_id);
 }
 
-/// Revokes a run's MCP token when the run's driver returns.
-struct ToolsGuard<'a> {
-    core: &'a Core,
-    mcp: Option<theodore_ports::McpEndpoint>,
+/// Revokes a run's MCP token when the run's driver returns. `pub(crate)`:
+/// also used by `usecases::tasks` for fix runs.
+pub(crate) struct ToolsGuard<'a> {
+    pub(crate) core: &'a Core,
+    pub(crate) mcp: Option<theodore_ports::McpEndpoint>,
 }
 
 impl Drop for ToolsGuard<'_> {
@@ -307,13 +308,23 @@ impl Drop for ToolsGuard<'_> {
     }
 }
 
-fn skill_prompt(skill: &str) -> String {
-    format!(
-        "Review this pull request with the `{skill}` skill. Start with the review-tools \
-         `get_pr_context` tool. Report every issue you find with `add_finding` \
-         (file path, line on the new side, severity info|warn|high, short title, body). \
-         Do not edit files. Finish with a one-paragraph summary."
-    )
+/// Claude discovers `SKILL.md` files under `~/.claude/skills` and the
+/// worktree's `.claude/skills` on its own (plan §8.4), so it only needs the
+/// skill referenced by name. Every other agent gets the full text inlined.
+fn skill_prompt(skill: &str, agent: AgentId, worktree: &Path) -> String {
+    let instructions = "Start with the review-tools `get_pr_context` tool. Report every issue \
+         you find with `add_finding` (file path, line on the new side, severity \
+         info|warn|high, short title, body). Do not edit files. Finish with a \
+         one-paragraph summary.";
+    if agent == AgentId::Claude {
+        return format!("Review this pull request with the `{skill}` skill. {instructions}");
+    }
+    match crate::usecases::skills::resolve_skill_content(skill, worktree) {
+        Some(content) => format!(
+            "{content}\n\n---\n\nReview this pull request using the skill above. {instructions}"
+        ),
+        None => format!("Review this pull request with the `{skill}` skill. {instructions}"),
+    }
 }
 
 async fn fail_run(core: &Core, run_id: &str, message: &str) {

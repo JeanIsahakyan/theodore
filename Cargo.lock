@@ -4798,6 +4798,7 @@ dependencies = [
  "theodore-contract",
  "theodore-domain",
  "theodore-ports",
+ "theodore-secrets",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",

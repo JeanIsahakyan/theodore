@@ -6,13 +6,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use theodore_contract::TokenSource;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, McpEndpoint, Secrets, Store};
 
 use crate::error::GrouperError;
 
 /// Groups a revision by meaning (plan §5). Implemented by the `grouping`
-/// crate at integration time; `app` only needs the trait.
+/// crate at integration time; `app` only needs the trait. `agent` is the
+/// `agents.grouping` setting, read by the caller and passed in here so the
+/// grouper never has to know about settings (plan §8.5).
 #[async_trait]
 pub trait Grouper: Send + Sync {
     async fn group(
@@ -20,6 +23,7 @@ pub trait Grouper: Send + Sync {
         rev: &Revision,
         pr: &PrDetail,
         worktree: &Path,
+        agent: AgentId,
     ) -> Result<Grouping, GrouperError>;
 
     /// Re-group after a push: unchanged hunks keep their group (plan §5.3).
@@ -29,6 +33,7 @@ pub trait Grouper: Send + Sync {
         rev: &Revision,
         pr: &PrDetail,
         worktree: &Path,
+        agent: AgentId,
     ) -> Result<Grouping, GrouperError>;
 }
 
@@ -37,6 +42,15 @@ pub trait Grouper: Send + Sync {
 pub trait RunTools: Send + Sync {
     fn register(&self, run_id: &str, pr: &PrId, agent: AgentId) -> McpEndpoint;
     fn unregister(&self, endpoint: &McpEndpoint);
+}
+
+/// Where the active host token came from (plan §6.8), and the ability to
+/// drop a cached fallback (`gh`/env) lookup once the keychain token
+/// changes. Implemented over `runtime::HostToken`; `app` stays ignorant of
+/// keychains and the `gh` CLI.
+pub trait TokenStatus: Send + Sync {
+    fn source(&self) -> TokenSource;
+    fn invalidate(&self);
 }
 
 #[derive(Clone)]
@@ -50,4 +64,7 @@ pub struct Deps {
     pub grouper: Arc<dyn Grouper>,
     /// `None` runs agents without MCP (tests, CLI).
     pub tools: Option<Arc<dyn RunTools>>,
+    /// `None` when the shell doesn't wire one in (tests, the CLI): `viewer`
+    /// and friends still work, `host_status` just reports `TokenSource::None`.
+    pub token_status: Option<Arc<dyn TokenStatus>>,
 }

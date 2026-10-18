@@ -21,6 +21,8 @@ pub enum GitError {
     Parse(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("not supported: {0}")]
+    Unsupported(&'static str),
 }
 
 pub type GitResult<T> = Result<T, GitError>;
@@ -76,4 +78,19 @@ pub trait GitPort: Send + Sync {
     ) -> GitResult<Revision>;
     /// File contents at `rev`, `None` if absent.
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>>;
+
+    /// Stages every change in `worktree`, commits it, and pushes to
+    /// `branch` on `repo`'s remote (plan §4 "Fix target": own or local PR).
+    /// Returns the new head sha. `Unsupported` by default; only a `GitPort`
+    /// backed by a real remote (the git CLI) can push.
+    async fn commit_and_push(
+        &self,
+        worktree: &Path,
+        repo: &RepoRef,
+        branch: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        let _ = (worktree, repo, branch, message);
+        Err(GitError::Unsupported("commit_and_push"))
+    }
 }

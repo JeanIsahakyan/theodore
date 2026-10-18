@@ -60,6 +60,9 @@ struct Adapters {
     triggers: Option<theodore_fixtures::Triggers>,
     fixture_clock: Option<theodore_fixtures::ManualClock>,
     fixture_host: Option<Arc<theodore_fixtures::FixtureHost>>,
+    /// `None` in fixture mode: there's no keychain/`gh`/env token story to
+    /// report (plan §6.8).
+    token_status: Option<Arc<dyn theodore_app::TokenStatus>>,
 }
 
 fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
@@ -72,7 +75,10 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         token.clone(),
         clock.clone(),
     ));
-    let git = Arc::new(theodore_git::GitCli::new(cfg.data_dir.clone(), token));
+    let git = Arc::new(theodore_git::GitCli::new(
+        cfg.data_dir.clone(),
+        token.clone(),
+    ));
     let store = Arc::new(
         theodore_store::SqliteStore::open(cfg.data_dir.join("theodore.db"))
             .context("opening the database")?,
@@ -87,6 +93,7 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         triggers: None,
         fixture_clock: None,
         fixture_host: None,
+        token_status: Some(token as Arc<dyn theodore_app::TokenStatus>),
     })
 }
 
@@ -104,6 +111,7 @@ fn fixture_adapters(dir: &std::path::Path) -> anyhow::Result<Adapters> {
         triggers: Some(triggers),
         fixture_clock: Some(clock),
         fixture_host: Some(host),
+        token_status: None,
     })
 }
 
@@ -124,6 +132,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         secrets: a.secrets,
         clock: a.clock,
         tools: Some(mcp.clone()),
+        token_status: a.token_status,
     };
     let (core, receivers) = Core::start(deps);
     backend.attach(core.clone());

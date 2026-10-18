@@ -2,7 +2,7 @@
 //! continuing from the previous grouping when there is one.
 
 use theodore_contract::models;
-use theodore_domain::{Grouping, PrId};
+use theodore_domain::{AgentId, Grouping, PrId};
 use theodore_ports::{NewAction, SyncActionCode};
 
 use crate::core::Core;
@@ -32,20 +32,21 @@ impl Core {
             .await
             .map_err(AppError::join)??;
         let prev: Option<Grouping> = prev_row.and_then(|r| serde_json::from_value(r.data).ok());
+        let agent = self.setting_agent("agents.grouping", AgentId::Claude).await;
 
         let grouping = match &prev {
             Some(p) => {
                 self.0
                     .deps
                     .grouper
-                    .regroup(p, &entry.revision, &detail, &entry.worktree_path)
+                    .regroup(p, &entry.revision, &detail, &entry.worktree_path, agent)
                     .await?
             }
             None => {
                 self.0
                     .deps
                     .grouper
-                    .group(&entry.revision, &detail, &entry.worktree_path)
+                    .group(&entry.revision, &detail, &entry.worktree_path, agent)
                     .await?
             }
         };

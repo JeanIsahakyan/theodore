@@ -81,6 +81,12 @@ impl Core {
         let core = Core(inner.clone());
         tokio::spawn(crate::outbox::run(inner.clone()));
         tokio::spawn(crate::poller::run(inner.clone()));
+        {
+            let core = core.clone();
+            tokio::spawn(async move {
+                let _ = core.refresh_inbox().await;
+            });
+        }
 
         (
             core,

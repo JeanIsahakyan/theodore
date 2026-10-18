@@ -6,9 +6,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use theodore_contract::{Ephemeral, ToastLevel, models};
-use theodore_domain::{Anchor, Comment, CommentId, Person, PrId, ReviewEvent, Sha, ViewedState};
+use theodore_domain::{
+    Anchor, Comment, CommentId, Person, PrId, PrRef, ReviewEvent, Sha, ThreadId, ViewedState,
+};
 use theodore_ports::{
-    HostError, NewAction, OutboxItem, ReviewComment, ReviewSubmission, SubmittedReview,
+    Fetched, HostError, NewAction, OutboxItem, ReviewComment, ReviewSubmission, SubmittedReview,
     SyncActionCode,
 };
 
@@ -41,6 +43,20 @@ pub struct SubmitReviewPayload {
     pub event: ReviewEvent,
     pub body: String,
     pub comments: Vec<DraftComment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplyPayload {
+    pub pr: PrId,
+    pub thread: ThreadId,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvePayload {
+    pub pr: PrId,
+    pub thread: ThreadId,
+    pub resolved: bool,
 }
 
 enum Outcome {
@@ -86,6 +102,8 @@ async fn process_item(core: &Core, item: OutboxItem) {
     let result = match item.op.as_str() {
         "set_viewed" => do_set_viewed(core, &item).await,
         "submit_review" => do_submit_review(core, &item).await,
+        "reply_thread" => do_reply_thread(core, &item).await,
+        "resolve_thread" => do_resolve_thread(core, &item).await,
         other => Err(Outcome::Fail(format!("unknown outbox op {other}"))),
     };
     let store = core.0.deps.store.clone();
@@ -222,6 +240,86 @@ async fn do_submit_review(core: &Core, item: &OutboxItem) -> Result<(), Outcome>
         }
         Err(e) => Err(classify_host_error(core, item, e).await),
     }
+}
+
+async fn do_reply_thread(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: ReplyPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    match core
+        .0
+        .deps
+        .host
+        .reply(&pr_ref, &payload.thread, &payload.body)
+        .await
+    {
+        Ok(_) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_resolve_thread(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: ResolvePayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    match core
+        .0
+        .deps
+        .host
+        .resolve(&pr_ref, &payload.thread, payload.resolved)
+        .await
+    {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+/// Re-fetches `pr_detail` so a thread write (reply, resolve) is reflected
+/// without waiting for the next poll tick.
+async fn refresh_pr_detail(core: &Core, pr: &PrId, pr_ref: &PrRef) {
+    let etag = core.0.etags.read().await.get(pr).cloned();
+    let Ok(Fetched::Modified { etag, value }) =
+        core.0.deps.host.get_pr(pr_ref, etag.as_deref()).await
+    else {
+        return;
+    };
+    if let Some(etag) = etag {
+        core.0.etags.write().await.insert(pr.clone(), etag);
+    }
+    let pr_s = pr.0.clone();
+    let Ok(detail_data) = serde_json::to_value(&value) else {
+        return;
+    };
+    let Ok(summary_data) = serde_json::to_value(&value.summary) else {
+        return;
+    };
+    let actions = vec![
+        NewAction {
+            model: models::PR_DETAIL.into(),
+            model_id: pr_s.clone(),
+            action: SyncActionCode::U,
+            data: Some(detail_data),
+        },
+        NewAction {
+            model: models::PR.into(),
+            model_id: pr_s,
+            action: SyncActionCode::U,
+            data: Some(summary_data),
+        },
+    ];
+    let _ = core.apply(actions).await;
 }
 
 async fn apply_submitted_review(
