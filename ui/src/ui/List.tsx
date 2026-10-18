@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Archive, Clock, CodePullRequest, Plus } from '@gravity-ui/icons';
+import {
+  ArrowRotateLeft,
+  Archive,
+  Clock,
+  CodePullRequest,
+  Plus,
+} from '@gravity-ui/icons';
 import {
   Button,
   Card,
@@ -9,12 +15,13 @@ import {
   ListBox,
   TextField,
   Toolbar,
+  Tooltip,
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { Key, ReactNode } from 'react';
 import type { InboxReason, PrId } from '../gen/contract';
-import { markDone, openPr } from '../actions';
+import { markDone, openPr, refreshInbox } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
 import { PRIcon } from './StatusIcon';
@@ -119,7 +126,7 @@ export function ViewHeader({
 const rowCls = (sel: boolean, picked: boolean) =>
   `${sel ? 'sel' : ''} ${picked ? 'picked bg-accent-soft' : ''}`;
 
-const PrRow = observer(function PrRow({
+export const PrRow = observer(function PrRow({
   id,
   sel,
   picked,
@@ -269,6 +276,18 @@ function useListKeys(order: PrId[]) {
 export const Inbox = observer(function Inbox() {
   const store = useRootStore();
   const ui = useUi();
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    void refreshInbox(store);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refresh = () => {
+    setRefreshing(true);
+    void refreshInbox(store).finally(() => setRefreshing(false));
+  };
+
   const prs = store.models.prSummaries.all();
   const inboxStates = store.models.inboxStates.all();
   const stateOf = (id: PrId) => inboxStates.find((s) => s.pr === id);
@@ -300,6 +319,19 @@ export const Inbox = observer(function Inbox() {
     <div className="view relative flex min-w-0 flex-1 flex-col">
       <ViewHeader title="Inbox" count={active.length}>
         <OpenPrField />
+        <Tooltip>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label="Refresh"
+            isPending={refreshing}
+            onPress={refresh}
+          >
+            <ArrowRotateLeft className="size-4" />
+          </Button>
+          <Tooltip.Content>Refresh inbox</Tooltip.Content>
+        </Tooltip>
       </ViewHeader>
       <div className="flex min-h-0 flex-1">
         <ListBox

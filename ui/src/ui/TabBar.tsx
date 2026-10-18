@@ -1,4 +1,5 @@
 import {
+  CodePullRequest,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -19,6 +20,8 @@ function useLabel(r: Route): { icon: ReactNode; title: string } {
   switch (r.name) {
     case 'inbox':
       return { icon: <Tray />, title: 'Inbox' };
+    case 'mine':
+      return { icon: <CodePullRequest />, title: 'My PRs' };
     case 'tasks':
       return { icon: <ListCheck />, title: 'Tasks' };
     case 'settings':

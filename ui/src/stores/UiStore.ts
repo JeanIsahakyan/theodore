@@ -16,6 +16,7 @@ export type SettingsPage = 'account' | 'agents' | 'updates' | 'about';
 
 export type Route =
   | { name: 'inbox' }
+  | { name: 'mine' }
   | { name: 'tasks' }
   | { name: 'settings'; page: SettingsPage }
   | { name: 'review'; pr: PrId };

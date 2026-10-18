@@ -9,8 +9,8 @@ export const FEATURES = {
   /** No host-write commands exist yet: take/decline/reassign/merge/auto-merge,
    *  "Ready for review", re-request review, update branch, conflict resolution. */
   hostWrites: false,
-  /** No command returns "who am I" — My PRs can't tell mine from anyone's. */
-  currentUser: false,
+  /** `viewer` returns the authenticated host user — My PRs filters on it. */
+  currentUser: true,
   /** No command adds/clones a project/repo; PRs arrive only via `open_pr`. */
   projects: false,
   /** No go-to-definition / find-references command (LSP was mock-only). */

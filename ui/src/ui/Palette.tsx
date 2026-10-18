@@ -6,10 +6,19 @@ import {
   Modal,
   ScrollShadow,
 } from '@heroui/react';
-import { Check, Clock, Gear, ListCheck, Moon, Tray } from '@gravity-ui/icons';
+import {
+  Check,
+  Clock,
+  CodePullRequest,
+  Gear,
+  ListCheck,
+  Moon,
+  Tray,
+} from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { SnoozeUntil } from '../gen/contract';
 import { snoozePrs } from '../actions';
+import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { toggleTheme } from '../stores/UiStore';
 import { K } from './bits';
@@ -194,6 +203,17 @@ export const CommandMenu = observer(function CommandMenu() {
       keys: 'G I',
       run: () => ui.go({ name: 'inbox' }),
     },
+    ...(FEATURES.currentUser
+      ? [
+          {
+            group: 'Go to',
+            label: 'My PRs',
+            icon: <CodePullRequest />,
+            keys: 'G M',
+            run: () => ui.go({ name: 'mine' }),
+          },
+        ]
+      : []),
     {
       group: 'Go to',
       label: 'Tasks',
@@ -262,11 +282,12 @@ export function useGlobalKeys() {
         (e.target as HTMLElement).closest('input,textarea,select')
       ) {
         return;
-      } else if (inSequence() && /^[itsa]$/.test(e.key)) {
+      } else if (inSequence() && /^[itsam]$/.test(e.key)) {
         gAt = 0;
         if (e.key === 'i') ui.go({ name: 'inbox' });
         if (e.key === 't') ui.go({ name: 'tasks' });
         if (e.key === 's') ui.go({ name: 'settings', page: 'agents' });
+        if (e.key === 'm' && FEATURES.currentUser) ui.go({ name: 'mine' });
       } else if (e.key === 'g') {
         gAt = Date.now();
       } else if (e.key === '[') {

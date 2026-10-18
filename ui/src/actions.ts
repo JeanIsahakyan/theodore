@@ -3,7 +3,7 @@
  * faked with a timer. Functions take the `RootStore` explicitly so they are
  * easy to call from components and from tests alike.
  */
-import { api } from './core/api';
+import { api, CommandFailure } from './core/api';
 import { FEATURES } from './features';
 import type {
   AgentId,
@@ -255,6 +255,35 @@ export function unsnooze(store: RootStore, pr: PrId): void {
   void store.sync.queue.transact([
     { op: 'update', model: 'inbox_state', id: pr, data: { snooze: null } },
   ]);
+}
+
+// ── inbox / viewer ───────────────────────────────────────────────────────────
+
+/** Asks the core to run the inbox searches again; rows land via `sync`.
+ *  A command the core doesn't have yet degrades to a toast, not a crash. */
+export async function refreshInbox(store: RootStore): Promise<void> {
+  try {
+    await api.refreshInbox();
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure
+          ? e.message
+          : 'Could not refresh the inbox.',
+    });
+  }
+}
+
+/** Fetches and caches the authenticated host user, for "My PRs" and "you" labels. */
+export async function loadViewer(store: RootStore): Promise<void> {
+  if (store.ephemeral.viewer) return;
+  try {
+    store.ephemeral.setViewer(await api.viewer());
+  } catch {
+    // No host connected yet (onboarding not finished) — My PRs stays empty.
+  }
 }
 
 // ── opening a PR ─────────────────────────────────────────────────────────────
