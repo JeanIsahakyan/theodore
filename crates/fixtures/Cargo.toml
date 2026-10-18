@@ -24,3 +24,7 @@ hex.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 tracing.workspace = true
+rmcp = { workspace = true, features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+] }

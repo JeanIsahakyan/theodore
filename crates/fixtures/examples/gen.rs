@@ -490,14 +490,14 @@ fn main() {
                 RecordedEvent {
                     event: AgentEvent::ToolCall {
                         id: "call-1".to_string(),
+                        // Flat shape matching the real `add_finding` MCP tool
+                        // (`crates/mcp/src/tools.rs::AddFindingParams`): the
+                        // fixture agent actually calls this tool over MCP
+                        // (see `ReplayAgents`), so the input must validate.
                         name: "add_finding".to_string(),
                         input: serde_json::json!({
-                            "anchor": {
-                                "rev": head1.as_str(),
-                                "path": "src/webhooks/deliver.ts",
-                                "side": "new",
-                                "line": 5,
-                            },
+                            "file": "src/webhooks/deliver.ts",
+                            "line": 5,
                             "severity": "warn",
                             "title": "Backoff has no upper bound",
                             "body": "500 * 2^attempt grows without a cap; consider MAX_BACKOFF_MS.",
@@ -505,6 +505,10 @@ fn main() {
                     },
                     delay_ms: 80,
                 },
+                // The recorded result is a placeholder: `ReplayAgents`
+                // replaces it with the real MCP response when `AgentRequest.mcp`
+                // is set, so this line only plays back when there is no MCP
+                // endpoint (e.g. a direct `AgentPort::run` call in a test).
                 RecordedEvent {
                     event: AgentEvent::ToolResult {
                         id: "call-1".to_string(),
@@ -521,6 +525,52 @@ fn main() {
                     delay_ms: 0,
                 },
             ],
+        );
+
+        // Regroup after a push (plan §5.3): reassigns the one changed hunk
+        // (`backoff.ts`, whose content changed from rev1 to rev2) back to
+        // its original group. Matched by the incremental regroup prompt
+        // (`# Existing groups`), not by a hand-typed substring.
+        write_script(
+            &dir,
+            agent,
+            "regroup",
+            vec![
+                RecordedEvent {
+                    event: AgentEvent::Text {
+                        text: format!("{prefix}: placing the changed backoff hunk..."),
+                    },
+                    delay_ms: 40,
+                },
+                RecordedEvent {
+                    event: AgentEvent::Done {
+                        final_text: serde_json::json!({
+                            "assignments": [
+                                {"hunk": backoff_hunk_v2.id.as_str(), "group": "g1"},
+                            ],
+                            "new_groups": [],
+                        })
+                        .to_string(),
+                        usage: usage(300, 60),
+                    },
+                    delay_ms: 0,
+                },
+            ],
+        );
+
+        // A deliberately slow script for e2e cancellation tests: matched by
+        // `ScriptRule::new("`slow-skill`", "slow")`, ahead of the generic
+        // "skill" rule, when `run_skill` is called with `skill: "slow-skill"`.
+        write_script(
+            &dir,
+            agent,
+            "slow",
+            vec![RecordedEvent {
+                event: AgentEvent::Text {
+                    text: "...".to_string(),
+                },
+                delay_ms: 5_000,
+            }],
         );
 
         write_script(

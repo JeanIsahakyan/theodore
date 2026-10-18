@@ -4887,6 +4887,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "hex",
+ "rmcp",
  "serde",
  "serde_json",
  "sha2",
@@ -5027,6 +5028,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dirs 6.0.0",
+ "serde",
  "serde_json",
  "tempfile",
  "theodore-agents",
