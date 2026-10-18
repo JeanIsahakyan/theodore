@@ -1,3 +1,4 @@
+import { DiffSkeleton } from './Loading';
 import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
@@ -502,8 +503,8 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       )}
 
       {!revision || revision.status === 'loading' ? (
-        <div className="flex flex-1 items-center justify-center text-muted">
-          <Spinner />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <DiffSkeleton />
         </div>
       ) : revision.status === 'error' ? (
         <div className="flex flex-1 items-center justify-center text-sm text-danger">

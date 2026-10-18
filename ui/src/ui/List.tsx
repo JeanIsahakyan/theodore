@@ -1,3 +1,4 @@
+import { RowsSkeleton } from './Loading';
 import { useEffect, useState } from 'react';
 import type { ComponentProps, Key, ReactNode } from 'react';
 import {
@@ -866,11 +867,17 @@ export const Inbox = observer(function Inbox() {
           onOpen={(id) => ui.go({ name: 'review', pr: id })}
           props={display.props}
           empty={
-            <Empty
-              icon={<CodePullRequest />}
-              title="Inbox is empty"
-              text="Open a PR by URL above, or wait for a review request to show up here."
-            />
+            store.ephemeral.inboxLoading ? (
+              <div className="flex-1">
+                <RowsSkeleton rows={6} />
+              </div>
+            ) : (
+              <Empty
+                icon={<CodePullRequest />}
+                title="Inbox is empty"
+                text="Open a PR by URL above, or wait for a review request to show up here."
+              />
+            )
           }
         />
         {ui.peek && ui.selected && <Peek id={ui.selected} />}

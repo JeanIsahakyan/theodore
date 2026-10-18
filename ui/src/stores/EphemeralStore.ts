@@ -36,6 +36,8 @@ export class EphemeralStore {
     rateLimitedUntil: null,
     authOk: true,
   };
+  /** `refresh_inbox` in flight. */
+  inboxLoading = false;
   /** Grouping runs in flight (and the last error) per PR id. */
   grouping = new Map<string, { running: boolean; error: string | null }>();
   /** The authenticated host user, cached once fetched via `viewer`. */
@@ -50,7 +52,14 @@ export class EphemeralStore {
       toasts: observableShallow,
       hostStatus: observable,
       grouping: observableShallow,
+      inboxLoading: observable,
       viewer: observableRef,
+    });
+  }
+
+  setInboxLoading(v: boolean): void {
+    runInAction(() => {
+      this.inboxLoading = v;
     });
   }
 

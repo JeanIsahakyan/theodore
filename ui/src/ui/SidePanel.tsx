@@ -334,10 +334,12 @@ const SkillRunView = observer(function SkillRunView({
                 : 'nothing found'}
             </>
           ) : (
-            <>
-              Running <span className="font-mono">/{r.skill}</span> on{' '}
-              {r.agents.join(' + ')}
-            </>
+            <span className="inline-flex items-center gap-2">
+              <Sparkles className="size-4 shrink-0 animate-pulse text-accent" />
+              <span className="shimmer-text">
+                Running /{r.skill} on {r.agents.join(' + ')}
+              </span>
+            </span>
           )}
         </span>
         {r.usage && (

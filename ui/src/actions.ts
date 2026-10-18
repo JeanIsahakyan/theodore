@@ -309,11 +309,14 @@ export function unsnooze(store: RootStore, pr: PrId): void {
 
 /** Asks the core to run the inbox searches again; rows land via `sync`.
  *  A command the core doesn't have yet degrades to a toast, not a crash. */
-export async function refreshInbox(_store: RootStore): Promise<void> {
+export async function refreshInbox(store: RootStore): Promise<void> {
+  store.ephemeral.setInboxLoading(true);
   try {
     await api.refreshInbox();
   } catch {
     // toasted by api.ts
+  } finally {
+    store.ephemeral.setInboxLoading(false);
   }
 }
 

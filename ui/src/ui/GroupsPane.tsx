@@ -1,3 +1,4 @@
+import { AgentWorking, GroupsSkeleton } from './Loading';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -19,7 +20,6 @@ import {
   Tabs,
   Tooltip,
   Virtualizer,
-  Spinner,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
@@ -672,9 +672,11 @@ function GroupingStatus({
       </div>
     );
   return (
-    <div className="flex items-center gap-2 px-4 py-3 text-xs text-muted">
-      <Spinner size="sm" />
-      Grouping changes by meaning… this takes a few minutes on large PRs.
+    <div className="flex flex-col gap-1 pt-2">
+      <div className="px-3">
+        <AgentWorking text="Grouping changes by meaning… a few minutes on large PRs" />
+      </div>
+      <GroupsSkeleton />
     </div>
   );
 }
