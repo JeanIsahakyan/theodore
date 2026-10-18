@@ -4,9 +4,9 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use theodore_domain::{
-    AgentId, Anchor, Author, Draft, Finding, Group, Grouping, HostKind, HunkId, Millis, Person,
-    PrDetail, PrId, PrSummary, RepoRef, ReviewEvent, Revision, Sha, SnoozeUntil, Task, TaskId,
-    Thread, ThreadId, Usage, ViewedState,
+    AgentId, Anchor, Author, CommentId, Draft, Finding, Group, Grouping, HostKind, HunkId, Millis,
+    Person, PrDetail, PrId, PrSummary, RepoRef, ReviewEvent, Revision, Sha, SnoozeUntil, Task,
+    TaskId, Thread, ThreadId, Usage, ViewedState,
 };
 
 /// Model names used in transactions and sync frames.
@@ -341,6 +341,116 @@ pub struct OpenBranchRequest {
     pub base: Option<String>,
 }
 
+// ── host writes (merge, reviewers, comments) ────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    Clean,
+    Blocked,
+    Behind,
+    Dirty,
+    Unstable,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct MergeInfo {
+    pub mergeable: Option<bool>,
+    pub state: MergeState,
+    pub allowed_methods: Vec<MergeMethod>,
+    pub auto_merge_enabled: bool,
+    pub in_queue: bool,
+    pub required_approvals: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct MergeRequest {
+    pub pr: PrId,
+    pub method: MergeMethod,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    /// Merge when requirements pass instead of now.
+    pub auto: bool,
+    /// Add to the merge queue instead of merging.
+    pub queue: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ReviewersRequest {
+    pub pr: PrId,
+    pub add: Vec<String>,
+    pub add_teams: Vec<String>,
+    pub remove: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct DraftStateRequest {
+    pub pr: PrId,
+    pub draft: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ReactRequest {
+    pub pr: PrId,
+    pub comment: CommentId,
+    /// GitHub content name: +1, -1, laugh, hooray, confused, heart, rocket, eyes.
+    pub emoji: String,
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct EditCommentRequest {
+    pub pr: PrId,
+    pub comment: CommentId,
+    /// `None` deletes the comment.
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CommitSuggestionsRequest {
+    pub pr: PrId,
+    /// Review comments whose ```suggestion blocks to apply.
+    pub comments: Vec<CommentId>,
+    pub message: String,
+}
+
+// ── skills, budget ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SkillBody {
+    pub info: SkillInfo,
+    /// Full SKILL.md text (front matter included).
+    pub body: String,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SaveSkillRequest {
+    pub id: String,
+    /// `user` (~/.claude/skills) or `repo` (the PR repo's .claude/skills —
+    /// committed on a branch only when the user asks).
+    pub scope: String,
+    pub pr: Option<PrId>,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct PrSpend {
+    pub pr: PrId,
+    pub usage: Usage,
+    /// `budget.per_pr_usd` setting; agent runs stop at this spend.
+    pub budget_usd: Option<f64>,
+}
+
 // ── ephemeral events (core → UI, not persisted) ─────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -492,7 +602,17 @@ pub fn types() -> specta::Types {
         .register::<AddProjectRequest>()
         .register::<LocalBranch>()
         .register::<OpenBranchRequest>()
-        .register::<RepoRef>();
+        .register::<RepoRef>()
+        .register::<MergeInfo>()
+        .register::<MergeRequest>()
+        .register::<ReviewersRequest>()
+        .register::<DraftStateRequest>()
+        .register::<ReactRequest>()
+        .register::<EditCommentRequest>()
+        .register::<CommitSuggestionsRequest>()
+        .register::<SkillBody>()
+        .register::<SaveSkillRequest>()
+        .register::<PrSpend>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

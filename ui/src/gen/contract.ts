@@ -100,6 +100,13 @@ export type Commit = {
 	at: number,
 };
 
+export type CommitSuggestionsRequest = {
+	pr: PrId,
+	/**  Review comments whose ```suggestion blocks to apply. */
+	comments: CommentId[],
+	message: string,
+};
+
 export type DelegateRequest = {
 	task: TaskId,
 	/**  Empty = use the `agents.fix` setting. */
@@ -122,6 +129,18 @@ export type Draft = {
 };
 
 export type DraftId = string;
+
+export type DraftStateRequest = {
+	pr: PrId,
+	draft: boolean,
+};
+
+export type EditCommentRequest = {
+	pr: PrId,
+	comment: CommentId,
+	/**  `None` deletes the comment. */
+	body: string | null,
+};
 
 export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } | { type: "toast"; level: ToastLevel; text: string } |
 /**  Grouping of a PR started or finished (no sync row until it's done). */
@@ -272,6 +291,30 @@ export type LocalBranch = {
 	updated_at: number,
 };
 
+export type MergeInfo = {
+	mergeable: boolean | null,
+	state: MergeState,
+	allowed_methods: MergeMethod[],
+	auto_merge_enabled: boolean,
+	in_queue: boolean,
+	required_approvals: number | null,
+};
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+export type MergeRequest = {
+	pr: PrId,
+	method: MergeMethod,
+	title: string | null,
+	body: string | null,
+	/**  Merge when requirements pass instead of now. */
+	auto: boolean,
+	/**  Add to the merge queue instead of merging. */
+	queue: boolean,
+};
+
+export type MergeState = "clean" | "blocked" | "behind" | "dirty" | "unstable" | "unknown";
+
 export type MutationOp = { op: "create"; model: string; id: string; data: unknown } |
 /**  `data` holds changed fields only. */
 { op: "update"; model: string; id: string; data: unknown } | { op: "archive"; model: string; id: string } | { op: "delete"; model: string; id: string };
@@ -334,6 +377,13 @@ export type PrRef = {
 	host_id: string | null,
 };
 
+export type PrSpend = {
+	pr: PrId,
+	usage: Usage,
+	/**  `budget.per_pr_usd` setting; agent runs stop at this spend. */
+	budget_usd: number | null,
+};
+
 export type PrState = "draft" | "open" | "merged" | "closed";
 
 /**  One row in the inbox / PR lists. */
@@ -375,6 +425,14 @@ export type Project = {
 
 export type ProjectStatus = "cloning" | "ready" | "error";
 
+export type ReactRequest = {
+	pr: PrId,
+	comment: CommentId,
+	/**  GitHub content name: +1, -1, laugh, hooray, confused, heart, rocket, eyes. */
+	emoji: string,
+	on: boolean,
+};
+
 export type ReplyRequest = {
 	pr: PrId,
 	thread: ThreadId,
@@ -404,6 +462,13 @@ export type Reviewer = {
 
 export type ReviewerState = "requested" | "approved" | "changes_requested" | "commented";
 
+export type ReviewersRequest = {
+	pr: PrId,
+	add: string[],
+	add_teams: string[],
+	remove: string[],
+};
+
 /**  One revision of a PR's diff: `base...head`. */
 export type Revision = {
 	base: Sha,
@@ -425,6 +490,17 @@ export type RunSkillRequest = {
 
 export type RunStatus = "running" | "done" | "cancelled" | "failed" | "stalled";
 
+export type SaveSkillRequest = {
+	id: string,
+	/**
+	 *  `user` (~/.claude/skills) or `repo` (the PR repo's .claude/skills —
+	 *  committed on a branch only when the user asks).
+	 */
+	scope: string,
+	pr: PrId | null,
+	body: string,
+};
+
 export type SetTokenRequest = {
 	host: HostKind,
 	/**  `None` removes the stored token. */
@@ -444,6 +520,13 @@ export type Severity = "info" | "warn" | "high";
 export type Sha = string;
 
 export type Side = "old" | "new";
+
+export type SkillBody = {
+	info: SkillInfo,
+	/**  Full SKILL.md text (front matter included). */
+	body: string,
+	editable: boolean,
+};
 
 export type SkillId = string;
 
