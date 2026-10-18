@@ -1,6 +1,7 @@
 /** Typed wrappers for every command in `.context/commands.md`, over `Transport`. */
 import { getTransport } from './transport';
 import type {
+  AddProjectRequest,
   AgentStatus,
   AppInfo,
   AskRequest,
@@ -10,11 +11,15 @@ import type {
   DelegateRequest,
   FileRequest,
   HostAuthStatus,
+  LocalBranch,
+  OpenBranchRequest,
   OpenPrRequest,
   OpenPrResponse,
   Person,
   PrId,
+  Project,
   ReplyRequest,
+  RepoRef,
   Revision,
   RevisionRequest,
   ResolveRequest,
@@ -96,4 +101,12 @@ export const api = {
   delegateTask: (req: DelegateRequest) =>
     call<string>('delegate_task', { req }),
   decideTask: (req: TaskDecision) => call<null>('decide_task', { req }),
+  listHostRepos: () => call<RepoRef[]>('list_host_repos'),
+  addProject: (req: AddProjectRequest) => call<Project>('add_project', { req }),
+  removeProject: (id: string) => call<null>('remove_project', { id }),
+  refreshProject: (id: string) => call<null>('refresh_project', { id }),
+  listBranches: (project: string) =>
+    call<LocalBranch[]>('list_branches', { project }),
+  openBranch: (req: OpenBranchRequest) =>
+    call<OpenPrResponse>('open_branch', { req }),
 };

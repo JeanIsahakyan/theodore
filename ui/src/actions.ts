@@ -7,11 +7,14 @@ import type { Route } from './stores/UiStore';
 import { api } from './core/api';
 import { FEATURES } from './features';
 import type {
+  AddProjectRequest,
   AgentId,
   Anchor,
   AskRequest,
   HunkId,
+  OpenBranchRequest,
   PrId,
+  Project,
   ReviewEvent,
   SnoozeUntil,
   TaskStatus,
@@ -347,6 +350,59 @@ export async function openPr(
     const to: Route = { name: 'review', pr: res.pr };
     if (replace) store.ui.replaceTab(replace, to);
     else store.ui.go(to);
+    return res.pr;
+  } catch {
+    return null;
+  }
+}
+
+// ── projects ─────────────────────────────────────────────────────────────────
+
+/** `null` on a rejected `add_project` (bad path, no access, already added, a
+ *  command the core doesn't have yet …) — already toasted by `api.ts`. */
+export async function addProject(
+  _store: RootStore,
+  req: AddProjectRequest,
+): Promise<Project | null> {
+  try {
+    return await api.addProject(req);
+  } catch {
+    return null;
+  }
+}
+
+export async function removeProject(
+  _store: RootStore,
+  id: string,
+): Promise<void> {
+  try {
+    await api.removeProject(id);
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+export async function refreshProject(
+  _store: RootStore,
+  id: string,
+): Promise<void> {
+  try {
+    await api.refreshProject(id);
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+/** Opens a local branch as a review with no host PR (`HostKind::Local`),
+ *  same shape as `openPr`. */
+export async function openBranch(
+  store: RootStore,
+  req: OpenBranchRequest,
+): Promise<PrId | null> {
+  try {
+    const res = await api.openBranch(req);
+    await store.sync.openPr(res.pr);
+    store.ui.go({ name: 'review', pr: res.pr });
     return res.pr;
   } catch {
     return null;

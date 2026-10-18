@@ -16,6 +16,7 @@ import type {
   InboxState,
   PrDetail,
   PrSummary,
+  Project,
   Setting,
   SkillRun,
   Task,
@@ -34,6 +35,7 @@ export const MODEL_NAMES = [
   'skill_run',
   'chat_message',
   'setting',
+  'project',
 ] as const;
 
 export type ModelName = (typeof MODEL_NAMES)[number];
@@ -57,6 +59,7 @@ export interface ModelRows {
   skill_run: WithId<SkillRun>;
   chat_message: WithId<ChatMessage>;
   setting: WithId<Setting>;
+  project: WithId<Project>;
 }
 
 /**

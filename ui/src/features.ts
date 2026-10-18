@@ -11,8 +11,9 @@ export const FEATURES = {
   hostWrites: false,
   /** `viewer` returns the authenticated host user — My PRs filters on it. */
   currentUser: true,
-  /** No command adds/clones a project/repo; PRs arrive only via `open_pr`. */
-  projects: false,
+  /** `list_host_repos` / `add_project` / `remove_project` / `refresh_project`
+   *  land this wave — projects can be added, browsed and removed. */
+  projects: true,
   /** No go-to-definition / find-references command (LSP was mock-only). */
   symbolPeek: false,
   /** No Linear integration command. */
