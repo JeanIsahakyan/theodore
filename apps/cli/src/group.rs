@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 use theodore_domain::{AgentId, Revision};
 use theodore_grouping::{GroupingOptions, GroupingReport, PrMeta, group_revision};
 use theodore_ports::AgentPort;
@@ -42,6 +43,38 @@ pub struct GroupArgs {
     /// Save the resulting grouping as JSON under this directory.
     #[arg(long)]
     pub save: Option<PathBuf>,
+    /// PR metadata (title/body/commits) as JSON, for use with --diff-file
+    /// when the real PR url path isn't available (e.g. host adapter gaps,
+    /// offline eval). Same shape as a fixture's "pr" field.
+    #[arg(long)]
+    pub meta: Option<PathBuf>,
+    /// Save the input (PR metadata + revision) as an eval fixture — the same
+    /// format `theodore eval` reads back, so a run can be replayed later
+    /// without network.
+    #[arg(long)]
+    pub save_fixture: Option<PathBuf>,
+}
+
+/// Mirrors `eval::FixturePr` — kept separate so this crate's CLI argument
+/// handling doesn't need `theodore_grouping::PrMeta` to derive serde.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FixtureMeta {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub commits: Vec<String>,
+}
+
+impl From<FixtureMeta> for PrMeta {
+    fn from(m: FixtureMeta) -> PrMeta {
+        PrMeta {
+            title: m.title,
+            body: m.body,
+            commits: m.commits,
+        }
+    }
 }
 
 /// Load the revision and PR metadata for `args`, with no `AgentPort` needed.
@@ -53,12 +86,37 @@ pub fn load_input(args: &GroupArgs) -> Result<(Revision, PrMeta, PathBuf)> {
             .filter(|p| !p.as_os_str().is_empty())
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
-        Ok((rev, PrMeta::default(), cwd))
+        let pr = match &args.meta {
+            Some(meta_path) => {
+                let text = std::fs::read_to_string(meta_path)
+                    .with_context(|| format!("reading {}", meta_path.display()))?;
+                let meta: FixtureMeta = serde_json::from_str(&text)
+                    .with_context(|| format!("parsing {}", meta_path.display()))?;
+                meta.into()
+            }
+            None => PrMeta::default(),
+        };
+        Ok((rev, pr, cwd))
     } else if args.pr_url.is_some() {
         anyhow::bail!("PR urls are loaded with deps::load_pr")
     } else {
         anyhow::bail!("provide a PR url or --diff-file <path>")
     }
+}
+
+/// Write `rev` + `pr` out as an eval fixture (same shape `eval::Fixture`
+/// reads), so a real `theodore group` run can be replayed offline later.
+pub fn save_fixture(path: &Path, pr: &FixtureMeta, rev: &Revision) -> Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[derive(Serialize)]
+    struct Fixture<'a> {
+        pr: &'a FixtureMeta,
+        revision: &'a Revision,
+    }
+    let text = serde_json::to_string_pretty(&Fixture { pr, revision: rev })?;
+    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Run the grouping pipeline against already-loaded input. This is the

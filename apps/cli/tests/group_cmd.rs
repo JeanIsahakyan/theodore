@@ -45,6 +45,8 @@ async fn diff_file_round_trips_through_the_pipeline() {
         agent: group::AgentChoice::Claude,
         json: false,
         save: None,
+        meta: None,
+        save_fixture: None,
     };
     let (rev, pr, _cwd) = group::load_input(&args).unwrap();
     assert_eq!(rev.files.len(), 2);
@@ -86,9 +88,70 @@ async fn missing_input_is_a_clear_error() {
         agent: group::AgentChoice::Claude,
         json: false,
         save: None,
+        meta: None,
+        save_fixture: None,
     };
     let err = group::load_input(&args).unwrap_err();
     assert!(err.to_string().contains("--diff-file"));
+}
+
+#[tokio::test]
+async fn meta_file_fills_in_pr_metadata_for_diff_file() {
+    let file = write_temp_diff();
+    let mut meta_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    meta_file
+        .write_all(br#"{"title": "Add line two", "body": "why not", "commits": ["c1"]}"#)
+        .unwrap();
+    let args = group::GroupArgs {
+        pr_url: None,
+        diff_file: Some(file.path().to_path_buf()),
+        agent: group::AgentChoice::Claude,
+        json: false,
+        save: None,
+        meta: Some(meta_file.path().to_path_buf()),
+        save_fixture: None,
+    };
+    let (_rev, pr, _cwd) = group::load_input(&args).unwrap();
+    assert_eq!(pr.title, "Add line two");
+    assert_eq!(pr.body, "why not");
+    assert_eq!(pr.commits, vec!["c1".to_string()]);
+}
+
+#[tokio::test]
+async fn missing_meta_file_is_a_clear_error() {
+    let file = write_temp_diff();
+    let args = group::GroupArgs {
+        pr_url: None,
+        diff_file: Some(file.path().to_path_buf()),
+        agent: group::AgentChoice::Claude,
+        json: false,
+        save: None,
+        meta: Some(Path::new("/no/such/meta.json").to_path_buf()),
+        save_fixture: None,
+    };
+    let err = group::load_input(&args).unwrap_err();
+    assert!(err.to_string().contains("meta.json"));
+}
+
+#[tokio::test]
+async fn save_fixture_round_trips_through_eval_loader() {
+    let rev = difffile::parse(DIFF, "base", "head").unwrap();
+    let meta = group::FixtureMeta {
+        title: "T".into(),
+        body: "B".into(),
+        commits: vec!["c1".into(), "c2".into()],
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pr123.json");
+    group::save_fixture(&path, &meta, &rev).unwrap();
+
+    let fixtures = theodore_cli::eval::load_fixtures(dir.path()).unwrap();
+    assert_eq!(fixtures.len(), 1);
+    let (name, fixture) = &fixtures[0];
+    assert_eq!(name, "pr123");
+    assert_eq!(fixture.pr.title, "T");
+    assert_eq!(fixture.pr.commits, vec!["c1".to_string(), "c2".to_string()]);
+    assert_eq!(fixture.revision.files.len(), rev.files.len());
 }
 
 #[tokio::test]
@@ -99,6 +162,8 @@ async fn pr_urls_are_not_loaded_offline() {
         agent: group::AgentChoice::Claude,
         json: false,
         save: None,
+        meta: None,
+        save_fixture: None,
     };
     let err = group::load_input(&args).unwrap_err();
     assert!(err.to_string().contains("load_pr"));
