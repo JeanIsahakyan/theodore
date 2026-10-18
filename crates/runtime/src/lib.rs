@@ -42,6 +42,12 @@ pub struct Runtime {
     pub mcp: Arc<McpRunTools>,
     /// Fixture triggers (author push, checks green, agent crash) in fixture mode.
     pub triggers: Option<theodore_fixtures::Triggers>,
+    /// The controlled clock in fixture mode, so tests can advance it past the
+    /// poller's due time deterministically (`None` on the real clock).
+    pub fixture_clock: Option<theodore_fixtures::ManualClock>,
+    /// The fixture host adapter in fixture mode, so tests can assert on the
+    /// calls it received (`None` on the real host).
+    pub fixture_host: Option<Arc<theodore_fixtures::FixtureHost>>,
 }
 
 struct Adapters {
@@ -52,6 +58,8 @@ struct Adapters {
     secrets: Arc<dyn Secrets>,
     clock: Arc<dyn Clock>,
     triggers: Option<theodore_fixtures::Triggers>,
+    fixture_clock: Option<theodore_fixtures::ManualClock>,
+    fixture_host: Option<Arc<theodore_fixtures::FixtureHost>>,
 }
 
 fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
@@ -77,20 +85,25 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         secrets,
         clock,
         triggers: None,
+        fixture_clock: None,
+        fixture_host: None,
     })
 }
 
 fn fixture_adapters(dir: &std::path::Path) -> anyhow::Result<Adapters> {
     let (host, git, agents, clock, triggers) = theodore_fixtures::FixtureSet::load(dir)
         .with_context(|| format!("loading fixtures from {}", dir.display()))?;
+    let host = Arc::new(host);
     Ok(Adapters {
-        host: Arc::new(host),
+        host: host.clone(),
         git: Arc::new(git),
         agents: Arc::new(agents),
         store: Arc::new(theodore_store::SqliteStore::open_in_memory()?),
         secrets: Arc::new(theodore_secrets::MemorySecrets::new()),
-        clock: Arc::new(clock),
+        clock: Arc::new(clock.clone()),
         triggers: Some(triggers),
+        fixture_clock: Some(clock),
+        fixture_host: Some(host),
     })
 }
 
@@ -120,5 +133,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         receivers,
         mcp,
         triggers: a.triggers,
+        fixture_clock: a.fixture_clock,
+        fixture_host: a.fixture_host,
     })
 }

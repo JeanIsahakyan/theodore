@@ -11,13 +11,59 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rmcp::RoleClient;
+use rmcp::ServiceExt;
+use rmcp::model::CallToolRequestParams;
+use rmcp::service::RunningService;
+use rmcp::transport::StreamableHttpClientTransport;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use serde::{Deserialize, Serialize};
 use theodore_domain::{AgentId, Usage};
-use theodore_ports::{AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun};
+use theodore_ports::{
+    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, McpEndpoint,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::state::SharedState;
+
+/// Connects to a `review-tools` MCP endpoint registered for this run
+/// (plan §8.3). Mirrors `theodore_mcp::bridge::connect_upstream`.
+async fn connect_mcp(endpoint: &McpEndpoint) -> Result<RunningService<RoleClient, ()>, String> {
+    let config = StreamableHttpClientTransportConfig::with_uri(endpoint.url.clone())
+        .auth_header(endpoint.token.clone());
+    let transport = StreamableHttpClientTransport::from_config(config);
+    ().serve(transport)
+        .await
+        .map_err(|e| format!("connecting to {}: {e}", endpoint.url))
+}
+
+/// Calls MCP tool `name` with `input` (a JSON object becomes the tool's
+/// arguments) and returns `(ok, output)`, the shape a recorded `ToolResult`
+/// carries.
+async fn call_tool(
+    client: &RunningService<RoleClient, ()>,
+    name: &str,
+    input: &serde_json::Value,
+) -> (bool, String) {
+    let mut request = CallToolRequestParams::new(name.to_string());
+    if let serde_json::Value::Object(map) = input.clone() {
+        request = request.with_arguments(map);
+    }
+    match client.call_tool(request).await {
+        Ok(result) => {
+            let ok = result.is_error != Some(true);
+            let output = result
+                .content
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.clone())
+                .unwrap_or_default();
+            (ok, output)
+        }
+        Err(e) => (false, e.to_string()),
+    }
+}
 
 /// One recorded event, with the delay to wait before sending it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +110,18 @@ impl ReplayAgents {
             state,
             rules: vec![
                 ScriptRule::new("grouping", "grouping"),
+                // The real grouping pipeline's initial-call prompt
+                // (`theodore_grouping::prompt::build_prompts`) never spells
+                // out the word "grouping"; it's recognized by its own
+                // section header instead.
+                ScriptRule::new("# Files and hunks", "grouping"),
+                // The incremental regroup prompt after a push
+                // (`theodore_grouping::incremental::build_prompt`).
+                ScriptRule::new("# Existing groups", "regroup"),
+                // Deliberately ahead of the generic "skill" rule below: lets
+                // a test ask for a slow-running skill run (to cancel) by
+                // name, e.g. `RunSkillRequest { skill: "slow-skill", .. }`.
+                ScriptRule::new("`slow-skill`", "slow"),
                 ScriptRule::new("skill", "skill"),
             ],
             defaults,
@@ -148,6 +206,7 @@ impl AgentPort for ReplayAgents {
             .map_err(AgentError::Spawn)?;
 
         let crash = self.state.lock().unwrap().crash_next.remove(&req.agent);
+        let mcp = req.mcp.clone();
 
         let (tx, rx) = mpsc::channel(16);
         let cancel = CancellationToken::new();
@@ -164,7 +223,12 @@ impl AgentPort for ReplayAgents {
                 return;
             }
 
-            for recorded in events {
+            // Connected lazily on the first `ToolCall`, so scripts with no
+            // tool calls never pay for it.
+            let mut mcp_client: Option<RunningService<RoleClient, ()>> = None;
+            let mut i = 0;
+            while i < events.len() {
+                let recorded = events[i].clone();
                 if recorded.delay_ms > 0 {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(recorded.delay_ms)) => {}
@@ -187,6 +251,51 @@ impl AgentPort for ReplayAgents {
                     return;
                 }
 
+                // A recorded tool call against a real MCP endpoint is
+                // actually placed over MCP (an `rmcp` client), not just
+                // echoed from the recording — the whole point being that a
+                // run through `app::Core::run_skill` ends in a real
+                // `finding` row, not a canned one (plan §8.3, §8.4).
+                if let AgentEvent::ToolCall { id, name, input } = &recorded.event
+                    && let Some(endpoint) = &mcp
+                {
+                    if tx.send(recorded.event.clone()).await.is_err() {
+                        return;
+                    }
+                    if mcp_client.is_none() {
+                        mcp_client = connect_mcp(endpoint).await.ok();
+                    }
+                    let (ok, output) = match &mcp_client {
+                        Some(client) => call_tool(client, name, input).await,
+                        None => (
+                            false,
+                            "fixture: could not connect to the MCP endpoint".to_string(),
+                        ),
+                    };
+                    if tx
+                        .send(AgentEvent::ToolResult {
+                            id: id.clone(),
+                            ok,
+                            output,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // The recording's own `ToolResult` for this call is a
+                    // placeholder for when there's no MCP endpoint to call
+                    // (see `load_script`'s callers); skip it so the real
+                    // result isn't followed by a stale canned one.
+                    if let Some(next) = events.get(i + 1)
+                        && matches!(&next.event, AgentEvent::ToolResult { id: next_id, .. } if next_id == id)
+                    {
+                        i += 1;
+                    }
+                    i += 1;
+                    continue;
+                }
+
                 let terminal = matches!(
                     recorded.event,
                     AgentEvent::Done { .. } | AgentEvent::Error { .. }
@@ -197,6 +306,7 @@ impl AgentPort for ReplayAgents {
                 if terminal {
                     return;
                 }
+                i += 1;
             }
 
             // Every script ends in exactly one terminal event; if the
