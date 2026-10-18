@@ -96,7 +96,12 @@ fn excerpt(hunk: &Hunk, budget: &PromptBudget) -> String {
         }
     }
     if out.len() > budget.excerpt_max_chars {
-        out.truncate(budget.excerpt_max_chars);
+        // Byte budget, cut on a char boundary: diffs carry any UTF-8.
+        let mut cut = budget.excerpt_max_chars;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
         out.push('…');
     }
     out
@@ -381,6 +386,31 @@ mod tests {
         let labels: Vec<&str> = chunks.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"a"));
         assert!(labels.contains(&"b"));
+    }
+
+    #[test]
+    fn excerpt_cuts_on_a_char_boundary() {
+        let budget = PromptBudget {
+            excerpt_max_chars: 7,
+            ..PromptBudget::default()
+        };
+        let hunk = Hunk {
+            id: theodore_domain::HunkId::new("h"),
+            path: "a.md".into(),
+            old_start: 1,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: 1,
+            header: String::new(),
+            lines: vec![theodore_domain::DiffLine {
+                kind: theodore_domain::LineKind::Add,
+                text: "привет мир".into(),
+                old_no: None,
+                new_no: Some(1),
+            }],
+        };
+        let out = excerpt(&hunk, &budget);
+        assert!(out.ends_with('…'));
     }
 
     #[test]
