@@ -616,14 +616,17 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const [text, setText] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillAgents, setSkillAgents] = useState<AgentId[]>(AGENTS);
+  const [installed, setInstalled] = useState<AgentId[] | null>(null);
   // Default to the agents actually installed on this machine.
   useEffect(() => {
     let live = true;
     void api
       .detectAgents()
       .then((all) => {
-        const installed = all.filter((a) => a.installed).map((a) => a.id);
-        if (live && installed.length > 0) setSkillAgents(installed);
+        const ids = all.filter((a) => a.installed).map((a) => a.id);
+        if (!live) return;
+        setInstalled(ids);
+        if (ids.length > 0) setSkillAgents(ids);
       })
       .catch(() => {});
     return () => {
@@ -934,9 +937,11 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                       if (next.length) setSkillAgents(next);
                     }}
                   >
-                    {AGENTS.map((a) => (
+                    {/* Only agents installed on this computer are offered. */}
+                    {(installed ?? AGENTS).map((a) => (
                       <Dropdown.Item key={a} id={a} textValue={a}>
                         <Label>{a}</Label>
+                        <Dropdown.ItemIndicator />
                       </Dropdown.Item>
                     ))}
                   </Dropdown.Menu>
