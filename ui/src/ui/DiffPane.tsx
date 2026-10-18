@@ -1,3 +1,5 @@
+import { MarkdownDiff } from './MarkdownDiff';
+import { isMarkdown } from './mdDiff';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
@@ -20,6 +22,7 @@ import {
   Kbd,
   Surface,
   ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@heroui/react';
@@ -272,6 +275,7 @@ export const DiffPane = observer(function DiffPane({
           key={f.path}
           pr={pr}
           rev={rev.head}
+          base={rev.base}
           allFiles={rev.files}
           file={f}
           since={since}
@@ -631,6 +635,7 @@ interface LineProps {
 function FileBlockInner({
   pr,
   rev,
+  base,
   allFiles,
   file,
   since,
@@ -648,6 +653,7 @@ function FileBlockInner({
 }: {
   pr: PrId;
   rev: Revision['head'];
+  base: Revision['base'];
   allFiles: FileDiff[];
   file: FileDiff;
   since?: Map<HunkId, SinceKind> | null;
@@ -665,6 +671,8 @@ function FileBlockInner({
   const isViewed = viewed?.state === 'viewed';
   const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const [shown, setShown] = useState(false);
+  const md = isMarkdown(file.path) && file.status !== 'deleted';
+  const [preview, setPreview] = useState(false);
   const generatedFlag = file.flags.find((f) => f.kind === 'generated');
   const summaryForMenu = store.models.prSummaries.get(pr);
   // Hooks must run unconditionally, so this is built before the early
@@ -767,8 +775,8 @@ function FileBlockInner({
           <span className="text-danger">−{file.deletions}</span>
         </span>
         {others.map((h) => {
-          const g = store.models.groups
-            .all()
+          const g = store.models
+            .groupsOf(pr)
             .find((x) => x.hunks.includes(h.id));
           if (!g) return null;
           return (
@@ -795,6 +803,22 @@ function FileBlockInner({
             changed since viewed
           </Chip>
         )}
+        {md && (
+          <ToggleButtonGroup
+            size="sm"
+            selectionMode="single"
+            disallowEmptySelection
+            aria-label="Markdown view"
+            selectedKeys={new Set([preview ? 'preview' : 'code'])}
+            onSelectionChange={(k) => setPreview([...k][0] === 'preview')}
+          >
+            <ToggleButton id="code">Code</ToggleButton>
+            <ToggleButton id="preview">
+              <ToggleButtonGroup.Separator />
+              Preview
+            </ToggleButton>
+          </ToggleButtonGroup>
+        )}
         <ToggleButton
           size="sm"
           isSelected={isViewed}
@@ -810,7 +834,15 @@ function FileBlockInner({
           {local ? 'Read' : 'Viewed'}
         </ToggleButton>
       </header>
-      {collapsedFile ? (
+      {md && preview ? (
+        <MarkdownDiff
+          pr={pr}
+          base={base}
+          head={rev}
+          path={file.path}
+          oldPath={file.old_path}
+        />
+      ) : collapsedFile ? (
         <div className="collapsed-file flex items-center gap-3 bg-surface-secondary px-4 py-3 text-sm text-muted">
           <span className="flex-1">
             {generatedFlag

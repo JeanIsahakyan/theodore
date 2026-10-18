@@ -335,3 +335,23 @@ body.cmd .lines .src span:hover {
     color: var(--muted);
   }
 }
+
+/* Rendered markdown diff */
+.md-diff .md-block {
+  border-radius: 0.5rem;
+  padding: 0.15rem 0.6rem;
+  border-inline-start: 3px solid transparent;
+}
+.md-diff .md-add {
+  background: var(--diff-add);
+  border-inline-start-color: var(--success);
+}
+.md-diff .md-del {
+  background: var(--diff-del);
+  border-inline-start-color: var(--danger);
+}
+.md-diff .md-del .md {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--danger) 60%, transparent);
+  opacity: 0.75;
+}
