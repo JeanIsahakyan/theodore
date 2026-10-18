@@ -176,3 +176,137 @@ real-world fixtures. Run them with:
 ```
 theodore eval apps/cli/fixtures/real --agent claude
 ```
+
+## Wave 2: coarser groups, faster on large PRs
+
+Trigger: a real PR (JeanIsahakyan/migratro#77, 77 files, ~4.3k changed
+lines) produced **40 groups in ~4 minutes** — far too many small groups
+(separate groups for `.env`, CI, a Dockerfile and docs that all served one
+change), and slow because every chunk's agent call ran one after another.
+
+Changes made:
+
+- `target::target_group_count` scales the group-count goal by PR size
+  (roughly 2-4 groups for a tiny PR up to 8-15 for a very large one).
+  `prompt::system_prompt` now states that target and spells out what "one
+  logical step" means: config/env/CI/docs that exist to support one change
+  belong in that change's group, not split out by file type.
+- `coarsen::merge_tiny_groups`: a deterministic post-pass (no agent call)
+  that merges 1-hunk groups into a same-kind neighbour sharing a "merge
+  area" once the grouping is over target. Area is normally the top-level
+  directory, except config/env/CI/docs-shaped files (`.env*`, `Dockerfile`
+  and its common suffixed variants, CI workflow configs, `README`, any
+  `changelog` path) share one pseudo-area regardless of their literal
+  directory — directly targeting the scattered-infra-file problem above.
+  Can't break the partition invariant: it only moves hunks between groups
+  that already exist (`domain::grouping::validate` is unaffected).
+- Chunk prompts for large, multi-directory PRs now run concurrently
+  (`futures::stream` `buffered`, concurrency 3) instead of sequentially.
+  Skim-flagged hunks (pure renames/whitespace/import-only) get half the
+  excerpt lines/chars — the model doesn't need a full excerpt to confirm a
+  hint the pre-pass already gave it.
+- `GroupingOptions::chunk_concurrency` and a new `--model` flag on
+  `theodore group`/`theodore eval` (forwarding to `GroupingOptions::model`,
+  already wired to `AgentRequest::model`) — lets a caller try a
+  cheaper/faster model. Not empirically compared against the default this
+  pass (see "Not done here" below); `GroupingOptions::default()`'s model
+  stays `None` (the agent CLI's own default).
+
+### Result: the 10-fixture suite (same fixtures, same default model)
+
+| fixture | groups before→after | latency before→after | cost before→after |
+| --- | ---: | ---: | ---: |
+| bun_39523 | 5→4 | 19.0s→18.9s | $0.259→$0.273 |
+| django_22073 | 6→5 | 17.8s→17.4s | $0.204→$0.221 |
+| django_22109 | 5→4 | 20.3s→17.0s | $0.215→$0.225 |
+| next_88225 | 3→2 | 11.7s→10.4s | $0.175→$0.188 |
+| ra_23452 | 6→4 | 16.8s→16.3s | $0.213→$0.036 |
+| ruff_18961 | 7→5 | 21.6s→11.6s | $0.225→$0.034 |
+| ruff_28362 | 3→3 | 11.2s→10.1s | $0.182→$0.022 |
+| ts_64846 | 7→5 | 21.1s→14.2s | $0.203→$0.035 |
+| ra_23173 | ERROR→10 | —→28.8s | —→$0.084 |
+| tokio_8587 | ERROR→5 | —→20.6s | —→$0.055 |
+
+10/10 valid first try (100%), 10/10 valid after repair (100%) — up from
+8/10 (80%) before. `ra_23173`/`tokio_8587` now succeed because
+`eval::load_fixtures` already de-duplicates colliding hunk ids before the
+pipeline's own duplicate check runs — a fix that predates this pass (not
+part of this slice's work), surfaced here simply because this is the
+first time this suite was re-run after it landed.
+
+Across the 8 directly-comparable fixtures: **groups 42→32 (-24%)**,
+**latency 139.5s→115.9s (-17%)**. Cost dropped much more than that for 4
+of the 8 (ra_23452/ruff_18961/ruff_28362/ts_64846: ~6x cheaper) but barely
+moved for the other 4 (bun/django×2/next) — too uneven to attribute to
+prompt trimming alone; likely a model/pricing difference on the agent
+side between the two runs, outside this slice's control. Latency and
+group count are the trustworthy before/after signals here; cost is
+reported as observed but flagged as noisy.
+
+### Result: migratro#77 (the trigger case), 3 runs
+
+| run | code | groups | latency | cost |
+| --- | --- | ---: | ---: | ---: |
+| before | pre-wave-2 | 40 | ~240s | not recorded |
+| A | target + coarsen (plain top-level-dir area) + concurrency | 19 | 151.8s | $0.4100 |
+| B | + infra pseudo-area (exact `Dockerfile`/`CHANGELOG.md`) | 18 | 90.3s | $0.3704 |
+| C | + widened infra match (`Dockerfile.*`, any `changelog` path) | 18 | 94.8s | $0.3936 |
+
+All 3 runs: valid first try, 12 attempts (chunk calls + repairs + merge
+pass). **Groups 40→18 (-55%)**, **latency ~240s→~91-95s (-60%)**. B→C
+stayed at 18 groups — the model's own output isn't perfectly
+deterministic between runs, so an identical final count doesn't mean the
+fix did nothing: inspecting run C's actual groups confirmed the widened
+match (missed in B) did merge the `Dockerfile.unified` build-arg hunk,
+just with a different infra-cluster neighbour than B's narrower match
+produced, netting the same total. Run B's own two merges are visible
+directly in its output (one group's `why` ends "Also includes: ...").
+
+### Rating
+
+**4/5** — groups dropped 24-55% and latency 17-60% on real PRs without
+losing validity (100% across the suite, up from 80%), and the scattered
+config/env/CI/docs problem that triggered this pass is demonstrably fixed
+on the PR that found it. Not 5: the coarsening pass is a best-effort
+heuristic (still 18 groups against a 16-group budget on migratro#77 once
+every remaining 1-hunk group ran out of a compatible same-kind neighbour
+to merge into — correctly declining to force a wrong merge, but not
+hitting the target either), and the cost comparison on the small-fixture
+suite is too noisy to credit cleanly to the prompt trimming.
+
+### Not done here
+
+- **Model comparison** (`--model sonnet` vs `--model haiku` vs default):
+  the CLI flag and `GroupingOptions.model` plumbing are in place, but no
+  empirical before/after was run this pass to keep spend predictable —
+  this pass's real-agent spend (~$2.75 of the ~$6 budget) went to
+  confirming the coarsening/concurrency fixes on real data instead.
+  `GroupingOptions::default()` keeps `model: None` (the agent CLI's own
+  default) until that comparison is done.
+- Pushing the migratro#77 coarsening further than 18 groups would need
+  either a looser tiny-group definition (currently exactly 1 hunk) or a
+  second merge criterion beyond kind+area; left as-is because forcing a
+  merge with no shared signal would misrepresent the change, which is a
+  worse outcome than one extra group.
+
+### New unit tests
+
+- `target::tests::*` — bucket bounds are monotone in PR size, the
+  "typical" and "very large" bucket targets match the goal, and
+  `scaled_for_chunk` floors at 1 and handles an empty total.
+- `coarsen::tests::*` — merging reaches the target and keeps the
+  partition valid (`domain::grouping::validate`); `Hidden` groups are
+  never a donor or recipient; a kind mismatch or no compatible area
+  correctly blocks a merge instead of forcing one; the migratro-shaped
+  scattered-infra-files case merges into one group;
+  `Dockerfile.unified`/`changelog/<date>-*.md` are recognized by
+  `is_infra_file`.
+- `pipeline::tests::chunk_concurrency_preserves_submission_order` — forces
+  2 chunks, scripts the merge pass to fail, and checks the natural-order
+  fallback lands in the original (alphabetical-by-directory) chunk order
+  despite running concurrently.
+- `pipeline::tests::fragmented_response_is_coarsened_down_to_the_pr_size_target` —
+  a 6-hunk PR whose agent response is 6 one-hunk groups gets coarsened to
+  the small-PR target with no extra agent call.
+- `prompt::tests::system_prompt_states_the_scaled_target_and_logical_step_rule`,
+  `prompt::tests::skim_candidate_hunks_get_a_shorter_excerpt`.
