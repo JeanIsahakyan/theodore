@@ -7,8 +7,9 @@ use theodore_ports::{Fetched, HostError, HostResult};
 
 use crate::anchor::GitlabPosition;
 use crate::model::{
-    CreateDraftNote, GlApprovals, GlChanges, GlCommit, GlDiscussion, GlMergeRequest, GlNote,
-    GlPipeline, GlProject, GlTodo, GlUser, NoteBody,
+    AwardEmojiBody, CreateDraftNote, GlApprovals, GlAwardEmoji, GlChanges, GlCommit, GlDiscussion,
+    GlMergeRequest, GlNote, GlPipeline, GlProject, GlProjectSettings, GlTodo, GlUser, MergeBody,
+    NoteBody, UpdateMrBody,
 };
 
 pub(crate) async fn viewer(http: &HttpClient) -> HostResult<GlUser> {
@@ -190,4 +191,115 @@ pub(crate) async fn delete_note(
 ) -> HostResult<()> {
     let path = format!("projects/{project}/merge_requests/{iid}/notes/{note_id}");
     http.delete(&path).await
+}
+
+// ── merge ───────────────────────────────────────────────────────────────
+
+pub(crate) async fn merge_request_merge(
+    http: &HttpClient,
+    project: &str,
+    iid: u64,
+    body: &MergeBody<'_>,
+) -> HostResult<GlMergeRequest> {
+    let path = format!("projects/{project}/merge_requests/{iid}/merge");
+    Ok(http.put_json(&path, body).await?.value)
+}
+
+pub(crate) async fn cancel_merge_when_pipeline_succeeds(
+    http: &HttpClient,
+    project: &str,
+    iid: u64,
+) -> HostResult<()> {
+    let path =
+        format!("projects/{project}/merge_requests/{iid}/cancel_merge_when_pipeline_succeeds");
+    http.post_no_content(&path, &serde_json::json!({})).await
+}
+
+pub(crate) async fn rebase(http: &HttpClient, project: &str, iid: u64) -> HostResult<()> {
+    let path = format!("projects/{project}/merge_requests/{iid}/rebase");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> =
+        http.put_json(&path, &serde_json::json!({})).await?;
+    Ok(())
+}
+
+pub(crate) async fn update_merge_request(
+    http: &HttpClient,
+    project: &str,
+    iid: u64,
+    body: &UpdateMrBody<'_>,
+) -> HostResult<GlMergeRequest> {
+    let path = format!("projects/{project}/merge_requests/{iid}");
+    Ok(http.put_json(&path, body).await?.value)
+}
+
+pub(crate) async fn project_settings(
+    http: &HttpClient,
+    project: &str,
+) -> HostResult<GlProjectSettings> {
+    let path = format!("projects/{project}");
+    Ok(http.get::<GlProjectSettings>(&path).await?.value)
+}
+
+// ── reviewers ───────────────────────────────────────────────────────────
+
+/// GitLab's user search is global, not scoped to a project; an exact
+/// `username` filter returns at most one match.
+pub(crate) async fn find_user_by_username(
+    http: &HttpClient,
+    username: &str,
+) -> HostResult<Option<GlUser>> {
+    let path = format!("users?username={}", urlencode(username));
+    let users = http.get::<Vec<GlUser>>(&path).await?.value;
+    Ok(users.into_iter().next())
+}
+
+pub(crate) async fn members_page(
+    http: &HttpClient,
+    project: &str,
+    page: u32,
+) -> HostResult<(Vec<GlUser>, reqwest::header::HeaderMap)> {
+    let path = format!("projects/{project}/members/all?page={page}&per_page=50");
+    let resp = http.get::<Vec<GlUser>>(&path).await?;
+    Ok((resp.value, resp.headers))
+}
+
+// ── award emoji (reactions) ────────────────────────────────────────────
+
+pub(crate) async fn award_emoji_create(
+    http: &HttpClient,
+    project: &str,
+    iid: u64,
+    note_id: &str,
+    name: &str,
+) -> HostResult<()> {
+    let path = format!("projects/{project}/merge_requests/{iid}/notes/{note_id}/award_emoji");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> =
+        http.post_json(&path, &AwardEmojiBody { name }).await?;
+    Ok(())
+}
+
+pub(crate) async fn award_emoji_list(
+    http: &HttpClient,
+    project: &str,
+    iid: u64,
+    note_id: &str,
+) -> HostResult<Vec<GlAwardEmoji>> {
+    let path = format!("projects/{project}/merge_requests/{iid}/notes/{note_id}/award_emoji");
+    Ok(http.get::<Vec<GlAwardEmoji>>(&path).await?.value)
+}
+
+pub(crate) async fn award_emoji_delete(
+    http: &HttpClient,
+    project: &str,
+    iid: u64,
+    note_id: &str,
+    award_id: u64,
+) -> HostResult<()> {
+    let path =
+        format!("projects/{project}/merge_requests/{iid}/notes/{note_id}/award_emoji/{award_id}");
+    http.delete(&path).await
+}
+
+fn urlencode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }

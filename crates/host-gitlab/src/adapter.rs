@@ -9,11 +9,11 @@ use theodore_domain::{
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    ReviewSubmission, SubmittedReview,
+    MergeMethod, MergeState, MergeStatus, ReviewSubmission, SubmittedReview,
 };
 
 use crate::anchor::{self, DiffRefs};
-use crate::model::{GlDiscussion, GlMergeRequest, GlNote, GlUser};
+use crate::model::{GlDiscussion, GlMergeRequest, GlNote, GlUser, MergeBody, UpdateMrBody};
 use crate::{pagination, rest, time};
 
 /// `HostAdapter` for gitlab.com and self-managed GitLab.
@@ -338,6 +338,218 @@ impl HostAdapter for GitlabAdapter {
         let project = project_id(pr);
         rest::delete_note(&self.http, &project, pr.number, comment.as_str()).await
     }
+
+    async fn add_reaction(&self, pr: &PrRef, comment: &CommentId, emoji: &str) -> HostResult<()> {
+        let project = project_id(pr);
+        rest::award_emoji_create(&self.http, &project, pr.number, comment.as_str(), emoji).await
+    }
+
+    async fn remove_reaction(
+        &self,
+        pr: &PrRef,
+        comment: &CommentId,
+        emoji: &str,
+    ) -> HostResult<()> {
+        let project = project_id(pr);
+        let me = self.username().await?.to_string();
+        let awards =
+            rest::award_emoji_list(&self.http, &project, pr.number, comment.as_str()).await?;
+        let mine = awards
+            .iter()
+            .find(|a| a.name == emoji && a.user.username == me);
+        match mine {
+            Some(a) => {
+                rest::award_emoji_delete(&self.http, &project, pr.number, comment.as_str(), a.id)
+                    .await
+            }
+            None => Ok(()),
+        }
+    }
+
+    async fn assignable_users(&self, repo: &RepoRef) -> HostResult<Vec<Person>> {
+        let project = project_path(repo);
+        let members =
+            pagination::paginate_all(|page| rest::members_page(&self.http, &project, page)).await?;
+        Ok(members.iter().map(user_to_person).collect())
+    }
+
+    /// GitLab merge requests have no "team reviewer" concept over this API;
+    /// `teams` is silently ignored.
+    async fn request_reviewers(
+        &self,
+        pr: &PrRef,
+        users: &[String],
+        _teams: &[String],
+    ) -> HostResult<()> {
+        let project = project_id(pr);
+        let mr = current_mr(&self.http, &project, pr.number).await?;
+        let mut ids: Vec<u64> = mr.reviewers.iter().map(|u| u.id).collect();
+        for username in users {
+            let user = rest::find_user_by_username(&self.http, username)
+                .await?
+                .ok_or_else(|| HostError::NotFound(format!("user {username}")))?;
+            if !ids.contains(&user.id) {
+                ids.push(user.id);
+            }
+        }
+        rest::update_merge_request(
+            &self.http,
+            &project,
+            pr.number,
+            &UpdateMrBody {
+                title: None,
+                reviewer_ids: Some(&ids),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn remove_reviewer(&self, pr: &PrRef, user: &str) -> HostResult<()> {
+        let project = project_id(pr);
+        let mr = current_mr(&self.http, &project, pr.number).await?;
+        let ids: Vec<u64> = mr
+            .reviewers
+            .iter()
+            .filter(|u| u.username != user)
+            .map(|u| u.id)
+            .collect();
+        rest::update_merge_request(
+            &self.http,
+            &project,
+            pr.number,
+            &UpdateMrBody {
+                title: None,
+                reviewer_ids: Some(&ids),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_ready(&self, pr: &PrRef) -> HostResult<()> {
+        let project = project_id(pr);
+        let mr = current_mr(&self.http, &project, pr.number).await?;
+        let title = strip_draft_prefix(&mr.title);
+        rest::update_merge_request(
+            &self.http,
+            &project,
+            pr.number,
+            &UpdateMrBody {
+                title: Some(&title),
+                reviewer_ids: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn convert_to_draft(&self, pr: &PrRef) -> HostResult<()> {
+        let project = project_id(pr);
+        let mr = current_mr(&self.http, &project, pr.number).await?;
+        let title = add_draft_prefix(&mr.title);
+        rest::update_merge_request(
+            &self.http,
+            &project,
+            pr.number,
+            &UpdateMrBody {
+                title: Some(&title),
+                reviewer_ids: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_branch(&self, pr: &PrRef) -> HostResult<()> {
+        let project = project_id(pr);
+        rest::rebase(&self.http, &project, pr.number).await
+    }
+
+    async fn merge_status(&self, pr: &PrRef) -> HostResult<MergeStatus> {
+        let project = project_id(pr);
+        let mr = current_mr(&self.http, &project, pr.number).await?;
+        let approvals = rest::approvals(&self.http, &project, pr.number).await?;
+        let settings = rest::project_settings(&self.http, &project).await?;
+
+        let mut allowed_methods = Vec::new();
+        if settings.merge_method.as_deref() != Some("ff") {
+            allowed_methods.push(MergeMethod::Merge);
+        }
+        if settings.squash_option.as_deref() != Some("never") {
+            allowed_methods.push(MergeMethod::Squash);
+        }
+
+        Ok(MergeStatus {
+            mergeable: map_mergeable(mr.merge_status.as_deref()),
+            state: map_merge_state(mr.detailed_merge_status.as_deref()),
+            allowed_methods,
+            auto_merge_enabled: mr.merge_when_pipeline_succeeds,
+            in_queue: false,
+            required_approvals: approvals.approvals_required,
+        })
+    }
+
+    async fn merge(
+        &self,
+        pr: &PrRef,
+        method: MergeMethod,
+        title: Option<String>,
+        body: Option<String>,
+    ) -> HostResult<Sha> {
+        let project = project_id(pr);
+        let message = merge_message(title.as_deref(), body.as_deref());
+        let merge_body = match method {
+            MergeMethod::Merge => MergeBody {
+                merge_commit_message: message.as_deref(),
+                ..Default::default()
+            },
+            MergeMethod::Squash => MergeBody {
+                squash: true,
+                squash_commit_message: message.as_deref(),
+                ..Default::default()
+            },
+            MergeMethod::Rebase => {
+                return Err(HostError::Unsupported(
+                    "gitlab has no per-request rebase-and-merge",
+                ));
+            }
+        };
+        let merged =
+            rest::merge_request_merge(&self.http, &project, pr.number, &merge_body).await?;
+        let sha = merged
+            .squash_commit_sha
+            .or(merged.merge_commit_sha)
+            .ok_or_else(|| HostError::Protocol("merge response had no commit sha".into()))?;
+        Ok(Sha::new(sha))
+    }
+
+    async fn enable_auto_merge(&self, pr: &PrRef, method: MergeMethod) -> HostResult<()> {
+        let project = project_id(pr);
+        let merge_body = match method {
+            MergeMethod::Merge => MergeBody {
+                merge_when_pipeline_succeeds: true,
+                ..Default::default()
+            },
+            MergeMethod::Squash => MergeBody {
+                squash: true,
+                merge_when_pipeline_succeeds: true,
+                ..Default::default()
+            },
+            MergeMethod::Rebase => {
+                return Err(HostError::Unsupported(
+                    "gitlab has no per-request rebase-and-merge",
+                ));
+            }
+        };
+        rest::merge_request_merge(&self.http, &project, pr.number, &merge_body).await?;
+        Ok(())
+    }
+
+    async fn disable_auto_merge(&self, pr: &PrRef) -> HostResult<()> {
+        let project = project_id(pr);
+        rest::cancel_merge_when_pipeline_succeeds(&self.http, &project, pr.number).await
+    }
 }
 
 impl GitlabAdapter {
@@ -380,6 +592,83 @@ fn project_id(pr: &PrRef) -> String {
         // project id is expected; `/` is the only character that needs
         // escaping here.
         None => format!("{}/{}", pr.repo.owner, pr.repo.name).replace('/', "%2F"),
+    }
+}
+
+/// Same as `project_id`, for calls keyed by `RepoRef` alone (no `PrRef`,
+/// hence no cached numeric id to prefer).
+fn project_path(repo: &RepoRef) -> String {
+    format!("{}/{}", repo.owner, repo.name).replace('/', "%2F")
+}
+
+async fn current_mr(http: &HttpClient, project: &str, iid: u64) -> HostResult<GlMergeRequest> {
+    match rest::get_merge_request(http, project, iid, None).await? {
+        Fetched::Modified { value, .. } => Ok(value),
+        Fetched::NotModified => unreachable!("no etag sent"),
+    }
+}
+
+/// `Draft: `/`[Draft] ` style prefixes GitLab's web UI itself uses to flag a
+/// draft MR (plan: GitLab has no separate draft boolean settable over this
+/// API — see `mr.draft`, which is derived from the title GitLab-side).
+fn strip_draft_prefix(title: &str) -> String {
+    let lower = title.to_ascii_lowercase();
+    for prefix in ["draft: ", "draft:", "[draft] ", "[draft]"] {
+        if lower.starts_with(prefix) {
+            return title[prefix.len()..].trim_start().to_string();
+        }
+    }
+    title.to_string()
+}
+
+fn add_draft_prefix(title: &str) -> String {
+    if title.to_ascii_lowercase().starts_with("draft:") {
+        title.to_string()
+    } else {
+        format!("Draft: {title}")
+    }
+}
+
+fn merge_message(title: Option<&str>, body: Option<&str>) -> Option<String> {
+    match (title, body) {
+        (Some(t), Some(b)) if !b.is_empty() => Some(format!("{t}\n\n{b}")),
+        (Some(t), _) => Some(t.to_string()),
+        (None, Some(b)) => Some(b.to_string()),
+        (None, None) => None,
+    }
+}
+
+/// GitLab's legacy three-value `merge_status` maps 1:1 onto
+/// `MergeStatus::mergeable`.
+fn map_mergeable(status: Option<&str>) -> Option<bool> {
+    match status {
+        Some("can_be_merged") => Some(true),
+        Some("cannot_be_merged") => Some(false),
+        _ => None,
+    }
+}
+
+/// Best-effort fold of GitLab's `detailed_merge_status` (many more values
+/// than GitHub's `mergeStateStatus`) onto the host-neutral `MergeState`.
+fn map_merge_state(status: Option<&str>) -> MergeState {
+    match status.unwrap_or("unchecked") {
+        "mergeable" => MergeState::Clean,
+        "conflict" => MergeState::Dirty,
+        "need_rebase" => MergeState::Behind,
+        "ci_still_running" | "ci_must_pass" | "commits_status" | "broken_status" => {
+            MergeState::Unstable
+        }
+        "blocked_status"
+        | "discussions_not_resolved"
+        | "not_approved"
+        | "requested_changes"
+        | "jira_association_missing"
+        | "external_status_checks"
+        | "locked_status"
+        | "merge_request_blocked"
+        | "security_policy_violations"
+        | "approvals_syncing" => MergeState::Blocked,
+        _ => MergeState::Unknown,
     }
 }
 

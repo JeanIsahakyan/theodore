@@ -55,3 +55,30 @@ async fn fetches_a_real_public_merge_request() {
     assert!(!detail.summary.title.is_empty());
     assert_eq!(detail.summary.pr.number, 1);
 }
+
+#[tokio::test]
+#[ignore = "hits real gitlab.com; run with --ignored and GITLAB_TOKEN set"]
+async fn reads_merge_status_and_assignable_users() {
+    // Read-only: never call a write method (merge, enable_auto_merge, ...)
+    // against a real host.
+    let token = std::env::var("GITLAB_TOKEN").expect("set GITLAB_TOKEN to run this test");
+    let token_source: Arc<dyn TokenSource> = Arc::new(StaticToken::new(token));
+    let adapter = theodore_host_gitlab::GitlabAdapter::new(token_source, Arc::new(SystemClock));
+
+    let repo = RepoRef {
+        host: HostKind::Gitlab,
+        owner: "gitlab-org".into(),
+        name: "gitlab-runner".into(),
+    };
+    let pr = PrRef {
+        repo: repo.clone(),
+        number: 1,
+        host_id: None,
+    };
+
+    adapter.merge_status(&pr).await.expect("merge_status");
+    adapter
+        .assignable_users(&repo)
+        .await
+        .expect("assignable_users");
+}

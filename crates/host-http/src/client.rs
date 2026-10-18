@@ -277,6 +277,21 @@ impl HttpClient {
         }
     }
 
+    /// DELETE with a JSON body (GitHub's `requested_reviewers` endpoint
+    /// requires one to say who to remove).
+    pub async fn delete_with_body<B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> HostResult<()> {
+        let json =
+            serde_json::to_string(body).map_err(|e| HostError::Protocol(format!("encode: {e}")))?;
+        match self.execute(Method::DELETE, path, Some(json), &[]).await? {
+            Outcome::Ok { .. } => Ok(()),
+            Outcome::NotModified(_) => unreachable!("no conditional header sent"),
+        }
+    }
+
     fn decode<T: DeserializeOwned>(&self, body: &str) -> HostResult<T> {
         serde_json::from_str(body)
             .map_err(|e| HostError::Protocol(self.redact(&format!("decode: {e}: {body}"))))
@@ -387,7 +402,11 @@ impl HttpClient {
                 Some(HostError::RateLimited { reset_at })
             }
             StatusCode::NOT_FOUND => Some(HostError::NotFound(String::new())),
-            StatusCode::CONFLICT => Some(HostError::Conflict(String::new())),
+            // 405: GitHub/GitLab's merge endpoints answer this when the PR
+            // isn't currently mergeable (open conflicts, blocked, etc).
+            StatusCode::CONFLICT | StatusCode::METHOD_NOT_ALLOWED => {
+                Some(HostError::Conflict(String::new()))
+            }
             StatusCode::UNPROCESSABLE_ENTITY | StatusCode::BAD_REQUEST => {
                 Some(HostError::Validation(String::new()))
             }

@@ -3,7 +3,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use theodore_domain::{
-    Anchor, CommentId, Millis, Person, PrDetail, PrRef, PrSummary, RepoRef, ReviewEvent, ThreadId,
+    Anchor, CommentId, Millis, Person, PrDetail, PrRef, PrSummary, RepoRef, ReviewEvent, Sha,
+    ThreadId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -94,6 +95,40 @@ pub struct SubmittedReview {
     pub threads: Vec<(String, ThreadId)>,
 }
 
+// ── merge ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+/// Host-neutral read of GitHub's `mergeStateStatus` / GitLab's
+/// `detailed_merge_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    Clean,
+    Blocked,
+    Behind,
+    Dirty,
+    Unstable,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeStatus {
+    /// `None` when the host hasn't computed it yet.
+    pub mergeable: Option<bool>,
+    pub state: MergeState,
+    pub allowed_methods: Vec<MergeMethod>,
+    pub auto_merge_enabled: bool,
+    pub in_queue: bool,
+    pub required_approvals: Option<u32>,
+}
+
 #[async_trait]
 pub trait HostAdapter: Send + Sync {
     fn kind(&self) -> theodore_domain::HostKind;
@@ -127,4 +162,78 @@ pub trait HostAdapter: Send + Sync {
     async fn resolve(&self, pr: &PrRef, thread: &ThreadId, resolved: bool) -> HostResult<()>;
     async fn edit_comment(&self, pr: &PrRef, comment: &CommentId, body: &str) -> HostResult<()>;
     async fn delete_comment(&self, pr: &PrRef, comment: &CommentId) -> HostResult<()>;
+
+    // reactions
+    async fn add_reaction(
+        &self,
+        _pr: &PrRef,
+        _comment: &CommentId,
+        _emoji: &str,
+    ) -> HostResult<()> {
+        Err(HostError::Unsupported("add_reaction"))
+    }
+    async fn remove_reaction(
+        &self,
+        _pr: &PrRef,
+        _comment: &CommentId,
+        _emoji: &str,
+    ) -> HostResult<()> {
+        Err(HostError::Unsupported("remove_reaction"))
+    }
+
+    // people
+    /// Candidates for the reviewer picker (repo collaborators / members).
+    async fn assignable_users(&self, _repo: &RepoRef) -> HostResult<Vec<Person>> {
+        Err(HostError::Unsupported("assignable_users"))
+    }
+    async fn request_reviewers(
+        &self,
+        _pr: &PrRef,
+        _users: &[String],
+        _teams: &[String],
+    ) -> HostResult<()> {
+        Err(HostError::Unsupported("request_reviewers"))
+    }
+    async fn remove_reviewer(&self, _pr: &PrRef, _user: &str) -> HostResult<()> {
+        Err(HostError::Unsupported("remove_reviewer"))
+    }
+
+    // draft state
+    async fn mark_ready(&self, _pr: &PrRef) -> HostResult<()> {
+        Err(HostError::Unsupported("mark_ready"))
+    }
+    async fn convert_to_draft(&self, _pr: &PrRef) -> HostResult<()> {
+        Err(HostError::Unsupported("convert_to_draft"))
+    }
+
+    // merge
+    /// Current mergeability, allowed methods and queue/auto-merge state.
+    async fn merge_status(&self, _pr: &PrRef) -> HostResult<MergeStatus> {
+        Err(HostError::Unsupported("merge_status"))
+    }
+    /// Merges `pr`. Returns the resulting merge commit sha.
+    async fn merge(
+        &self,
+        _pr: &PrRef,
+        _method: MergeMethod,
+        _title: Option<String>,
+        _body: Option<String>,
+    ) -> HostResult<Sha> {
+        Err(HostError::Unsupported("merge"))
+    }
+    async fn enable_auto_merge(&self, _pr: &PrRef, _method: MergeMethod) -> HostResult<()> {
+        Err(HostError::Unsupported("enable_auto_merge"))
+    }
+    async fn disable_auto_merge(&self, _pr: &PrRef) -> HostResult<()> {
+        Err(HostError::Unsupported("disable_auto_merge"))
+    }
+    /// Joins the host's merge queue (GitHub merge queue / GitLab merge train).
+    async fn enqueue(&self, _pr: &PrRef) -> HostResult<()> {
+        Err(HostError::Unsupported("enqueue"))
+    }
+    /// Merges the base branch into the PR's head. `HostError::Conflict` when
+    /// that can't be done automatically.
+    async fn update_branch(&self, _pr: &PrRef) -> HostResult<()> {
+        Err(HostError::Unsupported("update_branch"))
+    }
 }
