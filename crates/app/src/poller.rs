@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use theodore_contract::{Ephemeral, HunkRead, InboxState, ToastLevel, models};
 use theodore_domain::snooze::PrEvent;
-use theodore_domain::{Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState};
+use theodore_domain::{
+    AgentId, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
+};
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
 use crate::core::{Core, Inner, RevisionEntry};
@@ -280,15 +282,22 @@ async fn regroup_after_push(
         .and_then(|r| r.ok())
         .flatten();
     let prev: Option<Grouping> = prev_row.and_then(|r| serde_json::from_value(r.data).ok());
+    let agent = core.setting_agent("agents.grouping", AgentId::Claude).await;
     let result = match &prev {
         Some(p) => {
             core.0
                 .deps
                 .grouper
-                .regroup(p, new_rev, detail, worktree)
+                .regroup(p, new_rev, detail, worktree, agent)
                 .await
         }
-        None => core.0.deps.grouper.group(new_rev, detail, worktree).await,
+        None => {
+            core.0
+                .deps
+                .grouper
+                .group(new_rev, detail, worktree, agent)
+                .await
+        }
     };
     if let Ok(grouping) = result {
         let data = serde_json::to_value(&grouping).expect("serializable");
@@ -367,6 +376,7 @@ async fn poll_inbox(inner: Arc<Inner>) {
                             level: ToastLevel::Info,
                             text: format!("{} PR(s) updated", changes.prs.len()),
                         });
+                        let _ = core.refresh_inbox().await;
                     }
                     let wait = changes
                         .poll_after_ms

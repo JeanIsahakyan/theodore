@@ -91,9 +91,19 @@ impl Core {
             .unwrap_or_else(|| default.to_string())
     }
 
-    /// No agent run in flight — the shell may restart for an update.
+    /// No agent run in flight and no host write still queued — the shell
+    /// may restart for an update.
     pub async fn is_idle(&self) -> bool {
-        self.0.runs.read().await.is_empty()
+        if !self.0.runs.read().await.is_empty() {
+            return false;
+        }
+        let store = self.0.deps.store.clone();
+        let pending = tokio::task::spawn_blocking(move || store.outbox_pending_count())
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(0);
+        pending == 0
     }
 
     async fn setting_value(&self, key: &str) -> Option<serde_json::Value> {

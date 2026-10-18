@@ -7,9 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use theodore_contract::TokenSource;
 use theodore_domain::{
-    Anchor, CheckRollup, FileDiff, FileStatus, Group, GroupId, GroupKind, Grouping, Hunk, HunkId,
-    LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, Revision, Sha, Side,
+    AgentId, Anchor, CheckRollup, FileDiff, FileStatus, Group, GroupId, GroupKind, Grouping, Hunk,
+    HunkId, LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, Revision, Sha, Side,
 };
 use theodore_ports::{
     AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, Capabilities, Changes,
@@ -21,7 +22,7 @@ use theodore_ports::{
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use crate::deps::{Deps, Grouper};
+use crate::deps::{Deps, Grouper, TokenStatus};
 use crate::error::GrouperError;
 
 // ── clock ─────────────────────────────────────────────────────────────────
@@ -298,6 +299,14 @@ impl Store for FakeStore {
             .insert(key.to_string(), value.clone());
         Ok(())
     }
+
+    fn outbox_pending_count(&self) -> StoreResult<u64> {
+        let s = self.0.lock().unwrap();
+        Ok(s.outbox
+            .iter()
+            .filter(|i| matches!(i.status, OutboxStatus::Pending | OutboxStatus::InFlight))
+            .count() as u64)
+    }
 }
 
 // ── secrets ───────────────────────────────────────────────────────────────
@@ -334,6 +343,9 @@ pub struct FakeGit {
     head: Mutex<Sha>,
     revision: Mutex<Revision>,
     files: Mutex<HashMap<(String, String), Vec<u8>>>,
+    /// Last `(branch, message)` passed to `commit_and_push`, for assertions.
+    pub last_push: Mutex<Option<(String, String)>>,
+    push_responses: Mutex<VecDeque<GitResult<Sha>>>,
 }
 
 impl FakeGit {
@@ -343,7 +355,13 @@ impl FakeGit {
             head: Mutex::new(head),
             revision: Mutex::new(revision),
             files: Mutex::new(HashMap::new()),
+            last_push: Mutex::new(None),
+            push_responses: Mutex::new(VecDeque::new()),
         })
+    }
+
+    pub fn push_commit_and_push(&self, r: GitResult<Sha>) {
+        self.push_responses.lock().unwrap().push_back(r);
     }
 
     pub fn set_head(&self, head: Sha) {
@@ -402,6 +420,20 @@ impl GitPort for FakeGit {
             .get(&(rev.0.clone(), path.to_string()))
             .cloned())
     }
+    async fn commit_and_push(
+        &self,
+        _worktree: &Path,
+        _repo: &theodore_domain::RepoRef,
+        branch: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        *self.last_push.lock().unwrap() = Some((branch.to_string(), message.to_string()));
+        self.push_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(Sha::new("pushed-sha")))
+    }
 }
 
 // ── host ──────────────────────────────────────────────────────────────────
@@ -413,6 +445,10 @@ pub struct FakeHost {
     pub submit_review_responses: Mutex<VecDeque<HostResult<SubmittedReview>>>,
     pub find_marker_responses: Mutex<VecDeque<HostResult<Option<theodore_domain::CommentId>>>>,
     pub changed_since_responses: Mutex<VecDeque<HostResult<Changes>>>,
+    pub search_responses: Mutex<VecDeque<HostResult<Vec<PrSummary>>>>,
+    pub viewer_responses: Mutex<VecDeque<HostResult<Person>>>,
+    pub reply_responses: Mutex<VecDeque<HostResult<theodore_domain::CommentId>>>,
+    pub resolve_responses: Mutex<VecDeque<HostResult<()>>>,
 }
 
 impl FakeHost {
@@ -433,6 +469,18 @@ impl FakeHost {
     }
     pub fn push_changed_since(&self, r: HostResult<Changes>) {
         self.changed_since_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_search(&self, r: HostResult<Vec<PrSummary>>) {
+        self.search_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_viewer(&self, r: HostResult<Person>) {
+        self.viewer_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_reply(&self, r: HostResult<theodore_domain::CommentId>) {
+        self.reply_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_resolve(&self, r: HostResult<()>) {
+        self.resolve_responses.lock().unwrap().push_back(r);
     }
 }
 
@@ -463,8 +511,19 @@ impl HostAdapter for FakeHost {
                 poll_after_ms: Some(60_000),
             }))
     }
+    async fn viewer(&self) -> HostResult<Person> {
+        self.viewer_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Ok(sample_person("me")))
+    }
     async fn search(&self, _section: &InboxSection) -> HostResult<Vec<PrSummary>> {
-        Ok(vec![])
+        self.search_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(vec![]))
     }
     async fn list_repos(&self) -> HostResult<Vec<theodore_domain::RepoRef>> {
         Ok(vec![])
@@ -514,7 +573,11 @@ impl HostAdapter for FakeHost {
         _thread: &theodore_domain::ThreadId,
         _body: &str,
     ) -> HostResult<theodore_domain::CommentId> {
-        Ok(theodore_domain::CommentId::new("c1"))
+        self.reply_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(theodore_domain::CommentId::new("c1")))
     }
     async fn resolve(
         &self,
@@ -522,7 +585,11 @@ impl HostAdapter for FakeHost {
         _thread: &theodore_domain::ThreadId,
         _resolved: bool,
     ) -> HostResult<()> {
-        Ok(())
+        self.resolve_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
     }
     async fn edit_comment(
         &self,
@@ -550,6 +617,9 @@ pub struct FakeAgent {
     /// Keeps a run's sender alive forever so its `events.recv()` never
     /// resolves (used to test cancellation deterministically).
     kept_alive: Mutex<Vec<tokio::sync::mpsc::Sender<AgentEvent>>>,
+    /// Every request `run()` was called with, in order (assertions on the
+    /// prompt, mode, or agent a use case picked).
+    requests: Mutex<Vec<AgentRequest>>,
 }
 
 impl FakeAgent {
@@ -564,6 +634,9 @@ impl FakeAgent {
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
     }
+    pub fn last_request(&self) -> Option<AgentRequest> {
+        self.requests.lock().unwrap().last().cloned()
+    }
 }
 
 #[async_trait]
@@ -571,7 +644,8 @@ impl AgentPort for FakeAgent {
     async fn detect(&self) -> Vec<AgentInfo> {
         vec![]
     }
-    async fn run(&self, _req: AgentRequest) -> Result<AgentRun, AgentError> {
+    async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
+        self.requests.lock().unwrap().push(req);
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let hang = std::mem::take(&mut *self.hang_next.lock().unwrap());
         if hang {
@@ -600,14 +674,25 @@ impl AgentPort for FakeAgent {
 
 // ── grouper ───────────────────────────────────────────────────────────────
 
-pub struct FakeGrouper(Mutex<Grouping>);
+pub struct FakeGrouper {
+    grouping: Mutex<Grouping>,
+    last_agent: Mutex<Option<AgentId>>,
+}
 
 impl FakeGrouper {
     pub fn new(grouping: Grouping) -> Arc<Self> {
-        Arc::new(Self(Mutex::new(grouping)))
+        Arc::new(Self {
+            grouping: Mutex::new(grouping),
+            last_agent: Mutex::new(None),
+        })
     }
     pub fn set(&self, grouping: Grouping) {
-        *self.0.lock().unwrap() = grouping;
+        *self.grouping.lock().unwrap() = grouping;
+    }
+    /// The `agent` the last `group`/`regroup` call was made with (plan
+    /// §8.5: `agents.grouping` must reach the grouper).
+    pub fn last_agent(&self) -> Option<AgentId> {
+        *self.last_agent.lock().unwrap()
     }
 }
 
@@ -618,8 +703,10 @@ impl Grouper for FakeGrouper {
         _rev: &Revision,
         _pr: &PrDetail,
         _worktree: &Path,
+        agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
-        Ok(self.0.lock().unwrap().clone())
+        *self.last_agent.lock().unwrap() = Some(agent);
+        Ok(self.grouping.lock().unwrap().clone())
     }
     async fn regroup(
         &self,
@@ -627,9 +714,42 @@ impl Grouper for FakeGrouper {
         _rev: &Revision,
         _pr: &PrDetail,
         _worktree: &Path,
+        agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
         let _ = prev;
-        Ok(self.0.lock().unwrap().clone())
+        *self.last_agent.lock().unwrap() = Some(agent);
+        Ok(self.grouping.lock().unwrap().clone())
+    }
+}
+
+// ── token status ────────────────────────────────────────────────────────
+
+pub struct FakeTokenStatus {
+    source: Mutex<TokenSource>,
+    invalidations: Mutex<u32>,
+}
+
+impl FakeTokenStatus {
+    pub fn new(source: TokenSource) -> Arc<Self> {
+        Arc::new(Self {
+            source: Mutex::new(source),
+            invalidations: Mutex::new(0),
+        })
+    }
+    pub fn set(&self, source: TokenSource) {
+        *self.source.lock().unwrap() = source;
+    }
+    pub fn invalidations(&self) -> u32 {
+        *self.invalidations.lock().unwrap()
+    }
+}
+
+impl TokenStatus for FakeTokenStatus {
+    fn source(&self) -> TokenSource {
+        self.source.lock().unwrap().clone()
+    }
+    fn invalidate(&self) {
+        *self.invalidations.lock().unwrap() += 1;
     }
 }
 
@@ -643,6 +763,7 @@ pub struct Fixtures {
     pub agents: Arc<FakeAgent>,
     pub secrets: Arc<FakeSecrets>,
     pub grouper: Arc<FakeGrouper>,
+    pub token_status: Arc<FakeTokenStatus>,
 }
 
 impl Fixtures {
@@ -656,6 +777,7 @@ impl Fixtures {
             clock: self.clock.clone(),
             grouper: self.grouper.clone(),
             tools: None,
+            token_status: Some(self.token_status.clone()),
         }
     }
 }
@@ -677,6 +799,7 @@ pub fn fixtures() -> Fixtures {
             rev: Sha::new("head111"),
             groups: vec![],
         }),
+        token_status: FakeTokenStatus::new(TokenSource::Keychain),
     }
 }
 

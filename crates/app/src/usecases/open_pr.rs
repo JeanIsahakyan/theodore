@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use theodore_contract::{Ephemeral, OpenPrRequest, OpenPrResponse, ToastLevel, models};
-use theodore_domain::{HostKind, PrRef, RepoRef};
+use theodore_domain::{AgentId, HostKind, PrRef, RepoRef};
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
 use crate::core::{Core, RevisionEntry};
@@ -81,11 +81,12 @@ impl Core {
         let core = self.clone();
         let worktree_path = worktree.path.clone();
         tokio::spawn(async move {
+            let agent = core.setting_agent("agents.grouping", AgentId::Claude).await;
             match core
                 .0
                 .deps
                 .grouper
-                .group(&revision, &detail, &worktree_path)
+                .group(&revision, &detail, &worktree_path, agent)
                 .await
             {
                 Ok(grouping) => {

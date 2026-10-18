@@ -1,17 +1,22 @@
 //! Integration-style tests against `Core` + `testkit` fakes, per the
 //! coverage list in the agent brief for this slice.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::json;
 use theodore_contract::{
-    BootstrapScope, Ephemeral, FileViewedRow, HunkRead, MutationOp, OpenPrRequest, RevisionRequest,
-    RunSkillRequest, ToastLevel, Transaction, TransactionResult, models,
+    BootstrapScope, DelegateRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
+    MutationOp, OpenPrRequest, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
+    SetTokenRequest, TaskDecision, ToastLevel, TokenSource, Transaction, TransactionResult, models,
 };
 use theodore_domain::{
-    AgentId, FileDiff, HostKind, HunkId, PrId, PrRef, RepoRef, Revision, Sha, Usage, ViewedState,
+    AgentId, Assignee, FileDiff, Fix, FixStatus, HostKind, HunkId, Patch, PrId, PrRef, RepoRef,
+    Revision, Sha, Task, TaskId, TaskStatus, ThreadId, Usage, ViewedState,
 };
-use theodore_ports::{AgentEvent, Fetched, HostError, OutboxStatus, Store};
+use theodore_ports::{
+    AgentEvent, Clock, Fetched, HostError, NewAction, OutboxStatus, Secrets, Store, SyncActionCode,
+};
 
 use crate::testkit::{self, Fixtures, fixtures};
 use crate::{Core, Receivers};
@@ -94,6 +99,47 @@ fn file_viewed_row(f: &Fixtures, pr: &PrId, path: &str) -> Option<FileViewedRow>
         .ok()
         .flatten()
         .and_then(|r| serde_json::from_value(r.data).ok())
+}
+
+fn sample_task(
+    id: &str,
+    pr: &PrId,
+    anchor: Option<theodore_domain::Anchor>,
+    thread: Option<ThreadId>,
+    now: i64,
+) -> Task {
+    Task {
+        id: TaskId::new(id),
+        pr: pr.clone(),
+        title: "Fix the thing".into(),
+        body: "Do the fix, please.".into(),
+        anchor,
+        thread,
+        status: TaskStatus::Todo,
+        assignee: Assignee::Human("author".into()),
+        fix: None,
+        created_at: now,
+    }
+}
+
+fn put_task(f: &Fixtures, task: &Task) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::TASK.into(),
+            model_id: task.id.0.clone(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(task).unwrap()),
+        }])
+        .unwrap();
+}
+
+fn task_row(f: &Fixtures, id: &TaskId) -> Task {
+    let row = f.store.get(models::TASK, &id.0).unwrap().unwrap();
+    serde_json::from_value(row.data).unwrap()
+}
+
+fn worktree_dir(head: &Sha) -> PathBuf {
+    PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0))
 }
 
 // ── transact / sync frame / de-dup / rejection ──────────────────────────────
@@ -511,4 +557,523 @@ async fn a_skill_run_without_cancellation_completes() {
             .unwrap_or(false)
     })
     .await;
+}
+
+// ── refresh_inbox ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn refresh_inbox_writes_pr_rows_and_seeds_inbox_state_once() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    // Let the one-shot startup refresh (empty fixtures) drain first.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    let pr_ref = fixture_pr_ref();
+    let head = Sha::new("head111");
+    let summary = testkit::sample_pr_summary(&pr_ref, &head);
+    let pr_id = pr_ref.id();
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![summary.clone()]));
+    }
+
+    core.refresh_inbox().await.expect("refresh_inbox");
+
+    let pr_row = f.store.get(models::PR, &pr_id.0).unwrap();
+    assert!(pr_row.is_some(), "pr row written");
+    let state_row = f.store.get(models::INBOX_STATE, &pr_id.0).unwrap();
+    assert!(state_row.is_some(), "inbox_state row created");
+
+    // Mark it done, then refresh again: a second pass must not clobber it.
+    f.store
+        .apply(vec![NewAction {
+            model: models::INBOX_STATE.into(),
+            model_id: pr_id.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(json!({"pr": pr_id, "done": true, "snooze": null})),
+        }])
+        .unwrap();
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![summary.clone()]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox again");
+    let state_row = f.store.get(models::INBOX_STATE, &pr_id.0).unwrap().unwrap();
+    assert_eq!(state_row.data["done"], json!(true));
+}
+
+// ── viewer / host_status / set_host_token ───────────────────────────────────
+
+#[tokio::test]
+async fn viewer_returns_the_authenticated_person() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.host.push_viewer(Ok(testkit::sample_person("octocat")));
+
+    let me = core.viewer().await.expect("viewer");
+    assert_eq!(me.login, "octocat");
+}
+
+#[tokio::test]
+async fn host_status_reports_source_and_connection() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    let status = core.host_status().await.expect("host_status");
+    assert!(status.connected);
+    assert_eq!(status.login, Some("me".into()));
+    assert_eq!(status.source, TokenSource::Keychain);
+
+    f.token_status.set(TokenSource::None);
+    let status = core.host_status().await.expect("host_status");
+    assert!(!status.connected);
+    assert_eq!(status.source, TokenSource::None);
+}
+
+#[tokio::test]
+async fn set_host_token_validates_before_storing_and_rolls_back_on_failure() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.secrets
+        .set(theodore_secrets::GITHUB_TOKEN, "old-token")
+        .unwrap();
+
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    let status = core
+        .set_host_token(SetTokenRequest {
+            host: HostKind::Github,
+            token: Some("new-token".into()),
+        })
+        .await
+        .expect("set_host_token");
+    assert!(status.connected);
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("new-token".into())
+    );
+    assert!(f.token_status.invalidations() >= 1);
+
+    f.host.push_viewer(Err(HostError::Auth));
+    let err = core
+        .set_host_token(SetTokenRequest {
+            host: HostKind::Github,
+            token: Some("bad-token".into()),
+        })
+        .await;
+    assert!(err.is_err(), "a rejected token must not be stored");
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("new-token".into()),
+        "rolled back to the last good token"
+    );
+
+    core.set_host_token(SetTokenRequest {
+        host: HostKind::Github,
+        token: None,
+    })
+    .await
+    .expect("remove token");
+    assert_eq!(f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(), None);
+}
+
+// ── reply_thread / resolve_thread ────────────────────────────────────────────
+
+#[tokio::test]
+async fn reply_thread_enqueues_outbox_and_refreshes_pr_detail_on_success() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-reply".into()),
+        value: detail,
+    }));
+
+    core.reply_thread(ReplyRequest {
+        pr: pr.clone(),
+        thread: ThreadId::new("thread-1"),
+        body: "thanks, fixed".into(),
+    })
+    .await
+    .expect("reply_thread");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "reply_thread" && i.status == OutboxStatus::Done)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn resolve_thread_enqueues_outbox() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    core.resolve_thread(ResolveRequest {
+        pr,
+        thread: ThreadId::new("thread-1"),
+        resolved: true,
+    })
+    .await
+    .expect("resolve_thread");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "resolve_thread" && i.status == OutboxStatus::Done)
+    })
+    .await;
+}
+
+// ── list_skills / run_skill content ─────────────────────────────────────────
+
+#[tokio::test]
+async fn list_skills_includes_builtins_and_the_prs_own_claude_skills() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    let skill_dir = worktree_dir(&head).join(".claude/skills/demo");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo\ndescription: a demo skill\n---\n\nBody.\n",
+    )
+    .unwrap();
+
+    let skills = core.list_skills(Some(pr)).await.expect("list_skills");
+    assert!(
+        skills
+            .iter()
+            .any(|s| s.id == "bugs" && s.source == "built-in")
+    );
+    assert!(skills.iter().any(|s| s.id == "security"));
+    assert!(skills.iter().any(|s| s.id == "tests"));
+    assert!(
+        skills
+            .iter()
+            .any(|s| s.id == "demo" && s.title == "demo" && s.description == "a demo skill")
+    );
+}
+
+#[tokio::test]
+async fn run_skill_inlines_skill_text_for_non_claude_agents_only() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let skill_dir = worktree_dir(&head).join(".claude/skills/demo");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo\ndescription: a demo skill\n---\n\nUnique skill body marker.\n",
+    )
+    .unwrap();
+
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: Usage::default(),
+    }]);
+    core.run_skill(RunSkillRequest {
+        pr: pr.clone(),
+        skill: "demo".into(),
+        agents: vec![AgentId::Codex],
+    })
+    .await
+    .expect("run_skill codex");
+    wait_until(|| f.agents.last_request().is_some()).await;
+    let codex_prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        codex_prompt.contains("Unique skill body marker."),
+        "non-Claude agents get the SKILL.md text inlined"
+    );
+
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: Usage::default(),
+    }]);
+    core.run_skill(RunSkillRequest {
+        pr,
+        skill: "demo".into(),
+        agents: vec![AgentId::Claude],
+    })
+    .await
+    .expect("run_skill claude");
+    wait_until(|| {
+        f.agents
+            .last_request()
+            .is_some_and(|r| r.agent == AgentId::Claude)
+    })
+    .await;
+    let claude_prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        !claude_prompt.contains("Unique skill body marker."),
+        "Claude references the skill by name instead of inlining it"
+    );
+    assert!(claude_prompt.contains("`demo` skill"));
+}
+
+// ── delegate_task / decide_task ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn delegate_task_runs_the_agent_in_edit_mode_and_captures_a_patch() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.git.put_file(&head, "src/lib.rs", b"before\n");
+    let dir = worktree_dir(&head);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/lib.rs"), b"after\n").unwrap();
+
+    let task = sample_task(
+        "t1",
+        &pr,
+        Some(testkit::sample_anchor("src/lib.rs", 2)),
+        Some(ThreadId::new("thread-1")),
+        f.clock.now(),
+    );
+    put_task(&f, &task);
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: Usage::default(),
+    }]);
+
+    let run_id = core
+        .delegate_task(DelegateRequest {
+            task: task.id.clone(),
+            agent: Some(AgentId::Codex),
+        })
+        .await
+        .expect("delegate_task");
+    assert!(run_id.starts_with("fix:"));
+
+    wait_until(|| task_row(&f, &task.id).status == TaskStatus::Review).await;
+    let updated = task_row(&f, &task.id);
+    let patch = updated.fix.expect("fix").patch.expect("patch");
+    assert_eq!(patch.path, "src/lib.rs");
+    assert_eq!(patch.after, vec!["after".to_string()]);
+
+    let req = f.agents.last_request().expect("agent was run");
+    assert_eq!(req.mode, theodore_ports::AgentMode::Edit);
+    assert!(req.prompt.contains("Fix the thing"));
+}
+
+#[tokio::test]
+async fn decide_task_accept_on_own_pr_commits_pushes_and_resolves_thread() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    // `sample_pr_detail`'s author is "author" (plan §4: own PR == viewer == author).
+    f.host.push_viewer(Ok(testkit::sample_person("author")));
+
+    let mut task = sample_task(
+        "t-own",
+        &pr,
+        Some(testkit::sample_anchor("src/lib.rs", 2)),
+        Some(ThreadId::new("thread-1")),
+        f.clock.now(),
+    );
+    task.status = TaskStatus::Review;
+    task.fix = Some(Fix {
+        status: FixStatus::Ready,
+        patch: Some(Patch {
+            path: "src/lib.rs".into(),
+            before: vec!["before".into()],
+            after: vec!["after".into()],
+            note: "agent fix".into(),
+            by: AgentId::Codex,
+        }),
+        commit: None,
+    });
+    put_task(&f, &task);
+
+    core.decide_task(TaskDecision {
+        task: task.id.clone(),
+        accept: true,
+        reason: None,
+    })
+    .await
+    .expect("decide_task accept");
+
+    let (branch, message) = f.git.last_push.lock().unwrap().clone().expect("pushed");
+    assert_eq!(branch, "feature");
+    assert!(message.contains("Fix the thing"));
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "resolve_thread" && i.status == OutboxStatus::Done)
+    })
+    .await;
+
+    let updated = task_row(&f, &task.id);
+    assert_eq!(updated.status, TaskStatus::Done);
+    let fix = updated.fix.expect("fix");
+    assert_eq!(fix.status, FixStatus::Applied);
+    assert!(fix.commit.is_some());
+}
+
+#[tokio::test]
+async fn decide_task_accept_on_someone_elses_pr_drafts_a_suggestion() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    // Author is "author"; a different viewer makes this not-mine.
+    f.host.push_viewer(Ok(testkit::sample_person("reviewer")));
+
+    let mut task = sample_task(
+        "t-other",
+        &pr,
+        Some(testkit::sample_anchor("src/lib.rs", 2)),
+        Some(ThreadId::new("thread-1")),
+        f.clock.now(),
+    );
+    task.status = TaskStatus::Review;
+    task.fix = Some(Fix {
+        status: FixStatus::Ready,
+        patch: Some(Patch {
+            path: "src/lib.rs".into(),
+            before: vec!["before".into()],
+            after: vec!["after".into()],
+            note: "agent fix".into(),
+            by: AgentId::Codex,
+        }),
+        commit: None,
+    });
+    put_task(&f, &task);
+
+    core.decide_task(TaskDecision {
+        task: task.id.clone(),
+        accept: true,
+        reason: None,
+    })
+    .await
+    .expect("decide_task accept (suggestion)");
+
+    assert!(
+        f.git.last_push.lock().unwrap().is_none(),
+        "someone else's PR must not be pushed to"
+    );
+    let drafts = f.store.query(models::DRAFT, "pr", &pr.0).unwrap();
+    assert_eq!(drafts.len(), 1);
+    assert!(
+        drafts[0].data["body"]
+            .as_str()
+            .unwrap()
+            .contains("```suggestion")
+    );
+
+    let updated = task_row(&f, &task.id);
+    assert_eq!(updated.status, TaskStatus::Done);
+    assert_eq!(updated.fix.unwrap().status, FixStatus::Suggested);
+}
+
+#[tokio::test]
+async fn decide_task_reject_resets_to_todo_with_a_reason() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let mut task = sample_task("t-reject", &pr, None, None, f.clock.now());
+    task.status = TaskStatus::Review;
+    task.fix = Some(Fix {
+        status: FixStatus::Ready,
+        patch: None,
+        commit: None,
+    });
+    put_task(&f, &task);
+
+    core.decide_task(TaskDecision {
+        task: task.id.clone(),
+        accept: false,
+        reason: Some("doesn't fix the root cause".into()),
+    })
+    .await
+    .expect("decide_task reject");
+
+    let updated = task_row(&f, &task.id);
+    assert_eq!(updated.status, TaskStatus::Todo);
+    assert!(updated.fix.is_none());
+
+    let reason = f
+        .store
+        .kv_get(&format!("task:{}:reject_reason", task.id))
+        .unwrap();
+    assert_eq!(reason, Some(json!("doesn't fix the root cause")));
+}
+
+// ── agents.grouping setting ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn regroup_honours_the_agents_grouping_setting() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let tx = Transaction {
+        id: "set-grouping-agent".into(),
+        ops: vec![MutationOp::Create {
+            model: models::SETTING.into(),
+            id: "agents.grouping".into(),
+            data: json!({"key": "agents.grouping", "scope": "user", "value": "codex"}),
+        }],
+    };
+    assert!(matches!(
+        core.transact(tx).await,
+        TransactionResult::Ok { .. }
+    ));
+
+    core.regroup(pr).await.expect("regroup");
+    assert_eq!(f.grouper.last_agent(), Some(AgentId::Codex));
+}
+
+// ── is_idle ───────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn is_idle_is_false_while_the_outbox_has_pending_items() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: pr.clone(),
+            head,
+        })
+        .await
+        .unwrap();
+    let hunks = testkit::hunk_ids(&revision);
+
+    // Block the outbox on a network error so the item stays pending.
+    f.host
+        .push_set_viewed(Err(HostError::Network("down".into())));
+    for (i, h) in hunks.iter().enumerate() {
+        core.transact(hunk_read_tx(&format!("read-{i}"), &pr, h))
+            .await;
+    }
+    // Wait for the failed first attempt to land (back to `Pending`, armed
+    // with a backoff `not_before`) before advancing the clock — advancing
+    // too early would compute the backoff from the already-advanced time.
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .first()
+            .is_some_and(|i| i.attempts >= 1)
+    })
+    .await;
+
+    assert!(
+        !core.is_idle().await,
+        "a pending outbox item must not be idle"
+    );
+
+    f.host.push_set_viewed(Ok(()));
+    f.clock.advance(10_000);
+    wait_until(|| f.store.outbox_snapshot()[0].status == OutboxStatus::Done).await;
+    assert!(core.is_idle().await);
+}
+
+// Hand-written host authentication status smoke check: `HostAuthStatus`'s
+// shape, not behavior, to catch an accidental contract drift at the type
+// level (the rest is covered by `host_status_reports_source_and_connection`).
+#[test]
+fn host_auth_status_is_constructible() {
+    let _ = HostAuthStatus {
+        host: HostKind::Github,
+        connected: true,
+        login: Some("me".into()),
+        source: TokenSource::Gh,
+    };
 }
