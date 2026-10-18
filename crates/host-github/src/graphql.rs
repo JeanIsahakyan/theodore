@@ -901,3 +901,327 @@ pub(crate) async fn viewer(http: &HttpClient) -> HostResult<GqlActor> {
     let data: Data = graphql(http, VIEWER_QUERY, json!({})).await?;
     Ok(data.viewer)
 }
+
+// ── merge ───────────────────────────────────────────────────────────────
+
+const MERGE_PULL_REQUEST: &str = r#"
+mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!, $commitHeadline: String, $commitBody: String) {
+  mergePullRequest(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod, commitHeadline: $commitHeadline, commitBody: $commitBody }) {
+    pullRequest { mergeCommit { oid } }
+  }
+}
+"#;
+
+#[derive(Debug, Deserialize)]
+struct MergeData {
+    #[serde(rename = "mergePullRequest")]
+    merge_pull_request: Option<MergePayload>,
+}
+#[derive(Debug, Deserialize)]
+struct MergePayload {
+    #[serde(rename = "pullRequest")]
+    pull_request: Option<MergedPr>,
+}
+#[derive(Debug, Deserialize)]
+struct MergedPr {
+    #[serde(rename = "mergeCommit")]
+    merge_commit: Option<MergeCommit>,
+}
+#[derive(Debug, Deserialize)]
+struct MergeCommit {
+    oid: String,
+}
+
+pub(crate) async fn merge_pull_request(
+    http: &HttpClient,
+    pull_request_id: &str,
+    merge_method: &str,
+    commit_headline: Option<&str>,
+    commit_body: Option<&str>,
+) -> HostResult<String> {
+    let data: MergeData = graphql(
+        http,
+        MERGE_PULL_REQUEST,
+        json!({
+            "pullRequestId": pull_request_id,
+            "mergeMethod": merge_method,
+            "commitHeadline": commit_headline,
+            "commitBody": commit_body,
+        }),
+    )
+    .await?;
+    data.merge_pull_request
+        .and_then(|p| p.pull_request)
+        .and_then(|p| p.merge_commit)
+        .map(|c| c.oid)
+        .ok_or_else(|| HostError::Protocol("mergePullRequest returned no merge commit".into()))
+}
+
+const ENABLE_AUTO_MERGE: &str = r#"
+mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+  enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
+    pullRequest { id }
+  }
+}
+"#;
+
+pub(crate) async fn enable_auto_merge(
+    http: &HttpClient,
+    pull_request_id: &str,
+    merge_method: &str,
+) -> HostResult<()> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        #[serde(rename = "enablePullRequestAutoMerge")]
+        _payload: Option<serde_json::Value>,
+    }
+    let _: Data = graphql(
+        http,
+        ENABLE_AUTO_MERGE,
+        json!({ "pullRequestId": pull_request_id, "mergeMethod": merge_method }),
+    )
+    .await?;
+    Ok(())
+}
+
+const DISABLE_AUTO_MERGE: &str = r#"
+mutation($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
+    pullRequest { id }
+  }
+}
+"#;
+
+pub(crate) async fn disable_auto_merge(http: &HttpClient, pull_request_id: &str) -> HostResult<()> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        #[serde(rename = "disablePullRequestAutoMerge")]
+        _payload: Option<serde_json::Value>,
+    }
+    let _: Data = graphql(
+        http,
+        DISABLE_AUTO_MERGE,
+        json!({ "pullRequestId": pull_request_id }),
+    )
+    .await?;
+    Ok(())
+}
+
+const ENQUEUE_PULL_REQUEST: &str = r#"
+mutation($pullRequestId: ID!) {
+  enqueuePullRequest(input: { pullRequestId: $pullRequestId }) {
+    mergeQueueEntry { id }
+  }
+}
+"#;
+
+pub(crate) async fn enqueue_pull_request(
+    http: &HttpClient,
+    pull_request_id: &str,
+) -> HostResult<()> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        #[serde(rename = "enqueuePullRequest")]
+        _payload: Option<serde_json::Value>,
+    }
+    let _: Data = graphql(
+        http,
+        ENQUEUE_PULL_REQUEST,
+        json!({ "pullRequestId": pull_request_id }),
+    )
+    .await?;
+    Ok(())
+}
+
+const MARK_PULL_REQUEST_READY_FOR_REVIEW: &str = r#"
+mutation($pullRequestId: ID!) {
+  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+    pullRequest { id }
+  }
+}
+"#;
+
+pub(crate) async fn mark_ready_for_review(
+    http: &HttpClient,
+    pull_request_id: &str,
+) -> HostResult<()> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        #[serde(rename = "markPullRequestReadyForReview")]
+        _payload: Option<serde_json::Value>,
+    }
+    let _: Data = graphql(
+        http,
+        MARK_PULL_REQUEST_READY_FOR_REVIEW,
+        json!({ "pullRequestId": pull_request_id }),
+    )
+    .await?;
+    Ok(())
+}
+
+const CONVERT_PULL_REQUEST_TO_DRAFT: &str = r#"
+mutation($pullRequestId: ID!) {
+  convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+    pullRequest { id }
+  }
+}
+"#;
+
+pub(crate) async fn convert_to_draft(http: &HttpClient, pull_request_id: &str) -> HostResult<()> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        #[serde(rename = "convertPullRequestToDraft")]
+        _payload: Option<serde_json::Value>,
+    }
+    let _: Data = graphql(
+        http,
+        CONVERT_PULL_REQUEST_TO_DRAFT,
+        json!({ "pullRequestId": pull_request_id }),
+    )
+    .await?;
+    Ok(())
+}
+
+const UPDATE_PULL_REQUEST_BRANCH: &str = r#"
+mutation($pullRequestId: ID!) {
+  updatePullRequestBranch(input: { pullRequestId: $pullRequestId }) {
+    success
+  }
+}
+"#;
+
+pub(crate) async fn update_pull_request_branch(
+    http: &HttpClient,
+    pull_request_id: &str,
+) -> HostResult<()> {
+    #[derive(Debug, Deserialize)]
+    struct Payload {
+        success: Option<bool>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        #[serde(rename = "updatePullRequestBranch")]
+        payload: Option<Payload>,
+    }
+    let data: Data = graphql(
+        http,
+        UPDATE_PULL_REQUEST_BRANCH,
+        json!({ "pullRequestId": pull_request_id }),
+    )
+    .await?;
+    match data.payload.and_then(|p| p.success) {
+        Some(true) => Ok(()),
+        _ => Err(HostError::Conflict(
+            "could not update the pull request branch".into(),
+        )),
+    }
+}
+
+// Reactions use the REST comment-reactions endpoints instead of GraphQL's
+// `addReaction`/`removeReaction` (see `rest.rs`): those mutations take the
+// comment's GraphQL node id, but `CommentId` here holds the REST database id
+// (the same one `edit_comment`/`delete_comment` use) — resolving node ids
+// would cost an extra round trip per call for no benefit.
+
+// ── assignable users ───────────────────────────────────────────────────
+
+const ASSIGNABLE_USERS_QUERY: &str = r#"
+query($owner: String!, $repo: String!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    assignableUsers(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { login name avatarUrl }
+    }
+  }
+}
+"#;
+
+pub(crate) async fn assignable_users(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+) -> HostResult<Vec<GqlActor>> {
+    #[derive(Debug, Deserialize)]
+    struct AssignableWrap {
+        #[serde(rename = "assignableUsers")]
+        assignable_users: Connection<GqlActor>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        repository: Option<AssignableWrap>,
+    }
+    crate::pagination::paginate_all(|after| async move {
+        let data: Data = graphql(
+            http,
+            ASSIGNABLE_USERS_QUERY,
+            json!({ "owner": owner, "repo": repo, "after": after }),
+        )
+        .await?;
+        Ok(data
+            .repository
+            .map(|w| w.assignable_users)
+            .unwrap_or_default())
+    })
+    .await
+}
+
+// ── merge status ────────────────────────────────────────────────────────
+
+const PR_MERGE_STATUS_QUERY: &str = r#"
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    pullRequest(number: $number) {
+      mergeable
+      mergeStateStatus
+      isInMergeQueue
+      autoMergeRequest { enabledAt }
+    }
+  }
+}
+"#;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GqlRepoMergeSettings {
+    #[serde(rename = "mergeCommitAllowed")]
+    pub merge_commit_allowed: bool,
+    #[serde(rename = "squashMergeAllowed")]
+    pub squash_merge_allowed: bool,
+    #[serde(rename = "rebaseMergeAllowed")]
+    pub rebase_merge_allowed: bool,
+    #[serde(rename = "pullRequest")]
+    pub pull_request: Option<GqlPrMergeStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GqlPrMergeStatus {
+    pub mergeable: String,
+    #[serde(rename = "mergeStateStatus")]
+    pub merge_state_status: String,
+    #[serde(rename = "isInMergeQueue")]
+    pub is_in_merge_queue: bool,
+    #[serde(rename = "autoMergeRequest")]
+    pub auto_merge_request: Option<serde_json::Value>,
+}
+
+pub(crate) async fn pr_merge_status(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> HostResult<GqlRepoMergeSettings> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        repository: Option<GqlRepoMergeSettings>,
+    }
+    let data: Data = graphql(
+        http,
+        PR_MERGE_STATUS_QUERY,
+        json!({ "owner": owner, "repo": repo, "number": number }),
+    )
+    .await?;
+    data.repository
+        .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}#{number}")))
+}

@@ -9,7 +9,7 @@ use theodore_domain::{
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    ReviewComment, ReviewSubmission, SubmittedReview,
+    MergeMethod, MergeState, MergeStatus, ReviewComment, ReviewSubmission, SubmittedReview,
 };
 
 use crate::{anchor, graphql, pagination, rest, time};
@@ -401,6 +401,159 @@ impl HostAdapter for GithubAdapter {
     async fn delete_comment(&self, pr: &PrRef, comment: &CommentId) -> HostResult<()> {
         rest::delete_comment(&self.rest, &pr.repo.owner, &pr.repo.name, comment.as_str()).await
     }
+
+    async fn add_reaction(&self, pr: &PrRef, comment: &CommentId, emoji: &str) -> HostResult<()> {
+        rest::add_reaction(
+            &self.rest,
+            &pr.repo.owner,
+            &pr.repo.name,
+            comment.as_str(),
+            emoji,
+        )
+        .await
+    }
+
+    async fn remove_reaction(
+        &self,
+        pr: &PrRef,
+        comment: &CommentId,
+        emoji: &str,
+    ) -> HostResult<()> {
+        // REST reaction deletion needs the reaction's own id, not the
+        // comment's: list, find the viewer's matching one, delete that.
+        let viewer = self.viewer().await?;
+        let reactions =
+            rest::list_reactions(&self.rest, &pr.repo.owner, &pr.repo.name, comment.as_str())
+                .await?;
+        let mine = reactions.iter().find(|r| {
+            r.content == emoji
+                && r.user
+                    .as_ref()
+                    .map(|u| u.login == viewer.login)
+                    .unwrap_or(false)
+        });
+        match mine {
+            Some(r) => {
+                rest::delete_reaction(
+                    &self.rest,
+                    &pr.repo.owner,
+                    &pr.repo.name,
+                    comment.as_str(),
+                    r.id,
+                )
+                .await
+            }
+            None => Ok(()),
+        }
+    }
+
+    async fn assignable_users(&self, repo: &RepoRef) -> HostResult<Vec<Person>> {
+        let actors = graphql::assignable_users(&self.graphql, &repo.owner, &repo.name).await?;
+        Ok(actors
+            .into_iter()
+            .map(graphql::GqlActor::into_person)
+            .collect())
+    }
+
+    async fn request_reviewers(
+        &self,
+        pr: &PrRef,
+        users: &[String],
+        teams: &[String],
+    ) -> HostResult<()> {
+        rest::request_reviewers(
+            &self.rest,
+            &pr.repo.owner,
+            &pr.repo.name,
+            pr.number,
+            users,
+            teams,
+        )
+        .await
+    }
+
+    async fn remove_reviewer(&self, pr: &PrRef, user: &str) -> HostResult<()> {
+        rest::remove_requested_reviewer(&self.rest, &pr.repo.owner, &pr.repo.name, pr.number, user)
+            .await
+    }
+
+    async fn mark_ready(&self, pr: &PrRef) -> HostResult<()> {
+        let node_id = self.resolve_node_id(pr).await?;
+        graphql::mark_ready_for_review(&self.graphql, &node_id).await
+    }
+
+    async fn convert_to_draft(&self, pr: &PrRef) -> HostResult<()> {
+        let node_id = self.resolve_node_id(pr).await?;
+        graphql::convert_to_draft(&self.graphql, &node_id).await
+    }
+
+    async fn update_branch(&self, pr: &PrRef) -> HostResult<()> {
+        let node_id = self.resolve_node_id(pr).await?;
+        graphql::update_pull_request_branch(&self.graphql, &node_id).await
+    }
+
+    async fn merge_status(&self, pr: &PrRef) -> HostResult<MergeStatus> {
+        let settings =
+            graphql::pr_merge_status(&self.graphql, &pr.repo.owner, &pr.repo.name, pr.number)
+                .await?;
+        let status = settings
+            .pull_request
+            .ok_or_else(|| HostError::NotFound(format!("{}#{}", pr.repo.slug(), pr.number)))?;
+
+        let mut allowed_methods = Vec::new();
+        if settings.merge_commit_allowed {
+            allowed_methods.push(MergeMethod::Merge);
+        }
+        if settings.squash_merge_allowed {
+            allowed_methods.push(MergeMethod::Squash);
+        }
+        if settings.rebase_merge_allowed {
+            allowed_methods.push(MergeMethod::Rebase);
+        }
+
+        Ok(MergeStatus {
+            mergeable: map_mergeable(&status.mergeable),
+            state: map_merge_state(&status.merge_state_status),
+            allowed_methods,
+            auto_merge_enabled: status.auto_merge_request.is_some(),
+            in_queue: status.is_in_merge_queue,
+            required_approvals: None,
+        })
+    }
+
+    async fn merge(
+        &self,
+        pr: &PrRef,
+        method: MergeMethod,
+        title: Option<String>,
+        body: Option<String>,
+    ) -> HostResult<Sha> {
+        let node_id = self.resolve_node_id(pr).await?;
+        let oid = graphql::merge_pull_request(
+            &self.graphql,
+            &node_id,
+            merge_method_name(method),
+            title.as_deref(),
+            body.as_deref(),
+        )
+        .await?;
+        Ok(Sha::new(oid))
+    }
+
+    async fn enable_auto_merge(&self, pr: &PrRef, method: MergeMethod) -> HostResult<()> {
+        let node_id = self.resolve_node_id(pr).await?;
+        graphql::enable_auto_merge(&self.graphql, &node_id, merge_method_name(method)).await
+    }
+
+    async fn disable_auto_merge(&self, pr: &PrRef) -> HostResult<()> {
+        let node_id = self.resolve_node_id(pr).await?;
+        graphql::disable_auto_merge(&self.graphql, &node_id).await
+    }
+
+    async fn enqueue(&self, pr: &PrRef) -> HostResult<()> {
+        let node_id = self.resolve_node_id(pr).await?;
+        graphql::enqueue_pull_request(&self.graphql, &node_id).await
+    }
 }
 
 // ── mapping helpers ─────────────────────────────────────────────────────
@@ -442,6 +595,36 @@ fn map_reviewer_state(state: &str) -> ReviewerState {
         "APPROVED" => ReviewerState::Approved,
         "CHANGES_REQUESTED" => ReviewerState::ChangesRequested,
         _ => ReviewerState::Commented,
+    }
+}
+
+fn merge_method_name(method: MergeMethod) -> &'static str {
+    match method {
+        MergeMethod::Merge => "MERGE",
+        MergeMethod::Squash => "SQUASH",
+        MergeMethod::Rebase => "REBASE",
+    }
+}
+
+/// GitHub's `MergeableState`: `MERGEABLE`, `CONFLICTING`, `UNKNOWN`.
+fn map_mergeable(state: &str) -> Option<bool> {
+    match state {
+        "MERGEABLE" => Some(true),
+        "CONFLICTING" => Some(false),
+        _ => None,
+    }
+}
+
+/// GitHub's `MergeStateStatus`. `DRAFT`/`HAS_HOOKS` have no counterpart in
+/// the host-neutral `MergeState` and fold into `Unknown`.
+fn map_merge_state(state: &str) -> MergeState {
+    match state {
+        "CLEAN" => MergeState::Clean,
+        "BLOCKED" => MergeState::Blocked,
+        "BEHIND" => MergeState::Behind,
+        "DIRTY" => MergeState::Dirty,
+        "UNSTABLE" => MergeState::Unstable,
+        _ => MergeState::Unknown,
     }
 }
 

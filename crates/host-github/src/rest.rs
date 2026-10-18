@@ -116,3 +116,106 @@ pub(crate) async fn delete_comment(
     let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}");
     http.delete(&path).await
 }
+
+#[derive(serde::Serialize)]
+struct RequestedReviewersBody<'a> {
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    reviewers: &'a [String],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    team_reviewers: &'a [String],
+}
+
+/// `POST .../requested_reviewers`: takes logins/team slugs directly, no node
+/// id lookup needed (unlike GraphQL's `requestReviews`).
+pub(crate) async fn request_reviewers(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    number: u64,
+    users: &[String],
+    teams: &[String],
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/pulls/{number}/requested_reviewers");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> = http
+        .post_json(
+            &path,
+            &RequestedReviewersBody {
+                reviewers: users,
+                team_reviewers: teams,
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+/// `DELETE .../requested_reviewers` (same resource, a body is required even
+/// though this is a DELETE).
+pub(crate) async fn remove_requested_reviewer(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    number: u64,
+    user: &str,
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/pulls/{number}/requested_reviewers");
+    let users = [user.to_string()];
+    http.delete_with_body(
+        &path,
+        &RequestedReviewersBody {
+            reviewers: &users,
+            team_reviewers: &[],
+        },
+    )
+    .await
+}
+
+#[derive(serde::Serialize)]
+struct ReactionBody<'a> {
+    content: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhReaction {
+    pub id: u64,
+    pub content: String,
+    pub user: Option<GhReactionUser>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhReactionUser {
+    pub login: String,
+}
+
+pub(crate) async fn add_reaction(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    comment_id: &str,
+    content: &str,
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> =
+        http.post_json(&path, &ReactionBody { content }).await?;
+    Ok(())
+}
+
+pub(crate) async fn list_reactions(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    comment_id: &str,
+) -> HostResult<Vec<GhReaction>> {
+    let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions");
+    Ok(http.get::<Vec<GhReaction>>(&path).await?.value)
+}
+
+pub(crate) async fn delete_reaction(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    comment_id: &str,
+    reaction_id: u64,
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}");
+    http.delete(&path).await
+}

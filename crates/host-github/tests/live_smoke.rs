@@ -81,3 +81,34 @@ async fn runs_every_inbox_search_and_viewer() {
     adapter.list_repos().await.expect("list_repos");
     adapter.changed_since(None).await.expect("changed_since");
 }
+
+#[tokio::test]
+#[ignore = "hits real github.com; run with --ignored and GITHUB_TOKEN set"]
+async fn reads_merge_status_and_assignable_users() {
+    // Read-only: never call a write method (merge, enable_auto_merge, ...)
+    // against a real host.
+    let token = std::env::var("GITHUB_TOKEN").expect("set GITHUB_TOKEN to run this test");
+    let token_source: Arc<dyn TokenSource> = Arc::new(StaticToken::new(token));
+    let adapter = theodore_host_github::GithubAdapter::new(token_source, Arc::new(SystemClock));
+
+    let spec = std::env::var("THEODORE_LIVE_PR").unwrap_or_else(|_| "rust-lang/rust#1".into());
+    let (slug, number) = spec.split_once('#').expect("owner/repo#n");
+    let (owner, name) = slug.split_once('/').expect("owner/repo#n");
+    let number: u64 = number.parse().expect("PR number");
+    let repo = RepoRef {
+        host: HostKind::Github,
+        owner: owner.into(),
+        name: name.into(),
+    };
+    let pr = PrRef {
+        repo: repo.clone(),
+        number,
+        host_id: None,
+    };
+
+    adapter.merge_status(&pr).await.expect("merge_status");
+    adapter
+        .assignable_users(&repo)
+        .await
+        .expect("assignable_users");
+}
