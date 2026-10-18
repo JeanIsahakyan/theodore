@@ -1,3 +1,4 @@
+import { stripHtmlComments } from '../highlight';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUp,
@@ -602,6 +603,20 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const [text, setText] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillAgents, setSkillAgents] = useState<AgentId[]>(AGENTS);
+  // Default to the agents actually installed on this machine.
+  useEffect(() => {
+    let live = true;
+    void api
+      .detectAgents()
+      .then((all) => {
+        const installed = all.filter((a) => a.installed).map((a) => a.id);
+        if (live && installed.length > 0) setSkillAgents(installed);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
   const [hi, setHi] = useState(0);
   const [pending, setPending] = useState<{
     run: string;
@@ -993,7 +1008,9 @@ function DraftCard({ d }: { d: Draft }) {
           {d.anchor.path}:{d.anchor.line}
         </span>
       </div>
-      <p className="line-clamp-2 text-sm text-muted">{d.body}</p>
+      <p className="line-clamp-2 text-sm text-muted">
+        {stripHtmlComments(d.body)}
+      </p>
     </Card>
   );
 }
@@ -1042,7 +1059,7 @@ function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
       </div>
       <p className="line-clamp-2 text-sm text-muted">
         <span className="text-foreground">{last.author.login}:</span>{' '}
-        {last.body}
+        {stripHtmlComments(last.body)}
       </p>
       <div className="flex items-center justify-between text-xs text-muted">
         <span>
@@ -1060,12 +1077,12 @@ function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
           Reopen
         </Btn>
       ) : (
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <TextField
             aria-label="Reply"
             value={reply}
             onChange={setReply}
-            className="flex-1"
+            className="min-w-0 flex-1 basis-40"
           >
             <InputGroup fullWidth className="rounded-2xl">
               <InputGroup.Input

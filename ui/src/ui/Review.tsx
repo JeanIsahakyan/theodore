@@ -92,7 +92,7 @@ const lastSeenKey = (pr: PrId) => `theodore-lastseen:${pr}`;
 
 function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
   const reads = store.models.hunkReads.where((r) => r.pr === pr);
-  const groups = store.models.groups.all().filter((g) => g.kind !== 'hidden');
+  const groups = store.models.groupsOf(pr).filter((g) => g.kind !== 'hidden');
   const hunks = groups.flatMap((g) => g.hunks);
   if (!hunks.length) return 0;
   const readSet = new Set(reads.map((r) => r.hunk));
@@ -168,7 +168,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   }, [revision?.data, mode.file]);
 
   const orderedGroups = revision?.data
-    ? groupsForRevision(store, revision.data)
+    ? groupsForRevision(store, pr, revision.data)
     : [];
   const orderedGroupIds = orderedGroups.map((g) => g.id).join();
 
@@ -446,7 +446,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               className="approvals shrink-0 gap-1.5 tabular-nums"
             >
               <CircleCheck className="size-3.5" />
-              {summary.approvals}/{summary.required_approvals ?? '–'}
+              {summary.required_approvals != null
+                ? `${summary.approvals}/${summary.required_approvals}`
+                : summary.approvals}
             </Chip>
             <Tooltip.Content>
               {summary.required_approvals != null

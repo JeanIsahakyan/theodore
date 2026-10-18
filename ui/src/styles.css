@@ -87,9 +87,10 @@ body {
   user-select: none;
 }
 .ln .src {
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Real code has long lines: wrap them instead of hiding the tail. */
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 4;
 }
 .ln-act {
   display: none;

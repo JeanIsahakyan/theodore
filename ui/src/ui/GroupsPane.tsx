@@ -70,11 +70,12 @@ const plural = (n: number, one: string, few: string, many: string) =>
  *  field. Exported so Review can drive Tour mode over the same ordering. */
 export function groupsForRevision(
   store: ReturnType<typeof useRootStore>,
+  pr: PrId,
   rev: Revision,
 ) {
   const hunkIds = new Set(rev.files.flatMap((f) => f.hunks.map((h) => h.id)));
-  return store.models.groups
-    .all()
+  return store.models
+    .groupsOf(pr)
     .filter((g) => g.hunks.some((h) => hunkIds.has(h)))
     .filter((g) => g.kind !== 'hidden');
 }
@@ -101,7 +102,7 @@ export const GroupsPane = observer(function GroupsPane({
   const ui = useUi();
   const summary = store.models.prSummaries.get(pr);
   const local = summary?.pr.repo.host === 'local';
-  const groups = groupsForRevision(store, rev);
+  const groups = groupsForRevision(store, pr, rev);
   const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
   const hunkReads = store.models.hunkReads.where((r) => r.pr === pr);
   const readSet = new Set(hunkReads.map((r) => r.hunk));
@@ -159,6 +160,9 @@ export const GroupsPane = observer(function GroupsPane({
       </Tabs>
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-4">
+        {mode.mode === 'groups' && groups.length === 0 && (
+          <GroupingStatus status={store.ephemeral.grouping.get(pr)} />
+        )}
         {mode.mode === 'groups' ? (
           <Accordion
             expandedKeys={new Set(mode.group ? [mode.group] : [])}
@@ -169,9 +173,6 @@ export const GroupsPane = observer(function GroupsPane({
             }}
             hideSeparator
           >
-            {groups.length === 0 && (
-              <GroupingStatus status={store.ephemeral.grouping.get(pr)} />
-            )}
             {visibleGroups.map((g, gi) => {
               const hs = sinceOnly
                 ? g.hunks.filter((h) => since?.has(h))
@@ -653,8 +654,10 @@ const FileTree = observer(function FileTree({
 
 export const groupHunkIds = (
   store: ReturnType<typeof useRootStore>,
+  pr: PrId,
   groupId: string,
-): HunkId[] => store.models.groups.get(groupId)?.hunks ?? [];
+): HunkId[] =>
+  store.models.groupsOf(pr).find((g) => g.id === groupId)?.hunks ?? [];
 
 /** Shown while a PR has no grouping yet: running, failed, or not started. */
 function GroupingStatus({

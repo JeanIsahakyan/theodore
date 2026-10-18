@@ -25,6 +25,9 @@ export function modelAccessors(pool: ObjectPool) {
     inboxStates: of('inbox_state'),
     hunkReads: of('hunk_read'),
     fileViews: of('file_viewed'),
+    /** Groups of one PR's grouping, in reading order. Group ids are only
+     *  unique within a PR — always look groups up through this. */
+    groupsOf: (pr: string) => pool.get('grouping', pr)?.groups ?? [],
     /** Groups of every loaded grouping, in reading order. */
     groups: derived<Group & { id: string }>(() =>
       pool.all('grouping').flatMap((g) => g.groups),

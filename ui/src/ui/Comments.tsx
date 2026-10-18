@@ -1,3 +1,4 @@
+import { stripHtmlComments } from '../highlight';
 /**
  * The inline comment-thread UI used under a diff line: existing review
  * threads, pending drafts, and the composer that creates new ones. Ported
@@ -146,7 +147,8 @@ export const ThreadView = observer(function ThreadView({
           ))}
         </AvatarGroup>
         <span className="min-w-0 flex-1 truncate text-muted">
-          {t.comments[0]!.author.login}: {t.comments[0]!.body}
+          {t.comments[0]!.author.login}:{' '}
+          {stripHtmlComments(t.comments[0]!.body)}
         </span>
         <span className="shrink-0 text-xs text-muted">
           {plural(t.comments.length, 'comment', 'comments')}

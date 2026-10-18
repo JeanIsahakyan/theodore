@@ -170,7 +170,7 @@ export const DiffPane = observer(function DiffPane({
 
   const group =
     mode.mode === 'groups' && mode.group
-      ? store.models.groups.get(mode.group)
+      ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
       : null;
   const groupHunkIds = group ? new Set(group.hunks) : null;
   const showOnlyOutliers =
@@ -301,12 +301,15 @@ export const DiffPane = observer(function DiffPane({
       )}
       <div className="flex justify-center py-4">
         {mode.mode === 'groups' && !tour && (
-          <NextGroup rev={rev} mode={mode} setMode={setMode} />
+          <NextGroup pr={pr} rev={rev} mode={mode} setMode={setMode} />
         )}
       </div>
     </main>
   );
 });
+
+/** Longer risks wrap on their own line instead of stretching the chip. */
+const RISK_CHIP_MAX = 48;
 
 const GroupCard = observer(function GroupCard({
   pr,
@@ -316,9 +319,12 @@ const GroupCard = observer(function GroupCard({
   groupId: string;
 }) {
   const store = useRootStore();
-  const g = store.models.groups.get(groupId);
+  const g = store.models.groupsOf(pr).find((x) => x.id === groupId);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   if (!g) return null;
+  const n =
+    (store.models.groupings.get(pr)?.groups.findIndex((x) => x.id === g.id) ??
+      -1) + 1;
   const read = store.models.hunkReads
     .where((r) => r.pr === pr)
     .map((r) => r.hunk);
@@ -326,12 +332,19 @@ const GroupCard = observer(function GroupCard({
   return (
     <Card className="gcard mb-5 gap-4 p-5">
       <div className="flex items-center gap-3">
-        <Chip size="sm" variant="secondary">
-          {g.kind}
-        </Chip>
-        <Typography.Heading level={5}>{g.title}</Typography.Heading>
-        {g.risk && (
-          <Chip size="sm" variant="soft" color="warning" className="gap-1">
+        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-sm font-semibold text-accent tabular-nums">
+          {n}
+        </span>
+        <Typography.Heading level={5} className="min-w-0">
+          {g.title}
+        </Typography.Heading>
+        {g.risk && g.risk.length <= RISK_CHIP_MAX && (
+          <Chip
+            size="sm"
+            variant="soft"
+            color="warning"
+            className="shrink-0 gap-1"
+          >
             <TriangleExclamation className="size-3.5" />
             {g.risk}
           </Chip>
@@ -347,6 +360,12 @@ const GroupCard = observer(function GroupCard({
           {allRead ? 'Read' : 'Mark as read'}
         </Btn>
       </div>
+      {g.risk && g.risk.length > RISK_CHIP_MAX && (
+        <p className="flex max-w-[78ch] gap-2 text-sm leading-relaxed text-warning">
+          <TriangleExclamation className="mt-1 size-4 shrink-0" />
+          <span>{g.risk}</span>
+        </p>
+      )}
       <p className="rich flex max-w-[78ch] gap-2 text-sm leading-relaxed">
         <Sparkles
           className="mt-1 size-4 shrink-0 text-accent"
@@ -380,16 +399,18 @@ const GroupCard = observer(function GroupCard({
 });
 
 function NextGroup({
+  pr,
   rev,
   mode,
   setMode,
 }: {
+  pr: PrId;
   rev: Revision;
   mode: ReviewMode;
   setMode: (m: ReviewMode) => void;
 }) {
   const store = useRootStore();
-  const groups = groupsForRevision(store, rev);
+  const groups = groupsForRevision(store, pr, rev);
   const next = groups[groups.findIndex((g) => g.id === mode.group) + 1];
   if (!next) return null;
   return (

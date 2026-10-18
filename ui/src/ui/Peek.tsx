@@ -48,7 +48,7 @@ function ago(ms: number): string {
  *  computation `Review.tsx` keeps locally for its own header chip. */
 function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
   const reads = store.models.hunkReads.where((r) => r.pr === pr);
-  const groups = store.models.groups.all().filter((g) => g.kind !== 'hidden');
+  const groups = store.models.groupsOf(pr).filter((g) => g.kind !== 'hidden');
   const hunks = groups.flatMap((g) => g.hunks);
   if (!hunks.length) return 0;
   const readSet = new Set(reads.map((r) => r.hunk));
