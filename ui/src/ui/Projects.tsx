@@ -99,12 +99,14 @@ export interface ProjectDisplay {
   props: RowProp[];
 }
 
-export const DEFAULT_PROJECT_DISPLAY: ProjectDisplay = {
+// A function, not a constant: List.tsx and Projects.tsx import each other
+// (through Modals), so ROW_PROPS isn't initialised yet at module load.
+export const defaultProjectDisplay = (): ProjectDisplay => ({
   layout: 'list',
   groupBy: 'status',
   sort: 'activity',
   props: ROW_PROPS,
-};
+});
 
 function sortProjectPrs(
   items: InboxPr[],
@@ -500,7 +502,7 @@ function ProjectDisplayButton({
               size="sm"
               variant="ghost"
               className="h-7 gap-1 px-2 text-xs text-muted"
-              onPress={() => setDisplay(DEFAULT_PROJECT_DISPLAY)}
+              onPress={() => setDisplay(defaultProjectDisplay())}
             >
               Reset
             </Button>
@@ -597,7 +599,7 @@ const ProjectPrs = observer(function ProjectPrs({
   const store = useRootStore();
   const ui = useUi();
   const [display, setDisplayState] = useState<ProjectDisplay>(
-    DEFAULT_PROJECT_DISPLAY,
+    defaultProjectDisplay(),
   );
   const setDisplay = (patch: Partial<ProjectDisplay>) =>
     setDisplayState((d) => ({ ...d, ...patch }));
