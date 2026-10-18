@@ -125,11 +125,19 @@ fn prompt_budget_is_reasonable_for_the_shipped_fixtures() {
 /// occurrence but one.
 #[tokio::test]
 async fn real_fixture_with_colliding_hunk_ids_is_rejected_not_silently_accepted() {
-    let fixtures = eval::load_fixtures(&real_fixtures_dir()).unwrap();
-    let (_, fx) = fixtures
-        .iter()
-        .find(|(name, _)| name == "ra_23173")
-        .expect("ra_23173 fixture shipped under fixtures/real");
+    // The raw fixture still carries the colliding ids; `load_fixtures`
+    // de-duplicates them (checked below), so read it directly here.
+    let raw = std::fs::read_to_string(real_fixtures_dir().join("ra_23173.json")).unwrap();
+    let fx: eval::Fixture = serde_json::from_str(&raw).unwrap();
+    let loaded = eval::load_fixtures(&real_fixtures_dir()).unwrap();
+    let (_, deduped) = loaded.iter().find(|(n, _)| n == "ra_23173").unwrap();
+    let ids: Vec<_> = deduped.revision.hunks().map(|h| h.id.clone()).collect();
+    let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+    assert_eq!(
+        ids.len(),
+        unique.len(),
+        "load_fixtures must de-duplicate hunk ids"
+    );
 
     let agent = FakeAgentPort::new(["unused"]);
     let err = theodore_grouping::group_revision(

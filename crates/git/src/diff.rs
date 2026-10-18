@@ -72,7 +72,8 @@ impl GitCli {
         self.resolve_binary_sizes(repo, &askpass, &mut parsed)
             .await?;
 
-        let files = parsed.into_iter().map(|p| p.file).collect();
+        let mut files: Vec<_> = parsed.into_iter().map(|p| p.file).collect();
+        theodore_domain::interdiff::dedupe_hunk_ids(&mut files);
         Ok(Revision {
             base: base.clone(),
             head: head.clone(),

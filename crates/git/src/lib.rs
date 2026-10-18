@@ -231,10 +231,11 @@ pub fn parse_patch(
     max_file_lines: u32,
 ) -> theodore_domain::Revision {
     let attrs = generated::GitAttributes::parse("");
-    let files = parse::parse_unified_diff(text, &[], &attrs, max_file_lines)
+    let mut files: Vec<_> = parse::parse_unified_diff(text, &[], &attrs, max_file_lines)
         .into_iter()
         .map(|p| p.file)
         .collect();
+    theodore_domain::interdiff::dedupe_hunk_ids(&mut files);
     theodore_domain::Revision {
         base: base.clone(),
         head: head.clone(),

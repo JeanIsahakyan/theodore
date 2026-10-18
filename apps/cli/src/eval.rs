@@ -54,8 +54,10 @@ pub fn load_fixtures(dir: &Path) -> Result<Vec<(String, Fixture)>> {
             continue;
         }
         let text = std::fs::read_to_string(&path)?;
-        let fixture: Fixture = serde_json::from_str(&text)
+        let mut fixture: Fixture = serde_json::from_str(&text)
             .with_context(|| format!("parsing fixture {}", path.display()))?;
+        // Fixtures saved before hunk ids were de-duplicated may repeat ids.
+        theodore_domain::interdiff::dedupe_hunk_ids(&mut fixture.revision.files);
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())

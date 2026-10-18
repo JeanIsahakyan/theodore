@@ -27,6 +27,19 @@ pub fn hunk_id(path: &str, lines: &[crate::model::DiffLine]) -> HunkId {
     HunkId(hex::encode(&h.finalize()[..8]))
 }
 
+/// Make hunk ids unique within a revision: a repeated identical edit (same
+/// path, same changed lines) gets `-2`, `-3`, … in file order.
+pub fn dedupe_hunk_ids(files: &mut [crate::model::FileDiff]) {
+    let mut seen: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for h in files.iter_mut().flat_map(|f| f.hunks.iter_mut()) {
+        let n = seen.entry(h.id.0.clone()).or_insert(0);
+        *n += 1;
+        if *n > 1 {
+            h.id = HunkId(format!("{}-{}", h.id.0, n));
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HunkChange {
@@ -369,5 +382,52 @@ mod tests {
             ],
         );
         assert_eq!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod dedupe_tests {
+    use super::*;
+    use crate::model::{DiffLine, FileDiff, FileStatus, LineKind};
+
+    fn hunk(text: &str) -> Hunk {
+        let lines = vec![DiffLine {
+            kind: LineKind::Add,
+            text: text.into(),
+            old_no: None,
+            new_no: Some(1),
+        }];
+        Hunk {
+            id: hunk_id("a.rs", &lines),
+            path: "a.rs".into(),
+            old_start: 1,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: 1,
+            header: String::new(),
+            lines,
+        }
+    }
+
+    #[test]
+    fn repeated_identical_edits_get_distinct_ids() {
+        let mut files = vec![FileDiff {
+            path: "a.rs".into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            similarity: None,
+            old_mode: None,
+            new_mode: None,
+            flags: vec![],
+            additions: 3,
+            deletions: 0,
+            hunks: vec![hunk("x"), hunk("y"), hunk("x"), hunk("x")],
+        }];
+        dedupe_hunk_ids(&mut files);
+        let ids: Vec<_> = files[0].hunks.iter().map(|h| h.id.0.clone()).collect();
+        let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), 4);
+        assert_eq!(ids[2], format!("{}-2", ids[0]));
+        assert_eq!(ids[3], format!("{}-3", ids[0]));
     }
 }
