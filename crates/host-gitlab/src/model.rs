@@ -59,6 +59,31 @@ pub(crate) struct GlMergeRequest {
     pub head_pipeline: Option<GlHeadPipeline>,
     /// String, and `"1000+"` once GitLab stops counting exactly.
     pub changes_count: Option<String>,
+    /// Legacy three-value field (`can_be_merged` / `cannot_be_merged` /
+    /// `unchecked`); kept alongside `detailed_merge_status` because it maps
+    /// 1:1 onto `MergeStatus::mergeable`.
+    pub merge_status: Option<String>,
+    #[serde(default)]
+    pub detailed_merge_status: Option<String>,
+    #[serde(default)]
+    pub merge_when_pipeline_succeeds: bool,
+    pub merge_commit_sha: Option<String>,
+    pub squash_commit_sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GlProjectSettings {
+    /// `never` / `always` / `default_on` / `default_off`.
+    pub squash_option: Option<String>,
+    /// `merge` / `rebase_merge` / `ff`.
+    pub merge_method: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GlAwardEmoji {
+    pub id: u64,
+    pub name: String,
+    pub user: GlUser,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,4 +165,29 @@ pub(crate) struct CreateDraftNote<'a> {
 #[derive(Debug, Serialize)]
 pub(crate) struct NoteBody<'a> {
     pub body: &'a str,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub(crate) struct MergeBody<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_commit_message: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub squash_commit_message: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub squash: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub merge_when_pipeline_succeeds: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UpdateMrBody<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewer_ids: Option<&'a [u64]>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AwardEmojiBody<'a> {
+    pub name: &'a str,
 }
