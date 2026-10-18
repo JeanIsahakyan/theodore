@@ -9,9 +9,16 @@ pub const EVENT_EPHEMERAL: &str = "ephemeral";
 pub const EVENT_UPDATE: &str = "update";
 
 /// Emits the three wire events to every window.
-#[derive(Clone)]
 pub struct CoreEvents<R: Runtime> {
     app: AppHandle<R>,
+}
+
+impl<R: Runtime> Clone for CoreEvents<R> {
+    fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+        }
+    }
 }
 
 /// Builds the emitter for `app`.

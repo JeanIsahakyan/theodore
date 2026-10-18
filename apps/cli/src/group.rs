@@ -30,9 +30,7 @@ impl From<AgentChoice> for AgentId {
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct GroupArgs {
-    /// PR URL, e.g. https://github.com/owner/repo/pull/123. Needs the git +
-    /// GitHub adapters (not wired yet, see `deps::real_deps`) — use
-    /// `--diff-file` until then.
+    /// PR URL, e.g. https://github.com/owner/repo/pull/123.
     pub pr_url: Option<String>,
     /// A unified diff file: `git diff --no-color --find-renames -U3 base...head > f.patch`.
     #[arg(long)]
@@ -57,10 +55,7 @@ pub fn load_input(args: &GroupArgs) -> Result<(Revision, PrMeta, PathBuf)> {
             .unwrap_or_else(|| PathBuf::from("."));
         Ok((rev, PrMeta::default(), cwd))
     } else if args.pr_url.is_some() {
-        anyhow::bail!(
-            "grouping from a PR url needs the git/GitHub adapters, which are \
-             not wired yet (apps/cli/src/deps.rs); use --diff-file for now"
-        )
+        anyhow::bail!("PR urls are loaded with deps::load_pr")
     } else {
         anyhow::bail!("provide a PR url or --diff-file <path>")
     }

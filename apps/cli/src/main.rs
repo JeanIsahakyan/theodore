@@ -32,9 +32,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_group(args: group::GroupArgs) -> anyhow::Result<()> {
-    let (rev, pr, cwd) = group::load_input(&args)?;
+    let deps = deps::real_deps();
+    let (rev, pr, cwd) = match &args.pr_url {
+        Some(url) if args.diff_file.is_none() => deps::load_pr(&deps, url).await?,
+        _ => group::load_input(&args)?,
+    };
     let agent_id: AgentId = args.agent.into();
-    let deps = deps::real_deps(agent_id);
     let report = group::run(deps.agent.as_ref(), agent_id, &pr, &rev, &cwd).await?;
     group::emit(&report, &rev, args.json, args.save.as_deref())
 }
@@ -42,7 +45,7 @@ async fn run_group(args: group::GroupArgs) -> anyhow::Result<()> {
 async fn run_eval(args: eval::EvalArgs) -> anyhow::Result<()> {
     let fixtures = eval::load_fixtures(&args.fixtures_dir)?;
     let agent_id: AgentId = args.agent.into();
-    let deps = deps::real_deps(agent_id);
+    let deps = deps::real_deps();
     let cwd = std::env::current_dir()?;
     let rows = eval::run_eval(deps.agent.as_ref(), agent_id, &fixtures, &cwd).await;
     eval::print_table(&rows);

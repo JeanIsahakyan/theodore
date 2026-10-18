@@ -115,7 +115,7 @@ impl Core {
 
 /// `https://github.com/{owner}/{repo}/pull/{n}` or the `{owner}/{repo}#{n}`
 /// shorthand (both GitHub-only for now; plan §6.1 adds hosts later).
-fn parse_pr_ref(input: &str) -> AppResult<PrRef> {
+pub fn parse_pr_ref(input: &str) -> AppResult<PrRef> {
     let input = input.trim();
     if let Ok(url) = url::Url::parse(input) {
         if url.host_str() == Some("github.com") {

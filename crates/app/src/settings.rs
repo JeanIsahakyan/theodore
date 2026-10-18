@@ -84,6 +84,18 @@ impl Core {
             .unwrap_or(default)
     }
 
+    pub async fn setting_string(&self, key: &str, default: &str) -> String {
+        self.setting_value(key)
+            .await
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| default.to_string())
+    }
+
+    /// No agent run in flight — the shell may restart for an update.
+    pub async fn is_idle(&self) -> bool {
+        self.0.runs.read().await.is_empty()
+    }
+
     async fn setting_value(&self, key: &str) -> Option<serde_json::Value> {
         let store = self.0.deps.store.clone();
         let key_owned = key.to_string();

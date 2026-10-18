@@ -19,6 +19,11 @@ theodore-ports.workspace = true
 theodore-grouping.workspace = true
 theodore-mcp.workspace = true
 theodore-git.workspace = true
+theodore-app.workspace = true
+theodore-host-github.workspace = true
+theodore-agents.workspace = true
+theodore-secrets.workspace = true
+theodore-runtime = { path = "../../crates/runtime" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

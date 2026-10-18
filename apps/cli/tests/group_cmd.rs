@@ -92,7 +92,7 @@ async fn missing_input_is_a_clear_error() {
 }
 
 #[tokio::test]
-async fn pr_url_without_adapters_fails_clearly() {
+async fn pr_urls_are_not_loaded_offline() {
     let args = group::GroupArgs {
         pr_url: Some("https://github.com/o/r/pull/1".into()),
         diff_file: None,
@@ -101,7 +101,7 @@ async fn pr_url_without_adapters_fails_clearly() {
         save: None,
     };
     let err = group::load_input(&args).unwrap_err();
-    assert!(err.to_string().contains("not wired yet"));
+    assert!(err.to_string().contains("load_pr"));
 }
 
 #[tokio::test]

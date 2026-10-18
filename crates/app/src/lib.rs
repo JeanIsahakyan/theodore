@@ -10,6 +10,7 @@ mod outbox;
 mod poller;
 mod reading;
 mod settings;
+mod snapshot;
 mod sync;
 mod usecases;
 mod wire;
@@ -21,5 +22,7 @@ pub mod testkit;
 mod tests;
 
 pub use core::{Core, Receivers};
-pub use deps::{Deps, Grouper};
+pub use deps::{Deps, Grouper, RunTools};
 pub use error::{AppError, AppResult, GrouperError};
+pub use snapshot::PrSnapshot;
+pub use usecases::open_pr::parse_pr_ref;

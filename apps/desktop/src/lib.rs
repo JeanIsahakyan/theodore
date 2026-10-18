@@ -1,6 +1,7 @@
 //! Tauri 2 desktop shell (plan §11). Owns windows, the updater and the
 //! command/event wiring; delegates all behaviour to `State<Arc<dyn CoreApi>>`.
 
+pub mod app_core;
 pub mod commands;
 pub mod core_api;
 pub mod events;
@@ -66,8 +67,9 @@ pub fn export_bindings(out: impl AsRef<Path>) -> Result<(), String> {
 }
 
 /// Runs the Theodore desktop shell. `core` is the use-case implementation;
-/// pass `Arc::new(NotReadyCoreApi)` until `theodore-app` is wired in.
-pub fn run(core: Arc<dyn CoreApi>) {
+/// `forward` receives the event emitter once the app is up, to pipe the
+/// core's sync and ephemeral streams to the UI.
+pub fn run(core: Arc<dyn CoreApi>, forward: impl FnOnce(CoreEvents<tauri::Wry>) + Send + 'static) {
     let builder = specta_builder();
 
     tauri::Builder::default()
@@ -79,6 +81,7 @@ pub fn run(core: Arc<dyn CoreApi>) {
         .setup(move |app| {
             builder.mount_events(app);
             let handle = app.handle().clone();
+            forward(emitter(handle.clone()));
             updater::spawn_periodic_check(handle, core.clone());
             Ok(())
         })

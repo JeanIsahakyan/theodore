@@ -17,6 +17,9 @@ path = "src/main.rs"
 tauri-build = { workspace = true, features = ["codegen"] }
 
 [dependencies]
+theodore-app.workspace = true
+theodore-ports.workspace = true
+theodore-runtime = { path = "../../crates/runtime" }
 theodore-contract.workspace = true
 theodore-domain = { workspace = true, features = ["specta"] }
 serde_json.workspace = true

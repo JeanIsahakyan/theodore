@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use theodore_contract::{
     AskRequest, ChatMessage, Ephemeral, RunSkillRequest, RunStatus, SkillRun, models,
 };
-use theodore_domain::{AgentId, Author, Finding, PrId, Usage};
+use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId, Usage};
 use theodore_ports::{AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode};
 use tokio_util::sync::CancellationToken;
 
@@ -136,7 +136,8 @@ impl Core {
 
     /// Findings from several agents merge into one (plan §4, §8.4). Called
     /// once the MCP `add_finding` tool hands a result back.
-    pub async fn add_finding(&self, pr: PrId, mut finding: Finding) -> AppResult<()> {
+    /// Returns the id of the stored finding (an existing one when merged).
+    pub async fn add_finding(&self, pr: PrId, mut finding: Finding) -> AppResult<FindingId> {
         finding.pr = pr.clone();
         let pr_s = pr.0.clone();
         let store = self.0.deps.store.clone();
@@ -157,6 +158,32 @@ impl Core {
             model: models::FINDING.into(),
             model_id: merged.id.0.clone(),
             action,
+            data: Some(data),
+        }])
+        .await?;
+        Ok(merged.id)
+    }
+
+    /// Attach an agent-proposed fix to a finding of `pr` (MCP `propose_patch`).
+    pub async fn attach_fix(&self, pr: &PrId, finding: &FindingId, fix: Fix) -> AppResult<()> {
+        let store = self.0.deps.store.clone();
+        let id = finding.0.clone();
+        let row = tokio::task::spawn_blocking(move || store.get(models::FINDING, &id))
+            .await
+            .map_err(AppError::join)??
+            .ok_or_else(|| AppError::NotFound(format!("finding {finding}")))?;
+        let existing: Finding =
+            serde_json::from_value(row.data).map_err(|e| AppError::Invalid(e.to_string()))?;
+        if &existing.pr != pr {
+            return Err(AppError::Invalid(format!(
+                "finding {finding} belongs to another PR"
+            )));
+        }
+        let data = serde_json::json!({ "fix": fix });
+        self.apply(vec![NewAction {
+            model: models::FINDING.into(),
+            model_id: finding.0.clone(),
+            action: SyncActionCode::C,
             data: Some(data),
         }])
         .await?;
@@ -194,16 +221,23 @@ async fn drive_skill_run(
         if cancel.is_cancelled() {
             break;
         }
+        let mcp = core
+            .0
+            .deps
+            .tools
+            .as_ref()
+            .map(|t| t.register(&run_id, &pr, agent));
         let req = AgentRequest {
             agent,
-            prompt: format!("Run skill `{skill}` on this PR."),
+            prompt: skill_prompt(&skill),
             system: None,
             cwd: cwd.clone(),
             mode: AgentMode::ReadOnly,
-            mcp: None,
+            mcp: mcp.clone(),
             model: None,
             stall_after_ms: 90_000,
         };
+        let _guard = ToolsGuard { core, mcp };
         match core.0.deps.agents.run(req).await {
             Ok(mut run) => loop {
                 tokio::select! {
@@ -259,6 +293,29 @@ async fn drive_skill_run(
     core.0.runs.write().await.remove(&run_id);
 }
 
+/// Revokes a run's MCP token when the run's driver returns.
+struct ToolsGuard<'a> {
+    core: &'a Core,
+    mcp: Option<theodore_ports::McpEndpoint>,
+}
+
+impl Drop for ToolsGuard<'_> {
+    fn drop(&mut self) {
+        if let (Some(tools), Some(mcp)) = (&self.core.0.deps.tools, &self.mcp) {
+            tools.unregister(mcp);
+        }
+    }
+}
+
+fn skill_prompt(skill: &str) -> String {
+    format!(
+        "Review this pull request with the `{skill}` skill. Start with the review-tools \
+         `get_pr_context` tool. Report every issue you find with `add_finding` \
+         (file path, line on the new side, severity info|warn|high, short title, body). \
+         Do not edit files. Finish with a one-paragraph summary."
+    )
+}
+
 async fn fail_run(core: &Core, run_id: &str, message: &str) {
     let data = serde_json::json!({ "status": RunStatus::Failed, "error": message });
     let _ = core
@@ -281,16 +338,23 @@ async fn drive_ask(
     cwd: PathBuf,
     cancel: CancellationToken,
 ) {
+    let mcp = core
+        .0
+        .deps
+        .tools
+        .as_ref()
+        .map(|t| t.register(&run_id, &pr, agent));
     let req = AgentRequest {
         agent,
         prompt: question,
         system: None,
         cwd,
         mode: AgentMode::ReadOnly,
-        mcp: None,
+        mcp: mcp.clone(),
         model: None,
         stall_after_ms: 90_000,
     };
+    let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();
     let mut usage = Usage::default();
     let mut error = None;

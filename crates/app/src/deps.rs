@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use theodore_domain::{Grouping, PrDetail, Revision};
-use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, Secrets, Store};
+use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
+use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, McpEndpoint, Secrets, Store};
 
 use crate::error::GrouperError;
 
@@ -32,6 +32,13 @@ pub trait Grouper: Send + Sync {
     ) -> Result<Grouping, GrouperError>;
 }
 
+/// Per-run MCP `review-tools` access for agents (plan §8.3). Implemented
+/// over the MCP server by whoever wires `Deps`.
+pub trait RunTools: Send + Sync {
+    fn register(&self, run_id: &str, pr: &PrId, agent: AgentId) -> McpEndpoint;
+    fn unregister(&self, endpoint: &McpEndpoint);
+}
+
 #[derive(Clone)]
 pub struct Deps {
     pub host: Arc<dyn HostAdapter>,
@@ -41,4 +48,6 @@ pub struct Deps {
     pub secrets: Arc<dyn Secrets>,
     pub clock: Arc<dyn Clock>,
     pub grouper: Arc<dyn Grouper>,
+    /// `None` runs agents without MCP (tests, CLI).
+    pub tools: Option<Arc<dyn RunTools>>,
 }

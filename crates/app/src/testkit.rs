@@ -655,6 +655,7 @@ impl Fixtures {
             secrets: self.secrets.clone(),
             clock: self.clock.clone(),
             grouper: self.grouper.clone(),
+            tools: None,
         }
     }
 }

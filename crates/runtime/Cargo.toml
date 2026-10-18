@@ -1,0 +1,34 @@
+[package]
+name = "theodore-runtime"
+description = "Composition root: wires real adapters (or fixtures), the MCP server and the grouper into one Core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-contract.workspace = true
+theodore-app.workspace = true
+theodore-host-http.workspace = true
+theodore-host-github.workspace = true
+theodore-git.workspace = true
+theodore-agents.workspace = true
+theodore-mcp.workspace = true
+theodore-store.workspace = true
+theodore-secrets.workspace = true
+theodore-grouping.workspace = true
+theodore-fixtures = { path = "../fixtures" }
+async-trait.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

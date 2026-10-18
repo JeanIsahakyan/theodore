@@ -4804,11 +4804,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "theodore-agents",
+ "theodore-app",
  "theodore-domain",
  "theodore-git",
  "theodore-grouping",
+ "theodore-host-github",
  "theodore-mcp",
  "theodore-ports",
+ "theodore-runtime",
+ "theodore-secrets",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -4840,8 +4845,11 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-specta",
  "tempfile",
+ "theodore-app",
  "theodore-contract",
  "theodore-domain",
+ "theodore-ports",
+ "theodore-runtime",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4978,6 +4986,33 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "theodore-runtime"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 6.0.0",
+ "serde_json",
+ "tempfile",
+ "theodore-agents",
+ "theodore-app",
+ "theodore-contract",
+ "theodore-domain",
+ "theodore-fixtures",
+ "theodore-git",
+ "theodore-grouping",
+ "theodore-host-github",
+ "theodore-host-http",
+ "theodore-mcp",
+ "theodore-ports",
+ "theodore-secrets",
+ "theodore-store",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
