@@ -118,7 +118,9 @@ export class UiStore {
   }
 
   select(id: PrId | null): void {
-    this.selected = id;
+    runInAction(() => {
+      this.selected = id;
+    });
   }
 
   togglePick(id: PrId): void {
@@ -130,26 +132,36 @@ export class UiStore {
   }
 
   clearPicked(): void {
-    this.picked = [];
+    runInAction(() => {
+      this.picked = [];
+    });
   }
 
   togglePeek(): void {
-    this.peek = !this.peek;
+    runInAction(() => {
+      this.peek = !this.peek;
+    });
   }
 
   toggleSidebar(): void {
-    this.sidebar = !this.sidebar;
+    runInAction(() => {
+      this.sidebar = !this.sidebar;
+    });
   }
 
   toggleAside(open = !this.aside): void {
     localStorage.setItem(LS_ASIDE, open ? '1' : '0');
-    this.aside = open;
+    runInAction(() => {
+      this.aside = open;
+    });
   }
 
   toggleDiffView(): void {
     const v = this.diffView === 'split' ? 'unified' : 'split';
     localStorage.setItem(LS_DIFF_VIEW, v);
-    this.diffView = v;
+    runInAction(() => {
+      this.diffView = v;
+    });
   }
 
   openModal(m: ModalName, targets: PrId[] = []): void {
@@ -160,7 +172,9 @@ export class UiStore {
   }
 
   closeModal(): void {
-    this.modal = null;
+    runInAction(() => {
+      this.modal = null;
+    });
   }
 }
 
