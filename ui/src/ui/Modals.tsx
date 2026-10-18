@@ -1,16 +1,52 @@
-import { useState } from 'react';
-import { Modal, Select, ListBox, TextArea } from '@heroui/react';
+import { useState, type ReactNode } from 'react';
+import { Button, Label, Modal, Radio, RadioGroup, Table, TextArea } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReviewEvent } from '../gen/contract';
 import { submitReview } from '../actions';
+import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
-import { Btn, K } from './bits';
+import { AgentTag, K } from './bits';
 import { CommandMenu, SnoozeMenu } from './Palette';
 
-const EVENTS: [ReviewEvent, string][] = [
-  ['COMMENT', 'Comment'],
-  ['APPROVE', 'Approve'],
-  ['REQUEST_CHANGES', 'Request changes'],
+/** Shared modal frame — same shell every dialog in this file uses. */
+function Shell({
+  title,
+  children,
+  size = 'md',
+  footer,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  size?: 'md' | 'lg';
+  footer?: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <Modal.Backdrop isOpen onOpenChange={(open) => !open && onClose()}>
+      <Modal.Container
+        size={size}
+        placement="top"
+        scroll="inside"
+        className="mt-[8vh]"
+      >
+        <Modal.Dialog
+          aria-label={title}
+          className={`modal flex flex-col gap-3 p-4 ${size === 'lg' ? 'w-[760px] max-w-[92vw]' : 'w-[520px] max-w-[92vw]'}`}
+        >
+          <Modal.Heading>{title}</Modal.Heading>
+          {children}
+          {footer && <div className="flex justify-end gap-2">{footer}</div>}
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
+  );
+}
+
+const EVENT_OPTS: [ReviewEvent, string, string][] = [
+  ['COMMENT', 'Comment', 'no verdict'],
+  ['APPROVE', 'Approve', 'ready to merge'],
+  ['REQUEST_CHANGES', 'Request changes', 'blocks merge'],
 ];
 
 const SubmitReviewModal = observer(function SubmitReviewModal() {
@@ -18,124 +54,189 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
   const ui = useUi();
   const [event, setEvent] = useState<ReviewEvent>('COMMENT');
   const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
   if (ui.route.name !== 'review') return null;
   const pr = ui.route.pr;
+  const drafts = store.models.drafts.where((d) => d.pr === pr);
+  const reads = new Set(
+    store.models.hunkReads.where((r) => r.pr === pr).map((r) => r.hunk),
+  );
+  const unread = store.models.groups
+    .all()
+    .filter((g) => g.kind !== 'hidden')
+    .flatMap((g) => g.hunks)
+    .filter((h) => !reads.has(h)).length;
   return (
-    <Modal.Backdrop isOpen onOpenChange={(open) => !open && ui.closeModal()}>
-      <Modal.Container size="md">
-        <Modal.Dialog
-          aria-label="Submit review"
-          className="flex flex-col gap-3 p-4"
-        >
-          <Modal.Heading>Submit review</Modal.Heading>
-          <Select
-            aria-label="Review event"
-            value={event}
-            onChange={(v) => v && setEvent(v as ReviewEvent)}
+    <Shell title={`Review · ${pr}`} size="lg" onClose={() => ui.closeModal()}>
+      {unread > 0 && (
+        <div className="text-xs text-warning">Unread hunks: {unread}</div>
+      )}
+      <TextArea
+        rows={3}
+        fullWidth
+        aria-label="Overall comment"
+        placeholder="Overall comment (optional)"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+      />
+      <RadioGroup
+        value={event}
+        onChange={(v) => setEvent(v as ReviewEvent)}
+        orientation="horizontal"
+        aria-label="Verdict"
+      >
+        {EVENT_OPTS.map(([v, t, d]) => (
+          <Radio
+            key={v}
+            value={v}
+            className={`event flex-1 rounded-2xl border p-2.5 ${event === v ? 'border-accent bg-accent-soft' : 'border-separator'}`}
           >
-            <Select.Trigger>
-              <Select.Value />
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox selectionMode="single">
-                {EVENTS.map(([id, t]) => (
-                  <ListBox.Item key={id} id={id} textValue={t}>
-                    {t}
-                    <ListBox.ItemIndicator />
-                  </ListBox.Item>
-                ))}
-              </ListBox>
-            </Select.Popover>
-          </Select>
-          <TextArea
-            fullWidth
-            aria-label="Review summary"
-            placeholder="Leave a comment (optional)"
-            rows={4}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
-          <div className="flex justify-end gap-2">
-            <Btn tone="ghost" onPress={() => ui.closeModal()}>
-              Cancel
-            </Btn>
-            <Btn
-              tone="primary"
-              onPress={() => {
-                void submitReview(store, pr, event, body.trim()).catch(() => {
-                  // toasted by api.ts
-                });
-                ui.closeModal();
-                ui.goBack();
-              }}
+            <Radio.Content>
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <div>
+                <b>{t}</b>
+                <div className="text-xs text-muted">{d}</div>
+              </div>
+            </Radio.Content>
+          </Radio>
+        ))}
+      </RadioGroup>
+      <Label className="text-sm font-medium">
+        Pending comments ({drafts.length})
+      </Label>
+      <Table variant="secondary">
+        <Table.ScrollContainer>
+          <Table.Content aria-label="Pending comments">
+            <Table.Header>
+              <Table.Column isRowHeader>where</Table.Column>
+              <Table.Column>who</Table.Column>
+              <Table.Column>text</Table.Column>
+            </Table.Header>
+            <Table.Body
+              renderEmptyState={() => (
+                <span className="text-xs text-muted">
+                  none: only the verdict will be sent
+                </span>
+              )}
             >
-              Submit
-            </Btn>
-          </div>
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
+              {drafts.map((d) => (
+                <Table.Row key={d.id} id={d.id}>
+                  <Table.Cell className="font-mono text-xs">
+                    {d.anchor.path}:{d.anchor.line}
+                  </Table.Cell>
+                  <Table.Cell>
+                    {d.source.kind === 'agent' ? (
+                      <AgentTag id={d.source.agent} />
+                    ) : (
+                      <span className="text-xs text-muted">you</span>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell className="text-xs">
+                    {d.body.slice(0, 110)}
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table.Content>
+        </Table.ScrollContainer>
+      </Table>
+      <div className="flex justify-end gap-2">
+        <Button variant="tertiary" onPress={() => ui.closeModal()}>
+          Cancel
+        </Button>
+        <Button
+          variant={event === 'REQUEST_CHANGES' ? 'danger' : 'primary'}
+          isDisabled={sending}
+          onPress={() => {
+            setSending(true);
+            void submitReview(store, pr, event, body.trim())
+              .catch(() => {
+                // toasted by api.ts
+              })
+              .finally(() => setSending(false));
+            ui.closeModal();
+            ui.goBack();
+          }}
+        >
+          {sending ? 'Sending…' : 'Submit'}
+        </Button>
+      </div>
+    </Shell>
   );
 });
 
-const HelpModal = observer(function HelpModal() {
+const KEYS: [string, string][] = [
+  ['Everywhere', ''],
+  ['⌘K', 'command palette: any action, any PR'],
+  [
+    `G I${FEATURES.currentUser ? ' / G M' : ''} / G T / G S`,
+    `Inbox${FEATURES.currentUser ? ' / My PRs' : ''} / Tasks / Settings`,
+  ],
+  ['[', 'collapse sidebar'],
+  ['⌥1…9 / ⌥W', 'switch / close tab'],
+  ['⌘Z / ⌘⇧Z', 'undo / redo'],
+  ['PR lists', ''],
+  ['J / K', 'move through list'],
+  ['⏎', 'open PR'],
+  ['Space', 'peek: preview without opening'],
+  ['X', 'select (bulk actions)'],
+  ['E', 'done: leaves Inbox until new activity'],
+  ['H', 'snooze: an hour, until next push, until checks pass'],
+  ['Tasks', ''],
+  ['Y', 'accept fix'],
+  ['Review', ''],
+  ['J / K', 'next / previous hunk'],
+  ['N', 'next group'],
+  ['R', 'mark group as read (in tour: next)'],
+  ['V', 'Viewed for focused file'],
+  ['C', 'comment on focused hunk'],
+  ['T', 'toggle tour'],
+  ['S', 'unified / side by side'],
+  [']', 'hide / show AI panel'],
+  ['⇧ + click +', 'comment on a line range'],
+  [
+    '⌘ + click symbol',
+    FEATURES.symbolPeek
+      ? 'definition and usages'
+      : 'definition and usages (not available yet)',
+  ],
+  ['/', 'ask AI'],
+  ['Esc', 'close / back'],
+];
+
+function HelpModal() {
   const ui = useUi();
   return (
-    <Modal.Backdrop isOpen onOpenChange={(open) => !open && ui.closeModal()}>
-      <Modal.Container size="md">
-        <Modal.Dialog
-          aria-label="Keyboard shortcuts"
-          className="flex flex-col gap-4 p-4"
-        >
-          <Modal.Heading>Keyboard shortcuts</Modal.Heading>
-          <div className="flex flex-col gap-3 text-sm">
-            <section className="flex flex-col gap-1">
-              <div className="text-xs font-medium text-muted">Global</div>
-              <div>
-                <K>⌘K</K> command palette · <K>?</K> this help
-              </div>
-              <div>
-                <K>G</K> <K>I</K> inbox · <K>G</K> <K>M</K> my PRs · <K>G</K>{' '}
-                <K>T</K> tasks · <K>G</K> <K>S</K> settings
-              </div>
-              <div>
-                <K>⌘Z</K> undo · <K>⌘⇧Z</K> redo
-              </div>
-              <div>
-                <K>[</K> sidebar · <K>⌥1</K>–<K>⌥9</K> switch tab · <K>⌥W</K>{' '}
-                close tab
-              </div>
-            </section>
-            <section className="flex flex-col gap-1">
-              <div className="text-xs font-medium text-muted">
-                Lists (Inbox, My PRs, Tasks)
-              </div>
-              <div>
-                <K>J</K>/<K>K</K> navigate · <K>⏎</K> open · <K>Space</K> peek
-              </div>
-              <div>
-                <K>X</K> select · <K>E</K> done · <K>H</K> snooze · <K>Y</K>{' '}
-                accept task fix
-              </div>
-            </section>
-            <section className="flex flex-col gap-1">
-              <div className="text-xs font-medium text-muted">Review</div>
-              <div>
-                <K>]</K> AI/tasks/threads panel · <K>S</K> split/unified ·{' '}
-                <K>/</K> ask AI
-              </div>
-              <div>
-                <K>T</K> tour · <K>R</K> (in tour) mark group read, next
-              </div>
-              <div>shift-click a second comment "+" for a line range</div>
-            </section>
-          </div>
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
+    <Shell title="Shortcuts" onClose={() => ui.closeModal()}>
+      <Table variant="secondary">
+        <Table.ScrollContainer>
+          <Table.Content aria-label="Shortcuts">
+            <Table.Header>
+              <Table.Column isRowHeader>shortcut</Table.Column>
+              <Table.Column>action</Table.Column>
+            </Table.Header>
+            <Table.Body>
+              {KEYS.map(([k, v], i) => (
+                <Table.Row key={i} id={i}>
+                  <Table.Cell>
+                    {v ? (
+                      <K>{k}</K>
+                    ) : (
+                      <b className="text-sm font-medium">{k}</b>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell>{v}</Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table.Content>
+        </Table.ScrollContainer>
+      </Table>
+    </Shell>
   );
-});
+}
 
 export const Modals = observer(function Modals() {
   const ui = useUi();
