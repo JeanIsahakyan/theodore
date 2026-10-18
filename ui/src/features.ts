@@ -17,9 +17,9 @@ export const FEATURES = {
   symbolPeek: false,
   /** No Linear integration command. */
   linear: false,
-  /** Threads live inside `pr_detail` (host truth); no reply/resolve command
-   *  sends them to the host yet. */
-  threadWrites: false,
+  /** `reply_thread` / `resolve_thread` send to the host; the comment lands
+   *  back in `pr_detail.threads` on the next sync frame. */
+  threadWrites: true,
   /** `pr_detail` rows (body, commits, checks, reviewers, assignees, labels)
    *  sync like any other model — Checks/Commits tabs, the reviewer strip and
    *  the description disclosure in Review read them. */

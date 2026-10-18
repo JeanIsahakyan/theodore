@@ -92,45 +92,44 @@ export function removeDraft(store: RootStore, id: string): void {
   void store.sync.queue.transact([{ op: 'delete', model: 'draft', id }]);
 }
 
-export function replyThread(
+/** Sends a reply to the host; the comment lands in `pr_detail.threads` once
+ *  sync catches up, so there's nothing to apply optimistically here. */
+export async function replyThread(
   store: RootStore,
-  thread: string,
   pr: PrId,
-  author: { kind: 'me' } | { kind: 'agent'; agent: AgentId },
+  thread: string,
   body: string,
-): void {
-  const t = store.models.threads.get(thread);
-  if (!t || !FEATURES.threadWrites) return;
-  void store.sync.queue.transact([
-    {
-      op: 'update',
-      model: 'thread',
-      id: thread,
-      data: {
-        comments: [
-          ...t.comments,
-          {
-            id: crypto.randomUUID(),
-            author,
-            body,
-            created_at: Date.now(),
-            edited: false,
-          },
-        ],
-      },
-    },
-  ]);
+): Promise<void> {
+  try {
+    await api.replyThread({ pr, thread, body });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure ? e.message : 'Could not send the reply.',
+    });
+  }
 }
 
-export function resolveThread(
+export async function resolveThread(
   store: RootStore,
+  pr: PrId,
   thread: string,
   resolved: boolean,
-): void {
-  if (!FEATURES.threadWrites) return;
-  void store.sync.queue.transact([
-    { op: 'update', model: 'thread', id: thread, data: { resolved } },
-  ]);
+): Promise<void> {
+  try {
+    await api.resolveThread({ pr, thread, resolved });
+  } catch (e) {
+    store.ephemeral.handle({
+      type: 'toast',
+      level: 'warn',
+      text:
+        e instanceof CommandFailure
+          ? e.message
+          : 'Could not update the thread.',
+    });
+  }
 }
 
 // A brand-new thread (GitHub's "single comment", outside a review) has no

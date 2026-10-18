@@ -22,7 +22,13 @@ import type {
   Revision,
   Side,
 } from '../gen/contract';
-import { addDraft, markGroupRead, setFileViewed } from '../actions';
+import {
+  addDraft,
+  markGroupRead,
+  replyThread,
+  resolveThread,
+  setFileViewed,
+} from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn } from './bits';
 import {
@@ -609,8 +615,9 @@ const Line = observer(function Line({
 }) {
   const store = useRootStore();
   const anchor = lineAnchor(rev, path, l);
+  const prThreads = store.models.prDetails.get(pr)?.threads ?? [];
   const threads = anchor
-    ? store.models.threads.where(
+    ? prThreads.filter(
         (t) =>
           !!t.anchor && sameAnchor(t.anchor, path, anchor.side, anchor.line),
       )
@@ -680,7 +687,7 @@ const Line = observer(function Line({
       {(threads.length > 0 || drafts.length > 0 || composing) && (
         <div className="flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
           {threads.map((t) => (
-            <ThreadView key={t.id} id={t.id} />
+            <ThreadView key={t.id} pr={pr} id={t.id} />
           ))}
           {drafts.map((d) => (
             <div
@@ -704,10 +711,26 @@ const Line = observer(function Line({
   );
 });
 
-const ThreadView = observer(function ThreadView({ id }: { id: string }) {
+const ThreadView = observer(function ThreadView({
+  pr,
+  id,
+}: {
+  pr: PrId;
+  id: string;
+}) {
   const store = useRootStore();
-  const t = store.models.threads.get(id);
+  const t = store.models.prDetails.get(pr)?.threads.find((th) => th.id === id);
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
   if (!t) return null;
+  const send = () => {
+    const body = reply.trim();
+    if (!body) return;
+    setBusy(true);
+    void replyThread(store, pr, id, body)
+      .then(() => setReply(''))
+      .finally(() => setBusy(false));
+  };
   return (
     <Card
       className={`thread max-w-[760px] gap-0 overflow-hidden p-0 ${t.resolved ? 'resolved' : ''}`}
@@ -721,6 +744,18 @@ const ThreadView = observer(function ThreadView({ id }: { id: string }) {
           {t.resolved ? 'Resolved' : 'Open'}
         </Chip>
         <span className="text-xs text-muted">{t.comments.length} comments</span>
+        <span className="flex-1" />
+        {!t.resolved && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5"
+            onPress={() => void resolveThread(store, pr, id, true)}
+          >
+            <Check className="size-3.5" />
+            Resolve
+          </Button>
+        )}
       </div>
       <div className="flex flex-col gap-3 px-4 py-3">
         {t.comments.map((c, i) => (
@@ -729,6 +764,32 @@ const ThreadView = observer(function ThreadView({ id }: { id: string }) {
             <span>{c.body}</span>
           </div>
         ))}
+      </div>
+      <div className="flex items-center gap-1.5 border-t border-separator px-3 py-2">
+        <TextArea
+          aria-label="Reply"
+          rows={1}
+          fullWidth
+          value={reply}
+          placeholder="Reply…"
+          className="font-sans text-xs"
+          onChange={(e) => setReply(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && reply.trim()) {
+              send();
+            }
+          }}
+        />
+        <Button
+          isIconOnly
+          size="sm"
+          aria-label="Send reply"
+          isPending={busy}
+          isDisabled={!reply.trim()}
+          onPress={send}
+        >
+          <ArrowUp className="size-4" />
+        </Button>
       </div>
     </Card>
   );

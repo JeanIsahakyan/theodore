@@ -17,12 +17,13 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Finding, PrId } from '../gen/contract';
+import type { Finding, PrId, Thread } from '../gen/contract';
 import {
   ask,
   cancelRun,
   findingToDraft,
   ignoreFinding,
+  replyThread,
   resolveThread,
   runSkill,
 } from '../actions';
@@ -40,7 +41,8 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   const open = store.models.findings.where(
     (f) => f.pr === pr && f.state === 'open',
   ).length;
-  const unresolved = store.models.threads.where((t) => !t.resolved).length;
+  const threads = store.models.prDetails.get(pr)?.threads ?? [];
+  const unresolved = threads.filter((t) => !t.resolved).length;
   const tasksOpen = store.models.tasks.where(
     (t) => t.pr === pr && t.status !== 'done',
   ).length;
@@ -317,12 +319,11 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   );
 });
 
-// `pr` is unused until `Thread` carries one (see the final report) — kept in
-// the signature so this becomes a one-line fix once the contract has it.
-const Threads = observer(function Threads({ pr: _pr }: { pr: PrId }) {
+const Threads = observer(function Threads({ pr }: { pr: PrId }) {
   const store = useRootStore();
-  const open = store.models.threads.where((t) => !t.resolved);
-  const resolved = store.models.threads.where((t) => t.resolved);
+  const threads = store.models.prDetails.get(pr)?.threads ?? [];
+  const open = threads.filter((t) => !t.resolved);
+  const resolved = threads.filter((t) => t.resolved);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
       {open.length === 0 && resolved.length === 0 && (
@@ -331,26 +332,74 @@ const Threads = observer(function Threads({ pr: _pr }: { pr: PrId }) {
         </Typography.Paragraph>
       )}
       {[...open, ...resolved].map((t) => (
-        <Card key={t.id} className="flex flex-col gap-2 p-3">
-          <div className="flex items-center gap-2 text-xs">
-            <Avatar person={t.comments[0]!.author} size={18} />
-            <span className="font-medium">{t.comments[0]!.author.login}</span>
-            <span className="flex-1" />
-            {!t.resolved && (
-              <Btn
-                tone="tertiary"
-                icon={<Check />}
-                onPress={() => resolveThread(store, t.id, true)}
-              >
-                Resolve
-              </Btn>
-            )}
-          </div>
-          <p className="line-clamp-3 text-sm text-muted">
-            {t.comments.at(-1)!.body}
-          </p>
-        </Card>
+        <ThreadCard key={t.id} pr={pr} thread={t} />
       ))}
     </div>
   );
 });
+
+function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
+  const store = useRootStore();
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+  const send = () => {
+    const body = reply.trim();
+    if (!body) return;
+    setBusy(true);
+    void replyThread(store, pr, thread.id, body)
+      .then(() => setReply(''))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Card className="flex flex-col gap-2 p-3">
+      <div className="flex items-center gap-2 text-xs">
+        <Avatar person={thread.comments[0]!.author} size={18} />
+        <span className="font-medium">{thread.comments[0]!.author.login}</span>
+        <span className="flex-1" />
+        {thread.outdated && <span className="text-muted">outdated</span>}
+        {!thread.resolved && (
+          <Btn
+            tone="tertiary"
+            icon={<Check />}
+            onPress={() => void resolveThread(store, pr, thread.id, true)}
+          >
+            Resolve
+          </Btn>
+        )}
+      </div>
+      <p className="line-clamp-3 text-sm text-muted">
+        {thread.comments.at(-1)!.body}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <TextField
+          aria-label="Reply"
+          value={reply}
+          onChange={setReply}
+          className="flex-1"
+        >
+          <InputGroup fullWidth className="rounded-2xl">
+            <InputGroup.Input
+              placeholder="Reply…"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+            />
+          </InputGroup>
+        </TextField>
+        <Button
+          isIconOnly
+          size="sm"
+          aria-label="Send reply"
+          isPending={busy}
+          isDisabled={!reply.trim()}
+          onPress={send}
+        >
+          <ArrowUp className="size-4" />
+        </Button>
+      </div>
+    </Card>
+  );
+}

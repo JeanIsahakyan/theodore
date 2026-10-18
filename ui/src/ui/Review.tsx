@@ -152,7 +152,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     [tour, orderedGroupIds, pr],
   );
 
-  const unresolved = store.models.threads.where((t) => !t.resolved).length;
+  const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
 
   return (
     <div className="review flex min-w-0 flex-1 flex-col">
