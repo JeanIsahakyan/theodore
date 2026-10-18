@@ -35,10 +35,11 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { InboxReason, PrId, PrState, PrSummary } from '../gen/contract';
-import { markDone, openPr, refreshInbox } from '../actions';
+import { markDone, openPr, refreshInbox, snoozePrs } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { Peek } from './Peek';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { useViewKeys } from './keys';
@@ -250,6 +251,51 @@ export const PrRow = observer(function PrRow({
   const store = useRootStore();
   const ui = useUi();
   const p = store.models.prSummaries.get(id);
+  const rowMenu = useContextMenu((): ContextMenuItem[] => {
+    if (!p) return [];
+    return [
+      { id: 'open', label: 'Open', onAction: () => ui.go({ name: 'review', pr: id }) },
+      {
+        id: 'open-new-tab',
+        label: 'Open in new tab',
+        onAction: () => ui.go({ name: 'review', pr: id }, { newTab: true }),
+      },
+      { id: 'mark-done', label: 'Mark done', onAction: () => markDone(store, [id]) },
+      {
+        id: 'snooze',
+        label: 'Snooze',
+        items: [
+          {
+            id: 'snooze-1h',
+            label: '1 hour',
+            onAction: () =>
+              snoozePrs(store, [id], { kind: 'time', at: Date.now() + 3600_000 }),
+          },
+          {
+            id: 'snooze-tomorrow',
+            label: 'Tomorrow',
+            onAction: () =>
+              snoozePrs(store, [id], { kind: 'time', at: Date.now() + 86_400_000 }),
+          },
+          {
+            id: 'snooze-push',
+            label: 'Until push',
+            onAction: () => snoozePrs(store, [id], { kind: 'next_push' }),
+          },
+          {
+            id: 'snooze-checks',
+            label: 'Until checks green',
+            onAction: () => snoozePrs(store, [id], { kind: 'checks_green' }),
+          },
+        ],
+      },
+      {
+        id: 'copy-url',
+        label: 'Copy URL',
+        onAction: () => void navigator.clipboard.writeText(p.url),
+      },
+    ];
+  });
   if (!p) return null;
   const on = (k: RowProp) => props.includes(k);
   const cols = [
@@ -264,6 +310,7 @@ export const PrRow = observer(function PrRow({
       id={`R-${id}`}
       className={`prrow group grid h-11 w-full items-center gap-3 ${rowCls(sel, picked)}`}
       style={{ gridTemplateColumns: cols }}
+      onContextMenu={rowMenu}
     >
       <Checkbox
         aria-label="select"

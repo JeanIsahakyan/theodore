@@ -12,6 +12,7 @@ import type { AgentId, Task, TaskStatus } from '../gen/contract';
 import { decideTask, delegateTask } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { AgentTag, Btn, Empty, Hints, K, Spinner } from './bits';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { PatchView } from './Patch';
 import { ViewHeader } from './List';
 import { useViewKeys } from './keys';
@@ -59,10 +60,47 @@ export const TaskRow = observer(function TaskRow({
     void delegateTask(store, t.id, agent);
   };
 
+  const rowMenu = useContextMenu((): ContextMenuItem[] => [
+    {
+      id: 'delegate',
+      label: 'Delegate',
+      items: [
+        { id: 'delegate-default', label: 'Default agent', onAction: () => delegate(null) },
+        ...AGENTS.map((a) => ({
+          id: `delegate-${a}`,
+          label: a,
+          onAction: () => delegate(a),
+        })),
+      ],
+    },
+    {
+      id: 'accept',
+      label: 'Accept',
+      isDisabled: t.status !== 'review',
+      onAction: accept,
+    },
+    {
+      id: 'reject',
+      label: 'Reject',
+      isDisabled: t.status !== 'review',
+      onAction: () => setRejecting(true),
+    },
+    {
+      id: 'open-thread',
+      label: 'Open thread',
+      isDisabled: !t.thread,
+      onAction: () => {
+        ui.go({ name: 'review', pr: t.pr });
+        ui.toggleAside(true);
+      },
+    },
+  ]);
+
   return (
     <div
       id={`T-${t.id}`}
       className={`taskrow group flex min-h-12 w-full items-center gap-2.5 py-1.5 ${compact ? 'flex-wrap' : ''} ${sel ? 'sel' : ''}`}
+      onContextMenu={rowMenu}
     >
       <TaskIcon status={t.status} />
       <div className="min-w-0 flex-1">

@@ -57,6 +57,7 @@ import {
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { rich } from '../highlight';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
@@ -434,9 +435,45 @@ const FindingCard = observer(function FindingCard({
   f: Finding;
 }) {
   const store = useRootStore();
+  const findingMenu = useContextMenu((): ContextMenuItem[] => [
+    {
+      id: 'add-review',
+      label: 'Add to review',
+      isDisabled: f.state === 'drafted',
+      onAction: () => findingToDraft(store, pr, f),
+    },
+    {
+      id: 'add-tasks',
+      label: 'Add to tasks',
+      isDisabled: f.state === 'drafted',
+      onAction: () => findingToTask(store, pr, f),
+    },
+    {
+      id: 'propose-fix',
+      label: 'Propose fix',
+      isDisabled: f.fix?.status === 'generating',
+      onAction: () =>
+        void ask(store, {
+          pr,
+          question: `propose a fix for: ${f.title}`,
+          about: f.anchor,
+          group: null,
+          agent: null,
+        }).catch(() => {
+          // toasted by api.ts
+        }),
+    },
+    {
+      id: 'ignore',
+      label: 'Ignore',
+      isDisabled: f.state === 'drafted',
+      onAction: () => ignoreFinding(store, f.id),
+    },
+  ]);
   return (
     <Card
       className={`finding mt-1 gap-2 px-4 py-3 ${f.state === 'drafted' ? 'opacity-60' : ''}`}
+      onContextMenu={findingMenu}
     >
       <div className="flex items-center gap-1.5">
         <Sev s={f.severity} />
