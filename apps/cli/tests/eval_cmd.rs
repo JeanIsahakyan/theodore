@@ -13,6 +13,10 @@ fn fixtures_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")
 }
 
+fn real_fixtures_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/real")
+}
+
 /// One valid response per fixture: every non-hidden hunk goes into a single
 /// group. Exercises the harness's plumbing, not grouping quality — that
 /// needs a real agent and real PRs (plan §5.4).
@@ -108,4 +112,39 @@ fn prompt_budget_is_reasonable_for_the_shipped_fixtures() {
             "fixture {name} unexpectedly split into multiple chunks"
         );
     }
+}
+
+/// Regression, found via the real-PR eval run (docs/grouping-eval.md):
+/// rust-analyzer#23173 repeats a mechanically-identical one-line edit at
+/// several call sites in the same file, which collide to the same `HunkId`
+/// under `theodore_domain::interdiff::hunk_id` (identity is `(path,
+/// content)`, not line position, by design). `theodore_grouping::group_revision`
+/// must refuse to run on such a revision — `grouping::validate`'s
+/// `BTreeSet<&HunkId>` can't distinguish the colliding hunks, so without
+/// this guard it could report "valid" while quietly dropping every
+/// occurrence but one.
+#[tokio::test]
+async fn real_fixture_with_colliding_hunk_ids_is_rejected_not_silently_accepted() {
+    let fixtures = eval::load_fixtures(&real_fixtures_dir()).unwrap();
+    let (_, fx) = fixtures
+        .iter()
+        .find(|(name, _)| name == "ra_23173")
+        .expect("ra_23173 fixture shipped under fixtures/real");
+
+    let agent = FakeAgentPort::new(["unused"]);
+    let err = theodore_grouping::group_revision(
+        &agent,
+        &fx.pr.clone().into(),
+        &fx.revision,
+        Path::new("."),
+        &theodore_grouping::GroupingOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("shared by more than one physical hunk"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(agent.calls_made(), 0);
 }

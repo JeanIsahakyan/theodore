@@ -39,6 +39,15 @@ async fn run_group(args: group::GroupArgs) -> anyhow::Result<()> {
     };
     let agent_id: AgentId = args.agent.into();
     let report = group::run(deps.agent.as_ref(), agent_id, &pr, &rev, &cwd).await?;
+    if let Some(path) = &args.save_fixture {
+        let meta = group::FixtureMeta {
+            title: pr.title.clone(),
+            body: pr.body.clone(),
+            commits: pr.commits.clone(),
+        };
+        group::save_fixture(path, &meta, &rev)?;
+        eprintln!("saved fixture to {}", path.display());
+    }
     group::emit(&report, &rev, args.json, args.save.as_deref())
 }
 
@@ -48,6 +57,16 @@ async fn run_eval(args: eval::EvalArgs) -> anyhow::Result<()> {
     let deps = deps::real_deps();
     let cwd = std::env::current_dir()?;
     let rows = eval::run_eval(deps.agent.as_ref(), agent_id, &fixtures, &cwd).await;
-    eval::print_table(&rows);
+    let summary = eval::print_table(&rows);
+    if !summary.meets_targets() {
+        anyhow::bail!(
+            "grouping quality regressed below the §5.4 M1 targets \
+             (first try {:.0}% < {:.0}%, or after repair {:.0}% < {:.0}%)",
+            summary.first_try_pct(),
+            eval::TARGET_FIRST_TRY_PCT,
+            summary.after_repair_pct(),
+            eval::TARGET_AFTER_REPAIR_PCT,
+        );
+    }
     Ok(())
 }
