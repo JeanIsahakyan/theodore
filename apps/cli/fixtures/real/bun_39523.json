@@ -1,0 +1,4299 @@
+{
+  "pr": {
+    "title": "libjpeg-turbo: use the clz intrinsic and enable the x86_64 SIMD kernels",
+    "body": "### Problem\n- x64 builds compiled libjpeg-turbo with no SIMD at all (`simd = cfg.arm64` in `scripts/build/deps/libjpeg-turbo.ts`). The upstream x86_64 kernels are NASM syntax and were never wired into the direct build, so `Bun.Image` JPEG encode and decode ran the plain C code on x64 while arm64 had Neon.\n- On x64 the C Huffman encoders count bits through a 64 KB `jpeg_nbits_table`. `src/jpeg_nbits.h` only switches to the clz intrinsic on Arm.\n\n### Fix\n- `scripts/build/deps/libjpeg-turbo.ts`: assemble the 27 `simd/x86_64/*.asm` files from upstream's `simd/CMakeLists.txt` (SSE2 and AVX2 kernels plus `jsimdcpu.asm`) through the existing `nasm` ninja rule, compile `simd/x86_64/jsimd.c`, and define `WITH_SIMD` on x64 too. The nasm flags are upstream's: `-felf64|-fmacho64|-fwin64`, `-DELF|-DMACHO|-DWIN64`, `-D__x86_64__`. `-DPIC` is not passed: no x86_64 kernel uses the PIC macros (they are i386 only) and the objects link into the PIE android build as well.\n- `jsimd.c` selects AVX2, SSE2 or C per call from `jpeg_simd_cpu_support()` (CPUID leaf 7 plus XGETBV), so the AVX2 objects are safe under the `-march=nehalem` floor. `JSIMD_FORCESSE2=1` and `JSIMD_FORCENONE=1` still work as upstream.\n- `-DUSE_CLZ_INTRINSIC` on non-arm64 targets makes the C encoders (`jcphuff.c` always, `jchuff.c` when SIMD is off) use `bsr`. With SIMD on, `jchuff-sse2.asm` ships its own copy of the table, so this no longer changes the binary size. The comment in the build file says so.\n- `scripts/build/tools.ts` looks nasm up on every host. `compile.ts:nasm()` still fails with the install hint when it is missing. `bootstrap.sh` already installed nasm on Linux and `bootstrap.ps1` on Windows. `bootstrap.sh` now installs it on macOS too. `.buildkite/ci.mjs` runs the best-effort install for every x64 target.\n- `scripts/verify-baseline-static/allowlist-x64.txt` and `allowlist-x64-windows.txt`: one group for the 38 `jsimd_*_avx2` kernels, ceiling `[AVX, AVX2]`. The ELF list has 282 names because nasm puts the local labels of each kernel into `.symtab` and the scanner attributes the hits to them. The names are the ones the linux-x64, linux-x64-musl and windows-x64 scans of build 100872 printed. `llint_op_wide16_wide16` joins the existing LLInt data-in-text group: the new code moved the decoder desync to a sibling handler.\n- `test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts` (the file the emulated verify-baseline step runs) now encodes and decodes a 72x40 JPEG. A flat grey image has to survive encode, decode and encode byte for byte, which checks the kernel results. A gradient goes through the baseline and progressive encoders. Under `qemu-x86_64 -cpu Nehalem` a bad gate traps here.\n- Size, from the binary-size step of build 100872 against main: x64 targets grow by 120 KB (windows) to 146 KB (android), aarch64 targets are unchanged. The kernels and the table in `jchuff-sse2.asm` are that growth.\n\n### Verification\n- 120 cases (4 sizes including odd widths, 5 patterns, quality 1/75/100, baseline and progressive), each encoded and then decoded back to a stored PNG: the sha256 of every JPEG and of every decoded image is identical between the C-only release build of main, this branch with AVX2 (default on the test host), this branch with `JSIMD_FORCESSE2=1`, and this branch with `JSIMD_FORCENONE=1`.\n- gdb hit counts on one 96x80 round trip: by default `jsimd_fdct_islow_avx2`, `jsimd_idct_islow_avx2` and `jsimd_quantize_avx2` run 180 times each and the h2v2 down/upsample AVX2 kernels 80 times, so the dispatch picks AVX2 and the 32-byte alignment of the constants survived the link. With `JSIMD_FORCESSE2=1` the SSE2 kernels take the same counts and no AVX2 kernel runs.\n- `test/js/bun/image/*.test.ts` pass on the x64 debug build. The new simd-baseline cases pass natively, with `JSIMD_FORCESSE2=1`, with `JSIMD_FORCENONE=1`, and under `qemu-x86_64 -cpu Nehalem`.\n- Build 100872 built and linked all 12 targets (elf64, macho64, win64, and the PIE android link). Its only failures were the three verify-baseline steps. With the allowlist commit (build 100910) all seven verify-baseline steps pass: the linux-x64 scan reports 0 violations and 1070 allowlisted symbols, windows-x64 0 and 876, and the stale counts did not move. The two JPEG cases ran and passed under QEMU on linux-x64 and linux-x64-musl and under Intel SDE on windows-x64.\n- Configure on an x64 host now needs nasm installed, because the libjpeg-turbo `.asm` edges are emitted at configure time. The rust-lint GitHub action installs it for that reason.\n\n### Background\n- libjpeg-turbo has one C implementation of each stage (colour conversion, chroma sampling, DCT, quantization, Huffman coding) and optional SIMD versions. `jsimd.c` is the per-architecture dispatcher: the C code asks `jsimd_can_*()` once per compress or decompress object and calls `jsimd_*()` if it says yes. The SIMD versions are specified to produce the same output as the C code, which is what the byte comparisons above confirm.\n- The x86_64 kernels are written for nasm, which clang cannot assemble. bun already had a `nasm` ninja rule for BoringSSL's win-x64 assembly. A `direct` dependency lists its sources, and `emitDirect` routes `.asm` entries to that rule.\n- verify-baseline has two parts: a static scan of `.text` that fails on any instruction beyond Nehalem unless the containing symbol is allowlisted with a feature ceiling, and an emulated run of `simd-baseline.test.ts` on a Nehalem CPU model, where an instruction the gate should have kept out raises SIGILL.\n\n<details>\n<summary>Earlier description</summary>\n\nThe PR started as the `USE_CLZ_INTRINSIC` change alone. On its own it removed the 64 KB `jpeg_nbits_table` from every x64 build (build 100478: exactly -64 KB on each x64 target, 40 of 40 encodes byte-identical). The SIMD commit brings the table back through `jchuff-sse2.asm`, so that size win no longer applies to the combined change.\n\n</details>\n\n<!-- robobun:evidence:begin -->\n\n---\n\n**[stamp-90s]** gate passed · iteration 0 · 11 files touched\n\n<details><summary>passes on PR (with fix)</summary>\n\n```console\nTest-only change.\n\nDebug/ASAN (expected pass):\n$ bun bd test 'test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts'\n$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts\nbun test v1.4.0 (8326d1bd3)\n\ntest/js/bun/jsc-stress/fixtures/simd-baseline.test.ts:\n(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > clean passthrough [1.63ms]\n(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > ampersand in middle [2.81ms]\n(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > all special chars [2.60ms]\n(pass) stringWidth — @Vector(16, u8) ungated > ascii [1.30ms]\n(pass) stringWidth — @Vector(16, u8) ungated > empty [1.67ms]\n(pass) stringWidth — @Vector(16, u8) ungated > tabs [1.65ms]\n(pass) stringWidth — @Vector(16, u8) ungated > mixed printable and zero-width [2.21ms]\n(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 16 [2.57ms]\n(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 32 [0.81ms]\n(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 64 [0.50ms]\n(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 128 [0.44ms]\n(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 256 [0.52ms]\n(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > all byte values [3.95ms]\n(pass) base64 — simdutf runtime dispatch > ascii roundtrip [1.46ms]\n(pass) base64 — simdutf runtime dispatch > binary roundtrip [11.17ms]\n(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > ascii roundtrip [2.44ms]\n(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > mixed ascii + multibyte [2.05ms]\n(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > emoji surrogate pairs [2.22ms]\n(pass) decodeURIComponent — SIMD % scanning > clean passthrough [2.06ms]\n(pass) decodeURIComponent — SIMD % scanning > encoded at various positions [1.98ms]\n(pass) decodeURIComponent — SIMD % scanning > heavy utf8 encoding [5.39ms]\n(pass) URL parsing — Highway indexOfChar/inde\n... (truncated)\nExit: 0\n```\n\n</details>\n\n<details><summary>diff hotspot</summary>\n\n```\n.buildkite/ci.mjs                                  |  11 +-\n .github/actions/rust-lint-setup/action.yml         |   2 +-\n scripts/bootstrap.sh                               |   1 +\n scripts/build/compile.ts                           |   9 +-\n scripts/build/config.ts                            |   8 +-\n scripts/build/deps/libjpeg-turbo.ts                |  54 +++-\n scripts/build/source.ts                            |   2 +-\n scripts/build/tools.ts                             |  28 +-\n .../allowlist-x64-windows.txt                      |  48 ++++\n scripts/verify-baseline-static/allowlist-x64.txt   | 298 ++++++++++++++++++++-\n .../bun/jsc-stress/fixtures/simd-baseline.test.ts  |  76 ++++++\n 11 files changed, 487 insertions(+), 50 deletions(-)\n```\n\n</details>\n\n**gate history** · 3 passed · 0 rejected · iteration 0\n\n<details><summary>evidence per changed file</summary>\n\n```\nfile                                                      reads  edits  tests\n.buildkite/ci.mjs                                             1      2      0\n.github/actions/rust-lint-setup/action.yml                    0      0      0\nscripts/bootstrap.sh                                          0      0      0\nscripts/build/compile.ts                                      1      1      0\nscripts/build/config.ts                                       0      0      0\nscripts/build/deps/libjpeg-turbo.ts                           2      2      0\nscripts/build/source.ts                                       1      0      0\nscripts/build/tools.ts                                        0      0      0\nscripts/verify-baseline-static/allowlist-x64-windows.txt      0      0      0\nscripts/verify-baseline-static/allowlist-x64.txt              0      0      0\ntest/js/bun/jsc-stress/fixtures/simd-baseline.test.ts         2      4      0\n```\n\n</details>\n\n<!-- robobun:evidence:end -->",
+    "commits": [
+      "use the clz intrinsic instead of the libjpeg nbits table",
+      "libjpeg-turbo: assemble the x86_64 SSE2/AVX2 SIMD kernels",
+      "[autofix.ci] apply automated fixes",
+      "libjpeg-turbo: drop -DPIC from the nasm flags; bun is not PIC and x86…",
+      "verify-baseline: allowlist the libjpeg-turbo AVX2 kernels and exercis…",
+      "libjpeg-turbo: describe what USE_CLZ_INTRINSIC still does next to the…",
+      "verify-baseline-static: allowlist llint_op_wide16_wide16 decode false…",
+      "ci: install nasm in the rust-lint setup; configure now needs it on x64",
+      "ci: drop the unused os binding in getBuildBunStep"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": ".buildkite/ci.mjs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 4,
+        "deletions": 7,
+        "hunks": [
+          {
+            "id": "808d7414e122269c",
+            "path": ".buildkite/ci.mjs",
+            "old_start": 516,
+            "old_lines": 15,
+            "new_start": 516,
+            "new_lines": 12,
+            "header": "function getBuildCommand(target, options, mode) {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": " * @returns {Step}",
+                "old_no": 516,
+                "new_no": 516
+              },
+              {
+                "kind": "ctx",
+                "text": " */",
+                "old_no": 517,
+                "new_no": 517
+              },
+              {
+                "kind": "ctx",
+                "text": "function getBuildBunStep(platform, options) {",
+                "old_no": 518,
+                "new_no": 518
+              },
+              {
+                "kind": "del",
+                "text": "  const { os, arch } = platform;",
+                "old_no": 519,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm",
+                "old_no": 520,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // (.buildkite/Dockerfile); best-effort install covers older images, and",
+                "old_no": 521,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // `|| true` keeps a missing package manager from failing the step — the",
+                "old_no": 522,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // build's own \"nasm not found\" error is clearer.",
+                "old_no": 523,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  const { arch } = platform;",
+                "old_no": null,
+                "new_no": 519
+              },
+              {
+                "kind": "add",
+                "text": "  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.",
+                "old_no": null,
+                "new_no": 520
+              },
+              {
+                "kind": "ctx",
+                "text": "  const nasmSetup =",
+                "old_no": 524,
+                "new_no": 521
+              },
+              {
+                "kind": "del",
+                "text": "    os === \"windows\" && arch === \"x64\"",
+                "old_no": 525,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    arch === \"x64\"",
+                "old_no": null,
+                "new_no": 522
+              },
+              {
+                "kind": "ctx",
+                "text": "      ? [",
+                "old_no": 526,
+                "new_no": 523
+              },
+              {
+                "kind": "del",
+                "text": "          \"which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true\",",
+                "old_no": 527,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "          \"which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true\",",
+                "old_no": null,
+                "new_no": 524
+              },
+              {
+                "kind": "ctx",
+                "text": "        ]",
+                "old_no": 528,
+                "new_no": 525
+              },
+              {
+                "kind": "ctx",
+                "text": "      : [];",
+                "old_no": 529,
+                "new_no": 526
+              },
+              {
+                "kind": "ctx",
+                "text": "  return {",
+                "old_no": 530,
+                "new_no": 527
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": ".github/actions/rust-lint-setup/action.yml",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "76e33a5b13edd657",
+            "path": ".github/actions/rust-lint-setup/action.yml",
+            "old_start": 42,
+            "old_lines": 7,
+            "new_start": 42,
+            "new_lines": 7,
+            "header": "runs:",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null",
+                "old_no": 42,
+                "new_no": 42
+              },
+              {
+                "kind": "ctx",
+                "text": "        echo \"deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main\" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null",
+                "old_no": 43,
+                "new_no": 43
+              },
+              {
+                "kind": "ctx",
+                "text": "        sudo apt-get update -qq",
+                "old_no": 44,
+                "new_no": 44
+              },
+              {
+                "kind": "del",
+                "text": "        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}",
+                "old_no": 45,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}",
+                "old_no": null,
+                "new_no": 45
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 46,
+                "new_no": 46
+              },
+              {
+                "kind": "ctx",
+                "text": "    - name: Setup Rust",
+                "old_no": 47,
+                "new_no": 47
+              },
+              {
+                "kind": "ctx",
+                "text": "      if: inputs.toolchain != ''",
+                "old_no": 48,
+                "new_no": 48
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/bootstrap.sh",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "5a0e00ef1a7ce7c1",
+            "path": "scripts/bootstrap.sh",
+            "old_start": 1111,
+            "old_lines": 6,
+            "new_start": 1111,
+            "new_lines": 7,
+            "header": "install_build_essentials() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tbrew)",
+                "old_no": 1111,
+                "new_no": 1111
+              },
+              {
+                "kind": "ctx",
+                "text": "\t\tinstall_packages \\",
+                "old_no": 1112,
+                "new_no": 1112
+              },
+              {
+                "kind": "ctx",
+                "text": "\t\t\tninja \\",
+                "old_no": 1113,
+                "new_no": 1113
+              },
+              {
+                "kind": "add",
+                "text": "\t\t\tnasm \\",
+                "old_no": null,
+                "new_no": 1114
+              },
+              {
+                "kind": "ctx",
+                "text": "\t\t\tpkg-config \\",
+                "old_no": 1114,
+                "new_no": 1115
+              },
+              {
+                "kind": "ctx",
+                "text": "\t\t\tgolang",
+                "old_no": 1115,
+                "new_no": 1116
+              },
+              {
+                "kind": "ctx",
+                "text": "\t\t;;",
+                "old_no": 1116,
+                "new_no": 1117
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/build/compile.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 5,
+        "deletions": 4,
+        "hunks": [
+          {
+            "id": "733d9d6289be357e",
+            "path": "scripts/build/compile.ts",
+            "old_start": 92,
+            "old_lines": 8,
+            "new_start": 92,
+            "new_lines": 8,
+            "header": "export function registerCompileRules(n: Ninja, cfg: Config): void {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    pool: \"compile\",",
+                "old_no": 92,
+                "new_no": 92
+              },
+              {
+                "kind": "ctx",
+                "text": "  });",
+                "old_no": 93,
+                "new_no": 93
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 94,
+                "new_no": 94
+              },
+              {
+                "kind": "del",
+                "text": "  // ─── NASM assemble (Windows-x64 only) ───",
+                "old_no": 95,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // BoringSSL's win-x64 assembly is NASM syntax; clang can't assemble it.",
+                "old_no": 96,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  // ─── NASM assemble (x64 only) ───",
+                "old_no": null,
+                "new_no": 95
+              },
+              {
+                "kind": "add",
+                "text": "  // BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD are NASM syntax; clang can't assemble it.",
+                "old_no": null,
+                "new_no": 96
+              },
+              {
+                "kind": "ctx",
+                "text": "  // -MD writes a Make-style depfile; nasm 2.14+ supports it.",
+                "old_no": 97,
+                "new_no": 97
+              },
+              {
+                "kind": "ctx",
+                "text": "  if (cfg.nasm !== undefined) {",
+                "old_no": 98,
+                "new_no": 98
+              },
+              {
+                "kind": "ctx",
+                "text": "    n.rule(\"nasm\", {",
+                "old_no": 99,
+                "new_no": 99
+              }
+            ]
+          },
+          {
+            "id": "39962311304794cf",
+            "path": "scripts/build/compile.ts",
+            "old_start": 258,
+            "old_lines": 8,
+            "new_start": 258,
+            "new_lines": 9,
+            "header": "export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, \"",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "ctx",
+                "text": "/**",
+                "old_no": 260,
+                "new_no": 260
+              },
+              {
+                "kind": "del",
+                "text": " * Assemble a NASM-syntax `.asm` file. Returns absolute path to the .obj",
+                "old_no": 261,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": " * output. Windows-x64 only — gas-syntax `.S` goes through cc().",
+                "old_no": 262,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": " * Assemble a NASM-syntax `.asm` file (BoringSSL win-x64, libjpeg-turbo x86_64",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": " * SIMD). Returns absolute path to the object output. gas-syntax `.S` goes",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": " * through cc().",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "ctx",
+                "text": " */",
+                "old_no": 263,
+                "new_no": 264
+              },
+              {
+                "kind": "ctx",
+                "text": "export function nasm(",
+                "old_no": 264,
+                "new_no": 265
+              },
+              {
+                "kind": "ctx",
+                "text": "  n: Ninja,",
+                "old_no": 265,
+                "new_no": 266
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/build/config.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 2,
+        "deletions": 6,
+        "hunks": [
+          {
+            "id": "be24a71f4474a35d",
+            "path": "scripts/build/config.ts",
+            "old_start": 282,
+            "old_lines": 7,
+            "new_start": 282,
+            "new_lines": 7,
+            "header": "export interface Config {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  rc: string | undefined;",
+                "old_no": 282,
+                "new_no": 282
+              },
+              {
+                "kind": "ctx",
+                "text": "  /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */",
+                "old_no": 283,
+                "new_no": 283
+              },
+              {
+                "kind": "ctx",
+                "text": "  mt: string | undefined;",
+                "old_no": 284,
+                "new_no": 284
+              },
+              {
+                "kind": "del",
+                "text": "  /** Windows-x64: nasm for BoringSSL's NASM-syntax assembly. */",
+                "old_no": 285,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */",
+                "old_no": null,
+                "new_no": 285
+              },
+              {
+                "kind": "ctx",
+                "text": "  nasm: string | undefined;",
+                "old_no": 286,
+                "new_no": 286
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 287,
+                "new_no": 287
+              },
+              {
+                "kind": "ctx",
+                "text": "  // ─── macOS SDK (darwin only, undefined elsewhere) ───",
+                "old_no": 288,
+                "new_no": 288
+              }
+            ]
+          },
+          {
+            "id": "884a6a31271df8ef",
+            "path": "scripts/build/config.ts",
+            "old_start": 484,
+            "old_lines": 11,
+            "new_start": 484,
+            "new_lines": 7,
+            "header": "export interface Toolchain {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "   * source.ts) sidesteps the need.",
+                "old_no": 484,
+                "new_no": 484
+              },
+              {
+                "kind": "ctx",
+                "text": "   */",
+                "old_no": 485,
+                "new_no": 485
+              },
+              {
+                "kind": "ctx",
+                "text": "  mt: string | undefined;",
+                "old_no": 486,
+                "new_no": 486
+              },
+              {
+                "kind": "del",
+                "text": "  /**",
+                "old_no": 487,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "   * Windows only: nasm. BoringSSL's win-x64 assembly is NASM syntax;",
+                "old_no": 488,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "   * clang's integrated assembler can't read it. win-aarch64 uses gas",
+                "old_no": 489,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "   * .S files instead, so this is x64-only in practice.",
+                "old_no": 490,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "   */",
+                "old_no": 491,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */",
+                "old_no": null,
+                "new_no": 487
+              },
+              {
+                "kind": "ctx",
+                "text": "  nasm: string | undefined;",
+                "old_no": 492,
+                "new_no": 488
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 493,
+                "new_no": 489
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 494,
+                "new_no": 490
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/build/deps/libjpeg-turbo.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 43,
+        "deletions": 11,
+        "hunks": [
+          {
+            "id": "741702dcb5744bbf",
+            "path": "scripts/build/deps/libjpeg-turbo.ts",
+            "old_start": 4,
+            "old_lines": 18,
+            "new_start": 4,
+            "new_lines": 21,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": " *",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": " * DirectBuild. SIMD: arm64 uses the full Neon intrinsics path (no GAS, no",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": " * jsimd_neon.S — clang has the complete vld1_* set so NEON_INTRINSICS=1 is",
+                "old_no": 6,
+                "new_no": 6
+              },
+              {
+                "kind": "del",
+                "text": " * the upstream default there). x64 stays C-only for now; the x86_64 path is",
+                "old_no": 7,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": " * NASM .asm and needs a separate wiring step. The hand-written jconfig.h/",
+                "old_no": 8,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": " * jconfigint.h below replace cmake's configure_file — the only probes that",
+                "old_no": 9,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": " * matter are sizeof(size_t) and __builtin_ctzl, both known per target.",
+                "old_no": 10,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": " * the upstream default there). x64 assembles the upstream NASM SSE2/AVX2",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": " * kernels; simd/x86_64/jsimd.c picks between them per call from cpuid at",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": " * runtime, so the AVX2 objects are safe under the -march=nehalem floor.",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": " * The hand-written jconfig.h/jconfigint.h below replace cmake's",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": " * configure_file — the only probes that matter are sizeof(size_t) and",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": " * __builtin_ctzl, both known per target.",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "ctx",
+                "text": " *",
+                "old_no": 11,
+                "new_no": 13
+              },
+              {
+                "kind": "ctx",
+                "text": " * 12/16-bit sample depths and the lossless codec are compiled out",
+                "old_no": 12,
+                "new_no": 14
+              },
+              {
+                "kind": "ctx",
+                "text": " * (turbojpeg.c gates them on `#ifdef NO_PRECISION_EXT`); Bun.Image only",
+                "old_no": 13,
+                "new_no": 15
+              },
+              {
+                "kind": "ctx",
+                "text": " * deals in 8-bit RGB(A).",
+                "old_no": 14,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": " */",
+                "old_no": 15,
+                "new_no": 17
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 16,
+                "new_no": 18
+              },
+              {
+                "kind": "add",
+                "text": "import { quote } from \"../shell.ts\";",
+                "old_no": null,
+                "new_no": 19
+              },
+              {
+                "kind": "ctx",
+                "text": "import type { Dependency } from \"../source.ts\";",
+                "old_no": 17,
+                "new_no": 20
+              },
+              {
+                "kind": "del",
+                "text": "import { depBuildDir } from \"../source.ts\";",
+                "old_no": 18,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "import { depBuildDir, depSourceDir } from \"../source.ts\";",
+                "old_no": null,
+                "new_no": 21
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 19,
+                "new_no": 22
+              },
+              {
+                "kind": "ctx",
+                "text": "const LIBJPEG_TURBO_COMMIT = \"e352b02f794f701407b39af08576035ba3360d60\"; // 3.1.4",
+                "old_no": 20,
+                "new_no": 23
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 21,
+                "new_no": 24
+              }
+            ]
+          },
+          {
+            "id": "15438ea45f4e741b",
+            "path": "scripts/build/deps/libjpeg-turbo.ts",
+            "old_start": 64,
+            "old_lines": 6,
+            "new_start": 67,
+            "new_lines": 21,
+            "header": "const SIMD_ARM64 = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  \"arm/aarch64/jsimd\",",
+                "old_no": 64,
+                "new_no": 67
+              },
+              {
+                "kind": "ctx",
+                "text": "];",
+                "old_no": 65,
+                "new_no": 68
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 66,
+                "new_no": 69
+              },
+              {
+                "kind": "add",
+                "text": "// simd/CMakeLists.txt SIMD_SOURCES for x86_64; the *ext-*.asm files are %include'd, not assembled.",
+                "old_no": null,
+                "new_no": 70
+              },
+              {
+                "kind": "add",
+                "text": "// prettier-ignore",
+                "old_no": null,
+                "new_no": 71
+              },
+              {
+                "kind": "add",
+                "text": "const SIMD_X64 = [",
+                "old_no": null,
+                "new_no": 72
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jsimdcpu\", \"x86_64/jfdctflt-sse\",",
+                "old_no": null,
+                "new_no": 73
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jccolor-sse2\", \"x86_64/jcgray-sse2\", \"x86_64/jchuff-sse2\",",
+                "old_no": null,
+                "new_no": 74
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jcphuff-sse2\", \"x86_64/jcsample-sse2\", \"x86_64/jdcolor-sse2\",",
+                "old_no": null,
+                "new_no": 75
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jdmerge-sse2\", \"x86_64/jdsample-sse2\", \"x86_64/jfdctfst-sse2\",",
+                "old_no": null,
+                "new_no": 76
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jfdctint-sse2\", \"x86_64/jidctflt-sse2\", \"x86_64/jidctfst-sse2\",",
+                "old_no": null,
+                "new_no": 77
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jidctint-sse2\", \"x86_64/jidctred-sse2\", \"x86_64/jquantf-sse2\",",
+                "old_no": null,
+                "new_no": 78
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jquanti-sse2\",",
+                "old_no": null,
+                "new_no": 79
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jccolor-avx2\", \"x86_64/jcgray-avx2\", \"x86_64/jcsample-avx2\",",
+                "old_no": null,
+                "new_no": 80
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jdcolor-avx2\", \"x86_64/jdmerge-avx2\", \"x86_64/jdsample-avx2\",",
+                "old_no": null,
+                "new_no": 81
+              },
+              {
+                "kind": "add",
+                "text": "  \"x86_64/jfdctint-avx2\", \"x86_64/jidctint-avx2\", \"x86_64/jquanti-avx2\",",
+                "old_no": null,
+                "new_no": 82
+              },
+              {
+                "kind": "add",
+                "text": "];",
+                "old_no": null,
+                "new_no": 83
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 84
+              },
+              {
+                "kind": "ctx",
+                "text": "// `#cmakedefine X` → `#define X` / comment, configure_file-style. We resolve",
+                "old_no": 67,
+                "new_no": 85
+              },
+              {
+                "kind": "ctx",
+                "text": "// the handful of probes we know per target instead of running cmake.",
+                "old_no": 68,
+                "new_no": 86
+              },
+              {
+                "kind": "ctx",
+                "text": "const cmakedefine = (truthy: boolean): [string, string] => [\"#cmakedefine\", truthy ? \"#define\" : \"// #undef\"];",
+                "old_no": 69,
+                "new_no": 87
+              }
+            ]
+          },
+          {
+            "id": "bd558d6528cbc22b",
+            "path": "scripts/build/deps/libjpeg-turbo.ts",
+            "old_start": 80,
+            "old_lines": 11,
+            "new_start": 98,
+            "new_lines": 9,
+            "header": "export const libjpegTurbo: Dependency = {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  patches: [\"patches/libjpeg-turbo/8bit-only.patch\", \"patches/libjpeg-turbo/jbun_stubs.c\"],",
+                "old_no": 80,
+                "new_no": 98
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 81,
+                "new_no": 99
+              },
+              {
+                "kind": "ctx",
+                "text": "  build: cfg => {",
+                "old_no": 82,
+                "new_no": 100
+              },
+              {
+                "kind": "del",
+                "text": "    const simd = cfg.arm64; // x64 NASM path TODO",
+                "old_no": 83,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    const withSimd: [string, string] = [",
+                "old_no": 84,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      \"#cmakedefine WITH_SIMD 1\",",
+                "old_no": 85,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      simd ? \"#define WITH_SIMD 1\" : \"/* #undef WITH_SIMD */\",",
+                "old_no": 86,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    ];",
+                "old_no": 87,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    const withSimd: [string, string] = [\"#cmakedefine WITH_SIMD 1\", \"#define WITH_SIMD 1\"];",
+                "old_no": null,
+                "new_no": 101
+              },
+              {
+                "kind": "add",
+                "text": "    const srcDir = depSourceDir(cfg, \"libjpeg-turbo\");",
+                "old_no": null,
+                "new_no": 102
+              },
+              {
+                "kind": "add",
+                "text": "    const hostWin = cfg.host.os === \"windows\";",
+                "old_no": null,
+                "new_no": 103
+              },
+              {
+                "kind": "ctx",
+                "text": "    return {",
+                "old_no": 88,
+                "new_no": 104
+              },
+              {
+                "kind": "ctx",
+                "text": "      kind: \"direct\",",
+                "old_no": 89,
+                "new_no": 105
+              },
+              {
+                "kind": "ctx",
+                "text": "      sources: [",
+                "old_no": 90,
+                "new_no": 106
+              }
+            ]
+          },
+          {
+            "id": "5b3e79677c39764f",
+            "path": "scripts/build/deps/libjpeg-turbo.ts",
+            "old_start": 92,
+            "old_lines": 7,
+            "new_start": 108,
+            "new_lines": 18,
+            "header": "export const libjpegTurbo: Dependency = {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        ...TURBOJPEG.map(f => `src/${f}.c`),",
+                "old_no": 92,
+                "new_no": 108
+              },
+              {
+                "kind": "ctx",
+                "text": "        \"jbun_stubs.c\",",
+                "old_no": 93,
+                "new_no": 109
+              },
+              {
+                "kind": "ctx",
+                "text": "        ...(cfg.arm64 ? SIMD_ARM64.map(f => `simd/${f}.c`) : []),",
+                "old_no": 94,
+                "new_no": 110
+              },
+              {
+                "kind": "add",
+                "text": "        ...(cfg.x64 ? [\"simd/x86_64/jsimd.c\", ...SIMD_X64.map(f => `simd/${f}.asm`)] : []),",
+                "old_no": null,
+                "new_no": 111
+              },
+              {
+                "kind": "ctx",
+                "text": "      ],",
+                "old_no": 95,
+                "new_no": 112
+              },
+              {
+                "kind": "add",
+                "text": "      // Mirrors simd/CMakeLists.txt; nasm wants -I with a trailing slash.",
+                "old_no": null,
+                "new_no": 113
+              },
+              {
+                "kind": "add",
+                "text": "      nasmflags: cfg.x64",
+                "old_no": null,
+                "new_no": 114
+              },
+              {
+                "kind": "add",
+                "text": "        ? [",
+                "old_no": null,
+                "new_no": 115
+              },
+              {
+                "kind": "add",
+                "text": "            cfg.windows ? \"-fwin64\" : cfg.darwin ? \"-fmacho64\" : \"-felf64\",",
+                "old_no": null,
+                "new_no": 116
+              },
+              {
+                "kind": "add",
+                "text": "            cfg.windows ? \"-DWIN64\" : cfg.darwin ? \"-DMACHO\" : \"-DELF\",",
+                "old_no": null,
+                "new_no": 117
+              },
+              {
+                "kind": "add",
+                "text": "            \"-D__x86_64__\",",
+                "old_no": null,
+                "new_no": 118
+              },
+              {
+                "kind": "add",
+                "text": "            `-I${quote(srcDir + \"/simd/nasm/\", hostWin)}`,",
+                "old_no": null,
+                "new_no": 119
+              },
+              {
+                "kind": "add",
+                "text": "            `-I${quote(srcDir + \"/simd/x86_64/\", hostWin)}`,",
+                "old_no": null,
+                "new_no": 120
+              },
+              {
+                "kind": "add",
+                "text": "          ]",
+                "old_no": null,
+                "new_no": 121
+              },
+              {
+                "kind": "add",
+                "text": "        : [],",
+                "old_no": null,
+                "new_no": 122
+              },
+              {
+                "kind": "ctx",
+                "text": "      // simd/arm is needed for the bare `#include \"align.h\"` / `\"neon-compat.h\"`",
+                "old_no": 96,
+                "new_no": 123
+              },
+              {
+                "kind": "ctx",
+                "text": "      // in the intrinsics TUs; the generated neon-compat.h lands in depBuildDir,",
+                "old_no": 97,
+                "new_no": 124
+              },
+              {
+                "kind": "ctx",
+                "text": "      // which emitDirect already puts on the include path (jconfig.h relies on",
+                "old_no": 98,
+                "new_no": 125
+              }
+            ]
+          },
+          {
+            "id": "7a7f5a5c1cbb33c8",
+            "path": "scripts/build/deps/libjpeg-turbo.ts",
+            "old_start": 100,
+            "old_lines": 7,
+            "new_start": 127,
+            "new_lines": 12,
+            "header": "export const libjpegTurbo: Dependency = {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "      includes: [\"src\", ...(cfg.arm64 ? [\"simd/arm\"] : [])],",
+                "old_no": 100,
+                "new_no": 127
+              },
+              {
+                "kind": "ctx",
+                "text": "      defines: {",
+                "old_no": 101,
+                "new_no": 128
+              },
+              {
+                "kind": "ctx",
+                "text": "        BUN_8BIT_ONLY: true,",
+                "old_no": 102,
+                "new_no": 129
+              },
+              {
+                "kind": "del",
+                "text": "        ...(simd ? { NEON_INTRINSICS: true } : {}),",
+                "old_no": 103,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        ...(cfg.arm64 ? { NEON_INTRINSICS: true } : {}),",
+                "old_no": null,
+                "new_no": 130
+              },
+              {
+                "kind": "add",
+                "text": "        // jpeg_nbits.h only defines this itself on Arm. The C Huffman encoders",
+                "old_no": null,
+                "new_no": 131
+              },
+              {
+                "kind": "add",
+                "text": "        // (jcphuff.c always, jchuff.c when SIMD is off) then use bsr instead of",
+                "old_no": null,
+                "new_no": 132
+              },
+              {
+                "kind": "add",
+                "text": "        // jpeg_nbits_table. The 64 KB table still ships on x64: jchuff-sse2.asm",
+                "old_no": null,
+                "new_no": 133
+              },
+              {
+                "kind": "add",
+                "text": "        // carries its own copy.",
+                "old_no": null,
+                "new_no": 134
+              },
+              {
+                "kind": "add",
+                "text": "        ...(cfg.arm64 ? {} : { USE_CLZ_INTRINSIC: true }),",
+                "old_no": null,
+                "new_no": 135
+              },
+              {
+                "kind": "ctx",
+                "text": "      },",
+                "old_no": 104,
+                "new_no": 136
+              },
+              {
+                "kind": "ctx",
+                "text": "      headers: {",
+                "old_no": 105,
+                "new_no": 137
+              },
+              {
+                "kind": "ctx",
+                "text": "        \"jconfig.h\": {",
+                "old_no": 106,
+                "new_no": 138
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/build/source.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "dad344b2aeddaefe",
+            "path": "scripts/build/source.ts",
+            "old_start": 1675,
+            "old_lines": 7,
+            "new_start": 1675,
+            "new_lines": 7,
+            "header": "function emitDirect(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    const path = typeof s === \"string\" ? s : s.path;",
+                "old_no": 1675,
+                "new_no": 1675
+              },
+              {
+                "kind": "ctx",
+                "text": "    const extra = typeof s === \"string\" ? [] : s.cflags;",
+                "old_no": 1676,
+                "new_no": 1676
+              },
+              {
+                "kind": "ctx",
+                "text": "    const abs = resolve(srcDir, path);",
+                "old_no": 1677,
+                "new_no": 1677
+              },
+              {
+                "kind": "del",
+                "text": "    // .asm → nasm() (NASM syntax, Windows-x64). .c/.S → cc() (clang's",
+                "old_no": 1678,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    // .asm → nasm() (NASM syntax, x64). .c/.S → cc() (clang's",
+                "old_no": null,
+                "new_no": 1678
+              },
+              {
+                "kind": "ctx",
+                "text": "    // integrated assembler handles .S), prepending `-x c++` when lang:\"cxx\"",
+                "old_no": 1679,
+                "new_no": 1679
+              },
+              {
+                "kind": "ctx",
+                "text": "    // forces a C source through the C++ frontend (mimalloc). Everything",
+                "old_no": 1680,
+                "new_no": 1680
+              },
+              {
+                "kind": "ctx",
+                "text": "    // else (.cc/.cpp/.cxx) → cxx().",
+                "old_no": 1681,
+                "new_no": 1681
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/build/tools.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 9,
+        "deletions": 19,
+        "hunks": [
+          {
+            "id": "91ca942c2a758b82",
+            "path": "scripts/build/tools.ts",
+            "old_start": 540,
+            "old_lines": 25,
+            "new_start": 540,
+            "new_lines": 15,
+            "header": "export function resolveLlvmToolchain(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    mt = findLlvmTool(\"llvm-mt\", paths, os, { checkVersion: false, required: false })?.path;",
+                "old_no": 540,
+                "new_no": 540
+              },
+              {
+                "kind": "ctx",
+                "text": "  }",
+                "old_no": 541,
+                "new_no": 541
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 542,
+                "new_no": 542
+              },
+              {
+                "kind": "del",
+                "text": "  // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM",
+                "old_no": 543,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // syntax (perlasm emits gas .S everywhere else, including win-aarch64).",
+                "old_no": 544,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // clang's integrated assembler can't read NASM, and OPENSSL_NO_ASM is a",
+                "old_no": 545,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  // 5-10× crypto perf hit, so this is required when targeting win-x64.",
+                "old_no": 546,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  let nasm: string | undefined;",
+                "old_no": 547,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  if (msvcTarget) {",
+                "old_no": 548,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    nasm = findTool({",
+                "old_no": 549,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      names: [\"nasm\"],",
+                "old_no": 550,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.",
+                "old_no": 551,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      // `arch` here is the HOST arch — the target isn't known yet inside",
+                "old_no": 552,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      // resolveToolchain(). compile.ts:nasm() asserts at the use site",
+                "old_no": 553,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      // with the same hint, so a missing nasm still fails clearly.",
+                "old_no": 554,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      required: false,",
+                "old_no": 555,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "      hint:",
+                "old_no": 556,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        os === \"windows\"",
+                "old_no": 557,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "          ? \"Install from https://nasm.us or `winget install NASM.NASM`\"",
+                "old_no": 558,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "          : \"Install nasm from your distro (apt install nasm) or https://nasm.us\",",
+                "old_no": 559,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    })?.path;",
+                "old_no": 560,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  }",
+                "old_no": 561,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.",
+                "old_no": null,
+                "new_no": 543
+              },
+              {
+                "kind": "add",
+                "text": "  const nasm = findTool({",
+                "old_no": null,
+                "new_no": 544
+              },
+              {
+                "kind": "add",
+                "text": "    names: [\"nasm\"],",
+                "old_no": null,
+                "new_no": 545
+              },
+              {
+                "kind": "add",
+                "text": "    required: false,",
+                "old_no": null,
+                "new_no": 546
+              },
+              {
+                "kind": "add",
+                "text": "    hint:",
+                "old_no": null,
+                "new_no": 547
+              },
+              {
+                "kind": "add",
+                "text": "      os === \"windows\"",
+                "old_no": null,
+                "new_no": 548
+              },
+              {
+                "kind": "add",
+                "text": "        ? \"Install from https://nasm.us or `winget install NASM.NASM`\"",
+                "old_no": null,
+                "new_no": 549
+              },
+              {
+                "kind": "add",
+                "text": "        : \"Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us\",",
+                "old_no": null,
+                "new_no": 550
+              },
+              {
+                "kind": "add",
+                "text": "  })?.path;",
+                "old_no": null,
+                "new_no": 551
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 562,
+                "new_no": 552
+              },
+              {
+                "kind": "ctx",
+                "text": "  // rust-lld: optional alternative linker for cross-language LTO when",
+                "old_no": 563,
+                "new_no": 553
+              },
+              {
+                "kind": "ctx",
+                "text": "  // rustc's bundled LLVM is newer than clang's. See findRustLld().",
+                "old_no": 564,
+                "new_no": 554
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/verify-baseline-static/allowlist-x64-windows.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 48,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "912bc83d617dac3e",
+            "path": "scripts/verify-baseline-static/allowlist-x64-windows.txt",
+            "old_start": 1137,
+            "old_lines": 3,
+            "new_start": 1137,
+            "new_lines": 51,
+            "header": "PredictorSub10_AVX2  [AVX, AVX2]",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "PredictorSub11_AVX2  [AVX, AVX2]",
+                "old_no": 1137,
+                "new_no": 1137
+              },
+              {
+                "kind": "ctx",
+                "text": "PredictorSub12_AVX2  [AVX, AVX2]",
+                "old_no": 1138,
+                "new_no": 1138
+              },
+              {
+                "kind": "ctx",
+                "text": "PredictorSub13_AVX2  [AVX, AVX2]",
+                "old_no": 1139,
+                "new_no": 1139
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 1140
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 1141
+              },
+              {
+                "kind": "add",
+                "text": "# ----------------------------------------------------------------------------",
+                "old_no": null,
+                "new_no": 1142
+              },
+              {
+                "kind": "add",
+                "text": "# libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).",
+                "old_no": null,
+                "new_no": 1143
+              },
+              {
+                "kind": "add",
+                "text": "# Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7",
+                "old_no": null,
+                "new_no": 1144
+              },
+              {
+                "kind": "add",
+                "text": "# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/x86_64/jsimd.c only",
+                "old_no": null,
+                "new_no": 1145
+              },
+              {
+                "kind": "add",
+                "text": "# dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2",
+                "old_no": null,
+                "new_no": 1146
+              },
+              {
+                "kind": "add",
+                "text": "# kernels are baseline and need no entries.",
+                "old_no": null,
+                "new_no": 1147
+              },
+              {
+                "kind": "add",
+                "text": "# (38 symbols)",
+                "old_no": null,
+                "new_no": 1148
+              },
+              {
+                "kind": "add",
+                "text": "# ----------------------------------------------------------------------------",
+                "old_no": null,
+                "new_no": 1149
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_convsamp_avx2                      [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1150
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1151
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1152
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1153
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1154
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1155
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1156
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1157
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1158
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1159
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1160
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1161
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1162
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_fdct_islow_avx2                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1163
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1164
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1165
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1166
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1167
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1168
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1169
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1170
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1171
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1172
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_upsample_avx2                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1173
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1174
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1175
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_upsample_avx2                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1176
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_idct_islow_avx2                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1177
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_quantize_avx2                      [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1178
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2              [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1179
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1180
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1181
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1182
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1183
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1184
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1185
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1186
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1187
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "scripts/verify-baseline-static/allowlist-x64.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 297,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "d87f70023fa45ab0",
+            "path": "scripts/verify-baseline-static/allowlist-x64.txt",
+            "old_start": 1023,
+            "old_lines": 6,
+            "new_start": 1023,
+            "new_lines": 301,
+            "header": "_ZN9bun_image9N_AVX3_DLL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "_ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]",
+                "old_no": 1023,
+                "new_no": 1023
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1024,
+                "new_no": 1024
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1025,
+                "new_no": 1025
+              },
+              {
+                "kind": "add",
+                "text": "# ----------------------------------------------------------------------------",
+                "old_no": null,
+                "new_no": 1026
+              },
+              {
+                "kind": "add",
+                "text": "# libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).",
+                "old_no": null,
+                "new_no": 1027
+              },
+              {
+                "kind": "add",
+                "text": "# Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7",
+                "old_no": null,
+                "new_no": 1028
+              },
+              {
+                "kind": "add",
+                "text": "# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/x86_64/jsimd.c only",
+                "old_no": null,
+                "new_no": 1029
+              },
+              {
+                "kind": "add",
+                "text": "# dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2",
+                "old_no": null,
+                "new_no": 1030
+              },
+              {
+                "kind": "add",
+                "text": "# kernels are baseline and need no entries.",
+                "old_no": null,
+                "new_no": 1031
+              },
+              {
+                "kind": "add",
+                "text": "# The name.label entries are nasm local labels inside those kernels: nasm emits",
+                "old_no": null,
+                "new_no": 1032
+              },
+              {
+                "kind": "add",
+                "text": "# them into .symtab, so the scanner attributes most hits to the labels rather",
+                "old_no": null,
+                "new_no": 1033
+              },
+              {
+                "kind": "add",
+                "text": "# than to the kernel entry points (38 kernels; the Windows PDB sees only those).",
+                "old_no": null,
+                "new_no": 1034
+              },
+              {
+                "kind": "add",
+                "text": "# (282 symbols)",
+                "old_no": null,
+                "new_no": 1035
+              },
+              {
+                "kind": "add",
+                "text": "# ----------------------------------------------------------------------------",
+                "old_no": null,
+                "new_no": 1036
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_convsamp_avx2                                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1037
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.column_ld16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1038
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.column_ld32           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1039
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.column_ld4            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1040
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.column_ld64           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1041
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.column_ld8            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1042
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1043
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1044
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_gray_convert_avx2.rgb_gray_cnv          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1045
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.column_ld16            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1046
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.column_ld32            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1047
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.column_ld4             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1048
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.column_ld64            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1049
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.column_ld8             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1050
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.columnloop             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1051
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.return                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1052
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgr_ycc_convert_avx2.rgb_ycc_cnv            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1053
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.column_ld1           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1054
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.column_ld16          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1055
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.column_ld2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1056
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.column_ld4           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1057
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.column_ld8           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1058
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.columnloop           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1059
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.return               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1060
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1061
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.column_ld1            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1062
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.column_ld16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1063
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.column_ld2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1064
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.column_ld4            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1065
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.column_ld8            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1066
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1067
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1068
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extbgrx_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1069
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.column_ld16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1070
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.column_ld32           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1071
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.column_ld4            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1072
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.column_ld64           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1073
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.column_ld8            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1074
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1075
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1076
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_gray_convert_avx2.rgb_gray_cnv          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1077
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.column_ld16            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1078
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.column_ld32            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1079
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.column_ld4             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1080
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.column_ld64            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1081
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.column_ld8             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1082
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.columnloop             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1083
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.return                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1084
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgb_ycc_convert_avx2.rgb_ycc_cnv            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1085
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.column_ld1           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1086
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.column_ld16          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1087
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.column_ld2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1088
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.column_ld4           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1089
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.column_ld8           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1090
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.columnloop           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1091
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.return               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1092
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1093
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.column_ld1            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1094
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.column_ld16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1095
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.column_ld2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1096
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.column_ld4            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1097
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.column_ld8            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1098
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1099
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1100
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extrgbx_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1101
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.column_ld1           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1102
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.column_ld16          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1103
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.column_ld2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1104
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.column_ld4           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1105
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.column_ld8           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1106
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.columnloop           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1107
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.return               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1108
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1109
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.column_ld1            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1110
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.column_ld16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1111
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.column_ld2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1112
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.column_ld4            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1113
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.column_ld8            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1114
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1115
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1116
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxbgr_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1117
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.column_ld1           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1118
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.column_ld16          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1119
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.column_ld2           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1120
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.column_ld4           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1121
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.column_ld8           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1122
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.columnloop           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1123
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.return               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1124
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1125
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.column_ld1            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1126
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.column_ld16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1127
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.column_ld2            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1128
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.column_ld4            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1129
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.column_ld8            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1130
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1131
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1132
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_extxrgb_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1133
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_fdct_islow_avx2                                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1134
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.columnloop                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1135
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.columnloop_r16            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1136
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.columnloop_r24            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1137
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.columnloop_r8             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1138
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.downsample                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1139
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.expand_end                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1140
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_downsample_avx2.return                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1141
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.Yloop_1st     [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1142
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.Yloop_2nd     [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1143
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.column_st15   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1144
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.column_st3    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1145
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.column_st31   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1146
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.column_st32   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1147
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.column_st64   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1148
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.column_st7    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1149
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.columnloop    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1150
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.out1          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1151
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgr_merged_upsample_avx2.return        [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1152
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1153
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1154
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st15  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1155
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st16  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1156
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st32  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1157
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st64  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1158
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st7   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1159
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.columnloop   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1160
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.out1         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1161
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extbgrx_merged_upsample_avx2.return       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1162
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.Yloop_1st     [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1163
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.Yloop_2nd     [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1164
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.column_st15   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1165
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.column_st3    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1166
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.column_st31   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1167
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.column_st32   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1168
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.column_st64   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1169
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.column_st7    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1170
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.columnloop    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1171
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.out1          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1172
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgb_merged_upsample_avx2.return        [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1173
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1174
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1175
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st15  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1176
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st16  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1177
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st32  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1178
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st64  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1179
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st7   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1180
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.columnloop   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1181
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.out1         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1182
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extrgbx_merged_upsample_avx2.return       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1183
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1184
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1185
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st15  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1186
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st16  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1187
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st32  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1188
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st64  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1189
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st7   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1190
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.columnloop   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1191
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.out1         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1192
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxbgr_merged_upsample_avx2.return       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1193
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1194
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1195
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st15  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1196
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st16  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1197
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st32  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1198
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st64  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1199
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st7   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1200
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.columnloop   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1201
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.out1         [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1202
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_extxrgb_merged_upsample_avx2.return       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1203
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2                       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1204
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1205
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2.columnloop_last       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1206
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1207
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2.skip                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1208
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_fancy_upsample_avx2.upsample              [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1209
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.Yloop_1st            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1210
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.Yloop_2nd            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1211
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.column_st15          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1212
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.column_st3           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1213
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.column_st31          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1214
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.column_st32          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1215
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.column_st64          [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1216
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.column_st7           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1217
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.columnloop           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1218
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.out1                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1219
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_merged_upsample_avx2.return               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1220
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_upsample_avx2.above_16                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1221
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_upsample_avx2.columnloop                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1222
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v1_upsample_avx2.return                      [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1223
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.columnloop                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1224
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.columnloop_r16            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1225
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.columnloop_r24            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1226
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.columnloop_r8             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1227
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.downsample                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1228
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.expand_end                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1229
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_downsample_avx2.return                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1230
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1231
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2.columnloop_last       [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1232
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1233
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2.rowloop               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1234
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2.skip                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1235
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_fancy_upsample_avx2.upsample              [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1236
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_upsample_avx2.above_16                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1237
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_upsample_avx2.columnloop                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1238
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_h2v2_upsample_avx2.return                      [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1239
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_idct_islow_avx2                                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1240
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_idct_islow_avx2.columnDCT                      [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1241
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_idct_islow_avx2.column_end                     [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1242
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_quantize_avx2                                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1243
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.column_ld16              [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1244
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.column_ld32              [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1245
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.column_ld4               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1246
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.column_ld64              [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1247
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.column_ld8               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1248
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.columnloop               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1249
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.return                   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1250
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_gray_convert_avx2.rgb_gray_cnv             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1251
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.column_ld16               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1252
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.column_ld32               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1253
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.column_ld4                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1254
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.column_ld64               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1255
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.column_ld8                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1256
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.columnloop                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1257
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.return                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1258
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_rgb_ycc_convert_avx2.rgb_ycc_cnv               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1259
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.column_st15            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1260
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.column_st3             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1261
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.column_st31            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1262
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.column_st32            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1263
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.column_st64            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1264
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.column_st7             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1265
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.columnloop             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1266
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.out1                   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1267
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgr_convert_avx2.return                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1268
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.column_st15           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1269
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.column_st16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1270
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.column_st32           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1271
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.column_st64           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1272
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.column_st7            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1273
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1274
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.out1                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1275
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extbgrx_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1276
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.column_st15            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1277
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.column_st3             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1278
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.column_st31            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1279
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.column_st32            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1280
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.column_st64            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1281
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.column_st7             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1282
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.columnloop             [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1283
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.out1                   [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1284
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgb_convert_avx2.return                 [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1285
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.column_st15           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1286
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.column_st16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1287
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.column_st32           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1288
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.column_st64           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1289
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.column_st7            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1290
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1291
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.out1                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1292
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extrgbx_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1293
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.column_st15           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1294
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.column_st16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1295
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.column_st32           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1296
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.column_st64           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1297
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.column_st7            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1298
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1299
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.out1                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1300
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxbgr_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1301
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.column_st15           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1302
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.column_st16           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1303
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.column_st32           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1304
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.column_st64           [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1305
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.column_st7            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1306
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.columnloop            [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1307
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.out1                  [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1308
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_extxrgb_convert_avx2.return                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1309
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.column_st15               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1310
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.column_st3                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1311
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.column_st31               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1312
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.column_st32               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1313
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.column_st64               [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1314
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.column_st7                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1315
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.columnloop                [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1316
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.out1                      [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1317
+              },
+              {
+                "kind": "add",
+                "text": "jsimd_ycc_rgb_convert_avx2.return                    [AVX, AVX2]",
+                "old_no": null,
+                "new_no": 1318
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 1319
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 1320
+              },
+              {
+                "kind": "ctx",
+                "text": "# ----------------------------------------------------------------------------",
+                "old_no": 1026,
+                "new_no": 1321
+              },
+              {
+                "kind": "ctx",
+                "text": "# JSC LLInt. Data-in-.text false positive, NOT a gate.",
+                "old_no": 1027,
+                "new_no": 1322
+              },
+              {
+                "kind": "ctx",
+                "text": "#",
+                "old_no": 1028,
+                "new_no": 1323
+              }
+            ]
+          },
+          {
+            "id": "b4ddcbaeeaf3fc35",
+            "path": "scripts/verify-baseline-static/allowlist-x64.txt",
+            "old_start": 1036,
+            "old_lines": 6,
+            "new_start": 1331,
+            "new_lines": 7,
+            "header": "_ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "# single-digit hit here is decode noise. Ceiling [AVX] so a multi-feature leak",
+                "old_no": 1036,
+                "new_no": 1331
+              },
+              {
+                "kind": "ctx",
+                "text": "# still fails. On ELF each opcode handler has its own symbol, so layout shifts",
+                "old_no": 1037,
+                "new_no": 1332
+              },
+              {
+                "kind": "ctx",
+                "text": "# can move the desync between llint_op_* siblings; add them here as they trip.",
+                "old_no": 1038,
+                "new_no": 1333
+              },
+              {
+                "kind": "del",
+                "text": "# (1 symbol)",
+                "old_no": 1039,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "# (2 symbols)",
+                "old_no": null,
+                "new_no": 1334
+              },
+              {
+                "kind": "ctx",
+                "text": "# ----------------------------------------------------------------------------",
+                "old_no": 1040,
+                "new_no": 1335
+              },
+              {
+                "kind": "ctx",
+                "text": "llint_op_enter_wide32  [AVX]",
+                "old_no": 1041,
+                "new_no": 1336
+              },
+              {
+                "kind": "add",
+                "text": "llint_op_wide16_wide16  [AVX]",
+                "old_no": null,
+                "new_no": 1337
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 76,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "e79658e07ff997c9",
+            "path": "test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts",
+            "old_start": 6,
+            "old_lines": 6,
+            "new_start": 6,
+            "new_lines": 7,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "// to catch both SIGILL and miscompilation from wrong instruction lowering.",
+                "old_no": 6,
+                "new_no": 6
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 7,
+                "new_no": 7
+              },
+              {
+                "kind": "ctx",
+                "text": "import { describe, expect, test } from \"bun:test\";",
+                "old_no": 8,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "import { deflateSync } from \"node:zlib\";",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 9,
+                "new_no": 10
+              },
+              {
+                "kind": "ctx",
+                "text": "// Use Buffer.alloc instead of \"x\".repeat() — repeat is slow in debug JSC builds.",
+                "old_no": 10,
+                "new_no": 11
+              },
+              {
+                "kind": "ctx",
+                "text": "const ascii256 = Buffer.alloc(256, \"a\").toString();",
+                "old_no": 11,
+                "new_no": 12
+              }
+            ]
+          },
+          {
+            "id": "2b7f833ea0218338",
+            "path": "test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts",
+            "old_start": 201,
+            "old_lines": 3,
+            "new_start": 202,
+            "new_lines": 78,
+            "header": "describe(\"String search — Highway memMem/indexOfChar\", () => {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    expect(haystack.includes(\"missing\")).toBe(false);",
+                "old_no": 201,
+                "new_no": 202
+              },
+              {
+                "kind": "ctx",
+                "text": "  });",
+                "old_no": 202,
+                "new_no": 203
+              },
+              {
+                "kind": "ctx",
+                "text": "});",
+                "old_no": 203,
+                "new_no": 204
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 205
+              },
+              {
+                "kind": "add",
+                "text": "describe(\"JPEG codec: libjpeg-turbo jsimd runtime dispatch\", () => {",
+                "old_no": null,
+                "new_no": 206
+              },
+              {
+                "kind": "add",
+                "text": "  // libjpeg-turbo picks its kernels per call from CPUID (simd/x86_64/jsimd.c on",
+                "old_no": null,
+                "new_no": 207
+              },
+              {
+                "kind": "add",
+                "text": "  // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the",
+                "old_no": null,
+                "new_no": 208
+              },
+              {
+                "kind": "add",
+                "text": "  // AVX2 kernels must stay unselected, so this traps if that gate breaks.",
+                "old_no": null,
+                "new_no": 209
+              },
+              {
+                "kind": "add",
+                "text": "  // 72 px wide: two full 32-pixel AVX2 / 16-pixel SSE2 column iterations plus an",
+                "old_no": null,
+                "new_no": 210
+              },
+              {
+                "kind": "add",
+                "text": "  // 8-pixel tail; 40 px tall keeps h2v2 chroma downsampling and upsampling busy.",
+                "old_no": null,
+                "new_no": 211
+              },
+              {
+                "kind": "add",
+                "text": "  const width = 72;",
+                "old_no": null,
+                "new_no": 212
+              },
+              {
+                "kind": "add",
+                "text": "  const height = 40;",
+                "old_no": null,
+                "new_no": 213
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 214
+              },
+              {
+                "kind": "add",
+                "text": "  function crc32(bytes: Uint8Array): number {",
+                "old_no": null,
+                "new_no": 215
+              },
+              {
+                "kind": "add",
+                "text": "    let crc = ~0 >>> 0;",
+                "old_no": null,
+                "new_no": 216
+              },
+              {
+                "kind": "add",
+                "text": "    for (const byte of bytes) {",
+                "old_no": null,
+                "new_no": 217
+              },
+              {
+                "kind": "add",
+                "text": "      crc ^= byte;",
+                "old_no": null,
+                "new_no": 218
+              },
+              {
+                "kind": "add",
+                "text": "      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));",
+                "old_no": null,
+                "new_no": 219
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 220
+              },
+              {
+                "kind": "add",
+                "text": "    return ~crc >>> 0;",
+                "old_no": null,
+                "new_no": 221
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 222
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 223
+              },
+              {
+                "kind": "add",
+                "text": "  function pngChunk(type: string, data: Uint8Array): Uint8Array {",
+                "old_no": null,
+                "new_no": 224
+              },
+              {
+                "kind": "add",
+                "text": "    const chunk = new Uint8Array(12 + data.length);",
+                "old_no": null,
+                "new_no": 225
+              },
+              {
+                "kind": "add",
+                "text": "    const view = new DataView(chunk.buffer);",
+                "old_no": null,
+                "new_no": 226
+              },
+              {
+                "kind": "add",
+                "text": "    view.setUint32(0, data.length);",
+                "old_no": null,
+                "new_no": 227
+              },
+              {
+                "kind": "add",
+                "text": "    chunk.set(Buffer.from(type, \"latin1\"), 4);",
+                "old_no": null,
+                "new_no": 228
+              },
+              {
+                "kind": "add",
+                "text": "    chunk.set(data, 8);",
+                "old_no": null,
+                "new_no": 229
+              },
+              {
+                "kind": "add",
+                "text": "    view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));",
+                "old_no": null,
+                "new_no": 230
+              },
+              {
+                "kind": "add",
+                "text": "    return chunk;",
+                "old_no": null,
+                "new_no": 231
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 232
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 233
+              },
+              {
+                "kind": "add",
+                "text": "  /** 8-bit RGB PNG whose pixel (x, y) is `rgb(x, y)`. */",
+                "old_no": null,
+                "new_no": 234
+              },
+              {
+                "kind": "add",
+                "text": "  function png(rgb: (x: number, y: number) => [number, number, number]): Uint8Array {",
+                "old_no": null,
+                "new_no": 235
+              },
+              {
+                "kind": "add",
+                "text": "    const stride = 1 + width * 3;",
+                "old_no": null,
+                "new_no": 236
+              },
+              {
+                "kind": "add",
+                "text": "    const raw = new Uint8Array(height * stride);",
+                "old_no": null,
+                "new_no": 237
+              },
+              {
+                "kind": "add",
+                "text": "    for (let y = 0; y < height; y++) {",
+                "old_no": null,
+                "new_no": 238
+              },
+              {
+                "kind": "add",
+                "text": "      for (let x = 0; x < width; x++) raw.set(rgb(x, y), y * stride + 1 + x * 3);",
+                "old_no": null,
+                "new_no": 239
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 240
+              },
+              {
+                "kind": "add",
+                "text": "    const ihdr = new Uint8Array(13);",
+                "old_no": null,
+                "new_no": 241
+              },
+              {
+                "kind": "add",
+                "text": "    const view = new DataView(ihdr.buffer);",
+                "old_no": null,
+                "new_no": 242
+              },
+              {
+                "kind": "add",
+                "text": "    view.setUint32(0, width);",
+                "old_no": null,
+                "new_no": 243
+              },
+              {
+                "kind": "add",
+                "text": "    view.setUint32(4, height);",
+                "old_no": null,
+                "new_no": 244
+              },
+              {
+                "kind": "add",
+                "text": "    ihdr.set([8, 2, 0, 0, 0], 8); // 8 bits per sample, truecolor",
+                "old_no": null,
+                "new_no": 245
+              },
+              {
+                "kind": "add",
+                "text": "    return Buffer.concat([",
+                "old_no": null,
+                "new_no": 246
+              },
+              {
+                "kind": "add",
+                "text": "      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),",
+                "old_no": null,
+                "new_no": 247
+              },
+              {
+                "kind": "add",
+                "text": "      pngChunk(\"IHDR\", ihdr),",
+                "old_no": null,
+                "new_no": 248
+              },
+              {
+                "kind": "add",
+                "text": "      pngChunk(\"IDAT\", deflateSync(raw)),",
+                "old_no": null,
+                "new_no": 249
+              },
+              {
+                "kind": "add",
+                "text": "      pngChunk(\"IEND\", new Uint8Array(0)),",
+                "old_no": null,
+                "new_no": 250
+              },
+              {
+                "kind": "add",
+                "text": "    ]);",
+                "old_no": null,
+                "new_no": 251
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 252
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 253
+              },
+              {
+                "kind": "add",
+                "text": "  test(\"flat grey survives encode, decode, encode byte for byte\", async () => {",
+                "old_no": null,
+                "new_no": 254
+              },
+              {
+                "kind": "add",
+                "text": "    // Every 8x8 block of a flat image is a lone DC coefficient, which quality",
+                "old_no": null,
+                "new_no": 255
+              },
+              {
+                "kind": "add",
+                "text": "    // 100 stores exactly, and a grey value converts to YCbCr and back exactly.",
+                "old_no": null,
+                "new_no": 256
+              },
+              {
+                "kind": "add",
+                "text": "    // So decoding the JPEG gives back the exact source pixels, and encoding",
+                "old_no": null,
+                "new_no": 257
+              },
+              {
+                "kind": "add",
+                "text": "    // them again has to reproduce the first file. That runs the colour",
+                "old_no": null,
+                "new_no": 258
+              },
+              {
+                "kind": "add",
+                "text": "    // conversion, downsampling, DCT, quantization and Huffman kernels on the",
+                "old_no": null,
+                "new_no": 259
+              },
+              {
+                "kind": "add",
+                "text": "    // encode side and the IDCT, upsampling and colour conversion kernels on the",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "    // decode side, and checks their results, not just that they did not trap.",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "    const first = await new Bun.Image(png(() => [77, 77, 77])).jpeg({ quality: 100 }).bytes();",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "    const second = await new Bun.Image(first).jpeg({ quality: 100 }).bytes();",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "    expect(first.subarray(0, 2)).toEqual(new Uint8Array([0xff, 0xd8]));",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "    expect(second).toEqual(first);",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "  });",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "  test(\"gradient round-trips through baseline and progressive encoders\", async () => {",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "    // Non-flat content drives the AC coefficient paths of the Huffman kernels",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "    // and of the progressive encoder's coefficient preparation.",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "add",
+                "text": "    const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);",
+                "old_no": null,
+                "new_no": 271
+              },
+              {
+                "kind": "add",
+                "text": "    for (const progressive of [false, true]) {",
+                "old_no": null,
+                "new_no": 272
+              },
+              {
+                "kind": "add",
+                "text": "      const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();",
+                "old_no": null,
+                "new_no": 273
+              },
+              {
+                "kind": "add",
+                "text": "      expect(await new Bun.Image(jpeg).metadata()).toEqual({ width, height, format: \"jpeg\" });",
+                "old_no": null,
+                "new_no": 274
+              },
+              {
+                "kind": "add",
+                "text": "      const decoded = await new Bun.Image(jpeg).png().bytes();",
+                "old_no": null,
+                "new_no": 275
+              },
+              {
+                "kind": "add",
+                "text": "      expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: \"png\" });",
+                "old_no": null,
+                "new_no": 276
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 277
+              },
+              {
+                "kind": "add",
+                "text": "  });",
+                "old_no": null,
+                "new_no": 278
+              },
+              {
+                "kind": "add",
+                "text": "});",
+                "old_no": null,
+                "new_no": 279
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

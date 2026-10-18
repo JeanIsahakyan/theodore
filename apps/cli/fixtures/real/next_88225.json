@@ -1,0 +1,1144 @@
+{
+  "pr": {
+    "title": "Turbopack: fix `source` field in CSS sourcemaps",
+    "body": "Closes #88294\r\n\r\n\r\nCurrently, CSS source maps in Turbopack always use index `0` for all source file references. This can lead to misleading mappings and makes debugging CSS generated from multiple sources more difficult.\r\n\r\n",
+    "commits": [
+      "Fix: css sourcemaps correct filename",
+      "move test to test/production"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": "test/production/scss-multi-source-sourcemap/pages/_app.js",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": "100644",
+        "flags": [],
+        "additions": 12,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "18a3d5e77844d7b4",
+            "path": "test/production/scss-multi-source-sourcemap/pages/_app.js",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 12,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import React from 'react'",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "import App from 'next/app'",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "import '../styles/global.scss'",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "class MyApp extends App {",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  render() {",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "    const { Component, pageProps } = this.props",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "    return <Component {...pageProps} />",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "export default MyApp",
+                "old_no": null,
+                "new_no": 12
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/production/scss-multi-source-sourcemap/pages/index.js",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": "100644",
+        "flags": [],
+        "additions": 8,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "ed0e01716f1faf16",
+            "path": "test/production/scss-multi-source-sourcemap/pages/index.js",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 8,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "export default function Home() {",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "  return (",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "    <>",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "      <div className=\"from-main\">main</div>",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "      <div className=\"from-partial\">partial</div>",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "    </>",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "  )",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 8
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/production/scss-multi-source-sourcemap/scss-multi-source-sourcemap.test.ts",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": "100644",
+        "flags": [],
+        "additions": 128,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "224a603a0531a7cf",
+            "path": "test/production/scss-multi-source-sourcemap/scss-multi-source-sourcemap.test.ts",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 128,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "/* eslint-env jest */",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "import { nextTestSetup } from 'e2e-utils'",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "describe('SCSS Multi-Source Sourcemap', () => {",
+                "old_no": null,
+                "new_no": 5
+              },
+              {
+                "kind": "add",
+                "text": "  const { next } = nextTestSetup({",
+                "old_no": null,
+                "new_no": 6
+              },
+              {
+                "kind": "add",
+                "text": "    files: __dirname,",
+                "old_no": null,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "    dependencies: { sass: '1.54.0' },",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "    nextConfig: {",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "      productionBrowserSourceMaps: true,",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "    },",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "  })",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "  it('emits a sourcemap whose mappings reference each combined source', async () => {",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "    const $ = await next.render$('/')",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "add",
+                "text": "    const cssSheet = $('link[rel=\"stylesheet\"]')",
+                "old_no": null,
+                "new_no": 17
+              },
+              {
+                "kind": "add",
+                "text": "    expect(cssSheet.length).toBe(1)",
+                "old_no": null,
+                "new_no": 18
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 19
+              },
+              {
+                "kind": "add",
+                "text": "    const stylesheetUrl = cssSheet.attr('href')",
+                "old_no": null,
+                "new_no": 20
+              },
+              {
+                "kind": "add",
+                "text": "    const cssContent = await next.fetch(stylesheetUrl).then((res) => res.text())",
+                "old_no": null,
+                "new_no": 21
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 22
+              },
+              {
+                "kind": "add",
+                "text": "    // Sanity-check both rules are emitted into a single bundle.",
+                "old_no": null,
+                "new_no": 23
+              },
+              {
+                "kind": "add",
+                "text": "    const cssContentWithoutSourceMap = cssContent",
+                "old_no": null,
+                "new_no": 24
+              },
+              {
+                "kind": "add",
+                "text": "      .replace(/\\/\\*.*?\\*\\//g, '')",
+                "old_no": null,
+                "new_no": 25
+              },
+              {
+                "kind": "add",
+                "text": "      .trim()",
+                "old_no": null,
+                "new_no": 26
+              },
+              {
+                "kind": "add",
+                "text": "    expect(cssContentWithoutSourceMap).toContain('.from-partial')",
+                "old_no": null,
+                "new_no": 27
+              },
+              {
+                "kind": "add",
+                "text": "    expect(cssContentWithoutSourceMap).toContain('.from-main')",
+                "old_no": null,
+                "new_no": 28
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 29
+              },
+              {
+                "kind": "add",
+                "text": "    // Contains a source map.",
+                "old_no": null,
+                "new_no": 30
+              },
+              {
+                "kind": "add",
+                "text": "    expect(cssContent).toMatch(/\\/\\*#\\s*sourceMappingURL=(.+\\.map)\\s*\\*\\//)",
+                "old_no": null,
+                "new_no": 31
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 32
+              },
+              {
+                "kind": "add",
+                "text": "    const sourceMapUrl = /\\/\\*#\\s*sourceMappingURL=(.+\\.map)\\s*\\*\\//.exec(",
+                "old_no": null,
+                "new_no": 33
+              },
+              {
+                "kind": "add",
+                "text": "      cssContent",
+                "old_no": null,
+                "new_no": 34
+              },
+              {
+                "kind": "add",
+                "text": "    )[1]",
+                "old_no": null,
+                "new_no": 35
+              },
+              {
+                "kind": "add",
+                "text": "    const actualSourceMapUrl = stylesheetUrl.replace(",
+                "old_no": null,
+                "new_no": 36
+              },
+              {
+                "kind": "add",
+                "text": "      /(?<=^|\\/)[^/?]+(?=$|\\?)/,",
+                "old_no": null,
+                "new_no": 37
+              },
+              {
+                "kind": "add",
+                "text": "      sourceMapUrl",
+                "old_no": null,
+                "new_no": 38
+              },
+              {
+                "kind": "add",
+                "text": "    )",
+                "old_no": null,
+                "new_no": 39
+              },
+              {
+                "kind": "add",
+                "text": "    const sourceMapContent = await next",
+                "old_no": null,
+                "new_no": 40
+              },
+              {
+                "kind": "add",
+                "text": "      .fetch(actualSourceMapUrl)",
+                "old_no": null,
+                "new_no": 41
+              },
+              {
+                "kind": "add",
+                "text": "      .then((res) => res.text())",
+                "old_no": null,
+                "new_no": 42
+              },
+              {
+                "kind": "add",
+                "text": "    const sourceMapContentParsed = JSON.parse(sourceMapContent)",
+                "old_no": null,
+                "new_no": 43
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 44
+              },
+              {
+                "kind": "add",
+                "text": "    // With multiple inputs combined via `@import`, both source files must",
+                "old_no": null,
+                "new_no": 45
+              },
+              {
+                "kind": "add",
+                "text": "    // be declared as sources and their content preserved.",
+                "old_no": null,
+                "new_no": 46
+              },
+              {
+                "kind": "add",
+                "text": "    expect(sourceMapContentParsed.sources).toEqual(",
+                "old_no": null,
+                "new_no": 47
+              },
+              {
+                "kind": "add",
+                "text": "      expect.arrayContaining([",
+                "old_no": null,
+                "new_no": 48
+              },
+              {
+                "kind": "add",
+                "text": "        expect.stringContaining('global.scss'),",
+                "old_no": null,
+                "new_no": 49
+              },
+              {
+                "kind": "add",
+                "text": "        expect.stringContaining('_partial.scss'),",
+                "old_no": null,
+                "new_no": 50
+              },
+              {
+                "kind": "add",
+                "text": "      ])",
+                "old_no": null,
+                "new_no": 51
+              },
+              {
+                "kind": "add",
+                "text": "    )",
+                "old_no": null,
+                "new_no": 52
+              },
+              {
+                "kind": "add",
+                "text": "    expect(sourceMapContentParsed.sourcesContent).toEqual(",
+                "old_no": null,
+                "new_no": 53
+              },
+              {
+                "kind": "add",
+                "text": "      expect.arrayContaining([",
+                "old_no": null,
+                "new_no": 54
+              },
+              {
+                "kind": "add",
+                "text": "        expect.stringContaining('.from-partial'),",
+                "old_no": null,
+                "new_no": 55
+              },
+              {
+                "kind": "add",
+                "text": "        expect.stringContaining('.from-main'),",
+                "old_no": null,
+                "new_no": 56
+              },
+              {
+                "kind": "add",
+                "text": "      ])",
+                "old_no": null,
+                "new_no": 57
+              },
+              {
+                "kind": "add",
+                "text": "    )",
+                "old_no": null,
+                "new_no": 58
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 59
+              },
+              {
+                "kind": "add",
+                "text": "    // Ensure it doesn't have a specific path in the snapshot.",
+                "old_no": null,
+                "new_no": 60
+              },
+              {
+                "kind": "add",
+                "text": "    delete sourceMapContentParsed.file",
+                "old_no": null,
+                "new_no": 61
+              },
+              {
+                "kind": "add",
+                "text": "    delete sourceMapContentParsed.sources",
+                "old_no": null,
+                "new_no": 62
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 63
+              },
+              {
+                "kind": "add",
+                "text": "    if (process.env.IS_TURBOPACK_TEST) {",
+                "old_no": null,
+                "new_no": 64
+              },
+              {
+                "kind": "add",
+                "text": "      expect(sourceMapContentParsed).toMatchInlineSnapshot(`",
+                "old_no": null,
+                "new_no": 65
+              },
+              {
+                "kind": "add",
+                "text": "       {",
+                "old_no": null,
+                "new_no": 66
+              },
+              {
+                "kind": "add",
+                "text": "         \"mappings\": \"AAAA,wBCEA\",",
+                "old_no": null,
+                "new_no": 67
+              },
+              {
+                "kind": "add",
+                "text": "         \"names\": [],",
+                "old_no": null,
+                "new_no": 68
+              },
+              {
+                "kind": "add",
+                "text": "         \"sourcesContent\": [",
+                "old_no": null,
+                "new_no": 69
+              },
+              {
+                "kind": "add",
+                "text": "           \".from-partial {",
+                "old_no": null,
+                "new_no": 70
+              },
+              {
+                "kind": "add",
+                "text": "         color: red;",
+                "old_no": null,
+                "new_no": 71
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 72
+              },
+              {
+                "kind": "add",
+                "text": "       \",",
+                "old_no": null,
+                "new_no": 73
+              },
+              {
+                "kind": "add",
+                "text": "           \"@import './partial';",
+                "old_no": null,
+                "new_no": 74
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 75
+              },
+              {
+                "kind": "add",
+                "text": "       .from-main {",
+                "old_no": null,
+                "new_no": 76
+              },
+              {
+                "kind": "add",
+                "text": "         color: blue;",
+                "old_no": null,
+                "new_no": 77
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 78
+              },
+              {
+                "kind": "add",
+                "text": "       \",",
+                "old_no": null,
+                "new_no": 79
+              },
+              {
+                "kind": "add",
+                "text": "         ],",
+                "old_no": null,
+                "new_no": 80
+              },
+              {
+                "kind": "add",
+                "text": "         \"version\": 3,",
+                "old_no": null,
+                "new_no": 81
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 82
+              },
+              {
+                "kind": "add",
+                "text": "      `)",
+                "old_no": null,
+                "new_no": 83
+              },
+              {
+                "kind": "add",
+                "text": "    } else if (process.env.NEXT_RSPACK) {",
+                "old_no": null,
+                "new_no": 84
+              },
+              {
+                "kind": "add",
+                "text": "      expect(sourceMapContentParsed).toMatchInlineSnapshot(`",
+                "old_no": null,
+                "new_no": 85
+              },
+              {
+                "kind": "add",
+                "text": "       {",
+                "old_no": null,
+                "new_no": 86
+              },
+              {
+                "kind": "add",
+                "text": "         \"mappings\": \"AAAA,cACE,SAAA,CCCF,WACE,UAAA\",",
+                "old_no": null,
+                "new_no": 87
+              },
+              {
+                "kind": "add",
+                "text": "         \"names\": [],",
+                "old_no": null,
+                "new_no": 88
+              },
+              {
+                "kind": "add",
+                "text": "         \"sourcesContent\": [",
+                "old_no": null,
+                "new_no": 89
+              },
+              {
+                "kind": "add",
+                "text": "           \".from-partial {",
+                "old_no": null,
+                "new_no": 90
+              },
+              {
+                "kind": "add",
+                "text": "         color: red;",
+                "old_no": null,
+                "new_no": 91
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 92
+              },
+              {
+                "kind": "add",
+                "text": "       \",",
+                "old_no": null,
+                "new_no": 93
+              },
+              {
+                "kind": "add",
+                "text": "           \"@import './partial';",
+                "old_no": null,
+                "new_no": 94
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 95
+              },
+              {
+                "kind": "add",
+                "text": "       .from-main {",
+                "old_no": null,
+                "new_no": 96
+              },
+              {
+                "kind": "add",
+                "text": "         color: blue;",
+                "old_no": null,
+                "new_no": 97
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 98
+              },
+              {
+                "kind": "add",
+                "text": "       \",",
+                "old_no": null,
+                "new_no": 99
+              },
+              {
+                "kind": "add",
+                "text": "         ],",
+                "old_no": null,
+                "new_no": 100
+              },
+              {
+                "kind": "add",
+                "text": "         \"version\": 3,",
+                "old_no": null,
+                "new_no": 101
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 102
+              },
+              {
+                "kind": "add",
+                "text": "      `)",
+                "old_no": null,
+                "new_no": 103
+              },
+              {
+                "kind": "add",
+                "text": "    } else {",
+                "old_no": null,
+                "new_no": 104
+              },
+              {
+                "kind": "add",
+                "text": "      expect(sourceMapContentParsed).toMatchInlineSnapshot(`",
+                "old_no": null,
+                "new_no": 105
+              },
+              {
+                "kind": "add",
+                "text": "       {",
+                "old_no": null,
+                "new_no": 106
+              },
+              {
+                "kind": "add",
+                "text": "         \"ignoreList\": [],",
+                "old_no": null,
+                "new_no": 107
+              },
+              {
+                "kind": "add",
+                "text": "         \"mappings\": \"AAAA,cACE,SAAA,CCCF,WACE,UAAA\",",
+                "old_no": null,
+                "new_no": 108
+              },
+              {
+                "kind": "add",
+                "text": "         \"names\": [],",
+                "old_no": null,
+                "new_no": 109
+              },
+              {
+                "kind": "add",
+                "text": "         \"sourceRoot\": \"\",",
+                "old_no": null,
+                "new_no": 110
+              },
+              {
+                "kind": "add",
+                "text": "         \"sourcesContent\": [",
+                "old_no": null,
+                "new_no": 111
+              },
+              {
+                "kind": "add",
+                "text": "           \".from-partial {",
+                "old_no": null,
+                "new_no": 112
+              },
+              {
+                "kind": "add",
+                "text": "         color: red;",
+                "old_no": null,
+                "new_no": 113
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 114
+              },
+              {
+                "kind": "add",
+                "text": "       \",",
+                "old_no": null,
+                "new_no": 115
+              },
+              {
+                "kind": "add",
+                "text": "           \"@import './partial';",
+                "old_no": null,
+                "new_no": 116
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 117
+              },
+              {
+                "kind": "add",
+                "text": "       .from-main {",
+                "old_no": null,
+                "new_no": 118
+              },
+              {
+                "kind": "add",
+                "text": "         color: blue;",
+                "old_no": null,
+                "new_no": 119
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 120
+              },
+              {
+                "kind": "add",
+                "text": "       \",",
+                "old_no": null,
+                "new_no": 121
+              },
+              {
+                "kind": "add",
+                "text": "         ],",
+                "old_no": null,
+                "new_no": 122
+              },
+              {
+                "kind": "add",
+                "text": "         \"version\": 3,",
+                "old_no": null,
+                "new_no": 123
+              },
+              {
+                "kind": "add",
+                "text": "       }",
+                "old_no": null,
+                "new_no": 124
+              },
+              {
+                "kind": "add",
+                "text": "      `)",
+                "old_no": null,
+                "new_no": 125
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 126
+              },
+              {
+                "kind": "add",
+                "text": "  })",
+                "old_no": null,
+                "new_no": 127
+              },
+              {
+                "kind": "add",
+                "text": "})",
+                "old_no": null,
+                "new_no": 128
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/production/scss-multi-source-sourcemap/styles/_partial.scss",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": "100644",
+        "flags": [],
+        "additions": 3,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "944e4f6d9e594a7e",
+            "path": "test/production/scss-multi-source-sourcemap/styles/_partial.scss",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 3,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": ".from-partial {",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "  color: red;",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 3
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "test/production/scss-multi-source-sourcemap/styles/global.scss",
+        "old_path": null,
+        "status": "added",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": "100644",
+        "flags": [],
+        "additions": 5,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "8a34a369029447ef",
+            "path": "test/production/scss-multi-source-sourcemap/styles/global.scss",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 5,
+            "header": "",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "@import './partial';",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": ".from-main {",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "add",
+                "text": "  color: blue;",
+                "old_no": null,
+                "new_no": 4
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 5
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "turbopack/crates/turbopack-css/src/process.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "7a590f0baa4b6981",
+            "path": "turbopack/crates/turbopack-css/src/process.rs",
+            "old_start": 780,
+            "old_lines": 7,
+            "new_start": 780,
+            "new_lines": 7,
+            "header": "fn generate_css_source_map(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            m.generated_column,",
+                "old_no": 780,
+                "new_no": 780
+              },
+              {
+                "kind": "ctx",
+                "text": "            m.original.map(|v| v.original_line).unwrap_or_default(),",
+                "old_no": 781,
+                "new_no": 781
+              },
+              {
+                "kind": "ctx",
+                "text": "            m.original.map(|v| v.original_column).unwrap_or_default(),",
+                "old_no": 782,
+                "new_no": 782
+              },
+              {
+                "kind": "del",
+                "text": "            Some(0),",
+                "old_no": 783,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "            m.original.map(|v| v.source).or(Some(0)),",
+                "old_no": null,
+                "new_no": 783
+              },
+              {
+                "kind": "ctx",
+                "text": "            None,",
+                "old_no": 784,
+                "new_no": 784
+              },
+              {
+                "kind": "ctx",
+                "text": "            false,",
+                "old_no": 785,
+                "new_no": 785
+              },
+              {
+                "kind": "ctx",
+                "text": "        );",
+                "old_no": 786,
+                "new_no": 786
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

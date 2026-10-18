@@ -1,0 +1,2763 @@
+{
+  "pr": {
+    "title": "feat: do not suggest arg-list in expected callable arg",
+    "body": "Heuristic: This only handles path-expr directly in the arg-list\n\nImplemented https://github.com/rust-lang/rust-analyzer/issues/8676#issuecomment-872796029,\ncovering the main cases of https://github.com/rust-lang/rust-analyzer/issues/3148\n\nExample\n---\n```rust\nfn foo(x: Option<&str>) {\n    x.map(ToOwned::to$0)\n}\n```\n\n**Before this PR**\n\n```rust\nfn foo(x: Option<&str>) {\n    x.map(ToOwned::to_owned(${1:&self})$0)\n}\n```\n\n**After this PR**\n\n```rust\nfn foo(x: Option<&str>) {\n    x.map(ToOwned::to_owned)\n}\n```\n",
+    "commits": [
+      "feat: do not suggest arg-list in expected callable arg",
+      "Use n_params and ret-type instead impls_fnonce",
+      "Make ExpectedInfo to a struct"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": "crates/hir/src/lib.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "9f59718d4d43b86d",
+            "path": "crates/hir/src/lib.rs",
+            "old_start": 5858,
+            "old_lines": 7,
+            "new_start": 5858,
+            "new_lines": 7,
+            "header": "impl<'db> Callable<'db> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 5858,
+                "new_no": 5858
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 5859,
+                "new_no": 5859
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 5860,
+                "new_no": 5860
+              },
+              {
+                "kind": "del",
+                "text": "    fn as_function(&self) -> Option<Function> {",
+                "old_no": 5861,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    pub fn as_function(&self) -> Option<Function> {",
+                "old_no": null,
+                "new_no": 5861
+              },
+              {
+                "kind": "ctx",
+                "text": "        match self.callee {",
+                "old_no": 5862,
+                "new_no": 5862
+              },
+              {
+                "kind": "ctx",
+                "text": "            Callee::Def(CallableDefId::FunctionId(it)) => Some(it.into()),",
+                "old_no": 5863,
+                "new_no": 5863
+              },
+              {
+                "kind": "ctx",
+                "text": "            Callee::BuiltinDeriveImplMethod { method, impl_ } => {",
+                "old_no": 5864,
+                "new_no": 5864
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ide-completion/src/context.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 10,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "2f83274467662217",
+            "path": "crates/ide-completion/src/context.rs",
+            "old_start": 492,
+            "old_lines": 6,
+            "new_start": 492,
+            "new_lines": 7,
+            "header": "pub(crate) struct CompletionContext<'a, 'db> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    pub(crate) expected_name: Option<NameOrNameRef>,",
+                "old_no": 492,
+                "new_no": 492
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// The expected type of what we are completing.",
+                "old_no": 493,
+                "new_no": 493
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub(crate) expected_type: Option<Type<'db>>,",
+                "old_no": 494,
+                "new_no": 494
+              },
+              {
+                "kind": "add",
+                "text": "    pub(crate) expected_func: Option<hir::Callable<'db>>,",
+                "old_no": null,
+                "new_no": 495
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 495,
+                "new_no": 496
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub(crate) qualifier_ctx: QualifierCtx,",
+                "old_no": 496,
+                "new_no": 497
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 497,
+                "new_no": 498
+              }
+            ]
+          },
+          {
+            "id": "c5b5b89d0f93ac59",
+            "path": "crates/ide-completion/src/context.rs",
+            "old_start": 520,
+            "old_lines": 6,
+            "new_start": 521,
+            "new_lines": 13,
+            "header": "pub(crate) struct CompletionContext<'a, 'db> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    pub(crate) complete_semicolon: CompleteSemicolon,",
+                "old_no": 520,
+                "new_no": 521
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 521,
+                "new_no": 522
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 522,
+                "new_no": 523
+              },
+              {
+                "kind": "add",
+                "text": "#[derive(Debug, Default)]",
+                "old_no": null,
+                "new_no": 524
+              },
+              {
+                "kind": "add",
+                "text": "pub(crate) struct ExpectedInfo<'db> {",
+                "old_no": null,
+                "new_no": 525
+              },
+              {
+                "kind": "add",
+                "text": "    expected_type: Option<Type<'db>>,",
+                "old_no": null,
+                "new_no": 526
+              },
+              {
+                "kind": "add",
+                "text": "    expected_name: Option<NameOrNameRef>,",
+                "old_no": null,
+                "new_no": 527
+              },
+              {
+                "kind": "add",
+                "text": "    expected_func: Option<hir::Callable<'db>>,",
+                "old_no": null,
+                "new_no": 528
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 529
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 530
+              },
+              {
+                "kind": "ctx",
+                "text": "#[derive(Debug)]",
+                "old_no": 523,
+                "new_no": 531
+              },
+              {
+                "kind": "ctx",
+                "text": "pub(crate) enum CompleteSemicolon {",
+                "old_no": 524,
+                "new_no": 532
+              },
+              {
+                "kind": "ctx",
+                "text": "    DoNotComplete,",
+                "old_no": 525,
+                "new_no": 533
+              }
+            ]
+          },
+          {
+            "id": "bde32bd1e2b08b69",
+            "path": "crates/ide-completion/src/context.rs",
+            "old_start": 794,
+            "old_lines": 7,
+            "new_start": 802,
+            "new_lines": 7,
+            "header": "impl<'a, 'db> CompletionContext<'a, 'db> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 794,
+                "new_no": 802
+              },
+              {
+                "kind": "ctx",
+                "text": "        let AnalysisResult {",
+                "old_no": 795,
+                "new_no": 803
+              },
+              {
+                "kind": "ctx",
+                "text": "            analysis,",
+                "old_no": 796,
+                "new_no": 804
+              },
+              {
+                "kind": "del",
+                "text": "            expected: (expected_type, expected_name),",
+                "old_no": 797,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "            expected: ExpectedInfo { expected_type, expected_name, expected_func },",
+                "old_no": null,
+                "new_no": 805
+              },
+              {
+                "kind": "ctx",
+                "text": "            qualifier_ctx,",
+                "old_no": 798,
+                "new_no": 806
+              },
+              {
+                "kind": "ctx",
+                "text": "            token,",
+                "old_no": 799,
+                "new_no": 807
+              },
+              {
+                "kind": "ctx",
+                "text": "            original_offset,",
+                "old_no": 800,
+                "new_no": 808
+              }
+            ]
+          },
+          {
+            "id": "8a5bbd3e807a7cb2",
+            "path": "crates/ide-completion/src/context.rs",
+            "old_start": 935,
+            "old_lines": 6,
+            "new_start": 943,
+            "new_lines": 7,
+            "header": "impl<'a, 'db> CompletionContext<'a, 'db> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            edition,",
+                "old_no": 935,
+                "new_no": 943
+              },
+              {
+                "kind": "ctx",
+                "text": "            expected_name,",
+                "old_no": 936,
+                "new_no": 944
+              },
+              {
+                "kind": "ctx",
+                "text": "            expected_type,",
+                "old_no": 937,
+                "new_no": 945
+              },
+              {
+                "kind": "add",
+                "text": "            expected_func,",
+                "old_no": null,
+                "new_no": 946
+              },
+              {
+                "kind": "ctx",
+                "text": "            qualifier_ctx,",
+                "old_no": 938,
+                "new_no": 947
+              },
+              {
+                "kind": "ctx",
+                "text": "            locals,",
+                "old_no": 939,
+                "new_no": 948
+              },
+              {
+                "kind": "ctx",
+                "text": "            depth_from_crate_root,",
+                "old_no": 940,
+                "new_no": 949
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ide-completion/src/context/analysis.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 25,
+        "deletions": 11,
+        "hunks": [
+          {
+            "id": "271fcb6f3adb5b1d",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 25,
+            "old_lines": 9,
+            "new_start": 25,
+            "new_lines": 9,
+            "header": "use crate::{",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    completions::postfix::{is_in_condition, is_in_value},",
+                "old_no": 25,
+                "new_no": 25
+              },
+              {
+                "kind": "ctx",
+                "text": "    context::{",
+                "old_no": 26,
+                "new_no": 26
+              },
+              {
+                "kind": "ctx",
+                "text": "        AttrCtx, BreakableKind, COMPLETION_MARKER, CompletionAnalysis, DotAccess, DotAccessExprCtx,",
+                "old_no": 27,
+                "new_no": 27
+              },
+              {
+                "kind": "del",
+                "text": "        DotAccessKind, ItemListKind, LifetimeContext, LifetimeKind, NameContext, NameKind,",
+                "old_no": 28,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        NameRefContext, NameRefKind, ParamContext, ParamKind, PathCompletionCtx, PathExprCtx,",
+                "old_no": 29,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        PathKind, PatternContext, PatternRefutability, Qualified, QualifierCtx,",
+                "old_no": 30,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        DotAccessKind, ExpectedInfo, ItemListKind, LifetimeContext, LifetimeKind, NameContext,",
+                "old_no": null,
+                "new_no": 28
+              },
+              {
+                "kind": "add",
+                "text": "        NameKind, NameRefContext, NameRefKind, ParamContext, ParamKind, PathCompletionCtx,",
+                "old_no": null,
+                "new_no": 29
+              },
+              {
+                "kind": "add",
+                "text": "        PathExprCtx, PathKind, PatternContext, PatternRefutability, Qualified, QualifierCtx,",
+                "old_no": null,
+                "new_no": 30
+              },
+              {
+                "kind": "ctx",
+                "text": "        TypeAscriptionTarget, TypeLocation,",
+                "old_no": 31,
+                "new_no": 31
+              },
+              {
+                "kind": "ctx",
+                "text": "    },",
+                "old_no": 32,
+                "new_no": 32
+              },
+              {
+                "kind": "ctx",
+                "text": "};",
+                "old_no": 33,
+                "new_no": 33
+              }
+            ]
+          },
+          {
+            "id": "393a80a3e2f76437",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 46,
+            "old_lines": 7,
+            "new_start": 46,
+            "new_lines": 7,
+            "header": "struct ExpansionResult {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 46,
+                "new_no": 46
+              },
+              {
+                "kind": "ctx",
+                "text": "pub(super) struct AnalysisResult<'db> {",
+                "old_no": 47,
+                "new_no": 47
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub(super) analysis: CompletionAnalysis<'db>,",
+                "old_no": 48,
+                "new_no": 48
+              },
+              {
+                "kind": "del",
+                "text": "    pub(super) expected: (Option<Type<'db>>, Option<ast::NameOrNameRef>),",
+                "old_no": 49,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    pub(super) expected: ExpectedInfo<'db>,",
+                "old_no": null,
+                "new_no": 49
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub(super) qualifier_ctx: QualifierCtx,",
+                "old_no": 50,
+                "new_no": 50
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// the original token of the expanded file",
+                "old_no": 51,
+                "new_no": 51
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub(super) token: SyntaxToken,",
+                "old_no": 52,
+                "new_no": 52
+              }
+            ]
+          },
+          {
+            "id": "60ce7f78b77908cb",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 444,
+            "old_lines": 8,
+            "new_start": 444,
+            "new_lines": 7,
+            "header": "fn analyze<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    expansion_result: ExpansionResult,",
+                "old_no": 444,
+                "new_no": 444
+              },
+              {
+                "kind": "ctx",
+                "text": "    original_token: &SyntaxToken,",
+                "old_no": 445,
+                "new_no": 445
+              },
+              {
+                "kind": "ctx",
+                "text": "    self_token: &SyntaxToken,",
+                "old_no": 446,
+                "new_no": 446
+              },
+              {
+                "kind": "del",
+                "text": ") -> Option<(CompletionAnalysis<'db>, (Option<Type<'db>>, Option<ast::NameOrNameRef>), QualifierCtx)>",
+                "old_no": 447,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "{",
+                "old_no": 448,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": ") -> Option<(CompletionAnalysis<'db>, ExpectedInfo<'db>, QualifierCtx)> {",
+                "old_no": null,
+                "new_no": 447
+              },
+              {
+                "kind": "ctx",
+                "text": "    let _p = tracing::info_span!(\"CompletionContext::analyze\").entered();",
+                "old_no": 449,
+                "new_no": 448
+              },
+              {
+                "kind": "ctx",
+                "text": "    let ExpansionResult {",
+                "old_no": 450,
+                "new_no": 449
+              },
+              {
+                "kind": "ctx",
+                "text": "        original_file,",
+                "old_no": 451,
+                "new_no": 450
+              }
+            ]
+          },
+          {
+            "id": "aadb743618496e37",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 487,
+            "old_lines": 7,
+            "new_start": 486,
+            "new_lines": 7,
+            "header": "fn analyze<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            }",
+                "old_no": 487,
+                "new_no": 486
+              },
+              {
+                "kind": "ctx",
+                "text": "            return Some((",
+                "old_no": 488,
+                "new_no": 487
+              },
+              {
+                "kind": "ctx",
+                "text": "                CompletionAnalysis::NameRef(nameref_ctx),",
+                "old_no": 489,
+                "new_no": 488
+              },
+              {
+                "kind": "del",
+                "text": "                (None, None),",
+                "old_no": 490,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "                ExpectedInfo::default(),",
+                "old_no": null,
+                "new_no": 489
+              },
+              {
+                "kind": "ctx",
+                "text": "                QualifierCtx::default(),",
+                "old_no": 491,
+                "new_no": 490
+              },
+              {
+                "kind": "ctx",
+                "text": "            ));",
+                "old_no": 492,
+                "new_no": 491
+              },
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 493,
+                "new_no": 492
+              }
+            ]
+          },
+          {
+            "id": "0040c3202406c0a9",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 543,
+            "old_lines": 7,
+            "new_start": 542,
+            "new_lines": 7,
+            "header": "fn analyze<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "                return None;",
+                "old_no": 543,
+                "new_no": 542
+              },
+              {
+                "kind": "ctx",
+                "text": "            }",
+                "old_no": 544,
+                "new_no": 543
+              },
+              {
+                "kind": "ctx",
+                "text": "        };",
+                "old_no": 545,
+                "new_no": 544
+              },
+              {
+                "kind": "del",
+                "text": "        return Some((analysis, (None, None), QualifierCtx::default()));",
+                "old_no": 546,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        return Some((analysis, ExpectedInfo::default(), QualifierCtx::default()));",
+                "old_no": null,
+                "new_no": 545
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 547,
+                "new_no": 546
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 548,
+                "new_no": 547
+              },
+              {
+                "kind": "ctx",
+                "text": "    let expected = expected_type_and_name(sema, self_token, &name_like);",
+                "old_no": 549,
+                "new_no": 548
+              }
+            ]
+          },
+          {
+            "id": "4ec4f819590515d9",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 592,
+            "old_lines": 11,
+            "new_start": 591,
+            "new_lines": 11,
+            "header": "fn expected_type_and_name<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    sema: &Semantics<'db, RootDatabase>,",
+                "old_no": 592,
+                "new_no": 591
+              },
+              {
+                "kind": "ctx",
+                "text": "    self_token: &SyntaxToken,",
+                "old_no": 593,
+                "new_no": 592
+              },
+              {
+                "kind": "ctx",
+                "text": "    name_like: &ast::NameLike,",
+                "old_no": 594,
+                "new_no": 593
+              },
+              {
+                "kind": "del",
+                "text": ") -> (Option<Type<'db>>, Option<NameOrNameRef>) {",
+                "old_no": 595,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": ") -> ExpectedInfo<'db> {",
+                "old_no": null,
+                "new_no": 594
+              },
+              {
+                "kind": "ctx",
+                "text": "    let token = prev_special_biased_token_at_trivia(self_token.clone());",
+                "old_no": 596,
+                "new_no": 595
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut node = match token.parent() {",
+                "old_no": 597,
+                "new_no": 596
+              },
+              {
+                "kind": "ctx",
+                "text": "        Some(it) => it,",
+                "old_no": 598,
+                "new_no": 597
+              },
+              {
+                "kind": "del",
+                "text": "        None => return (None, None),",
+                "old_no": 599,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        None => return ExpectedInfo::default(),",
+                "old_no": null,
+                "new_no": 598
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 600,
+                "new_no": 599
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 601,
+                "new_no": 600
+              },
+              {
+                "kind": "ctx",
+                "text": "    let strip_refs = |mut ty: Type<'db>| match name_like {",
+                "old_no": 602,
+                "new_no": 601
+              }
+            ]
+          },
+          {
+            "id": "f5db1290a2b95bed",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 651,
+            "old_lines": 6,
+            "new_start": 650,
+            "new_lines": 7,
+            "header": "fn expected_type_and_name<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 651,
+                "new_no": 650
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 652,
+                "new_no": 651
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut generic_def = None;",
+                "old_no": 653,
+                "new_no": 652
+              },
+              {
+                "kind": "add",
+                "text": "    let mut original_ty = None;",
+                "old_no": null,
+                "new_no": 653
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut rebase_ty = {",
+                "old_no": 654,
+                "new_no": 654
+              },
+              {
+                "kind": "ctx",
+                "text": "        let node = node.clone();",
+                "old_no": 655,
+                "new_no": 655
+              },
+              {
+                "kind": "ctx",
+                "text": "        move |ty: hir::Type<'db>| {",
+                "old_no": 656,
+                "new_no": 656
+              }
+            ]
+          },
+          {
+            "id": "311b71a2a5465739",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 711,
+            "old_lines": 6,
+            "new_start": 711,
+            "new_lines": 7,
+            "header": "fn expected_type_and_name<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "                        token.clone(),",
+                "old_no": 711,
+                "new_no": 711
+              },
+              {
+                "kind": "ctx",
+                "text": "                    ).map(|ap| {",
+                "old_no": 712,
+                "new_no": 712
+              },
+              {
+                "kind": "ctx",
+                "text": "                        let name = ap.ident().map(NameOrNameRef::Name);",
+                "old_no": 713,
+                "new_no": 713
+              },
+              {
+                "kind": "add",
+                "text": "                        original_ty.get_or_insert(ap.original.map(|it| it.ty().clone()));",
+                "old_no": null,
+                "new_no": 714
+              },
+              {
+                "kind": "ctx",
+                "text": "                        (Some(ap.ty), name)",
+                "old_no": 714,
+                "new_no": 715
+              },
+              {
+                "kind": "ctx",
+                "text": "                    })",
+                "old_no": 715,
+                "new_no": 716
+              },
+              {
+                "kind": "ctx",
+                "text": "                    .unwrap_or((None, None))",
+                "old_no": 716,
+                "new_no": 717
+              }
+            ]
+          },
+          {
+            "id": "e5d388a73c11a95d",
+            "path": "crates/ide-completion/src/context/analysis.rs",
+            "old_start": 878,
+            "old_lines": 7,
+            "new_start": 879,
+            "new_lines": 20,
+            "header": "fn expected_type_and_name<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            }",
+                "old_no": 878,
+                "new_no": 879
+              },
+              {
+                "kind": "ctx",
+                "text": "        };",
+                "old_no": 879,
+                "new_no": 880
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 880,
+                "new_no": 881
+              },
+              {
+                "kind": "del",
+                "text": "    (ty.map(strip_refs), name)",
+                "old_no": 881,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    // FIXME: Heuristic hack for PathExpr in ArgList",
+                "old_no": null,
+                "new_no": 882
+              },
+              {
+                "kind": "add",
+                "text": "    let expected_func = original_ty.flatten().and_then(|ty| {",
+                "old_no": null,
+                "new_no": 883
+              },
+              {
+                "kind": "add",
+                "text": "        let is_direct_arg = token",
+                "old_no": null,
+                "new_no": 884
+              },
+              {
+                "kind": "add",
+                "text": "            .parent()",
+                "old_no": null,
+                "new_no": 885
+              },
+              {
+                "kind": "add",
+                "text": "            .filter(|it| ast::NameLike::can_cast(it.kind()))",
+                "old_no": null,
+                "new_no": 886
+              },
+              {
+                "kind": "add",
+                "text": "            .into_iter()",
+                "old_no": null,
+                "new_no": 887
+              },
+              {
+                "kind": "add",
+                "text": "            .flat_map(|it| it.ancestors().skip(1))",
+                "old_no": null,
+                "new_no": 888
+              },
+              {
+                "kind": "add",
+                "text": "            .find(|it| {",
+                "old_no": null,
+                "new_no": 889
+              },
+              {
+                "kind": "add",
+                "text": "                !Either::<Either<ast::PathSegment, ast::Path>, ast::PathExpr>::can_cast(it.kind())",
+                "old_no": null,
+                "new_no": 890
+              },
+              {
+                "kind": "add",
+                "text": "            })",
+                "old_no": null,
+                "new_no": 891
+              },
+              {
+                "kind": "add",
+                "text": "            == Some(node);",
+                "old_no": null,
+                "new_no": 892
+              },
+              {
+                "kind": "add",
+                "text": "        is_direct_arg.then_some(()).and_then(|()| ty.as_callable(sema.db))",
+                "old_no": null,
+                "new_no": 893
+              },
+              {
+                "kind": "add",
+                "text": "    });",
+                "old_no": null,
+                "new_no": 894
+              },
+              {
+                "kind": "add",
+                "text": "    ExpectedInfo { expected_type: ty.map(strip_refs), expected_name: name, expected_func }",
+                "old_no": null,
+                "new_no": 895
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 882,
+                "new_no": 896
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 883,
+                "new_no": 897
+              },
+              {
+                "kind": "ctx",
+                "text": "fn classify_lifetime(",
+                "old_no": 884,
+                "new_no": 898
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ide-completion/src/render.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 209,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "3600fdceff60ee06",
+            "path": "crates/ide-completion/src/render.rs",
+            "old_start": 2496,
+            "old_lines": 6,
+            "new_start": 2496,
+            "new_lines": 215,
+            "header": "fn main() -> RawIdentTable {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        );",
+                "old_no": 2496,
+                "new_no": 2496
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 2497,
+                "new_no": 2497
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 2498,
+                "new_no": 2498
+              },
+              {
+                "kind": "add",
+                "text": "    #[test]",
+                "old_no": null,
+                "new_no": 2499
+              },
+              {
+                "kind": "add",
+                "text": "    fn no_call_parens_if_param_with_fn_bounds() {",
+                "old_no": null,
+                "new_no": 2500
+              },
+              {
+                "kind": "add",
+                "text": "        cov_mark::check!(no_call_parens_if_ty_with_fn_bounds);",
+                "old_no": null,
+                "new_no": 2501
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2502
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2503
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2504
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2505
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2506
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2507
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(f$0)",
+                "old_no": null,
+                "new_no": 2508
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2509
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2510
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2511
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2512
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2513
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(foo)",
+                "old_no": null,
+                "new_no": 2514
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2515
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2516
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2517
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2518
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2519
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2520
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2521
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<F: FnOnce(u8, u8)>(f: F) {}",
+                "old_no": null,
+                "new_no": 2522
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2523
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(f$0)",
+                "old_no": null,
+                "new_no": 2524
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2525
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2526
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2527
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<F: FnOnce(u8, u8)>(f: F) {}",
+                "old_no": null,
+                "new_no": 2528
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2529
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(foo)",
+                "old_no": null,
+                "new_no": 2530
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2531
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2532
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2533
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2534
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2535
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2536
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2537
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<F>(f: F) where F: FnOnce(u8, u8) {}",
+                "old_no": null,
+                "new_no": 2538
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2539
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(f$0)",
+                "old_no": null,
+                "new_no": 2540
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2541
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2542
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2543
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<F>(f: F) where F: FnOnce(u8, u8) {}",
+                "old_no": null,
+                "new_no": 2544
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2545
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(foo)",
+                "old_no": null,
+                "new_no": 2546
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2547
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2548
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2549
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2550
+              },
+              {
+                "kind": "add",
+                "text": "            \"unmap\",",
+                "old_no": null,
+                "new_no": 2551
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2552
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2553
+              },
+              {
+                "kind": "add",
+                "text": "trait Trait {",
+                "old_no": null,
+                "new_no": 2554
+              },
+              {
+                "kind": "add",
+                "text": "    fn unmap(self) -> i32 { 0 }",
+                "old_no": null,
+                "new_no": 2555
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2556
+              },
+              {
+                "kind": "add",
+                "text": "mod module {",
+                "old_no": null,
+                "new_no": 2557
+              },
+              {
+                "kind": "add",
+                "text": "    pub struct Ty;",
+                "old_no": null,
+                "new_no": 2558
+              },
+              {
+                "kind": "add",
+                "text": "    impl super::Trait for Ty {}",
+                "old_no": null,
+                "new_no": 2559
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2560
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<T>(f: impl FnOnce(T) -> i32) {}",
+                "old_no": null,
+                "new_no": 2561
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2562
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(module::Ty::u$0)",
+                "old_no": null,
+                "new_no": 2563
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2564
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2565
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2566
+              },
+              {
+                "kind": "add",
+                "text": "trait Trait {",
+                "old_no": null,
+                "new_no": 2567
+              },
+              {
+                "kind": "add",
+                "text": "    fn unmap(self) -> i32 { 0 }",
+                "old_no": null,
+                "new_no": 2568
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2569
+              },
+              {
+                "kind": "add",
+                "text": "mod module {",
+                "old_no": null,
+                "new_no": 2570
+              },
+              {
+                "kind": "add",
+                "text": "    pub struct Ty;",
+                "old_no": null,
+                "new_no": 2571
+              },
+              {
+                "kind": "add",
+                "text": "    impl super::Trait for Ty {}",
+                "old_no": null,
+                "new_no": 2572
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2573
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<T>(f: impl FnOnce(T) -> i32) {}",
+                "old_no": null,
+                "new_no": 2574
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2575
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(module::Ty::unmap)",
+                "old_no": null,
+                "new_no": 2576
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2577
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2578
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2579
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2580
+              },
+              {
+                "kind": "add",
+                "text": "            \"neg\",",
+                "old_no": null,
+                "new_no": 2581
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2582
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: iterator, iterators, unary_ops, builtin_impls",
+                "old_no": null,
+                "new_no": 2583
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(iter: impl Iterator<Item = u32>) {",
+                "old_no": null,
+                "new_no": 2584
+              },
+              {
+                "kind": "add",
+                "text": "    iter.map(core::ops::Neg::n$0)",
+                "old_no": null,
+                "new_no": 2585
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2586
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2587
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2588
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(iter: impl Iterator<Item = u32>) {",
+                "old_no": null,
+                "new_no": 2589
+              },
+              {
+                "kind": "add",
+                "text": "    iter.map(core::ops::Neg::neg)",
+                "old_no": null,
+                "new_no": 2590
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2591
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2592
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2593
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 2594
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2595
+              },
+              {
+                "kind": "add",
+                "text": "    #[test]",
+                "old_no": null,
+                "new_no": 2596
+              },
+              {
+                "kind": "add",
+                "text": "    fn call_parens_in_non_direct_expr() {",
+                "old_no": null,
+                "new_no": 2597
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2598
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2599
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2600
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2601
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2602
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2603
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(&f$0)",
+                "old_no": null,
+                "new_no": 2604
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2605
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2606
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2607
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2608
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2609
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(&foo(${1:a}, ${2:b})$0)",
+                "old_no": null,
+                "new_no": 2610
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2611
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2612
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2613
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2614
+              },
+              {
+                "kind": "add",
+                "text": "            \"method\",",
+                "old_no": null,
+                "new_no": 2615
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2616
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2617
+              },
+              {
+                "kind": "add",
+                "text": "struct Foo;",
+                "old_no": null,
+                "new_no": 2618
+              },
+              {
+                "kind": "add",
+                "text": "impl Foo { fn method(&self, a: u8, b: u8) {} }",
+                "old_no": null,
+                "new_no": 2619
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2620
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2621
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(Foo.m$0)",
+                "old_no": null,
+                "new_no": 2622
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2623
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2624
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2625
+              },
+              {
+                "kind": "add",
+                "text": "struct Foo;",
+                "old_no": null,
+                "new_no": 2626
+              },
+              {
+                "kind": "add",
+                "text": "impl Foo { fn method(&self, a: u8, b: u8) {} }",
+                "old_no": null,
+                "new_no": 2627
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2628
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2629
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(Foo.method(${1:a}, ${2:b})$0)",
+                "old_no": null,
+                "new_no": 2630
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2631
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2632
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2633
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2634
+              },
+              {
+                "kind": "add",
+                "text": "            \"method\",",
+                "old_no": null,
+                "new_no": 2635
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2636
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2637
+              },
+              {
+                "kind": "add",
+                "text": "struct Foo;",
+                "old_no": null,
+                "new_no": 2638
+              },
+              {
+                "kind": "add",
+                "text": "impl Foo { fn method(&self, a: u8, b: u8) {} }",
+                "old_no": null,
+                "new_no": 2639
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2640
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2641
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(Foo.$0)",
+                "old_no": null,
+                "new_no": 2642
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2643
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2644
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2645
+              },
+              {
+                "kind": "add",
+                "text": "struct Foo;",
+                "old_no": null,
+                "new_no": 2646
+              },
+              {
+                "kind": "add",
+                "text": "impl Foo { fn method(&self, a: u8, b: u8) {} }",
+                "old_no": null,
+                "new_no": 2647
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2648
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) {",
+                "old_no": null,
+                "new_no": 2649
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(Foo.method(${1:a}, ${2:b})$0)",
+                "old_no": null,
+                "new_no": 2650
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2651
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2652
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2653
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 2654
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2655
+              },
+              {
+                "kind": "add",
+                "text": "    #[test]",
+                "old_no": null,
+                "new_no": 2656
+              },
+              {
+                "kind": "add",
+                "text": "    fn call_parens_in_bad_case() {",
+                "old_no": null,
+                "new_no": 2657
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2658
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2659
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2660
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2661
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2662
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8) {",
+                "old_no": null,
+                "new_no": 2663
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(f$0);",
+                "old_no": null,
+                "new_no": 2664
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2665
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2666
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2667
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8)) {}",
+                "old_no": null,
+                "new_no": 2668
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8) {",
+                "old_no": null,
+                "new_no": 2669
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(foo(${1:a})$0);",
+                "old_no": null,
+                "new_no": 2670
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2671
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2672
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2673
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2674
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2675
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2676
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2677
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<T>(f: impl FnOnce(u8, u8) -> T) {}",
+                "old_no": null,
+                "new_no": 2678
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) -> impl FnOnce(u8, u8) {",
+                "old_no": null,
+                "new_no": 2679
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(f$0);",
+                "old_no": null,
+                "new_no": 2680
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2681
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2682
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2683
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn<T>(f: impl FnOnce(u8, u8) -> T) {}",
+                "old_no": null,
+                "new_no": 2684
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) -> impl FnOnce(u8, u8) {",
+                "old_no": null,
+                "new_no": 2685
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(foo(${1:a}, ${2:b})$0);",
+                "old_no": null,
+                "new_no": 2686
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2687
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2688
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2689
+              },
+              {
+                "kind": "add",
+                "text": "        check_edit(",
+                "old_no": null,
+                "new_no": 2690
+              },
+              {
+                "kind": "add",
+                "text": "            \"foo\",",
+                "old_no": null,
+                "new_no": 2691
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2692
+              },
+              {
+                "kind": "add",
+                "text": "//- minicore: fn",
+                "old_no": null,
+                "new_no": 2693
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8) -> u8) {}",
+                "old_no": null,
+                "new_no": 2694
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) -> u16 {",
+                "old_no": null,
+                "new_no": 2695
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(f$0);",
+                "old_no": null,
+                "new_no": 2696
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2697
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2698
+              },
+              {
+                "kind": "add",
+                "text": "            r#\"",
+                "old_no": null,
+                "new_no": 2699
+              },
+              {
+                "kind": "add",
+                "text": "fn needs_fn(f: impl FnOnce(u8, u8) -> u8) {}",
+                "old_no": null,
+                "new_no": 2700
+              },
+              {
+                "kind": "add",
+                "text": "fn foo(a: u8, b: u8) -> u16 {",
+                "old_no": null,
+                "new_no": 2701
+              },
+              {
+                "kind": "add",
+                "text": "    needs_fn(foo(${1:a}, ${2:b})$0);",
+                "old_no": null,
+                "new_no": 2702
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 2703
+              },
+              {
+                "kind": "add",
+                "text": "\"#,",
+                "old_no": null,
+                "new_no": 2704
+              },
+              {
+                "kind": "add",
+                "text": "        );",
+                "old_no": null,
+                "new_no": 2705
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 2706
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 2707
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[test]",
+                "old_no": 2499,
+                "new_no": 2708
+              },
+              {
+                "kind": "ctx",
+                "text": "    fn no_parens_in_use_item() {",
+                "old_no": 2500,
+                "new_no": 2709
+              },
+              {
+                "kind": "ctx",
+                "text": "        check_edit(",
+                "old_no": 2501,
+                "new_no": 2710
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ide-completion/src/render/function.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 15,
+        "deletions": 3,
+        "hunks": [
+          {
+            "id": "1e96e96c5c0789f9",
+            "path": "crates/ide-completion/src/render/function.rs",
+            "old_start": 101,
+            "old_lines": 9,
+            "new_start": 101,
+            "new_lines": 9,
+            "header": "fn render(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 101,
+                "new_no": 101
+              },
+              {
+                "kind": "ctx",
+                "text": "        _ => (false, false, None),",
+                "old_no": 102,
+                "new_no": 102
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 103,
+                "new_no": 103
+              },
+              {
+                "kind": "del",
+                "text": "    let complete_call_parens = cap",
+                "old_no": 104,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        .filter(|_| !has_call_parens)",
+                "old_no": 105,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        .and_then(|cap| Some((cap, params(ctx.completion, func, &func_kind, has_dot_receiver)?)));",
+                "old_no": 106,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let complete_call_parens = cap.filter(|_| !has_call_parens).and_then(|cap| {",
+                "old_no": null,
+                "new_no": 104
+              },
+              {
+                "kind": "add",
+                "text": "        Some((cap, params(ctx.completion, func, &func_kind, has_dot_receiver, &ret_type)?))",
+                "old_no": null,
+                "new_no": 105
+              },
+              {
+                "kind": "add",
+                "text": "    });",
+                "old_no": null,
+                "new_no": 106
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 107,
+                "new_no": 107
+              },
+              {
+                "kind": "ctx",
+                "text": "    let function = assoc_item",
+                "old_no": 108,
+                "new_no": 108
+              },
+              {
+                "kind": "ctx",
+                "text": "        .and_then(|assoc_item| assoc_item.implementing_ty(db))",
+                "old_no": 109,
+                "new_no": 109
+              }
+            ]
+          },
+          {
+            "id": "fcd9e906aa8331aa",
+            "path": "crates/ide-completion/src/render/function.rs",
+            "old_start": 376,
+            "old_lines": 6,
+            "new_start": 376,
+            "new_lines": 7,
+            "header": "fn params<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    func: hir::Function,",
+                "old_no": 376,
+                "new_no": 376
+              },
+              {
+                "kind": "ctx",
+                "text": "    func_kind: &FuncKind<'_>,",
+                "old_no": 377,
+                "new_no": 377
+              },
+              {
+                "kind": "ctx",
+                "text": "    has_dot_receiver: bool,",
+                "old_no": 378,
+                "new_no": 378
+              },
+              {
+                "kind": "add",
+                "text": "    ret_type: &hir::Type<'_>,",
+                "old_no": null,
+                "new_no": 379
+              },
+              {
+                "kind": "ctx",
+                "text": ") -> Option<(Option<hir::SelfParam>, Vec<hir::Param<'db>>)> {",
+                "old_no": 379,
+                "new_no": 380
+              },
+              {
+                "kind": "ctx",
+                "text": "    ctx.config.callable.as_ref()?;",
+                "old_no": 380,
+                "new_no": 381
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 381,
+                "new_no": 382
+              }
+            ]
+          },
+          {
+            "id": "1700842a52d30cc5",
+            "path": "crates/ide-completion/src/render/function.rs",
+            "old_start": 388,
+            "old_lines": 6,
+            "new_start": 389,
+            "new_lines": 17,
+            "header": "fn params<'db>(",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        cov_mark::hit!(no_call_parens_if_fn_ptr_needed);",
+                "old_no": 388,
+                "new_no": 389
+              },
+              {
+                "kind": "ctx",
+                "text": "        return None;",
+                "old_no": 389,
+                "new_no": 390
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 390,
+                "new_no": 391
+              },
+              {
+                "kind": "add",
+                "text": "    // Handle generic signature, do not use FnSig::eq",
+                "old_no": null,
+                "new_no": 392
+              },
+              {
+                "kind": "add",
+                "text": "    if ctx.expected_type.as_ref().is_none_or(|it| it.is_unknown()) // only process generic expected",
+                "old_no": null,
+                "new_no": 393
+              },
+              {
+                "kind": "add",
+                "text": "        && let Some(expected) = &ctx.expected_func",
+                "old_no": null,
+                "new_no": 394
+              },
+              {
+                "kind": "add",
+                "text": "        && let Some(completed) = func.ty(ctx.db).as_callable(ctx.db)",
+                "old_no": null,
+                "new_no": 395
+              },
+              {
+                "kind": "add",
+                "text": "        && expected.n_params() == completed.n_params()",
+                "old_no": null,
+                "new_no": 396
+              },
+              {
+                "kind": "add",
+                "text": "        && ctx.rebase_ty(&expected.return_type()).could_unify_with(ctx.db, ret_type)",
+                "old_no": null,
+                "new_no": 397
+              },
+              {
+                "kind": "add",
+                "text": "        && !completed.return_type().impls_fnonce(ctx.db)",
+                "old_no": null,
+                "new_no": 398
+              },
+              {
+                "kind": "add",
+                "text": "    {",
+                "old_no": null,
+                "new_no": 399
+              },
+              {
+                "kind": "add",
+                "text": "        cov_mark::hit!(no_call_parens_if_ty_with_fn_bounds);",
+                "old_no": null,
+                "new_no": 400
+              },
+              {
+                "kind": "add",
+                "text": "        return None;",
+                "old_no": null,
+                "new_no": 401
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 402
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 391,
+                "new_no": 403
+              },
+              {
+                "kind": "ctx",
+                "text": "    let self_param = if has_dot_receiver || matches!(func_kind, FuncKind::Method(_, Some(_))) {",
+                "old_no": 392,
+                "new_no": 404
+              },
+              {
+                "kind": "ctx",
+                "text": "        None",
+                "old_no": 393,
+                "new_no": 405
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ide-db/src/active_parameter.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 7,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "e29932ab5d1b9147",
+            "path": "crates/ide-db/src/active_parameter.rs",
+            "old_start": 16,
+            "old_lines": 6,
+            "new_start": 16,
+            "new_lines": 7,
+            "header": "use crate::RootDatabase;",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "pub struct ActiveParameter<'db> {",
+                "old_no": 16,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub ty: Type<'db>,",
+                "old_no": 17,
+                "new_no": 17
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub src: Option<InFile<Either<ast::SelfParam, ast::Param>>>,",
+                "old_no": 18,
+                "new_no": 18
+              },
+              {
+                "kind": "add",
+                "text": "    pub original: Option<hir::Param<'db>>,",
+                "old_no": null,
+                "new_no": 19
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 19,
+                "new_no": 20
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 20,
+                "new_no": 21
+              },
+              {
+                "kind": "ctx",
+                "text": "impl<'db> ActiveParameter<'db> {",
+                "old_no": 21,
+                "new_no": 22
+              }
+            ]
+          },
+          {
+            "id": "1d4b2cebd75a3d58",
+            "path": "crates/ide-db/src/active_parameter.rs",
+            "old_start": 46,
+            "old_lines": 8,
+            "new_start": 47,
+            "new_lines": 13,
+            "header": "impl<'db> ActiveParameter<'db> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            cov_mark::hit!(too_many_arguments);",
+                "old_no": 46,
+                "new_no": 47
+              },
+              {
+                "kind": "ctx",
+                "text": "            return None;",
+                "old_no": 47,
+                "new_no": 48
+              },
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 48,
+                "new_no": 49
+              },
+              {
+                "kind": "add",
+                "text": "        let original = signature.as_function().map(|func| {",
+                "old_no": null,
+                "new_no": 50
+              },
+              {
+                "kind": "add",
+                "text": "            let mut assoc_params = func.assoc_fn_params(sema.db);",
+                "old_no": null,
+                "new_no": 51
+              },
+              {
+                "kind": "add",
+                "text": "            let assoc_idx = assoc_params.len() - params.len() + idx;",
+                "old_no": null,
+                "new_no": 52
+              },
+              {
+                "kind": "add",
+                "text": "            assoc_params.swap_remove(assoc_idx)",
+                "old_no": null,
+                "new_no": 53
+              },
+              {
+                "kind": "add",
+                "text": "        });",
+                "old_no": null,
+                "new_no": 54
+              },
+              {
+                "kind": "ctx",
+                "text": "        let param = params.swap_remove(idx);",
+                "old_no": 49,
+                "new_no": 55
+              },
+              {
+                "kind": "del",
+                "text": "        Some(ActiveParameter { ty: param.ty().clone(), src: sema.source(param) })",
+                "old_no": 50,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        Some(ActiveParameter { ty: param.ty().clone(), src: sema.source(param), original })",
+                "old_no": null,
+                "new_no": 56
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 51,
+                "new_no": 57
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 52,
+                "new_no": 58
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub fn ident(&self) -> Option<ast::Name> {",
+                "old_no": 53,
+                "new_no": 59
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
