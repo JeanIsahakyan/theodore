@@ -292,9 +292,7 @@ const AccountPage = observer(function AccountPage() {
               </Chip>
             </div>
           </Card>
-          <Tooltip.Content>
-            Device management not available yet
-          </Tooltip.Content>
+          <Tooltip.Content>Device management not available yet</Tooltip.Content>
         </Tooltip>
       </section>
       <Tooltip>
@@ -311,7 +309,10 @@ const AgentsPage = observer(function AgentsPage() {
   const store = useRootStore();
   const [detected, setDetected] = useState<AgentStatus[] | null>(null);
   useEffect(() => {
-    void api.detectAgents().then(setDetected).catch(() => setDetected([]));
+    void api
+      .detectAgents()
+      .then(setDetected)
+      .catch(() => setDetected([]));
   }, []);
   return (
     <>
@@ -459,14 +460,16 @@ const UpdatesPage = observer(function UpdatesPage() {
       </section>
       <section className="flex flex-col gap-2">
         <Typography.Heading level={6}>Check for updates</Typography.Heading>
-        <Btn tone="tertiary" className="self-start" isPending={checking} onPress={check}>
+        <Btn
+          tone="tertiary"
+          className="self-start"
+          isPending={checking}
+          onPress={check}
+        >
           Check now
         </Btn>
         {update && (
-          <Card
-            variant="secondary"
-            className="flex flex-col gap-2 p-4 text-sm"
-          >
+          <Card variant="secondary" className="flex flex-col gap-2 p-4 text-sm">
             <span className="font-medium">
               v{update.version}{' '}
               {update.downloaded ? '— ready to install' : '— downloading'}
@@ -487,7 +490,10 @@ const UpdatesPage = observer(function UpdatesPage() {
 const AboutPage = observer(function AboutPage() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   useEffect(() => {
-    void api.appInfo().then(setInfo).catch(() => setInfo(null));
+    void api
+      .appInfo()
+      .then(setInfo)
+      .catch(() => setInfo(null));
   }, []);
   if (!info) return <Spinner />;
   return (

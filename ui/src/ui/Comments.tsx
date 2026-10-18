@@ -17,7 +17,14 @@
  *   commits it.
  */
 import { useState } from 'react';
-import { ArrowUp, Check, CircleCheck, ChevronDown, ChevronUp, Plus } from '@gravity-ui/icons';
+import {
+  ArrowUp,
+  Check,
+  CircleCheck,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+} from '@gravity-ui/icons';
 import {
   AvatarGroup,
   Button,

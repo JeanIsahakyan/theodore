@@ -184,7 +184,11 @@ function ToolCalls({ tools, running }: { tools: string[]; running: boolean }) {
     >
       <Disclosure.Heading>
         <Disclosure.Trigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs">
-          {running ? <Spinner /> : <CircleCheck className="size-3.5 text-success" />}
+          {running ? (
+            <Spinner />
+          ) : (
+            <CircleCheck className="size-3.5 text-success" />
+          )}
           <span className="text-muted">{running ? 'Working:' : 'Done:'}</span>
           <span className="truncate font-medium">
             {plural(tools.length, 'log line', 'log lines', 'log lines')}
@@ -736,7 +740,8 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                       usage={m.usage}
                       onRetry={() => {
                         const q = priorQuestion(messages, m);
-                        const agent = m.author.kind === 'me' ? null : m.author.agent;
+                        const agent =
+                          m.author.kind === 'me' ? null : m.author.agent;
                         if (q)
                           void ask(store, {
                             pr,
@@ -943,9 +948,8 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
       }}
       renderEmptyState={() => (
         <EmptyState className="rounded-2xl border border-dashed border-separator p-4 text-sm">
-          No tasks. Create one from a skill finding or a thread. Once the
-          review is submitted, each comment also becomes a task for the
-          author.
+          No tasks. Create one from a skill finding or a thread. Once the review
+          is submitted, each comment also becomes a task for the author.
         </EmptyState>
       )}
       className="min-h-0 flex-1 overflow-auto p-4"
@@ -964,13 +968,7 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   );
 });
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
       <Header className="px-1 pb-1 text-xs font-medium text-muted">
@@ -1004,7 +1002,9 @@ function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
   const store = useRootStore();
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
-  const people = [...new Map(thread.comments.map((c) => [c.author.login, c.author]))];
+  const people = [
+    ...new Map(thread.comments.map((c) => [c.author.login, c.author])),
+  ];
   const last = thread.comments.at(-1)!;
   const send = () => {
     const body = reply.trim();
@@ -1046,8 +1046,8 @@ function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
       </p>
       <div className="flex items-center justify-between text-xs text-muted">
         <span>
-          {plural(thread.comments.length, 'comment', 'comments', 'comments')}{' '}
-          · {ago(last.created_at)}
+          {plural(thread.comments.length, 'comment', 'comments', 'comments')} ·{' '}
+          {ago(last.created_at)}
         </span>
         {thread.outdated && <span>outdated</span>}
       </div>

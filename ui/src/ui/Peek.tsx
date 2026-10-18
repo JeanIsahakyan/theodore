@@ -112,8 +112,8 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
           {p.title}
         </Typography.Heading>
         <div className="flex items-center gap-1.5 text-xs text-muted">
-          <Avatar person={p.author} size={18} />{' '}
-          {mine ? 'you' : p.author.login} · {ago(p.updated_at)} ·{' '}
+          <Avatar person={p.author} size={18} /> {mine ? 'you' : p.author.login}{' '}
+          · {ago(p.updated_at)} ·{' '}
           <span className="text-success">+{p.additions}</span>{' '}
           <span className="text-danger">−{p.deletions}</span>
         </div>

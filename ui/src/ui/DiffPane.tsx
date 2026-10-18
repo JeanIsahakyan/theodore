@@ -361,9 +361,7 @@ const GroupCard = observer(function GroupCard({
             <Checkbox
               key={c}
               isSelected={!!checked[c]}
-              onChange={() =>
-                setChecked((s) => ({ ...s, [c]: !s[c] }))
-              }
+              onChange={() => setChecked((s) => ({ ...s, [c]: !s[c] }))}
             >
               <Checkbox.Content
                 className={checked[c] ? 'text-muted line-through' : ''}
@@ -397,7 +395,9 @@ function NextGroup({
   return (
     <Btn
       icon={<ArrowRight />}
-      onPress={() => setMode({ mode: 'groups', group: next.id, file: mode.file })}
+      onPress={() =>
+        setMode({ mode: 'groups', group: next.id, file: mode.file })
+      }
     >
       Next: {next.title}
     </Btn>
@@ -461,7 +461,10 @@ const ContextGap = observer(function ContextGap({
   const [shown, setShown] = useState(0);
   const total = gap.to - gap.from + 1;
   const key = `${pr}@${rev}:${path}`;
-  const res = shown > 0 ? store.files.get(key, () => api.getFile({ pr, rev, path })) : null;
+  const res =
+    shown > 0
+      ? store.files.get(key, () => api.getFile({ pr, rev, path }))
+      : null;
   if (res?.status === 'ready' && res.data != null) {
     const allLines = res.data.split('\n');
     const from = gap.to - shown + 1;
@@ -524,7 +527,10 @@ const FileTail = observer(function FileTail({
   const store = useRootStore();
   const [shown, setShown] = useState(0);
   const key = `${pr}@${rev}:${path}`;
-  const res = shown > 0 ? store.files.get(key, () => api.getFile({ pr, rev, path })) : null;
+  const res =
+    shown > 0
+      ? store.files.get(key, () => api.getFile({ pr, rev, path }))
+      : null;
   if (res?.status === 'ready' && res.data != null) {
     const allLines = res.data.split('\n');
     const gap = gapTail(hunks, allLines.length);
@@ -634,8 +640,7 @@ function FileBlock({
     .where((v) => v.pr === pr && v.path === file.path)
     .at(-1);
   const isViewed = viewed?.state === 'viewed';
-  const local =
-    store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
+  const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const [shown, setShown] = useState(false);
   const generatedFlag = file.flags.find((f) => f.kind === 'generated');
   const summaryForMenu = store.models.prSummaries.get(pr);
@@ -686,7 +691,8 @@ function FileBlock({
     );
   }
 
-  const collapsedFile = (!!generatedFlag || file.status === 'deleted') && !shown;
+  const collapsedFile =
+    (!!generatedFlag || file.status === 'deleted') && !shown;
   const others =
     groupHunkIds && mode.mode === 'groups'
       ? (allFiles.find((f) => f.path === file.path)?.hunks ?? []).filter(
@@ -738,7 +744,9 @@ function FileBlock({
           <span className="text-danger">−{file.deletions}</span>
         </span>
         {others.map((h) => {
-          const g = store.models.groups.all().find((x) => x.hunks.includes(h.id));
+          const g = store.models.groups
+            .all()
+            .find((x) => x.hunks.includes(h.id));
           if (!g) return null;
           return (
             <Tooltip key={h.id}>
@@ -827,7 +835,13 @@ function FileBlock({
             </div>
           ))}
           {last && (
-            <FileTail pr={pr} rev={rev} path={file.path} hunks={file.hunks} lang={lang} />
+            <FileTail
+              pr={pr}
+              rev={rev}
+              path={file.path}
+              hunks={file.hunks}
+              lang={lang}
+            />
           )}
         </>
       )}
@@ -906,7 +920,9 @@ function HunkView({
       id: 'copy-hunk',
       label: 'Copy hunk',
       onAction: () =>
-        void navigator.clipboard.writeText(h.lines.map((l) => l.text).join('\n')),
+        void navigator.clipboard.writeText(
+          h.lines.map((l) => l.text).join('\n'),
+        ),
     },
   ]);
   return (
@@ -1075,7 +1091,8 @@ const Line = observer(function Line({
     : [];
   const drafts = anchor
     ? store.models.drafts.where(
-        (d) => d.pr === pr && sameAnchor(d.anchor, path, anchor.side, anchor.line),
+        (d) =>
+          d.pr === pr && sameAnchor(d.anchor, path, anchor.side, anchor.line),
       )
     : [];
   const findings = anchor
@@ -1101,12 +1118,14 @@ const Line = observer(function Line({
       {
         id: 'comment',
         label: 'Comment',
-        onAction: () => setComposer({ path, side: anchor.side, line: anchor.line }),
+        onAction: () =>
+          setComposer({ path, side: anchor.side, line: anchor.line }),
       },
       {
         id: 'comment-range',
         label: 'Comment on range',
-        onAction: () => setRangeStart({ path, side: anchor.side, line: anchor.line }),
+        onAction: () =>
+          setRangeStart({ path, side: anchor.side, line: anchor.line }),
       },
       {
         id: 'ask-agent',
@@ -1133,7 +1152,9 @@ const Line = observer(function Line({
         id: 'copy-permalink',
         label: 'Copy permalink',
         onAction: () =>
-          void navigator.clipboard.writeText(`${summary.url}#diff-${path}L${lineNo}`),
+          void navigator.clipboard.writeText(
+            `${summary.url}#diff-${path}L${lineNo}`,
+          ),
       });
     }
     return items;
@@ -1187,7 +1208,8 @@ const Line = observer(function Line({
                         path,
                         side: anchor.side,
                         line: endLine,
-                        startLine: startLine !== endLine ? startLine : undefined,
+                        startLine:
+                          startLine !== endLine ? startLine : undefined,
                       });
                     } else {
                       setRangeStart({
@@ -1195,7 +1217,11 @@ const Line = observer(function Line({
                         side: anchor.side,
                         line: anchor.line,
                       });
-                      setComposer({ path, side: anchor.side, line: anchor.line });
+                      setComposer({
+                        path,
+                        side: anchor.side,
+                        line: anchor.line,
+                      });
                     }
                   }}
                 >

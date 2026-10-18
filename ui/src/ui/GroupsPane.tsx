@@ -214,35 +214,38 @@ export const GroupsPane = observer(function GroupsPane({
                   <Accordion.Heading>
                     <Accordion.Trigger
                       className="grp-h flex w-full items-start gap-3 rounded-2xl px-2 py-2 text-left hover:bg-default/50"
-                      onContextMenu={contextMenuHandler(ui, (): ContextMenuItem[] => [
-                        {
-                          id: 'mark-read',
-                          label: 'Mark read',
-                          isDisabled: read === hs.length,
-                          disabledReason: 'Already read',
-                          onAction: () => markGroupRead(store, pr, hs),
-                        },
-                        {
-                          id: 'tour-from-here',
-                          label: 'Tour from here',
-                          isDisabled: !onTourFrom,
-                          onAction: () => onTourFrom?.(g.id),
-                        },
-                        {
-                          id: 'ask-agent',
-                          label: 'Ask agent',
-                          onAction: () =>
-                            void ask(store, {
-                              pr,
-                              question: `about the "${g.title}" group`,
-                              about: null,
-                              group: g.id,
-                              agent: null,
-                            }).catch(() => {
-                              // toasted by api.ts
-                            }),
-                        },
-                      ])}
+                      onContextMenu={contextMenuHandler(
+                        ui,
+                        (): ContextMenuItem[] => [
+                          {
+                            id: 'mark-read',
+                            label: 'Mark read',
+                            isDisabled: read === hs.length,
+                            disabledReason: 'Already read',
+                            onAction: () => markGroupRead(store, pr, hs),
+                          },
+                          {
+                            id: 'tour-from-here',
+                            label: 'Tour from here',
+                            isDisabled: !onTourFrom,
+                            onAction: () => onTourFrom?.(g.id),
+                          },
+                          {
+                            id: 'ask-agent',
+                            label: 'Ask agent',
+                            onAction: () =>
+                              void ask(store, {
+                                pr,
+                                question: `about the "${g.title}" group`,
+                                about: null,
+                                group: g.id,
+                                agent: null,
+                              }).catch(() => {
+                                // toasted by api.ts
+                              }),
+                          },
+                        ],
+                      )}
                     >
                       <span
                         className={`relative z-[1] grid size-[30px] shrink-0 place-items-center rounded-full border text-xs font-semibold tabular-nums ${
@@ -319,7 +322,9 @@ export const GroupsPane = observer(function GroupsPane({
                               .filter((h) => hunkGroup.get(h) !== g.id);
                             const others = [
                               ...new Set(
-                                elsewhere.map((h) => numberOf.get(hunkGroup.get(h)!)),
+                                elsewhere.map((h) =>
+                                  numberOf.get(hunkGroup.get(h)!),
+                                ),
                               ),
                             ].join(', ');
                             return (
@@ -337,7 +342,11 @@ export const GroupsPane = observer(function GroupsPane({
                                   {short(f)}
                                 </span>
                                 {outFiles.has(f) && (
-                                  <Chip size="sm" variant="soft" color="warning">
+                                  <Chip
+                                    size="sm"
+                                    variant="soft"
+                                    color="warning"
+                                  >
                                     off-pattern
                                   </Chip>
                                 )}
@@ -426,7 +435,9 @@ const Viewed = observer(function Viewed({
   local: boolean;
 }) {
   const store = useRootStore();
-  const v = store.models.fileViews.where((x) => x.pr === pr && x.path === path).at(-1);
+  const v = store.models.fileViews
+    .where((x) => x.pr === pr && x.path === path)
+    .at(-1);
   const viewed = v?.state === 'viewed';
   return (
     <span className="viewed inline-flex items-center gap-0.5">
@@ -562,7 +573,8 @@ const FileTree = observer(function FileTree({
           if (row.dir) {
             const fs = allFiles(row.dir);
             const seen = fs.filter(
-              (f) => fileViews.find((v) => v.path === f.path)?.state === 'viewed',
+              (f) =>
+                fileViews.find((v) => v.path === f.path)?.state === 'viewed',
             ).length;
             return (
               <ListBox.Item
@@ -592,7 +604,9 @@ const FileTree = observer(function FileTree({
           const f = row.file!;
           const gs = [
             ...new Set(
-              f.hunks.map((h) => hunkGroup.get(h.id)).filter((g): g is string => !!g),
+              f.hunks
+                .map((h) => hunkGroup.get(h.id))
+                .filter((g): g is string => !!g),
             ),
           ];
           const [letter, color] = STATUS[f.status];

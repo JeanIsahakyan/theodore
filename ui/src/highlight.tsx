@@ -1,3 +1,5 @@
+import Markdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useSyncExternalStore, type ReactNode } from 'react';
 import type { HighlighterCore } from 'shiki/core';
 
@@ -198,43 +200,37 @@ export function rich(text: string): ReactNode[] {
     );
 }
 
-/** The bit of GitHub markdown people use in review comments: quotes, lists, code blocks. */
+/** GitHub-flavoured markdown (headings, lists, tables, task lists, code) for
+ *  PR descriptions and comments. Raw HTML is not rendered. */
 export function Md({ text }: { text: string }) {
-  const out: ReactNode[] = [];
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i]!;
-    if (l.startsWith('```')) {
-      const code: string[] = [];
-      while (++i < lines.length && !lines[i]!.startsWith('```'))
-        code.push(lines[i]!);
-      out.push(
-        <pre
-          key={i}
-          className="my-1 overflow-x-auto rounded-xl bg-default px-3 py-2 font-mono text-xs"
-        >
-          {code.join('\n')}
-        </pre>,
-      );
-    } else if (l.startsWith('> ')) {
-      out.push(
-        <blockquote
-          key={i}
-          className="border-s-2 border-separator ps-3 text-muted"
-        >
-          {rich(l.slice(2))}
-        </blockquote>,
-      );
-    } else if (/^[-*] /.test(l)) {
-      out.push(
-        <div key={i} className="flex gap-2 ps-1">
-          <span className="text-muted">•</span>
-          <span>{rich(l.slice(2))}</span>
-        </div>,
-      );
-    } else if (l.trim()) {
-      out.push(<div key={i}>{rich(l)}</div>);
-    } else out.push(<div key={i} className="h-2" />);
-  }
-  return <div className="rich md flex flex-col">{out}</div>;
+  return (
+    <div className="rich md">
+      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {text}
+      </Markdown>
+    </div>
+  );
 }
+
+const mdComponents: Components = {
+  pre: ({ children }) => (
+    <pre className="my-2 overflow-x-auto rounded-xl bg-default px-3 py-2 font-mono text-xs">
+      {children}
+    </pre>
+  ),
+  table: ({ children }) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="md-table">{children}</table>
+    </div>
+  ),
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      className="text-accent underline-offset-2 hover:underline"
+      target="_blank"
+      rel="noreferrer"
+    >
+      {children}
+    </a>
+  ),
+};

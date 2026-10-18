@@ -88,7 +88,13 @@ export function ago(ms: number): string {
 // and sort/group keys that depended on them (risk) are dropped, not faked.
 
 export type RowProp = 'id' | 'reasons' | 'checks' | 'author' | 'age';
-export const ROW_PROPS: RowProp[] = ['id', 'reasons', 'checks', 'author', 'age'];
+export const ROW_PROPS: RowProp[] = [
+  'id',
+  'reasons',
+  'checks',
+  'author',
+  'age',
+];
 
 const PROP_LABEL: Record<RowProp, string> = {
   id: 'Number',
@@ -254,13 +260,21 @@ export const PrRow = observer(function PrRow({
   const rowMenu = useContextMenu((): ContextMenuItem[] => {
     if (!p) return [];
     return [
-      { id: 'open', label: 'Open', onAction: () => ui.go({ name: 'review', pr: id }) },
+      {
+        id: 'open',
+        label: 'Open',
+        onAction: () => ui.go({ name: 'review', pr: id }),
+      },
       {
         id: 'open-new-tab',
         label: 'Open in new tab',
         onAction: () => ui.go({ name: 'review', pr: id }, { newTab: true }),
       },
-      { id: 'mark-done', label: 'Mark done', onAction: () => markDone(store, [id]) },
+      {
+        id: 'mark-done',
+        label: 'Mark done',
+        onAction: () => markDone(store, [id]),
+      },
       {
         id: 'snooze',
         label: 'Snooze',
@@ -269,13 +283,19 @@ export const PrRow = observer(function PrRow({
             id: 'snooze-1h',
             label: '1 hour',
             onAction: () =>
-              snoozePrs(store, [id], { kind: 'time', at: Date.now() + 3600_000 }),
+              snoozePrs(store, [id], {
+                kind: 'time',
+                at: Date.now() + 3600_000,
+              }),
           },
           {
             id: 'snooze-tomorrow',
             label: 'Tomorrow',
             onAction: () =>
-              snoozePrs(store, [id], { kind: 'time', at: Date.now() + 86_400_000 }),
+              snoozePrs(store, [id], {
+                kind: 'time',
+                at: Date.now() + 86_400_000,
+              }),
           },
           {
             id: 'snooze-push',
@@ -346,7 +366,9 @@ export const PrRow = observer(function PrRow({
       {on('checks') && <CheckIcon s={p.checks} />}
       {on('author') && <Avatar person={p.author} size={22} />}
       {on('age') && (
-        <span className="text-right text-xs text-muted">{ago(p.updated_at)}</span>
+        <span className="text-right text-xs text-muted">
+          {ago(p.updated_at)}
+        </span>
       )}
     </div>
   );
@@ -692,7 +714,12 @@ function ListBody({
       onSelect={onSelect}
       onOpen={onOpen}
       row={(id) => (
-        <PrRow id={id} sel={sel === id} picked={picked.includes(id)} props={props} />
+        <PrRow
+          id={id}
+          sel={sel === id}
+          picked={picked.includes(id)}
+          props={props}
+        />
       )}
       empty={empty}
     />

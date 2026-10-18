@@ -39,7 +39,10 @@ function labelText(it: ContextMenuItem): string {
   return it.textValue ?? (typeof it.label === 'string' ? it.label : it.id);
 }
 
-function flatten(items: ContextMenuItem[], out: Map<string, ContextMenuItem>): void {
+function flatten(
+  items: ContextMenuItem[],
+  out: Map<string, ContextMenuItem>,
+): void {
   for (const it of items) {
     out.set(it.id, it);
     if (it.items) flatten(it.items, out);
@@ -82,7 +85,9 @@ function MenuItems({ items }: { items: ContextMenuItem[] }) {
                 {it.disabledReason ?? 'Not available yet'}
               </span>
             ) : (
-              it.kbd && <span className="ms-2 text-xs text-muted">{it.kbd}</span>
+              it.kbd && (
+                <span className="ms-2 text-xs text-muted">{it.kbd}</span>
+              )
             )}
           </Dropdown.Item>
         ),

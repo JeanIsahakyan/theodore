@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Button, Dropdown, Header, ListBox, Tabs, TextField } from '@heroui/react';
+import {
+  Button,
+  Dropdown,
+  Header,
+  ListBox,
+  Tabs,
+  TextField,
+} from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { Key } from 'react';
 import {
@@ -47,7 +54,11 @@ function taskTabs(me: string | null): {
       title: 'Mine',
       match: (t) => t.assignee.kind === 'human' && t.assignee.id === me,
     },
-    { id: 'agents', title: 'Agents', match: (t) => t.assignee.kind === 'agent' },
+    {
+      id: 'agents',
+      title: 'Agents',
+      match: (t) => t.assignee.kind === 'agent',
+    },
     {
       id: 'others',
       title: 'Waiting on others',
@@ -94,7 +105,11 @@ export const TaskRow = observer(function TaskRow({
       id: 'delegate',
       label: 'Delegate',
       items: [
-        { id: 'delegate-default', label: 'Default agent', onAction: () => delegate(null) },
+        {
+          id: 'delegate-default',
+          label: 'Default agent',
+          onAction: () => delegate(null),
+        },
         ...AGENTS.map((a) => ({
           id: `delegate-${a}`,
           label: a,
@@ -315,7 +330,10 @@ export const Tasks = observer(function Tasks() {
                 <Tabs.Tab key={x.id} id={x.id} className="whitespace-nowrap">
                   {x.title}{' '}
                   <span className="ml-1 text-muted">
-                    {all.filter(x.match).filter((t) => t.status !== 'done').length}
+                    {
+                      all.filter(x.match).filter((t) => t.status !== 'done')
+                        .length
+                    }
                   </span>
                   <Tabs.Indicator />
                 </Tabs.Tab>

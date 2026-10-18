@@ -28,7 +28,11 @@ function useRootContextMenu() {
     if (isField) {
       const input = el as HTMLInputElement | HTMLTextAreaElement;
       return [
-        { id: 'cut', label: 'Cut', onAction: () => document.execCommand('cut') },
+        {
+          id: 'cut',
+          label: 'Cut',
+          onAction: () => document.execCommand('cut'),
+        },
         {
           id: 'copy',
           label: 'Copy',

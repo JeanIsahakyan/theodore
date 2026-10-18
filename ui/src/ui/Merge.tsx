@@ -53,10 +53,7 @@ interface Gate {
 }
 
 /** Everything that stands between this PR and a merge, from data we actually have. */
-function gatesFor(
-  store: ReturnType<typeof useRootStore>,
-  pr: PrId,
-): Gate[] {
+function gatesFor(store: ReturnType<typeof useRootStore>, pr: PrId): Gate[] {
   const summary = store.models.prSummaries.get(pr);
   const detail = store.models.prDetails.get(pr);
   const tasks = store.models.tasks.where((t) => t.pr === pr);
@@ -111,33 +108,34 @@ export const MergeDialog = observer(function MergeDialog({
   const mergeable = !local && blocked.length === 0;
   const slug = `${summary.pr.repo.owner}/${summary.pr.repo.name}#${summary.pr.number}`;
 
-  const footer = blocked.length > 0 ? (
-    <Tooltip>
-      <Btn
-        tone="tertiary"
-        icon={<CodeMerge />}
-        className="enable-auto-merge"
-        isDisabled={!FEATURES.hostWrites}
-        onPress={() => {}}
-      >
-        Enable auto-merge
-      </Btn>
-      <Tooltip.Content>Not available yet</Tooltip.Content>
-    </Tooltip>
-  ) : (
-    <Tooltip>
-      <Btn
-        tone="success"
-        icon={<CodeMerge />}
-        className="do-merge"
-        isDisabled={!FEATURES.hostWrites}
-        onPress={() => {}}
-      >
-        {METHOD[method]}
-      </Btn>
-      <Tooltip.Content>Not available yet</Tooltip.Content>
-    </Tooltip>
-  );
+  const footer =
+    blocked.length > 0 ? (
+      <Tooltip>
+        <Btn
+          tone="tertiary"
+          icon={<CodeMerge />}
+          className="enable-auto-merge"
+          isDisabled={!FEATURES.hostWrites}
+          onPress={() => {}}
+        >
+          Enable auto-merge
+        </Btn>
+        <Tooltip.Content>Not available yet</Tooltip.Content>
+      </Tooltip>
+    ) : (
+      <Tooltip>
+        <Btn
+          tone="success"
+          icon={<CodeMerge />}
+          className="do-merge"
+          isDisabled={!FEATURES.hostWrites}
+          onPress={() => {}}
+        >
+          {METHOD[method]}
+        </Btn>
+        <Tooltip.Content>Not available yet</Tooltip.Content>
+      </Tooltip>
+    );
 
   return (
     <Modal.Backdrop isOpen onOpenChange={(open) => !open && onClose()}>

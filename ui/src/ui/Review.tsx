@@ -492,7 +492,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             </Disclosure.Trigger>
           </Disclosure.Heading>
           <Disclosure.Content>
-            <Disclosure.Body className="max-w-[78ch] pb-3">
+            <Disclosure.Body className="max-h-[40vh] max-w-[78ch] overflow-y-auto pb-3">
               <Md text={detail.body} />
             </Disclosure.Body>
           </Disclosure.Content>
@@ -541,9 +541,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           {ui.aside && <SidePanel pr={pr} />}
         </div>
       )}
-      {mergeOpen && (
-        <MergeDialog pr={pr} onClose={() => setMergeOpen(false)} />
-      )}
+      {mergeOpen && <MergeDialog pr={pr} onClose={() => setMergeOpen(false)} />}
     </div>
   );
 });
