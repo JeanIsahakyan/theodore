@@ -93,7 +93,7 @@ export const TabBar = observer(function TabBar({
       >
         <Tabs.List
           aria-label="Open tabs"
-          className="w-fit max-w-full overflow-x-auto scrollbar-none"
+          className="flex w-fit max-w-full overflow-x-auto scrollbar-none"
         >
           {ui.tabs.map((t, i) => (
             <TabItem
@@ -138,7 +138,11 @@ const TabItem = observer(function TabItem({
 }) {
   const l = useLabel(t);
   return (
-    <Tabs.Tab id={key(t)} className="tab group max-w-64 gap-2 text-sm">
+    <Tabs.Tab
+      id={key(t)}
+      // Tabs shrink to fit (title truncates); past their minimum the list scrolls.
+      className="tab group min-w-28 max-w-64 shrink gap-2 text-sm"
+    >
       {i > 0 && <Tabs.Separator />}
       <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
         {l.icon}

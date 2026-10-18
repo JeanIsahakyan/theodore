@@ -47,6 +47,10 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
             args.push("Read,Grep,Glob,mcp__review-tools__*".to_string());
+            // `--allowedTools` only pre-approves; anything that writes or runs
+            // commands must be denied outright for a review run.
+            args.push("--disallowedTools".to_string());
+            args.push("Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task".to_string());
         }
         AgentMode::Edit => {
             args.push("--allowedTools".to_string());
@@ -331,5 +335,30 @@ mod tests {
                 stderr_tail: "panic: x".into(),
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+
+    #[test]
+    fn read_only_runs_deny_shell_and_writes() {
+        let req = theodore_ports::AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::ReadOnly,
+            mcp: None,
+            model: None,
+            stall_after_ms: 1000,
+        };
+        let args = build_args(&req, &Default::default());
+        let i = args
+            .iter()
+            .position(|a| a == "--disallowedTools")
+            .expect("denylist");
+        assert!(args[i + 1].contains("Bash") && args[i + 1].contains("Edit"));
     }
 }
