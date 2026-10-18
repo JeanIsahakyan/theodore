@@ -161,6 +161,33 @@ export function findingToDraft(
   ]);
 }
 
+export function findingToTask(
+  store: RootStore,
+  pr: PrId,
+  finding: { id: string; anchor: Anchor; title: string; body: string },
+): void {
+  const id = crypto.randomUUID();
+  void store.sync.queue.transact([
+    {
+      op: 'create',
+      model: 'task',
+      id,
+      data: {
+        id,
+        pr,
+        title: finding.title,
+        body: finding.body,
+        anchor: finding.anchor,
+        thread: null,
+        status: 'todo',
+        assignee: { kind: 'human', id: 'me' },
+        fix: null,
+        created_at: Date.now(),
+      },
+    },
+  ]);
+}
+
 // ── review: skills, chat, grouping ──────────────────────────────────────────
 
 export async function runSkill(
