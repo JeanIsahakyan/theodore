@@ -36,6 +36,8 @@ export class EphemeralStore {
     rateLimitedUntil: null,
     authOk: true,
   };
+  /** Grouping runs in flight (and the last error) per PR id. */
+  grouping = new Map<string, { running: boolean; error: string | null }>();
   /** The authenticated host user, cached once fetched via `viewer`. */
   viewer: Person | null = null;
 
@@ -47,6 +49,7 @@ export class EphemeralStore {
       runLog: observableShallow,
       toasts: observableShallow,
       hostStatus: observable,
+      grouping: observableShallow,
       viewer: observableRef,
     });
   }
@@ -79,6 +82,12 @@ export class EphemeralStore {
             { id: this.nextToastId++, level: e.level, text: e.text },
           ];
           return;
+        case 'grouping': {
+          const next = new Map(this.grouping);
+          next.set(e.pr, { running: e.running, error: e.error });
+          this.grouping = next;
+          return;
+        }
         case 'host_status':
           this.hostStatus = {
             online: e.online,

@@ -206,10 +206,15 @@ export function Md({ text }: { text: string }) {
   return (
     <div className="rich md">
       <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-        {text}
+        {stripHtmlComments(text)}
       </Markdown>
     </div>
   );
+}
+
+/** HTML comments (e.g. Theodore's idempotency markers) never show. */
+export function stripHtmlComments(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, '').trimEnd();
 }
 
 const mdComponents: Components = {

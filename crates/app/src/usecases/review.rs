@@ -29,7 +29,7 @@ impl Core {
                 let draft: Draft = serde_json::from_value(r.data.clone()).ok()?;
                 Some(DraftComment {
                     draft_id: draft.id.0.clone(),
-                    marker: format!("theodore:{}", draft.id.0),
+                    marker: draft.id.0.clone(),
                     anchor: draft.anchor,
                     body: draft.body,
                 })

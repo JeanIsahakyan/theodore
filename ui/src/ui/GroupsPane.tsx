@@ -19,6 +19,7 @@ import {
   Tabs,
   Tooltip,
   Virtualizer,
+  Spinner,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
@@ -168,6 +169,9 @@ export const GroupsPane = observer(function GroupsPane({
             }}
             hideSeparator
           >
+            {groups.length === 0 && (
+              <GroupingStatus status={store.ephemeral.grouping.get(pr)} />
+            )}
             {visibleGroups.map((g, gi) => {
               const hs = sinceOnly
                 ? g.hunks.filter((h) => since?.has(h))
@@ -651,3 +655,23 @@ export const groupHunkIds = (
   store: ReturnType<typeof useRootStore>,
   groupId: string,
 ): HunkId[] => store.models.groups.get(groupId)?.hunks ?? [];
+
+/** Shown while a PR has no grouping yet: running, failed, or not started. */
+function GroupingStatus({
+  status,
+}: {
+  status: { running: boolean; error: string | null } | undefined;
+}) {
+  if (status?.error)
+    return (
+      <div className="px-4 py-3 text-xs text-danger">
+        Grouping failed: {status.error}
+      </div>
+    );
+  return (
+    <div className="flex items-center gap-2 px-4 py-3 text-xs text-muted">
+      <Spinner size="sm" />
+      Grouping changes by meaning… this takes a few minutes on large PRs.
+    </div>
+  );
+}
