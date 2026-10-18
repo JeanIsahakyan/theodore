@@ -82,6 +82,9 @@ pub fn run(core: Arc<dyn CoreApi>, forward: impl FnOnce(CoreEvents<tauri::Wry>) 
     let builder = specta_builder();
 
     tauri::Builder::default()
+        // The standard app menu. On macOS its Edit submenu is what makes
+        // ⌘C / ⌘V / ⌘X / ⌘A / ⌘Z work inside text fields.
+        .menu(tauri::menu::Menu::default)
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(builder.invoke_handler())

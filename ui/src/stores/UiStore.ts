@@ -9,6 +9,7 @@ import {
   observableRef,
   observableShallow,
   runInAction,
+  reaction,
 } from 'mobx';
 import type { PrId } from '../gen/contract';
 import type { ContextMenuItem } from '../ui/ContextMenu';
@@ -26,7 +27,9 @@ export type Route =
   | { name: 'mine' }
   | { name: 'tasks' }
   | { name: 'settings'; page: SettingsPage }
-  | { name: 'review'; pr: PrId };
+  | { name: 'review'; pr: PrId }
+  /** A blank tab: paste a PR link to turn it into a review. */
+  | { name: 'new'; id: string };
 
 export type ModalName = 'help' | 'submit' | 'snooze' | 'cmdk';
 
@@ -37,12 +40,27 @@ const LS_ONBOARDED = 'theodore-onboarded';
 const LS_DIFF_VIEW = 'theodore-diff-view';
 const LS_ASIDE = 'theodore-aside';
 const LS_THEME = 'theodore-theme';
+const LS_TABS = 'theodore-tabs';
+
+/** Open tabs and the active one, restored on the next launch. */
+function loadTabs(): { tabs: Route[]; route: Route } {
+  try {
+    const v = JSON.parse(localStorage.getItem(LS_TABS) ?? 'null') as {
+      tabs: Route[];
+      route: Route;
+    } | null;
+    if (v && Array.isArray(v.tabs) && v.tabs.length && v.route) return v;
+  } catch {
+    // corrupt value: start fresh
+  }
+  return { tabs: [{ name: 'inbox' }], route: { name: 'inbox' } };
+}
 
 export class UiStore {
   onboarded = localStorage.getItem(LS_ONBOARDED) === '1';
-  route: Route = { name: 'inbox' };
+  route: Route = loadTabs().route;
   back: Route = { name: 'inbox' };
-  tabs: Route[] = [{ name: 'inbox' }];
+  tabs: Route[] = loadTabs().tabs;
   selected: PrId | null = null;
   picked: PrId[] = [];
   peek = true;
@@ -71,6 +89,10 @@ export class UiStore {
       snoozeTargets: observableShallow,
       contextMenu: observableRef,
     });
+    reaction(
+      () => ({ tabs: this.tabs, route: this.route }),
+      (v) => localStorage.setItem(LS_TABS, JSON.stringify(v)),
+    );
   }
 
   finishOnboarding(): void {
@@ -102,6 +124,23 @@ export class UiStore {
       this.route = route;
       this.modal = null;
       this.picked = [];
+    });
+  }
+
+  /** Open a blank tab (the `+` in the tab bar). */
+  newTab(): void {
+    this.go({ name: 'new', id: crypto.randomUUID() }, { newTab: true });
+  }
+
+  /** Swap `from` (e.g. a blank tab) for `to` in place. */
+  replaceTab(from: Route, to: Route): void {
+    runInAction(() => {
+      const exists = this.tabs.some((t) => sameRoute(t, to));
+      this.tabs = exists
+        ? this.tabs.filter((t) => !sameRoute(t, from))
+        : this.tabs.map((t) => (sameRoute(t, from) ? to : t));
+      if (!this.tabs.length) this.tabs = [to];
+      this.route = to;
     });
   }
 

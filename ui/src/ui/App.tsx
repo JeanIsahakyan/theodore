@@ -1,3 +1,6 @@
+import { looksLikePrUrl } from '../core/prUrl';
+import { openPr } from '../actions';
+import { NewTab } from './NewTab';
 import { useEffect } from 'react';
 import { Surface, Toast, toast } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
@@ -21,6 +24,30 @@ import { Onboarding } from './Onboarding';
 function useRootContextMenu() {
   const store = useRootStore();
   const ui = useUi();
+  // ⌘V with a PR link outside a text field opens it; ⌘T opens a blank tab.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('input,textarea,[contenteditable=true]')) return;
+      const text = e.clipboardData?.getData('text') ?? '';
+      if (!looksLikePrUrl(text)) return;
+      e.preventDefault();
+      void openPr(store, text.trim());
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key === 't') {
+        e.preventDefault();
+        ui.newTab();
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('paste', onPaste);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [store, ui]);
+
   return useContextMenu(() => {
     const el = document.activeElement as HTMLElement | null;
     const isField =
@@ -127,6 +154,8 @@ export const App = observer(function App() {
               <Tasks />
             ) : r.name === 'settings' ? (
               <SettingsPage page={r.page} />
+            ) : r.name === 'new' ? (
+              <NewTab key={r.id} route={r} />
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}

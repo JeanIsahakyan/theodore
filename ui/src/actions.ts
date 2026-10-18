@@ -1,3 +1,4 @@
+import type { Route } from './stores/UiStore';
 /**
  * Every user action as a transaction or a direct command — nothing here is
  * faked with a timer. Functions take the `RootStore` explicitly so they are
@@ -337,11 +338,15 @@ export async function loadViewer(store: RootStore): Promise<void> {
 export async function openPr(
   store: RootStore,
   url: string,
+  /** A blank tab to turn into this review. */
+  replace?: Route,
 ): Promise<PrId | null> {
   try {
     const res = await api.openPr({ url });
     await store.sync.openPr(res.pr);
-    store.ui.go({ name: 'review', pr: res.pr });
+    const to: Route = { name: 'review', pr: res.pr };
+    if (replace) store.ui.replaceTab(replace, to);
+    else store.ui.go(to);
     return res.pr;
   } catch {
     return null;

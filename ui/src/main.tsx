@@ -1,3 +1,4 @@
+import { installLatinKeys } from './core/latinKeys';
 import { createRoot } from 'react-dom/client';
 import { configure } from 'mobx';
 import { loadShiki } from './highlight';
@@ -24,6 +25,9 @@ window.addEventListener('contextmenu', (e) => {
 
 const store = new RootStore();
 void store.start();
+
+// Before React mounts, so it runs ahead of every shortcut listener.
+installLatinKeys();
 
 createRoot(document.getElementById('root')!).render(
   <RootStoreProvider store={store}>

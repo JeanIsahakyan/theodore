@@ -3,6 +3,7 @@ import {
   Gear,
   LayoutSideContentLeft,
   ListCheck,
+  Link,
   Plus,
   Tray,
   Xmark,
@@ -30,6 +31,8 @@ function useLabel(r: Route): {
       return { icon: <ListCheck />, title: 'Tasks' };
     case 'settings':
       return { icon: <Gear />, title: 'Settings' };
+    case 'new':
+      return { icon: <Link />, title: 'New tab' };
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);
       const drafts = store.models.drafts.where((d) => d.pr === r.pr).length;
@@ -103,13 +106,13 @@ export const TabBar = observer(function TabBar({
           isIconOnly
           size="sm"
           variant="ghost"
-          aria-label="Open"
-          onPress={() => ui.openModal('cmdk')}
+          aria-label="New tab"
+          onPress={() => ui.newTab()}
         >
           <Plus className="size-4" />
         </Button>
         <Tooltip.Content>
-          Open <K>⌘K</K>
+          New tab — paste a PR link <K>⌘T</K>
         </Tooltip.Content>
       </Tooltip>
     </Toolbar>
