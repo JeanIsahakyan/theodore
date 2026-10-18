@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  ClockArrowRotateLeft,
   Comments as CommentsIcon,
+  LayoutRows,
   LayoutSideContentRight,
+  LayoutSplitColumns,
+  Play,
+  Stop,
 } from '@gravity-ui/icons';
 import { CircleCheck, Code, CodeCommit } from '@gravity-ui/icons';
 import {
+  Alert,
   Breadcrumbs,
   Button,
   Chip,
@@ -14,6 +20,7 @@ import {
   Spinner,
   Tabs,
   ToggleButton,
+  ToggleButtonGroup,
   Toolbar,
   Tooltip,
   Typography,
@@ -21,16 +28,21 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { PrId } from '../gen/contract';
 import { api } from '../core/api';
+import { markGroupRead } from '../actions';
 import { Md } from '../highlight';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, K } from './bits';
 import { Checks, Commits, ReviewerStrip } from './Checks';
 import { DiffPane } from './DiffPane';
-import { GroupsPane, type ReviewMode } from './GroupsPane';
+import { sinceHunks, type SinceKind } from './diff';
+import { GroupsPane, groupsForRevision, type ReviewMode } from './GroupsPane';
 import { SidePanel } from './SidePanel';
 import { PRIcon, prStatusLabel } from './StatusIcon';
+import { useViewKeys } from './keys';
 
 type PrTab = 'diff' | 'checks' | 'commits';
+
+const lastSeenKey = (pr: PrId) => `theodore-lastseen:${pr}`;
 
 function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
   const reads = store.models.hunkReads.where((r) => r.pr === pr);
@@ -50,6 +62,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     file: null,
   });
   const [tab, setTab] = useState<PrTab>('diff');
+  const [tour, setTour] = useState<number | null>(null);
+  const [sinceOnly, setSinceOnly] = useState(false);
+  const [baselineSha, setBaselineSha] = useState<string | null>(null);
 
   useEffect(() => {
     void store.sync.openPr(pr);
@@ -68,11 +83,74 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       )
     : null;
 
+  // Note the head you had open last time, before overwriting it with this one.
+  useEffect(() => {
+    if (!summary) return;
+    const key = lastSeenKey(pr);
+    const stored = localStorage.getItem(key);
+    if (stored && stored !== summary.head_sha) setBaselineSha(stored);
+    localStorage.setItem(key, summary.head_sha);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pr, summary?.head_sha]);
+
+  const baselineKey = baselineSha ? `${pr}@${baselineSha}` : null;
+  const baselineRevision = baselineKey
+    ? store.revisions.get(baselineKey, () =>
+        api.getRevision({ pr, head: baselineSha! }),
+      )
+    : null;
+  const since: Map<string, SinceKind> | null =
+    baselineRevision?.status === 'ready' && revision?.data
+      ? sinceHunks(baselineRevision.data!.files, revision.data.files)
+      : null;
+  const sinceCount = since?.size ?? 0;
+
   useEffect(() => {
     if (!mode.file && revision?.data?.files.length) {
       setMode((m) => ({ ...m, file: m.file ?? revision.data!.files[0]!.path }));
     }
   }, [revision?.data, mode.file]);
+
+  const orderedGroups = revision?.data
+    ? groupsForRevision(store, revision.data)
+    : [];
+  const orderedGroupIds = orderedGroups.map((g) => g.id).join();
+
+  // Tour drives group selection; keep `mode` in sync with the tour cursor.
+  useEffect(() => {
+    if (tour == null) return;
+    const g = orderedGroups[tour];
+    if (g) setMode((m) => ({ ...m, mode: 'groups', group: g.id }));
+    else setTour(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tour, orderedGroupIds]);
+
+  const startTour = () => {
+    const reads = new Set(
+      store.models.hunkReads.where((r) => r.pr === pr).map((r) => r.hunk),
+    );
+    const firstUnread = orderedGroups.findIndex(
+      (g) => !g.hunks.every((h) => reads.has(h)),
+    );
+    setTour(firstUnread >= 0 ? firstUnread : 0);
+  };
+
+  useViewKeys(
+    ui,
+    (e) => {
+      if (e.key === 't' || e.key === 'T') {
+        if (tour === null) startTour();
+        else setTour(null);
+        return;
+      }
+      if (e.key !== 'r' && e.key !== 'R') return false;
+      if (tour == null) return false;
+      const g = orderedGroups[tour];
+      if (g) markGroupRead(store, pr, g.hunks);
+      setTour(tour + 1 < orderedGroups.length ? tour + 1 : null);
+    },
+    [tour, orderedGroupIds, pr],
+  );
 
   const unresolved = store.models.threads.where((t) => !t.resolved).length;
 
@@ -125,6 +203,20 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             <Spinner size="sm" />
           )}
         </div>
+        <ToggleButton
+          size="sm"
+          className="gap-1.5"
+          isSelected={tour !== null}
+          onChange={() => (tour === null ? startTour() : setTour(null))}
+        >
+          {tour === null ? (
+            <Play className="size-4" />
+          ) : (
+            <Stop className="size-4" />
+          )}
+          Tour
+          <K>T</K>
+        </ToggleButton>
         <Btn tone="primary" onPress={() => ui.openModal('submit')}>
           Submit review
         </Btn>
@@ -182,6 +274,44 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             </Tabs.List>
           </Tabs.ListContainer>
         </Tabs>
+        {baselineRevision?.status === 'ready' && (
+          <ToggleButtonGroup
+            size="sm"
+            selectionMode="single"
+            disallowEmptySelection
+            selectedKeys={new Set([sinceOnly ? 'since' : 'all'])}
+            onSelectionChange={(k) => setSinceOnly([...k][0] === 'since')}
+            aria-label="What to show"
+          >
+            <ToggleButton id="all">Whole PR</ToggleButton>
+            <ToggleButton id="since" className="gap-1.5">
+              <ToggleButtonGroup.Separator />
+              <ClockArrowRotateLeft className="size-4" />
+              Since last visit
+              <span className="tabular-nums text-muted">{sinceCount}</span>
+            </ToggleButton>
+          </ToggleButtonGroup>
+        )}
+        {tab === 'diff' && (
+          <ToggleButtonGroup
+            size="sm"
+            selectionMode="single"
+            disallowEmptySelection
+            selectedKeys={new Set([ui.diffView])}
+            onSelectionChange={(k) =>
+              [...k][0] !== ui.diffView && ui.toggleDiffView()
+            }
+            aria-label="Diff view"
+          >
+            <ToggleButton id="unified" isIconOnly aria-label="Unified">
+              <LayoutRows className="size-4" />
+            </ToggleButton>
+            <ToggleButton id="split" isIconOnly aria-label="Side by side">
+              <ToggleButtonGroup.Separator />
+              <LayoutSplitColumns className="size-4" />
+            </ToggleButton>
+          </ToggleButtonGroup>
+        )}
         <span className="flex-1" />
         {detail && detail.reviewers.length > 0 && (
           <>
@@ -219,6 +349,25 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           {unresolved} unresolved thread{unresolved === 1 ? '' : 's'}
         </div>
       )}
+
+      {sinceOnly &&
+        sinceCount === 0 &&
+        baselineRevision?.status === 'ready' && (
+          <Alert
+            status="accent"
+            className="since-banner rounded-none border-b border-separator px-3 py-1.5"
+          >
+            <Alert.Indicator>
+              <ClockArrowRotateLeft className="size-4" />
+            </Alert.Indicator>
+            <Alert.Content>
+              <Alert.Title>Nothing changed since your last visit.</Alert.Title>
+            </Alert.Content>
+            <Btn tone="tertiary" onPress={() => setSinceOnly(false)}>
+              Whole PR
+            </Btn>
+          </Alert>
+        )}
 
       {detail?.body && (
         <Disclosure className="description border-b border-separator px-4">
@@ -259,7 +408,14 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           ) : tab === 'commits' ? (
             <Commits commits={detail?.commits ?? []} />
           ) : (
-            <DiffPane pr={pr} rev={revision.data!} mode={mode} />
+            <DiffPane
+              pr={pr}
+              rev={revision.data!}
+              mode={mode}
+              since={since}
+              sinceOnly={sinceOnly && sinceCount > 0}
+              tour={tour !== null}
+            />
           )}
           {ui.aside && <SidePanel pr={pr} />}
         </div>

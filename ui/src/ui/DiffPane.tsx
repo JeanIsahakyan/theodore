@@ -6,28 +6,47 @@ import {
   Eye,
   FileCode,
   Plus,
+  Sparkles,
 } from '@gravity-ui/icons';
-import { Button, Card, Chip, TextArea } from '@heroui/react';
+import { Alert, Button, Card, Chip, TextArea, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { Code, langOf, rich } from '../highlight';
+import { api } from '../core/api';
 import type {
   Anchor,
   DiffLine,
   FileDiff,
   Hunk,
+  HunkId,
   PrId,
   Revision,
   Side,
 } from '../gen/contract';
 import { addDraft, markGroupRead, setFileViewed } from '../actions';
-import { useRootStore } from '../stores/context';
+import { useRootStore, useUi } from '../stores/context';
 import { Btn } from './bits';
+import {
+  gapsAbove,
+  splitRows,
+  wordMarks,
+  type Gap,
+  type SinceKind,
+} from './diff';
 import type { ReviewMode } from './GroupsPane';
+
+interface ComposerState {
+  path: string;
+  side: Side;
+  line: number;
+  /** Set when the comment covers a range; `line` is always the range's end. */
+  startLine?: number;
+}
 
 function lineAnchor(
   rev: Revision['head'],
   path: string,
   l: DiffLine,
+  startLine?: number,
 ): Anchor | null {
   if (l.kind === 'del') {
     if (l.old_no == null) return null;
@@ -36,8 +55,8 @@ function lineAnchor(
       path,
       side: 'old',
       line: l.old_no,
-      start_line: null,
-      start_side: null,
+      start_line: startLine ?? null,
+      start_side: startLine != null ? 'old' : null,
     };
   }
   if (l.new_no == null) return null;
@@ -46,8 +65,8 @@ function lineAnchor(
     path,
     side: 'new',
     line: l.new_no,
-    start_line: null,
-    start_side: null,
+    start_line: startLine ?? null,
+    start_side: startLine != null ? 'new' : null,
   };
 }
 
@@ -58,23 +77,39 @@ export const DiffPane = observer(function DiffPane({
   pr,
   rev,
   mode,
+  since,
+  sinceOnly,
+  tour,
 }: {
   pr: PrId;
   rev: Revision;
   mode: ReviewMode;
+  since?: Map<HunkId, SinceKind> | null;
+  sinceOnly?: boolean;
+  tour?: boolean;
 }) {
   const store = useRootStore();
-  const [composer, setComposer] = useState<{
+  const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [rangeStart, setRangeStart] = useState<{
     path: string;
     side: Side;
     line: number;
   } | null>(null);
+  const [outliersOpen, setOutliersOpen] = useState<Record<string, boolean>>({});
 
-  const groupHunkIds =
+  const group =
     mode.mode === 'groups' && mode.group
-      ? new Set(store.models.groups.get(mode.group)?.hunks ?? [])
+      ? store.models.groups.get(mode.group)
       : null;
-  const files: FileDiff[] =
+  const groupHunkIds = group ? new Set(group.hunks) : null;
+  const showOnlyOutliers =
+    !!group &&
+    group.kind === 'skim' &&
+    group.outliers.length > 0 &&
+    !outliersOpen[group.id];
+  const outlierSet = group ? new Set(group.outliers) : null;
+
+  let files: FileDiff[] =
     mode.mode === 'files'
       ? rev.files.filter((f) => f.path === mode.file)
       : groupHunkIds
@@ -86,10 +121,67 @@ export const DiffPane = observer(function DiffPane({
             .filter((f) => f.hunks.length)
         : rev.files;
 
+  if (showOnlyOutliers && outlierSet) {
+    files = files
+      .map((f) => ({
+        ...f,
+        hunks: f.hunks.filter((h) => outlierSet.has(h.id)),
+      }))
+      .filter((f) => f.hunks.length);
+  }
+
+  if (sinceOnly && since) {
+    files = files
+      .map((f) => ({ ...f, hunks: f.hunks.filter((h) => since.has(h.id)) }))
+      .filter((f) => f.hunks.length);
+  }
+
+  const totalInGroup =
+    mode.mode === 'groups' && groupHunkIds
+      ? rev.files.flatMap((f) => f.hunks.filter((h) => groupHunkIds.has(h.id)))
+          .length
+      : 0;
+
   return (
     <main className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5">
+      {tour && (
+        <div className="tour sticky -top-5 z-[3] -mx-6 -mt-5 mb-5 flex items-center gap-3 border-b border-separator bg-surface px-6 py-3 text-sm">
+          <Sparkles className="size-4 text-accent" />
+          Tour mode — press <kbd className="font-mono">R</kbd> to mark this
+          group read and continue
+        </div>
+      )}
       {mode.mode === 'groups' && mode.group && (
         <GroupCard pr={pr} groupId={mode.group} />
+      )}
+      {group && group.kind === 'skim' && group.outliers.length > 0 && (
+        <Alert
+          status={showOnlyOutliers ? 'warning' : 'default'}
+          className="outliers mb-4"
+        >
+          <Alert.Indicator>
+            <Sparkles className="size-4" />
+          </Alert.Indicator>
+          <Alert.Content>
+            <Alert.Title>
+              {showOnlyOutliers
+                ? `Showing ${group.outliers.length} off-pattern edit${group.outliers.length === 1 ? '' : 's'} of ${totalInGroup}`
+                : `All ${totalInGroup} hunks in the group`}
+            </Alert.Title>
+            <Alert.Description>
+              This is a mechanical group: the agent checked the rest against the
+              pattern — the same replacement, no need to read it.
+            </Alert.Description>
+          </Alert.Content>
+          <Btn
+            tone="tertiary"
+            onPress={() =>
+              setOutliersOpen((o) => ({ ...o, [group.id]: !o[group.id] }))
+            }
+          >
+            {showOnlyOutliers ? 'Show all' : 'Only outliers'}
+          </Btn>
+        </Alert>
       )}
       {files.map((f) => (
         <FileBlock
@@ -97,8 +189,11 @@ export const DiffPane = observer(function DiffPane({
           pr={pr}
           rev={rev.head}
           file={f}
+          since={since}
           composer={composer}
           setComposer={setComposer}
+          rangeStart={rangeStart}
+          setRangeStart={setRangeStart}
         />
       ))}
     </main>
@@ -152,20 +247,82 @@ const GroupCard = observer(function GroupCard({
   );
 });
 
+/** A collapsed run of unchanged lines, with a button to fetch and reveal it. */
+const ContextGap = observer(function ContextGap({
+  pr,
+  rev,
+  path,
+  gap,
+  lang,
+}: {
+  pr: PrId;
+  rev: Revision['head'];
+  path: string;
+  gap: Gap;
+  lang: ReturnType<typeof langOf>;
+}) {
+  const store = useRootStore();
+  const [want, setWant] = useState(false);
+  const key = `${pr}@${rev}:${path}`;
+  const res = want
+    ? store.files.get(key, () => api.getFile({ pr, rev, path }))
+    : null;
+  if (res?.status === 'ready' && res.data != null) {
+    const allLines = res.data.split('\n');
+    const slice = allLines.slice(gap.from - 1, gap.to);
+    return (
+      <>
+        {slice.map((text, i) => {
+          const newNo = gap.from + i;
+          return (
+            <div key={newNo} className="ln t-ctx">
+              <span className="no">{newNo - gap.shift}</span>
+              <span className="no">{newNo}</span>
+              <span className="mark"> </span>
+              <Code s={text} lang={lang} />
+              <span className="ln-act" />
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+  return (
+    <div className="gap flex items-center justify-center gap-2 border-y border-separator bg-surface-secondary px-4 py-1 text-xs text-muted">
+      <Button
+        size="sm"
+        variant="ghost"
+        isPending={res?.status === 'loading'}
+        onPress={() => setWant(true)}
+      >
+        Load {gap.to - gap.from + 1} line{gap.to - gap.from ? 's' : ''} of
+        context
+      </Button>
+    </div>
+  );
+});
+
 function FileBlock({
   pr,
   rev,
   file,
+  since,
   composer,
   setComposer,
+  rangeStart,
+  setRangeStart,
 }: {
   pr: PrId;
   rev: Revision['head'];
   file: FileDiff;
-  composer: { path: string; side: Side; line: number } | null;
-  setComposer: (c: { path: string; side: Side; line: number } | null) => void;
+  since?: Map<HunkId, SinceKind> | null;
+  composer: ComposerState | null;
+  setComposer: (c: ComposerState | null) => void;
+  rangeStart: { path: string; side: Side; line: number } | null;
+  setRangeStart: (r: { path: string; side: Side; line: number } | null) => void;
 }) {
   const store = useRootStore();
+  const ui = useUi();
   const lang = langOf(file.path);
   const viewed = store.models.fileViews
     .where((v) => v.pr === pr && v.path === file.path)
@@ -178,6 +335,7 @@ function FileBlock({
       </Card>
     );
   }
+  const gaps = gapsAbove(file.hunks);
   return (
     <Card className="file mb-4 gap-0 overflow-hidden p-0">
       <header className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm">
@@ -215,18 +373,59 @@ function FileBlock({
         </Button>
       </header>
       {file.hunks.map((h) => (
-        <HunkView
-          key={h.id}
-          pr={pr}
-          rev={rev}
-          path={file.path}
-          h={h}
-          lang={lang}
-          composer={composer}
-          setComposer={setComposer}
-        />
+        <div key={h.id}>
+          {gaps.has(h.id) && (
+            <ContextGap
+              pr={pr}
+              rev={rev}
+              path={file.path}
+              gap={gaps.get(h.id)!}
+              lang={lang}
+            />
+          )}
+          {ui.diffView === 'split' ? (
+            <SplitHunkView
+              pr={pr}
+              rev={rev}
+              path={file.path}
+              h={h}
+              lang={lang}
+              since={since?.get(h.id)}
+              composer={composer}
+              setComposer={setComposer}
+              rangeStart={rangeStart}
+              setRangeStart={setRangeStart}
+            />
+          ) : (
+            <HunkView
+              pr={pr}
+              rev={rev}
+              path={file.path}
+              h={h}
+              lang={lang}
+              since={since?.get(h.id)}
+              composer={composer}
+              setComposer={setComposer}
+              rangeStart={rangeStart}
+              setRangeStart={setRangeStart}
+            />
+          )}
+        </div>
       ))}
     </Card>
+  );
+}
+
+function SinceBadge({ kind }: { kind?: SinceKind }) {
+  if (!kind) return null;
+  return (
+    <Chip
+      size="sm"
+      variant="soft"
+      color={kind === 'new' ? 'success' : 'warning'}
+    >
+      {kind === 'new' ? 'new since' : 'changed since'} last visit
+    </Chip>
   );
 }
 
@@ -236,21 +435,28 @@ function HunkView({
   path,
   h,
   lang,
+  since,
   composer,
   setComposer,
+  rangeStart,
+  setRangeStart,
 }: {
   pr: PrId;
   rev: Revision['head'];
   path: string;
   h: Hunk;
   lang: ReturnType<typeof langOf>;
-  composer: { path: string; side: Side; line: number } | null;
-  setComposer: (c: { path: string; side: Side; line: number } | null) => void;
+  since?: SinceKind;
+  composer: ComposerState | null;
+  setComposer: (c: ComposerState | null) => void;
+  rangeStart: { path: string; side: Side; line: number } | null;
+  setRangeStart: (r: { path: string; side: Side; line: number } | null) => void;
 }) {
   const store = useRootStore();
   const read =
     store.models.hunkReads.where((r) => r.pr === pr && r.hunk === h.id).length >
     0;
+  const marks = wordMarks(h.lines);
   return (
     <div
       className={`hunk border-t border-separator first:border-t-0 ${read ? 'read' : ''}`}
@@ -260,6 +466,7 @@ function HunkView({
           {h.header ||
             `@@ -${h.old_start},${h.old_lines} +${h.new_start},${h.new_lines} @@`}
         </span>
+        <SinceBadge kind={since} />
         <span className="flex-1" />
         {read && (
           <span className="inline-flex items-center gap-1 text-success">
@@ -276,9 +483,101 @@ function HunkView({
             path={path}
             l={l}
             lang={lang}
+            marks={marks.get(i)}
             composer={composer}
             setComposer={setComposer}
+            rangeStart={rangeStart}
+            setRangeStart={setRangeStart}
           />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Side-by-side rendering of one hunk, using `splitRows` to pair del/add lines. */
+function SplitHunkView({
+  pr,
+  rev,
+  path,
+  h,
+  lang,
+  since,
+  composer,
+  setComposer,
+  rangeStart,
+  setRangeStart,
+}: {
+  pr: PrId;
+  rev: Revision['head'];
+  path: string;
+  h: Hunk;
+  lang: ReturnType<typeof langOf>;
+  since?: SinceKind;
+  composer: ComposerState | null;
+  setComposer: (c: ComposerState | null) => void;
+  rangeStart: { path: string; side: Side; line: number } | null;
+  setRangeStart: (r: { path: string; side: Side; line: number } | null) => void;
+}) {
+  const store = useRootStore();
+  const read =
+    store.models.hunkReads.where((r) => r.pr === pr && r.hunk === h.id).length >
+    0;
+  const marks = wordMarks(h.lines);
+  const rows = splitRows(h.lines);
+  return (
+    <div
+      className={`hunk split border-t border-separator first:border-t-0 ${read ? 'read' : ''}`}
+    >
+      <div className="flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted bg-surface-secondary">
+        <span className="tabular-nums">
+          {h.header ||
+            `@@ -${h.old_start},${h.old_lines} +${h.new_start},${h.new_lines} @@`}
+        </span>
+        <SinceBadge kind={since} />
+        <span className="flex-1" />
+        {read && (
+          <span className="inline-flex items-center gap-1 text-success">
+            <Check className="size-3.5" /> read
+          </span>
+        )}
+      </div>
+      <div className="lines split-lines">
+        {rows.map((row, i) => (
+          <div key={i} className="split-row grid grid-cols-2">
+            <div className="split-col">
+              {row.l != null && (
+                <Line
+                  pr={pr}
+                  rev={rev}
+                  path={path}
+                  l={h.lines[row.l]!}
+                  lang={lang}
+                  marks={marks.get(row.l)}
+                  composer={composer}
+                  setComposer={setComposer}
+                  rangeStart={rangeStart}
+                  setRangeStart={setRangeStart}
+                />
+              )}
+            </div>
+            <div className="split-col">
+              {row.r != null && (
+                <Line
+                  pr={pr}
+                  rev={rev}
+                  path={path}
+                  l={h.lines[row.r]!}
+                  lang={lang}
+                  marks={marks.get(row.r)}
+                  composer={composer}
+                  setComposer={setComposer}
+                  rangeStart={rangeStart}
+                  setRangeStart={setRangeStart}
+                />
+              )}
+            </div>
+          </div>
         ))}
       </div>
     </div>
@@ -291,16 +590,22 @@ const Line = observer(function Line({
   path,
   l,
   lang,
+  marks,
   composer,
   setComposer,
+  rangeStart,
+  setRangeStart,
 }: {
   pr: PrId;
   rev: Revision['head'];
   path: string;
   l: DiffLine;
   lang: ReturnType<typeof langOf>;
-  composer: { path: string; side: Side; line: number } | null;
-  setComposer: (c: { path: string; side: Side; line: number } | null) => void;
+  marks?: [number, number][];
+  composer: ComposerState | null;
+  setComposer: (c: ComposerState | null) => void;
+  rangeStart: { path: string; side: Side; line: number } | null;
+  setRangeStart: (r: { path: string; side: Side; line: number } | null) => void;
 }) {
   const store = useRootStore();
   const anchor = lineAnchor(rev, path, l);
@@ -319,6 +624,8 @@ const Line = observer(function Line({
     anchor &&
     composer &&
     sameAnchor(anchor, path, composer.side, composer.line);
+  const composerAnchor =
+    composing && anchor ? lineAnchor(rev, path, l, composer!.startLine) : null;
   return (
     <>
       <div className={`ln t-${l.kind}`}>
@@ -327,20 +634,46 @@ const Line = observer(function Line({
         <span className="mark">
           {l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}
         </span>
-        <Code s={l.text} lang={lang} />
+        <Code s={l.text} lang={lang} marks={marks} />
         <span className="ln-act">
           {anchor && (
-            <Button
-              isIconOnly
-              size="sm"
-              aria-label="comment"
-              className="h-5 min-w-5 w-5 rounded-xl text-xs"
-              onPress={() =>
-                setComposer({ path, side: anchor.side, line: anchor.line })
-              }
-            >
-              <Plus className="size-3" />
-            </Button>
+            <Tooltip>
+              <Button
+                isIconOnly
+                size="sm"
+                aria-label="comment"
+                className="h-5 min-w-5 w-5 rounded-xl text-xs"
+                onPress={(e) => {
+                  if (
+                    e.shiftKey &&
+                    rangeStart &&
+                    rangeStart.path === path &&
+                    rangeStart.side === anchor.side
+                  ) {
+                    const startLine = Math.min(rangeStart.line, anchor.line);
+                    const endLine = Math.max(rangeStart.line, anchor.line);
+                    setComposer({
+                      path,
+                      side: anchor.side,
+                      line: endLine,
+                      startLine: startLine !== endLine ? startLine : undefined,
+                    });
+                  } else {
+                    setRangeStart({
+                      path,
+                      side: anchor.side,
+                      line: anchor.line,
+                    });
+                    setComposer({ path, side: anchor.side, line: anchor.line });
+                  }
+                }}
+              >
+                <Plus className="size-3" />
+              </Button>
+              <Tooltip.Content>
+                Comment · shift-click another line for a range
+              </Tooltip.Content>
+            </Tooltip>
           )}
         </span>
       </div>
@@ -358,10 +691,10 @@ const Line = observer(function Line({
               <div className="text-sm">{d.body}</div>
             </div>
           ))}
-          {composing && anchor && (
+          {composing && composerAnchor && (
             <Composer
               pr={pr}
-              anchor={anchor}
+              anchor={composerAnchor}
               onClose={() => setComposer(null)}
             />
           )}
@@ -414,6 +747,11 @@ function Composer({
   const [text, setText] = useState('');
   return (
     <Card className="composer max-w-[760px] gap-1.5 p-2">
+      {anchor.start_line != null && (
+        <div className="px-1 text-xs text-muted">
+          Commenting on lines {anchor.start_line}–{anchor.line}
+        </div>
+      )}
       <TextArea
         autoFocus
         fullWidth

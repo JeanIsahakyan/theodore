@@ -53,7 +53,7 @@ export const App = observer(function App() {
             ) : r.name === 'settings' ? (
               <SettingsPage page={r.page} />
             ) : (
-              <Review pr={r.pr} />
+              <Review key={r.pr} pr={r.pr} />
             )}
           </div>
         </Surface>

@@ -84,9 +84,15 @@ describe('splitRows', () => {
 
 describe('gapsAbove / gapTail', () => {
   it('reports a gap from the top of the file to the first hunk', () => {
-    const h = hunk({ id: 'h1', new_start: 10, new_lines: 3, lines: [] });
+    const h = hunk({
+      id: 'h1',
+      new_start: 10,
+      new_lines: 3,
+      old_start: 8,
+      lines: [],
+    });
     const gaps = gapsAbove([h]);
-    expect(gaps.get('h1')).toEqual({ from: 1, to: 9 });
+    expect(gaps.get('h1')).toEqual({ from: 1, to: 9, shift: 2 });
   });
 
   it('reports no gap when a hunk starts at line 1', () => {
@@ -99,12 +105,19 @@ describe('gapsAbove / gapTail', () => {
     const h2 = hunk({ id: 'h2', new_start: 10, new_lines: 2, lines: [] });
     const gaps = gapsAbove([h1, h2]);
     expect(gaps.has('h1')).toBe(false);
-    expect(gaps.get('h2')).toEqual({ from: 3, to: 9 });
+    expect(gaps.get('h2')).toEqual({ from: 3, to: 9, shift: 9 });
   });
 
   it('reports the tail gap against a known file length', () => {
-    const h = hunk({ id: 'h1', new_start: 1, new_lines: 5, lines: [] });
-    expect(gapTail([h], 20)).toEqual({ from: 6, to: 20 });
+    const h = hunk({
+      id: 'h1',
+      new_start: 1,
+      new_lines: 5,
+      old_start: 1,
+      old_lines: 5,
+      lines: [],
+    });
+    expect(gapTail([h], 20)).toEqual({ from: 6, to: 20, shift: 0 });
     expect(gapTail([h], 5)).toBeNull();
   });
 });

@@ -108,10 +108,13 @@ export function splitRows(lines: DiffLine[]): SplitRow[] {
   return rows;
 }
 
-/** A gap of unchanged lines directly above a hunk, in new-file line numbers. */
+/** A gap of unchanged lines directly above a hunk, in new-file line numbers.
+ *  `shift`: old line number = new line number − `shift`, constant across the
+ *  gap since nothing in it changed. */
 export interface Gap {
   from: number;
   to: number;
+  shift: number;
 }
 
 /** Gaps above each shown hunk of one file (sorted by position), from either
@@ -122,7 +125,11 @@ export function gapsAbove(hunks: Hunk[]): Map<HunkId, Gap> {
   let end = 0;
   for (const h of hunks) {
     if (h.new_start - 1 > end)
-      out.set(h.id, { from: end + 1, to: h.new_start - 1 });
+      out.set(h.id, {
+        from: end + 1,
+        to: h.new_start - 1,
+        shift: h.new_start - h.old_start,
+      });
     end = Math.max(end, h.new_start + h.new_lines - 1);
   }
   return out;
@@ -132,8 +139,13 @@ export function gapsAbove(hunks: Hunk[]): Map<HunkId, Gap> {
  *  (known once its full content has been fetched via `get_file`). */
 export function gapTail(hunks: Hunk[], totalLines: number): Gap | null {
   if (!hunks.length) return null;
-  const end = Math.max(...hunks.map((h) => h.new_start + h.new_lines - 1));
-  return totalLines > end ? { from: end + 1, to: totalLines } : null;
+  const last = hunks.reduce((a, b) =>
+    a.new_start + a.new_lines > b.new_start + b.new_lines ? a : b,
+  );
+  const end = last.new_start + last.new_lines - 1;
+  const shift =
+    last.new_start + last.new_lines - (last.old_start + last.old_lines);
+  return totalLines > end ? { from: end + 1, to: totalLines, shift } : null;
 }
 
 export type SinceKind = 'new' | 'changed';
