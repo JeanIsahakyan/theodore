@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use theodore_contract::{Ephemeral, OpenPrRequest, OpenPrResponse, ToastLevel, models};
-use theodore_domain::{AgentId, HostKind, PrRef, RepoRef};
+use theodore_domain::{AgentId, HostKind, PrId, PrRef, RepoRef};
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
 use crate::core::{Core, RevisionEntry};
@@ -13,7 +13,25 @@ use crate::error::{AppError, AppResult};
 impl Core {
     pub async fn open_pr(&self, req: OpenPrRequest) -> AppResult<OpenPrResponse> {
         let pr_ref = parse_pr_ref(&req.url)?;
+        let _guard = self.0.open_lock.lock().await;
+        self.open_ref(pr_ref).await
+    }
 
+    /// Open `pr` if this session hasn't yet (a PR opened from the inbox or a
+    /// restored tab arrives by id, not by URL).
+    pub async fn ensure_open(&self, pr: &PrId) -> AppResult<()> {
+        if self.0.current_head.read().await.contains_key(pr) {
+            return Ok(());
+        }
+        let _guard = self.0.open_lock.lock().await;
+        if self.0.current_head.read().await.contains_key(pr) {
+            return Ok(());
+        }
+        let pr_ref = pr_ref_from_id(pr)?;
+        self.open_ref(pr_ref).await.map(|_| ())
+    }
+
+    async fn open_ref(&self, pr_ref: PrRef) -> AppResult<OpenPrResponse> {
         let fetched = self.0.deps.host.get_pr(&pr_ref, None).await?;
         let detail = match fetched {
             Fetched::Modified { value, .. } => value,
@@ -116,6 +134,30 @@ impl Core {
 
 /// `https://github.com/{owner}/{repo}/pull/{n}` or the `{owner}/{repo}#{n}`
 /// shorthand (both GitHub-only for now; plan §6.1 adds hosts later).
+/// Inverse of `PrRef::id`: `github:owner/repo#12`, `gitlab:group/sub/proj#3`.
+pub fn pr_ref_from_id(id: &PrId) -> AppResult<PrRef> {
+    let bad = || AppError::Invalid(format!("bad pr id {id}"));
+    let (host, rest) = id.0.split_once(':').ok_or_else(bad)?;
+    let (slug, n) = rest.rsplit_once('#').ok_or_else(bad)?;
+    let (owner, name) = slug.rsplit_once('/').ok_or_else(bad)?;
+    let host = match host {
+        "github" => HostKind::Github,
+        "gitlab" => HostKind::Gitlab,
+        "bitbucket" => HostKind::Bitbucket,
+        "local" => HostKind::Local,
+        _ => return Err(bad()),
+    };
+    Ok(PrRef {
+        repo: RepoRef {
+            host,
+            owner: owner.into(),
+            name: name.into(),
+        },
+        number: n.parse().map_err(|_| bad())?,
+        host_id: None,
+    })
+}
+
 pub fn parse_pr_ref(input: &str) -> AppResult<PrRef> {
     let input = input.trim();
     if let Ok(url) = url::Url::parse(input) {
@@ -192,6 +234,17 @@ mod parse_tests {
         assert_eq!(pr.repo.owner, "group/sub");
         assert_eq!(pr.repo.name, "project");
         assert_eq!(pr.number, 42);
+    }
+
+    #[test]
+    fn pr_ids_round_trip() {
+        for url in [
+            "https://github.com/o/r/pull/7",
+            "https://gitlab.com/g/s/p/-/merge_requests/3",
+        ] {
+            let pr = parse_pr_ref(url).unwrap();
+            assert_eq!(pr_ref_from_id(&pr.id()).unwrap(), pr);
+        }
     }
 
     #[test]

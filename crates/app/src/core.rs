@@ -45,6 +45,8 @@ pub(crate) struct Inner {
     /// wait for its idle poll (which is paced by `Clock`, not wall time).
     pub outbox_notify: Notify,
     pub shutdown: CancellationToken,
+    /// Serializes PR opens so two callers never clone/fetch the same PR twice.
+    pub open_lock: tokio::sync::Mutex<()>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -76,6 +78,7 @@ impl Core {
             runs: RwLock::new(HashMap::new()),
             outbox_notify: Notify::new(),
             shutdown: CancellationToken::new(),
+            open_lock: tokio::sync::Mutex::new(()),
         });
 
         let core = Core(inner.clone());

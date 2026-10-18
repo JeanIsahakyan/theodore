@@ -270,11 +270,13 @@ pub(crate) struct GqlPrCore {
     pub updated_at: String,
     pub author: Option<GqlActor>,
     pub labels: Option<Connection<GqlLabel>>,
+    #[serde(default)]
     pub assignees: Connection<GqlActor>,
     #[serde(rename = "reviewRequests")]
     pub review_requests: Option<Connection<GqlReviewRequest>>,
     #[serde(rename = "latestReviews")]
     pub latest_reviews: Option<Connection<GqlReview>>,
+    #[serde(default)]
     pub commits: Connection<GqlPrCommitNode>,
     #[serde(rename = "statusCheckRollup")]
     pub status_check_rollup: Option<GqlStatusCheckRollup>,
@@ -337,6 +339,7 @@ pub(crate) struct GqlActorLite {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GqlStatusCheckRollup {
     pub state: String,
+    #[serde(default)]
     pub contexts: Connection<GqlCheckContext>,
 }
 
@@ -486,6 +489,7 @@ pub(crate) struct GqlThread {
     pub diff_side: String,
     #[serde(rename = "startDiffSide")]
     pub start_diff_side: Option<String>,
+    #[serde(default)]
     pub comments: Connection<GqlThreadComment>,
 }
 

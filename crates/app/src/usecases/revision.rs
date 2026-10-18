@@ -12,6 +12,7 @@ use crate::error::{AppError, AppResult};
 
 impl Core {
     pub async fn get_revision(&self, req: RevisionRequest) -> AppResult<Revision> {
+        self.ensure_open(&req.pr).await?;
         if let Some(entry) = self
             .0
             .revisions
@@ -55,6 +56,7 @@ impl Core {
     }
 
     pub async fn get_file(&self, req: FileRequest) -> AppResult<Option<String>> {
+        self.ensure_open(&req.pr).await?;
         let repo_path = {
             let revisions = self.0.revisions.read().await;
             revisions

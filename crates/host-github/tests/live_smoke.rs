@@ -59,3 +59,25 @@ async fn fetches_a_real_public_pr() {
     assert!(!detail.summary.title.is_empty());
     assert_eq!(detail.summary.pr.number, number);
 }
+
+#[tokio::test]
+#[ignore = "hits real github.com; run with --ignored and GITHUB_TOKEN set"]
+async fn runs_every_inbox_search_and_viewer() {
+    let token = std::env::var("GITHUB_TOKEN").expect("set GITHUB_TOKEN to run this test");
+    let token_source: Arc<dyn TokenSource> = Arc::new(StaticToken::new(token));
+    let adapter = theodore_host_github::GithubAdapter::new(token_source, Arc::new(SystemClock));
+    adapter.viewer().await.expect("viewer");
+    for section in [
+        theodore_ports::InboxSection::ReviewRequested,
+        theodore_ports::InboxSection::Assigned,
+        theodore_ports::InboxSection::Authored,
+        theodore_ports::InboxSection::Mentioned,
+    ] {
+        adapter
+            .search(&section)
+            .await
+            .unwrap_or_else(|e| panic!("{section:?}: {e}"));
+    }
+    adapter.list_repos().await.expect("list_repos");
+    adapter.changed_since(None).await.expect("changed_since");
+}

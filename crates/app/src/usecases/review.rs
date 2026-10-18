@@ -11,6 +11,7 @@ use crate::core::Core;
 
 impl Core {
     pub async fn submit_review(&self, req: SubmitReviewRequest) -> AppResult<()> {
+        self.ensure_open(&req.pr).await?;
         let head = self.0.current_head.read().await.get(&req.pr).cloned();
         let Some(head) = head else {
             return Err(AppError::Invalid("pr is not open".into()));

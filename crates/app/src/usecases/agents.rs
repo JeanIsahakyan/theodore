@@ -16,6 +16,7 @@ use crate::error::{AppError, AppResult};
 
 impl Core {
     pub async fn run_skill(&self, req: RunSkillRequest) -> AppResult<String> {
+        self.ensure_open(&req.pr).await?;
         let agents = if req.agents.is_empty() {
             self.setting_agents("agents.skills", vec![AgentId::Claude])
                 .await
@@ -62,6 +63,7 @@ impl Core {
     }
 
     pub async fn ask(&self, req: AskRequest) -> AppResult<String> {
+        self.ensure_open(&req.pr).await?;
         let message_id = uuid::Uuid::new_v4().to_string();
         let now = self.0.deps.clock.now();
         let question = ChatMessage {

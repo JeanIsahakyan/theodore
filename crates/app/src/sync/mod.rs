@@ -34,6 +34,18 @@ impl Core {
             .await
             .map_err(AppError::join)??,
             BootstrapScope::Pr(pr) => {
+                if !self.0.current_head.read().await.contains_key(&pr) {
+                    let core = self.clone();
+                    let pr = pr.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = core.ensure_open(&pr).await {
+                            core.emit(theodore_contract::Ephemeral::Toast {
+                                level: theodore_contract::ToastLevel::Error,
+                                text: format!("Could not open {pr}: {e}"),
+                            });
+                        }
+                    });
+                }
                 let pr_s = pr.0.clone();
                 tokio::task::spawn_blocking(move || {
                     let mut out = Vec::new();

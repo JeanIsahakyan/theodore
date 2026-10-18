@@ -20,6 +20,15 @@ pub(crate) struct Connection<N> {
     pub page_info: PageInfo,
 }
 
+impl<N> Default for Connection<N> {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            page_info: PageInfo::default(),
+        }
+    }
+}
+
 impl<N> Connection<N> {
     pub(crate) fn into_nodes(self) -> Vec<N> {
         self.nodes.into_iter().flatten().collect()
