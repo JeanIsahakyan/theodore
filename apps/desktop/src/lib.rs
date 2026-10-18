@@ -5,6 +5,7 @@ pub mod app_core;
 pub mod commands;
 pub mod core_api;
 pub mod events;
+pub mod menu;
 pub mod updater;
 
 use std::path::Path;
@@ -82,9 +83,10 @@ pub fn run(core: Arc<dyn CoreApi>, forward: impl FnOnce(CoreEvents<tauri::Wry>) 
     let builder = specta_builder();
 
     tauri::Builder::default()
-        // The standard app menu. On macOS its Edit submenu is what makes
-        // ⌘C / ⌘V / ⌘X / ⌘A / ⌘Z work inside text fields.
-        .menu(tauri::menu::Menu::default)
+        // Native menu bar. Its Edit submenu is also what makes ⌘C / ⌘V /
+        // ⌘X / ⌘A / ⌘Z work inside text fields on macOS.
+        .menu(menu::build)
+        .on_menu_event(menu::on_event)
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(builder.invoke_handler())

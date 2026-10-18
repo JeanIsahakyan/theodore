@@ -1,3 +1,4 @@
+import { REVIEW_EVENT } from '../core/menu';
 import { DiffSkeleton } from './Loading';
 import { useEffect, useState } from 'react';
 import {
@@ -201,6 +202,30 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     );
     setTour(firstUnread >= 0 ? firstUnread : 0);
   };
+
+  // Review items of the native menu bar (see core/menu.ts).
+  useEffect(() => {
+    const on = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id === 'view-grouped') setMode((m) => ({ ...m, mode: 'groups' }));
+      else if (id === 'view-files') setMode((m) => ({ ...m, mode: 'files' }));
+      else if (id === 'view-split') ui.toggleDiffView();
+      else if (id === 'tour') {
+        if (tour === null) startTour();
+        else setTour(null);
+      } else if (id === 'mark-group-read') {
+        const g = orderedGroups.find((x) => x.id === mode.group);
+        if (g) markGroupRead(store, pr, g.hunks);
+      } else if (id === 'ask-agent') {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: '/' }));
+      } else if (id === 'open-on-host') {
+        const url = summary?.url;
+        if (url) window.open(url, '_blank');
+      }
+    };
+    window.addEventListener(REVIEW_EVENT, on);
+    return () => window.removeEventListener(REVIEW_EVENT, on);
+  });
 
   useViewKeys(
     ui,
