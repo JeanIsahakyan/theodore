@@ -1,17 +1,29 @@
 /** The Checks and Commits tabs of a PR — `PrDetail.checks` / `.commits`. */
-import { Accordion, Chip, Table, Toolbar, Tooltip } from '@heroui/react';
+import { useEffect, useState } from 'react';
+import { PersonPlus } from '@gravity-ui/icons';
+import {
+  Accordion,
+  Button,
+  Chip,
+  Dropdown,
+  Table,
+  Toolbar,
+  Tooltip,
+} from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
   Check,
   CheckStatus,
   Commit,
+  Person,
   PrId,
   Reviewer,
 } from '../gen/contract';
-import { ask } from '../actions';
+import { ask, setReviewers } from '../actions';
+import { api } from '../core/api';
 import { useRootStore } from '../stores/context';
 import { ago } from './List';
-import { Avatar, Btn } from './bits';
+import { Avatar, Btn, Spinner } from './bits';
 
 const ORDER: Record<CheckStatus, number> = {
   fail: 0,
@@ -213,3 +225,70 @@ export function ReviewerStrip({ reviewers }: { reviewers: Reviewer[] }) {
     </div>
   );
 }
+
+/** Add/remove reviewers from `assignable_users`, via `set_reviewers`. Teams
+ *  (`Reviewer.team`) aren't offered here — `assignable_users` returns
+ *  people, not teams. */
+export const ReviewerPicker = observer(function ReviewerPicker({
+  pr,
+}: {
+  pr: PrId;
+}) {
+  const store = useRootStore();
+  const [open, setOpen] = useState(false);
+  const [users, setUsers] = useState<Person[] | 'loading' | null>(null);
+  const detail = store.models.prDetails.get(pr);
+  const requested = new Set(
+    (detail?.reviewers ?? []).filter((r) => !r.team).map((r) => r.person.login),
+  );
+
+  useEffect(() => {
+    if (!open || users) return;
+    setUsers('loading');
+    void api
+      .assignableUsers(pr)
+      .then(setUsers)
+      .catch(() => setUsers([]));
+  }, [open, pr, users]);
+
+  return (
+    <Dropdown isOpen={open} onOpenChange={setOpen}>
+      <Button size="sm" variant="tertiary" className="reviewer-picker gap-1.5">
+        <PersonPlus className="size-4" />
+        Reviewers
+      </Button>
+      <Dropdown.Popover placement="bottom end">
+        {users === 'loading' || users === null ? (
+          <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted">
+            <Spinner /> Loading…
+          </div>
+        ) : (
+          <Dropdown.Menu
+            aria-label="Reviewers"
+            selectionMode="multiple"
+            selectedKeys={requested}
+            onSelectionChange={(keys) => {
+              const next = new Set([...keys].map(String));
+              const add = [...next].filter((l) => !requested.has(l));
+              const remove = [...requested].filter((l) => !next.has(l));
+              if (add.length || remove.length) {
+                void setReviewers(store, {
+                  pr,
+                  add,
+                  add_teams: [],
+                  remove,
+                });
+              }
+            }}
+          >
+            {users.map((u) => (
+              <Dropdown.Item key={u.login} id={u.login} textValue={u.login}>
+                {u.login}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Menu>
+        )}
+      </Dropdown.Popover>
+    </Dropdown>
+  );
+});

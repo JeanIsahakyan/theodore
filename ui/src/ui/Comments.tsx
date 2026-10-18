@@ -2,20 +2,15 @@ import { stripHtmlComments } from '../highlight';
 /**
  * The inline comment-thread UI used under a diff line: existing review
  * threads, pending drafts, and the composer that creates new ones. Ported
- * from the prototype's `Comments.tsx`; only the data layer changes.
+ * from the prototype's `Comments.tsx`.
  *
- * Dropped vs. the prototype (no backing data or action exists for any of
- * these — not a UI choice, a contract gap):
- * - Per-comment reactions (`Comment` has no `reactions` field).
- * - Comment edit/delete and quote-reply (no `editComment`/`deleteComment`
- *   action; threads are host state — only replying to or resolving an
- *   existing thread is wired, see `actions.ts`).
+ * Still dropped vs. the prototype (no backing data exists for either — not
+ * a UI choice, a contract gap):
  * - `@`-mention autocomplete (`MENTIONABLE` came from mock team data; no
  *   equivalent exists here).
- * - Suggestion commit / batch commit bar (`commitSuggestions`, `BatchBar`):
- *   no action turns a suggestion into a pushed commit. The composer still
- *   lets you draft a ```suggestion fence (purely textual), but nothing
- *   commits it.
+ * - Reaction *counts*: `Comment` carries no reactions field at all, so the
+ *   reaction bar can toggle (`react`) but can only show what *we* toggled
+ *   this session (`EphemeralStore.reacted`), never who else reacted.
  */
 import { useState } from 'react';
 import {
@@ -24,6 +19,10 @@ import {
   CircleCheck,
   ChevronDown,
   ChevronUp,
+  CodeCommit,
+  Ellipsis,
+  FaceSmile,
+  Layers,
   Plus,
 } from '@gravity-ui/icons';
 import {
@@ -31,17 +30,23 @@ import {
   Button,
   Card,
   Chip,
+  Dropdown,
   Kbd,
+  Popover,
   Tabs,
   TextArea,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { Md } from '../highlight';
-import type { Anchor, Comment, Draft, PrId } from '../gen/contract';
+import type { Anchor, Comment, Draft, PrId, PrSummary } from '../gen/contract';
 import {
   addDraft,
   ask,
+  commitSuggestions,
+  deleteComment,
+  editComment,
   editDraft,
+  reactToComment,
   removeDraft,
   replyThread,
   resolveThread,
@@ -61,6 +66,34 @@ function timeAgo(ms: number): string {
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
 }
+
+/** The lines of a trailing ```suggestion fence, or `null` if there is none. */
+export function suggestionOf(body: string): string[] | null {
+  const m = body.match(/```suggestion\n([\s\S]*?)\n```/);
+  return m ? m[1]!.split('\n') : null;
+}
+
+/** `commit_suggestions` is own-PRs-only: a local branch has no other author
+ *  to gate on; a host PR needs the signed-in viewer to be its author. */
+export function canCommitSuggestions(
+  summary: Pick<PrSummary, 'pr' | 'author'> | undefined,
+  viewerLogin: string | undefined,
+): boolean {
+  if (!summary) return false;
+  if (summary.pr.repo.host === 'local') return true;
+  return !!viewerLogin && summary.author.login === viewerLogin;
+}
+
+const REACTIONS: [emoji: string, name: string][] = [
+  ['👍', '+1'],
+  ['👎', '-1'],
+  ['😄', 'laugh'],
+  ['🎉', 'hooray'],
+  ['😕', 'confused'],
+  ['❤️', 'heart'],
+  ['🚀', 'rocket'],
+  ['👀', 'eyes'],
+];
 
 /** Markdown, plus a GitHub-style suggestion block rendered as a diff line. */
 export function Body({ text }: { text: string }) {
@@ -85,11 +118,88 @@ export function Body({ text }: { text: string }) {
   );
 }
 
-/** One comment of a thread. The prototype's edit/delete/reactions menu is
- *  dropped — see file header. */
-export function CommentView({ c }: { c: Comment }) {
+const Reactions = observer(function Reactions({
+  pr,
+  comment,
+}: {
+  pr: PrId;
+  comment: Comment;
+}) {
+  const store = useRootStore();
+  const [open, setOpen] = useState(false);
+  const mine = REACTIONS.filter(([, name]) =>
+    store.ephemeral.hasReacted(comment.id, name),
+  );
   return (
-    <div className="comment flex gap-3">
+    <div className="reactions flex flex-wrap items-center gap-1">
+      {mine.map(([emoji, name]) => (
+        <Button
+          key={name}
+          size="sm"
+          variant="secondary"
+          aria-label={name}
+          className="reaction h-6 gap-1 rounded-full px-2 text-xs ring-1 ring-accent"
+          onPress={() => void reactToComment(store, pr, comment.id, name)}
+        >
+          {emoji}
+        </Button>
+      ))}
+      <Popover isOpen={open} onOpenChange={setOpen}>
+        <Button
+          isIconOnly
+          size="sm"
+          variant="ghost"
+          aria-label="Add reaction"
+          className={`add-reaction size-6 min-w-6 text-muted ${mine.length ? '' : 'opacity-0 group-hover:opacity-100'} data-[pressed=true]:opacity-100`}
+        >
+          <FaceSmile className="size-3.5" />
+        </Button>
+        <Popover.Content placement="top start">
+          <Popover.Dialog className="flex gap-0.5 p-1">
+            {REACTIONS.map(([emoji, name]) => (
+              <Button
+                key={name}
+                isIconOnly
+                size="sm"
+                variant="ghost"
+                aria-label={name}
+                className="size-8 min-w-8 text-base"
+                onPress={() => {
+                  void reactToComment(store, pr, comment.id, name);
+                  setOpen(false);
+                }}
+              >
+                {emoji}
+              </Button>
+            ))}
+          </Popover.Dialog>
+        </Popover.Content>
+      </Popover>
+    </div>
+  );
+});
+
+/** One comment of a thread: reactions for everyone, edit/delete for your
+ *  own, and "add to batch" / "commit" on a comment with a suggestion. */
+export const CommentView = observer(function CommentView({
+  pr,
+  c,
+}: {
+  pr: PrId;
+  c: Comment;
+}) {
+  const store = useRootStore();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(c.body);
+  const [busy, setBusy] = useState(false);
+  const viewer = store.ephemeral.viewer;
+  const mine = !!viewer && c.author.login === viewer.login;
+  const sug = suggestionOf(c.body);
+  const summary = store.models.prSummaries.get(pr);
+  const writable = canCommitSuggestions(summary, viewer?.login);
+  const inBatch = store.ephemeral.batchOf(pr).has(c.id);
+  return (
+    <div className="comment group flex gap-3">
       <Avatar person={c.author} size={24} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2 text-sm">
@@ -98,14 +208,105 @@ export function CommentView({ c }: { c: Comment }) {
             {timeAgo(c.created_at)}
             {c.edited && ' · edited'}
           </span>
+          <span className="flex-1" />
+          {mine && !editing && (
+            <Dropdown>
+              <Button
+                isIconOnly
+                size="sm"
+                variant="ghost"
+                aria-label="Comment actions"
+                className="comment-menu size-6 min-w-6 text-muted opacity-0 group-hover:opacity-100 data-[pressed=true]:opacity-100"
+              >
+                <Ellipsis className="size-4" />
+              </Button>
+              <Dropdown.Popover placement="bottom end">
+                <Dropdown.Menu
+                  aria-label="Comment"
+                  onAction={(k) => {
+                    if (k === 'edit') setEditing(true);
+                    if (k === 'delete') void deleteComment(store, pr, c.id);
+                  }}
+                >
+                  <Dropdown.Item id="edit" textValue="Edit">
+                    Edit
+                  </Dropdown.Item>
+                  <Dropdown.Item
+                    id="delete"
+                    textValue="Delete"
+                    className="text-danger"
+                  >
+                    Delete
+                  </Dropdown.Item>
+                </Dropdown.Menu>
+              </Dropdown.Popover>
+            </Dropdown>
+          )}
         </div>
-        <div className="text-sm leading-relaxed">
-          <Body text={c.body} />
-        </div>
+        {editing ? (
+          <div className="flex flex-col gap-1.5">
+            <TextArea
+              autoFocus
+              rows={3}
+              aria-label="Edit comment"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              className="comment-edit text-sm"
+            />
+            <div className="flex justify-end gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                onPress={() => {
+                  setText(c.body);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                isDisabled={!text.trim() || busy}
+                onPress={() => {
+                  setBusy(true);
+                  void editComment(store, pr, c.id, text.trim())
+                    .then(() => setEditing(false))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm leading-relaxed">
+            <Body text={c.body} />
+          </div>
+        )}
+        {sug && writable && (
+          <div className="sug-actions flex items-center gap-1.5">
+            <Btn
+              icon={<CodeCommit />}
+              className="commit-suggestion"
+              onPress={() => void commitSuggestions(store, pr, [c.id])}
+            >
+              Commit
+            </Btn>
+            <Btn
+              tone="ghost"
+              icon={<Layers />}
+              className="batch-suggestion"
+              onPress={() => store.ephemeral.toggleBatch(pr, c.id)}
+            >
+              {inBatch ? 'Remove from batch' : 'Add to batch'}
+            </Btn>
+          </div>
+        )}
+        <Reactions pr={pr} comment={c} />
       </div>
     </div>
   );
-}
+});
 
 /** A review thread: collapsed to one line once resolved, same as the
  *  prototype; expands to the full comment list and a reply box. */
@@ -197,7 +398,7 @@ export const ThreadView = observer(function ThreadView({
       </div>
       <div className="flex flex-col gap-4 px-4 py-3">
         {t.comments.map((c, i) => (
-          <CommentView key={c.id ?? i} c={c} />
+          <CommentView key={c.id ?? i} pr={pr} c={c} />
         ))}
       </div>
       <div className="flex items-center gap-1.5 border-t border-separator px-3 py-2">

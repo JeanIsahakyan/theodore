@@ -1,18 +1,16 @@
 /**
  * Merge as on GitHub: method, commit message, gates, conflicts, auto-merge —
- * ported from the prototype's `MergeDialog`. We have no host-write command
- * for any of it yet (`FEATURES.hostWrites`, see `features.ts`): no merge,
- * no auto-merge toggle, no update-branch, no conflict resolution. Every
- * control that would call one of those stays on screen, disabled, with a
- * "Not available yet" tooltip — the moment the command lands, flip the flag
- * and these go live with no further UI work.
+ * ported from the prototype's `MergeDialog`, now wired to the real
+ * `merge_info` / `merge_pr` / `update_branch` commands (`FEATURES.hostWrites`).
  *
- * We also have no `conflicts` field on `PrSummary`/`PrDetail` at all, unlike
- * the prototype's `PR.conflicts`. Rather than fabricate a fake conflicting
- * diff to look busy, this shows a plain note that conflict detection isn't
- * wired up, next to the (disabled) actions that would resolve one.
+ * We still have no `conflicts` field on `PrSummary`/`PrDetail`, unlike the
+ * prototype's `PR.conflicts` — `MergeInfo.state === 'dirty'` tells us *that*
+ * there's a conflict, never which files. Rather than fabricate a fake
+ * conflicting diff to look busy, this shows a plain note next to "Update
+ * branch" (the one real action that can clear a `behind` or `dirty` state).
+ * "Resolve with agent" has no backing command either way — kept disabled.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CircleCheckFill,
   CodeMerge,
@@ -32,12 +30,11 @@ import {
   Tooltip,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AgentId, PrId } from '../gen/contract';
-import { FEATURES } from '../features';
+import type { AgentId, MergeInfo, MergeMethod, PrId } from '../gen/contract';
+import { mergePr, updateBranch } from '../actions';
+import { api } from '../core/api';
 import { useRootStore } from '../stores/context';
-import { Btn } from './bits';
-
-type MergeMethod = 'squash' | 'merge' | 'rebase';
+import { Btn, Spinner } from './bits';
 
 const METHOD: Record<MergeMethod, string> = {
   squash: 'Squash and merge',
@@ -47,13 +44,26 @@ const METHOD: Record<MergeMethod, string> = {
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 
+const STATE_LABEL: Record<MergeInfo['state'], string> = {
+  clean: 'Ready to merge',
+  blocked: 'Blocked by required checks or reviews',
+  behind: 'Out of date with the base branch',
+  dirty: 'Has merge conflicts',
+  unstable: 'Checks are still running',
+  unknown: "GitHub hasn't finished checking yet",
+};
+
 interface Gate {
   ok: boolean;
   label: string;
 }
 
 /** Everything that stands between this PR and a merge, from data we actually have. */
-function gatesFor(store: ReturnType<typeof useRootStore>, pr: PrId): Gate[] {
+function gatesFor(
+  store: ReturnType<typeof useRootStore>,
+  pr: PrId,
+  info: MergeInfo | null,
+): Gate[] {
   const summary = store.models.prSummaries.get(pr);
   const detail = store.models.prDetails.get(pr);
   const tasks = store.models.tasks.where((t) => t.pr === pr);
@@ -84,6 +94,9 @@ function gatesFor(store: ReturnType<typeof useRootStore>, pr: PrId): Gate[] {
     });
   }
   if (toVerify) gates.push({ ok: false, label: `${toVerify} tasks to verify` });
+  if (info && info.state !== 'clean' && info.state !== 'unknown') {
+    gates.push({ ok: false, label: STATE_LABEL[info.state] });
+  }
   return gates;
 }
 
@@ -96,46 +109,100 @@ export const MergeDialog = observer(function MergeDialog({
 }) {
   const store = useRootStore();
   const summary = store.models.prSummaries.get(pr);
+  const [info, setInfo] = useState<MergeInfo | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [method, setMethod] = useState<MergeMethod>('squash');
   const [title, setTitle] = useState(summary ? `${summary.title}` : '');
   const [body, setBody] = useState('');
   const [resolveAgent, setResolveAgent] = useState<AgentId | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [merging, setMerging] = useState<'now' | 'auto' | 'queue' | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void api
+      .mergeInfo(pr)
+      .then((i) => {
+        if (!live) return;
+        setInfo(i);
+        if (i.allowed_methods.length && !i.allowed_methods.includes(method)) {
+          setMethod(i.allowed_methods[0]!);
+        }
+      })
+      .catch(
+        (e) => live && setLoadError(e instanceof Error ? e.message : String(e)),
+      );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pr]);
+
   if (!summary) return null;
 
   const local = summary.pr.repo.host === 'local';
-  const gates = gatesFor(store, pr);
+  const gates = gatesFor(store, pr, info);
   const blocked = gates.filter((g) => !g.ok);
-  const mergeable = !local && blocked.length === 0;
+  const behindOrDirty = info?.state === 'behind' || info?.state === 'dirty';
+  const canMergeNow = !local && !!info && blocked.length === 0;
+  const allowedMethods = info?.allowed_methods ?? [];
   const slug = `${summary.pr.repo.owner}/${summary.pr.repo.name}#${summary.pr.number}`;
 
-  const footer =
-    blocked.length > 0 ? (
-      <Tooltip>
-        <Btn
-          tone="tertiary"
-          icon={<CodeMerge />}
-          className="enable-auto-merge"
-          isDisabled={!FEATURES.hostWrites}
-          onPress={() => {}}
-        >
-          Enable auto-merge
-        </Btn>
-        <Tooltip.Content>Not available yet</Tooltip.Content>
-      </Tooltip>
-    ) : (
-      <Tooltip>
-        <Btn
-          tone="success"
-          icon={<CodeMerge />}
-          className="do-merge"
-          isDisabled={!FEATURES.hostWrites}
-          onPress={() => {}}
-        >
-          {METHOD[method]}
-        </Btn>
-        <Tooltip.Content>Not available yet</Tooltip.Content>
-      </Tooltip>
-    );
+  const doMerge = (opts: { auto?: boolean; queue?: boolean }) => {
+    const kind = opts.queue ? 'queue' : opts.auto ? 'auto' : 'now';
+    setMerging(kind);
+    void mergePr(store, {
+      pr,
+      method,
+      title: method === 'squash' ? title : null,
+      body: method === 'squash' ? body : null,
+      auto: !!opts.auto,
+      queue: !!opts.queue,
+    })
+      .then((ok) => {
+        if (ok && !opts.queue) onClose();
+      })
+      .finally(() => setMerging(null));
+  };
+
+  const footer = local ? null : !info ? (
+    <Spinner />
+  ) : info.in_queue ? (
+    <Btn tone="tertiary" icon={<CodeMerge />} isDisabled>
+      Already in the merge queue
+    </Btn>
+  ) : (
+    <div className="flex items-center gap-2">
+      <Btn
+        tone="tertiary"
+        icon={<CodeMerge />}
+        className="merge-queue"
+        isPending={merging === 'queue'}
+        onPress={() => doMerge({ queue: true })}
+      >
+        Add to merge queue
+      </Btn>
+      <Btn
+        tone={info.auto_merge_enabled ? 'secondary' : 'tertiary'}
+        icon={<CodeMerge />}
+        className="enable-auto-merge"
+        isPending={merging === 'auto'}
+        onPress={() => doMerge({ auto: !info.auto_merge_enabled })}
+      >
+        {info.auto_merge_enabled ? 'Disable auto-merge' : 'Enable auto-merge'}
+      </Btn>
+      <Btn
+        tone="success"
+        icon={<CodeMerge />}
+        className="do-merge"
+        isDisabled={blocked.length > 0}
+        isPending={merging === 'now'}
+        onPress={() => doMerge({})}
+      >
+        {METHOD[method]}
+      </Btn>
+    </div>
+  );
 
   return (
     <Modal.Backdrop isOpen onOpenChange={(open) => !open && onClose()}>
@@ -151,6 +218,15 @@ export const MergeDialog = observer(function MergeDialog({
             <Modal.Heading>Merge · {slug}</Modal.Heading>
           </Modal.Header>
           <Modal.Body className="flex flex-col gap-3">
+            {loadError && (
+              <Alert status="danger">
+                <Alert.Indicator />
+                <Alert.Content>
+                  <Alert.Title>Can't check merge status</Alert.Title>
+                  <Alert.Description>{loadError}</Alert.Description>
+                </Alert.Content>
+              </Alert>
+            )}
             <div className="merge-gates flex flex-col gap-1.5 text-sm">
               {gates.map((g) => (
                 <div
@@ -173,56 +249,66 @@ export const MergeDialog = observer(function MergeDialog({
               )}
             </div>
 
-            <Alert status="default" className="conflicts">
-              <Alert.Indicator />
-              <Alert.Content>
-                <Alert.Title>Conflict detection isn't wired up yet</Alert.Title>
-                <Alert.Description className="flex flex-wrap items-center gap-1.5">
-                  No command reports merge conflicts for this PR.
-                  <Tooltip>
-                    <Dropdown>
-                      <Button
-                        size="sm"
-                        variant="tertiary"
-                        className="resolve-agent"
-                        isDisabled={!FEATURES.hostWrites}
-                      >
-                        Resolve with agent
-                      </Button>
-                      <Dropdown.Popover placement="bottom end">
-                        <Dropdown.Menu
-                          aria-label="Agent"
-                          onAction={(k) => setResolveAgent(k as AgentId)}
+            {behindOrDirty && (
+              <Alert status="default" className="conflicts">
+                <Alert.Indicator />
+                <Alert.Content>
+                  <Alert.Title>
+                    {info?.state === 'dirty'
+                      ? 'Merge conflicts — no file-level detail is reported yet'
+                      : 'Behind the base branch'}
+                  </Alert.Title>
+                  <Alert.Description className="flex flex-wrap items-center gap-1.5">
+                    {info?.state === 'dirty'
+                      ? 'GitHub reports this PR has conflicts with the base branch.'
+                      : 'Merge the base branch into this one to pick up its latest changes.'}
+                    <Tooltip>
+                      <Dropdown>
+                        <Button
+                          size="sm"
+                          variant="tertiary"
+                          className="resolve-agent"
+                          isDisabled
                         >
-                          {AGENTS.map((a) => (
-                            <Dropdown.Item key={a} id={a} textValue={a}>
-                              {a}
-                            </Dropdown.Item>
-                          ))}
-                        </Dropdown.Menu>
-                      </Dropdown.Popover>
-                    </Dropdown>
-                    <Tooltip.Content>Not available yet</Tooltip.Content>
-                  </Tooltip>
-                  <Tooltip>
+                          Resolve with agent
+                        </Button>
+                        <Dropdown.Popover placement="bottom end">
+                          <Dropdown.Menu
+                            aria-label="Agent"
+                            onAction={(k) => setResolveAgent(k as AgentId)}
+                          >
+                            {AGENTS.map((a) => (
+                              <Dropdown.Item key={a} id={a} textValue={a}>
+                                {a}
+                              </Dropdown.Item>
+                            ))}
+                          </Dropdown.Menu>
+                        </Dropdown.Popover>
+                      </Dropdown>
+                      <Tooltip.Content>Not available yet</Tooltip.Content>
+                    </Tooltip>
                     <Button
                       size="sm"
                       variant="ghost"
-                      isDisabled={!FEATURES.hostWrites}
-                      onPress={() => {}}
+                      isPending={updating}
+                      onPress={() => {
+                        setUpdating(true);
+                        void updateBranch(store, pr).finally(() =>
+                          setUpdating(false),
+                        );
+                      }}
                     >
                       Update branch
                     </Button>
-                    <Tooltip.Content>Not available yet</Tooltip.Content>
-                  </Tooltip>
-                  {resolveAgent && !FEATURES.hostWrites && (
-                    <span className="text-xs text-muted">
-                      picked {resolveAgent} — nothing to run yet
-                    </span>
-                  )}
-                </Alert.Description>
-              </Alert.Content>
-            </Alert>
+                    {resolveAgent && (
+                      <span className="text-xs text-muted">
+                        picked {resolveAgent} — nothing to run yet
+                      </span>
+                    )}
+                  </Alert.Description>
+                </Alert.Content>
+              </Alert>
+            )}
 
             <RadioGroup
               value={method}
@@ -234,6 +320,9 @@ export const MergeDialog = observer(function MergeDialog({
                 <Radio
                   key={m}
                   value={m}
+                  isDisabled={
+                    allowedMethods.length > 0 && !allowedMethods.includes(m)
+                  }
                   className={`rounded-2xl border px-3 py-2 ${method === m ? 'border-accent bg-accent-soft' : 'border-separator'}`}
                 >
                   <Radio.Content>
@@ -271,10 +360,12 @@ export const MergeDialog = observer(function MergeDialog({
             )}
             <span className="text-xs text-muted">
               {blocked.length
-                ? `Can't merge yet: ${blocked.map((g) => g.label.toLowerCase()).join('; ')}.`
-                : mergeable
+                ? `Can't merge yet: ${blocked.map((g) => g.label.toLowerCase()).join('; ')}. Auto-merge will merge once everything is resolved.`
+                : canMergeNow
                   ? 'All checks passed.'
-                  : 'No PR to merge.'}
+                  : local
+                    ? 'No PR to merge.'
+                    : ''}
             </span>
           </Modal.Body>
           <Modal.Footer>{footer}</Modal.Footer>

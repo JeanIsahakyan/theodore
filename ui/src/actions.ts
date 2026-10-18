@@ -5,17 +5,22 @@ import type { Route } from './stores/UiStore';
  * easy to call from components and from tests alike.
  */
 import { api } from './core/api';
-import { FEATURES } from './features';
 import type {
   AddProjectRequest,
   AgentId,
   Anchor,
   AskRequest,
+  CommentId,
+  DraftStateRequest,
   HunkId,
+  MergeRequest,
   OpenBranchRequest,
   PrId,
   Project,
   ReviewEvent,
+  ReviewersRequest,
+  SaveSkillRequest,
+  SkillBody,
   SnoozeUntil,
   TaskStatus,
 } from './gen/contract';
@@ -429,9 +434,148 @@ export function setSetting(
   ]);
 }
 
-// ── host writes with no command yet (merge, reassign, take, …) ─────────────
-// Kept as a single switch so every call site that needs one of these is
-// forced to acknowledge FEATURES.hostWrites rather than silently no-op.
-export function requireHostWrites(): boolean {
-  return FEATURES.hostWrites;
+// ── host writes: merge, reviewers, draft state ──────────────────────────────
+
+export async function mergePr(
+  _store: RootStore,
+  req: MergeRequest,
+): Promise<boolean> {
+  try {
+    await api.mergePr(req);
+    return true;
+  } catch {
+    return false; // toasted by api.ts
+  }
+}
+
+export async function updateBranch(_store: RootStore, pr: PrId): Promise<void> {
+  try {
+    await api.updateBranch(pr);
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+export async function setReviewers(
+  _store: RootStore,
+  req: ReviewersRequest,
+): Promise<void> {
+  try {
+    await api.setReviewers(req);
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+export async function setDraft(
+  _store: RootStore,
+  req: DraftStateRequest,
+): Promise<void> {
+  try {
+    await api.setDraft(req);
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+// ── review: reactions, edit/delete, suggestion batch ────────────────────────
+
+/** Toggles one reaction on a comment. `Comment` carries no reaction counts
+ *  (no field for it in the contract) — this only forwards the toggle to the
+ *  host; `EphemeralStore.suggestionBatch`'s sibling, `reacted`, remembers
+ *  which emoji *we* toggled so the button can show as "on" locally. */
+export async function reactToComment(
+  store: RootStore,
+  pr: PrId,
+  comment: CommentId,
+  emoji: string,
+): Promise<void> {
+  const on = !store.ephemeral.hasReacted(comment, emoji);
+  store.ephemeral.setReacted(comment, emoji, on);
+  try {
+    await api.react({ pr, comment, emoji, on });
+  } catch {
+    store.ephemeral.setReacted(comment, emoji, !on); // roll back the optimistic flip
+  }
+}
+
+export async function editComment(
+  _store: RootStore,
+  pr: PrId,
+  comment: CommentId,
+  body: string,
+): Promise<void> {
+  try {
+    await api.editComment({ pr, comment, body });
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+export async function deleteComment(
+  _store: RootStore,
+  pr: PrId,
+  comment: CommentId,
+): Promise<void> {
+  try {
+    await api.editComment({ pr, comment, body: null });
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+/** Applies every ```suggestion block of `comments` as one commit, pushed to
+ *  the PR branch (own PRs only — the core rejects otherwise). */
+export async function commitSuggestions(
+  store: RootStore,
+  pr: PrId,
+  comments: CommentId[],
+): Promise<boolean> {
+  const message =
+    comments.length === 1
+      ? 'Apply suggested change'
+      : `Apply ${comments.length} suggested changes`;
+  try {
+    await api.commitSuggestions({ pr, comments, message });
+    store.ephemeral.clearBatch(pr, comments);
+    return true;
+  } catch {
+    return false; // toasted by api.ts
+  }
+}
+
+// ── skills: edit / save ──────────────────────────────────────────────────────
+
+export async function getSkill(
+  _store: RootStore,
+  id: string,
+  pr: PrId | null,
+): Promise<SkillBody | null> {
+  try {
+    return await api.getSkill(id, pr);
+  } catch {
+    return null; // toasted by api.ts
+  }
+}
+
+export async function saveSkill(
+  _store: RootStore,
+  req: SaveSkillRequest,
+): Promise<boolean> {
+  try {
+    await api.saveSkill(req);
+    return true;
+  } catch {
+    return false; // toasted by api.ts
+  }
+}
+
+// ── folder picker ────────────────────────────────────────────────────────────
+
+export async function pickFolder(_store: RootStore): Promise<string | null> {
+  try {
+    return await api.pickFolder();
+  } catch {
+    return null; // rejected/unknown command — caller falls back to the text field
+  }
 }
