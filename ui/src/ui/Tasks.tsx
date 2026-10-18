@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Dropdown, Header, ListBox, TextField } from '@heroui/react';
+import { Button, Dropdown, Header, ListBox, Tabs, TextField } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { Key } from 'react';
 import {
@@ -27,6 +27,35 @@ const TITLE: Record<TaskStatus, string> = {
   progress: 'In progress',
   done: 'Done',
 };
+
+type TaskTab = 'mine' | 'agents' | 'others' | 'all';
+
+/** Who a task is on: human `assignee.id` is the host login, so "mine" is
+ *  whichever task is assigned to the signed-in `viewer`. There's no `by`
+ *  (who delegated it) in our contract, so unlike the prototype "mine"
+ *  doesn't also pull in agent work the viewer merely requested, and
+ *  "others" can't require that the viewer was the one who assigned it —
+ *  both fall back to the coarser assignee-only read. */
+function taskTabs(me: string | null): {
+  id: TaskTab;
+  title: string;
+  match: (t: Task) => boolean;
+}[] {
+  return [
+    {
+      id: 'mine',
+      title: 'Mine',
+      match: (t) => t.assignee.kind === 'human' && t.assignee.id === me,
+    },
+    { id: 'agents', title: 'Agents', match: (t) => t.assignee.kind === 'agent' },
+    {
+      id: 'others',
+      title: 'Waiting on others',
+      match: (t) => t.assignee.kind === 'human' && t.assignee.id !== me,
+    },
+    { id: 'all', title: 'All', match: () => true },
+  ];
+}
 
 export const TaskRow = observer(function TaskRow({
   t,
@@ -261,14 +290,40 @@ function useTaskKeys(order: string[]) {
 export const Tasks = observer(function Tasks() {
   const store = useRootStore();
   const ui = useUi();
-  const items = store.models.tasks.all();
+  const me = store.ephemeral.viewer?.login ?? null;
+  const tabs = taskTabs(me);
+  const [taskTab, setTaskTab] = useState<TaskTab>('mine');
+  const tab = tabs.find((x) => x.id === taskTab)!;
+  const all = store.models.tasks.all();
+  const items = all.filter(tab.match);
   const order = ORDER.flatMap((st) =>
     items.filter((t) => t.status === st).map((t) => t.id),
   );
   useTaskKeys(order);
   return (
     <div className="view flex min-w-0 flex-1 flex-col">
-      <ViewHeader title="Tasks" count={items.length} />
+      <ViewHeader title="Tasks" count={items.length}>
+        <Tabs
+          data-plain
+          selectedKey={taskTab}
+          onSelectionChange={(k) => setTaskTab(k as TaskTab)}
+          className="task-tabs"
+        >
+          <Tabs.ListContainer>
+            <Tabs.List aria-label="Task filter">
+              {tabs.map((x) => (
+                <Tabs.Tab key={x.id} id={x.id} className="whitespace-nowrap">
+                  {x.title}{' '}
+                  <span className="ml-1 text-muted">
+                    {all.filter(x.match).filter((t) => t.status !== 'done').length}
+                  </span>
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs.ListContainer>
+        </Tabs>
+      </ViewHeader>
       <ListBox
         aria-label="Tasks"
         selectionMode="single"
@@ -298,6 +353,11 @@ export const Tasks = observer(function Tasks() {
               <span className="tabular-nums text-muted">
                 {items.filter((t) => t.status === st).length}
               </span>
+              {st === 'review' && (
+                <span className="text-xs font-normal text-muted">
+                  an agent or the author brought a fix — review and accept it
+                </span>
+              )}
             </Header>
             {items
               .filter((t) => t.status === st)

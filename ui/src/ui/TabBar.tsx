@@ -15,7 +15,11 @@ import type { Route } from '../stores/UiStore';
 import { K } from './bits';
 import { PRIcon } from './StatusIcon';
 
-function useLabel(r: Route): { icon: ReactNode; title: string } {
+function useLabel(r: Route): {
+  icon: ReactNode;
+  title: string;
+  drafts?: number;
+} {
   const store = useRootStore();
   switch (r.name) {
     case 'inbox':
@@ -28,9 +32,11 @@ function useLabel(r: Route): { icon: ReactNode; title: string } {
       return { icon: <Gear />, title: 'Settings' };
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);
+      const drafts = store.models.drafts.where((d) => d.pr === r.pr).length;
       return {
         icon: <PRIcon status={p?.state ?? 'open'} />,
         title: p ? `#${p.pr.number} ${p.title}` : r.pr,
+        drafts,
       };
     }
   }
@@ -134,6 +140,12 @@ const TabItem = observer(function TabItem({
       >
         {l.title}
       </span>
+      {!!l.drafts && (
+        <span
+          className="size-1.5 shrink-0 rounded-full bg-warning"
+          aria-label={`${l.drafts} pending comments`}
+        />
+      )}
       {closable && (
         <Button
           isIconOnly
