@@ -347,7 +347,10 @@ export const PrRow = observer(function PrRow({
       </Checkbox>
       <PRIcon status={p.state} />
       {on('id') && (
-        <span className="text-xs tabular-nums text-muted">
+        <span
+          className="max-w-36 truncate whitespace-nowrap text-xs tabular-nums text-muted"
+          title={`${p.pr.repo.owner}/${p.pr.repo.name} #${p.pr.number}`}
+        >
           {p.pr.repo.name} #{p.pr.number}
         </span>
       )}

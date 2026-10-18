@@ -80,7 +80,7 @@ export const SettingsNav = observer(function SettingsNav({
   const ui = useUi();
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
-      <div className="px-3 pb-2 pt-4">
+      <div data-tauri-drag-region className="px-3 pb-2 pt-11">
         <Button
           variant="ghost"
           size="sm"
@@ -391,7 +391,16 @@ const AgentsPage = observer(function AgentsPage() {
                   }}
                 >
                   {AGENTS.map((a, i) => (
-                    <ToggleButton key={a} id={a} className="whitespace-nowrap">
+                    <ToggleButton
+                      key={a}
+                      id={a}
+                      className="whitespace-nowrap"
+                      // Only agents installed on this computer can be picked.
+                      isDisabled={
+                        detected !== null &&
+                        !detected.some((d) => d.id === a && d.installed)
+                      }
+                    >
                       {i > 0 && <ToggleButtonGroup.Separator />}
                       {a}
                     </ToggleButton>
