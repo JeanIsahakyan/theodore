@@ -1,0 +1,35 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": { "hasNextPage": true, "endCursor": "threads-cursor-1" },
+          "nodes": [
+            {
+              "id": "thread_1",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/lib.rs",
+              "line": 10,
+              "startLine": null,
+              "diffSide": "RIGHT",
+              "startDiffSide": null,
+              "comments": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                  {
+                    "fullDatabaseId": "1001",
+                    "body": "Nit: rename this.",
+                    "createdAt": "2024-01-02T04:00:00Z",
+                    "lastEditedAt": null,
+                    "author": { "login": "carol", "avatarUrl": null, "name": "Carol" }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

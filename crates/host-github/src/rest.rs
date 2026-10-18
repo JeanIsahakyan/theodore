@@ -1,0 +1,118 @@
+//! REST calls: notification polling and the two writes that don't have a
+//! GraphQL equivalent worth using (comment edit/delete).
+
+use serde::Deserialize;
+use theodore_host_http::HttpClient;
+use theodore_ports::HostResult;
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GhNotification {
+    pub subject: GhSubject,
+    pub repository: GhRepository,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GhSubject {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GhRepository {
+    pub name: String,
+    pub owner: GhOwner,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GhOwner {
+    pub login: String,
+}
+
+impl GhNotification {
+    /// The PR number, parsed from the subject's API URL
+    /// (`.../repos/o/r/pulls/42`). `None` for non-PR notifications.
+    pub(crate) fn pr_number(&self) -> Option<u64> {
+        if self.subject.kind != "PullRequest" {
+            return None;
+        }
+        self.subject
+            .url
+            .as_deref()?
+            .rsplit('/')
+            .next()?
+            .parse()
+            .ok()
+    }
+}
+
+pub(crate) struct NotificationsPoll {
+    pub notifications: Vec<GhNotification>,
+    /// Opaque cursor for the next call's `If-Modified-Since` (the response's
+    /// `Last-Modified`, or the request's own cursor when nothing changed).
+    pub cursor: String,
+    pub poll_after_ms: Option<i64>,
+}
+
+pub(crate) async fn poll_notifications(
+    http: &HttpClient,
+    since: Option<&str>,
+) -> HostResult<NotificationsPoll> {
+    let headers: Vec<(&str, String)> = since
+        .map(|s| vec![("if-modified-since", s.to_string())])
+        .unwrap_or_default();
+    let raw = http.get_raw("notifications", &headers).await?;
+    let poll_after_ms = header(&raw.headers, "x-poll-interval")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|s| s * 1000);
+
+    if raw.not_modified {
+        return Ok(NotificationsPoll {
+            notifications: vec![],
+            cursor: since.unwrap_or_default().to_string(),
+            poll_after_ms,
+        });
+    }
+
+    let notifications: Vec<GhNotification> = serde_json::from_str(&raw.body)
+        .map_err(|e| theodore_ports::HostError::Protocol(format!("notifications decode: {e}")))?;
+    let cursor = header(&raw.headers, "last-modified")
+        .map(str::to_string)
+        .unwrap_or_else(|| since.unwrap_or_default().to_string());
+    Ok(NotificationsPoll {
+        notifications,
+        cursor,
+        poll_after_ms,
+    })
+}
+
+fn header<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name)?.to_str().ok()
+}
+
+pub(crate) async fn edit_comment(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    comment_id: &str,
+    body: &str,
+) -> HostResult<()> {
+    #[derive(serde::Serialize)]
+    struct Body<'a> {
+        body: &'a str,
+    }
+    let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> =
+        http.patch_json(&path, &Body { body }).await?;
+    Ok(())
+}
+
+pub(crate) async fn delete_comment(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    comment_id: &str,
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}");
+    http.delete(&path).await
+}

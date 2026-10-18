@@ -1,0 +1,57 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "nodes": [
+            {
+              "id": "thread_other",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/lib.rs",
+              "line": 3,
+              "startLine": null,
+              "diffSide": "RIGHT",
+              "startDiffSide": null,
+              "comments": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                  {
+                    "fullDatabaseId": "4001",
+                    "body": "Unrelated comment.",
+                    "createdAt": "2024-01-02T04:00:00Z",
+                    "lastEditedAt": null,
+                    "author": { "login": "carol", "avatarUrl": null, "name": "Carol" }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "thread_marked",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/lib.rs",
+              "line": 10,
+              "startLine": null,
+              "diffSide": "RIGHT",
+              "startDiffSide": null,
+              "comments": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                  {
+                    "fullDatabaseId": "5001",
+                    "body": "Please fix this.\n\n<!-- theodore:m1 -->",
+                    "createdAt": "2024-01-02T04:10:00Z",
+                    "lastEditedAt": null,
+                    "author": { "login": "me", "avatarUrl": null, "name": "Me" }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

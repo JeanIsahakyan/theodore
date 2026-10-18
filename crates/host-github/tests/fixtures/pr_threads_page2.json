@@ -1,0 +1,35 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "nodes": [
+            {
+              "id": "thread_2",
+              "isResolved": true,
+              "isOutdated": true,
+              "path": "src/main.rs",
+              "line": null,
+              "startLine": null,
+              "diffSide": "LEFT",
+              "startDiffSide": null,
+              "comments": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                  {
+                    "fullDatabaseId": 1002,
+                    "body": "File-level note.",
+                    "createdAt": "2024-01-02T04:05:00Z",
+                    "lastEditedAt": "2024-01-02T04:06:00Z",
+                    "author": { "login": "bob", "avatarUrl": null, "name": "Bob" }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
