@@ -110,6 +110,8 @@ export const Checks = observer(function Checks({
                               about: null,
                               group: null,
                               agent: null,
+                            }).catch(() => {
+                              // toasted by api.ts
                             })
                           }
                         >

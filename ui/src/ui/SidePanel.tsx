@@ -1,25 +1,49 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUp,
   Check,
+  ChevronDown,
+  CircleCheck,
   CircleStop,
+  Comment as CommentIcon,
+  Comments as CommentsIcon,
+  Copy,
+  FileCode,
   ListCheck,
   Plus,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
 } from '@gravity-ui/icons';
 import {
+  AvatarGroup,
   Button,
   Card,
   Chip,
+  Disclosure,
+  Dropdown,
   EmptyState,
+  Header,
   InputGroup,
+  Label,
   ListBox,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Finding, PrId, SkillInfo, Thread } from '../gen/contract';
+import type {
+  AgentId,
+  Anchor,
+  ChatMessage,
+  Draft,
+  Finding,
+  PrId,
+  SkillInfo,
+  Thread,
+  Usage,
+} from '../gen/contract';
 import { api } from '../core/api';
 import {
   ask,
@@ -33,17 +57,41 @@ import {
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { rich } from '../highlight';
-import { AgentTag, Avatar, Btn, Sev } from './bits';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
+import { ago } from './List';
+import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
+import { SkillBrowser } from './Skills';
 import { TaskRow } from './Tasks';
 
 export type SideTab = 'ai' | 'tasks' | 'threads';
+
+const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
+
+const plural = (n: number, one: string, few: string, many: string) =>
+  `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
+
+/** A small accent/warning chip for a tab's count, hidden at zero. */
+function CountChip({
+  n,
+  color = 'accent',
+}: {
+  n: number;
+  color?: 'accent' | 'warning';
+}) {
+  if (n <= 0) return null;
+  return (
+    <Chip size="sm" variant="soft" color={color} className="ml-1">
+      {n}
+    </Chip>
+  );
+}
 
 export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   const [tab, setTab] = useState<SideTab>('ai');
   const store = useRootStore();
   const open = store.models.findings.where(
-    (f) => f.pr === pr && f.state === 'open',
+    (f) => f.pr === pr && (f.state === 'open' || f.state === 'maybe_fixed'),
   ).length;
   const threads = store.models.prDetails.get(pr)?.threads ?? [];
   const unresolved = threads.filter((t) => !t.resolved).length;
@@ -56,28 +104,24 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
         data-plain
         selectedKey={tab}
         onSelectionChange={(k) => setTab(k as SideTab)}
-        className="side-tabs flex min-h-0 flex-1 flex-col"
+        className="side-tabs flex min-h-0 flex-1 flex-col [&>[role=tabpanel]]:border-t [&>[role=tabpanel]]:border-separator"
       >
         <Tabs.ListContainer className="mx-4 my-3">
           <Tabs.List aria-label="Review panel" className="w-full">
             <Tabs.Tab id="ai" className="gap-1.5">
               <Sparkles className="size-4" />
               AI
-              {open > 0 && <span className="ml-1 text-warning">{open}</span>}
+              <CountChip n={open} />
               <Tabs.Indicator />
             </Tabs.Tab>
             <Tabs.Tab id="tasks">
               Tasks
-              {tasksOpen > 0 && (
-                <span className="ml-1 text-warning">{tasksOpen}</span>
-              )}
+              <CountChip n={tasksOpen} />
               <Tabs.Indicator />
             </Tabs.Tab>
             <Tabs.Tab id="threads">
               Threads
-              {unresolved > 0 && (
-                <span className="ml-1 text-warning">{unresolved}</span>
-              )}
+              <CountChip n={unresolved} color="warning" />
               <Tabs.Indicator />
             </Tabs.Tab>
           </Tabs.List>
@@ -96,6 +140,293 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   );
 });
 
+/** A finding's anchor as an informational file:line chip. Not clickable:
+ *  nothing outside `Review`'s own local diff state can jump the diff pane
+ *  to a line yet, so this only orients, same as the prototype's `Ref` did,
+ *  minus the jump. */
+function Ref({ a }: { a: Anchor }) {
+  return (
+    <span className="ref inline-flex h-6 items-center gap-1.5 rounded-full border border-separator px-2.5 font-mono text-xs text-muted">
+      <FileCode className="size-3.5" />
+      {a.path}:{a.line}
+    </span>
+  );
+}
+
+/** Typing indicator: three dots, like a messenger. */
+function Dots() {
+  return (
+    <span
+      className="inline-flex h-5 items-center gap-1"
+      aria-label="Agent is thinking"
+    >
+      {[0, 150, 300].map((d) => (
+        <span
+          key={d}
+          className="size-1.5 animate-bounce rounded-full bg-muted"
+          style={{ animationDelay: `${d}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** Collapsible card with the log lines an agent produced for this answer.
+ *  Open while the agent works, folds away once it's done — remounted (via
+ *  `key`) rather than synced through an effect, so there's no setState in
+ *  an effect body to cascade a render. */
+function ToolCalls({ tools, running }: { tools: string[]; running: boolean }) {
+  return (
+    <Disclosure
+      key={running ? 'running' : 'done'}
+      defaultExpanded={running}
+      className="rounded-2xl border border-separator"
+    >
+      <Disclosure.Heading>
+        <Disclosure.Trigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs">
+          {running ? <Spinner /> : <CircleCheck className="size-3.5 text-success" />}
+          <span className="text-muted">{running ? 'Working:' : 'Done:'}</span>
+          <span className="truncate font-medium">
+            {plural(tools.length, 'log line', 'log lines', 'log lines')}
+          </span>
+          <Disclosure.Indicator />
+        </Disclosure.Trigger>
+      </Disclosure.Heading>
+      <Disclosure.Content>
+        <Disclosure.Body className="runlog flex flex-col gap-1 px-3 pb-2.5 pt-0 font-mono text-xs text-muted">
+          {tools.map((t, i) => (
+            <span key={i}>{t}</span>
+          ))}
+        </Disclosure.Body>
+      </Disclosure.Content>
+    </Disclosure>
+  );
+}
+
+/** "12.4k tok · $0.08" — omits the price when the backend didn't report one. */
+export const fmtUsage = (u: Usage) => {
+  const tokens = u.input_tokens + u.output_tokens;
+  const tok = tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : `${tokens}`;
+  return u.usd != null ? `${tok} tok · $${u.usd.toFixed(2)}` : `${tok} tok`;
+};
+
+function MessageActions({
+  text,
+  usage,
+  onRetry,
+}: {
+  text: string;
+  usage?: Usage | null;
+  onRetry?: () => void;
+}) {
+  const [vote, setVote] = useState<'up' | 'down' | null>(null);
+  const [copied, setCopied] = useState(false);
+  const act = (
+    label: string,
+    icon: ReactNode,
+    onPress: () => void,
+    on = false,
+  ) => (
+    <Tooltip key={label}>
+      <Button
+        isIconOnly
+        size="sm"
+        variant="ghost"
+        aria-label={label}
+        className={`size-7 min-w-7 ${on ? 'text-foreground' : 'text-muted'}`}
+        onPress={onPress}
+      >
+        {icon}
+      </Button>
+      <Tooltip.Content>{label}</Tooltip.Content>
+    </Tooltip>
+  );
+  return (
+    <div className="-ms-1.5 flex items-center gap-0.5">
+      {act(
+        copied ? 'Copied' : 'Copy',
+        copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />,
+        () => {
+          void navigator.clipboard?.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        },
+      )}
+      {act(
+        'Helpful',
+        <ThumbsUp className="size-3.5" />,
+        () => setVote(vote === 'up' ? null : 'up'),
+        vote === 'up',
+      )}
+      {act(
+        'Not helpful',
+        <ThumbsDown className="size-3.5" />,
+        () => setVote(vote === 'down' ? null : 'down'),
+        vote === 'down',
+      )}
+      {usage && (
+        <span className="usage ms-2 text-xs tabular-nums text-muted">
+          {fmtUsage(usage)}
+        </span>
+      )}
+      {onRetry && (
+        <Btn tone="ghost" className="ms-1 h-7 px-2 text-xs" onPress={onRetry}>
+          Ask again
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+const RANK = { high: 0, warn: 1, info: 2 } as const;
+
+/** A skill run inside the chat: the live log, then its findings — with a
+ *  severity filter and bulk actions so a long list turns into tasks or
+ *  review comments in one go. */
+const SkillRunView = observer(function SkillRunView({
+  pr,
+  run,
+}: {
+  pr: PrId;
+  run: string;
+}) {
+  const store = useRootStore();
+  const r = store.models.skillRuns.get(run);
+  const log = store.ephemeral.runLog.get(run) ?? [];
+  const liveText = store.ephemeral.agentText.get(run);
+  const [sev, setSev] = useState<Finding['severity'] | 'all'>('all');
+  const all = store.models.findings
+    .where((f) => f.pr === pr && f.skill === r?.skill && f.state !== 'ignored')
+    .sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+  const openFindings = all.filter(
+    (f) => f.state === 'open' || f.state === 'maybe_fixed',
+  );
+  const shown = all.filter((f) => sev === 'all' || f.severity === sev);
+  const count = (s: Finding['severity']) =>
+    all.filter((f) => f.severity === s).length;
+  if (!r) return null;
+  const done = r.status === 'done';
+  const live = r.status === 'running';
+  const other = AGENTS.find((a) => !r.agents.includes(a));
+  return (
+    <div className="skill flex flex-col gap-2.5">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="min-w-0 flex-1">
+          {r.status === 'cancelled' ? (
+            <>
+              <span className="font-mono">/{r.skill}</span> stopped
+            </>
+          ) : r.status === 'failed' || r.status === 'stalled' ? (
+            <>
+              <span className="font-mono">/{r.skill}</span>{' '}
+              {r.status === 'failed' ? 'failed' : 'stalled'}
+            </>
+          ) : done ? (
+            <>
+              <span className="font-mono">/{r.skill}</span>:{' '}
+              {all.length
+                ? plural(all.length, 'finding', 'findings', 'findings')
+                : 'nothing found'}
+            </>
+          ) : (
+            <>
+              Running <span className="font-mono">/{r.skill}</span> on{' '}
+              {r.agents.join(' + ')}
+            </>
+          )}
+        </span>
+        {r.usage && (
+          <span className="usage shrink-0 text-xs tabular-nums text-muted">
+            {fmtUsage(r.usage)}
+          </span>
+        )}
+        {(live || r.status === 'stalled') && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="cancel-run h-7 px-2 text-xs"
+            onPress={() => void cancelRun(store, run)}
+          >
+            <CircleStop className="size-3.5" />
+            Stop
+          </Button>
+        )}
+      </div>
+      {live && liveText && (
+        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+          {rich(liveText)}
+        </div>
+      )}
+      {(r.status === 'failed' || r.status === 'stalled') && (
+        <div className="run-error rounded-2xl border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">
+          {r.error}
+          <div className="mt-2 flex gap-1.5">
+            <Button
+              size="sm"
+              variant="tertiary"
+              onPress={() => void runSkill(store, pr, r.skill, r.agents)}
+            >
+              Restart
+            </Button>
+            {other && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onPress={() => void runSkill(store, pr, r.skill, [other])}
+              >
+                Only {other}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {log.length > 0 && <ToolCalls tools={log} running={live} />}
+      {done && all.length > 0 && (
+        <div
+          role="toolbar"
+          aria-label="Findings"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          {(['all', 'high', 'warn', 'info'] as const)
+            .filter((x) => x === 'all' || count(x))
+            .map((x) => (
+              <Btn
+                key={x}
+                tone={sev === x ? 'secondary' : 'tertiary'}
+                onPress={() => setSev(x)}
+              >
+                {x === 'all' ? `All ${all.length}` : `${x} ${count(x)}`}
+              </Btn>
+            ))}
+          {openFindings.length > 0 && (
+            <>
+              <Btn
+                icon={<ListCheck />}
+                onPress={() =>
+                  openFindings.forEach((f) => findingToTask(store, pr, f))
+                }
+              >
+                Add all to tasks
+              </Btn>
+              <Btn
+                icon={<Plus />}
+                onPress={() =>
+                  openFindings.forEach((f) => findingToDraft(store, pr, f))
+                }
+              >
+                Add all to review
+              </Btn>
+            </>
+          )}
+        </div>
+      )}
+      {shown.map((f) => (
+        <FindingCard key={f.id} pr={pr} f={f} />
+      ))}
+    </div>
+  );
+});
+
 const FindingCard = observer(function FindingCard({
   pr,
   f,
@@ -104,57 +435,143 @@ const FindingCard = observer(function FindingCard({
   f: Finding;
 }) {
   const store = useRootStore();
+  const findingMenu = useContextMenu((): ContextMenuItem[] => [
+    {
+      id: 'add-review',
+      label: 'Add to review',
+      isDisabled: f.state === 'drafted',
+      onAction: () => findingToDraft(store, pr, f),
+    },
+    {
+      id: 'add-tasks',
+      label: 'Add to tasks',
+      isDisabled: f.state === 'drafted',
+      onAction: () => findingToTask(store, pr, f),
+    },
+    {
+      id: 'propose-fix',
+      label: 'Propose fix',
+      isDisabled: f.fix?.status === 'generating',
+      onAction: () =>
+        void ask(store, {
+          pr,
+          question: `propose a fix for: ${f.title}`,
+          about: f.anchor,
+          group: null,
+          agent: null,
+        }).catch(() => {
+          // toasted by api.ts
+        }),
+    },
+    {
+      id: 'ignore',
+      label: 'Ignore',
+      isDisabled: f.state === 'drafted',
+      onAction: () => ignoreFinding(store, f.id),
+    },
+  ]);
   return (
     <Card
       className={`finding mt-1 gap-2 px-4 py-3 ${f.state === 'drafted' ? 'opacity-60' : ''}`}
+      onContextMenu={findingMenu}
     >
       <div className="flex items-center gap-1.5">
         <Sev s={f.severity} />
         <b>{f.title}</b>
       </div>
       <div className="flex flex-wrap items-center gap-1">
+        <Ref a={f.anchor} />
         {f.agents.map((a) => (
           <AgentTag key={a} id={a} />
         ))}
         {f.agents.length > 1 && (
-          <Chip size="sm" variant="soft" color="accent">
+          <span className="text-xs text-muted">
             {f.agents.length === 2 ? 'both found it' : 'all found it'}
-          </Chip>
+          </span>
         )}
       </div>
       <div className="rich text-sm text-muted">{rich(f.body)}</div>
-      {f.fix?.patch && (
-        <PatchView
-          patch={f.fix.patch}
-          status={
-            f.fix.status === 'applied'
-              ? 'applied'
-              : f.fix.status === 'rejected'
-                ? 'rejected'
-                : undefined
-          }
-        />
-      )}
-      {f.state !== 'drafted' && (
-        <div className="flex flex-wrap gap-1">
-          <Btn
-            icon={<ListCheck />}
-            onPress={() => findingToDraft(store, pr, f)}
-          >
-            Add to review
-          </Btn>
-          <Btn
-            tone="secondary"
-            icon={<Plus />}
-            onPress={() => findingToTask(store, pr, f)}
-          >
-            Add to tasks
-          </Btn>
-          <Btn tone="tertiary" onPress={() => ignoreFinding(store, f.id)}>
-            Ignore
-          </Btn>
+      {f.state === 'maybe_fixed' && (
+        <div className="text-xs text-success">
+          May already be fixed by a later commit — recheck
         </div>
       )}
+      {f.fix?.status === 'generating' && (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <Spinner /> {f.agents[0]} is preparing a patch…
+        </div>
+      )}
+      {f.fix?.patch && f.fix.status !== 'generating' && (
+        <>
+          <PatchView
+            patch={f.fix.patch}
+            status={
+              f.fix.status === 'applied'
+                ? 'applied'
+                : f.fix.status === 'suggested'
+                  ? 'in review as a suggestion'
+                  : f.fix.status === 'rejected'
+                    ? 'rejected'
+                    : undefined
+            }
+          />
+          {f.fix.status === 'ready' && (
+            <div className="fix-actions flex flex-wrap gap-1">
+              <Tooltip>
+                <Btn tone="success" icon={<Check />} isDisabled>
+                  Apply
+                </Btn>
+                <Tooltip.Content>Not available yet</Tooltip.Content>
+              </Tooltip>
+              <Tooltip>
+                <Btn tone="ghost" isDisabled>
+                  Reject
+                </Btn>
+                <Tooltip.Content>Not available yet</Tooltip.Content>
+              </Tooltip>
+            </div>
+          )}
+        </>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {f.state === 'drafted' ? (
+          <span className="text-xs text-muted">Already in review or tasks</span>
+        ) : (
+          <>
+            <Btn
+              icon={<ListCheck />}
+              onPress={() => findingToDraft(store, pr, f)}
+            >
+              Add to review
+            </Btn>
+            <Btn
+              tone="secondary"
+              icon={<Plus />}
+              onPress={() => findingToTask(store, pr, f)}
+            >
+              Add to tasks
+            </Btn>
+            <Btn
+              tone="ghost"
+              icon={<Sparkles />}
+              onPress={() =>
+                void ask(store, {
+                  pr,
+                  question: `${f.title}: is this right?`,
+                  about: f.anchor,
+                  group: null,
+                  agent: null,
+                }).catch(() => {})
+              }
+            >
+              Discuss
+            </Btn>
+            <Btn tone="tertiary" onPress={() => ignoreFinding(store, f.id)}>
+              Ignore
+            </Btn>
+          </>
+        )}
+      </div>
     </Card>
   );
 });
@@ -166,11 +583,26 @@ function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
   return skills.filter((s) => s.id.toLowerCase().includes(q));
 }
 
+/** Finds the user's question right before an agent's reply, for "Ask again". */
+function priorQuestion(messages: ChatMessage[], reply: ChatMessage): string {
+  const i = messages.findIndex((m) => m.id === reply.id);
+  for (let j = i - 1; j >= 0; j--) {
+    const m = messages[j]!;
+    if (m.author.kind === 'me') return m.text;
+  }
+  return '';
+}
+
 const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const [text, setText] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillAgents, setSkillAgents] = useState<AgentId[]>(AGENTS);
   const [hi, setHi] = useState(0);
+  const [pending, setPending] = useState<{
+    run: string;
+    startedAt: number;
+  } | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const messages = store.models.chatMessages
     .where((m) => m.pr === pr)
@@ -178,19 +610,29 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const runs = store.models.skillRuns.where((r) => r.pr === pr);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length]);
+  }, [messages.length, runs.length, pending]);
   useEffect(() => {
     void api
       .listSkills(pr)
       .then(setSkills)
       .catch(() => setSkills([]));
   }, [pr]);
+  // Once an agent message lands after we fired the ask, the pending bubble
+  // has nothing left to show — the real message takes over.
+  useEffect(() => {
+    if (
+      pending &&
+      messages.some((m) => m.author.kind !== 'me' && m.at >= pending.startedAt)
+    ) {
+      setPending(null);
+    }
+  }, [messages, pending]);
 
   const matches = matchSkills(skills, text);
   useEffect(() => setHi(0), [text]);
 
   const runMatch = (s: SkillInfo) => {
-    void runSkill(store, pr, s.id);
+    void runSkill(store, pr, s.id, skillAgents);
     setText('');
   };
 
@@ -202,15 +644,18 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
       return;
     }
     if (t.startsWith('/')) {
-      void runSkill(store, pr, t.slice(1).split(' ')[0] ?? '');
+      void runSkill(store, pr, t.slice(1).split(' ')[0] ?? '', skillAgents);
     } else {
+      const startedAt = Date.now();
       void ask(store, {
         pr,
         question: t,
         about: null,
         group: null,
-        agent: null,
-      });
+        agent: skillAgents[0] ?? null,
+      })
+        .then((run) => setPending({ run, startedAt }))
+        .catch(() => {});
     }
     setText('');
   };
@@ -218,57 +663,165 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   return (
     <div className="chat flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 py-5">
-        {messages.length === 0 && runs.length === 0 && (
-          <div className="m-auto flex flex-col items-center gap-2 text-center text-sm text-muted">
-            <Sparkles className="size-5" />
-            Ask about this PR, or type / to run a skill.
+        {messages.length === 0 && runs.length === 0 && !pending ? (
+          <div className="m-auto flex w-full flex-col gap-4">
+            <div className="flex flex-col items-center gap-2 text-center">
+              <span className="grid size-10 place-items-center rounded-full bg-default text-muted">
+                <Sparkles className="size-5" />
+              </span>
+              <Typography.Heading level={6}>
+                Ask about this PR
+              </Typography.Heading>
+              <Typography.Paragraph size="sm" color="muted" align="center">
+                The agent works in a worktree and sees the whole repo.
+              </Typography.Paragraph>
+            </div>
+            {skills.length > 0 && (
+              <ListBox
+                aria-label="Suggested skills"
+                selectionMode="none"
+                onAction={(k) => {
+                  const s = skills.find((x) => x.id === String(k));
+                  if (s) runMatch(s);
+                }}
+                className="flex w-full flex-col gap-1.5 p-0"
+              >
+                {skills.slice(0, 3).map((k) => (
+                  <ListBox.Item
+                    key={k.id}
+                    id={k.id}
+                    textValue={k.title}
+                    className="w-full gap-2.5 rounded-2xl border border-separator bg-surface px-3 py-2.5 text-sm"
+                  >
+                    <span className="grid size-4 shrink-0 place-items-center font-mono text-muted">
+                      /
+                    </span>
+                    <span className="font-mono">{k.id}</span>
+                    <span className="truncate text-xs text-muted">
+                      {k.description}
+                    </span>
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            )}
           </div>
-        )}
-        {runs.map((r) => (
-          <SkillRunView key={r.id} pr={pr} run={r.id} />
-        ))}
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`msg flex ${m.author.kind === 'me' ? 'justify-end' : 'gap-3'}`}
-          >
-            {m.author.kind === 'me' ? (
-              <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-default px-4 py-2 text-sm">
-                {rich(m.text)}
-              </div>
-            ) : (
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <AgentTag id={m.author.agent} />
-                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                  {rich(m.text)}
+        ) : (
+          <>
+            {runs.map((r) => (
+              <SkillRunView key={r.id} pr={pr} run={r.id} />
+            ))}
+            {messages.map((m) =>
+              m.author.kind === 'me' ? (
+                <div key={m.id} className="msg user flex justify-end">
+                  <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-default px-4 py-2 text-sm">
+                    {rich(m.text)}
+                  </div>
+                </div>
+              ) : (
+                <div key={m.id} className="msg agent flex gap-3">
+                  <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+                    <AgentTag id={m.author.agent} />
+                    <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                      {rich(m.text)}
+                    </div>
+                    {m.refs.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {m.refs.map((a, i) => (
+                          <Ref key={i} a={a} />
+                        ))}
+                      </div>
+                    )}
+                    <MessageActions
+                      text={m.text}
+                      usage={m.usage}
+                      onRetry={() => {
+                        const q = priorQuestion(messages, m);
+                        const agent = m.author.kind === 'me' ? null : m.author.agent;
+                        if (q)
+                          void ask(store, {
+                            pr,
+                            question: q,
+                            about: null,
+                            group: null,
+                            agent,
+                          }).catch(() => {});
+                      }}
+                    />
+                  </div>
+                </div>
+              ),
+            )}
+            {pending && (
+              <div className="msg agent flex gap-3">
+                <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+                  {store.ephemeral.agentText.get(pending.run) ? (
+                    <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                      {rich(store.ephemeral.agentText.get(pending.run)!)}
+                    </div>
+                  ) : (
+                    <Dots />
+                  )}
+                  {(store.ephemeral.runLog.get(pending.run)?.length ?? 0) >
+                    0 && (
+                    <ToolCalls
+                      tools={store.ephemeral.runLog.get(pending.run)!}
+                      running
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-fit px-2 text-xs"
+                    onPress={() => {
+                      void cancelRun(store, pending.run);
+                      setPending(null);
+                    }}
+                  >
+                    <CircleStop className="size-3.5" />
+                    Stop
+                  </Button>
                 </div>
               </div>
             )}
-          </div>
-        ))}
+          </>
+        )}
         <div ref={end} />
       </div>
-      <div className="chat-input relative flex flex-col gap-2 border-t border-separator px-4 pb-3 pt-3">
+
+      <div className="chat-input flex flex-col gap-2.5 border-t border-separator px-4 pb-3 pt-3">
         {matches && matches.length > 0 && (
-          <div className="skill-menu absolute inset-x-4 bottom-full z-10 mb-1.5 max-h-48 overflow-auto rounded-2xl border border-separator bg-surface p-1 shadow-overlay">
-            {matches.map((s, i) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`flex w-full flex-col gap-0.5 rounded-xl px-3 py-1.5 text-left ${i === hi ? 'bg-default' : ''}`}
-                onMouseEnter={() => setHi(i)}
-                onClick={() => runMatch(s)}
-              >
-                <span className="flex items-center gap-2 text-sm font-medium">
-                  /{s.id}
-                  <span className="text-xs text-muted">{s.source}</span>
-                </span>
-                <span className="truncate text-xs text-muted">
-                  {s.description}
-                </span>
-              </button>
-            ))}
-          </div>
+          <Card className="slash-menu gap-0 p-1.5 shadow-overlay">
+            <ListBox
+              aria-label="Skills"
+              selectionMode="none"
+              onAction={(k) => {
+                const s = matches.find((x) => x.id === String(k));
+                if (s) runMatch(s);
+              }}
+              className="p-0"
+            >
+              {matches.map((s, i) => (
+                <ListBox.Item
+                  key={s.id}
+                  id={s.id}
+                  textValue={s.title}
+                  onHoverStart={() => setHi(i)}
+                  className={`flex-col items-start gap-0.5 rounded-2xl px-3 py-2 ${i === Math.min(hi, matches.length - 1) ? 'bg-default' : ''}`}
+                >
+                  <span className="flex w-full items-center gap-2">
+                    <span className="font-mono text-sm">/{s.id}</span>
+                    <span className="ms-auto text-xs text-muted">
+                      {s.source}
+                    </span>
+                  </span>
+                  <span className="text-xs text-muted">{s.description}</span>
+                </ListBox.Item>
+              ))}
+            </ListBox>
+            <div className="flex items-center gap-1 px-3 pb-1 pt-1.5 text-xs text-muted">
+              Runs on {skillAgents.join(' + ')}
+            </div>
+          </Card>
         )}
         <TextField
           fullWidth
@@ -296,9 +849,9 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                     setHi((n) => Math.max(0, n - 1));
                     return;
                   }
-                  if (e.key === 'Tab') {
+                  if (e.key === 'Tab' || e.key === 'Enter') {
                     e.preventDefault();
-                    setText(`/${matches[hi]!.id} `);
+                    runMatch(matches[Math.min(hi, matches.length - 1)]!);
                     return;
                   }
                 }
@@ -308,7 +861,55 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 }
               }}
             />
-            <InputGroup.Suffix className="flex w-full items-center justify-end px-2.5 py-0">
+            <InputGroup.Suffix className="flex w-full items-center gap-1.5 px-2.5 py-0">
+              <Tooltip>
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="tertiary"
+                  aria-label="Skills"
+                  className="slash-btn rounded-full font-mono"
+                  onPress={() => setText('/')}
+                >
+                  /
+                </Button>
+                <Tooltip.Content>Run a skill</Tooltip.Content>
+              </Tooltip>
+              <SkillBrowser
+                skills={skills}
+                agents={skillAgents}
+                onRun={(s, agents) => void runSkill(store, pr, s.id, agents)}
+              />
+              <Dropdown>
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  className="gap-1.5 rounded-full px-3 text-xs"
+                >
+                  {skillAgents.join(' + ')}
+                  <ChevronDown className="size-3 text-muted" />
+                </Button>
+                <Dropdown.Popover placement="top start">
+                  <Dropdown.Menu
+                    aria-label="Agents"
+                    selectionMode="multiple"
+                    selectedKeys={new Set(skillAgents)}
+                    onSelectionChange={(keys) => {
+                      const next = AGENTS.filter(
+                        (a) => keys === 'all' || keys.has(a),
+                      );
+                      if (next.length) setSkillAgents(next);
+                    }}
+                  >
+                    {AGENTS.map((a) => (
+                      <Dropdown.Item key={a} id={a} textValue={a}>
+                        <Label>{a}</Label>
+                      </Dropdown.Item>
+                    ))}
+                  </Dropdown.Menu>
+                </Dropdown.Popover>
+              </Dropdown>
+              <span className="flex-1" />
               <Button
                 isIconOnly
                 size="sm"
@@ -327,56 +928,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   );
 });
 
-const SkillRunView = observer(function SkillRunView({
-  pr,
-  run,
-}: {
-  pr: PrId;
-  run: string;
-}) {
-  const store = useRootStore();
-  const r = store.models.skillRuns.get(run);
-  const log = store.ephemeral.runLog.get(run) ?? [];
-  const liveText = store.ephemeral.agentText.get(run);
-  const findings = store.models.findings.where(
-    (f) => f.pr === pr && f.skill === r?.skill,
-  );
-  if (!r) return null;
-  return (
-    <div className="skill flex flex-col gap-2.5">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="min-w-0 flex-1 font-mono">/{r.skill}</span>
-        <span className="text-xs text-muted">{r.status}</span>
-        {r.status === 'running' && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onPress={() => void cancelRun(store, run)}
-          >
-            <CircleStop className="size-3.5" />
-            Stop
-          </Button>
-        )}
-      </div>
-      {r.status === 'running' && liveText && (
-        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-          {rich(liveText)}
-        </div>
-      )}
-      {r.status === 'running' && log.length > 0 && (
-        <pre className="runlog max-h-32 overflow-auto rounded-xl bg-background-secondary px-3 py-2 font-mono text-xs text-muted">
-          {log.join('\n')}
-        </pre>
-      )}
-      {r.error && <div className="text-xs text-danger">{r.error}</div>}
-      {findings.map((f) => (
-        <FindingCard key={f.id} pr={pr} f={f} />
-      ))}
-    </div>
-  );
-});
-
 const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const ui = useUi();
@@ -384,10 +935,17 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   return (
     <ListBox
       aria-label="PR tasks"
-      selectionMode="none"
+      selectionMode="single"
+      selectedKeys={ui.selected ? [ui.selected] : []}
+      onSelectionChange={(keys) => {
+        const k = keys === 'all' ? null : [...keys][0];
+        if (k != null) ui.select(String(k));
+      }}
       renderEmptyState={() => (
         <EmptyState className="rounded-2xl border border-dashed border-separator p-4 text-sm">
-          No tasks yet.
+          No tasks. Create one from a skill finding or a thread. Once the
+          review is submitted, each comment also becomes a task for the
+          author.
         </EmptyState>
       )}
       className="min-h-0 flex-1 overflow-auto p-4"
@@ -406,29 +964,48 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   );
 });
 
-const Threads = observer(function Threads({ pr }: { pr: PrId }) {
-  const store = useRootStore();
-  const threads = store.models.prDetails.get(pr)?.threads ?? [];
-  const open = threads.filter((t) => !t.resolved);
-  const resolved = threads.filter((t) => t.resolved);
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
-      {open.length === 0 && resolved.length === 0 && (
-        <Typography.Paragraph size="sm" color="muted" align="center">
-          No threads yet.
-        </Typography.Paragraph>
-      )}
-      {[...open, ...resolved].map((t) => (
-        <ThreadCard key={t.id} pr={pr} thread={t} />
-      ))}
+    <div className="flex flex-col gap-2">
+      <Header className="px-1 pb-1 text-xs font-medium text-muted">
+        {title}
+      </Header>
+      {children}
     </div>
   );
-});
+}
+
+function DraftCard({ d }: { d: Draft }) {
+  return (
+    <Card className="titem flex flex-col gap-2 border border-dashed border-warning/50 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Chip size="sm" variant="soft" color="warning">
+          pending
+        </Chip>
+        {d.source.kind === 'agent' && <AgentTag id={d.source.agent} />}
+        <span className="flex-1" />
+        <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
+          <FileCode className="size-3.5" />
+          {d.anchor.path}:{d.anchor.line}
+        </span>
+      </div>
+      <p className="line-clamp-2 text-sm text-muted">{d.body}</p>
+    </Card>
+  );
+}
 
 function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
   const store = useRootStore();
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
+  const people = [...new Map(thread.comments.map((c) => [c.author.login, c.author]))];
+  const last = thread.comments.at(-1)!;
   const send = () => {
     const body = reply.trim();
     if (!body) return;
@@ -438,13 +1015,80 @@ function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
       .finally(() => setBusy(false));
   };
   return (
-    <Card className="flex flex-col gap-2 p-3">
-      <div className="flex items-center gap-2 text-xs">
-        <Avatar person={thread.comments[0]!.author} size={18} />
-        <span className="font-medium">{thread.comments[0]!.author.login}</span>
+    <Card
+      className={`titem flex flex-col gap-2 border border-separator px-4 py-3 ${thread.resolved ? 'opacity-70' : ''}`}
+    >
+      <div className="flex items-center gap-2">
+        {thread.resolved ? (
+          <CircleCheck className="size-4 text-success" />
+        ) : (
+          <CommentIcon className="size-4 text-warning" />
+        )}
+        <AvatarGroup>
+          {people.map(([login, person]) => (
+            <Avatar key={login} person={person} size={20} />
+          ))}
+        </AvatarGroup>
+        <span className="truncate text-sm font-medium">
+          {people.map(([login]) => login).join(', ')}
+        </span>
         <span className="flex-1" />
-        {thread.outdated && <span className="text-muted">outdated</span>}
-        {!thread.resolved && (
+        {thread.anchor && (
+          <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
+            <FileCode className="size-3.5" />
+            {thread.anchor.path}:{thread.anchor.line}
+          </span>
+        )}
+      </div>
+      <p className="line-clamp-2 text-sm text-muted">
+        <span className="text-foreground">{last.author.login}:</span>{' '}
+        {last.body}
+      </p>
+      <div className="flex items-center justify-between text-xs text-muted">
+        <span>
+          {plural(thread.comments.length, 'comment', 'comments', 'comments')}{' '}
+          · {ago(last.created_at)}
+        </span>
+        {thread.outdated && <span>outdated</span>}
+      </div>
+      {thread.resolved ? (
+        <Btn
+          tone="ghost"
+          className="w-fit"
+          onPress={() => void resolveThread(store, pr, thread.id, false)}
+        >
+          Reopen
+        </Btn>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <TextField
+            aria-label="Reply"
+            value={reply}
+            onChange={setReply}
+            className="flex-1"
+          >
+            <InputGroup fullWidth className="rounded-2xl">
+              <InputGroup.Input
+                placeholder="Reply…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+              />
+            </InputGroup>
+          </TextField>
+          <Button
+            isIconOnly
+            size="sm"
+            aria-label="Send reply"
+            isPending={busy}
+            isDisabled={!reply.trim()}
+            onPress={send}
+          >
+            <ArrowUp className="size-4" />
+          </Button>
           <Btn
             tone="tertiary"
             icon={<Check />}
@@ -452,41 +1096,52 @@ function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
           >
             Resolve
           </Btn>
-        )}
-      </div>
-      <p className="line-clamp-3 text-sm text-muted">
-        {thread.comments.at(-1)!.body}
-      </p>
-      <div className="flex items-center gap-1.5">
-        <TextField
-          aria-label="Reply"
-          value={reply}
-          onChange={setReply}
-          className="flex-1"
-        >
-          <InputGroup fullWidth className="rounded-2xl">
-            <InputGroup.Input
-              placeholder="Reply…"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-            />
-          </InputGroup>
-        </TextField>
-        <Button
-          isIconOnly
-          size="sm"
-          aria-label="Send reply"
-          isPending={busy}
-          isDisabled={!reply.trim()}
-          onPress={send}
-        >
-          <ArrowUp className="size-4" />
-        </Button>
-      </div>
+        </div>
+      )}
     </Card>
   );
 }
+
+/** All threads and pending drafts of this PR, grouped like an inbox. */
+const Threads = observer(function Threads({ pr }: { pr: PrId }) {
+  const store = useRootStore();
+  const threads = store.models.prDetails.get(pr)?.threads ?? [];
+  const drafts = store.models.drafts.where((d) => d.pr === pr);
+  const open = threads.filter((t) => !t.resolved);
+  const resolved = threads.filter((t) => t.resolved);
+
+  if (!open.length && !drafts.length && !resolved.length) {
+    return (
+      <EmptyState className="flex flex-col items-center gap-2 p-8 text-center text-sm">
+        <CommentsIcon className="size-6 text-muted" />
+        No threads yet. Start one from a diff line.
+      </EmptyState>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+      {open.length > 0 && (
+        <Section title={`Open · ${open.length}`}>
+          {open.map((t) => (
+            <ThreadCard key={t.id} pr={pr} thread={t} />
+          ))}
+        </Section>
+      )}
+      {drafts.length > 0 && (
+        <Section title={`Drafts · ${drafts.length}`}>
+          {drafts.map((d) => (
+            <DraftCard key={d.id} d={d} />
+          ))}
+        </Section>
+      )}
+      {resolved.length > 0 && (
+        <Section title={`Resolved · ${resolved.length}`}>
+          {resolved.map((t) => (
+            <ThreadCard key={t.id} pr={pr} thread={t} />
+          ))}
+        </Section>
+      )}
+    </div>
+  );
+});

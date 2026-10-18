@@ -3,6 +3,7 @@ import { resourceCache, type ResourceCache } from '../core/resource';
 import { SyncClient, modelAccessors, type ModelAccessors } from '../sync';
 import type { Ephemeral, Revision } from '../gen/contract';
 import { loadViewer } from '../actions';
+import { setCommandFailureHandler } from '../core/api';
 import { EphemeralStore } from './EphemeralStore';
 import { UiStore } from './UiStore';
 
@@ -20,6 +21,9 @@ export class RootStore {
   private unlistenEphemeral: (() => void) | undefined;
 
   async start(): Promise<void> {
+    setCommandFailureHandler((f) =>
+      this.ephemeral.handle({ type: 'toast', level: 'warn', text: f.message }),
+    );
     this.unlistenEphemeral = await getTransport().listen<Ephemeral>(
       'ephemeral',
       (e) => this.ephemeral.handle(e),

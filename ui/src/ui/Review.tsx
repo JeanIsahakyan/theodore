@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ClockArrowRotateLeft,
+  CodeMerge,
   Comments as CommentsIcon,
   LayoutRows,
   LayoutSideContentRight,
@@ -29,6 +30,7 @@ import { observer } from 'mobx-react-lite';
 import type { PrId } from '../gen/contract';
 import { api } from '../core/api';
 import { markGroupRead } from '../actions';
+import { FEATURES } from '../features';
 import { Md } from '../highlight';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, K } from './bits';
@@ -36,9 +38,53 @@ import { Checks, Commits, ReviewerStrip } from './Checks';
 import { DiffPane } from './DiffPane';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, groupsForRevision, type ReviewMode } from './GroupsPane';
+import { MergeDialog } from './Merge';
 import { SidePanel } from './SidePanel';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { useViewKeys } from './keys';
+
+/** Live updates: green while synced, amber on cached/rate-limited reads, red
+ *  offline. Ported from the prototype's `LiveDot`, minus the fake `feed`
+ *  popover (nothing backs it) — driven by the real `hostStatus` instead of
+ *  demo fault injection. */
+const LiveDot = observer(function LiveDot() {
+  const store = useRootStore();
+  const s = store.ephemeral.hostStatus;
+  const rateLimited = !!s.rateLimitedUntil && s.rateLimitedUntil > Date.now();
+  const [color, text] = !s.online
+    ? ['bg-danger', 'offline — showing cache']
+    : rateLimited || !s.authOk
+      ? ['bg-warning', 'updates paused']
+      : ['bg-success', 'live'];
+  return (
+    <Tooltip>
+      <Chip
+        size="sm"
+        variant="secondary"
+        className="live-dot shrink-0 gap-1.5 px-1.5"
+      >
+        <span className="relative flex size-2">
+          {color === 'bg-success' && (
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
+          )}
+          <span
+            className={`relative inline-flex size-2 rounded-full ${color}`}
+          />
+        </span>
+      </Chip>
+      <Tooltip.Content>Updates: {text}</Tooltip.Content>
+    </Tooltip>
+  );
+});
+
+type LinearRef = { key: string; state: string; title: string };
+
+// `PrSummary` has no Linear field at all yet (`FEATURES.linear`). Behind a
+// function call so TS can't fold it to the literal `null` and narrow every
+// read of it to `never` — a plain `const x: T | null = null` would.
+function linearOf(): LinearRef | null {
+  return null;
+}
 
 type PrTab = 'diff' | 'checks' | 'commits';
 
@@ -65,6 +111,16 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const [tour, setTour] = useState<number | null>(null);
   const [sinceOnly, setSinceOnly] = useState(false);
   const [baselineSha, setBaselineSha] = useState<string | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  // `PrSummary` has no Linear field at all yet (`FEATURES.linear`); kept as a
+  // typed placeholder so the chip's shape stays, pointed at nothing, rather
+  // than being deleted — wiring up the real field later is then a one-line
+  // change instead of new JSX.
+  const linear = linearOf();
+  // Widened to `boolean` on purpose: `FEATURES.linear` is the literal `false`,
+  // and TS narrows an always-false `&&` chain's later operands to `never` —
+  // widening keeps `linear.key` below type-checking as real, reachable code.
+  const linearEnabled: boolean = FEATURES.linear;
 
   useEffect(() => {
     void store.sync.openPr(pr);
@@ -170,6 +226,16 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   );
 
   const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
+  const local = summary?.pr.repo.host === 'local';
+  const mergeBlock = !summary
+    ? ''
+    : local
+      ? 'local branch'
+      : failing
+        ? `${failing} ${failing === 1 ? 'check' : 'checks'} failing`
+        : summary.approvals < (summary.required_approvals ?? 0)
+          ? `approvals ${summary.approvals}/${summary.required_approvals}`
+          : '';
 
   return (
     <div className="review flex min-w-0 flex-1 flex-col">
@@ -215,6 +281,19 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   {l}
                 </Chip>
               ))}
+              {linearEnabled && linear && (
+                <Tooltip>
+                  <Chip
+                    size="sm"
+                    variant="secondary"
+                    className="lin shrink-0 whitespace-nowrap tabular-nums"
+                  >
+                    {linear.key} · {linear.state}
+                  </Chip>
+                  <Tooltip.Content>{linear.title}</Tooltip.Content>
+                </Tooltip>
+              )}
+              {summary.pr.repo.host !== 'local' && <LiveDot />}
             </>
           ) : (
             <Spinner size="sm" />
@@ -237,6 +316,24 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         <Btn tone="primary" onPress={() => ui.openModal('submit')}>
           Submit review
         </Btn>
+        <Tooltip>
+          <Btn
+            tone={mergeBlock ? 'tertiary' : 'success'}
+            icon={<CodeMerge />}
+            className="merge-btn"
+            isDisabled={!FEATURES.hostWrites}
+            onPress={() => setMergeOpen(true)}
+          >
+            Merge
+          </Btn>
+          <Tooltip.Content>
+            {!FEATURES.hostWrites
+              ? 'Not available yet'
+              : mergeBlock
+                ? `Blocked: ${mergeBlock} — you can enable auto-merge`
+                : 'Merge'}
+          </Tooltip.Content>
+        </Tooltip>
         <Tooltip>
           <ToggleButton
             isIconOnly
@@ -419,6 +516,12 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             rev={revision.data!}
             mode={mode}
             setMode={setMode}
+            since={since}
+            sinceOnly={sinceOnly && sinceCount > 0}
+            onTourFrom={(groupId) => {
+              const idx = orderedGroups.findIndex((g) => g.id === groupId);
+              if (idx >= 0) setTour(idx);
+            }}
           />
           {tab === 'checks' ? (
             <Checks pr={pr} checks={checks} />
@@ -429,6 +532,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               pr={pr}
               rev={revision.data!}
               mode={mode}
+              setMode={setMode}
               since={since}
               sinceOnly={sinceOnly && sinceCount > 0}
               tour={tour !== null}
@@ -436,6 +540,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           )}
           {ui.aside && <SidePanel pr={pr} />}
         </div>
+      )}
+      {mergeOpen && (
+        <MergeDialog pr={pr} onClose={() => setMergeOpen(false)} />
       )}
     </div>
   );

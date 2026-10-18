@@ -1,4 +1,5 @@
 import {
+  BranchesRight,
   CodePullRequest,
   Gear,
   Keyboard,
@@ -6,22 +7,38 @@ import {
   ListCheck,
   Magnifier,
   Moon,
+  Plus,
   Tray,
 } from '@gravity-ui/icons';
-import { Button, ListBox, Separator, Toolbar, Tooltip } from '@heroui/react';
+import {
+  Button,
+  Header,
+  ListBox,
+  Separator,
+  Toolbar,
+  Tooltip,
+} from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
-import { K } from './bits';
+import { Avatar, K } from './bits';
 
 interface NavItem {
   key: string;
   icon: ReactNode;
   label: string;
   n?: number;
-  route: Route;
+  route?: Route;
+  isDisabled?: boolean;
+  onPress?: () => void;
+}
+
+interface NavGroup {
+  id: string;
+  title?: string;
+  items: NavItem[];
 }
 
 const routeKey = (r: Route) => JSON.stringify(r);
@@ -70,40 +87,78 @@ export const Sidebar = observer(function Sidebar() {
     (p) => viewer && p.author.login === viewer.login && p.state !== 'merged',
   ).length;
 
-  const items: NavItem[] = [
+  const localBranches = prs.filter((p) => p.pr.repo.host === 'local');
+
+  const groups: NavGroup[] = [
     {
-      key: routeKey({ name: 'inbox' }),
-      icon: <Tray />,
-      label: 'Inbox',
-      n: inboxCount,
-      route: { name: 'inbox' },
+      id: 'main',
+      items: [
+        {
+          key: routeKey({ name: 'inbox' }),
+          icon: <Tray />,
+          label: 'Inbox',
+          n: inboxCount,
+          route: { name: 'inbox' },
+        },
+        ...(FEATURES.currentUser
+          ? [
+              {
+                key: routeKey({ name: 'mine' }),
+                icon: <CodePullRequest />,
+                label: 'My PRs',
+                n: mineOpen,
+                route: { name: 'mine' } as Route,
+              },
+            ]
+          : []),
+        {
+          key: routeKey({ name: 'tasks' }),
+          icon: <ListCheck />,
+          label: 'Tasks',
+          n: tasksOpen,
+          route: { name: 'tasks' },
+        },
+      ],
     },
-    ...(FEATURES.currentUser
+    {
+      id: 'projects',
+      title: 'Projects',
+      items: [
+        {
+          key: 'add-project',
+          icon: <Plus />,
+          label: 'Add project',
+          isDisabled: !FEATURES.projects,
+          onPress: () => {
+            // no add-repo command yet; PRs arrive only via `open_pr`
+          },
+        },
+      ],
+    },
+    ...(localBranches.length
       ? [
           {
-            key: routeKey({ name: 'mine' }),
-            icon: <CodePullRequest />,
-            label: 'My PRs',
-            n: mineOpen,
-            route: { name: 'mine' } as Route,
+            id: 'local',
+            title: 'Local branches',
+            items: localBranches.map((p) => ({
+              key: routeKey({ name: 'review', pr: p.id }),
+              icon: <BranchesRight />,
+              label: p.head_ref,
+              route: { name: 'review', pr: p.id } as Route,
+            })),
           },
         ]
       : []),
-    {
-      key: routeKey({ name: 'tasks' }),
-      icon: <ListCheck />,
-      label: 'Tasks',
-      n: tasksOpen,
-      route: { name: 'tasks' },
-    },
   ];
-  const current = items.find((i) => sameRoute(i.route, ui.route));
+  const allItems = groups.flatMap((g) => g.items);
+  const current = allItems.find((i) => i.route && sameRoute(i.route, ui.route));
 
   return (
     <aside className="sidebar flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
       <Toolbar
         aria-label="Workspace"
-        className="flex w-full items-center gap-2.5 px-5 pb-3 pt-4"
+        data-tauri-drag-region
+        className="flex min-h-[38px] w-full items-center gap-2.5 pb-3 pe-5 ps-20 pt-4"
       >
         <span className="grid size-6 place-items-center rounded-xl bg-foreground text-xs font-semibold text-background">
           T
@@ -130,26 +185,37 @@ export const Sidebar = observer(function Sidebar() {
         selectedKeys={current ? [current.key] : []}
         onSelectionChange={(keys) => {
           const k = keys === 'all' ? undefined : [...keys][0];
-          const it = items.find((i) => i.key === k);
-          if (it) ui.go(it.route);
+          const it = allItems.find((i) => i.key === k);
+          if (it?.route) ui.go(it.route);
+          else it?.onPress?.();
         }}
         className="nav-list min-h-0 flex-1 overflow-auto px-2 pb-3"
       >
-        {items.map((i) => (
-          <ListBox.Item
-            key={i.key}
-            id={i.key}
-            textValue={i.label}
-            className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
-          >
-            <span className="grid size-4 place-items-center text-muted [&>svg]:size-4">
-              {i.icon}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{i.label}</span>
-            {i.n !== undefined && i.n !== 0 && (
-              <span className="text-xs tabular-nums text-muted">{i.n}</span>
+        {groups.map((g) => (
+          <ListBox.Section key={g.id} id={g.id}>
+            {g.title && (
+              <Header className="px-3 pb-1.5 pt-6 text-xs text-muted">
+                {g.title}
+              </Header>
             )}
-          </ListBox.Item>
+            {g.items.map((i) => (
+              <ListBox.Item
+                key={i.key}
+                id={i.key}
+                textValue={i.label}
+                isDisabled={i.isDisabled}
+                className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
+              >
+                <span className="grid size-4 place-items-center text-muted [&>svg]:size-4">
+                  {i.icon}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{i.label}</span>
+                {i.n !== undefined && i.n !== 0 && (
+                  <span className="text-xs tabular-nums text-muted">{i.n}</span>
+                )}
+              </ListBox.Item>
+            ))}
+          </ListBox.Section>
         ))}
       </ListBox>
 
@@ -158,9 +224,21 @@ export const Sidebar = observer(function Sidebar() {
         aria-label="App"
         className="flex w-full items-center gap-1 px-5 py-3"
       >
-        <span className="ms-1.5 min-w-0 flex-1 truncate text-sm text-muted">
-          local core
-        </span>
+        {viewer ? (
+          <>
+            <Avatar person={viewer} size={24} />
+            <span
+              className="ms-1.5 min-w-0 flex-1 truncate text-sm"
+              title={viewer.name ?? viewer.login}
+            >
+              {viewer.login}
+            </span>
+          </>
+        ) : (
+          <span className="ms-1.5 min-w-0 flex-1 truncate text-sm text-muted">
+            local core
+          </span>
+        )}
         <IconBtn
           label="Settings  G S"
           onPress={() => ui.go({ name: 'settings', page: 'agents' })}

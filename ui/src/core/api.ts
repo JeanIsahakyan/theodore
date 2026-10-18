@@ -39,6 +39,18 @@ export class CommandFailure extends Error {
   }
 }
 
+/** Set once by `RootStore.start()`. Every rejected command surfaces here as a
+ *  toast — callers that also need to adjust their own state (clear a busy
+ *  flag, roll back an optimistic update) still get the rejection to `catch`,
+ *  they just don't need to put the message in front of the user themselves. */
+let onFailure: ((f: CommandFailure) => void) | null = null;
+
+export function setCommandFailureHandler(
+  fn: (f: CommandFailure) => void,
+): void {
+  onFailure = fn;
+}
+
 async function call<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -47,7 +59,9 @@ async function call<T>(
     return await getTransport().invoke<T>(cmd, args);
   } catch (e) {
     if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
-      throw new CommandFailure(e as CommandError);
+      const failure = new CommandFailure(e as CommandError);
+      onFailure?.(failure);
+      throw failure;
     }
     throw e;
   }

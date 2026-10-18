@@ -3,7 +3,7 @@
  * faked with a timer. Functions take the `RootStore` explicitly so they are
  * easy to call from components and from tests alike.
  */
-import { api, CommandFailure } from './core/api';
+import { api } from './core/api';
 import { FEATURES } from './features';
 import type {
   AgentId,
@@ -93,42 +93,32 @@ export function removeDraft(store: RootStore, id: string): void {
 }
 
 /** Sends a reply to the host; the comment lands in `pr_detail.threads` once
- *  sync catches up, so there's nothing to apply optimistically here. */
+ *  sync catches up, so there's nothing to apply optimistically here. A
+ *  rejection already shows a toast (`api.ts`); this just stops it short of
+ *  an unhandled rejection in the caller. */
 export async function replyThread(
-  store: RootStore,
+  _store: RootStore,
   pr: PrId,
   thread: string,
   body: string,
 ): Promise<void> {
   try {
     await api.replyThread({ pr, thread, body });
-  } catch (e) {
-    store.ephemeral.handle({
-      type: 'toast',
-      level: 'warn',
-      text:
-        e instanceof CommandFailure ? e.message : 'Could not send the reply.',
-    });
+  } catch {
+    // toasted by api.ts
   }
 }
 
 export async function resolveThread(
-  store: RootStore,
+  _store: RootStore,
   pr: PrId,
   thread: string,
   resolved: boolean,
 ): Promise<void> {
   try {
     await api.resolveThread({ pr, thread, resolved });
-  } catch (e) {
-    store.ephemeral.handle({
-      type: 'toast',
-      level: 'warn',
-      text:
-        e instanceof CommandFailure
-          ? e.message
-          : 'Could not update the thread.',
-    });
+  } catch {
+    // toasted by api.ts
   }
 }
 
@@ -248,22 +238,14 @@ export function assignTask(
  *  locally — this only kicks the run off. Returns the run id, or `null` on
  *  a graceful failure (toast, no crash). */
 export async function delegateTask(
-  store: RootStore,
+  _store: RootStore,
   task: string,
   agent: AgentId | null = null,
 ): Promise<string | null> {
   try {
     return await api.delegateTask({ task, agent });
-  } catch (e) {
-    store.ephemeral.handle({
-      type: 'toast',
-      level: 'warn',
-      text:
-        e instanceof CommandFailure
-          ? e.message
-          : 'Could not delegate the task.',
-    });
-    return null;
+  } catch {
+    return null; // toasted by api.ts
   }
 }
 
@@ -271,20 +253,15 @@ export async function delegateTask(
  *  suggestion; resolves the linked thread. Reject: back to `todo`, `reason`
  *  goes to the agent on the next attempt. */
 export async function decideTask(
-  store: RootStore,
+  _store: RootStore,
   task: string,
   accept: boolean,
   reason: string | null = null,
 ): Promise<void> {
   try {
     await api.decideTask({ task, accept, reason });
-  } catch (e) {
-    store.ephemeral.handle({
-      type: 'toast',
-      level: 'warn',
-      text:
-        e instanceof CommandFailure ? e.message : 'Could not decide the task.',
-    });
+  } catch {
+    // toasted by api.ts
   }
 }
 
@@ -332,18 +309,11 @@ export function unsnooze(store: RootStore, pr: PrId): void {
 
 /** Asks the core to run the inbox searches again; rows land via `sync`.
  *  A command the core doesn't have yet degrades to a toast, not a crash. */
-export async function refreshInbox(store: RootStore): Promise<void> {
+export async function refreshInbox(_store: RootStore): Promise<void> {
   try {
     await api.refreshInbox();
-  } catch (e) {
-    store.ephemeral.handle({
-      type: 'toast',
-      level: 'warn',
-      text:
-        e instanceof CommandFailure
-          ? e.message
-          : 'Could not refresh the inbox.',
-    });
+  } catch {
+    // toasted by api.ts
   }
 }
 
@@ -359,11 +329,20 @@ export async function loadViewer(store: RootStore): Promise<void> {
 
 // ── opening a PR ─────────────────────────────────────────────────────────────
 
-export async function openPr(store: RootStore, url: string): Promise<PrId> {
-  const res = await api.openPr({ url });
-  await store.sync.openPr(res.pr);
-  store.ui.go({ name: 'review', pr: res.pr });
-  return res.pr;
+/** `null` on a rejected `open_pr` (bad URL, no access, …) — already toasted
+ *  by `api.ts`; nothing left for the caller but to stop spinning. */
+export async function openPr(
+  store: RootStore,
+  url: string,
+): Promise<PrId | null> {
+  try {
+    const res = await api.openPr({ url });
+    await store.sync.openPr(res.pr);
+    store.ui.go({ name: 'review', pr: res.pr });
+    return res.pr;
+  } catch {
+    return null;
+  }
 }
 
 // ── settings ─────────────────────────────────────────────────────────────────
