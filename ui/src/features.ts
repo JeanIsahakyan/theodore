@@ -6,9 +6,12 @@
  * Flip a flag to `true` once the command lands; don't delete the UI.
  */
 export const FEATURES = {
-  /** No host-write commands exist yet: take/decline/reassign/merge/auto-merge,
-   *  "Ready for review", re-request review, update branch, conflict resolution. */
-  hostWrites: false,
+  /** `merge_info` / `merge_pr` / `assignable_users` / `set_reviewers` /
+   *  `set_draft` / `update_branch` land this wave: merge, auto-merge, merge
+   *  queue, reviewer picker, "Ready for review" / "Convert to draft", update
+   *  branch. Still no command for take/decline/reassign or conflict
+   *  resolution — those stay gated locally where they're rendered. */
+  hostWrites: true,
   /** `viewer` returns the authenticated host user — My PRs filters on it. */
   currentUser: true,
   /** `list_host_repos` / `add_project` / `remove_project` / `refresh_project`

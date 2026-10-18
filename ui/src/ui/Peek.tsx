@@ -1,4 +1,5 @@
 import type { ComponentProps, ReactNode } from 'react';
+import { useState } from 'react';
 import {
   Archive,
   ArrowRotateRight,
@@ -23,8 +24,7 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { PrId } from '../gen/contract';
-import { delegateTask, markDone, unsnooze } from '../actions';
-import { FEATURES } from '../features';
+import { delegateTask, markDone, setDraft, setReviewers, unsnooze } from '../actions';
 import { useRootStore } from '../stores/context';
 import { AgentTag, Avatar, Btn, CheckIcon } from './bits';
 import { PRIcon, TaskIcon, prStatusLabel } from './StatusIcon';
@@ -55,10 +55,11 @@ function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
   return hunks.filter((h) => readSet.has(h)).length / hunks.length;
 }
 
-/** Wraps a `Btn` whose backing command doesn't exist yet: disabled, with a
- *  tooltip explaining why — never deleted, per `features.ts`. */
+/** Wraps a `Btn` whose action has no backing command at all — reassigning a
+ *  PR, declining a review request, or adding a reviewer (no picker fits this
+ *  compact panel; use the PR page) aren't in `.context/commands.md`: shown
+ *  disabled, with a tooltip explaining why, never deleted. */
 function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
-  if (FEATURES.hostWrites) return <Btn {...rest}>{children}</Btn>;
   const { kbd: _kbd, ...disabledRest } = rest;
   return (
     <Tooltip>
@@ -79,16 +80,21 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
   const store = useRootStore();
   const ui = store.ui;
   const p = store.models.prSummaries.get(id);
+  const [busy, setBusy] = useState<'ready' | 'rerequest' | null>(null);
   if (!p) return null;
   const detail = store.models.prDetails.get(id);
   const tasks = store.models.tasks.where((t) => t.pr === id);
   const inboxState = store.models.inboxStates.get(id);
   const viewer = store.ephemeral.viewer;
   const mine = !!viewer && viewer.login === p.author.login;
+  const local = p.pr.repo.host === 'local';
   const requested =
     p.reasons.includes('review_requested') ||
     p.reasons.includes('team_review_requested');
   const reviewers = detail?.reviewers ?? [];
+  const changesRequestedBy = reviewers
+    .filter((r) => r.state === 'changes_requested' && !r.team)
+    .map((r) => r.person.login);
   const openMine = tasks.filter(
     (t) =>
       t.status === 'todo' &&
@@ -131,10 +137,14 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         >
           Open
         </Btn>
-        {p.state === 'open' && (
-          <GatedBtn tone="success" icon={<CodeMerge />}>
+        {!local && p.state === 'open' && (
+          <Btn
+            tone="success"
+            icon={<CodeMerge />}
+            onPress={() => ui.go({ name: 'review', pr: id })}
+          >
             Merge
-          </GatedBtn>
+          </Btn>
         )}
         {requested && (
           <>
@@ -145,13 +155,38 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
             </GatedBtn>
           </>
         )}
-        {mine && p.state === 'draft' && (
-          <GatedBtn icon={<Eye />}>Ready for review</GatedBtn>
+        {!local && mine && p.state === 'draft' && (
+          <Btn
+            icon={<Eye />}
+            isPending={busy === 'ready'}
+            onPress={() => {
+              setBusy('ready');
+              void setDraft(store, { pr: id, draft: false }).finally(() =>
+                setBusy(null),
+              );
+            }}
+          >
+            Ready for review
+          </Btn>
         )}
-        {mine && reviewers.some((r) => r.state === 'changes_requested') && (
-          <GatedBtn icon={<ArrowRotateRight />}>Re-request review</GatedBtn>
+        {!local && mine && changesRequestedBy.length > 0 && (
+          <Btn
+            icon={<ArrowRotateRight />}
+            isPending={busy === 'rerequest'}
+            onPress={() => {
+              setBusy('rerequest');
+              void setReviewers(store, {
+                pr: id,
+                add: changesRequestedBy,
+                add_teams: [],
+                remove: [],
+              }).finally(() => setBusy(null));
+            }}
+          >
+            Re-request review
+          </Btn>
         )}
-        {mine && p.state !== 'merged' && (
+        {!local && mine && p.state !== 'merged' && (
           <GatedBtn icon={<PersonPlus />}>Reviewer</GatedBtn>
         )}
         {mine && openMine.length > 0 && (

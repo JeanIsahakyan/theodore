@@ -37,7 +37,6 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { InboxReason, PrId, PrState, PrSummary } from '../gen/contract';
 import { markDone, openPr, refreshInbox, snoozePrs } from '../actions';
-import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
@@ -161,10 +160,12 @@ function groupPRs(
   }));
 }
 
-/** Wraps a `Btn` whose backing command doesn't exist yet: disabled, with a
- *  tooltip explaining why — never deleted, per `features.ts`. */
+/** Wraps a `Btn` whose action has no backing command at all (not gated by
+ *  `FEATURES.hostWrites` — reassigning a PR to someone else, or running a
+ *  skill over a bulk selection, aren't in `.context/commands.md`): disabled,
+ *  with a tooltip explaining why — never deleted, so the UI lights up with
+ *  no further work the day a command lands. */
 function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
-  if (FEATURES.hostWrites) return <Btn {...rest}>{children}</Btn>;
   const { kbd: _kbd, ...disabledRest } = rest;
   return (
     <Tooltip>

@@ -9,7 +9,13 @@ import {
   observableShallow,
   runInAction,
 } from 'mobx';
-import type { Ephemeral, Person, ToastLevel } from '../gen/contract';
+import type {
+  CommentId,
+  Ephemeral,
+  PrId,
+  Person,
+  ToastLevel,
+} from '../gen/contract';
 
 const LOG_LIMIT = 500;
 
@@ -42,6 +48,12 @@ export class EphemeralStore {
   grouping = new Map<string, { running: boolean; error: string | null }>();
   /** The authenticated host user, cached once fetched via `viewer`. */
   viewer: Person | null = null;
+  /** Reactions *we* toggled, `"<comment>:<emoji>"` — `Comment` carries no
+   *  reaction counts (no field for it in the contract), so this is local
+   *  memory of our own toggles, not a readback of the host's state. */
+  reacted = new Set<string>();
+  /** Suggestion comments queued for a batch commit, per PR. */
+  suggestionBatch = new Map<PrId, Set<CommentId>>();
 
   private nextToastId = 1;
 
@@ -54,6 +66,51 @@ export class EphemeralStore {
       grouping: observableShallow,
       inboxLoading: observable,
       viewer: observableRef,
+      reacted: observableShallow,
+      suggestionBatch: observableShallow,
+    });
+  }
+
+  hasReacted(comment: CommentId, emoji: string): boolean {
+    return this.reacted.has(`${comment}:${emoji}`);
+  }
+
+  setReacted(comment: CommentId, emoji: string, on: boolean): void {
+    runInAction(() => {
+      const next = new Set(this.reacted);
+      const key = `${comment}:${emoji}`;
+      if (on) next.add(key);
+      else next.delete(key);
+      this.reacted = next;
+    });
+  }
+
+  batchOf(pr: PrId): Set<CommentId> {
+    return this.suggestionBatch.get(pr) ?? new Set();
+  }
+
+  toggleBatch(pr: PrId, comment: CommentId): void {
+    runInAction(() => {
+      const next = new Map(this.suggestionBatch);
+      const set = new Set(next.get(pr) ?? []);
+      if (set.has(comment)) set.delete(comment);
+      else set.add(comment);
+      next.set(pr, set);
+      this.suggestionBatch = next;
+    });
+  }
+
+  clearBatch(pr: PrId, comments?: CommentId[]): void {
+    runInAction(() => {
+      const next = new Map(this.suggestionBatch);
+      if (!comments) {
+        next.delete(pr);
+      } else {
+        const set = new Set(next.get(pr) ?? []);
+        for (const c of comments) set.delete(c);
+        next.set(pr, set);
+      }
+      this.suggestionBatch = next;
     });
   }
 
