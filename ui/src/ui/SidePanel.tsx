@@ -6,10 +6,12 @@ import {
   ChevronDown,
   CircleCheck,
   CircleStop,
+  CodeCommit,
   Comment as CommentIcon,
   Comments as CommentsIcon,
   Copy,
   FileCode,
+  Layers,
   ListCheck,
   Plus,
   Sparkles,
@@ -28,6 +30,7 @@ import {
   InputGroup,
   Label,
   ListBox,
+  ProgressBar,
   Tabs,
   TextField,
   Tooltip,
@@ -41,6 +44,7 @@ import type {
   Draft,
   Finding,
   PrId,
+  PrSpend,
   SkillInfo,
   Thread,
   Usage,
@@ -49,6 +53,7 @@ import { api } from '../core/api';
 import {
   ask,
   cancelRun,
+  commitSuggestions,
   findingToDraft,
   findingToTask,
   ignoreFinding,
@@ -214,6 +219,78 @@ export const fmtUsage = (u: Usage) => {
   const tok = tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : `${tokens}`;
   return u.usd != null ? `${tok} tok · $${u.usd.toFixed(2)}` : `${tok} tok`;
 };
+
+/** Where `spentUsd` sits against `budgetUsd` (`budget.per_pr_usd`, resolved
+ *  by the core into `PrSpend.budget_usd`): no bar at all without a budget,
+ *  warm past 75%, hot at or past the limit. */
+export interface BudgetStatus {
+  pct: number;
+  tone: 'default' | 'warning' | 'danger';
+  over: boolean;
+}
+
+export function budgetStatus(
+  spentUsd: number,
+  budgetUsd: number | null,
+): BudgetStatus {
+  if (budgetUsd == null || budgetUsd <= 0) {
+    return { pct: 0, tone: 'default', over: false };
+  }
+  const pct = Math.min(100, (spentUsd / budgetUsd) * 100);
+  const over = spentUsd >= budgetUsd;
+  return { pct, tone: over ? 'danger' : pct > 75 ? 'warning' : 'default', over };
+}
+
+/** `pr_spend` is a plain command, not a synced row — refetch whenever the
+ *  PR's run/message count changes, since those are what spend money. */
+function useSpend(pr: PrId): PrSpend | null {
+  const store = useRootStore();
+  const [spend, setSpend] = useState<PrSpend | null>(null);
+  const runs = store.models.skillRuns.where((r) => r.pr === pr).length;
+  const messages = store.models.chatMessages.where((m) => m.pr === pr).length;
+  useEffect(() => {
+    let live = true;
+    void api
+      .prSpend(pr)
+      .then((s) => live && setSpend(s))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [pr, runs, messages]);
+  return spend;
+}
+
+/** Spend vs. the per-PR AI budget, next to the chat input. */
+function BudgetMeter({ pr }: { pr: PrId }) {
+  const spend = useSpend(pr);
+  if (!spend || spend.budget_usd == null) return null;
+  const spent = spend.usage.usd ?? 0;
+  const { pct, tone } = budgetStatus(spent, spend.budget_usd);
+  return (
+    <Tooltip>
+      <Tooltip.Trigger>
+        <div className="budget flex shrink-0 items-center gap-2 whitespace-nowrap text-xs tabular-nums text-muted">
+          <ProgressBar
+            aria-label="AI budget for this PR"
+            value={pct}
+            size="sm"
+            color={tone}
+            className="w-14"
+          >
+            <ProgressBar.Track>
+              <ProgressBar.Fill />
+            </ProgressBar.Track>
+          </ProgressBar>
+          ${spent.toFixed(2)} / ${spend.budget_usd.toFixed(2)}
+        </div>
+      </Tooltip.Trigger>
+      <Tooltip.Content>
+        AI spend on this PR · limit in Settings → Agents
+      </Tooltip.Content>
+    </Tooltip>
+  );
+}
 
 function MessageActions({
   text,
@@ -640,6 +717,13 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     .where((m) => m.pr === pr)
     .sort((a, b) => a.at - b.at);
   const runs = store.models.skillRuns.where((r) => r.pr === pr);
+  const spend = useSpend(pr);
+  const over =
+    spend?.budget_usd != null &&
+    budgetStatus(spend.usage.usd ?? 0, spend.budget_usd).over;
+  const overBudgetReason = over
+    ? `Over budget: $${(spend!.usage.usd ?? 0).toFixed(2)} of $${spend!.budget_usd!.toFixed(2)} spent on this PR — raise it in Settings → Agents.`
+    : null;
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
   }, [messages.length, runs.length, pending]);
@@ -664,6 +748,14 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   useEffect(() => setHi(0), [text]);
 
   const runMatch = (s: SkillInfo) => {
+    if (overBudgetReason) {
+      store.ephemeral.handle({
+        type: 'toast',
+        level: 'warn',
+        text: overBudgetReason,
+      });
+      return;
+    }
     void runSkill(store, pr, s.id, skillAgents);
     setText('');
   };
@@ -671,6 +763,14 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const send = () => {
     const t = text.trim();
     if (!t) return;
+    if (overBudgetReason) {
+      store.ephemeral.handle({
+        type: 'toast',
+        level: 'warn',
+        text: overBudgetReason,
+      });
+      return;
+    }
     if (matches && matches[hi]) {
       runMatch(matches[hi]!);
       return;
@@ -911,7 +1011,17 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
               <SkillBrowser
                 skills={skills}
                 agents={skillAgents}
-                onRun={(s, agents) => void runSkill(store, pr, s.id, agents)}
+                onRun={(s, agents) => {
+                  if (overBudgetReason) {
+                    store.ephemeral.handle({
+                      type: 'toast',
+                      level: 'warn',
+                      text: overBudgetReason,
+                    });
+                    return;
+                  }
+                  void runSkill(store, pr, s.id, agents);
+                }}
               />
               <Dropdown>
                 <Button
@@ -943,19 +1053,38 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 </Dropdown.Popover>
               </Dropdown>
               <span className="flex-1" />
-              <Button
-                isIconOnly
-                size="sm"
-                aria-label="Send"
-                className="rounded-full"
-                isDisabled={!text.trim()}
-                onPress={send}
-              >
-                <ArrowUp className="size-4" />
-              </Button>
+              {overBudgetReason ? (
+                <Tooltip>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    aria-label="Send"
+                    className="rounded-full"
+                    isDisabled
+                  >
+                    <ArrowUp className="size-4" />
+                  </Button>
+                  <Tooltip.Content>{overBudgetReason}</Tooltip.Content>
+                </Tooltip>
+              ) : (
+                <Button
+                  isIconOnly
+                  size="sm"
+                  aria-label="Send"
+                  className="rounded-full"
+                  isDisabled={!text.trim()}
+                  onPress={send}
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+              )}
             </InputGroup.Suffix>
           </InputGroup>
         </TextField>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted">
+          <span className="min-w-0 truncate">The agent can be wrong</span>
+          <BudgetMeter pr={pr} />
+        </div>
       </div>
     </div>
   );
@@ -1132,6 +1261,54 @@ function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
   );
 }
 
+/** Suggestions queued with "Add to batch" (`Comments.tsx`'s `CommentView`),
+ *  committed together as one push — GitHub's batch-suggestion flow. */
+const SuggestionBatchBar = observer(function SuggestionBatchBar({
+  pr,
+}: {
+  pr: PrId;
+}) {
+  const store = useRootStore();
+  const [busy, setBusy] = useState(false);
+  const batch = [...store.ephemeral.batchOf(pr)];
+  if (!batch.length) return null;
+  return (
+    <div className="batch-bar sticky bottom-0 z-[3] flex items-center gap-3 rounded-2xl border border-accent/40 bg-surface px-4 py-2 text-sm shadow-lg">
+      <Layers className="size-4 text-accent" />
+      <span className="flex-1">
+        {plural(
+          batch.length,
+          'batched suggestion',
+          'batched suggestions',
+          'batched suggestions',
+        )}{' '}
+        — will go out as one commit
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        onPress={() => store.ephemeral.clearBatch(pr)}
+      >
+        Clear
+      </Button>
+      <Btn
+        tone="primary"
+        icon={<CodeCommit />}
+        className="commit-batch"
+        isPending={busy}
+        onPress={() => {
+          setBusy(true);
+          void commitSuggestions(store, pr, batch).finally(() =>
+            setBusy(false),
+          );
+        }}
+      >
+        Commit batch
+      </Btn>
+    </div>
+  );
+});
+
 /** All threads and pending drafts of this PR, grouped like an inbox. */
 const Threads = observer(function Threads({ pr }: { pr: PrId }) {
   const store = useRootStore();
@@ -1172,6 +1349,7 @@ const Threads = observer(function Threads({ pr }: { pr: PrId }) {
           ))}
         </Section>
       )}
+      <SuggestionBatchBar pr={pr} />
     </div>
   );
 });
