@@ -12,6 +12,8 @@ import {
   Check,
   Clock,
   CodePullRequest,
+  Eye,
+  FileText,
   Folder,
   FolderPlus,
   Gear,
@@ -22,7 +24,7 @@ import {
 } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { SnoozeUntil } from '../gen/contract';
-import { refreshInbox, snoozePrs } from '../actions';
+import { refreshInbox, setDraft, snoozePrs } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { toggleTheme } from '../stores/UiStore';
@@ -209,6 +211,28 @@ export const CommandMenu = observer(function CommandMenu() {
       () => window.dispatchEvent(new KeyboardEvent('keydown', { key })),
       0,
     );
+  const prSummary = r.name === 'review' ? store.models.prSummaries.get(r.pr) : null;
+  const prLocal = prSummary?.pr.repo.host === 'local';
+  const prMine =
+    !!prSummary && store.ephemeral.viewer?.login === prSummary.author.login;
+  const draftItems: Item[] =
+    r.name === 'review' && prSummary && !prLocal && prMine
+      ? [
+          {
+            group: 'This PR',
+            label:
+              prSummary.state === 'draft'
+                ? 'Ready for review'
+                : 'Convert to draft',
+            icon: prSummary.state === 'draft' ? <Eye /> : <FileText />,
+            run: () =>
+              void setDraft(store, {
+                pr: r.pr,
+                draft: prSummary.state !== 'draft',
+              }),
+          },
+        ]
+      : [];
   const prItems: Item[] =
     r.name === 'review'
       ? [
@@ -218,6 +242,7 @@ export const CommandMenu = observer(function CommandMenu() {
             icon: <Check />,
             run: () => ui.openModal('submit'),
           },
+          ...draftItems,
           {
             group: 'This PR',
             label: 'Start / stop tour',

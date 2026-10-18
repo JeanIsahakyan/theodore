@@ -12,7 +12,7 @@ import {
   Play,
   Stop,
 } from '@gravity-ui/icons';
-import { CircleCheck, Code, CodeCommit } from '@gravity-ui/icons';
+import { CircleCheck, Code, CodeCommit, Eye, FileText } from '@gravity-ui/icons';
 import {
   Alert,
   Breadcrumbs,
@@ -31,12 +31,12 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { PrId } from '../gen/contract';
 import { api } from '../core/api';
-import { markGroupRead } from '../actions';
+import { markGroupRead, setDraft } from '../actions';
 import { FEATURES } from '../features';
 import { Md } from '../highlight';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, K } from './bits';
-import { Checks, Commits, ReviewerStrip } from './Checks';
+import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
 import { DiffPane } from './DiffPane';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, groupsForRevision, type ReviewMode } from './GroupsPane';
@@ -115,6 +115,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const [sinceOnly, setSinceOnly] = useState(false);
   const [baselineSha, setBaselineSha] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [draftBusy, setDraftBusy] = useState(false);
   // `PrSummary` has no Linear field at all yet (`FEATURES.linear`); kept as a
   // typed placeholder so the chip's shape stays, pointed at nothing, rather
   // than being deleted — wiring up the real field later is then a one-line
@@ -263,6 +264,8 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
 
   const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
   const local = summary?.pr.repo.host === 'local';
+  const mine =
+    !!summary && store.ephemeral.viewer?.login === summary.author.login;
   const mergeBlock = !summary
     ? ''
     : local
@@ -349,9 +352,26 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           Tour
           <K>T</K>
         </ToggleButton>
+        {!local && mine && summary && (
+          <Btn
+            tone="tertiary"
+            icon={summary.state === 'draft' ? <Eye /> : <FileText />}
+            isPending={draftBusy}
+            onPress={() => {
+              setDraftBusy(true);
+              void setDraft(store, {
+                pr,
+                draft: summary.state !== 'draft',
+              }).finally(() => setDraftBusy(false));
+            }}
+          >
+            {summary.state === 'draft' ? 'Ready for review' : 'Convert to draft'}
+          </Btn>
+        )}
         <Btn tone="primary" onPress={() => ui.openModal('submit')}>
           Submit review
         </Btn>
+        {!local && FEATURES.hostWrites && <ReviewerPicker pr={pr} />}
         {!local && (
           <Tooltip>
             <Btn
