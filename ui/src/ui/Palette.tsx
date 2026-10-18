@@ -211,7 +211,8 @@ export const CommandMenu = observer(function CommandMenu() {
       () => window.dispatchEvent(new KeyboardEvent('keydown', { key })),
       0,
     );
-  const prSummary = r.name === 'review' ? store.models.prSummaries.get(r.pr) : null;
+  const prSummary =
+    r.name === 'review' ? store.models.prSummaries.get(r.pr) : null;
   const prLocal = prSummary?.pr.repo.host === 'local';
   const prMine =
     !!prSummary && store.ephemeral.viewer?.login === prSummary.author.login;

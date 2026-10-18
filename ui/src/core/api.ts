@@ -122,8 +122,7 @@ export const api = {
   mergeInfo: (pr: PrId) => call<MergeInfo>('merge_info', { pr }),
   mergePr: (req: MergeRequest) => call<null>('merge_pr', { req }),
   assignableUsers: (pr: PrId) => call<Person[]>('assignable_users', { pr }),
-  setReviewers: (req: ReviewersRequest) =>
-    call<null>('set_reviewers', { req }),
+  setReviewers: (req: ReviewersRequest) => call<null>('set_reviewers', { req }),
   setDraft: (req: DraftStateRequest) => call<null>('set_draft', { req }),
   updateBranch: (pr: PrId) => call<null>('update_branch', { pr }),
   react: (req: ReactRequest) => call<null>('react', { req }),

@@ -15,11 +15,7 @@ import type { PrId } from '../gen/contract';
 import type { ContextMenuItem } from '../ui/ContextMenu';
 
 export type SettingsPage =
-  | 'account'
-  | 'agents'
-  | 'projects'
-  | 'updates'
-  | 'about';
+  'account' | 'agents' | 'projects' | 'updates' | 'about';
 
 export interface ContextMenuState {
   x: number;

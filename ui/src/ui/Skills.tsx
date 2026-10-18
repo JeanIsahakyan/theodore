@@ -16,7 +16,14 @@
  * is given (i.e. opened from a review, not from a PR-less context).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, FloppyDisk, ListCheck, Pencil, Play, Sparkles } from '@gravity-ui/icons';
+import {
+  Copy,
+  FloppyDisk,
+  ListCheck,
+  Pencil,
+  Play,
+  Sparkles,
+} from '@gravity-ui/icons';
 import {
   Alert,
   Button,

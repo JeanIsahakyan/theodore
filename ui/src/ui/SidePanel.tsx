@@ -238,7 +238,11 @@ export function budgetStatus(
   }
   const pct = Math.min(100, (spentUsd / budgetUsd) * 100);
   const over = spentUsd >= budgetUsd;
-  return { pct, tone: over ? 'danger' : pct > 75 ? 'warning' : 'default', over };
+  return {
+    pct,
+    tone: over ? 'danger' : pct > 75 ? 'warning' : 'default',
+    over,
+  };
 }
 
 /** `pr_spend` is a plain command, not a synced row — refetch whenever the

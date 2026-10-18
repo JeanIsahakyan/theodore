@@ -435,9 +435,7 @@ const AgentsPage = observer(function AgentsPage() {
 const BudgetRow = observer(function BudgetRow() {
   const store = useRootStore();
   const raw = settingValue(store, 'user', BUDGET_KEY);
-  const [text, setText] = useState(
-    typeof raw === 'number' ? String(raw) : '',
-  );
+  const [text, setText] = useState(typeof raw === 'number' ? String(raw) : '');
   useEffect(() => {
     setText(typeof raw === 'number' ? String(raw) : '');
   }, [raw]);
@@ -633,8 +631,8 @@ const RepoSettingsPage = observer(function RepoSettingsPage({
           })}
         </Card>
         <span className="text-xs text-muted">
-          Repo values are read-only here — edit .review/config.yaml in the
-          repo to change them.
+          Repo values are read-only here — edit .review/config.yaml in the repo
+          to change them.
         </span>
       </section>
     </>
@@ -651,9 +649,7 @@ const ProjectsPage = observer(function ProjectsPage() {
   }
   return (
     <section className="flex flex-col gap-2">
-      <Typography.Heading level={6}>
-        Connected repositories
-      </Typography.Heading>
+      <Typography.Heading level={6}>Connected repositories</Typography.Heading>
       {projects.length === 0 ? (
         <span className="text-sm text-muted">
           No projects yet — add one from the sidebar.

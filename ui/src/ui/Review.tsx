@@ -12,7 +12,13 @@ import {
   Play,
   Stop,
 } from '@gravity-ui/icons';
-import { CircleCheck, Code, CodeCommit, Eye, FileText } from '@gravity-ui/icons';
+import {
+  CircleCheck,
+  Code,
+  CodeCommit,
+  Eye,
+  FileText,
+} from '@gravity-ui/icons';
 import {
   Alert,
   Breadcrumbs,
@@ -365,7 +371,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               }).finally(() => setDraftBusy(false));
             }}
           >
-            {summary.state === 'draft' ? 'Ready for review' : 'Convert to draft'}
+            {summary.state === 'draft'
+              ? 'Ready for review'
+              : 'Convert to draft'}
           </Btn>
         )}
         <Btn tone="primary" onPress={() => ui.openModal('submit')}>

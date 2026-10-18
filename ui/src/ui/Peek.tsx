@@ -24,7 +24,13 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { PrId } from '../gen/contract';
-import { delegateTask, markDone, setDraft, setReviewers, unsnooze } from '../actions';
+import {
+  delegateTask,
+  markDone,
+  setDraft,
+  setReviewers,
+  unsnooze,
+} from '../actions';
 import { useRootStore } from '../stores/context';
 import { AgentTag, Avatar, Btn, CheckIcon } from './bits';
 import { PRIcon, TaskIcon, prStatusLabel } from './StatusIcon';

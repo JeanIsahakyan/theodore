@@ -116,9 +116,7 @@ export const MergeDialog = observer(function MergeDialog({
   const [body, setBody] = useState('');
   const [resolveAgent, setResolveAgent] = useState<AgentId | null>(null);
   const [updating, setUpdating] = useState(false);
-  const [merging, setMerging] = useState<'now' | 'auto' | 'queue' | null>(
-    null,
-  );
+  const [merging, setMerging] = useState<'now' | 'auto' | 'queue' | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -131,7 +129,9 @@ export const MergeDialog = observer(function MergeDialog({
           setMethod(i.allowed_methods[0]!);
         }
       })
-      .catch((e) => live && setLoadError(e instanceof Error ? e.message : String(e)));
+      .catch(
+        (e) => live && setLoadError(e instanceof Error ? e.message : String(e)),
+      );
     return () => {
       live = false;
     };
@@ -320,7 +320,9 @@ export const MergeDialog = observer(function MergeDialog({
                 <Radio
                   key={m}
                   value={m}
-                  isDisabled={allowedMethods.length > 0 && !allowedMethods.includes(m)}
+                  isDisabled={
+                    allowedMethods.length > 0 && !allowedMethods.includes(m)
+                  }
                   className={`rounded-2xl border px-3 py-2 ${method === m ? 'border-accent bg-accent-soft' : 'border-separator'}`}
                 >
                   <Radio.Content>

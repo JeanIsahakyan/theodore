@@ -448,10 +448,7 @@ export async function mergePr(
   }
 }
 
-export async function updateBranch(
-  _store: RootStore,
-  pr: PrId,
-): Promise<void> {
+export async function updateBranch(_store: RootStore, pr: PrId): Promise<void> {
   try {
     await api.updateBranch(pr);
   } catch {

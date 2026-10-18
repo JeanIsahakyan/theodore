@@ -11,7 +11,11 @@ describe('budgetStatus', () => {
   });
 
   it('has no bar when the budget is zero or negative', () => {
-    expect(budgetStatus(0, 0)).toEqual({ pct: 0, tone: 'default', over: false });
+    expect(budgetStatus(0, 0)).toEqual({
+      pct: 0,
+      tone: 'default',
+      over: false,
+    });
     expect(budgetStatus(1, -5)).toEqual({
       pct: 0,
       tone: 'default',
@@ -20,7 +24,11 @@ describe('budgetStatus', () => {
   });
 
   it('is the default tone comfortably under the limit', () => {
-    expect(budgetStatus(1, 10)).toEqual({ pct: 10, tone: 'default', over: false });
+    expect(budgetStatus(1, 10)).toEqual({
+      pct: 10,
+      tone: 'default',
+      over: false,
+    });
   });
 
   it('turns warning past 75%', () => {
@@ -36,7 +44,11 @@ describe('budgetStatus', () => {
   });
 
   it('turns danger and reports over at the limit', () => {
-    expect(budgetStatus(10, 10)).toEqual({ pct: 100, tone: 'danger', over: true });
+    expect(budgetStatus(10, 10)).toEqual({
+      pct: 100,
+      tone: 'danger',
+      over: true,
+    });
   });
 
   it('clamps the bar at 100% past the limit', () => {

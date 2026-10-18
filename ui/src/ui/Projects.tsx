@@ -44,6 +44,7 @@ import type { LocalBranch, PrState, Project, RepoRef } from '../gen/contract';
 import {
   addProject,
   openBranch as openBranchAction,
+  pickFolder,
   refreshProject,
 } from '../actions';
 import { api } from '../core/api';
@@ -148,26 +149,6 @@ export function boardColumns(
 
 // ── Add project: "From GitHub" / "Local folder" ────────────────────────
 
-/** Not a dependency of this app (`ui/package.json` has no
- *  `@tauri-apps/plugin-dialog`, and no Rust plugin registers it either —
- *  out of scope for this slice; see the final report). The specifier is
- *  built from a variable, not a literal, so TS doesn't try to resolve its
- *  types; at runtime the dynamic import always rejects and the folder tab
- *  falls back to a plain text field. Adding the npm + Rust plugin later
- *  lights this up with no UI change. */
-const DIALOG_PLUGIN = '@tauri-apps/plugin-dialog';
-
-async function pickFolder(): Promise<string | null> {
-  try {
-    const mod = (await import(DIALOG_PLUGIN)) as {
-      open: (opts: { directory: true }) => Promise<string | null>;
-    };
-    return await mod.open({ directory: true });
-  } catch {
-    return null;
-  }
-}
-
 function GitHubRepoTab({
   addedKeys,
   onAdd,
@@ -264,20 +245,24 @@ function GitHubRepoTab({
 }
 
 function LocalFolderTab({ onAdd }: { onAdd: (path: string) => Promise<void> }) {
+  const store = useRootStore();
   const [path, setPath] = useState('');
-  const [hasDialog, setHasDialog] = useState<boolean | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [pickFailed, setPickFailed] = useState(false);
   const [adding, setAdding] = useState(false);
 
-  useEffect(() => {
-    void import(DIALOG_PLUGIN)
-      .then(() => setHasDialog(true))
-      .catch(() => setHasDialog(false));
-  }, []);
-
   const choose = () => {
-    void pickFolder().then((p) => {
-      if (p) setPath(p);
-    });
+    setPicking(true);
+    void pickFolder(store)
+      .then((p) => {
+        if (p) {
+          setPath(p);
+          setPickFailed(false);
+        } else {
+          setPickFailed(true);
+        }
+      })
+      .finally(() => setPicking(false));
   };
 
   return (
@@ -290,16 +275,19 @@ function LocalFolderTab({ onAdd }: { onAdd: (path: string) => Promise<void> }) {
         <Label>Folder</Label>
         <div className="flex gap-2">
           <Input placeholder="/Users/me/code/my-repo" className="font-mono" />
-          {hasDialog && (
-            <Button variant="tertiary" onPress={choose}>
-              Choose folder…
-            </Button>
-          )}
+          <Button
+            variant="tertiary"
+            className="choose-folder"
+            isPending={picking}
+            onPress={choose}
+          >
+            Choose folder…
+          </Button>
         </div>
       </TextField>
-      {hasDialog === false && (
+      {pickFailed && (
         <p className="text-xs text-muted">
-          No folder picker available — paste the path by hand.
+          No folder selected — paste the path by hand instead.
         </p>
       )}
       <Button

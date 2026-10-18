@@ -8,9 +8,9 @@ describe('suggestionOf', () => {
   });
 
   it('extracts the suggested lines from a ```suggestion fence', () => {
-    expect(suggestionOf('fix this:\n```suggestion\nconst x = 1;\n```')).toEqual([
-      'const x = 1;',
-    ]);
+    expect(suggestionOf('fix this:\n```suggestion\nconst x = 1;\n```')).toEqual(
+      ['const x = 1;'],
+    );
   });
 
   it('extracts every line of a multi-line suggestion', () => {
@@ -21,7 +21,11 @@ describe('suggestionOf', () => {
 
 const summary = (over: Partial<PrSummary> = {}): PrSummary =>
   ({
-    pr: { repo: { host: 'github', owner: 'acme', name: 'web' }, number: 1, host_id: null },
+    pr: {
+      repo: { host: 'github', owner: 'acme', name: 'web' },
+      number: 1,
+      host_id: null,
+    },
     title: 'a change',
     author: { login: 'author', name: null, avatar_url: null },
     state: 'open',
@@ -47,7 +51,11 @@ describe('canCommitSuggestions', () => {
 
   it('is true for a local branch regardless of viewer', () => {
     const local = summary({
-      pr: { repo: { host: 'local', owner: '', name: 'web' }, number: 0, host_id: null },
+      pr: {
+        repo: { host: 'local', owner: '', name: 'web' },
+        number: 0,
+        host_id: null,
+      },
     });
     expect(canCommitSuggestions(local, undefined)).toBe(true);
   });
