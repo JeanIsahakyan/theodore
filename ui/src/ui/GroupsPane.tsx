@@ -1,8 +1,37 @@
-import { Check, TriangleExclamation } from '@gravity-ui/icons';
-import { ListBox, ProgressBar, Surface, Tabs, Tooltip } from '@heroui/react';
+import { useState } from 'react';
+import type { ReactNode } from 'react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  TriangleExclamation,
+} from '@gravity-ui/icons';
+import {
+  Accordion,
+  Checkbox,
+  Chip,
+  Label,
+  ListBox,
+  ListLayout,
+  ProgressBar,
+  Surface,
+  Tabs,
+  Tooltip,
+  Virtualizer,
+} from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { FileDiff, HunkId, PrId, Revision } from '../gen/contract';
+import type {
+  FileDiff,
+  FileStatus,
+  Hunk,
+  HunkId,
+  PrId,
+  Revision,
+} from '../gen/contract';
+import { setFileViewed } from '../actions';
 import { useRootStore } from '../stores/context';
+import type { SinceKind } from './diff';
 
 export interface ReviewMode {
   mode: 'groups' | 'files';
@@ -10,7 +39,29 @@ export interface ReviewMode {
   file: string | null;
 }
 
+const BIG = 40;
+
+/** Long file lists render through React Aria's Virtualizer: only visible rows hit the DOM. */
+function MaybeVirtual({
+  count,
+  children,
+}: {
+  count: number;
+  children: ReactNode;
+}) {
+  if (count <= BIG) return <>{children}</>;
+  return (
+    <Virtualizer layout={ListLayout} layoutOptions={{ rowHeight: 30 }}>
+      {children}
+    </Virtualizer>
+  );
+}
+
 const short = (p: string) => p.split('/').slice(-2).join('/');
+const base = (p: string) => p.split('/').pop() ?? p;
+const circled = (n: number) => '①②③④⑤⑥⑦⑧⑨'[n - 1] ?? String(n);
+const plural = (n: number, one: string, few: string, many: string) =>
+  `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
 
 /** Groups loaded for this PR whose hunks are part of the open revision, in
  *  reading order — see the final report on why `Group` needs its own `pr`
@@ -31,21 +82,40 @@ export const GroupsPane = observer(function GroupsPane({
   rev,
   mode,
   setMode,
+  since,
+  sinceOnly,
 }: {
   pr: PrId;
   rev: Revision;
   mode: ReviewMode;
   setMode: (m: ReviewMode) => void;
+  since: Map<HunkId, SinceKind> | null;
+  sinceOnly: boolean;
 }) {
   const store = useRootStore();
+  const summary = store.models.prSummaries.get(pr);
+  const local = summary?.pr.repo.host === 'local';
   const groups = groupsForRevision(store, rev);
+  const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
   const hunkReads = store.models.hunkReads.where((r) => r.pr === pr);
   const readSet = new Set(hunkReads.map((r) => r.hunk));
   const fileViews = store.models.fileViews.where((v) => v.pr === pr);
   const viewedCount = fileViews.filter((v) => v.state === 'viewed').length;
 
-  const selectFile = (path: string) =>
-    setMode({ mode: 'files', group: mode.group, file: path });
+  const hunkFile = new Map<HunkId, string>();
+  const hunkById = new Map<HunkId, Hunk>();
+  for (const f of rev.files) {
+    for (const h of f.hunks) {
+      hunkFile.set(h.id, f.path);
+      hunkById.set(h.id, h);
+    }
+  }
+  const hunkGroup = new Map<HunkId, string>();
+  for (const g of groups) for (const h of g.hunks) hunkGroup.set(h, g.id);
+
+  const visibleGroups = groups.filter(
+    (g) => !sinceOnly || g.hunks.some((h) => since?.has(h)),
+  );
 
   return (
     <Surface
@@ -84,112 +154,446 @@ export const GroupsPane = observer(function GroupsPane({
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-4">
         {mode.mode === 'groups' ? (
-          <ListBox
-            aria-label="Groups"
-            selectionMode="single"
-            selectedKeys={mode.group ? [mode.group] : []}
-            onSelectionChange={(keys) => {
-              const k = keys === 'all' ? undefined : [...keys][0];
-              if (k)
+          <Accordion
+            expandedKeys={new Set(mode.group ? [mode.group] : [])}
+            onExpandedChange={(keys) => {
+              const k = [...keys].find((x) => x !== mode.group) ?? [...keys][0];
+              if (k !== undefined)
                 setMode({ mode: 'groups', group: String(k), file: mode.file });
             }}
-            className="p-0"
+            hideSeparator
           >
-            {groups.map((g) => {
-              const hs = g.hunks;
+            {visibleGroups.map((g, gi) => {
+              const hs = sinceOnly
+                ? g.hunks.filter((h) => since?.has(h))
+                : g.hunks;
               const read = hs.filter((h) => readSet.has(h)).length;
+              const outFiles = new Set(
+                hs
+                  .filter((h) => g.outliers.includes(h))
+                  .map((h) => hunkFile.get(h)!),
+              );
+              const files = [...new Set(hs.map((h) => hunkFile.get(h)!))].sort(
+                (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
+              );
+              const add = hs.reduce(
+                (n, h) =>
+                  n +
+                  (hunkById.get(h)?.lines.filter((l) => l.kind === 'add')
+                    .length ?? 0),
+                0,
+              );
+              const del = hs.reduce(
+                (n, h) =>
+                  n +
+                  (hunkById.get(h)?.lines.filter((l) => l.kind === 'del')
+                    .length ?? 0),
+                0,
+              );
+              const state =
+                read === hs.length ? 'done' : read ? 'part' : 'none';
+              const sel = mode.group === g.id;
+              const n = numberOf.get(g.id)!;
               return (
-                <ListBox.Item
+                <Accordion.Item
                   key={g.id}
                   id={g.id}
-                  textValue={g.title}
-                  className="grp flex-col items-start gap-1 rounded-2xl px-3 py-2"
+                  className={`grp relative ${g.kind !== 'normal' ? 'opacity-70' : ''}`}
                 >
-                  <span className="flex w-full items-start gap-1.5">
-                    <span className="flex-1 text-sm font-medium">
-                      {g.title}
-                    </span>
-                    {g.risk && (
-                      <Tooltip>
-                        <Tooltip.Trigger>
-                          <TriangleExclamation className="mt-0.5 size-3.5 text-warning" />
-                        </Tooltip.Trigger>
-                        <Tooltip.Content>{g.risk}</Tooltip.Content>
-                      </Tooltip>
-                    )}
-                    {read === hs.length && (
-                      <Check className="size-4 text-success" />
-                    )}
-                  </span>
-                  <span className="text-xs text-muted">
-                    {hs.length} hunk{hs.length === 1 ? '' : 's'} · {read}/
-                    {hs.length} read
-                  </span>
-                </ListBox.Item>
+                  {gi < visibleGroups.length - 1 && (
+                    <span
+                      aria-hidden
+                      className={`absolute bottom-0 left-[23px] top-9 w-px ${state === 'done' ? 'bg-success' : 'bg-separator'}`}
+                    />
+                  )}
+                  <Accordion.Heading>
+                    <Accordion.Trigger className="grp-h flex w-full items-start gap-3 rounded-2xl px-2 py-2 text-left hover:bg-default/50">
+                      <span
+                        className={`relative z-[1] grid size-[30px] shrink-0 place-items-center rounded-full border text-xs font-semibold tabular-nums ${
+                          state === 'done'
+                            ? 'border-success bg-success text-success-foreground'
+                            : sel
+                              ? 'border-accent bg-accent-soft text-accent'
+                              : 'border-separator bg-surface text-muted'
+                        }`}
+                      >
+                        {state === 'done' ? <Check className="size-4" /> : n}
+                        {state === 'part' && (
+                          <svg
+                            className="absolute -inset-px size-[30px] -rotate-90"
+                            viewBox="0 0 30 30"
+                            aria-hidden
+                          >
+                            <circle
+                              cx="15"
+                              cy="15"
+                              r="14"
+                              fill="none"
+                              stroke="var(--warning)"
+                              strokeWidth="2"
+                              strokeDasharray={`${(read / hs.length) * 88} 88`}
+                            />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5 pt-1">
+                        <span className="flex items-start gap-1.5">
+                          <span
+                            className={`gtitle flex-1 text-sm ${sel ? 'font-semibold' : 'font-medium'}`}
+                          >
+                            {g.title}
+                          </span>
+                          {g.risk && (
+                            <Tooltip>
+                              <Tooltip.Trigger>
+                                <TriangleExclamation className="mt-0.5 size-3.5 text-warning" />
+                              </Tooltip.Trigger>
+                              <Tooltip.Content>{g.risk}</Tooltip.Content>
+                            </Tooltip>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-2 whitespace-nowrap text-xs text-muted">
+                          <span>
+                            {plural(files.length, 'file', 'files', 'files')}
+                          </span>
+                          <span className="tabular-nums">
+                            <span className="text-success">+{add}</span>{' '}
+                            <span className="text-danger">−{del}</span>
+                          </span>
+                          {g.kind === 'skim' && <span>skim</span>}
+                          <span className="ml-auto tabular-nums">
+                            {read}/{hs.length}
+                          </span>
+                        </span>
+                      </span>
+                    </Accordion.Trigger>
+                  </Accordion.Heading>
+                  <Accordion.Panel>
+                    <Accordion.Body className="py-0 pl-11 pr-0">
+                      <MaybeVirtual count={files.length}>
+                        <ListBox
+                          aria-label={`Files in group ${n}`}
+                          selectionMode="none"
+                          className={`p-0 pb-1.5 ${files.length > BIG ? 'h-72 overflow-auto' : ''}`}
+                        >
+                          {files.map((f) => {
+                            const elsewhere = [...hunkFile.entries()]
+                              .filter(([, path]) => path === f)
+                              .map(([h]) => h)
+                              .filter((h) => hunkGroup.get(h) !== g.id);
+                            const others = [
+                              ...new Set(
+                                elsewhere.map((h) => numberOf.get(hunkGroup.get(h)!)),
+                              ),
+                            ].join(', ');
+                            return (
+                              <ListBox.Item
+                                key={f}
+                                id={f}
+                                textValue={base(f)}
+                                className="min-h-6 gap-1.5 px-1.5 py-0.5 text-xs"
+                              >
+                                <Viewed pr={pr} path={f} local={!!local} />
+                                <span
+                                  className="min-w-0 flex-1 truncate font-mono"
+                                  title={f}
+                                >
+                                  {short(f)}
+                                </span>
+                                {outFiles.has(f) && (
+                                  <Chip size="sm" variant="soft" color="warning">
+                                    off-pattern
+                                  </Chip>
+                                )}
+                                {elsewhere.length > 0 && (
+                                  <Tooltip>
+                                    <Tooltip.Trigger>
+                                      <Chip
+                                        size="sm"
+                                        variant="soft"
+                                        color="warning"
+                                      >
+                                        also in {others}
+                                      </Chip>
+                                    </Tooltip.Trigger>
+                                    <Tooltip.Content>
+                                      {plural(
+                                        elsewhere.length,
+                                        'more hunk',
+                                        'more hunks',
+                                        'more hunks',
+                                      )}{' '}
+                                      in {others} — Viewed on GitHub only once
+                                      all are read
+                                    </Tooltip.Content>
+                                  </Tooltip>
+                                )}
+                              </ListBox.Item>
+                            );
+                          })}
+                        </ListBox>
+                      </MaybeVirtual>
+                    </Accordion.Body>
+                  </Accordion.Panel>
+                </Accordion.Item>
               );
             })}
-          </ListBox>
+          </Accordion>
         ) : (
-          <ListBox
-            aria-label="Files"
-            selectionMode="single"
-            selectedKeys={mode.file ? [mode.file] : []}
-            onSelectionChange={(keys) => {
-              const k = keys === 'all' ? undefined : [...keys][0];
-              if (k !== undefined) selectFile(String(k));
-            }}
-            className="p-0"
-          >
-            {rev.files.map((f: FileDiff) => {
-              const views = fileViews.find((v) => v.path === f.path);
-              return (
-                <ListBox.Item
-                  key={f.path}
-                  id={f.path}
-                  textValue={f.path}
-                  className="min-h-6 gap-1.5 px-1.5 py-1 text-xs"
-                >
-                  <span
-                    className={`w-3 text-center font-mono font-semibold ${views?.state === 'viewed' ? 'text-success' : ''}`}
-                  >
-                    {f.status === 'added'
-                      ? 'A'
-                      : f.status === 'deleted'
-                        ? 'D'
-                        : f.status === 'renamed'
-                          ? 'R'
-                          : 'M'}
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate font-mono"
-                    title={f.path}
-                  >
-                    {short(f.path)}
-                  </span>
-                </ListBox.Item>
-              );
-            })}
-          </ListBox>
+          <FileTree
+            pr={pr}
+            rev={rev}
+            local={!!local}
+            selected={mode.file}
+            hunkGroup={hunkGroup}
+            numberOf={numberOf}
+            onSelect={(path) =>
+              setMode({ mode: 'files', group: mode.group, file: path })
+            }
+          />
         )}
       </div>
 
       <div className="groups-foot flex flex-col gap-2 border-t border-separator px-4 py-3 text-xs">
-        <ProgressBar
-          aria-label="Viewed"
-          value={viewedCount}
-          maxValue={rev.files.length}
-          size="sm"
-          color="success"
-        >
-          <ProgressBar.Track>
-            <ProgressBar.Fill />
-          </ProgressBar.Track>
-        </ProgressBar>
-        <span className="text-muted">
-          Viewed: {viewedCount}/{rev.files.length} files
-        </span>
+        {local ? (
+          <span className="text-muted">
+            local: read state is stored only here
+          </span>
+        ) : (
+          <ProgressBar
+            aria-label="Viewed on GitHub"
+            value={viewedCount}
+            maxValue={rev.files.length}
+            size="sm"
+            color="success"
+          >
+            <Label className="text-xs">
+              Viewed on GitHub: <b>{viewedCount}</b>/{rev.files.length} files
+            </Label>
+            <ProgressBar.Track>
+              <ProgressBar.Fill />
+            </ProgressBar.Track>
+          </ProgressBar>
+        )}
       </div>
     </Surface>
+  );
+});
+
+const Viewed = observer(function Viewed({
+  pr,
+  path,
+  local,
+}: {
+  pr: PrId;
+  path: string;
+  local: boolean;
+}) {
+  const store = useRootStore();
+  const v = store.models.fileViews.where((x) => x.pr === pr && x.path === path).at(-1);
+  const viewed = v?.state === 'viewed';
+  return (
+    <span className="viewed inline-flex items-center gap-0.5">
+      <Checkbox
+        aria-label={local ? 'Read' : 'Viewed — synced with GitHub'}
+        isSelected={viewed}
+        onChange={() => setFileViewed(store, pr, path, !viewed)}
+      >
+        <Checkbox.Content>
+          <Checkbox.Control>
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+        </Checkbox.Content>
+      </Checkbox>
+      {v?.state === 'dismissed' && (
+        <span
+          className="font-bold text-warning"
+          title="changed after you marked it viewed"
+        >
+          ↻
+        </span>
+      )}
+    </span>
+  );
+});
+
+interface Dir {
+  path: string;
+  name: string;
+  dirs: Dir[];
+  files: FileDiff[];
+}
+
+/** Folders from paths; chains of single folders collapse into one row («src/billing»). */
+function buildTree(files: FileDiff[]): Dir {
+  const root: Dir = { path: '', name: '', dirs: [], files: [] };
+  for (const f of files) {
+    const parts = f.path.split('/').slice(0, -1);
+    let d = root;
+    parts.forEach((p, i) => {
+      const path = parts.slice(0, i + 1).join('/');
+      let next = d.dirs.find((x) => x.path === path);
+      if (!next) {
+        next = { path, name: p, dirs: [], files: [] };
+        d.dirs.push(next);
+      }
+      d = next;
+    });
+    d.files.push(f);
+  }
+  const squash = (d: Dir): Dir => {
+    let cur = { ...d, dirs: d.dirs.map(squash) };
+    while (cur.path && cur.dirs.length === 1 && !cur.files.length) {
+      const only = cur.dirs[0]!;
+      cur = { ...only, name: `${cur.name}/${only.name}` };
+    }
+    return cur;
+  };
+  return { ...root, dirs: root.dirs.map(squash) };
+}
+
+const allFiles = (d: Dir): FileDiff[] => [
+  ...d.files,
+  ...d.dirs.flatMap(allFiles),
+];
+
+const STATUS: Record<FileStatus, [string, string]> = {
+  added: ['A', 'text-success'],
+  modified: ['M', 'text-warning'],
+  renamed: ['R', 'text-accent'],
+  deleted: ['D', 'text-danger'],
+  copied: ['C', 'text-accent'],
+};
+
+/** "Files" as a tree: folders fold, each shows how much of it is viewed. */
+const FileTree = observer(function FileTree({
+  pr,
+  rev,
+  local,
+  selected,
+  hunkGroup,
+  numberOf,
+  onSelect,
+}: {
+  pr: PrId;
+  rev: Revision;
+  local: boolean;
+  selected: string | null;
+  hunkGroup: Map<HunkId, string>;
+  numberOf: Map<string, number>;
+  onSelect: (path: string) => void;
+}) {
+  const store = useRootStore();
+  const fileViews = store.models.fileViews.where((v) => v.pr === pr);
+  const files = rev.files;
+  const tree = buildTree(files);
+  const [closed, setClosed] = useState<Record<string, boolean>>(() =>
+    files.length > BIG
+      ? Object.fromEntries(
+          tree.dirs.flatMap((d) => d.dirs.map((x) => [x.path, true])),
+        )
+      : {},
+  );
+  type Row = { key: string; depth: number; dir?: Dir; file?: FileDiff };
+  const rows: Row[] = [];
+  const walk = (d: Dir, depth: number) => {
+    for (const x of d.dirs) {
+      rows.push({ key: `dir:${x.path}`, depth, dir: x });
+      if (!closed[x.path]) walk(x, depth + 1);
+    }
+    for (const f of d.files) rows.push({ key: f.path, depth, file: f });
+  };
+  walk(tree, 0);
+  return (
+    <MaybeVirtual count={rows.length}>
+      <ListBox
+        aria-label="Files"
+        selectionMode="single"
+        selectedKeys={selected ? [selected] : []}
+        onSelectionChange={(keys) => {
+          const k = keys === 'all' ? undefined : [...keys][0];
+          if (k === undefined) return;
+          const key = String(k);
+          if (key.startsWith('dir:')) {
+            const p = key.slice(4);
+            setClosed((c) => ({ ...c, [p]: !c[p] }));
+          } else onSelect(key);
+        }}
+        className={`file-tree p-0 ${rows.length > BIG ? 'h-full overflow-auto' : ''}`}
+      >
+        {rows.map((row) => {
+          const pad = { paddingInlineStart: `${6 + row.depth * 14}px` };
+          if (row.dir) {
+            const fs = allFiles(row.dir);
+            const seen = fs.filter(
+              (f) => fileViews.find((v) => v.path === f.path)?.state === 'viewed',
+            ).length;
+            return (
+              <ListBox.Item
+                key={row.key}
+                id={row.key}
+                textValue={row.dir.name}
+                className="tree-dir min-h-7 gap-1.5 pe-1.5 text-xs"
+                style={pad}
+              >
+                {closed[row.dir.path] ? (
+                  <ChevronRight className="size-3.5 text-muted" />
+                ) : (
+                  <ChevronDown className="size-3.5 text-muted" />
+                )}
+                <Folder className="size-3.5 text-muted" />
+                <span className="min-w-0 flex-1 truncate font-mono">
+                  {row.dir.name}
+                </span>
+                <span
+                  className={`tabular-nums ${seen === fs.length ? 'text-success' : 'text-muted'}`}
+                >
+                  {seen}/{fs.length}
+                </span>
+              </ListBox.Item>
+            );
+          }
+          const f = row.file!;
+          const gs = [
+            ...new Set(
+              f.hunks.map((h) => hunkGroup.get(h.id)).filter((g): g is string => !!g),
+            ),
+          ];
+          const [letter, color] = STATUS[f.status];
+          return (
+            <ListBox.Item
+              key={row.key}
+              id={row.key}
+              textValue={f.path}
+              className="min-h-7 gap-1.5 pe-1.5 text-xs"
+              style={pad}
+            >
+              <Viewed pr={pr} path={f.path} local={local} />
+              <span
+                className={`w-3 text-center font-mono font-semibold ${color}`}
+                title={f.status}
+              >
+                {letter}
+              </span>
+              <span
+                className={`min-w-0 flex-1 truncate font-mono ${f.status === 'deleted' ? 'text-muted line-through' : ''}`}
+                title={f.old_path ? `${f.old_path} → ${f.path}` : f.path}
+              >
+                {base(f.path)}
+              </span>
+              {f.flags.some((fl) => fl.kind === 'generated') && (
+                <span className="text-muted">gen</span>
+              )}
+              {gs.map((g) => (
+                <Chip key={g} size="sm" variant="tertiary">
+                  {circled(numberOf.get(g) ?? 0)}
+                </Chip>
+              ))}
+            </ListBox.Item>
+          );
+        })}
+      </ListBox>
+    </MaybeVirtual>
   );
 });
 

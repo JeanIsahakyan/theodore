@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react';
+import type { ComponentProps, Key, ReactNode } from 'react';
 import {
   ArrowRotateLeft,
   Archive,
+  ChevronDown,
+  ChevronRight,
   Clock,
   CodePullRequest,
+  LayoutSideContentRight,
+  Persons,
   Plus,
+  Sliders,
+  Sparkles,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -12,20 +19,32 @@ import {
   Checkbox,
   Header,
   InputGroup,
+  Label,
   ListBox,
+  Popover,
+  Select,
+  Separator,
+  Switch,
+  Tag,
+  TagGroup,
   TextField,
+  ToggleButton,
   Toolbar,
   Tooltip,
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Key, ReactNode } from 'react';
-import type { InboxReason, PrId } from '../gen/contract';
+import type { InboxReason, PrId, PrState, PrSummary } from '../gen/contract';
 import { markDone, openPr, refreshInbox } from '../actions';
+import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
-import { PRIcon } from './StatusIcon';
+import { Peek } from './Peek';
+import { PRIcon, prStatusLabel } from './StatusIcon';
 import { useViewKeys } from './keys';
+
+/** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
+type InboxPr = PrSummary & { id: PrId };
 
 const REASON_LABEL: Record<InboxReason, string> = {
   review_requested: 'review requested',
@@ -52,12 +71,101 @@ const SECTIONS: { id: string; title: string; reasons: InboxReason[] }[] = [
   { id: 'authored', title: 'Authored by you', reasons: ['authored'] },
 ];
 
+const STATUS_ORDER: PrState[] = ['draft', 'open', 'merged', 'closed'];
+
 export function ago(ms: number): string {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 60) return `${Math.round(s)}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;
   if (s < 86400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
+}
+
+// ── Display: grouping, ordering, which columns a row shows ────────────────
+// Ported from the prototype's `Display`/`ROW_PROPS`, trimmed to the fields
+// `PrSummary` actually has — no stack/linear/ai/note/team, so those columns
+// and sort/group keys that depended on them (risk) are dropped, not faked.
+
+export type RowProp = 'id' | 'reasons' | 'checks' | 'author' | 'age';
+export const ROW_PROPS: RowProp[] = ['id', 'reasons', 'checks', 'author', 'age'];
+
+const PROP_LABEL: Record<RowProp, string> = {
+  id: 'Number',
+  reasons: 'Reason',
+  checks: 'Checks',
+  author: 'Author',
+  age: 'Age',
+};
+
+const COL: Record<RowProp, string> = {
+  id: '72px',
+  reasons: '150px',
+  checks: '16px',
+  author: '20px',
+  age: '36px',
+};
+
+interface Display {
+  groupBy: 'section' | 'status' | 'repo' | 'none';
+  sort: 'activity' | 'size';
+  props: RowProp[];
+}
+
+const DEFAULT_DISPLAY: Display = {
+  groupBy: 'section',
+  sort: 'activity',
+  props: ROW_PROPS,
+};
+
+function sortPRs(items: InboxPr[], sort: Display['sort']): InboxPr[] {
+  const by =
+    sort === 'size'
+      ? (p: InboxPr) => -(p.additions + p.deletions)
+      : (p: InboxPr) => -p.updated_at;
+  return [...items].sort((a, b) => by(a) - by(b));
+}
+
+function groupPRs(
+  items: InboxPr[],
+  d: Display,
+): { id: string; title: string; items: InboxPr[] }[] {
+  const sorted = sortPRs(items, d.sort);
+  if (d.groupBy === 'none') return [{ id: 'all', title: 'All', items: sorted }];
+  if (d.groupBy === 'repo') {
+    const repos = [...new Set(sorted.map((p) => p.pr.repo.name))];
+    return repos.map((r) => ({
+      id: r,
+      title: r,
+      items: sorted.filter((p) => p.pr.repo.name === r),
+    }));
+  }
+  if (d.groupBy === 'status') {
+    return STATUS_ORDER.map((st) => ({
+      id: st,
+      title: prStatusLabel[st],
+      items: sorted.filter((p) => p.state === st),
+    }));
+  }
+  return SECTIONS.map((sec) => ({
+    id: sec.id,
+    title: sec.title,
+    items: sorted.filter((p) => p.reasons.some((r) => sec.reasons.includes(r))),
+  }));
+}
+
+/** Wraps a `Btn` whose backing command doesn't exist yet: disabled, with a
+ *  tooltip explaining why — never deleted, per `features.ts`. */
+function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
+  if (FEATURES.hostWrites) return <Btn {...rest}>{children}</Btn>;
+  const { kbd: _kbd, ...disabledRest } = rest;
+  return (
+    <Tooltip>
+      <Btn {...disabledRest} isDisabled>
+        {children}
+      </Btn>
+      <Tooltip.Content>Not available yet</Tooltip.Content>
+    </Tooltip>
+  );
 }
 
 function OpenPrField() {
@@ -126,27 +234,36 @@ export function ViewHeader({
 const rowCls = (sel: boolean, picked: boolean) =>
   `${sel ? 'sel' : ''} ${picked ? 'picked bg-accent-soft' : ''}`;
 
+/** The row body; the `ListBox.Item` around it is the HeroUI row. Columns
+ *  follow Display → "Row properties". */
 export const PrRow = observer(function PrRow({
   id,
   sel,
   picked,
+  props = ROW_PROPS,
 }: {
   id: PrId;
   sel: boolean;
   picked: boolean;
+  props?: RowProp[];
 }) {
   const store = useRootStore();
   const ui = useUi();
   const p = store.models.prSummaries.get(id);
   if (!p) return null;
+  const on = (k: RowProp) => props.includes(k);
+  const cols = [
+    '16px',
+    '16px',
+    ...(on('id') ? [COL.id] : []),
+    'minmax(200px,1.5fr)',
+    ...ROW_PROPS.filter((k) => k !== 'id' && on(k)).map((k) => COL[k]),
+  ].join(' ');
   return (
     <div
       id={`R-${id}`}
       className={`prrow group grid h-11 w-full items-center gap-3 ${rowCls(sel, picked)}`}
-      style={{
-        gridTemplateColumns:
-          '16px 16px 72px minmax(200px,1.5fr) 150px minmax(0,1fr) 16px 20px 36px',
-      }}
+      style={{ gridTemplateColumns: cols }}
     >
       <Checkbox
         aria-label="select"
@@ -161,38 +278,136 @@ export const PrRow = observer(function PrRow({
         </Checkbox.Content>
       </Checkbox>
       <PRIcon status={p.state} />
-      <span className="text-xs tabular-nums text-muted">
-        {p.pr.repo.name} #{p.pr.number}
-      </span>
+      {on('id') && (
+        <span className="text-xs tabular-nums text-muted">
+          {p.pr.repo.name} #{p.pr.number}
+        </span>
+      )}
       <span className="truncate font-medium">{p.title}</span>
-      <span className="flex gap-1 overflow-hidden">
-        {p.reasons.slice(0, 2).map((r) => (
-          <span
-            key={r}
-            className="chip rounded-full bg-default px-2 py-0.5 text-xs"
-          >
-            {REASON_LABEL[r]}
-          </span>
-        ))}
-      </span>
-      <span className="truncate text-xs text-muted">
-        {p.approvals}/{p.required_approvals ?? '–'} approvals
-      </span>
-      <CheckIcon s={p.checks} />
-      <Avatar person={p.author} size={22} />
-      <span className="text-right text-xs text-muted">{ago(p.updated_at)}</span>
+      {on('reasons') && (
+        <span className="flex gap-1 overflow-hidden">
+          {p.reasons.slice(0, 2).map((r) => (
+            <span
+              key={r}
+              className="chip rounded-full bg-default px-2 py-0.5 text-xs"
+            >
+              {REASON_LABEL[r]}
+            </span>
+          ))}
+        </span>
+      )}
+      {on('checks') && <CheckIcon s={p.checks} />}
+      {on('author') && <Avatar person={p.author} size={22} />}
+      {on('age') && (
+        <span className="text-right text-xs text-muted">{ago(p.updated_at)}</span>
+      )}
     </div>
   );
 });
+
+/** A section header inside a HeroUI ListBox; the caret collapses the section. */
+function SectionHeader({
+  title,
+  count,
+  open,
+  toggle,
+}: {
+  title: ReactNode;
+  count: number;
+  open: boolean;
+  toggle: () => void;
+}) {
+  return (
+    <Header className="ghead sticky top-0 z-[1] flex h-10 select-none items-center gap-2 border-b border-separator bg-surface/95 pl-[18px] pr-6 text-sm backdrop-blur">
+      <Button
+        isIconOnly
+        size="sm"
+        variant="ghost"
+        aria-label={open ? 'collapse' : 'expand'}
+        className="size-6 min-w-6 text-muted"
+        onPress={toggle}
+      >
+        {open ? (
+          <ChevronDown className="size-3.5" />
+        ) : (
+          <ChevronRight className="size-3.5" />
+        )}
+      </Button>
+      <span className="font-medium">{title}</span>
+      <span className="tabular-nums text-muted">{count}</span>
+    </Header>
+  );
+}
+
+/** A Linear-style list as one HeroUI ListBox: sections, single selection, ⏎ / double-click opens. */
+function RowList({
+  groups,
+  sel,
+  closed,
+  toggle,
+  onSelect,
+  onOpen,
+  row,
+  empty,
+}: {
+  groups: { id: string; title: ReactNode; items: InboxPr[] }[];
+  sel: PrId | null;
+  closed: Record<string, boolean>;
+  toggle: (id: string) => void;
+  onSelect: (id: PrId) => void;
+  onOpen: (id: PrId) => void;
+  row: (id: PrId) => ReactNode;
+  empty?: ReactNode;
+}) {
+  if (empty && groups.every((g) => !g.items.length)) return <>{empty}</>;
+  return (
+    <ListBox
+      aria-label="Pull requests"
+      selectionMode="single"
+      selectionBehavior="replace"
+      disallowEmptySelection
+      selectedKeys={sel ? [sel] : []}
+      onSelectionChange={(keys) => {
+        const k = keys === 'all' ? null : [...keys][0];
+        if (k !== undefined && k !== null) onSelect(String(k));
+      }}
+      onAction={(k: Key) => onOpen(String(k))}
+      className="list min-w-0 flex-1 overflow-auto p-0 pb-20"
+    >
+      {groups.map((g) => (
+        <ListBox.Section key={g.id} id={g.id}>
+          <SectionHeader
+            title={g.title}
+            count={g.items.length}
+            open={!closed[g.id]}
+            toggle={() => toggle(g.id)}
+          />
+          {(closed[g.id] ? [] : g.items).map((p) => (
+            <ListBox.Item
+              key={p.id}
+              id={p.id}
+              textValue={p.title}
+              className="min-h-0 rounded-none border-b border-separator px-6 py-0"
+            >
+              {row(p.id)}
+            </ListBox.Item>
+          ))}
+        </ListBox.Section>
+      ))}
+    </ListBox>
+  );
+}
 
 function BulkBar({
   n,
   onDone,
   onSnooze,
+  onClear,
 }: {
   n: number;
   onDone: () => void;
   onSnooze: () => void;
+  onClear: () => void;
 }) {
   return (
     <Card className="bulk absolute bottom-16 left-1/2 z-10 -translate-x-1/2 px-4 py-2.5 shadow-overlay">
@@ -204,10 +419,241 @@ function BulkBar({
         <Btn tone="tertiary" kbd="H" icon={<Clock />} onPress={onSnooze}>
           Snooze
         </Btn>
+        <GatedBtn tone="tertiary" icon={<Persons />}>
+          Reassign
+        </GatedBtn>
+        <GatedBtn tone="tertiary" icon={<Sparkles />}>
+          Pre-review
+        </GatedBtn>
+        <Btn
+          tone="ghost"
+          kbd="Esc"
+          aria-label="clear selection"
+          onPress={onClear}
+        />
       </Toolbar>
     </Card>
   );
 }
+
+function DisplayRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <Label className="text-sm text-muted">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function Picker<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: [T, string][];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <Select
+      aria-label={label}
+      value={value}
+      onChange={(v) => v && onChange(v as T)}
+      className="w-44"
+    >
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
+        <ListBox selectionMode="single">
+          {options.map(([id, t]) => (
+            <ListBox.Item key={id} id={id} textValue={t}>
+              {t}
+              <ListBox.ItemIndicator />
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  );
+}
+
+/** Linear's «Display»: grouping, ordering, which properties a row shows.
+ *  The prototype also toggled list/board layout here, but our app has no
+ *  board/`PRView` route to switch to (see the file's final report), so the
+ *  layout toggle is dropped and this popover only ever drives the inbox. */
+function DisplayButton({
+  display,
+  setDisplay,
+  showDone,
+  setShowDone,
+}: {
+  display: Display;
+  setDisplay: (d: Partial<Display>) => void;
+  showDone: boolean;
+  setShowDone: (v: boolean) => void;
+}) {
+  return (
+    <Popover>
+      <Button size="sm" variant="tertiary" className="gap-1.5">
+        <Sliders className="size-4" />
+        Display
+      </Button>
+      <Popover.Content
+        placement="bottom end"
+        offset={8}
+        className="w-[340px] p-0"
+      >
+        <Popover.Dialog className="display-pop flex flex-col gap-0 p-0">
+          <div className="flex items-center justify-between px-4 py-3">
+            <Popover.Heading className="text-sm font-semibold">
+              Display
+            </Popover.Heading>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1 px-2 text-xs text-muted"
+              onPress={() => setDisplay(DEFAULT_DISPLAY)}
+            >
+              <ArrowRotateLeft className="size-3.5" />
+              Reset
+            </Button>
+          </div>
+
+          <Separator />
+          <div className="flex flex-col gap-3 px-4 py-3">
+            <DisplayRow label="Grouping">
+              <Picker
+                label="Grouping"
+                value={display.groupBy}
+                onChange={(v) => setDisplay({ groupBy: v })}
+                options={[
+                  ['section', 'By reason'],
+                  ['status', 'By status'],
+                  ['repo', 'By repository'],
+                  ['none', 'No grouping'],
+                ]}
+              />
+            </DisplayRow>
+            <DisplayRow label="Ordering">
+              <Picker
+                label="Ordering"
+                value={display.sort}
+                onChange={(v) => setDisplay({ sort: v })}
+                options={[
+                  ['activity', 'By activity'],
+                  ['size', 'By size'],
+                ]}
+              />
+            </DisplayRow>
+            <DisplayRow label="Show Done">
+              <Switch
+                size="sm"
+                aria-label="Show Done"
+                isSelected={showDone}
+                onChange={() => setShowDone(!showDone)}
+              >
+                <Switch.Content>
+                  <Switch.Control>
+                    <Switch.Thumb />
+                  </Switch.Control>
+                </Switch.Content>
+              </Switch>
+            </DisplayRow>
+          </div>
+
+          <Separator />
+          <div className="flex flex-col gap-2.5 px-4 pb-4 pt-3">
+            <Label className="text-sm text-muted">Row properties</Label>
+            <TagGroup
+              aria-label="Row properties"
+              size="sm"
+              selectionMode="multiple"
+              selectionBehavior="toggle"
+              escapeKeyBehavior="none"
+              selectedKeys={new Set(display.props)}
+              onSelectionChange={(keys) =>
+                setDisplay({
+                  props: ROW_PROPS.filter((p) => keys === 'all' || keys.has(p)),
+                })
+              }
+            >
+              <TagGroup.List className="flex flex-wrap gap-1.5">
+                {ROW_PROPS.map((p) => (
+                  <Tag key={p} id={p} textValue={PROP_LABEL[p]}>
+                    {PROP_LABEL[p]}
+                  </Tag>
+                ))}
+              </TagGroup.List>
+            </TagGroup>
+          </div>
+        </Popover.Dialog>
+      </Popover.Content>
+    </Popover>
+  );
+}
+
+function PeekToggle({ on, toggle }: { on: boolean; toggle: () => void }) {
+  return (
+    <ToggleButton
+      size="sm"
+      className="gap-1.5"
+      isSelected={on}
+      onChange={toggle}
+    >
+      <LayoutSideContentRight className="size-4" />
+      Peek
+    </ToggleButton>
+  );
+}
+
+function ListBody({
+  groups,
+  sel,
+  picked,
+  onSelect,
+  onOpen,
+  props,
+  empty,
+}: {
+  groups: { id: string; title: string; items: InboxPr[] }[];
+  sel: PrId | null;
+  picked: PrId[];
+  onSelect: (id: PrId) => void;
+  onOpen: (id: PrId) => void;
+  props: RowProp[];
+  empty?: ReactNode;
+}) {
+  const [closed, setClosed] = useState<Record<string, boolean>>({
+    snoozed: true,
+  });
+  return (
+    <RowList
+      groups={groups}
+      sel={sel}
+      closed={closed}
+      toggle={(id) => setClosed((c) => ({ ...c, [id]: !c[id] }))}
+      onSelect={onSelect}
+      onOpen={onOpen}
+      row={(id) => (
+        <PrRow id={id} sel={sel === id} picked={picked.includes(id)} props={props} />
+      )}
+      empty={empty}
+    />
+  );
+}
+
+const order = (groups: { items: InboxPr[] }[]) =>
+  groups.flatMap((g) => g.items.map((p) => p.id));
 
 /** Linear-style single-key verbs for the list. */
 function useListKeys(order: PrId[]) {
@@ -273,10 +719,16 @@ function useListKeys(order: PrId[]) {
   }, [ui.selected]);
 }
 
+// ── screens ─────────────────────────────────────────────────────────────
+
 export const Inbox = observer(function Inbox() {
   const store = useRootStore();
   const ui = useUi();
   const [refreshing, setRefreshing] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const [display, setDisplayState] = useState<Display>(DEFAULT_DISPLAY);
+  const setDisplay = (patch: Partial<Display>) =>
+    setDisplayState((d) => ({ ...d, ...patch }));
 
   useEffect(() => {
     void refreshInbox(store);
@@ -296,24 +748,15 @@ export const Inbox = observer(function Inbox() {
     return !s?.done && !s?.snooze;
   });
   const snoozed = prs.filter((p) => stateOf(p.id)?.snooze);
-  const [showDone, setShowDone] = useState(false);
   const done = prs.filter((p) => stateOf(p.id)?.done);
 
   const groups = [
-    ...SECTIONS.map((sec) => ({
-      ...sec,
-      items: active.filter((p) =>
-        p.reasons.some((r) => sec.reasons.includes(r)),
-      ),
-    })).filter((g) => g.items.length),
-    { id: 'snoozed', title: 'Snoozed', reasons: [], items: snoozed },
-    ...(showDone
-      ? [{ id: 'done', title: 'Done', reasons: [], items: done }]
-      : []),
+    ...groupPRs(active, display).filter((g) => g.items.length),
+    { id: 'snoozed', title: 'Snoozed', items: snoozed },
+    ...(showDone ? [{ id: 'done', title: 'Done', items: done }] : []),
   ].filter((g) => g.items.length || g.id === 'snoozed');
 
-  const order = groups.flatMap((g) => g.items.map((p) => p.id));
-  useListKeys(order);
+  useListKeys(order(groups));
 
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
@@ -332,73 +775,33 @@ export const Inbox = observer(function Inbox() {
           </Button>
           <Tooltip.Content>Refresh inbox</Tooltip.Content>
         </Tooltip>
+        <DisplayButton
+          display={display}
+          setDisplay={setDisplay}
+          showDone={showDone}
+          setShowDone={setShowDone}
+        />
+        <PeekToggle on={ui.peek} toggle={() => ui.togglePeek()} />
       </ViewHeader>
       <div className="flex min-h-0 flex-1">
-        <ListBox
-          aria-label="Pull requests"
-          selectionMode="single"
-          selectionBehavior="replace"
-          disallowEmptySelection
-          selectedKeys={ui.selected ? [ui.selected] : []}
-          onSelectionChange={(keys) => {
-            const k = keys === 'all' ? null : [...keys][0];
-            if (k !== undefined && k !== null) ui.select(String(k));
-          }}
-          onAction={(k: Key) => ui.go({ name: 'review', pr: String(k) })}
-          className="list min-w-0 flex-1 overflow-auto p-0 pb-20"
-          renderEmptyState={() => (
+        <ListBody
+          groups={groups}
+          sel={ui.selected}
+          picked={ui.picked}
+          onSelect={(id) => ui.select(id)}
+          onOpen={(id) => ui.go({ name: 'review', pr: id })}
+          props={display.props}
+          empty={
             <Empty
               icon={<CodePullRequest />}
               title="Inbox is empty"
               text="Open a PR by URL above, or wait for a review request to show up here."
             />
-          )}
-        >
-          {groups.map((g) => (
-            <ListBox.Section key={g.id} id={g.id}>
-              <Header className="ghead sticky top-0 z-[1] flex h-10 items-center gap-2 border-b border-separator bg-surface/95 pl-[18px] pr-6 text-sm backdrop-blur">
-                <span className="font-medium">{g.title}</span>
-                <span className="tabular-nums text-muted">
-                  {g.items.length}
-                </span>
-                {g.id === 'done' && (
-                  <Checkbox
-                    isSelected={showDone}
-                    onChange={() => setShowDone((v) => !v)}
-                    className="ms-auto"
-                  >
-                    <Checkbox.Content>
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                      Show done
-                    </Checkbox.Content>
-                  </Checkbox>
-                )}
-              </Header>
-              {g.items.map((p) => (
-                <ListBox.Item
-                  key={p.id}
-                  id={p.id}
-                  textValue={p.title}
-                  className="min-h-0 rounded-none border-b border-separator px-6 py-0"
-                >
-                  <PrRow
-                    id={p.id}
-                    sel={ui.selected === p.id}
-                    picked={ui.picked.includes(p.id)}
-                  />
-                </ListBox.Item>
-              ))}
-            </ListBox.Section>
-          ))}
-        </ListBox>
+          }
+        />
+        {ui.peek && ui.selected && <Peek id={ui.selected} />}
       </div>
-      <Hints>
-        <K>J</K>
-        <K>K</K> navigate <K>⏎</K> open <K>X</K> select <K>E</K> done <K>H</K>{' '}
-        snooze <K>⌘K</K> everything <K>⌘Z</K> undo
-      </Hints>
+      <ListHints />
       {ui.picked.length > 0 && (
         <BulkBar
           n={ui.picked.length}
@@ -407,8 +810,19 @@ export const Inbox = observer(function Inbox() {
             ui.clearPicked();
           }}
           onSnooze={() => ui.openModal('snooze', ui.picked)}
+          onClear={() => ui.clearPicked()}
         />
       )}
     </div>
   );
 });
+
+function ListHints() {
+  return (
+    <Hints>
+      <K>J</K>
+      <K>K</K> navigate <K>⏎</K> open <K>Space</K> peek <K>X</K> select <K>E</K>{' '}
+      done <K>H</K> snooze <K>⌘K</K> everything <K>⌘Z</K> undo
+    </Hints>
+  );
+}
