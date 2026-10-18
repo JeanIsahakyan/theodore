@@ -1009,6 +1009,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 <Tooltip.Content>Run a skill</Tooltip.Content>
               </Tooltip>
               <SkillBrowser
+                pr={pr}
                 skills={skills}
                 agents={skillAgents}
                 onRun={(s, agents) => {
