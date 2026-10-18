@@ -10,14 +10,15 @@ use async_trait::async_trait;
 use theodore_contract::TokenSource;
 use theodore_domain::{
     AgentId, Anchor, CheckRollup, FileDiff, FileStatus, Group, GroupId, GroupKind, Grouping, Hunk,
-    HunkId, LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, Revision, Sha, Side,
+    HunkId, LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, Revision, Sha,
+    Side,
 };
 use theodore_ports::{
-    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, Capabilities, Changes,
-    Clock, DiffOptions, Fetched, GitPort, GitResult, HostAdapter, HostError, HostResult,
-    InboxSection, ModelRow, NewAction, OutboxItem, OutboxStatus, ReviewSubmission, Secrets,
-    SecretsError, Store, StoreError, StoreResult, SubmittedReview, SyncAction, SyncActionCode,
-    Worktree,
+    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo, Capabilities,
+    Changes, Clock, CommitLog, DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter,
+    HostError, HostResult, InboxSection, ModelRow, NewAction, OutboxItem, OutboxStatus,
+    ReviewSubmission, Secrets, SecretsError, Store, StoreError, StoreResult, SubmittedReview,
+    SyncAction, SyncActionCode, Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -346,6 +347,17 @@ pub struct FakeGit {
     /// Last `(branch, message)` passed to `commit_and_push`, for assertions.
     pub last_push: Mutex<Option<(String, String)>>,
     push_responses: Mutex<VecDeque<GitResult<Sha>>>,
+
+    // ── projects (plan "projects") ───────────────────────────────────────
+    mirror_path: PathBuf,
+    mirror_calls: Mutex<Vec<(PathBuf, RepoRef)>>,
+    is_repo_value: Mutex<bool>,
+    default_branch_value: Mutex<Option<String>>,
+    branches_value: Mutex<Vec<BranchInfo>>,
+    resolve_refs: Mutex<HashMap<String, Sha>>,
+    commits: Mutex<HashMap<String, CommitLog>>,
+    commit_log_value: Mutex<Vec<CommitLog>>,
+    removed_repos: Mutex<Vec<RepoRef>>,
 }
 
 impl FakeGit {
@@ -357,6 +369,15 @@ impl FakeGit {
             files: Mutex::new(HashMap::new()),
             last_push: Mutex::new(None),
             push_responses: Mutex::new(VecDeque::new()),
+            mirror_path: PathBuf::from("/tmp/theodore-fake-mirror"),
+            mirror_calls: Mutex::new(Vec::new()),
+            is_repo_value: Mutex::new(true),
+            default_branch_value: Mutex::new(Some("main".into())),
+            branches_value: Mutex::new(Vec::new()),
+            resolve_refs: Mutex::new(HashMap::new()),
+            commits: Mutex::new(HashMap::new()),
+            commit_log_value: Mutex::new(Vec::new()),
+            removed_repos: Mutex::new(Vec::new()),
         })
     }
 
@@ -377,6 +398,43 @@ impl FakeGit {
             .lock()
             .unwrap()
             .insert((rev.0.clone(), path.to_string()), content.to_vec());
+    }
+
+    pub fn set_is_repo(&self, value: bool) {
+        *self.is_repo_value.lock().unwrap() = value;
+    }
+
+    pub fn set_default_branch(&self, value: Option<&str>) {
+        *self.default_branch_value.lock().unwrap() = value.map(str::to_string);
+    }
+
+    pub fn set_branches(&self, branches: Vec<BranchInfo>) {
+        *self.branches_value.lock().unwrap() = branches;
+    }
+
+    /// Makes `resolve_ref(_, name)` return `sha` (branch names and base refs
+    /// alike — a local branch review resolves both through the same call).
+    pub fn set_resolve(&self, name: &str, sha: Sha) {
+        self.resolve_refs
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), sha);
+    }
+
+    pub fn set_commit(&self, sha: Sha, commit: CommitLog) {
+        self.commits.lock().unwrap().insert(sha.0.clone(), commit);
+    }
+
+    pub fn set_commit_log(&self, commits: Vec<CommitLog>) {
+        *self.commit_log_value.lock().unwrap() = commits;
+    }
+
+    pub fn mirror_calls(&self) -> Vec<(PathBuf, RepoRef)> {
+        self.mirror_calls.lock().unwrap().clone()
+    }
+
+    pub fn removed_repos(&self) -> Vec<RepoRef> {
+        self.removed_repos.lock().unwrap().clone()
     }
 }
 
@@ -433,6 +491,62 @@ impl GitPort for FakeGit {
             .unwrap()
             .pop_front()
             .unwrap_or(Ok(Sha::new("pushed-sha")))
+    }
+
+    async fn ensure_local_mirror(&self, source: &Path, repo: &RepoRef) -> GitResult<PathBuf> {
+        self.mirror_calls
+            .lock()
+            .unwrap()
+            .push((source.to_path_buf(), repo.clone()));
+        Ok(self.mirror_path.clone())
+    }
+
+    async fn is_repo(&self, _path: &Path) -> GitResult<bool> {
+        Ok(*self.is_repo_value.lock().unwrap())
+    }
+
+    async fn default_branch(&self, _repo: &Path) -> GitResult<Option<String>> {
+        Ok(self.default_branch_value.lock().unwrap().clone())
+    }
+
+    async fn list_branches(
+        &self,
+        _repo: &Path,
+        _default_branch: &str,
+    ) -> GitResult<Vec<BranchInfo>> {
+        Ok(self.branches_value.lock().unwrap().clone())
+    }
+
+    async fn resolve_ref(&self, _repo: &Path, refname: &str) -> GitResult<Sha> {
+        self.resolve_refs
+            .lock()
+            .unwrap()
+            .get(refname)
+            .cloned()
+            .ok_or_else(|| GitError::Parse(format!("no fixture ref {refname}")))
+    }
+
+    async fn commit(&self, _repo: &Path, sha: &Sha) -> GitResult<CommitLog> {
+        self.commits
+            .lock()
+            .unwrap()
+            .get(sha.as_str())
+            .cloned()
+            .ok_or_else(|| GitError::Parse(format!("no fixture commit {sha}")))
+    }
+
+    async fn commit_log(
+        &self,
+        _repo: &Path,
+        _base: &Sha,
+        _head: &Sha,
+    ) -> GitResult<Vec<CommitLog>> {
+        Ok(self.commit_log_value.lock().unwrap().clone())
+    }
+
+    async fn remove_repo(&self, repo: &RepoRef) -> GitResult<()> {
+        self.removed_repos.lock().unwrap().push(repo.clone());
+        Ok(())
     }
 }
 

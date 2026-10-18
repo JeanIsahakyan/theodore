@@ -13,16 +13,26 @@ use theodore_ports::{
 pub struct Hosts {
     primary: Arc<dyn HostAdapter>,
     gitlab: Option<Arc<dyn HostAdapter>>,
+    local: Arc<dyn HostAdapter>,
 }
 
 impl Hosts {
-    pub fn new(primary: Arc<dyn HostAdapter>, gitlab: Option<Arc<dyn HostAdapter>>) -> Self {
-        Self { primary, gitlab }
+    pub fn new(
+        primary: Arc<dyn HostAdapter>,
+        gitlab: Option<Arc<dyn HostAdapter>>,
+        local: Arc<dyn HostAdapter>,
+    ) -> Self {
+        Self {
+            primary,
+            gitlab,
+            local,
+        }
     }
 
     fn for_pr(&self, pr: &PrRef) -> HostResult<&Arc<dyn HostAdapter>> {
         match pr.repo.host {
             HostKind::Gitlab => self.gitlab.as_ref().ok_or(HostError::Unsupported("gitlab")),
+            HostKind::Local => Ok(&self.local),
             _ => Ok(&self.primary),
         }
     }

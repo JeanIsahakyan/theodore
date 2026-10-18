@@ -3,6 +3,7 @@
 
 mod grouper;
 mod hosts;
+mod local_host;
 mod token;
 mod tools;
 
@@ -15,6 +16,7 @@ use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, Secrets, Store, Sys
 
 pub use grouper::GroupingGrouper;
 pub use hosts::Hosts;
+pub use local_host::LocalHostAdapter;
 pub use token::HostToken;
 pub use tools::{CoreTools, McpRunTools};
 
@@ -81,15 +83,19 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         Arc::new(token::GitlabToken::new(secrets.clone())),
         clock.clone(),
     ));
-    let host = Arc::new(Hosts::new(github, Some(gitlab)));
-    let git = Arc::new(theodore_git::GitCli::new(
+    let git: Arc<dyn GitPort> = Arc::new(theodore_git::GitCli::new(
         cfg.data_dir.clone(),
         token.clone(),
     ));
-    let store = Arc::new(
+    let store: Arc<dyn Store> = Arc::new(
         theodore_store::SqliteStore::open(cfg.data_dir.join("theodore.db"))
             .context("opening the database")?,
     );
+    let local = Arc::new(local_host::LocalHostAdapter::new(
+        store.clone(),
+        git.clone(),
+    ));
+    let host = Arc::new(Hosts::new(github, Some(gitlab), local));
     Ok(Adapters {
         host,
         git,

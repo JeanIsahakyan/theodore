@@ -97,6 +97,12 @@ impl Core {
                 let _ = core.refresh_inbox().await;
             });
         }
+        {
+            let core = core.clone();
+            tokio::spawn(async move {
+                let _ = core.resume_cloning_projects().await;
+            });
+        }
 
         (
             core,

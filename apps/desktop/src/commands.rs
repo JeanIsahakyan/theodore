@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 use theodore_contract::{
-    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, DelegateRequest,
-    FileRequest, HostAuthStatus, OpenPrRequest, OpenPrResponse, ReplyRequest, ResolveRequest,
-    RevisionRequest, RunSkillRequest, SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame,
-    TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
+    DelegateRequest, FileRequest, HostAuthStatus, LocalBranch, OpenBranchRequest, OpenPrRequest,
+    OpenPrResponse, Project, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
+    SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, UpdateInfo,
 };
-use theodore_domain::{Person, PrId, Revision};
+use theodore_domain::{Person, PrId, RepoRef, Revision};
 
 use crate::core_api::CoreApi;
 use crate::updater;
@@ -192,6 +193,59 @@ pub async fn decide_task(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<(), CommandError> {
     core.decide_task(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_host_repos(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<RepoRef>, CommandError> {
+    core.list_host_repos().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn add_project(
+    req: AddProjectRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Project, CommandError> {
+    core.add_project(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_project(
+    id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.remove_project(id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn refresh_project(
+    id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.refresh_project(id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_branches(
+    project: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<LocalBranch>, CommandError> {
+    core.list_branches(project).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn open_branch(
+    req: OpenBranchRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<OpenPrResponse, CommandError> {
+    core.open_branch(req).await
 }
 
 /// The core doesn't know about updates the shell already downloaded in the

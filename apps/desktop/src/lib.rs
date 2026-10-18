@@ -45,6 +45,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::list_skills,
             commands::delegate_task,
             commands::decide_task,
+            commands::list_host_repos,
+            commands::add_project,
+            commands::remove_project,
+            commands::refresh_project,
+            commands::list_branches,
+            commands::open_branch,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()

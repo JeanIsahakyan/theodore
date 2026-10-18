@@ -6,16 +6,18 @@ use std::time::Duration;
 
 use serde_json::json;
 use theodore_contract::{
-    BootstrapScope, DelegateRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
-    MutationOp, OpenPrRequest, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
-    SetTokenRequest, TaskDecision, ToastLevel, TokenSource, Transaction, TransactionResult, models,
+    AddProjectRequest, BootstrapScope, DelegateRequest, Ephemeral, FileViewedRow, HostAuthStatus,
+    HunkRead, MutationOp, OpenBranchRequest, OpenPrRequest, ProjectStatus, ReplyRequest,
+    ResolveRequest, RevisionRequest, RunSkillRequest, SetTokenRequest, TaskDecision, ToastLevel,
+    TokenSource, Transaction, TransactionResult, models,
 };
 use theodore_domain::{
     AgentId, Assignee, FileDiff, Fix, FixStatus, HostKind, HunkId, Patch, PrId, PrRef, RepoRef,
     Revision, Sha, Task, TaskId, TaskStatus, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
-    AgentEvent, Clock, Fetched, HostError, NewAction, OutboxStatus, Secrets, Store, SyncActionCode,
+    AgentEvent, BranchInfo, Clock, CommitLog, Fetched, HostError, NewAction, OutboxStatus, Secrets,
+    Store, SyncActionCode,
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
@@ -1076,4 +1078,294 @@ fn host_auth_status_is_constructible() {
         login: Some("me".into()),
         source: TokenSource::Gh,
     };
+}
+
+// ── projects ──────────────────────────────────────────────────────────────
+
+async fn started_core(f: &Fixtures) -> (Core, Receivers) {
+    let (core, recv) = Core::start(f.deps());
+    // Let the one-shot startup inbox refresh (empty fixtures) drain first —
+    // it shares `FakeHost`'s search queue with a project's own refresh.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    (core, recv)
+}
+
+async fn add_ready_local_project(
+    core: &Core,
+    f: &Fixtures,
+    path: &str,
+) -> theodore_contract::Project {
+    let project = core
+        .add_project(AddProjectRequest {
+            repo: None,
+            path: Some(path.into()),
+        })
+        .await
+        .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, &project.id)
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+    project
+}
+
+fn feature_branch_commit() -> CommitLog {
+    CommitLog {
+        sha: Sha::new("feat-head"),
+        title: "feature work".into(),
+        author_name: "Ada".into(),
+        author_email: "ada@example.com".into(),
+        at: 42_000,
+    }
+}
+
+#[tokio::test]
+async fn add_project_clones_a_host_repo_then_becomes_ready_and_refreshes_its_prs() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+
+    let repo = RepoRef {
+        host: HostKind::Github,
+        owner: "acme".into(),
+        name: "widgets".into(),
+    };
+    let pr_ref = PrRef {
+        repo: repo.clone(),
+        number: 9,
+        host_id: Some("node-9".into()),
+    };
+    f.host.push_search(Ok(vec![testkit::sample_pr_summary(
+        &pr_ref,
+        &Sha::new("head9"),
+    )]));
+
+    let project = core
+        .add_project(AddProjectRequest {
+            repo: Some(repo.clone()),
+            path: None,
+        })
+        .await
+        .expect("add_project");
+    assert_eq!(project.id, "github:acme/widgets");
+    assert_eq!(project.status, ProjectStatus::Cloning);
+
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, "github:acme/widgets")
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+    let row = f
+        .store
+        .get(models::PROJECT, "github:acme/widgets")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.data["default_branch"], json!("main"));
+
+    // The initial refresh after the clone wrote the repo's open PRs.
+    wait_until(|| f.store.get(models::PR, &pr_ref.id().0).unwrap().is_some()).await;
+}
+
+#[tokio::test]
+async fn add_project_rejects_a_folder_that_is_not_a_git_repository() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    f.git.set_is_repo(false);
+
+    let err = core
+        .add_project(AddProjectRequest {
+            repo: None,
+            path: Some("/tmp/not-a-repo".into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not a git repository"));
+}
+
+#[tokio::test]
+async fn add_project_local_folder_dedupes_a_colliding_name() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+
+    let first = core
+        .add_project(AddProjectRequest {
+            repo: None,
+            path: Some("/tmp/widgets".into()),
+        })
+        .await
+        .expect("first add_project");
+    assert_eq!(first.id, "local:widgets");
+    assert_eq!(first.repo.owner, "local");
+    assert_eq!(first.repo.name, "widgets");
+    assert_eq!(first.path.as_deref(), Some("/tmp/widgets"));
+
+    // A different folder that happens to share a basename gets a
+    // de-duplicated id instead of colliding with the first.
+    let second = core
+        .add_project(AddProjectRequest {
+            repo: None,
+            path: Some("/elsewhere/widgets".into()),
+        })
+        .await
+        .expect("second add_project");
+    assert_eq!(second.id, "local:widgets-2");
+
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, "local:widgets")
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, "local:widgets-2")
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn remove_project_deletes_the_cache_but_never_the_local_folder() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+
+    core.remove_project(&project.id)
+        .await
+        .expect("remove_project");
+
+    assert!(f.store.get(models::PROJECT, &project.id).unwrap().is_none());
+    assert_eq!(f.git.removed_repos(), vec![project.repo.clone()]);
+}
+
+#[tokio::test]
+async fn list_branches_reads_the_mirror_for_a_local_project() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+
+    f.git.set_branches(vec![
+        BranchInfo {
+            name: "main".into(),
+            head: Sha::new("m1"),
+            subject: "base".into(),
+            ahead: 0,
+            behind: 0,
+            updated_at: 1,
+        },
+        BranchInfo {
+            name: "feature".into(),
+            head: Sha::new("f1"),
+            subject: "feature work".into(),
+            ahead: 2,
+            behind: 1,
+            updated_at: 2,
+        },
+    ]);
+
+    let branches = core
+        .list_branches(&project.id)
+        .await
+        .expect("list_branches");
+    assert_eq!(branches.len(), 2);
+    let feature = branches.iter().find(|b| b.name == "feature").unwrap();
+    assert_eq!((feature.ahead, feature.behind), (2, 1));
+    assert_eq!(feature.subject, "feature work");
+}
+
+#[tokio::test]
+async fn open_branch_opens_a_review_with_no_host_pr() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+
+    let resp = core
+        .open_branch(OpenBranchRequest {
+            project: project.id.clone(),
+            branch: "feature".into(),
+            base: None,
+        })
+        .await
+        .expect("open_branch");
+    assert_eq!(resp.head.as_str(), "feat-head");
+
+    let pr_row = f
+        .store
+        .get(models::PR, &resp.pr.0)
+        .unwrap()
+        .expect("pr row");
+    assert_eq!(pr_row.data["head_ref"], json!("feature"));
+    assert_eq!(pr_row.data["base_ref"], json!("main"));
+    assert_eq!(pr_row.data["state"], json!("open"));
+    assert_eq!(pr_row.data["url"], json!(""));
+
+    let detail_row = f
+        .store
+        .get(models::PR_DETAIL, &resp.pr.0)
+        .unwrap()
+        .expect("pr_detail row");
+    assert_eq!(detail_row.data["body"], json!(""));
+    assert_eq!(detail_row.data["commits"].as_array().unwrap().len(), 1);
+
+    // Reopening the same branch is idempotent — keyed by the stable hash
+    // of its name, it returns the same PR without re-running the flow.
+    let again = core
+        .open_branch(OpenBranchRequest {
+            project: project.id.clone(),
+            branch: "feature".into(),
+            base: None,
+        })
+        .await
+        .expect("open_branch again");
+    assert_eq!(again.pr, resp.pr);
+}
+
+#[tokio::test]
+async fn ensure_open_recovers_a_local_pr_after_a_restart() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+
+    let resp = core
+        .open_branch(OpenBranchRequest {
+            project: project.id.clone(),
+            branch: "feature".into(),
+            base: None,
+        })
+        .await
+        .expect("open_branch");
+
+    // A fresh `Core` over the same store/git has nothing cached in memory;
+    // `ensure_open` must recover the branch from the stored `pr` row.
+    let before = f.git.mirror_calls().len();
+    let (core2, _recv2) = started_core(&f).await;
+    core2.ensure_open(&resp.pr).await.expect("ensure_open");
+    assert!(f.git.mirror_calls().len() > before);
+
+    let revision = core2
+        .get_revision(RevisionRequest {
+            pr: resp.pr.clone(),
+            head: resp.head.clone(),
+        })
+        .await
+        .expect("get_revision after recovery");
+    assert!(!revision.files.is_empty());
 }

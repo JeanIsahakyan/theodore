@@ -235,7 +235,7 @@ impl GitCli {
         Ok(removed)
     }
 
-    async fn drop_worktree_dir(&self, askpass: &Path, repo_dir: &Path, dirname: &str) {
+    pub(crate) async fn drop_worktree_dir(&self, askpass: &Path, repo_dir: &Path, dirname: &str) {
         let wt_path = self.wt_root().join(dirname);
         if !wt_path.exists() {
             return;

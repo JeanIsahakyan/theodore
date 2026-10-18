@@ -10,8 +10,10 @@
 //! Auth never touches argv, a clone URL, or `.git/config` (see `auth.rs`).
 
 mod auth;
+mod branches;
 mod diff;
 mod generated;
+mod local;
 mod meta;
 mod parse;
 mod process;
@@ -22,7 +24,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_domain::{PrRef, RepoRef, Revision, Sha};
-use theodore_ports::{CredentialSource, DiffOptions, GitError, GitPort, GitResult, Worktree};
+use theodore_ports::{
+    BranchInfo, CommitLog, CredentialSource, DiffOptions, GitError, GitPort, GitResult, Worktree,
+};
 
 use process::GitProc;
 
@@ -44,6 +48,10 @@ impl GitCli {
 
     pub(crate) fn token_for(&self, repo: &RepoRef) -> Option<String> {
         self.creds.token_for(repo)
+    }
+
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
     }
 
     pub(crate) fn repos_root(&self) -> PathBuf {
@@ -219,6 +227,38 @@ impl GitPort for GitCli {
     ) -> GitResult<Sha> {
         self.commit_and_push_op(worktree, repo, branch, message)
             .await
+    }
+
+    async fn ensure_local_mirror(&self, source: &Path, repo: &RepoRef) -> GitResult<PathBuf> {
+        self.ensure_local_mirror_op(source, repo).await
+    }
+
+    async fn is_repo(&self, path: &Path) -> GitResult<bool> {
+        self.is_repo_op(path).await
+    }
+
+    async fn remove_repo(&self, repo: &RepoRef) -> GitResult<()> {
+        self.remove_repo_op(repo).await
+    }
+
+    async fn default_branch(&self, repo: &Path) -> GitResult<Option<String>> {
+        self.default_branch_op(repo).await
+    }
+
+    async fn resolve_ref(&self, repo: &Path, refname: &str) -> GitResult<Sha> {
+        self.resolve_ref_op(repo, refname).await
+    }
+
+    async fn commit(&self, repo: &Path, sha: &Sha) -> GitResult<CommitLog> {
+        self.commit_op(repo, sha).await
+    }
+
+    async fn commit_log(&self, repo: &Path, base: &Sha, head: &Sha) -> GitResult<Vec<CommitLog>> {
+        self.commit_log_op(repo, base, head).await
+    }
+
+    async fn list_branches(&self, repo: &Path, default_branch: &str) -> GitResult<Vec<BranchInfo>> {
+        self.list_branches_op(repo, default_branch).await
     }
 }
 

@@ -4,12 +4,13 @@
 
 use async_trait::async_trait;
 use theodore_contract::{
-    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, DelegateRequest,
-    FileRequest, HostAuthStatus, OpenPrRequest, OpenPrResponse, ReplyRequest, ResolveRequest,
-    RevisionRequest, RunSkillRequest, SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame,
-    TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
+    DelegateRequest, FileRequest, HostAuthStatus, LocalBranch, OpenBranchRequest, OpenPrRequest,
+    OpenPrResponse, Project, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
+    SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, UpdateInfo,
 };
-use theodore_domain::{Person, PrId, Revision};
+use theodore_domain::{Person, PrId, RepoRef, Revision};
 
 fn not_ready() -> CommandError {
     CommandError {
@@ -46,6 +47,12 @@ pub trait CoreApi: Send + Sync {
     async fn list_skills(&self, pr: Option<PrId>) -> Result<Vec<SkillInfo>, CommandError>;
     async fn delegate_task(&self, req: DelegateRequest) -> Result<String, CommandError>;
     async fn decide_task(&self, req: TaskDecision) -> Result<(), CommandError>;
+    async fn list_host_repos(&self) -> Result<Vec<RepoRef>, CommandError>;
+    async fn add_project(&self, req: AddProjectRequest) -> Result<Project, CommandError>;
+    async fn remove_project(&self, id: String) -> Result<(), CommandError>;
+    async fn refresh_project(&self, id: String) -> Result<(), CommandError>;
+    async fn list_branches(&self, project: String) -> Result<Vec<LocalBranch>, CommandError>;
+    async fn open_branch(&self, req: OpenBranchRequest) -> Result<OpenPrResponse, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -135,6 +142,24 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn decide_task(&self, _req: TaskDecision) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn list_host_repos(&self) -> Result<Vec<RepoRef>, CommandError> {
+        Err(not_ready())
+    }
+    async fn add_project(&self, _req: AddProjectRequest) -> Result<Project, CommandError> {
+        Err(not_ready())
+    }
+    async fn remove_project(&self, _id: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn refresh_project(&self, _id: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn list_branches(&self, _project: String) -> Result<Vec<LocalBranch>, CommandError> {
+        Err(not_ready())
+    }
+    async fn open_branch(&self, _req: OpenBranchRequest) -> Result<OpenPrResponse, CommandError> {
         Err(not_ready())
     }
 }
