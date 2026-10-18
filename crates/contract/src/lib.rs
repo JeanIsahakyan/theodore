@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use theodore_domain::{
     AgentId, Anchor, Author, Draft, Finding, Group, Grouping, HostKind, HunkId, Millis, Person,
-    PrDetail, PrId, PrSummary, ReviewEvent, Revision, Sha, SnoozeUntil, Task, TaskId, Thread,
-    ThreadId, Usage, ViewedState,
+    PrDetail, PrId, PrSummary, RepoRef, ReviewEvent, Revision, Sha, SnoozeUntil, Task, TaskId,
+    Thread, ThreadId, Usage, ViewedState,
 };
 
 /// Model names used in transactions and sync frames.
@@ -24,6 +24,7 @@ pub mod models {
     pub const CHAT_MESSAGE: &str = "chat_message";
     pub const INBOX_STATE: &str = "inbox_state";
     pub const SETTING: &str = "setting";
+    pub const PROJECT: &str = "project";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -38,6 +39,7 @@ pub mod models {
         CHAT_MESSAGE,
         INBOX_STATE,
         SETTING,
+        PROJECT,
     ];
 }
 
@@ -284,6 +286,61 @@ pub struct TaskDecision {
     pub reason: Option<String>,
 }
 
+// ── projects (connected repositories) ───────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectStatus {
+    Cloning,
+    Ready,
+    Error,
+}
+
+/// A connected repository: a host repo (bare clone under `~/.theodore/repos`)
+/// or a local folder (mirrored into the same cache, the user's repo is never
+/// written to). Synced row `project`, id = `Project::id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct Project {
+    /// `github:owner/name`, `gitlab:group/name`, or `local:<name>`.
+    pub id: String,
+    pub repo: RepoRef,
+    /// Absolute path of a local folder project.
+    pub path: Option<String>,
+    pub status: ProjectStatus,
+    pub error: Option<String>,
+    pub default_branch: Option<String>,
+    pub added_at: Millis,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AddProjectRequest {
+    /// A host repo (from `list_host_repos`), or …
+    pub repo: Option<RepoRef>,
+    /// … an absolute path to a local git repository.
+    pub path: Option<String>,
+}
+
+/// A branch of a project, for reviewing work without a host PR.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct LocalBranch {
+    pub name: String,
+    pub head: Sha,
+    /// Last commit subject.
+    pub subject: String,
+    /// Commits ahead of / behind the project's default branch.
+    pub ahead: u32,
+    pub behind: u32,
+    pub updated_at: Millis,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct OpenBranchRequest {
+    pub project: String,
+    pub branch: String,
+    /// Defaults to the project's default branch.
+    pub base: Option<String>,
+}
+
 // ── ephemeral events (core → UI, not persisted) ─────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -430,7 +487,12 @@ pub fn types() -> specta::Types {
         .register::<ResolveRequest>()
         .register::<SkillInfo>()
         .register::<DelegateRequest>()
-        .register::<TaskDecision>();
+        .register::<TaskDecision>()
+        .register::<Project>()
+        .register::<AddProjectRequest>()
+        .register::<LocalBranch>()
+        .register::<OpenBranchRequest>()
+        .register::<RepoRef>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()
