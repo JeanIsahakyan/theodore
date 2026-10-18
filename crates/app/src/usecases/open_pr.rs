@@ -1,10 +1,11 @@
 //! `open_pr` (plan §2.1): parse the URL, fetch the PR and its diff, cache
 //! the revision, store the rows, and group it in the background.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use theodore_contract::{Ephemeral, OpenPrRequest, OpenPrResponse, ToastLevel, models};
-use theodore_domain::{AgentId, HostKind, PrId, PrRef, RepoRef};
+use theodore_domain::{AgentId, HostKind, PrDetail, PrId, PrRef, RepoRef, Revision};
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
 use crate::core::{Core, RevisionEntry};
@@ -22,7 +23,9 @@ impl Core {
     }
 
     /// Open `pr` if this session hasn't yet (a PR opened from the inbox or a
-    /// restored tab arrives by id, not by URL).
+    /// restored tab arrives by id, not by URL). A `local:` id has no host
+    /// behind it, so it's recovered from its stored `pr` row instead of
+    /// being reparsed (plan "projects").
     pub async fn ensure_open(&self, pr: &PrId) -> AppResult<()> {
         if self.0.current_head.read().await.contains_key(pr) {
             return Ok(());
@@ -30,6 +33,9 @@ impl Core {
         let _guard = self.0.open_lock.lock().await;
         if self.0.current_head.read().await.contains_key(pr) {
             return Ok(());
+        }
+        if pr.0.starts_with("local:") {
+            return self.ensure_open_local(pr).await;
         }
         let pr_ref = pr_ref_from_id(pr)?;
         self.open_ref(pr_ref).await.map(|_| ())
@@ -47,7 +53,6 @@ impl Core {
         };
         // The adapter fills in `host_id` and canonical owner/repo casing.
         let pr_ref = detail.summary.pr.clone();
-        let pr_id = pr_ref.id();
 
         let repo_path = self.0.deps.git.ensure_repo(&pr_ref.repo).await?;
         let head = self.0.deps.git.fetch_pr(&pr_ref).await?;
@@ -58,6 +63,25 @@ impl Core {
             .git
             .diff(&repo_path, &detail.base_sha, &head, &DiffOptions::default())
             .await?;
+
+        self.finish_open(pr_ref, detail, revision, repo_path, worktree.path)
+            .await
+    }
+
+    /// Caches the revision, writes the `pr`/`pr_detail` rows and kicks off
+    /// grouping. Shared tail of `open_ref` (host PRs) and `open_local`
+    /// (plan "projects" branch reviews) — everything up to here differs by
+    /// where the detail and diff came from.
+    pub(crate) async fn finish_open(
+        &self,
+        pr_ref: PrRef,
+        detail: PrDetail,
+        revision: Revision,
+        repo_path: PathBuf,
+        worktree_path: PathBuf,
+    ) -> AppResult<OpenPrResponse> {
+        let pr_id = pr_ref.id();
+        let head = detail.summary.head_sha.clone();
 
         {
             self.0
@@ -72,7 +96,7 @@ impl Core {
                 Arc::new(RevisionEntry {
                     revision: Arc::new(revision.clone()),
                     repo_path,
-                    worktree_path: worktree.path.clone(),
+                    worktree_path: worktree_path.clone(),
                     pr_ref: pr_ref.clone(),
                 }),
             );
@@ -100,12 +124,9 @@ impl Core {
         self.apply(actions).await?;
 
         // Group in the background; the UI gets it as a `grouping` sync row.
-        self.spawn_grouping(pr_id, head.clone(), revision, detail, worktree.path.clone());
+        self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
 
-        Ok(OpenPrResponse {
-            pr: pr_ref.id(),
-            head,
-        })
+        Ok(OpenPrResponse { pr: pr_id, head })
     }
 }
 

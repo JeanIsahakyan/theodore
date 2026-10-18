@@ -5,6 +5,7 @@ pub mod grouping;
 pub mod host;
 pub mod inbox;
 pub mod open_pr;
+pub mod projects;
 pub mod review;
 pub mod revision;
 pub mod skills;

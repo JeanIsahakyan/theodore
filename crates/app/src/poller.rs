@@ -92,10 +92,17 @@ async fn handle_push(
     };
     let repo_path = match repo_path {
         Some(p) => p,
-        None => match core.0.deps.git.ensure_repo(&pr_ref.repo).await {
-            Ok(p) => p,
-            Err(_) => return,
-        },
+        None => {
+            let fallback = if pr_ref.repo.host == theodore_domain::HostKind::Local {
+                core.ensure_local_project_cache(&pr_ref.repo).await
+            } else {
+                core.0.deps.git.ensure_repo(&pr_ref.repo).await
+            };
+            match fallback {
+                Ok(p) => p,
+                Err(_) => return,
+            }
+        }
     };
     let worktree = match core.0.deps.git.worktree(pr_ref, &new_head).await {
         Ok(w) => w,
