@@ -84,25 +84,50 @@ const HelpModal = observer(function HelpModal() {
       <Modal.Container size="md">
         <Modal.Dialog
           aria-label="Keyboard shortcuts"
-          className="flex flex-col gap-3 p-4"
+          className="flex flex-col gap-4 p-4"
         >
           <Modal.Heading>Keyboard shortcuts</Modal.Heading>
-          <div className="flex flex-col gap-1.5 text-sm">
-            <div>
-              <K>⌘K</K> command palette
-            </div>
-            <div>
-              <K>J</K>/<K>K</K> navigate · <K>⏎</K> open · <K>Space</K> peek
-            </div>
-            <div>
-              <K>E</K> done · <K>H</K> snooze
-            </div>
-            <div>
-              <K>⌘Z</K> undo · <K>⌘⇧Z</K> redo
-            </div>
-            <div>
-              <K>[</K> sidebar · <K>]</K> AI panel (in review)
-            </div>
+          <div className="flex flex-col gap-3 text-sm">
+            <section className="flex flex-col gap-1">
+              <div className="text-xs font-medium text-muted">Global</div>
+              <div>
+                <K>⌘K</K> command palette · <K>?</K> this help
+              </div>
+              <div>
+                <K>G</K> <K>I</K> inbox · <K>G</K> <K>M</K> my PRs · <K>G</K>{' '}
+                <K>T</K> tasks · <K>G</K> <K>S</K> settings
+              </div>
+              <div>
+                <K>⌘Z</K> undo · <K>⌘⇧Z</K> redo
+              </div>
+              <div>
+                <K>[</K> sidebar · <K>⌥1</K>–<K>⌥9</K> switch tab · <K>⌥W</K>{' '}
+                close tab
+              </div>
+            </section>
+            <section className="flex flex-col gap-1">
+              <div className="text-xs font-medium text-muted">
+                Lists (Inbox, My PRs, Tasks)
+              </div>
+              <div>
+                <K>J</K>/<K>K</K> navigate · <K>⏎</K> open · <K>Space</K> peek
+              </div>
+              <div>
+                <K>X</K> select · <K>E</K> done · <K>H</K> snooze · <K>Y</K>{' '}
+                accept task fix
+              </div>
+            </section>
+            <section className="flex flex-col gap-1">
+              <div className="text-xs font-medium text-muted">Review</div>
+              <div>
+                <K>]</K> AI/tasks/threads panel · <K>S</K> split/unified ·{' '}
+                <K>/</K> ask AI
+              </div>
+              <div>
+                <K>T</K> tour · <K>R</K> (in tour) mark group read, next
+              </div>
+              <div>shift-click a second comment "+" for a line range</div>
+            </section>
           </div>
         </Modal.Dialog>
       </Modal.Container>

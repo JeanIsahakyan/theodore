@@ -143,6 +143,23 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         else setTour(null);
         return;
       }
+      if (e.key === 's' || e.key === 'S') {
+        ui.toggleDiffView();
+        return;
+      }
+      if (e.key === '/') {
+        ui.toggleAside(true);
+        setTimeout(
+          () =>
+            (
+              document.querySelector(
+                '.chat-input textarea',
+              ) as HTMLTextAreaElement | null
+            )?.focus(),
+          30,
+        );
+        return;
+      }
       if (e.key !== 'r' && e.key !== 'R') return false;
       if (tour == null) return false;
       const g = orderedGroups[tour];
