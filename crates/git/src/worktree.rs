@@ -8,12 +8,75 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use theodore_domain::{PrRef, Sha};
+use theodore_domain::{PrRef, RepoRef, Sha};
 use theodore_ports::{GitResult, Worktree};
 
 use crate::GitCli;
 use crate::meta::{self, WorktreeMeta};
 use crate::process::GitProc;
+
+impl GitCli {
+    /// Commits every change in `worktree` and pushes it to `branch` on
+    /// `repo`'s remote (plan §4 "Fix target": own or local PR). The
+    /// worktree is always a detached, Theodore-owned checkout, so `git add
+    /// -A` + commit is safe — there is no user branch to disturb.
+    pub(crate) async fn commit_and_push_op(
+        &self,
+        worktree: &Path,
+        repo: &RepoRef,
+        branch: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        let askpass = self.ensure_askpass()?;
+        GitProc {
+            cwd: worktree,
+            askpass: &askpass,
+            args: &["add", "-A"],
+            token: None,
+            stdin: None,
+        }
+        .run()
+        .await?;
+        GitProc {
+            cwd: worktree,
+            askpass: &askpass,
+            args: &[
+                "-c",
+                "user.name=Theodore",
+                "-c",
+                "user.email=theodore@localhost",
+                "commit",
+                "-m",
+                message,
+            ],
+            token: None,
+            stdin: None,
+        }
+        .run()
+        .await?;
+        let token = self.token_for(repo);
+        let refspec = format!("HEAD:refs/heads/{branch}");
+        GitProc {
+            cwd: worktree,
+            askpass: &askpass,
+            args: &["push", "origin", &refspec],
+            token: token.as_deref(),
+            stdin: None,
+        }
+        .run()
+        .await?;
+        let out = GitProc {
+            cwd: worktree,
+            askpass: &askpass,
+            args: &["rev-parse", "HEAD"],
+            token: None,
+            stdin: None,
+        }
+        .run_text()
+        .await?;
+        Ok(Sha::new(out.trim().to_string()))
+    }
+}
 
 impl GitCli {
     pub(crate) async fn worktree_op(&self, pr: &PrRef, head: &Sha) -> GitResult<Worktree> {

@@ -209,6 +209,17 @@ impl GitPort for GitCli {
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>> {
         self.show_op(repo, rev, path).await
     }
+
+    async fn commit_and_push(
+        &self,
+        worktree: &Path,
+        repo: &RepoRef,
+        branch: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        self.commit_and_push_op(worktree, repo, branch, message)
+            .await
+    }
 }
 
 /// Parse a standalone patch (e.g. `git diff > f.patch`) without a repository:
