@@ -236,6 +236,10 @@ impl HostAdapter for GithubAdapter {
         HostKind::Github
     }
 
+    async fn viewer(&self) -> HostResult<Person> {
+        Ok(graphql::viewer(&self.graphql).await?.into_person())
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             viewed: true,
