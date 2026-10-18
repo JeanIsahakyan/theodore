@@ -45,9 +45,22 @@ export const commands = {
 	listSkills: (pr: string | null) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("list_skills", { pr })),
 	delegateTask: (req: DelegateRequest) => typedError<string, CommandError>(__TAURI_INVOKE("delegate_task", { req })),
 	decideTask: (req: TaskDecision) => typedError<null, CommandError>(__TAURI_INVOKE("decide_task", { req })),
+	listHostRepos: () => typedError<RepoRef[], CommandError>(__TAURI_INVOKE("list_host_repos")),
+	addProject: (req: AddProjectRequest) => typedError<Project, CommandError>(__TAURI_INVOKE("add_project", { req })),
+	removeProject: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("remove_project", { id })),
+	refreshProject: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("refresh_project", { id })),
+	listBranches: (project: string) => typedError<LocalBranch[], CommandError>(__TAURI_INVOKE("list_branches", { project })),
+	openBranch: (req: OpenBranchRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("open_branch", { req })),
 };
 
 /* Types */
+export type AddProjectRequest = {
+	/**  A host repo (from `list_host_repos`), or … */
+	repo: RepoRef | null,
+	/**  … an absolute path to a local git repository. */
+	path: string | null,
+};
+
 export type AgentId = "claude" | "codex" | "gemini";
 
 export type AgentStatus = {
@@ -172,9 +185,28 @@ export type HunkId = string;
 
 export type LineKind = "ctx" | "add" | "del";
 
+/**  A branch of a project, for reviewing work without a host PR. */
+export type LocalBranch = {
+	name: string,
+	head: Sha,
+	/**  Last commit subject. */
+	subject: string,
+	/**  Commits ahead of / behind the project's default branch. */
+	ahead: number,
+	behind: number,
+	updated_at: number,
+};
+
 export type MutationOp = { op: "create"; model: string; id: string; data: unknown } |
 /**  `data` holds changed fields only. */
 { op: "update"; model: string; id: string; data: unknown } | { op: "archive"; model: string; id: string } | { op: "delete"; model: string; id: string };
+
+export type OpenBranchRequest = {
+	project: string,
+	branch: string,
+	/**  Defaults to the project's default branch. */
+	base: string | null,
+};
 
 export type OpenPrRequest = {
 	/**  Host URL (`https://github.com/o/r/pull/12`) or local id. */
@@ -194,10 +226,36 @@ export type Person = {
 
 export type PrId = string;
 
+/**
+ *  A connected repository: a host repo (bare clone under `~/.theodore/repos`)
+ *  or a local folder (mirrored into the same cache, the user's repo is never
+ *  written to). Synced row `project`, id = `Project::id`.
+ */
+export type Project = {
+	/**  `github:owner/name`, `gitlab:group/name`, or `local:<name>`. */
+	id: string,
+	repo: RepoRef,
+	/**  Absolute path of a local folder project. */
+	path: string | null,
+	status: ProjectStatus,
+	error: string | null,
+	default_branch: string | null,
+	added_at: number,
+};
+
+export type ProjectStatus = "cloning" | "ready" | "error";
+
 export type ReplyRequest = {
 	pr: PrId,
 	thread: ThreadId,
 	body: string,
+};
+
+/**  Host-neutral repository reference. */
+export type RepoRef = {
+	host: HostKind,
+	owner: string,
+	name: string,
 };
 
 export type ResolveRequest = {

@@ -3,12 +3,13 @@
 use async_trait::async_trait;
 use theodore_app::{AppError, Core};
 use theodore_contract::{
-    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, DelegateRequest,
-    FileRequest, HostAuthStatus, OpenPrRequest, OpenPrResponse, ReplyRequest, ResolveRequest,
-    RevisionRequest, RunSkillRequest, SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame,
-    TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
+    DelegateRequest, FileRequest, HostAuthStatus, LocalBranch, OpenBranchRequest, OpenPrRequest,
+    OpenPrResponse, Project, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
+    SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, UpdateInfo,
 };
-use theodore_domain::{Person, PrId, Revision};
+use theodore_domain::{Person, PrId, RepoRef, Revision};
 
 use crate::core_api::CoreApi;
 
@@ -130,6 +131,24 @@ impl CoreApi for AppCore {
     }
     async fn decide_task(&self, req: TaskDecision) -> Result<(), CommandError> {
         self.core.decide_task(req).await.map_err(err)
+    }
+    async fn list_host_repos(&self) -> Result<Vec<RepoRef>, CommandError> {
+        self.core.list_host_repos().await.map_err(err)
+    }
+    async fn add_project(&self, req: AddProjectRequest) -> Result<Project, CommandError> {
+        self.core.add_project(req).await.map_err(err)
+    }
+    async fn remove_project(&self, id: String) -> Result<(), CommandError> {
+        self.core.remove_project(&id).await.map_err(err)
+    }
+    async fn refresh_project(&self, id: String) -> Result<(), CommandError> {
+        self.core.refresh_project(&id).await.map_err(err)
+    }
+    async fn list_branches(&self, project: String) -> Result<Vec<LocalBranch>, CommandError> {
+        self.core.list_branches(&project).await.map_err(err)
+    }
+    async fn open_branch(&self, req: OpenBranchRequest) -> Result<OpenPrResponse, CommandError> {
+        self.core.open_branch(req).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await
