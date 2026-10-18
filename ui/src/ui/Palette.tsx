@@ -12,6 +12,8 @@ import {
   Check,
   Clock,
   CodePullRequest,
+  Folder,
+  FolderPlus,
   Gear,
   Keyboard,
   ListCheck,
@@ -25,6 +27,7 @@ import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { toggleTheme } from '../stores/UiStore';
 import { K } from './bits';
+import { projectLabel } from './Projects';
 
 export interface Item {
   group?: string;
@@ -247,6 +250,12 @@ export const CommandMenu = observer(function CommandMenu() {
           },
         ]
       : [];
+  const projectItems: Item[] = store.models.projects.all().map((p) => ({
+    group: 'Go to',
+    label: `Go to project ▸ ${projectLabel(p)}`,
+    icon: <Folder />,
+    run: () => ui.go({ name: 'project', id: p.id }),
+  }));
   const items: Item[] = [
     ...prItems,
     {
@@ -293,6 +302,13 @@ export const CommandMenu = observer(function CommandMenu() {
       label: 'Settings → Account',
       icon: <Gear />,
       run: () => ui.go({ name: 'settings', page: 'account' }),
+    },
+    ...projectItems,
+    {
+      group: 'General',
+      label: 'Add project…',
+      icon: <FolderPlus />,
+      run: () => ui.openModal('add-project'),
     },
     {
       group: 'General',

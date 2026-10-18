@@ -3,6 +3,7 @@ import {
   Button,
   Chip,
   Kbd,
+  Modal,
   Spinner as HSpinner,
   Toolbar,
 } from '@heroui/react';
@@ -154,6 +155,41 @@ export function Hints({ children }: { children: ReactNode }) {
     >
       {children}
     </Toolbar>
+  );
+}
+
+/** Shared modal frame — same shell every dialog in the app uses. */
+export function Shell({
+  title,
+  children,
+  size = 'md',
+  footer,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  size?: 'md' | 'lg';
+  footer?: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <Modal.Backdrop isOpen onOpenChange={(open) => !open && onClose()}>
+      <Modal.Container
+        size={size}
+        placement="top"
+        scroll="inside"
+        className="mt-[8vh]"
+      >
+        <Modal.Dialog
+          aria-label={title}
+          className={`modal flex flex-col gap-3 p-4 ${size === 'lg' ? 'w-[760px] max-w-[92vw]' : 'w-[520px] max-w-[92vw]'}`}
+        >
+          <Modal.Heading>{title}</Modal.Heading>
+          {children}
+          {footer && <div className="flex justify-end gap-2">{footer}</div>}
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
   );
 }
 

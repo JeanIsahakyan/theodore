@@ -1,5 +1,6 @@
 import {
   CodePullRequest,
+  Folder,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -14,6 +15,7 @@ import type { ReactNode } from 'react';
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
+import { projectLabel } from './Projects';
 import { PRIcon } from './StatusIcon';
 
 function useLabel(r: Route): {
@@ -33,6 +35,10 @@ function useLabel(r: Route): {
       return { icon: <Gear />, title: 'Settings' };
     case 'new':
       return { icon: <Link />, title: 'New tab' };
+    case 'project': {
+      const p = store.models.projects.get(r.id);
+      return { icon: <Folder />, title: p ? projectLabel(p) : r.id };
+    }
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);
       const drafts = store.models.drafts.where((d) => d.pr === r.pr).length;

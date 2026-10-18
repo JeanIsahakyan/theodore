@@ -21,8 +21,9 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { AgentStatus, HostAuthStatus } from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
-import { useUi } from '../stores/context';
+import { useRootStore, useUi } from '../stores/context';
 import { Btn, Spinner } from './bits';
+import { ProjectPicker } from './Projects';
 
 const STEPS = ['GitHub', 'Agents', 'Projects', 'Done'];
 
@@ -37,6 +38,7 @@ const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
  *  pasted token), detect agent CLIs, then straight to the Inbox — projects
  *  arrive by opening a PR by URL, so that step is a no-op you can skip. */
 export const Onboarding = observer(function Onboarding() {
+  const store = useRootStore();
   const ui = useUi();
   const [step, setStep] = useState(0);
   const [host, setHost] = useState<HostAuthStatus | null | 'unready'>(null);
@@ -256,10 +258,11 @@ export const Onboarding = observer(function Onboarding() {
             <>
               <Typography.Heading level={4}>Projects</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
-                There's no project list to manage yet — open a pull request by
-                its URL from the Inbox and Theodore clones what it needs on
-                demand. Nothing to do here; skip ahead.
+                Connect a GitHub repository, or point Theodore at a local
+                folder. Optional — you can also open a pull request by URL from
+                the Inbox and skip this.
               </Typography.Paragraph>
+              <ProjectPicker />
             </>
           )}
 
@@ -313,7 +316,9 @@ export const Onboarding = observer(function Onboarding() {
               isDisabled={!canNext}
               onPress={() => setStep(step + 1)}
             >
-              {step === 2 ? 'Skip' : 'Next'}
+              {step === 2 && store.models.projects.all().length === 0
+                ? 'Skip'
+                : 'Next'}
             </Button>
           ) : (
             <Btn tone="primary" onPress={() => ui.finishOnboarding()}>
