@@ -158,7 +158,7 @@ export const Sidebar = observer(function Sidebar() {
       <Toolbar
         aria-label="Workspace"
         data-tauri-drag-region
-        className="flex min-h-[38px] w-full items-center gap-2.5 pb-3 pe-5 ps-20 pt-4"
+        className="flex w-full items-center gap-2.5 pb-3 pe-5 ps-5 pt-11"
       >
         <span className="grid size-6 place-items-center rounded-xl bg-foreground text-xs font-semibold text-background">
           T
