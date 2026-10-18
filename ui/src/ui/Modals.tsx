@@ -214,7 +214,7 @@ const KEYS: [string, string][] = [
   ['Esc', 'close / back'],
 ];
 
-function HelpModal() {
+function HelpModalInner() {
   const ui = useUi();
   return (
     <Shell title="Shortcuts" onClose={() => ui.closeModal()}>
@@ -261,3 +261,5 @@ export const Modals = observer(function Modals() {
       return null;
   }
 });
+
+const HelpModal = observer(HelpModalInner);

@@ -642,7 +642,15 @@ impl FakeAgent {
 #[async_trait]
 impl AgentPort for FakeAgent {
     async fn detect(&self) -> Vec<AgentInfo> {
-        vec![]
+        theodore_domain::AgentId::ALL
+            .into_iter()
+            .map(|id| AgentInfo {
+                id,
+                path: None,
+                version: None,
+                installed: true,
+            })
+            .collect()
     }
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
         self.requests.lock().unwrap().push(req);

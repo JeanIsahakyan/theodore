@@ -398,7 +398,7 @@ const GroupCard = observer(function GroupCard({
   );
 });
 
-function NextGroup({
+function NextGroupInner({
   pr,
   rev,
   mode,
@@ -626,7 +626,7 @@ interface LineProps {
   setPeek: (p: SymbolPeekTarget | null) => void;
 }
 
-function FileBlock({
+function FileBlockInner({
   pr,
   rev,
   allFiles,
@@ -870,7 +870,7 @@ function FileBlock({
   );
 }
 
-function HunkOrSplit(
+function HunkOrSplitInner(
   props: {
     h: Hunk;
     lang: ReturnType<typeof langOf>;
@@ -887,7 +887,7 @@ function HunkOrSplit(
   );
 }
 
-function HunkView({
+function HunkViewInner({
   pr,
   rev,
   path,
@@ -989,7 +989,7 @@ function HunkView({
 }
 
 /** Side-by-side rendering of one hunk, using `splitRows` to pair del/add lines. */
-function SplitHunkView({
+function SplitHunkViewInner({
   pr,
   rev,
   path,
@@ -1298,3 +1298,9 @@ const Line = observer(function Line({
     </>
   );
 });
+
+const NextGroup = observer(NextGroupInner);
+const FileBlock = observer(FileBlockInner);
+const HunkOrSplit = observer(HunkOrSplitInner);
+const HunkView = observer(HunkViewInner);
+const SplitHunkView = observer(SplitHunkViewInner);

@@ -18,6 +18,11 @@ pub(super) async fn validate_op(core: &Core, op: &MutationOp) -> Result<(), Stri
     if !models::ALL.contains(&model) {
         return Err(format!("unknown model {model}"));
     }
+    // Threads are host truth (inside `pr_detail`); they change only through
+    // reply/resolve commands, never through a client transaction.
+    if model == models::THREAD {
+        return Err("threads are changed through reply_thread / resolve_thread".into());
+    }
     match (model, op) {
         (m, MutationOp::Create { data, .. }) if m == models::HUNK_READ => {
             validate_hunk_read(core, data).await

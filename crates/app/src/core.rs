@@ -85,6 +85,10 @@ impl Core {
         });
 
         let core = Core(inner.clone());
+        {
+            let core = core.clone();
+            tokio::spawn(async move { core.fail_interrupted_runs().await });
+        }
         tokio::spawn(crate::outbox::run(inner.clone()));
         tokio::spawn(crate::poller::run(inner.clone()));
         {
@@ -104,6 +108,30 @@ impl Core {
     }
 
     /// Stops the background loops. Idempotent.
+    /// Runs left `running` by a previous process can never finish: mark them
+    /// failed so the UI doesn't show them spinning forever.
+    async fn fail_interrupted_runs(&self) {
+        use theodore_contract::models;
+        let store = self.0.deps.store.clone();
+        let Ok(Ok(rows)) = tokio::task::spawn_blocking(move || store.all(models::SKILL_RUN)).await
+        else {
+            return;
+        };
+        let actions: Vec<theodore_ports::NewAction> = rows
+            .into_iter()
+            .filter(|r| r.data.get("status").and_then(|s| s.as_str()) == Some("running"))
+            .map(|r| theodore_ports::NewAction {
+                model: models::SKILL_RUN.into(),
+                model_id: r.id,
+                action: theodore_ports::SyncActionCode::C,
+                data: Some(serde_json::json!({ "status": "failed", "error": "interrupted: Theodore was closed" })),
+            })
+            .collect();
+        if !actions.is_empty() {
+            let _ = self.apply(actions).await;
+        }
+    }
+
     pub fn shutdown(&self) {
         self.0.shutdown.cancel();
     }

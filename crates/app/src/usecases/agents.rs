@@ -23,6 +23,27 @@ impl Core {
         } else {
             req.agents.clone()
         };
+        // Skip agents that aren't installed instead of failing the whole run
+        // after the installed ones already spent tokens.
+        let installed: Vec<AgentId> = self
+            .0
+            .deps
+            .agents
+            .detect()
+            .await
+            .into_iter()
+            .filter(|a| a.installed)
+            .map(|a| a.id)
+            .collect();
+        let agents: Vec<AgentId> = agents
+            .into_iter()
+            .filter(|a| installed.contains(a))
+            .collect();
+        if agents.is_empty() {
+            return Err(AppError::Invalid(
+                "none of the selected agents is installed".into(),
+            ));
+        }
         let run_id = uuid::Uuid::new_v4().to_string();
         let started_at = self.0.deps.clock.now();
         let row = SkillRun {

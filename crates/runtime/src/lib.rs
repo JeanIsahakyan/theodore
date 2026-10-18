@@ -93,7 +93,9 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
     Ok(Adapters {
         host,
         git,
-        agents: Arc::new(theodore_agents::AgentCli::new()),
+        agents: Arc::new(
+            theodore_agents::AgentCli::new().with_pid_dir(cfg.data_dir.join("agents")),
+        ),
         store,
         secrets,
         clock,

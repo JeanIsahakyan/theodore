@@ -32,11 +32,23 @@ pub use config::{AgentBinaryConfig, AgentCliConfig};
 #[derive(Debug, Clone, Default)]
 pub struct AgentCli {
     configs: AgentCliConfig,
+    pid_dir: Option<std::path::PathBuf>,
 }
 
 impl AgentCli {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record running agents' pids under `dir` and kill any left behind by a
+    /// previous run (see `process::reap_orphans`).
+    pub fn with_pid_dir(mut self, dir: std::path::PathBuf) -> Self {
+        let n = process::reap_orphans(&dir);
+        if n > 0 {
+            tracing::warn!(n, "killed agent processes left over from a previous run");
+        }
+        self.pid_dir = Some(dir);
+        self
     }
 
     pub fn with_config(mut self, id: AgentId, cfg: AgentBinaryConfig) -> Self {
@@ -93,6 +105,7 @@ impl AgentPort for AgentCli {
             env: child_env,
             stall_after_ms: req.stall_after_ms,
             guards,
+            pid_dir: self.pid_dir.clone(),
         };
         process::spawn_and_stream(spec, parser)
     }

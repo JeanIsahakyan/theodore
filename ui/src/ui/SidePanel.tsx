@@ -1015,7 +1015,7 @@ function DraftCard({ d }: { d: Draft }) {
   );
 }
 
-function ThreadCard({ pr, thread }: { pr: PrId; thread: Thread }) {
+function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
   const store = useRootStore();
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1162,3 +1162,5 @@ const Threads = observer(function Threads({ pr }: { pr: PrId }) {
     </div>
   );
 });
+
+const ThreadCard = observer(ThreadCardInner);

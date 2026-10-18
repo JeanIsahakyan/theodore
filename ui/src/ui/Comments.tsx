@@ -231,7 +231,7 @@ export const ThreadView = observer(function ThreadView({
 });
 
 /** A not-yet-submitted comment, held locally until "Submit review". */
-export function DraftView({ d }: { d: Draft }) {
+function DraftViewInner({ d }: { d: Draft }) {
   const store = useRootStore();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(d.body);
@@ -288,7 +288,7 @@ export function DraftView({ d }: { d: Draft }) {
 }
 
 /** Composer for a new draft, anchored to one line or a shift-click range. */
-export function Composer({
+function ComposerInner({
   pr,
   anchor,
   lineText,
@@ -406,3 +406,6 @@ export function Composer({
     </Card>
   );
 }
+
+export const DraftView = observer(DraftViewInner);
+export const Composer = observer(ComposerInner);

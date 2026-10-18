@@ -47,6 +47,55 @@ pub struct SpawnSpec {
     /// Dropped only once the run loop ends (e.g. a Gemini temp settings file
     /// that must outlive the child process).
     pub guards: Vec<Box<dyn std::any::Any + Send>>,
+    /// Where to record the child's pid while it runs, so a later process can
+    /// reap it if Theodore dies without cleaning up (`reap_orphans`).
+    pub pid_dir: Option<PathBuf>,
+}
+
+/// Deletes the pid marker once the run loop ends.
+struct PidMarker(PathBuf);
+
+impl Drop for PidMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Kill agent process groups recorded in `dir` by a previous Theodore process
+/// that died without cleaning up. Only pids whose command is still an agent
+/// CLI are signalled (pids get reused).
+pub fn reap_orphans(dir: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut killed = 0;
+    for e in entries.flatten() {
+        let path = e.path();
+        let Some(pid) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let comm = std::process::Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.to_string()])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        if ["claude", "codex", "gemini"]
+            .iter()
+            .any(|a| comm.contains(a))
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &format!("-{pid}")])
+                .status();
+            killed += 1;
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    killed
 }
 
 fn is_terminal(e: &AgentEvent) -> bool {
@@ -74,6 +123,15 @@ pub fn spawn_and_stream(
         .process_group(0);
 
     let mut child = cmd.spawn().map_err(|e| AgentError::Spawn(e.to_string()))?;
+    let mut guards = spec.guards;
+    if let (Some(dir), Some(pid)) = (&spec.pid_dir, child.id())
+        && std::fs::create_dir_all(dir).is_ok()
+    {
+        let marker = dir.join(pid.to_string());
+        if std::fs::write(&marker, spec.program.display().to_string()).is_ok() {
+            guards.push(Box::new(PidMarker(marker)));
+        }
+    }
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -88,7 +146,7 @@ pub fn spawn_and_stream(
         cancel.clone(),
         stall_after,
         parser,
-        spec.guards,
+        guards,
     ));
 
     Ok(AgentRun { events: rx, cancel })

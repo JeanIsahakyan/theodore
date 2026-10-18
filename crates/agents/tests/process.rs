@@ -43,6 +43,7 @@ impl LineParser for EchoParser {
 
 fn spec(mode: &str, stall_after_ms: u64) -> SpawnSpec {
     SpawnSpec {
+        pid_dir: None,
         program: fake_agent(),
         args: vec![mode.to_string()],
         cwd: std::env::temp_dir(),

@@ -175,7 +175,7 @@ function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
   );
 }
 
-function OpenPrField() {
+function OpenPrFieldInner() {
   const store = useRootStore();
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -900,3 +900,5 @@ function ListHints() {
     </Hints>
   );
 }
+
+const OpenPrField = observer(OpenPrFieldInner);
