@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use theodore_domain::{
-    Anchor, CommentId, Millis, PrDetail, PrRef, PrSummary, RepoRef, ReviewEvent, ThreadId,
+    Anchor, CommentId, Millis, Person, PrDetail, PrRef, PrSummary, RepoRef, ReviewEvent, ThreadId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -98,6 +98,11 @@ pub struct SubmittedReview {
 pub trait HostAdapter: Send + Sync {
     fn kind(&self) -> theodore_domain::HostKind;
     fn capabilities(&self) -> Capabilities;
+
+    /// The authenticated user (validates the token).
+    async fn viewer(&self) -> HostResult<Person> {
+        Err(HostError::Unsupported("viewer"))
+    }
 
     // inbox
     async fn changed_since(&self, cursor: Option<&str>) -> HostResult<Changes>;
