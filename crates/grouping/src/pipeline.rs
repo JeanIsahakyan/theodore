@@ -6,13 +6,21 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
+use futures::stream::{self, StreamExt, TryStreamExt};
 use theodore_domain::grouping::{self, GroupingError};
 use theodore_domain::{AgentId, Group, GroupId, Grouping, Hunk, HunkId, Revision, Usage};
 use theodore_ports::{AgentEvent, AgentMode, AgentPort, AgentRequest};
 
+use crate::coarsen;
 use crate::prepass::{self, HiddenReason, PrePass};
 use crate::prompt::{self, PromptBudget, PromptPart};
 use crate::schema;
+use crate::target;
+
+/// Chunk prompts run concurrently, capped at this many in flight at once —
+/// enough to cut wall time on a large, multi-directory PR without hammering
+/// the agent CLI with dozens of simultaneous processes.
+const DEFAULT_CHUNK_CONCURRENCY: usize = 3;
 
 /// Everything the prompt needs about the PR beyond the diff itself. Empty
 /// when grouping a bare diff file with no host context.
@@ -27,10 +35,16 @@ pub struct PrMeta {
 #[derive(Debug, Clone)]
 pub struct GroupingOptions {
     pub agent: AgentId,
+    /// Overrides the agent CLI's own default model (e.g. `"sonnet"`,
+    /// `"haiku"`) — forwarded to `AgentRequest::model`. `None` keeps
+    /// whatever the agent CLI defaults to.
     pub model: Option<String>,
     pub budget: PromptBudget,
     /// Forwarded to `AgentRequest::stall_after_ms`.
     pub stall_after_ms: u64,
+    /// Max number of chunk prompts run concurrently, for large PRs split
+    /// into several per-directory prompts (plan §5.2).
+    pub chunk_concurrency: usize,
 }
 
 impl Default for GroupingOptions {
@@ -40,6 +54,7 @@ impl Default for GroupingOptions {
             model: None,
             budget: PromptBudget::default(),
             stall_after_ms: 90_000,
+            chunk_concurrency: DEFAULT_CHUNK_CONCURRENCY,
         }
     }
 }
@@ -123,16 +138,32 @@ pub async fn group_revision(
     }
     let prepass = prepass::run(rev);
     let chunks = prompt::build_prompts(pr, rev, &prepass, &opts.budget);
+    let total_visible_hunks: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
+
+    // Run every chunk's agent call concurrently, capped at
+    // `chunk_concurrency` in flight — `buffered` polls up to that many
+    // futures at once but still yields results in the original chunk
+    // order, so the rest of this function doesn't need to know it ran
+    // concurrently at all. Chunks are consumed by value (not borrowed) so
+    // each future owns its own data instead of tying its type to a
+    // borrowed-iterator-item lifetime, which `rustc` otherwise rejects once
+    // this `async fn` is itself boxed by a caller (`#[async_trait]` in
+    // `crates/runtime`).
+    let concurrency = opts.chunk_concurrency.max(1);
+    let results: Vec<(Grouping, u32, bool, Usage)> =
+        stream::iter(chunks.into_iter().map(|chunk| {
+            let sub_rev = sub_revision(rev, &chunk.hunk_ids);
+            async move { run_chunk(agent, opts, cwd, &sub_rev, &chunk.prompt).await }
+        }))
+        .buffered(concurrency)
+        .try_collect()
+        .await?;
 
     let mut usage = Usage::default();
     let mut attempts: u32 = 0;
     let mut any_repair = false;
-    let mut chunk_groupings: Vec<Grouping> = Vec::with_capacity(chunks.len());
-
-    for chunk in &chunks {
-        let sub_rev = sub_revision(rev, &chunk.hunk_ids);
-        let (grouping, att, repaired, u) =
-            run_chunk(agent, opts, cwd, &sub_rev, &chunk.prompt).await?;
+    let mut chunk_groupings: Vec<Grouping> = Vec::with_capacity(results.len());
+    for (grouping, att, repaired, u) in results {
         usage += u;
         attempts += att;
         any_repair |= repaired;
@@ -140,6 +171,7 @@ pub async fn group_revision(
     }
 
     let mut groups: Vec<Group> = hidden_groups(&prepass, rev);
+    let has_hidden_group = !groups.is_empty();
 
     if chunk_groupings.len() <= 1 {
         if let Some(g) = chunk_groupings.into_iter().next() {
@@ -164,6 +196,18 @@ pub async fn group_revision(
                 groups.extend(all);
             }
         }
+    }
+
+    // Coarser-groups goal: if the model (across however many chunks) still
+    // produced more groups than this PR's size warrants, deterministically
+    // merge the tiniest ones into a same-area, same-kind neighbour. Free
+    // (no agent call) and exact — it only moves hunks between groups that
+    // already exist, so it can't break the partition invariant checked
+    // just below.
+    let (_, target_hi) = target::target_group_count(total_visible_hunks);
+    let target_max = target_hi + usize::from(has_hidden_group);
+    if groups.len() > target_max {
+        groups = coarsen::merge_tiny_groups(rev, groups, target_max);
     }
 
     let grouping = Grouping {
@@ -606,5 +650,103 @@ mod tests {
         let reqs = agent.requests();
         assert_eq!(reqs.len(), 1);
         assert!(!reqs[0].prompt.contains("lock1"));
+    }
+
+    /// Speed goal: chunk prompts run concurrently (`buffered`), but the rest
+    /// of the pipeline must see them in their original (alphabetical
+    /// top-level-dir) order regardless. Pinned down via the natural-order
+    /// fallback path: the merge-pass call is scripted to fail, so the final
+    /// group order is exactly the chunk submission order.
+    #[tokio::test]
+    async fn chunk_concurrency_preserves_submission_order() {
+        let rev = Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files: vec![
+                file("a/one.ts", vec![mk_hunk("a1")]),
+                file("b/two.ts", vec![mk_hunk("b1")]),
+            ],
+        };
+        let tiny_budget = PromptBudget {
+            max_chars: 10,
+            ..PromptBudget::default()
+        };
+        let opts = GroupingOptions {
+            budget: tiny_budget,
+            ..GroupingOptions::default()
+        };
+        let a_response = r#"{"groups": [{"id": "ga", "title": "A", "why": "w",
+            "kind": "normal", "hunks": ["a1"], "outliers": []}]}"#;
+        let b_response = r#"{"groups": [{"id": "gb", "title": "B", "why": "w",
+            "kind": "normal", "hunks": ["b1"], "outliers": []}]}"#;
+        // The merge-pass call (3rd) is garbage, forcing the natural-order
+        // fallback — exactly what pins the chunk order down for this test.
+        let agent = FakeAgentPort::new([a_response, b_response, "not json"]);
+
+        let report = group_revision(&agent, &PrMeta::default(), &rev, Path::new("."), &opts)
+            .await
+            .unwrap();
+
+        assert!(grouping::validate(&rev, &report.grouping).is_ok());
+        let ids: Vec<&str> = report
+            .grouping
+            .groups
+            .iter()
+            .map(|g| g.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["ga", "gb"]);
+    }
+
+    /// Coarser-groups goal: a real large PR (migratro#77-shaped) got one
+    /// group per small, related file (`.env`, CI, docker, docs) that should
+    /// have stayed with the change they supported. Simulate the same
+    /// over-fragmentation on a small PR and check the deterministic
+    /// post-pass brings it back down to the PR-size target without another
+    /// agent call.
+    #[tokio::test]
+    async fn fragmented_response_is_coarsened_down_to_the_pr_size_target() {
+        let rev = Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files: vec![
+                file("a/one.rs", vec![mk_hunk("a1")]),
+                file("a/two.rs", vec![mk_hunk("a2")]),
+                file("a/three.rs", vec![mk_hunk("a3")]),
+                file("b/one.rs", vec![mk_hunk("b1")]),
+                file("b/two.rs", vec![mk_hunk("b2")]),
+                file("b/three.rs", vec![mk_hunk("b3")]),
+            ],
+        };
+        let fragmented = r#"{"groups": [
+            {"id": "a1g", "title": "a1", "why": "w", "kind": "normal", "hunks": ["a1"], "outliers": []},
+            {"id": "a2g", "title": "a2", "why": "w", "kind": "normal", "hunks": ["a2"], "outliers": []},
+            {"id": "a3g", "title": "a3", "why": "w", "kind": "normal", "hunks": ["a3"], "outliers": []},
+            {"id": "b1g", "title": "b1", "why": "w", "kind": "normal", "hunks": ["b1"], "outliers": []},
+            {"id": "b2g", "title": "b2", "why": "w", "kind": "normal", "hunks": ["b2"], "outliers": []},
+            {"id": "b3g", "title": "b3", "why": "w", "kind": "normal", "hunks": ["b3"], "outliers": []}
+        ]}"#;
+        let agent = FakeAgentPort::new([fragmented]);
+
+        let report = group_revision(
+            &agent,
+            &PrMeta::default(),
+            &rev,
+            Path::new("."),
+            &GroupingOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        assert!(grouping::validate(&rev, &report.grouping).is_ok());
+        assert!(
+            report.grouping.groups.len() <= 4,
+            "expected coarsening down to the 6-hunk PR's target (2-4), got {} groups",
+            report.grouping.groups.len()
+        );
+        assert_eq!(
+            agent.calls_made(),
+            1,
+            "coarsening is a deterministic post-pass, not another agent call"
+        );
     }
 }
