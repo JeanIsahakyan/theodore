@@ -96,7 +96,14 @@ fn excerpt(hunk: &Hunk, budget: &PromptBudget) -> String {
         }
     }
     if out.len() > budget.excerpt_max_chars {
-        out.truncate(budget.excerpt_max_chars);
+        // `String::truncate` panics unless the cut point lies on a char
+        // boundary — back off until it does (a multi-byte char, including
+        // the "…" this function itself inserts above, can straddle the cap).
+        let mut cut = budget.excerpt_max_chars;
+        while cut > 0 && !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
         out.push('…');
     }
     out
@@ -390,6 +397,45 @@ mod tests {
         let e = excerpt(&h, &budget);
         assert!(e.len() <= budget.excerpt_max_chars + 1);
         assert!(e.contains('…'));
+    }
+
+    /// Regression: a real tokio PR crashed `theodore group` here because the
+    /// default 320-char cap landed in the middle of a multi-byte character,
+    /// and `String::truncate` panics unless the cut point is a char
+    /// boundary. Built so the cap (320) falls on the second byte of an 'é'.
+    #[test]
+    fn excerpt_backs_off_to_a_char_boundary_instead_of_panicking() {
+        let ascii_line = "a".repeat(70);
+        let mut straddling_line = String::new();
+        straddling_line.push_str(&"a".repeat(26));
+        straddling_line.push('é'); // 2-byte char; its 2nd byte lands at offset 320
+        straddling_line.push_str(&"a".repeat(42));
+        assert_eq!(straddling_line.len(), 70);
+
+        let lines: Vec<DiffLine> = (0..9)
+            .map(|i| {
+                let text = if i == 5 {
+                    straddling_line.as_str()
+                } else {
+                    ascii_line.as_str()
+                };
+                line(LineKind::Add, text)
+            })
+            .collect();
+        let h = Hunk {
+            id: HunkId::new("h1"),
+            path: String::new(),
+            old_start: 1,
+            old_lines: 9,
+            new_start: 1,
+            new_lines: 9,
+            header: String::new(),
+            lines,
+        };
+        let budget = PromptBudget::default();
+        let e = excerpt(&h, &budget); // must not panic
+        assert!(e.ends_with('…'));
+        assert!(e.is_char_boundary(e.len()));
     }
 
     #[test]
