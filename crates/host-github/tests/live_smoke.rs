@@ -35,13 +35,18 @@ async fn fetches_a_real_public_pr() {
     let token_source: Arc<dyn TokenSource> = Arc::new(StaticToken::new(token));
     let adapter = theodore_host_github::GithubAdapter::new(token_source, Arc::new(SystemClock));
 
+    // `THEODORE_LIVE_PR=owner/repo#n` picks another PR.
+    let spec = std::env::var("THEODORE_LIVE_PR").unwrap_or_else(|_| "rust-lang/rust#1".into());
+    let (slug, number) = spec.split_once('#').expect("owner/repo#n");
+    let (owner, name) = slug.split_once('/').expect("owner/repo#n");
+    let number: u64 = number.parse().expect("PR number");
     let pr = PrRef {
         repo: RepoRef {
             host: HostKind::Github,
-            owner: "rust-lang".into(),
-            name: "rust".into(),
+            owner: owner.into(),
+            name: name.into(),
         },
-        number: 1,
+        number,
         host_id: None,
     };
 
@@ -52,5 +57,5 @@ async fn fetches_a_real_public_pr() {
     };
 
     assert!(!detail.summary.title.is_empty());
-    assert_eq!(detail.summary.pr.number, 1);
+    assert_eq!(detail.summary.pr.number, number);
 }

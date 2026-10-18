@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use theodore_ports::HostResult;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct PageInfo {
     #[serde(rename = "hasNextPage")]
     pub has_next_page: bool,
@@ -15,7 +15,8 @@ pub(crate) struct PageInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Connection<N> {
     pub nodes: Vec<Option<N>>,
-    #[serde(rename = "pageInfo")]
+    /// Absent when the query selects only the first page (`first: 100`).
+    #[serde(rename = "pageInfo", default)]
     pub page_info: PageInfo,
 }
 
@@ -123,5 +124,17 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result, vec![1, 2]);
+    }
+}
+
+#[cfg(test)]
+mod page_info_tests {
+    use super::*;
+
+    #[test]
+    fn connection_without_page_info_decodes() {
+        let c: Connection<serde_json::Value> =
+            serde_json::from_str(r#"{"nodes":[{"name":"bug"}]}"#).expect("decode");
+        assert_eq!(c.into_nodes().len(), 1);
     }
 }
