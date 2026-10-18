@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use theodore_domain::{
-    AgentId, Anchor, Author, Draft, Finding, Group, Grouping, HunkId, Millis, PrDetail, PrId,
-    PrSummary, ReviewEvent, Revision, Sha, SnoozeUntil, Task, Thread, Usage, ViewedState,
+    AgentId, Anchor, Author, Draft, Finding, Group, Grouping, HostKind, HunkId, Millis, Person,
+    PrDetail, PrId, PrSummary, ReviewEvent, Revision, Sha, SnoozeUntil, Task, TaskId, Thread,
+    ThreadId, Usage, ViewedState,
 };
 
 /// Model names used in transactions and sync frames.
@@ -220,6 +221,69 @@ pub struct CommandError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenSource {
+    Keychain,
+    Gh,
+    Env,
+    None,
+}
+
+/// Host connection state for onboarding and Settings → Account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct HostAuthStatus {
+    pub host: HostKind,
+    pub connected: bool,
+    pub login: Option<String>,
+    pub source: TokenSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SetTokenRequest {
+    pub host: HostKind,
+    /// `None` removes the stored token.
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ReplyRequest {
+    pub pr: PrId,
+    pub thread: ThreadId,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ResolveRequest {
+    pub pr: PrId,
+    pub thread: ThreadId,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SkillInfo {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    /// `built-in`, `~/.claude/skills` or `<owner>/<repo> · .claude/skills`
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct DelegateRequest {
+    pub task: TaskId,
+    /// Empty = use the `agents.fix` setting.
+    pub agent: Option<AgentId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct TaskDecision {
+    pub task: TaskId,
+    pub accept: bool,
+    /// Why a fix was rejected (sent back to the agent on the next attempt).
+    pub reason: Option<String>,
+}
+
 // ── ephemeral events (core → UI, not persisted) ─────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -352,7 +416,15 @@ pub fn types() -> specta::Types {
         .register::<Thread>()
         .register::<Draft>()
         .register::<Finding>()
-        .register::<Task>();
+        .register::<Task>()
+        .register::<Person>()
+        .register::<HostAuthStatus>()
+        .register::<SetTokenRequest>()
+        .register::<ReplyRequest>()
+        .register::<ResolveRequest>()
+        .register::<SkillInfo>()
+        .register::<DelegateRequest>()
+        .register::<TaskDecision>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

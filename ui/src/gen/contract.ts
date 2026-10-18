@@ -93,6 +93,12 @@ export type Commit = {
 	at: number,
 };
 
+export type DelegateRequest = {
+	task: TaskId,
+	/**  Empty = use the `agents.fix` setting. */
+	agent: AgentId | null,
+};
+
 export type DiffLine = {
 	kind: LineKind,
 	text: string,
@@ -201,6 +207,14 @@ export type GroupKind = "normal" |
 export type Grouping = {
 	rev: Sha,
 	groups: Group[],
+};
+
+/**  Host connection state for onboarding and Settings → Account. */
+export type HostAuthStatus = {
+	host: HostKind,
+	connected: boolean,
+	login: string | null,
+	source: TokenSource,
 };
 
 export type HostKind = "github" | "gitlab" | "bitbucket" |
@@ -314,11 +328,23 @@ export type PrSummary = {
 	url: string,
 };
 
+export type ReplyRequest = {
+	pr: PrId,
+	thread: ThreadId,
+	body: string,
+};
+
 /**  Host-neutral repository reference. */
 export type RepoRef = {
 	host: HostKind,
 	owner: string,
 	name: string,
+};
+
+export type ResolveRequest = {
+	pr: PrId,
+	thread: ThreadId,
+	resolved: boolean,
 };
 
 export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
@@ -352,6 +378,12 @@ export type RunSkillRequest = {
 
 export type RunStatus = "running" | "done" | "cancelled" | "failed" | "stalled";
 
+export type SetTokenRequest = {
+	host: HostKind,
+	/**  `None` removes the stored token. */
+	token: string | null,
+};
+
 export type Setting = {
 	/**  e.g. `agents.grouping`, `updates.channel` */
 	key: string,
@@ -367,6 +399,14 @@ export type Sha = string;
 export type Side = "old" | "new";
 
 export type SkillId = string;
+
+export type SkillInfo = {
+	id: string,
+	title: string,
+	description: string,
+	/**  `built-in`, `~/.claude/skills` or `<owner>/<repo> · .claude/skills` */
+	source: string,
+};
 
 export type SkillRun = {
 	id: string,
@@ -412,6 +452,13 @@ export type Task = {
 	created_at: number,
 };
 
+export type TaskDecision = {
+	task: TaskId,
+	accept: boolean,
+	/**  Why a fix was rejected (sent back to the agent on the next attempt). */
+	reason: string | null,
+};
+
 export type TaskId = string;
 
 export type TaskStatus = "todo" | "progress" |
@@ -429,6 +476,8 @@ export type Thread = {
 export type ThreadId = string;
 
 export type ToastLevel = "info" | "warn" | "error";
+
+export type TokenSource = "keychain" | "gh" | "env" | "none";
 
 export type Transaction = {
 	/**  Client-generated, for de-duplication on retry. */
