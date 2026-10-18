@@ -36,6 +36,15 @@ export const commands = {
 	 *  idle (no agent running, outbox empty) — never forced.
 	 */
 	installUpdate: () => typedError<null, CommandError>(__TAURI_INVOKE("install_update")),
+	refreshInbox: () => typedError<null, CommandError>(__TAURI_INVOKE("refresh_inbox")),
+	viewer: () => typedError<Person, CommandError>(__TAURI_INVOKE("viewer")),
+	hostStatus: () => typedError<HostAuthStatus, CommandError>(__TAURI_INVOKE("host_status")),
+	setHostToken: (req: SetTokenRequest) => typedError<HostAuthStatus, CommandError>(__TAURI_INVOKE("set_host_token", { req })),
+	replyThread: (req: ReplyRequest) => typedError<null, CommandError>(__TAURI_INVOKE("reply_thread", { req })),
+	resolveThread: (req: ResolveRequest) => typedError<null, CommandError>(__TAURI_INVOKE("resolve_thread", { req })),
+	listSkills: (pr: string | null) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("list_skills", { pr })),
+	delegateTask: (req: DelegateRequest) => typedError<string, CommandError>(__TAURI_INVOKE("delegate_task", { req })),
+	decideTask: (req: TaskDecision) => typedError<null, CommandError>(__TAURI_INVOKE("decide_task", { req })),
 };
 
 /* Types */
@@ -90,6 +99,12 @@ export type CommandError = {
 	message: string,
 };
 
+export type DelegateRequest = {
+	task: TaskId,
+	/**  Empty = use the `agents.fix` setting. */
+	agent: AgentId | null,
+};
+
 export type DiffLine = {
 	kind: LineKind,
 	text: string,
@@ -126,6 +141,18 @@ export type FileRequest = {
 
 export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied";
 
+/**  Host connection state for onboarding and Settings → Account. */
+export type HostAuthStatus = {
+	host: HostKind,
+	connected: boolean,
+	login: string | null,
+	source: TokenSource,
+};
+
+export type HostKind = "github" | "gitlab" | "bitbucket" |
+/**  A local branch reviewed without a host. */
+"local";
+
 /**  Unit of grouping. Belongs to exactly one group. */
 export type Hunk = {
 	id: HunkId,
@@ -157,7 +184,25 @@ export type OpenPrResponse = {
 	head: Sha,
 };
 
+export type Person = {
+	login: string,
+	name: string | null,
+	avatar_url: string | null,
+};
+
 export type PrId = string;
+
+export type ReplyRequest = {
+	pr: PrId,
+	thread: ThreadId,
+	body: string,
+};
+
+export type ResolveRequest = {
+	pr: PrId,
+	thread: ThreadId,
+	resolved: boolean,
+};
 
 export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
 
@@ -180,9 +225,23 @@ export type RunSkillRequest = {
 	agents: AgentId[],
 };
 
+export type SetTokenRequest = {
+	host: HostKind,
+	/**  `None` removes the stored token. */
+	token: string | null,
+};
+
 export type Sha = string;
 
 export type Side = "old" | "new";
+
+export type SkillInfo = {
+	id: string,
+	title: string,
+	description: string,
+	/**  `built-in`, `~/.claude/skills` or `<owner>/<repo> · .claude/skills` */
+	source: string,
+};
 
 export type SubmitReviewRequest = {
 	pr: PrId,
@@ -202,7 +261,20 @@ export type SyncFrame = {
 	actions: WireAction[],
 };
 
+export type TaskDecision = {
+	task: TaskId,
+	accept: boolean,
+	/**  Why a fix was rejected (sent back to the agent on the next attempt). */
+	reason: string | null,
+};
+
+export type TaskId = string;
+
+export type ThreadId = string;
+
 export type ToastLevel = "info" | "warn" | "error";
+
+export type TokenSource = "keychain" | "gh" | "env" | "none";
 
 export type Transaction = {
 	/**  Client-generated, for de-duplication on retry. */

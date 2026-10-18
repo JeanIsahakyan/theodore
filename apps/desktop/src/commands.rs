@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 use theodore_contract::{
-    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, FileRequest,
-    OpenPrRequest, OpenPrResponse, RevisionRequest, RunSkillRequest, SubmitReviewRequest,
-    SyncFrame, Transaction, TransactionResult, UpdateInfo,
+    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, DelegateRequest,
+    FileRequest, HostAuthStatus, OpenPrRequest, OpenPrResponse, ReplyRequest, ResolveRequest,
+    RevisionRequest, RunSkillRequest, SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame,
+    TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
-use theodore_domain::{PrId, Revision};
+use theodore_domain::{Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 use crate::updater;
@@ -117,6 +118,80 @@ pub async fn detect_agents(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Vec<AgentStatus>, CommandError> {
     core.detect_agents().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn refresh_inbox(core: State<'_, Arc<dyn CoreApi>>) -> Result<(), CommandError> {
+    core.refresh_inbox().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn viewer(core: State<'_, Arc<dyn CoreApi>>) -> Result<Person, CommandError> {
+    core.viewer().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn host_status(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<HostAuthStatus, CommandError> {
+    core.host_status().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_host_token(
+    req: SetTokenRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<HostAuthStatus, CommandError> {
+    core.set_host_token(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn reply_thread(
+    req: ReplyRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.reply_thread(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_thread(
+    req: ResolveRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.resolve_thread(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_skills(
+    pr: Option<PrId>,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<SkillInfo>, CommandError> {
+    core.list_skills(pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn delegate_task(
+    req: DelegateRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    core.delegate_task(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn decide_task(
+    req: TaskDecision,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.decide_task(req).await
 }
 
 /// The core doesn't know about updates the shell already downloaded in the

@@ -3,11 +3,12 @@
 use async_trait::async_trait;
 use theodore_app::{AppError, Core};
 use theodore_contract::{
-    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, FileRequest,
-    OpenPrRequest, OpenPrResponse, RevisionRequest, RunSkillRequest, SubmitReviewRequest,
-    SyncFrame, Transaction, TransactionResult, UpdateInfo,
+    AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError, DelegateRequest,
+    FileRequest, HostAuthStatus, OpenPrRequest, OpenPrResponse, ReplyRequest, ResolveRequest,
+    RevisionRequest, RunSkillRequest, SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame,
+    TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
-use theodore_domain::{PrId, Revision};
+use theodore_domain::{Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 
@@ -102,6 +103,33 @@ impl CoreApi for AppCore {
     }
     async fn install_update(&self) -> Result<(), CommandError> {
         Ok(())
+    }
+    async fn refresh_inbox(&self) -> Result<(), CommandError> {
+        self.core.refresh_inbox().await.map_err(err)
+    }
+    async fn viewer(&self) -> Result<Person, CommandError> {
+        self.core.viewer().await.map_err(err)
+    }
+    async fn host_status(&self) -> Result<HostAuthStatus, CommandError> {
+        self.core.host_status().await.map_err(err)
+    }
+    async fn set_host_token(&self, req: SetTokenRequest) -> Result<HostAuthStatus, CommandError> {
+        self.core.set_host_token(req).await.map_err(err)
+    }
+    async fn reply_thread(&self, req: ReplyRequest) -> Result<(), CommandError> {
+        self.core.reply_thread(req).await.map_err(err)
+    }
+    async fn resolve_thread(&self, req: ResolveRequest) -> Result<(), CommandError> {
+        self.core.resolve_thread(req).await.map_err(err)
+    }
+    async fn list_skills(&self, pr: Option<PrId>) -> Result<Vec<SkillInfo>, CommandError> {
+        self.core.list_skills(pr).await.map_err(err)
+    }
+    async fn delegate_task(&self, req: DelegateRequest) -> Result<String, CommandError> {
+        self.core.delegate_task(req).await.map_err(err)
+    }
+    async fn decide_task(&self, req: TaskDecision) -> Result<(), CommandError> {
+        self.core.decide_task(req).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await
