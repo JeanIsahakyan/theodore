@@ -118,8 +118,9 @@ export class UiStore {
           opts.newTab ||
           this.route.name === 'review' ||
           cur < 0;
+        // A new tab always goes last, whatever opened it.
         tabs = push
-          ? [...tabs.slice(0, cur + 1), route, ...tabs.slice(cur + 1)]
+          ? [...tabs, route]
           : tabs.map((t, i) => (i === cur ? route : t));
       }
       this.back = this.route.name === 'review' ? this.back : this.route;
