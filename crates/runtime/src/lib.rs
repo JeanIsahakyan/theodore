@@ -2,6 +2,7 @@
 //! The desktop shell and the CLI both start the core through here.
 
 mod grouper;
+mod hosts;
 mod token;
 mod tools;
 
@@ -13,6 +14,7 @@ use theodore_app::{Core, Deps, Receivers};
 use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, Secrets, Store, SystemClock};
 
 pub use grouper::GroupingGrouper;
+pub use hosts::Hosts;
 pub use token::HostToken;
 pub use tools::{CoreTools, McpRunTools};
 
@@ -71,10 +73,15 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let secrets: Arc<dyn Secrets> = Arc::new(theodore_secrets::KeychainSecrets::new());
     let token = Arc::new(HostToken::new(secrets.clone()));
-    let host = Arc::new(theodore_host_github::GithubAdapter::new(
+    let github = Arc::new(theodore_host_github::GithubAdapter::new(
         token.clone(),
         clock.clone(),
     ));
+    let gitlab = Arc::new(theodore_host_gitlab::GitlabAdapter::new(
+        Arc::new(token::GitlabToken::new(secrets.clone())),
+        clock.clone(),
+    ));
+    let host = Arc::new(Hosts::new(github, Some(gitlab)));
     let git = Arc::new(theodore_git::GitCli::new(
         cfg.data_dir.clone(),
         token.clone(),

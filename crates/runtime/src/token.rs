@@ -81,8 +81,35 @@ impl theodore_host_http::TokenSource for HostToken {
 }
 
 impl CredentialSource for HostToken {
-    fn token_for(&self, _repo: &RepoRef) -> Option<String> {
-        theodore_host_http::TokenSource::token(self)
+    fn token_for(&self, repo: &RepoRef) -> Option<String> {
+        match repo.host {
+            theodore_domain::HostKind::Gitlab => GitlabToken::new(self.secrets.clone()).lookup(),
+            _ => theodore_host_http::TokenSource::token(self),
+        }
+    }
+}
+
+/// GitLab token: keychain → `GITLAB_TOKEN`.
+pub struct GitlabToken {
+    secrets: Arc<dyn Secrets>,
+}
+
+impl GitlabToken {
+    pub fn new(secrets: Arc<dyn Secrets>) -> Self {
+        Self { secrets }
+    }
+
+    fn lookup(&self) -> Option<String> {
+        match self.secrets.get(theodore_secrets::GITLAB_TOKEN) {
+            Ok(Some(t)) => Some(t),
+            _ => std::env::var("GITLAB_TOKEN").ok().filter(|t| !t.is_empty()),
+        }
+    }
+}
+
+impl theodore_host_http::TokenSource for GitlabToken {
+    fn token(&self) -> Option<String> {
+        self.lookup()
     }
 }
 

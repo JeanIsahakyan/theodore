@@ -12,6 +12,7 @@ theodore-contract.workspace = true
 theodore-app.workspace = true
 theodore-host-http.workspace = true
 theodore-host-github.workspace = true
+theodore-host-gitlab = { path = "../host-gitlab" }
 theodore-git.workspace = true
 theodore-agents.workspace = true
 theodore-mcp.workspace = true

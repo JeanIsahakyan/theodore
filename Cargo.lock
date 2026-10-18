@@ -5040,6 +5040,7 @@ dependencies = [
  "theodore-git",
  "theodore-grouping",
  "theodore-host-github",
+ "theodore-host-gitlab",
  "theodore-host-http",
  "theodore-mcp",
  "theodore-ports",

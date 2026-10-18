@@ -136,6 +136,28 @@ pub fn parse_pr_ref(input: &str) -> AppResult<PrRef> {
                 });
             }
         }
+        if url.host_str() == Some("gitlab.com") {
+            // gitlab.com/<namespace…>/<project>/-/merge_requests/<iid>
+            let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
+            if let Some(dash) = segments.iter().position(|s| *s == "-")
+                && segments.get(dash + 1) == Some(&"merge_requests")
+                && dash >= 2
+                && let Some(n) = segments.get(dash + 2)
+            {
+                let number: u64 = n
+                    .parse()
+                    .map_err(|_| AppError::Invalid(format!("bad MR number in {input}")))?;
+                return Ok(PrRef {
+                    repo: RepoRef {
+                        host: HostKind::Gitlab,
+                        owner: segments[..dash - 1].join("/"),
+                        name: segments[dash - 1].to_string(),
+                    },
+                    number,
+                    host_id: None,
+                });
+            }
+        }
         return Err(AppError::Invalid(format!("unsupported PR url: {input}")));
     }
     if let Some((slug, num)) = input.rsplit_once('#')
@@ -157,4 +179,24 @@ pub fn parse_pr_ref(input: &str) -> AppResult<PrRef> {
     Err(AppError::Invalid(format!(
         "cannot parse PR reference: {input}"
     )))
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    #[test]
+    fn parses_gitlab_merge_request_urls() {
+        let pr = parse_pr_ref("https://gitlab.com/group/sub/project/-/merge_requests/42").unwrap();
+        assert_eq!(pr.repo.host, HostKind::Gitlab);
+        assert_eq!(pr.repo.owner, "group/sub");
+        assert_eq!(pr.repo.name, "project");
+        assert_eq!(pr.number, 42);
+    }
+
+    #[test]
+    fn parses_github_pull_urls() {
+        let pr = parse_pr_ref("https://github.com/o/r/pull/7").unwrap();
+        assert_eq!((pr.repo.host, pr.number), (HostKind::Github, 7));
+    }
 }

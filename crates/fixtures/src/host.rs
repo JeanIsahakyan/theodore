@@ -72,6 +72,14 @@ impl HostAdapter for FixtureHost {
         theodore_domain::HostKind::Github
     }
 
+    async fn viewer(&self) -> HostResult<theodore_domain::Person> {
+        Ok(theodore_domain::Person {
+            login: "demo".into(),
+            name: Some("Demo Reviewer".into()),
+            avatar_url: None,
+        })
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             viewed: true,

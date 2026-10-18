@@ -388,6 +388,18 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn outbox_pending_count(&self) -> StoreResult<u64> {
+        let conn = self.lock()?;
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM outbox WHERE status IN ('pending', 'in_flight')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(de)?;
+        Ok(n as u64)
+    }
+
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>> {
         let conn = self.lock()?;
         let text: Option<String> = conn
