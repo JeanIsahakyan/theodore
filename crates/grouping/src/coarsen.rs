@@ -1,7 +1,8 @@
 //! Deterministic post-pass: once a grouping has more groups than the PR's
 //! size-scaled target (`target::target_group_count`) allows, merge groups
-//! with exactly one hunk into a neighbour that shares a top-level area and
-//! `GroupKind`, until the target is met or no more such merges exist.
+//! with exactly one hunk into a neighbour that shares a merge-area (see
+//! `merge_area` below) and `GroupKind`, until the target is met or no more
+//! such merges exist.
 //!
 //! No agent call involved, so it is both free and exact: it only ever moves
 //! a hunk from one group to another, never drops, duplicates or invents
@@ -47,15 +48,48 @@ pub(crate) fn merge_tiny_groups(
     groups
 }
 
-/// hunk id -> its file's top-level directory.
-fn hunk_areas(rev: &Revision) -> BTreeMap<HunkId, &str> {
+/// hunk id -> its merge-matching "area": normally the file's top-level
+/// directory, but see `merge_area` for the config/env/CI/docs exception.
+fn hunk_areas(rev: &Revision) -> BTreeMap<HunkId, String> {
     rev.files
         .iter()
         .flat_map(|f| {
-            let dir = top_level_dir(&f.path);
-            f.hunks.iter().map(move |h| (h.id.clone(), dir))
+            let area = merge_area(&f.path);
+            f.hunks.iter().map(move |h| (h.id.clone(), area.clone()))
         })
         .collect()
+}
+
+/// Shared pseudo-area for config/env/CI/docs files, regardless of their
+/// literal top-level directory. A real PR scatters exactly these files
+/// across the repo root, `.github/`, and a service's own directory even
+/// though they all support one change — e.g. a root `.env.example` key, a
+/// CI job's env var, a Dockerfile build arg and a changelog entry for the
+/// same feature (seen on migratro#77: 4 such one-hunk groups the plain
+/// top-level-directory match couldn't see were related). Everything else
+/// still matches by directory.
+const INFRA_AREA: &str = "\0infra";
+
+fn merge_area(path: &str) -> String {
+    if is_infra_file(path) {
+        INFRA_AREA.to_string()
+    } else {
+        top_level_dir(path).to_string()
+    }
+}
+
+fn is_infra_file(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let base = lower.rsplit('/').next().unwrap_or(&lower);
+    base.starts_with(".env")
+        || base == "dockerfile"
+        || base.ends_with(".dockerfile")
+        || base == "changelog.md"
+        || base == "readme.md"
+        || lower.contains("/.github/workflows/")
+        || lower.starts_with(".github/workflows/")
+        || base == ".gitlab-ci.yml"
+        || base == "jenkinsfile"
 }
 
 /// Indices of groups with at most one hunk, excluding `Hidden`, smallest
@@ -75,7 +109,7 @@ fn tiny_group_indices(groups: &[Group]) -> Vec<usize> {
 /// kind and touches the same top-level area, or `None` if there isn't one.
 fn pick_merge_target(
     groups: &[Group],
-    area: &BTreeMap<HunkId, &str>,
+    area: &BTreeMap<HunkId, String>,
     victim: usize,
 ) -> Option<usize> {
     let kind = groups[victim].kind;
@@ -83,7 +117,7 @@ fn pick_merge_target(
         .hunks
         .first()
         .and_then(|h| area.get(h))
-        .copied()?;
+        .cloned()?;
     groups
         .iter()
         .enumerate()
@@ -263,6 +297,51 @@ mod tests {
         // there is no compatible target; the pass must leave it alone
         // rather than force an incorrect merge.
         assert_eq!(after, before);
+    }
+
+    /// Regression, found on migratro#77: a real PR scattered 4 one-hunk
+    /// groups for `.env.example`, a CI workflow, a `Dockerfile` and
+    /// `README.md` across 4 different top-level directories. Plain
+    /// top-level-directory matching can't see they belong together, so the
+    /// post-pass needs the config/env/CI/docs pseudo-area to merge them.
+    #[test]
+    fn scattered_config_env_ci_docs_files_merge_into_one_infra_group() {
+        let r = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![
+                mk_file("a/core.rs", &["a1", "a2"]),
+                mk_file(".env.example", &["e1"]),
+                mk_file(".github/workflows/ci.yml", &["c1"]),
+                mk_file("apps/shell/Dockerfile", &["d1"]),
+                mk_file("README.md", &["r1"]),
+            ],
+        };
+        let groups = vec![
+            mk_group("core", GroupKind::Normal, &["a1", "a2"]),
+            mk_group("env", GroupKind::Normal, &["e1"]),
+            mk_group("ci", GroupKind::Normal, &["c1"]),
+            mk_group("docker", GroupKind::Normal, &["d1"]),
+            mk_group("readme", GroupKind::Normal, &["r1"]),
+        ];
+        let after = merge_tiny_groups(&r, groups, 2);
+        assert_eq!(
+            after.len(),
+            2,
+            "the 4 scattered infra groups should all land in one"
+        );
+        let g = Grouping {
+            rev: r.head.clone(),
+            groups: after.clone(),
+        };
+        assert!(grouping::validate(&r, &g).is_ok());
+        let infra = after.iter().find(|g| g.id != GroupId::new("core")).unwrap();
+        for id in ["e1", "c1", "d1", "r1"] {
+            assert!(
+                infra.hunks.contains(&HunkId::new(id)),
+                "{id} should have joined the merged infra group"
+            );
+        }
     }
 
     #[test]
