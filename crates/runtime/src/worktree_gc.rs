@@ -196,6 +196,8 @@ mod tests {
             required_approvals: None,
             updated_at: 0 as Millis,
             url: String::new(),
+            review_decision: None,
+            conflicts: false,
         }
     }
 

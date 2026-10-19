@@ -74,6 +74,11 @@ async fn get_pr_probes_etag_then_builds_full_detail_from_graphql() {
     assert_eq!(detail.summary.approvals, 1);
     assert_eq!(detail.summary.checks, CheckRollup::Pass);
     assert_eq!(
+        detail.summary.review_decision,
+        Some(theodore_domain::ReviewDecision::Approved)
+    );
+    assert!(!detail.summary.conflicts);
+    assert_eq!(
         detail.base_sha.as_str(),
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
@@ -84,10 +89,16 @@ async fn get_pr_probes_etag_then_builds_full_detail_from_graphql() {
     assert_eq!(detail.commits.len(), 1);
     assert_eq!(detail.commits[0].title, "feat: add feature X");
     assert_eq!(detail.commits[0].author.login, "alice");
+    // The fixture's viewer (carol) last reviewed at 02:00, this commit
+    // landed at 03:00: new since that review.
+    assert!(detail.commits[0].after_my_review);
 
     assert_eq!(detail.checks.len(), 2);
     assert_eq!(detail.checks[0].status, CheckStatus::Pass);
     assert_eq!(detail.checks[0].duration_ms, Some(60_000));
+    // The REST numeric id (`databaseId`), not the opaque GraphQL node id:
+    // `rerun_check` needs it for `check-runs/{id}/rerequest`.
+    assert_eq!(detail.checks[0].id, "900001");
     assert_eq!(detail.checks[1].name, "ci/legacy");
 
     // One requested-review (User), one requested-review (Team), one latest review.

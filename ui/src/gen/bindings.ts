@@ -45,7 +45,7 @@ export const commands = {
 	listSkills: (pr: string | null) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("list_skills", { pr })),
 	delegateTask: (req: DelegateRequest) => typedError<string, CommandError>(__TAURI_INVOKE("delegate_task", { req })),
 	decideTask: (req: TaskDecision) => typedError<null, CommandError>(__TAURI_INVOKE("decide_task", { req })),
-	listHostRepos: () => typedError<RepoRef[], CommandError>(__TAURI_INVOKE("list_host_repos")),
+	listHostRepos: () => typedError<HostRepo[], CommandError>(__TAURI_INVOKE("list_host_repos")),
 	addProject: (req: AddProjectRequest) => typedError<Project, CommandError>(__TAURI_INVOKE("add_project", { req })),
 	removeProject: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("remove_project", { id })),
 	refreshProject: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("refresh_project", { id })),
@@ -72,6 +72,8 @@ export const commands = {
 	interdiff: (req: InterdiffRequest) => typedError<InterdiffEntry[], CommandError>(__TAURI_INVOKE("interdiff", { req })),
 	loginStart: () => typedError<DeviceLogin, CommandError>(__TAURI_INVOKE("login_start")),
 	loginPoll: () => typedError<LoginState, CommandError>(__TAURI_INVOKE("login_poll")),
+	rerunCheck: (req: RerunCheckRequest) => typedError<null, CommandError>(__TAURI_INVOKE("rerun_check", { req })),
+	triage: (req: TriageRequest) => typedError<null, CommandError>(__TAURI_INVOKE("triage", { req })),
 };
 
 /* Types */
@@ -232,6 +234,17 @@ export type HostAuthStatus = {
 export type HostKind = "github" | "gitlab" | "bitbucket" |
 /**  A local branch reviewed without a host. */
 "local";
+
+/**
+ *  A repository as listed by a host, for the Add project picker. Not a
+ *  synced model — returned directly by the `list_host_repos` command.
+ */
+export type HostRepo = {
+	repo: RepoRef,
+	description: string | null,
+	private: boolean,
+	pushed_at: number | null,
+};
 
 /**  Unit of grouping. Belongs to exactly one group. */
 export type Hunk = {
@@ -413,6 +426,12 @@ export type RepoRef = {
 	name: string,
 };
 
+export type RerunCheckRequest = {
+	pr: PrId,
+	/**  `Check::id`, as reported in `PrDetail::checks`. */
+	check: string,
+};
+
 export type ResolveRequest = {
 	pr: PrId,
 	thread: ThreadId,
@@ -532,6 +551,19 @@ export type Transaction = {
 export type TransactionResult = { status: "ok"; last_sync_id: number } |
 /**  Rejected by domain validation; the UI rolls back. */
 { status: "rejected"; reason: string };
+
+export type TriageAction =
+/**  The viewer takes the review themselves. */
+{ action: "take" } |
+/**  The viewer declines; the inbox row is marked done. */
+{ action: "decline" } |
+/**  Hand the review to someone else (logins). */
+{ action: "reassign"; to: string[] };
+
+export type TriageRequest = {
+	pr: PrId,
+	action: TriageAction,
+};
 
 export type UpdateInfo = {
 	version: string,

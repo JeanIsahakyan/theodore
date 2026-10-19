@@ -42,7 +42,13 @@ import {
   Tooltip,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { LocalBranch, PrState, Project, RepoRef } from '../gen/contract';
+import type {
+  HostRepo,
+  LocalBranch,
+  PrState,
+  Project,
+  RepoRef,
+} from '../gen/contract';
 import {
   addProject,
   openBranch as openBranchAction,
@@ -89,10 +95,12 @@ export function projectLabel(p: Project): string {
 }
 
 /** Repos matching a search query on "owner/name", case-insensitive. */
-export function filterHostRepos(repos: RepoRef[], query: string): RepoRef[] {
+export function filterHostRepos(repos: HostRepo[], query: string): HostRepo[] {
   const q = query.trim().toLowerCase();
   if (!q) return repos;
-  return repos.filter((r) => `${r.owner}/${r.name}`.toLowerCase().includes(q));
+  return repos.filter((r) =>
+    `${r.repo.owner}/${r.repo.name}`.toLowerCase().includes(q),
+  );
 }
 
 export interface ProjectDisplay {
@@ -154,16 +162,16 @@ export function boardColumns(
 /** Repos grouped by owner/org, in first-seen order — the picker's section
  *  headers. */
 export function groupByOwner(
-  repos: RepoRef[],
-): { owner: string; repos: RepoRef[] }[] {
+  repos: HostRepo[],
+): { owner: string; repos: HostRepo[] }[] {
   const order: string[] = [];
-  const byOwner = new Map<string, RepoRef[]>();
+  const byOwner = new Map<string, HostRepo[]>();
   for (const r of repos) {
-    if (!byOwner.has(r.owner)) {
-      order.push(r.owner);
-      byOwner.set(r.owner, []);
+    if (!byOwner.has(r.repo.owner)) {
+      order.push(r.repo.owner);
+      byOwner.set(r.repo.owner, []);
     }
-    byOwner.get(r.owner)!.push(r);
+    byOwner.get(r.repo.owner)!.push(r);
   }
   return order.map((owner) => ({ owner, repos: byOwner.get(owner)! }));
 }
@@ -181,26 +189,20 @@ function ownerAvatarUrl(host: string, owner: string): string | null {
 }
 
 /** One repo row in the picker: a disabled "Added" row for repos that are
- *  already a project, otherwise a checkbox — `RepoRef` doesn't carry
- *  `description` / `private` / `pushed_at` yet, so those render only when
- *  a future contract change adds them. */
+ *  already a project, otherwise a checkbox — description, visibility and
+ *  last push come straight off `HostRepo`. */
 function RepoRow({
   r,
   already,
   prCount,
 }: {
-  r: RepoRef;
+  r: HostRepo;
   already: boolean;
   prCount: number;
 }) {
-  const extra = r as Partial<{
-    description: string;
-    private: boolean;
-    pushed_at: number;
-  }>;
   const sub = [
-    extra.description,
-    extra.pushed_at != null ? `pushed ${ago(extra.pushed_at)}` : null,
+    r.description,
+    r.pushed_at != null ? `pushed ${ago(r.pushed_at)}` : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -208,8 +210,8 @@ function RepoRow({
   const body = (
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-        <span className="min-w-0 truncate">{r.name}</span>
-        {extra.private && <Lock className="size-3.5 shrink-0 text-muted" />}
+        <span className="min-w-0 truncate">{r.repo.name}</span>
+        {r.private && <Lock className="size-3.5 shrink-0 text-muted" />}
       </span>
       {sub && <span className="truncate text-xs text-muted">{sub}</span>}
     </span>
@@ -231,7 +233,7 @@ function RepoRow({
 
   return (
     <Checkbox
-      value={repoKey(r)}
+      value={repoKey(r.repo)}
       className="rounded-2xl px-3 py-2 hover:bg-default/50"
     >
       <Checkbox.Content className="w-full">
@@ -258,7 +260,7 @@ export const ProjectPicker = observer(function ProjectPicker({
   onAdded?: (p: Project) => void;
 }) {
   const store = useRootStore();
-  const [repos, setRepos] = useState<RepoRef[] | 'unready' | null>(null);
+  const [repos, setRepos] = useState<HostRepo[] | 'unready' | null>(null);
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<string[]>([]);
   const [addingFolder, setAddingFolder] = useState(false);
@@ -282,17 +284,15 @@ export const ProjectPicker = observer(function ProjectPicker({
   const addLocalFolder = () => {
     setAddingFolder(true);
     void pickFolder(store)
-      .then((path) =>
-        path ? addProject(store, { repo: null, path }) : null,
-      )
+      .then((path) => (path ? addProject(store, { repo: null, path }) : null))
       .then((p) => p && onAdded?.(p))
       .finally(() => setAddingFolder(false));
   };
 
   const addPicked = async () => {
     setAddingPicked(true);
-    for (const r of shown.filter((r) => picked.includes(repoKey(r)))) {
-      const p = await addProject(store, { repo: r, path: null });
+    for (const r of shown.filter((r) => picked.includes(repoKey(r.repo)))) {
+      const p = await addProject(store, { repo: r.repo, path: null });
       if (p) onAdded?.(p);
     }
     setPicked([]);
@@ -346,7 +346,7 @@ export const ProjectPicker = observer(function ProjectPicker({
                       person={{
                         login: owner,
                         name: null,
-                        avatar_url: ownerAvatarUrl(group[0]!.host, owner),
+                        avatar_url: ownerAvatarUrl(group[0]!.repo.host, owner),
                       }}
                       size={16}
                     />
@@ -354,10 +354,10 @@ export const ProjectPicker = observer(function ProjectPicker({
                   </div>
                   {group.map((r) => (
                     <RepoRow
-                      key={repoKey(r)}
+                      key={repoKey(r.repo)}
                       r={r}
-                      already={addedKeys.has(repoKey(r))}
-                      prCount={prsWithYou(prItems, r)}
+                      already={addedKeys.has(repoKey(r.repo))}
+                      prCount={prsWithYou(prItems, r.repo)}
                     />
                   ))}
                 </div>

@@ -8,11 +8,12 @@ use theodore_contract::{
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
     FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
     MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame,
-    TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
+    UpdateInfo,
 };
-use theodore_domain::{Person, PrId, RepoRef, Revision};
+use theodore_domain::{HostRepo, Person, PrId, Revision};
 
 fn not_ready() -> CommandError {
     CommandError {
@@ -49,7 +50,7 @@ pub trait CoreApi: Send + Sync {
     async fn list_skills(&self, pr: Option<PrId>) -> Result<Vec<SkillInfo>, CommandError>;
     async fn delegate_task(&self, req: DelegateRequest) -> Result<String, CommandError>;
     async fn decide_task(&self, req: TaskDecision) -> Result<(), CommandError>;
-    async fn list_host_repos(&self) -> Result<Vec<RepoRef>, CommandError>;
+    async fn list_host_repos(&self) -> Result<Vec<HostRepo>, CommandError>;
     async fn add_project(&self, req: AddProjectRequest) -> Result<Project, CommandError>;
     async fn remove_project(&self, id: String) -> Result<(), CommandError>;
     async fn refresh_project(&self, id: String) -> Result<(), CommandError>;
@@ -72,6 +73,8 @@ pub trait CoreApi: Send + Sync {
     async fn login_start(&self) -> Result<DeviceLogin, CommandError>;
     /// Polls once for that login's outcome.
     async fn login_poll(&self) -> Result<LoginState, CommandError>;
+    async fn rerun_check(&self, req: RerunCheckRequest) -> Result<(), CommandError>;
+    async fn triage(&self, req: TriageRequest) -> Result<(), CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -163,7 +166,7 @@ impl CoreApi for NotReadyCoreApi {
     async fn decide_task(&self, _req: TaskDecision) -> Result<(), CommandError> {
         Err(not_ready())
     }
-    async fn list_host_repos(&self) -> Result<Vec<RepoRef>, CommandError> {
+    async fn list_host_repos(&self) -> Result<Vec<HostRepo>, CommandError> {
         Err(not_ready())
     }
     async fn add_project(&self, _req: AddProjectRequest) -> Result<Project, CommandError> {
@@ -224,6 +227,12 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn login_poll(&self) -> Result<LoginState, CommandError> {
+        Err(not_ready())
+    }
+    async fn rerun_check(&self, _req: RerunCheckRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn triage(&self, _req: TriageRequest) -> Result<(), CommandError> {
         Err(not_ready())
     }
 }

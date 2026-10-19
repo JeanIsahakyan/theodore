@@ -271,6 +271,8 @@ fn main() {
             required_approvals: Some(1),
             updated_at: 1_700_000_000_000,
             url: "https://example.com/octo/webhooks/pull/101".to_string(),
+            review_decision: Some(theodore_domain::ReviewDecision::ReviewRequired),
+            conflicts: false,
         },
         body: "Retries webhook delivery with exponential backoff, dead-letters after 5 attempts."
             .to_string(),
@@ -280,6 +282,8 @@ fn main() {
             title: "webhook retry with backoff".to_string(),
             author: author1.clone(),
             at: 1_700_000_000_000,
+            // Demo data for the "new since you last looked" divider.
+            after_my_review: true,
         }],
         checks: vec![
             Check {
@@ -359,6 +363,8 @@ fn main() {
             required_approvals: Some(1),
             updated_at: 1_700_100_000_000,
             url: "https://example.com/octo/api/pull/7".to_string(),
+            review_decision: Some(theodore_domain::ReviewDecision::Approved),
+            conflicts: false,
         },
         body: "`next` leaked past the last page; return `null` once the cursor runs out."
             .to_string(),
@@ -368,6 +374,7 @@ fn main() {
             title: "fix pagination cursor".to_string(),
             author: author2.clone(),
             at: 1_700_100_000_000,
+            after_my_review: false,
         }],
         checks: vec![Check {
             id: "unit".to_string(),

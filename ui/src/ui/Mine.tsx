@@ -1,23 +1,136 @@
-/** "My PRs": pull requests authored by the signed-in host user (`viewer`). */
-import { useEffect } from 'react';
+/**
+ * "My PRs": pull requests authored by the signed-in host user (`viewer`),
+ * grouped by what happens next — ported from the prototype's `nextStep` /
+ * `mergeGates`, computed from `PrSummary` alone (no per-row `merge_info`
+ * fetch): checks, approvals, `review_decision` and `conflicts` are all on
+ * the summary already.
+ */
+import { useEffect, useState } from 'react';
 import { CodePullRequest } from '@gravity-ui/icons';
-import { Header, ListBox } from '@heroui/react';
+import { Chip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Key } from 'react';
-import type { PrState } from '../gen/contract';
+import type { PrId, PrSummary } from '../gen/contract';
 import { loadViewer } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
-import { Empty, Hints, K } from './bits';
+import { Avatar, CheckIcon, Empty, Hints, K } from './bits';
 import { RowsSkeleton } from './Loading';
-import { PrRow, ViewHeader } from './List';
+import { RowList, ViewHeader, ago } from './List';
+import { PRIcon, ReviewDecisionIcon } from './StatusIcon';
 import { useViewKeys } from './keys';
 
-const SECTIONS: { id: PrState; title: string }[] = [
+export type Step =
+  'merge' | 'yours' | 'waiting' | 'draft' | 'merged' | 'closed';
+
+const STEPS: { id: Step; title: string }[] = [
+  { id: 'merge', title: 'Ready to merge' },
+  { id: 'yours', title: 'Your move' },
+  { id: 'waiting', title: 'Waiting on reviewers' },
   { id: 'draft', title: 'Drafts' },
-  { id: 'open', title: 'Open' },
   { id: 'merged', title: 'Merged' },
   { id: 'closed', title: 'Closed' },
 ];
+
+export interface Gate {
+  ok: boolean;
+  label: string;
+}
+
+/** The merge gates a PR summary alone can answer, without `merge_info`. */
+export function gatesFor(p: PrSummary): Gate[] {
+  const gates: Gate[] = [
+    {
+      ok: p.checks !== 'fail',
+      label:
+        p.checks === 'fail'
+          ? 'checks failing'
+          : p.checks === 'pending'
+            ? 'checks running'
+            : 'checks passing',
+    },
+  ];
+  if (p.required_approvals != null) {
+    gates.push({
+      ok: p.approvals >= p.required_approvals,
+      label: `${p.approvals}/${p.required_approvals} approvals`,
+    });
+  }
+  if (p.review_decision === 'changes_requested') {
+    gates.push({ ok: false, label: 'changes requested' });
+  }
+  if (p.conflicts) {
+    gates.push({ ok: false, label: 'conflicts with base' });
+  }
+  return gates;
+}
+
+export function nextStep(p: PrSummary): Step {
+  if (p.state === 'merged') return 'merged';
+  if (p.state === 'closed') return 'closed';
+  if (p.state === 'draft') return 'draft';
+  const blocked = gatesFor(p).some((g) => !g.ok);
+  if (!blocked) return 'merge';
+  const yours =
+    p.checks === 'fail' ||
+    p.conflicts ||
+    p.review_decision === 'changes_requested';
+  return yours ? 'yours' : 'waiting';
+}
+
+function MineRow({ id, sel }: { id: PrId; sel: boolean }) {
+  const store = useRootStore();
+  const p = store.models.prSummaries.get(id);
+  if (!p) return null;
+  const gates = gatesFor(p);
+  const blockers = gates.filter((g) => !g.ok);
+  return (
+    <div
+      id={`R-${id}`}
+      className={`minerow grid h-12 w-full grid-cols-[16px_16px_72px_minmax(200px,1fr)_minmax(0,1.4fr)_22px_16px_40px] items-center gap-3 ${
+        sel ? 'sel' : ''
+      }`}
+    >
+      <PRIcon status={p.state} />
+      <span className="flex items-center justify-center">
+        {p.state === 'open' && p.review_decision && (
+          <ReviewDecisionIcon decision={p.review_decision} />
+        )}
+      </span>
+      <span
+        className="truncate font-mono text-xs text-muted"
+        title={`${p.pr.repo.owner}/${p.pr.repo.name}#${p.pr.number}`}
+      >
+        {p.pr.repo.name}#{p.pr.number}
+      </span>
+      <span className="min-w-0 truncate font-medium" title={p.title}>
+        {p.title}
+      </span>
+      <span className="flex min-w-0 gap-1 overflow-hidden">
+        {p.state === 'merged' ? (
+          <span className="text-xs text-muted">merged</span>
+        ) : blockers.length ? (
+          blockers.map((b) => (
+            <Chip
+              key={b.label}
+              size="sm"
+              variant="soft"
+              color="warning"
+              className="blocker min-w-0 shrink truncate whitespace-nowrap"
+            >
+              {b.label}
+            </Chip>
+          ))
+        ) : (
+          <Chip size="sm" variant="soft" color="success">
+            ready to merge
+          </Chip>
+        )}
+      </span>
+      <Avatar person={p.author} size={18} />
+      <CheckIcon s={p.checks} />
+      <span className="text-right text-xs text-muted">{ago(p.updated_at)}</span>
+    </div>
+  );
+}
 
 function useMineKeys(order: string[]) {
   const ui = useUi();
@@ -58,6 +171,10 @@ function useMineKeys(order: string[]) {
 export const Mine = observer(function Mine() {
   const store = useRootStore();
   const ui = useUi();
+  const [closed, setClosed] = useState<Record<string, boolean>>({
+    merged: true,
+    closed: true,
+  });
 
   useEffect(() => {
     void loadViewer(store);
@@ -69,29 +186,31 @@ export const Mine = observer(function Mine() {
         .all()
         .filter((p) => p.author.login === viewer.login)
     : [];
-  const groups = SECTIONS.map((s) => ({
+  const groups = STEPS.map((s) => ({
     ...s,
-    items: mine.filter((p) => p.state === s.id),
+    items: mine.filter((p) => nextStep(p) === s.id),
   })).filter((g) => g.items.length);
-  const order = groups.flatMap((g) => g.items.map((p) => p.id));
+  const order = groups.flatMap((g) =>
+    closed[g.id] ? [] : g.items.map((p) => p.id),
+  );
   useMineKeys(order);
 
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
-      <ViewHeader title="My PRs" count={mine.length} />
+      <ViewHeader
+        title="My PRs"
+        count={mine.filter((p) => p.state !== 'merged').length}
+      />
       <div className="flex min-h-0 flex-1">
-        <ListBox
-          aria-label="My pull requests"
-          selectionMode="single"
-          selectionBehavior="replace"
-          selectedKeys={ui.selected ? [ui.selected] : []}
-          onSelectionChange={(keys) => {
-            const k = keys === 'all' ? null : [...keys][0];
-            if (k !== undefined && k !== null) ui.select(String(k));
-          }}
-          onAction={(k: Key) => ui.go({ name: 'review', pr: String(k) })}
-          className="list min-w-0 flex-1 overflow-auto p-0 pb-20"
-          renderEmptyState={() =>
+        <RowList
+          groups={groups}
+          sel={ui.selected}
+          closed={closed}
+          toggle={(id) => setClosed((c) => ({ ...c, [id]: !c[id] }))}
+          onSelect={(id) => ui.select(id)}
+          onOpen={(id) => ui.go({ name: 'review', pr: id })}
+          row={(id) => <MineRow id={id} sel={ui.selected === id} />}
+          empty={
             !viewer && store.ephemeral.viewerLoading ? (
               <RowsSkeleton rows={6} />
             ) : (
@@ -100,34 +219,13 @@ export const Mine = observer(function Mine() {
                 title={viewer ? 'No PRs of yours' : 'Not signed in'}
                 text={
                   viewer
-                    ? 'When you open a PR you authored, it shows up here.'
+                    ? 'When you open a PR you authored, it shows up here with a checklist to merge.'
                     : 'Connect GitHub in Settings → Account to see your PRs.'
                 }
               />
             )
           }
-        >
-          {groups.map((g) => (
-            <ListBox.Section key={g.id} id={g.id}>
-              <Header className="ghead sticky top-0 z-[1] flex h-10 items-center gap-2 border-b border-separator bg-surface/95 pl-[18px] pr-6 text-sm backdrop-blur">
-                <span className="font-medium">{g.title}</span>
-                <span className="tabular-nums text-muted">
-                  {g.items.length}
-                </span>
-              </Header>
-              {g.items.map((p) => (
-                <ListBox.Item
-                  key={p.id}
-                  id={p.id}
-                  textValue={p.title}
-                  className="min-h-0 rounded-none border-b border-separator px-6 py-0"
-                >
-                  <PrRow id={p.id} sel={ui.selected === p.id} picked={false} />
-                </ListBox.Item>
-              ))}
-            </ListBox.Section>
-          ))}
-        </ListBox>
+        />
       </div>
       <Hints>
         <K>J</K>

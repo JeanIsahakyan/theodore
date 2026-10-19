@@ -219,3 +219,33 @@ pub(crate) async fn delete_reaction(
     let path = format!("repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}");
     http.delete(&path).await
 }
+
+/// `POST .../check-runs/{id}/rerequest`: re-queues one check run. Works for
+/// any check-run app, including a single Actions job — but for a *failed*
+/// Actions job, `rerun_failed_jobs` is preferred (it reruns the whole job,
+/// not just the one check-run GitHub happens to have split it into).
+pub(crate) async fn rerequest_check_run(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    check_run_id: &str,
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/check-runs/{check_run_id}/rerequest");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> =
+        http.post_json(&path, &serde_json::json!({})).await?;
+    Ok(())
+}
+
+/// `POST .../actions/runs/{run_id}/rerun-failed-jobs`: reruns every failed
+/// job of an Actions workflow run.
+pub(crate) async fn rerun_workflow_failed_jobs(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    run_id: &str,
+) -> HostResult<()> {
+    let path = format!("repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs");
+    let _: theodore_host_http::HttpResponse<serde_json::Value> =
+        http.post_json(&path, &serde_json::json!({})).await?;
+    Ok(())
+}

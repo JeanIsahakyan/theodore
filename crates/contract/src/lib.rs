@@ -4,15 +4,17 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use theodore_domain::{
-    AgentId, Anchor, Author, CommentId, Draft, Finding, Group, Grouping, HostKind, HunkId, Millis,
-    Person, PrDetail, PrId, PrSummary, RepoRef, ReviewEvent, Revision, Sha, SnoozeUntil, Task,
-    TaskId, Thread, ThreadId, Usage, ViewedState,
+    AgentId, Anchor, Author, CommentId, Draft, Finding, Group, Grouping, HostKind, HostRepo,
+    HunkId, Millis, Person, PrDetail, PrId, PrSummary, RepoRef, ReviewEvent, Revision, Sha,
+    SnoozeUntil, Task, TaskId, Thread, ThreadId, Usage, ViewedState,
 };
 
 mod interdiff;
 pub use interdiff::*;
 mod login;
 pub use login::*;
+mod pr_state;
+pub use pr_state::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -645,7 +647,11 @@ pub fn types() -> specta::Types {
         .register::<InterdiffRequest>()
         .register::<InterdiffEntry>()
         .register::<DeviceLogin>()
-        .register::<LoginState>();
+        .register::<LoginState>()
+        .register::<HostRepo>()
+        .register::<RerunCheckRequest>()
+        .register::<TriageRequest>()
+        .register::<TriageAction>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

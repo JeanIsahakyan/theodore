@@ -111,6 +111,14 @@ pub struct EditCommentPayload {
     pub body: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerunCheckPayload {
+    pub pr: PrId,
+    /// `Check::id`, resolved back to the full `Check` (the adapter needs
+    /// its `url` too) from the stored `pr_detail` row when the item runs.
+    pub check: String,
+}
+
 enum Outcome {
     RetryAt(i64),
     AuthPaused(i64),
@@ -162,6 +170,8 @@ async fn process_item(core: &Core, item: OutboxItem) {
         "update_branch" => do_update_branch(core, &item).await,
         "react" => do_react(core, &item).await,
         "edit_comment" => do_edit_comment(core, &item).await,
+        "rerun_check" => do_rerun_check(core, &item).await,
+        "triage" => do_triage(core, &item).await,
         other => Err(Outcome::Fail(format!("unknown outbox op {other}"))),
     };
     let store = core.0.deps.store.clone();
@@ -524,6 +534,83 @@ async fn do_edit_comment(core: &Core, item: &OutboxItem) -> Result<(), Outcome> 
 /// without waiting for the next poll tick.
 async fn refresh_pr_detail(core: &Core, pr: &PrId, pr_ref: &PrRef) {
     core.refresh_pr(pr, pr_ref).await;
+}
+
+async fn do_rerun_check(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: RerunCheckPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    let check = core
+        .pr_check(&payload.pr, &payload.check)
+        .await
+        .ok_or_else(|| Outcome::Fail(format!("check {} not found", payload.check)))?;
+    match core.0.deps.host.rerun_check(&pr_ref, &check).await {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_triage(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: theodore_contract::TriageRequest =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    let viewer = match core.0.deps.host.viewer().await {
+        Ok(v) => v,
+        Err(e) => return Err(classify_host_error(core, item, e).await),
+    };
+
+    match payload.action {
+        theodore_contract::TriageAction::Take => {
+            if let Err(e) = core
+                .0
+                .deps
+                .host
+                .request_reviewers(&pr_ref, std::slice::from_ref(&viewer.login), &[])
+                .await
+            {
+                return Err(classify_host_error(core, item, e).await);
+            }
+            // Best-effort: a team review request that got the viewer here
+            // in the first place doesn't block "take" from succeeding.
+            for team in core.pr_requested_teams(&payload.pr).await {
+                let _ = core.0.deps.host.remove_reviewer(&pr_ref, &team).await;
+            }
+        }
+        theodore_contract::TriageAction::Decline => {
+            if let Err(e) = core
+                .0
+                .deps
+                .host
+                .remove_reviewer(&pr_ref, &viewer.login)
+                .await
+            {
+                return Err(classify_host_error(core, item, e).await);
+            }
+            core.mark_inbox_done(&payload.pr).await;
+        }
+        theodore_contract::TriageAction::Reassign { to } => {
+            if let Err(e) = core.0.deps.host.request_reviewers(&pr_ref, &to, &[]).await {
+                return Err(classify_host_error(core, item, e).await);
+            }
+            let _ = core
+                .0
+                .deps
+                .host
+                .remove_reviewer(&pr_ref, &viewer.login)
+                .await;
+        }
+    }
+    refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+    Ok(())
 }
 
 async fn apply_submitted_review(

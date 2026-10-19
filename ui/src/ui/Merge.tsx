@@ -3,12 +3,15 @@
  * ported from the prototype's `MergeDialog`, now wired to the real
  * `merge_info` / `merge_pr` / `update_branch` commands (`FEATURES.hostWrites`).
  *
- * We still have no `conflicts` field on `PrSummary`/`PrDetail`, unlike the
- * prototype's `PR.conflicts` — `MergeInfo.state === 'dirty'` tells us *that*
- * there's a conflict, never which files. Rather than fabricate a fake
- * conflicting diff to look busy, this shows a plain note next to "Update
- * branch" (the one real action that can clear a `behind` or `dirty` state).
- * "Resolve with agent" has no backing command either way — kept disabled.
+ * `PrSummary.conflicts` is a bare bool (no file list, unlike the prototype's
+ * `PR.conflicts: string[]`) — real but coarser. `MergeInfo.state === 'dirty'`
+ * is the live, per-open-dialog read of the same fact from the host; the
+ * gates below use `conflicts` because it's already on hand for every PR row,
+ * not just the one being merged. Rather than fabricate a fake conflicting
+ * diff to look busy, the dialog itself still shows a plain note next to
+ * "Update branch" (the one real action that can clear a `behind` or `dirty`
+ * state). "Resolve with agent" has no backing command either way — kept
+ * disabled.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -91,6 +94,13 @@ function gatesFor(
     gates.push({
       ok: summary.approvals >= (summary.required_approvals ?? 0),
       label: `${summary.approvals}/${summary.required_approvals ?? 0} approvals`,
+    });
+    if (summary.review_decision === 'changes_requested') {
+      gates.push({ ok: false, label: 'changes requested' });
+    }
+    gates.push({
+      ok: !summary.conflicts,
+      label: summary.conflicts ? 'conflicts with base branch' : 'no conflicts',
     });
   }
   if (toVerify) gates.push({ ok: false, label: `${toVerify} tasks to verify` });

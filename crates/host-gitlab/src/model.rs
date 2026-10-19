@@ -28,6 +28,15 @@ pub(crate) struct GlHeadPipeline {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GlProject {
     pub path_with_namespace: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// `private` / `internal` / `public`.
+    #[serde(default)]
+    pub visibility: Option<String>,
+    /// GitLab has no exact "last push" timestamp; this is the closest cheap
+    /// proxy (bumped by pushes, MRs, issues, …).
+    #[serde(default)]
+    pub last_activity_at: Option<String>,
 }
 
 /// A merge request as returned by both the single-MR `GET` and the list

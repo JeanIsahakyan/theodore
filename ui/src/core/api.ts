@@ -17,6 +17,7 @@ import type {
   HostAuthStatus,
   InterdiffEntry,
   InterdiffRequest,
+  HostRepo,
   LocalBranch,
   LoginState,
   MergeInfo,
@@ -30,7 +31,7 @@ import type {
   Project,
   ReactRequest,
   ReplyRequest,
-  RepoRef,
+  RerunCheckRequest,
   Revision,
   RevisionRequest,
   ResolveRequest,
@@ -45,6 +46,7 @@ import type {
   TaskDecision,
   Transaction,
   TransactionResult,
+  TriageRequest,
   UpdateInfo,
 } from '../gen/contract';
 
@@ -115,7 +117,7 @@ export const api = {
   delegateTask: (req: DelegateRequest) =>
     call<string>('delegate_task', { req }),
   decideTask: (req: TaskDecision) => call<null>('decide_task', { req }),
-  listHostRepos: () => call<RepoRef[]>('list_host_repos'),
+  listHostRepos: () => call<HostRepo[]>('list_host_repos'),
   addProject: (req: AddProjectRequest) => call<Project>('add_project', { req }),
   removeProject: (id: string) => call<null>('remove_project', { id }),
   refreshProject: (id: string) => call<null>('refresh_project', { id }),
@@ -142,4 +144,6 @@ export const api = {
     call<InterdiffEntry[]>('interdiff', { req }),
   loginStart: () => call<DeviceLogin>('login_start'),
   loginPoll: () => call<LoginState>('login_poll'),
+  rerunCheck: (req: RerunCheckRequest) => call<null>('rerun_check', { req }),
+  triage: (req: TriageRequest) => call<null>('triage', { req }),
 };

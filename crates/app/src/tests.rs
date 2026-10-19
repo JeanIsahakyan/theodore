@@ -9,16 +9,16 @@ use serde_json::json;
 use theodore_contract::{
     AddProjectRequest, BootstrapScope, CommitSuggestionsRequest, DelegateRequest, DeviceLogin,
     DraftStateRequest, EditCommentRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
-    LoginState, MergeMethod as WireMergeMethod, MergeRequest, MutationOp, OpenBranchRequest,
-    OpenPrRequest, ProjectStatus, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting,
-    SubmitReviewRequest, TaskDecision, ToastLevel, TokenSource, Transaction, TransactionResult,
-    models,
+    InboxState, LoginState, MergeMethod as WireMergeMethod, MergeRequest, MutationOp,
+    OpenBranchRequest, OpenPrRequest, ProjectStatus, ReactRequest, ReplyRequest, RerunCheckRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetTokenRequest, Setting, SubmitReviewRequest, TaskDecision, ToastLevel, TokenSource,
+    Transaction, TransactionResult, TriageAction, TriageRequest, models,
 };
 use theodore_domain::{
-    AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, FileStatus, Fix, FixStatus, HostKind,
-    HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha, Side, Task, TaskId,
-    TaskStatus, Thread, ThreadId, Usage, ViewedState,
+    AgentId, Anchor, Assignee, Check, CheckStatus, Comment, CommentId, FileDiff, FileStatus, Fix,
+    FixStatus, HostKind, HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha, Side,
+    Task, TaskId, TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
     AgentEvent, BranchInfo, Clock, CommitLog, DevicePoll, Fetched, HostError,
@@ -2598,6 +2598,240 @@ async fn set_reviewers_enqueues_adds_and_removes_in_one_outbox_item() {
         vec![(vec!["carol".to_string()], vec!["core".to_string()])]
     );
     assert_eq!(f.host.remove_reviewer_calls(), vec!["dave".to_string()]);
+}
+
+// ── rerun_check / triage ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn rerun_check_resolves_the_check_from_pr_detail_and_calls_the_host() {
+    let f = fixtures();
+    let head = Sha::new("head111");
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    detail.checks = vec![Check {
+        id: "900001".into(),
+        name: "build".into(),
+        status: CheckStatus::Fail,
+        url: None,
+        duration_ms: None,
+    }];
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-1".into()),
+        value: detail,
+    }));
+    let (core, _recv) = Core::start(f.deps());
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+    let pr = resp.pr;
+    // `rerun_check` itself refreshes `pr_detail` on success too.
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+
+    core.rerun_check(RerunCheckRequest {
+        pr: pr.clone(),
+        check: "900001".into(),
+    })
+    .await
+    .expect("rerun_check");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "rerun_check" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert_eq!(f.host.rerun_check_calls(), vec!["900001".to_string()]);
+}
+
+#[tokio::test]
+async fn rerun_check_fails_when_the_check_id_is_unknown() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+
+    core.rerun_check(RerunCheckRequest {
+        pr: pr.clone(),
+        check: "missing".into(),
+    })
+    .await
+    .expect("enqueues even though the check doesn't resolve until it runs");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "rerun_check" && i.status == OutboxStatus::Failed)
+    })
+    .await;
+    assert!(f.host.rerun_check_calls().is_empty());
+}
+
+#[tokio::test]
+async fn triage_take_requests_review_from_the_viewer_and_drops_team_requests() {
+    let f = fixtures();
+    let head = Sha::new("head111");
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    detail.reviewers = vec![theodore_domain::Reviewer {
+        person: testkit::sample_person("core-team"),
+        state: theodore_domain::ReviewerState::Requested,
+        team: Some("core-team".into()),
+    }];
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-1".into()),
+        value: detail,
+    }));
+    let (core, _recv) = Core::start(f.deps());
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+    let pr = resp.pr;
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+
+    core.triage(TriageRequest {
+        pr: pr.clone(),
+        action: TriageAction::Take,
+    })
+    .await
+    .expect("triage take");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "triage" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert_eq!(
+        f.host.reviewer_calls(),
+        vec![(vec!["me".to_string()], vec![])]
+    );
+    assert_eq!(
+        f.host.remove_reviewer_calls(),
+        vec!["core-team".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn triage_decline_removes_the_viewer_and_marks_the_inbox_row_done() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+    core.apply(vec![NewAction {
+        model: models::INBOX_STATE.into(),
+        model_id: pr.0.clone(),
+        action: SyncActionCode::I,
+        data: Some(
+            serde_json::to_value(InboxState {
+                pr: pr.clone(),
+                done: false,
+                snooze: None,
+            })
+            .unwrap(),
+        ),
+    }])
+    .await
+    .expect("seed inbox_state");
+
+    core.triage(TriageRequest {
+        pr: pr.clone(),
+        action: TriageAction::Decline,
+    })
+    .await
+    .expect("triage decline");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "triage" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert_eq!(f.host.remove_reviewer_calls(), vec!["me".to_string()]);
+    let row = f
+        .store
+        .get(models::INBOX_STATE, &pr.0)
+        .unwrap()
+        .expect("inbox_state row");
+    assert_eq!(row.data.get("done"), Some(&json!(true)));
+}
+
+#[tokio::test]
+async fn triage_reassign_requests_the_given_users_and_drops_the_viewer() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+
+    core.triage(TriageRequest {
+        pr: pr.clone(),
+        action: TriageAction::Reassign {
+            to: vec!["carol".into()],
+        },
+    })
+    .await
+    .expect("triage reassign");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "triage" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert_eq!(
+        f.host.reviewer_calls(),
+        vec![(vec!["carol".to_string()], vec![])]
+    );
+    assert_eq!(f.host.remove_reviewer_calls(), vec!["me".to_string()]);
+}
+
+#[tokio::test]
+async fn triage_on_a_local_pr_rejects_synchronously() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+    let resp = core
+        .open_branch(OpenBranchRequest {
+            project: project.id.clone(),
+            branch: "feature".into(),
+            base: None,
+        })
+        .await
+        .expect("open_branch");
+
+    let err = core
+        .triage(TriageRequest {
+            pr: resp.pr,
+            action: TriageAction::Decline,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("local branch review"));
+    assert!(f.store.outbox_snapshot().is_empty());
 }
 
 #[tokio::test]

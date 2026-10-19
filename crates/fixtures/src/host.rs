@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use theodore_domain::{
-    Comment, CommentId, FileViewed, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, Reviewer,
-    ReviewerState, Sha, ThreadId, ViewedState,
+    Comment, CommentId, FileViewed, HostRepo, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef,
+    Reviewer, ReviewerState, Sha, ThreadId, ViewedState,
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
@@ -127,7 +127,7 @@ impl HostAdapter for FixtureHost {
         Ok(state.prs.values().map(|pr| pr.summary.clone()).collect())
     }
 
-    async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+    async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
         let mut state = self.state.lock().unwrap();
         state.calls.push(HostCall {
             method: "list_repos".to_string(),
@@ -135,14 +135,22 @@ impl HostAdapter for FixtureHost {
             details: String::new(),
         });
 
-        let mut repos = Vec::new();
+        let mut repos: Vec<RepoRef> = Vec::new();
         for pr in state.prs.values() {
             let repo = pr.summary.pr.repo.clone();
             if !repos.iter().any(|r: &RepoRef| r == &repo) {
                 repos.push(repo);
             }
         }
-        Ok(repos)
+        Ok(repos
+            .into_iter()
+            .map(|repo| HostRepo {
+                repo,
+                description: None,
+                private: false,
+                pushed_at: None,
+            })
+            .collect())
     }
 
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {

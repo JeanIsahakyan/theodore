@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_domain::{
-    Check, CheckRollup, CheckStatus, Comment, CommentId, Commit, FileViewed, HostKind, InboxReason,
-    Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, ReviewEvent, Reviewer, ReviewerState,
-    Sha, Thread, ThreadId, ViewedState,
+    Check, CheckRollup, CheckStatus, Comment, CommentId, Commit, FileViewed, HostKind, HostRepo,
+    InboxReason, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, ReviewDecision,
+    ReviewEvent, Reviewer, ReviewerState, Sha, Thread, ThreadId, ViewedState,
 };
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
@@ -101,7 +101,8 @@ impl GithubAdapter {
     async fn fetch_pr_detail(&self, pr: &PrRef) -> HostResult<PrDetail> {
         let (owner, repo, number) = (pr.repo.owner.as_str(), pr.repo.name.as_str(), pr.number);
 
-        let core = graphql::fetch_pr_core(&self.graphql, owner, repo, number).await?;
+        let graphql::PrCoreAndViewer { core, viewer_login } =
+            graphql::fetch_pr_core(&self.graphql, owner, repo, number).await?;
         let files = pagination::paginate_all(|after| {
             graphql::fetch_files_page(&self.graphql, owner, repo, number, after)
         })
@@ -165,7 +166,21 @@ impl GithubAdapter {
             .map(|l| l.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
 
-        let commits = core.commits.iter().map(|n| map_commit(&n.commit)).collect();
+        // The viewer's own latest review (plan "Commits tab"): a commit is
+        // "new" when it landed after that review was submitted.
+        let my_last_review_at = core.latest_reviews.as_ref().and_then(|lr| {
+            lr.iter()
+                .find(|r| {
+                    r.author.as_ref().map(|a| a.login.as_str()) == Some(viewer_login.as_str())
+                })
+                .and_then(|r| r.submitted_at.as_deref())
+                .map(time::parse_millis)
+        });
+        let commits = core
+            .commits
+            .iter()
+            .map(|n| map_commit(&n.commit, my_last_review_at))
+            .collect();
         let checks = core
             .status_check_rollup
             .as_ref()
@@ -213,6 +228,8 @@ impl GithubAdapter {
             required_approvals: None,
             updated_at: time::parse_millis(&core.updated_at),
             url: core.url.clone(),
+            review_decision: map_review_decision(core.review_decision.as_deref()),
+            conflicts: core.mergeable.as_deref() == Some("CONFLICTING"),
         };
 
         Ok(PrDetail {
@@ -284,14 +301,19 @@ impl HostAdapter for GithubAdapter {
             .collect())
     }
 
-    async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+    async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
         let repos = graphql::list_repos(&self.graphql).await?;
         Ok(repos
             .into_iter()
-            .map(|r| RepoRef {
-                host: HostKind::Github,
-                owner: r.owner.login,
-                name: r.name,
+            .map(|r| HostRepo {
+                repo: RepoRef {
+                    host: HostKind::Github,
+                    owner: r.owner.login,
+                    name: r.name,
+                },
+                description: r.description,
+                private: r.is_private,
+                pushed_at: r.pushed_at.as_deref().map(time::parse_millis),
             })
             .collect())
     }
@@ -554,6 +576,30 @@ impl HostAdapter for GithubAdapter {
         let node_id = self.resolve_node_id(pr).await?;
         graphql::enqueue_pull_request(&self.graphql, &node_id).await
     }
+
+    async fn rerun_check(&self, pr: &PrRef, check: &Check) -> HostResult<()> {
+        let (owner, repo) = (pr.repo.owner.as_str(), pr.repo.name.as_str());
+        // An Actions check run's `detailsUrl` looks like
+        // `https://github.com/{owner}/{repo}/actions/runs/{run_id}/job/{job_id}`;
+        // rerunning its *workflow run*'s failed jobs covers the whole job,
+        // not just the one check-run GitHub split it into.
+        if let Some(run_id) = check.url.as_deref().and_then(actions_run_id) {
+            return rest::rerun_workflow_failed_jobs(&self.rest, owner, repo, run_id).await;
+        }
+        if check.id.chars().all(|c| c.is_ascii_digit()) {
+            return rest::rerequest_check_run(&self.rest, owner, repo, &check.id).await;
+        }
+        Err(HostError::Unsupported(
+            "this check has no re-runnable REST resource",
+        ))
+    }
+}
+
+/// Pulls `{run_id}` out of an Actions check-run `detailsUrl`
+/// (`.../actions/runs/{run_id}/...`).
+fn actions_run_id(url: &str) -> Option<&str> {
+    let (_, rest) = url.split_once("/actions/runs/")?;
+    rest.split('/').next().filter(|s| !s.is_empty())
 }
 
 // ── mapping helpers ─────────────────────────────────────────────────────
@@ -606,6 +652,17 @@ fn merge_method_name(method: MergeMethod) -> &'static str {
     }
 }
 
+/// GitHub's `PullRequestReviewDecision`: `APPROVED`, `CHANGES_REQUESTED`,
+/// `REVIEW_REQUIRED`, or `null` before any review has been requested.
+fn map_review_decision(decision: Option<&str>) -> Option<ReviewDecision> {
+    match decision {
+        Some("APPROVED") => Some(ReviewDecision::Approved),
+        Some("CHANGES_REQUESTED") => Some(ReviewDecision::ChangesRequested),
+        Some("REVIEW_REQUIRED") => Some(ReviewDecision::ReviewRequired),
+        _ => None,
+    }
+}
+
 /// GitHub's `MergeableState`: `MERGEABLE`, `CONFLICTING`, `UNKNOWN`.
 fn map_mergeable(state: &str) -> Option<bool> {
     match state {
@@ -649,7 +706,13 @@ fn map_check_context(c: &graphql::GqlCheckContext) -> Check {
             _ => None,
         };
         Check {
-            id: c.id.clone(),
+            // The REST numeric id when GitHub has one (`rerun_check` needs
+            // it); the opaque GraphQL node id is otherwise unusable for a
+            // REST call, so there's no reason to prefer it here.
+            id: c
+                .database_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| c.id.clone()),
             name: c.name.clone().unwrap_or_default(),
             status,
             url: c.details_url.clone(),
@@ -671,7 +734,7 @@ fn map_check_context(c: &graphql::GqlCheckContext) -> Check {
     }
 }
 
-fn map_commit(c: &graphql::GqlCommit) -> Commit {
+fn map_commit(c: &graphql::GqlCommit, my_last_review_at: Option<Millis>) -> Commit {
     let title = c.message.lines().next().unwrap_or_default().to_string();
     let author = match &c.author {
         Some(a) => match &a.user {
@@ -692,11 +755,13 @@ fn map_commit(c: &graphql::GqlCommit) -> Commit {
             avatar_url: None,
         },
     };
+    let at = time::parse_millis(&c.committed_date);
     Commit {
         sha: Sha::new(c.oid.clone()),
         title,
         author,
-        at: time::parse_millis(&c.committed_date),
+        at,
+        after_my_review: my_last_review_at.is_some_and(|reviewed_at| at > reviewed_at),
     }
 }
 
@@ -824,5 +889,7 @@ fn search_node_to_summary(
         required_approvals: None,
         updated_at: n.updated_at.as_deref().map(time::parse_millis).unwrap_or(0),
         url: n.url.clone().unwrap_or_default(),
+        review_decision: map_review_decision(n.review_decision.as_deref()),
+        conflicts: n.mergeable.as_deref() == Some("CONFLICTING"),
     })
 }

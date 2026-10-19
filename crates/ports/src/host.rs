@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use theodore_domain::{
-    Anchor, CommentId, Millis, Person, PrDetail, PrRef, PrSummary, RepoRef, ReviewEvent, Sha,
-    ThreadId,
+    Anchor, Check, CommentId, HostRepo, Millis, Person, PrDetail, PrRef, PrSummary, RepoRef,
+    ReviewEvent, Sha, ThreadId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -169,7 +169,9 @@ pub trait HostAdapter: Send + Sync {
         let _ = repo;
         self.search(section).await
     }
-    async fn list_repos(&self) -> HostResult<Vec<RepoRef>>;
+    /// Repos for the Add project picker, with the metadata it shows
+    /// (description, visibility, last push) — not just the bare ref.
+    async fn list_repos(&self) -> HostResult<Vec<HostRepo>>;
 
     // pulls
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>>;
@@ -277,5 +279,13 @@ pub trait HostAdapter: Send + Sync {
     /// that can't be done automatically.
     async fn update_branch(&self, _pr: &PrRef) -> HostResult<()> {
         Err(HostError::Unsupported("update_branch"))
+    }
+
+    /// Re-runs one check (plan "re-run a check"). Takes the whole `Check` —
+    /// not just its id — so an adapter can pick the right underlying API
+    /// from its id and url (e.g. GitHub's check-run rerequest vs. its
+    /// Actions rerun-failed-jobs) without a second round trip to look it up.
+    async fn rerun_check(&self, _pr: &PrRef, _check: &Check) -> HostResult<()> {
+        Err(HostError::Unsupported("rerun_check"))
     }
 }

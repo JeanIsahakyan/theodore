@@ -111,6 +111,28 @@ pub enum ReviewerState {
     Commented,
 }
 
+/// Host-level rollup of the PR's reviews (GitHub's `reviewDecision`; GitLab
+/// has no 1:1 equivalent — derived best-effort from approvals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDecision {
+    Approved,
+    ChangesRequested,
+    ReviewRequired,
+}
+
+/// A repository as listed by a host, for the Add project picker. Not a
+/// synced model — returned directly by the `list_host_repos` command.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct HostRepo {
+    pub repo: RepoRef,
+    pub description: Option<String>,
+    pub private: bool,
+    pub pushed_at: Option<Millis>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Person {
@@ -147,6 +169,12 @@ pub struct PrSummary {
     pub required_approvals: Option<u32>,
     pub updated_at: Millis,
     pub url: String,
+    #[serde(default)]
+    pub review_decision: Option<ReviewDecision>,
+    /// True when the host reports the PR as not cleanly mergeable (merge
+    /// conflicts with the base branch).
+    #[serde(default)]
+    pub conflicts: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +214,10 @@ pub struct Commit {
     pub title: String,
     pub author: Person,
     pub at: Millis,
+    /// Landed after the viewer's last submitted review on this PR (plan
+    /// "Commits tab"): new work the viewer hasn't seen yet.
+    #[serde(default)]
+    pub after_my_review: bool,
 }
 
 /// Everything loaded when a PR is opened (host side; diff comes from git).
