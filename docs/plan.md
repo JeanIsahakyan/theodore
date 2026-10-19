@@ -89,6 +89,7 @@ crates/
   host-http/     shared HTTP client for host adapters: auth, ETag, limits, retry
   host-github/   GraphQL (cynic) + REST, notifications polling, ETag
   host-gitlab/   M7
+  linear/        read-only GraphQL client for Linear (issue linking, §6.10)
   git/           clone, worktree, diff → hunks, blobs
   agents/        CLI runners, stream parsers, process lifecycle, cost
   grouping/      grouping pipeline: pre-pass, prompt, validation, repair, eval
@@ -390,6 +391,33 @@ token — nothing else about auth changes.
 - One contract test suite, run against every adapter on recorded HTTP fixtures
   (wiremock).
 - Opt-in live smoke test against a sandbox repo.
+
+### 6.10 Linear (read-only)
+
+A separate integration, not a `HostAdapter`: Linear isn't a code host, and its
+personal API keys authenticate with a bare `Authorization: <key>` header (no
+`Bearer` prefix) — the opposite of every host adapter's convention — so the
+`linear` crate talks to `reqwest` directly instead of building on `host::http`.
+
+```
+app ──▶ linear::LinearClient ──▶ https://api.linear.app/graphql
+            │
+            ├─ viewer()          validates a token, returns the user + workspace
+            └─ issue(identifier) one issue by its key ("ABC-123")
+```
+
+- **Linking.** PR titles, head branch names and bodies are scanned for issue
+  keys (`[A-Z][A-Z0-9]+-\d+`); every match is looked up and returned by
+  `linear_issues`. With no token stored this returns an empty list, never an
+  error — the feature is additive, not a gate.
+- **Caching.** Results are kept in memory per PR for about five minutes:
+  Peek and the Review header both ask on every render, and Linear's API has
+  no conditional-GET story the way GitHub's ETags do.
+- **Token.** `set_linear_token` validates the key against `viewer` before
+  storing it (mirrors `set_host_token`); `linear_status` reports
+  connected/user/workspace for Settings → Integrations.
+- **Scope.** Read-only. Creating or updating a Linear issue from Theodore is
+  future work, not covered here.
 
 ---
 

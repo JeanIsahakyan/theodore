@@ -4879,6 +4879,7 @@ dependencies = [
  "theodore-contract",
  "theodore-domain",
  "theodore-git",
+ "theodore-linear",
  "theodore-ports",
  "theodore-secrets",
  "theodore-store",
@@ -5071,6 +5072,21 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "wiremock",
+]
+
+[[package]]
+name = "theodore-linear"
+version = "0.0.1"
+dependencies = [
+ "pretty_assertions",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "wiremock",
 ]
 

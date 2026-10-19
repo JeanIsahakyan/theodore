@@ -34,8 +34,10 @@ import {
   unsnooze,
 } from '../actions';
 import { api } from '../core/api';
+import { FEATURES } from '../features';
 import { useRootStore } from '../stores/context';
 import { AgentTag, Avatar, Btn, CheckIcon } from './bits';
+import { LinearChips } from './linear/LinearChips';
 import {
   ConflictsIcon,
   PRIcon,
@@ -210,6 +212,11 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         <Typography.Heading level={5} className="peek-title">
           {p.title}
         </Typography.Heading>
+        {FEATURES.linear && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <LinearChips pr={id} />
+          </div>
+        )}
         <div className="flex items-center gap-1.5 text-xs text-muted">
           <Avatar person={p.author} size={18} /> {mine ? 'you' : p.author.login}{' '}
           · {ago(p.updated_at)} ·{' '}

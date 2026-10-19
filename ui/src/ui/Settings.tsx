@@ -11,6 +11,7 @@ import {
   Keyboard,
   Lock,
   LogoGithub,
+  PlugConnection,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -41,11 +42,11 @@ import type {
 import { api, CommandFailure } from '../core/api';
 import { setSetting } from '../actions';
 import { useDeviceLogin } from '../core/deviceLogin';
-import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
+import { IntegrationsPage } from './linear/IntegrationsPage';
 import { projectLabel } from './Projects';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
@@ -62,6 +63,7 @@ const BUDGET_KEY = 'budget.per_pr_usd';
 const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'account', title: 'Account', icon: <LogoGithub /> },
   { id: 'agents', title: 'Agents', icon: <Cpu /> },
+  { id: 'integrations', title: 'Integrations', icon: <PlugConnection /> },
   { id: 'projects', title: 'Projects', icon: <Folder /> },
   { id: 'updates', title: 'Updates', icon: <ArrowRotateRight /> },
   { id: 'about', title: 'About', icon: <CircleInfo /> },
@@ -70,6 +72,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
 const SUB: Record<Page, string> = {
   account: 'GitHub sign-in. Tokens live in the system keychain.',
   agents: 'Agent CLIs on this computer, and which one handles each task.',
+  integrations: 'Other tools Theodore can link PRs to.',
   projects: 'Connected repositories and the settings effective in each.',
   updates: 'Check for and install new versions of Theodore.',
   about: 'Version and release channel.',
@@ -298,23 +301,6 @@ const AccountPage = observer(function AccountPage() {
           )}
         </Card>
         {error && <span className="text-xs text-danger">{error}</span>}
-      </section>
-      <section className="flex flex-col gap-2">
-        <Typography.Heading level={6}>Linear</Typography.Heading>
-        <Tooltip>
-          <Card
-            variant="secondary"
-            className={`flex-row items-center gap-3 px-4 py-3 ${FEATURES.linear ? '' : 'opacity-60'}`}
-          >
-            <span className="flex-1 text-sm">Not connected</span>
-            <Button size="sm" variant="ghost" isDisabled={!FEATURES.linear}>
-              Connect
-            </Button>
-          </Card>
-          {!FEATURES.linear && (
-            <Tooltip.Content>Not available yet</Tooltip.Content>
-          )}
-        </Tooltip>
       </section>
       <section className="flex flex-col gap-2">
         <Typography.Heading level={6}>Devices</Typography.Heading>
@@ -799,6 +785,8 @@ export const SettingsPage = observer(function SettingsPage({
           <AccountPage />
         ) : page === 'agents' ? (
           <AgentsPage />
+        ) : page === 'integrations' ? (
+          <IntegrationsPage />
         ) : page === 'projects' ? (
           <ProjectsPage />
         ) : page === 'updates' ? (

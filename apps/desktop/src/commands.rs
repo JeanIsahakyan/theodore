@@ -8,10 +8,11 @@ use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
-    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
     SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
     UpdateInfo,
 };
@@ -397,6 +398,32 @@ pub async fn triage(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<(), CommandError> {
     core.triage(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_linear_token(
+    req: SetLinearTokenRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<LinearStatus, CommandError> {
+    core.set_linear_token(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn linear_status(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<LinearStatus, CommandError> {
+    core.linear_status().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn linear_issues(
+    req: LinearIssuesRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<LinearIssue>, CommandError> {
+    core.linear_issues(req).await
 }
 
 /// Native folder picker for the Add project dialog. Runs on a background

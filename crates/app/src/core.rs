@@ -53,6 +53,10 @@ pub(crate) struct Inner {
     /// and the login finishing (plan "login"): kept in memory only, never
     /// persisted — a restart just means starting over.
     pub login: Mutex<Option<crate::usecases::host::LoginSession>>,
+    /// `linear_issues` results per PR, for about 5 minutes (plan "Linear"):
+    /// Peek and the Review header both ask on every render, and Linear's
+    /// API has no conditional-GET story to make repeat lookups free.
+    pub linear_cache: std::sync::Mutex<HashMap<PrId, (i64, Vec<theodore_contract::LinearIssue>)>>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -87,6 +91,7 @@ impl Core {
             open_lock: tokio::sync::Mutex::new(()),
             grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
             login: Mutex::new(None),
+            linear_cache: std::sync::Mutex::new(HashMap::new()),
         });
 
         let core = Core(inner.clone());
