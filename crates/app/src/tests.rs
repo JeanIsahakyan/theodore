@@ -25,7 +25,7 @@ use theodore_ports::{
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
-use crate::{Core, Receivers};
+use crate::{AppError, Core, Receivers};
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
     for _ in 0..400 {
@@ -1290,6 +1290,70 @@ async fn set_host_token_validates_before_storing_and_rolls_back_on_failure() {
     .await
     .expect("remove token");
     assert_eq!(f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(), None);
+}
+
+#[tokio::test]
+async fn set_host_token_keys_by_host_and_leaves_other_hosts_token_alone() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.secrets
+        .set(theodore_secrets::GITHUB_TOKEN, "old-gh")
+        .unwrap();
+    f.secrets
+        .set(theodore_secrets::GITLAB_TOKEN, "old-gl")
+        .unwrap();
+
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    let status = core
+        .set_host_token(SetTokenRequest {
+            host: HostKind::Github,
+            token: Some("new-gh".into()),
+        })
+        .await
+        .expect("set_host_token");
+    assert!(status.connected);
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("new-gh".into())
+    );
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITLAB_TOKEN).unwrap(),
+        Some("old-gl".into()),
+        "setting github's token must not touch gitlab's"
+    );
+}
+
+#[tokio::test]
+async fn set_host_token_for_a_non_primary_host_never_touches_the_primarys_token() {
+    // `FakeHost::kind()` is `Github`; setting a `Gitlab` token used to be
+    // rejected outright before it ever reached the secrets vault (a flat
+    // `req.host != deps.host.kind()` gate). It must now actually attempt
+    // that host's own validation (surfacing as `AppError::Host`, not the
+    // old `AppError::Invalid("... is not configured")`), and never read,
+    // write or delete another host's token while doing so.
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.secrets
+        .set(theodore_secrets::GITHUB_TOKEN, "keep-me")
+        .unwrap();
+
+    let err = core
+        .set_host_token(SetTokenRequest {
+            host: HostKind::Gitlab,
+            token: Some("gl-new".into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Host(_)),
+        "expected the gitlab-specific validation to run and fail, got {err:?}"
+    );
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("keep-me".into()),
+        "github's token must survive a gitlab token attempt"
+    );
+    assert_eq!(f.secrets.get(theodore_secrets::GITLAB_TOKEN).unwrap(), None);
 }
 
 // ── submit_review ────────────────────────────────────────────────────────

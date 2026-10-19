@@ -3,10 +3,22 @@
 //! one path that changes the stored token.
 
 use theodore_contract::{HostAuthStatus, SetTokenRequest, TokenSource};
-use theodore_domain::Person;
+use theodore_domain::{HostKind, Person};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
+
+/// The vault key for a host's own token (plan §6.8): each host keeps its
+/// token independent of the others, keyed by kind rather than hardcoded to
+/// whichever host happens to be primary.
+fn token_key(host: HostKind) -> AppResult<&'static str> {
+    match host {
+        HostKind::Github => Ok(theodore_secrets::GITHUB_TOKEN),
+        HostKind::Gitlab => Ok(theodore_secrets::GITLAB_TOKEN),
+        HostKind::Bitbucket => Ok(theodore_secrets::BITBUCKET_TOKEN),
+        HostKind::Local => Err(AppError::Invalid("local reviews have no host token".into())),
+    }
+}
 
 impl Core {
     pub async fn viewer(&self) -> AppResult<Person> {
@@ -44,23 +56,21 @@ impl Core {
     /// typo never silently replaces a working token. Removing the token
     /// (`req.token: None`) always succeeds.
     pub async fn set_host_token(&self, req: SetTokenRequest) -> AppResult<HostAuthStatus> {
-        if req.host != self.0.deps.host.kind() {
-            return Err(AppError::Invalid(format!(
-                "host {:?} is not configured",
-                req.host
-            )));
-        }
+        let key = token_key(req.host)?;
         let secrets = self.0.deps.secrets.clone();
         match req.token {
             Some(token) => {
-                let previous = secrets.get(theodore_secrets::GITHUB_TOKEN).ok().flatten();
+                // Only `key` (this host's own slot) is ever touched below —
+                // another host's token is never read, written or deleted
+                // by this call.
+                let previous = secrets.get(key).ok().flatten();
                 secrets
-                    .set(theodore_secrets::GITHUB_TOKEN, &token)
+                    .set(key, &token)
                     .map_err(|e| AppError::Invalid(e.to_string()))?;
                 self.invalidate_token_cache();
-                match self.0.deps.host.viewer().await {
+                match self.0.deps.host.viewer_for(req.host).await {
                     Ok(person) => Ok(HostAuthStatus {
-                        host: self.0.deps.host.kind(),
+                        host: req.host,
                         connected: true,
                         login: Some(person.login),
                         source: TokenSource::Keychain,
@@ -68,10 +78,10 @@ impl Core {
                     Err(e) => {
                         match previous {
                             Some(p) => {
-                                let _ = secrets.set(theodore_secrets::GITHUB_TOKEN, &p);
+                                let _ = secrets.set(key, &p);
                             }
                             None => {
-                                let _ = secrets.delete(theodore_secrets::GITHUB_TOKEN);
+                                let _ = secrets.delete(key);
                             }
                         }
                         self.invalidate_token_cache();
@@ -81,10 +91,15 @@ impl Core {
             }
             None => {
                 secrets
-                    .delete(theodore_secrets::GITHUB_TOKEN)
+                    .delete(key)
                     .map_err(|e| AppError::Invalid(e.to_string()))?;
                 self.invalidate_token_cache();
-                self.host_status().await
+                Ok(HostAuthStatus {
+                    host: req.host,
+                    connected: false,
+                    login: None,
+                    source: TokenSource::None,
+                })
             }
         }
     }

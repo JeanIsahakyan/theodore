@@ -138,6 +138,20 @@ pub trait HostAdapter: Send + Sync {
     async fn viewer(&self) -> HostResult<Person> {
         Err(HostError::Unsupported("viewer"))
     }
+    /// Like `viewer`, but explicit about which host it validates against
+    /// (plan §6.8 `set_host_token`): a caller holding several hosts behind
+    /// one `HostAdapter` (GitHub primary, GitLab, …) routes this to the
+    /// adapter for `host` rather than whichever one `kind()` happens to be.
+    /// Default: only this adapter's own kind is supported — correct for a
+    /// single-host adapter; a multi-host composition should override it to
+    /// route per `host` the way it already does for `search_repo`/`get_pr`.
+    async fn viewer_for(&self, host: theodore_domain::HostKind) -> HostResult<Person> {
+        if host == self.kind() {
+            self.viewer().await
+        } else {
+            Err(HostError::Unsupported("host"))
+        }
+    }
 
     // inbox
     async fn changed_since(&self, cursor: Option<&str>) -> HostResult<Changes>;
