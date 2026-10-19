@@ -1,6 +1,14 @@
 import { MarkdownDiff } from './MarkdownDiff';
 import { isMarkdown } from './mdDiff';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ArrowRight,
   Check,
@@ -134,6 +142,82 @@ const STEP = 20;
 /** Below this, side-by-side halves are too narrow to read — fall back to
  *  unified even if the user asked for split. */
 const SPLIT_MIN_WIDTH = 760;
+
+/** The diff's scroll container — the root files measure their distance to. */
+const ScrollRoot = createContext<{ current: HTMLElement | null }>({
+  current: null,
+});
+
+/** A file's hunks mount once it is within ~1.5 viewports of the visible
+ *  part of the diff, and stay mounted after that. */
+const MOUNT_MARGIN = '150% 0px';
+
+/** Files at the top of the list mount right away, up to this many viewports
+ *  of estimated height — no placeholder flash on open or group switch. */
+const EAGER_VIEWPORTS = 2.5;
+
+// Rendered heights from styles.css / the classes below, for placeholders.
+const LINE_PX = 20;
+const HUNK_HEAD_PX = 33;
+const GAP_PX = 41;
+const FILE_HEAD_PX = 61;
+
+/** Estimated height of a file's hunks, so an unmounted file's placeholder
+ *  keeps the scrollbar and everything below it roughly where they'll be. */
+function estimateBodyHeight(file: FileDiff, split: boolean): number {
+  const gaps = gapsAbove(file.hunks);
+  let px = file.hunks.length ? GAP_PX : 0;
+  for (const h of file.hunks) {
+    const rows = split ? splitRows(h.lines).length : h.lines.length;
+    px += HUNK_HEAD_PX + LINE_PX * rows + (gaps.has(h.id) ? GAP_PX : 0);
+  }
+  return px;
+}
+
+/** How many files from the top fit in `EAGER_VIEWPORTS` viewports. */
+function eagerCount(files: FileDiff[], split: boolean): number {
+  const budget =
+    EAGER_VIEWPORTS *
+    (typeof window !== 'undefined' ? window.innerHeight : 800);
+  let px = 0;
+  let n = 0;
+  for (const f of files) {
+    if (px > budget) break;
+    px += FILE_HEAD_PX + estimateBodyHeight(f, split);
+    n++;
+  }
+  return n;
+}
+
+/** Whether a file's hunks should be in the DOM: once `force`d (it's the
+ *  target of a jump) or once it came near the viewport. Without
+ *  `IntersectionObserver` (tests) everything mounts, as before. */
+function useMountedNear(
+  ref: { current: HTMLElement | null },
+  force: boolean,
+): boolean {
+  const root = useContext(ScrollRoot);
+  const [mounted, setMounted] = useState(
+    () => force || typeof IntersectionObserver === 'undefined',
+  );
+  // Same render, not an effect: a jump target must be in the DOM by the
+  // time the caller's effect scrolls to it.
+  if (force && !mounted) setMounted(true);
+  useEffect(() => {
+    if (mounted) return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setMounted(true);
+      },
+      { root: root.current, rootMargin: MOUNT_MARGIN },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [mounted, ref, root]);
+  return mounted || force;
+}
 
 /** Tracks an element's rendered width (see `Review.tsx`'s twin of this —
  *  not shared, each file owns its own small copy). No-op without
@@ -351,6 +435,10 @@ export const DiffPane = observer(function DiffPane({
   // A chunked file list resets whenever the group/file/mode changes under it.
   useEffect(() => setLimit(CHUNK), [mode.mode, mode.group, mode.file]);
   const visibleFiles = files.slice(0, limit);
+  const eager = useMemo(
+    () => eagerCount(files, effectiveSplit),
+    [files, effectiveSplit],
+  );
 
   const totalInGroup =
     mode.mode === 'groups' && groupHunkIds
@@ -364,131 +452,136 @@ export const DiffPane = observer(function DiffPane({
   );
 
   return (
-    <main
-      ref={mainRef}
-      className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
-    >
-      {tour && (
-        <TourBar
-          groups={tour.groups}
-          index={tour.index}
-          onBack={tour.onBack}
-          onNext={tour.onNext}
-        />
-      )}
-      {splitDowngraded && (
-        <Alert status="default" className="split-note mb-4">
-          <Alert.Content>
-            <Alert.Title>
-              Showing unified — not enough room here for side-by-side.
-            </Alert.Title>
-          </Alert.Content>
-        </Alert>
-      )}
-      {sinceOnly && (
-        <Alert status="accent" className="since-banner mb-4">
-          <Alert.Content>
-            <Alert.Title>
-              Showing only what changed since your last visit
-              {baselineSha ? ` (${baselineSha.slice(0, 7)})` : ''}.
-            </Alert.Title>
-            <Alert.Description>
-              {sinceTotals.changed}{' '}
-              {sinceTotals.changed === 1 ? 'hunk' : 'hunks'} changed,{' '}
-              {sinceTotals.new} new — the rest you've already seen.
-            </Alert.Description>
-          </Alert.Content>
-        </Alert>
-      )}
-      {mode.mode === 'groups' && mode.group && (
-        <GroupCard pr={pr} groupId={mode.group} />
-      )}
-      {group && group.kind === 'skim' && group.outliers.length > 0 && (
-        <Alert
-          status={showOnlyOutliers ? 'warning' : 'default'}
-          className="outliers mb-4"
-        >
-          <Alert.Indicator>
-            <Sparkles className="size-4" />
-          </Alert.Indicator>
-          <Alert.Content>
-            <Alert.Title>
-              {showOnlyOutliers
-                ? `Showing ${group.outliers.length} off-pattern edit${group.outliers.length === 1 ? '' : 's'} of ${totalInGroup}`
-                : `All ${totalInGroup} edits in the group`}
-            </Alert.Title>
-            <Alert.Description>
-              The agent checked the rest against the pattern: the same
-              replacement, no need to read.
-            </Alert.Description>
-          </Alert.Content>
-          <Btn
-            tone="tertiary"
-            onPress={() =>
-              setOutliersOpen((o) => ({ ...o, [group.id]: !o[group.id] }))
-            }
-          >
-            {showOnlyOutliers ? 'Show all' : 'Only outliers'}
-          </Btn>
-        </Alert>
-      )}
-      {groupCollapsed ? (
-        <div className="hidden-group flex items-center gap-3 rounded-2xl border border-dashed border-separator p-3.5 text-muted">
-          <span className="flex-1">
-            Hidden: {group!.why || 'mechanical or generated changes'} —
-            collapsed by default.
-          </span>
-          <Btn
-            tone="tertiary"
-            className="show-hidden"
-            onPress={() => setHiddenOpen((o) => ({ ...o, [group!.id]: true }))}
-          >
-            Show anyway
-          </Btn>
-        </div>
-      ) : (
-        <>
-          {visibleFiles.map((f) => (
-            // Per-file slices only: a file whose composer, peek, focus and
-            // expand are all `null` stays memo-equal when another file's change.
-            <FileBlock
-              key={f.path}
-              pr={pr}
-              rev={rev.head}
-              base={rev.base}
-              file={f}
-              since={since}
-              interdiff={interdiffMap}
-              others={othersByPath.get(f.path) ?? NO_HUNKS}
-              setMode={setMode}
-              split={effectiveSplit}
-              focusHunk={focusPath === f.path ? focusHunk : null}
-              setFocusHunk={setFocusHunk}
-              expandHunk={expandPath === f.path ? expandHunk : null}
-              composer={composer?.path === f.path ? composer : null}
-              peek={peek?.path === f.path ? peek : null}
-              actions={actions}
-            />
-          ))}
-          {files.length > visibleFiles.length && (
-            <div className="more-files flex items-center justify-center gap-3 py-2 text-sm text-muted">
-              Showing {visibleFiles.length} of {files.length} files
-              <Btn onPress={() => setLimit((n) => n + CHUNK * 2)}>
-                {Math.min(CHUNK * 2, files.length - visibleFiles.length)} more
-              </Btn>
-              <Btn tone="ghost" onPress={() => setLimit(files.length)}>
-                All
-              </Btn>
-            </div>
-          )}
-        </>
-      )}
-      <div className="flex justify-center py-4">
-        {mode.mode === 'groups' && !tour && (
-          <NextGroup pr={pr} rev={rev} mode={mode} setMode={setMode} />
+    <ScrollRoot.Provider value={mainRef}>
+      <main
+        ref={mainRef}
+        className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
+      >
+        {tour && (
+          <TourBar
+            groups={tour.groups}
+            index={tour.index}
+            onBack={tour.onBack}
+            onNext={tour.onNext}
+          />
         )}
-      </div>
-    </main>
+        {splitDowngraded && (
+          <Alert status="default" className="split-note mb-4">
+            <Alert.Content>
+              <Alert.Title>
+                Showing unified — not enough room here for side-by-side.
+              </Alert.Title>
+            </Alert.Content>
+          </Alert>
+        )}
+        {sinceOnly && (
+          <Alert status="accent" className="since-banner mb-4">
+            <Alert.Content>
+              <Alert.Title>
+                Showing only what changed since your last visit
+                {baselineSha ? ` (${baselineSha.slice(0, 7)})` : ''}.
+              </Alert.Title>
+              <Alert.Description>
+                {sinceTotals.changed}{' '}
+                {sinceTotals.changed === 1 ? 'hunk' : 'hunks'} changed,{' '}
+                {sinceTotals.new} new — the rest you've already seen.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
+        )}
+        {mode.mode === 'groups' && mode.group && (
+          <GroupCard pr={pr} groupId={mode.group} />
+        )}
+        {group && group.kind === 'skim' && group.outliers.length > 0 && (
+          <Alert
+            status={showOnlyOutliers ? 'warning' : 'default'}
+            className="outliers mb-4"
+          >
+            <Alert.Indicator>
+              <Sparkles className="size-4" />
+            </Alert.Indicator>
+            <Alert.Content>
+              <Alert.Title>
+                {showOnlyOutliers
+                  ? `Showing ${group.outliers.length} off-pattern edit${group.outliers.length === 1 ? '' : 's'} of ${totalInGroup}`
+                  : `All ${totalInGroup} edits in the group`}
+              </Alert.Title>
+              <Alert.Description>
+                The agent checked the rest against the pattern: the same
+                replacement, no need to read.
+              </Alert.Description>
+            </Alert.Content>
+            <Btn
+              tone="tertiary"
+              onPress={() =>
+                setOutliersOpen((o) => ({ ...o, [group.id]: !o[group.id] }))
+              }
+            >
+              {showOnlyOutliers ? 'Show all' : 'Only outliers'}
+            </Btn>
+          </Alert>
+        )}
+        {groupCollapsed ? (
+          <div className="hidden-group flex items-center gap-3 rounded-2xl border border-dashed border-separator p-3.5 text-muted">
+            <span className="flex-1">
+              Hidden: {group!.why || 'mechanical or generated changes'} —
+              collapsed by default.
+            </span>
+            <Btn
+              tone="tertiary"
+              className="show-hidden"
+              onPress={() =>
+                setHiddenOpen((o) => ({ ...o, [group!.id]: true }))
+              }
+            >
+              Show anyway
+            </Btn>
+          </div>
+        ) : (
+          <>
+            {visibleFiles.map((f, i) => (
+              // Per-file slices only: a file whose composer, peek, focus and
+              // expand are all `null` stays memo-equal when another file changes.
+              <FileBlock
+                key={f.path}
+                eager={i < eager}
+                pr={pr}
+                rev={rev.head}
+                base={rev.base}
+                file={f}
+                since={since}
+                interdiff={interdiffMap}
+                others={othersByPath.get(f.path) ?? NO_HUNKS}
+                setMode={setMode}
+                split={effectiveSplit}
+                focusHunk={focusPath === f.path ? focusHunk : null}
+                setFocusHunk={setFocusHunk}
+                expandHunk={expandPath === f.path ? expandHunk : null}
+                composer={composer?.path === f.path ? composer : null}
+                peek={peek?.path === f.path ? peek : null}
+                actions={actions}
+              />
+            ))}
+            {files.length > visibleFiles.length && (
+              <div className="more-files flex items-center justify-center gap-3 py-2 text-sm text-muted">
+                Showing {visibleFiles.length} of {files.length} files
+                <Btn onPress={() => setLimit((n) => n + CHUNK * 2)}>
+                  {Math.min(CHUNK * 2, files.length - visibleFiles.length)} more
+                </Btn>
+                <Btn tone="ghost" onPress={() => setLimit(files.length)}>
+                  All
+                </Btn>
+              </div>
+            )}
+          </>
+        )}
+        <div className="flex justify-center py-4">
+          {mode.mode === 'groups' && !tour && (
+            <NextGroup pr={pr} rev={rev} mode={mode} setMode={setMode} />
+          )}
+        </div>
+      </main>
+    </ScrollRoot.Provider>
   );
 });
 
@@ -884,6 +977,7 @@ function FileBlockInner({
   composer,
   peek,
   actions,
+  eager,
 }: {
   pr: PrId;
   rev: Revision['head'];
@@ -907,9 +1001,18 @@ function FileBlockInner({
   /** Only set when the symbol peek is on this file. */
   peek: SymbolPeekTarget | null;
   actions: LineActions;
+  /** Near the top of the list: mount without waiting for the observer. */
+  eager: boolean;
 }) {
   countRender('FileBlock');
   const store = useRootStore();
+  const cardRef = useRef<HTMLDivElement>(null);
+  // Anything that jumps here (J/K focus, `E`, `C`, a peek) forces the hunks
+  // in first so the jump finds its `H-<id>` element.
+  const mounted = useMountedNear(
+    cardRef,
+    eager || !!focusHunk || !!expandHunk || !!composer || !!peek,
+  );
   const lang = langOf(file.path);
   const viewed = store.models.fileViews.of(pr, file.path);
   const isViewed = viewed?.state === 'viewed';
@@ -974,7 +1077,7 @@ function FileBlockInner({
   const last = file.hunks[file.hunks.length - 1];
 
   return (
-    <Card className="file mb-4 gap-0 overflow-hidden p-0">
+    <Card ref={cardRef} className="file mb-4 gap-0 overflow-hidden p-0">
       <header
         className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm"
         onContextMenu={fileMenu}
@@ -1130,6 +1233,12 @@ function FileBlockInner({
             Show diff
           </Button>
         </div>
+      ) : !mounted ? (
+        <div
+          aria-hidden
+          className="file-pending"
+          style={{ height: estimateBodyHeight(file, split) }}
+        />
       ) : (
         <>
           {file.hunks.map((h) => {
