@@ -8,6 +8,7 @@ import type { PrState } from '../gen/contract';
 import { loadViewer } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { Empty, Hints, K } from './bits';
+import { RowsSkeleton } from './Loading';
 import { PrRow, ViewHeader } from './List';
 import { useViewKeys } from './keys';
 
@@ -90,17 +91,21 @@ export const Mine = observer(function Mine() {
           }}
           onAction={(k: Key) => ui.go({ name: 'review', pr: String(k) })}
           className="list min-w-0 flex-1 overflow-auto p-0 pb-20"
-          renderEmptyState={() => (
-            <Empty
-              icon={<CodePullRequest />}
-              title={viewer ? 'No PRs of yours' : 'Not signed in'}
-              text={
-                viewer
-                  ? 'When you open a PR you authored, it shows up here.'
-                  : 'Connect GitHub in Settings → Account to see your PRs.'
-              }
-            />
-          )}
+          renderEmptyState={() =>
+            !viewer && store.ephemeral.viewerLoading ? (
+              <RowsSkeleton rows={6} />
+            ) : (
+              <Empty
+                icon={<CodePullRequest />}
+                title={viewer ? 'No PRs of yours' : 'Not signed in'}
+                text={
+                  viewer
+                    ? 'When you open a PR you authored, it shows up here.'
+                    : 'Connect GitHub in Settings → Account to see your PRs.'
+                }
+              />
+            )
+          }
         >
           {groups.map((g) => (
             <ListBox.Section key={g.id} id={g.id}>

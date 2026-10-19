@@ -48,6 +48,8 @@ export class EphemeralStore {
   grouping = new Map<string, { running: boolean; error: string | null }>();
   /** The authenticated host user, cached once fetched via `viewer`. */
   viewer: Person | null = null;
+  /** `viewer` fetch in flight — tells "loading" apart from "signed out". */
+  viewerLoading = false;
   /** Reactions *we* toggled, `"<comment>:<emoji>"` — `Comment` carries no
    *  reaction counts (no field for it in the contract), so this is local
    *  memory of our own toggles, not a readback of the host's state. */
@@ -66,6 +68,7 @@ export class EphemeralStore {
       grouping: observableShallow,
       inboxLoading: observable,
       viewer: observableRef,
+      viewerLoading: observable,
       reacted: observableShallow,
       suggestionBatch: observableShallow,
     });
@@ -117,6 +120,12 @@ export class EphemeralStore {
   setInboxLoading(v: boolean): void {
     runInAction(() => {
       this.inboxLoading = v;
+    });
+  }
+
+  setViewerLoading(v: boolean): void {
+    runInAction(() => {
+      this.viewerLoading = v;
     });
   }
 
