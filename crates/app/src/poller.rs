@@ -153,8 +153,22 @@ async fn handle_push(
                 }
             }
         }
+        // `classify` only classifies *new*-side hunks, so an old hunk with
+        // no counterpart at all in the new revision — the push dropped it
+        // outright, with nothing landing to match it against — never shows
+        // up as anyone's `previous` and would otherwise keep its stale
+        // `hunk_read` forever. Catch those directly: any old hunk id gone
+        // from the new revision, whether or not `classify` ever saw it.
+        let new_ids: BTreeSet<&HunkId> = new_rev.hunks().map(|h| &h.id).collect();
+        let mut vanished_paths: BTreeSet<&str> = BTreeSet::new();
+        for h in old_rev.hunks() {
+            if !new_ids.contains(&h.id) {
+                stale_old_ids.insert(h.id.clone());
+                vanished_paths.insert(h.path.as_str());
+            }
+        }
         clear_reads(core, pr, &stale_old_ids).await;
-        dismiss_files(core, pr, &new_rev, &changed_new_ids).await;
+        dismiss_files(core, pr, &new_rev, &changed_new_ids, &vanished_paths).await;
     }
 
     if let Some(old_head) = &old_head {
@@ -320,13 +334,20 @@ async fn clear_reads(core: &Core, pr: &PrId, changed: &BTreeSet<HunkId>) {
     let _ = core.apply(actions).await;
 }
 
-async fn dismiss_files(core: &Core, pr: &PrId, new_rev: &Revision, changed: &BTreeSet<HunkId>) {
-    let changed_paths: BTreeSet<&str> = new_rev
+async fn dismiss_files(
+    core: &Core,
+    pr: &PrId,
+    new_rev: &Revision,
+    changed: &BTreeSet<HunkId>,
+    extra_changed_paths: &BTreeSet<&str>,
+) {
+    let mut changed_paths: BTreeSet<&str> = new_rev
         .files
         .iter()
         .filter(|f| f.hunks.iter().any(|h| changed.contains(&h.id)))
         .map(|f| f.path.as_str())
         .collect();
+    changed_paths.extend(extra_changed_paths.iter().copied());
     if changed_paths.is_empty() {
         return;
     }

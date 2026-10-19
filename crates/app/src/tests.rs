@@ -907,6 +907,70 @@ async fn a_push_clears_reads_of_changed_hunks_and_dismisses_their_file() {
 }
 
 #[tokio::test]
+async fn a_push_clears_reads_and_dismisses_a_file_whose_hunk_vanished_with_no_replacement() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: pr.clone(),
+            head: head.clone(),
+        })
+        .await
+        .unwrap();
+    let hunks = testkit::hunk_ids(&revision);
+
+    for (i, h) in hunks.iter().enumerate() {
+        core.transact(hunk_read_tx(&format!("read-{i}"), &pr, h))
+            .await;
+    }
+    wait_until(|| file_viewed_row(&f, &pr, "src/lib.rs").is_some()).await;
+
+    // The author pushes: hunk 1 is reverted outright — dropped, with
+    // nothing landing in its place — while hunk 2 survives untouched.
+    // `interdiff::classify` only walks the *new* revision's hunks, so it
+    // never sees hunk 1 at all; it must still be caught as vanished.
+    let new_head = Sha::new("head222");
+    let unchanged = revision.files[0].hunks[1].clone();
+    let new_revision = Revision {
+        base: revision.base.clone(),
+        head: new_head.clone(),
+        files: vec![FileDiff {
+            hunks: vec![unchanged],
+            ..revision.files[0].clone()
+        }],
+    };
+    f.git.set_head(new_head.clone());
+    f.git.set_revision(new_revision);
+
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &revision.base, &new_head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-vanish".into()),
+        value: detail,
+    }));
+
+    f.clock.advance(15_000);
+
+    wait_until(|| {
+        file_viewed_row(&f, &pr, "src/lib.rs")
+            .map(|fv| fv.state == ViewedState::Dismissed)
+            .unwrap_or(false)
+    })
+    .await;
+
+    let remaining_reads = f.store.query(models::HUNK_READ, "pr", &pr.0).unwrap();
+    assert_eq!(
+        remaining_reads.len(),
+        1,
+        "the vanished hunk's read must be cleared, the survivor's must not"
+    );
+    let remaining: HunkRead = serde_json::from_value(remaining_reads[0].data.clone()).unwrap();
+    assert_eq!(
+        remaining.hunk, hunks[1],
+        "the surviving hunk's read must stay"
+    );
+}
+
+#[tokio::test]
 async fn a_push_remaps_moved_anchors_and_marks_rewritten_ones_outdated() {
     let f = fixtures();
     let (_core, _recv, pr, head) = open_fixture_pr(&f).await;
