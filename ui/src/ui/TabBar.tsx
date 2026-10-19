@@ -44,7 +44,7 @@ function useLabel(r: Route): {
     }
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);
-      const drafts = store.models.drafts.where((d) => d.pr === r.pr).length;
+      const drafts = store.models.drafts.byPr(r.pr).length;
       return {
         icon: <PRIcon status={p?.state ?? 'open'} />,
         title: p ? `#${p.pr.number} ${p.title}` : r.pr,

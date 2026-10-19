@@ -62,7 +62,7 @@ function ago(ms: number): string {
 /** Fraction of this PR's loaded (non-hidden) hunks already read — same
  *  computation `Review.tsx` keeps locally for its own header chip. */
 function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
-  const reads = store.models.hunkReads.where((r) => r.pr === pr);
+  const reads = store.models.hunkReads.byPr(pr);
   const groups = store.models.groupsOf(pr).filter((g) => g.kind !== 'hidden');
   const hunks = groups.flatMap((g) => g.hunks);
   if (!hunks.length) return 0;
@@ -158,7 +158,7 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
   >(null);
   if (!p) return null;
   const detail = store.models.prDetails.get(id);
-  const tasks = store.models.tasks.where((t) => t.pr === id);
+  const tasks = store.models.tasks.byPr(id);
   const inboxState = store.models.inboxStates.get(id);
   const viewer = store.ephemeral.viewer;
   const mine = !!viewer && viewer.login === p.author.login;

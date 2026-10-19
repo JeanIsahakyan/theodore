@@ -98,14 +98,14 @@ function CountChip({
 export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   const [tab, setTab] = useState<SideTab>('ai');
   const store = useRootStore();
-  const open = store.models.findings.where(
-    (f) => f.pr === pr && (f.state === 'open' || f.state === 'maybe_fixed'),
-  ).length;
+  const open = store.models.findings
+    .byPr(pr)
+    .filter((f) => f.state === 'open' || f.state === 'maybe_fixed').length;
   const threads = store.models.prDetails.get(pr)?.threads ?? [];
   const unresolved = threads.filter((t) => !t.resolved).length;
-  const tasksOpen = store.models.tasks.where(
-    (t) => t.pr === pr && t.status !== 'done',
-  ).length;
+  const tasksOpen = store.models.tasks
+    .byPr(pr)
+    .filter((t) => t.status !== 'done').length;
   return (
     <div className="side flex min-h-0 flex-col border-l border-separator">
       <Tabs
@@ -258,8 +258,8 @@ export function budgetStatus(
 function useSpend(pr: PrId): PrSpend | null {
   const store = useRootStore();
   const [spend, setSpend] = useState<PrSpend | null>(null);
-  const runs = store.models.skillRuns.where((r) => r.pr === pr).length;
-  const messages = store.models.chatMessages.where((m) => m.pr === pr).length;
+  const runs = store.models.skillRuns.byPr(pr).length;
+  const messages = store.models.chatMessages.byPr(pr).length;
   useEffect(() => {
     let live = true;
     void api
@@ -390,7 +390,8 @@ const SkillRunView = observer(function SkillRunView({
   const liveText = store.ephemeral.agentText.get(run);
   const [sev, setSev] = useState<Finding['severity'] | 'all'>('all');
   const all = store.models.findings
-    .where((f) => f.pr === pr && f.skill === r?.skill && f.state !== 'ignored')
+    .byPr(pr)
+    .filter((f) => f.skill === r?.skill && f.state !== 'ignored')
     .sort((a, b) => RANK[a.severity] - RANK[b.severity]);
   const openFindings = all.filter(
     (f) => f.state === 'open' || f.state === 'maybe_fixed',
@@ -778,10 +779,10 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     agent: AgentId | null;
   } | null>(null);
   const end = useRef<HTMLDivElement>(null);
-  const messages = store.models.chatMessages
-    .where((m) => m.pr === pr)
-    .sort((a, b) => a.at - b.at);
-  const runs = store.models.skillRuns.where((r) => r.pr === pr);
+  const messages = [...store.models.chatMessages.byPr(pr)].sort(
+    (a, b) => a.at - b.at,
+  );
+  const runs = store.models.skillRuns.byPr(pr);
   const spend = useSpend(pr);
   const over =
     spend?.budget_usd != null &&
@@ -1230,7 +1231,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
 const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const ui = useUi();
-  const tasks = store.models.tasks.where((t) => t.pr === pr);
+  const tasks = store.models.tasks.byPr(pr);
   return (
     <ListBox
       aria-label="PR tasks"
@@ -1442,7 +1443,7 @@ const SuggestionBatchBar = observer(function SuggestionBatchBar({
 const Threads = observer(function Threads({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const threads = store.models.prDetails.get(pr)?.threads ?? [];
-  const drafts = store.models.drafts.where((d) => d.pr === pr);
+  const drafts = store.models.drafts.byPr(pr);
   const open = threads.filter((t) => !t.resolved);
   const resolved = threads.filter((t) => t.resolved);
 
