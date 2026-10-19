@@ -109,10 +109,32 @@ export class SyncClient {
 
   private async catchUp(): Promise<void> {
     const delta = await api.catchUp(this.lastSyncId);
+    if (delta.resync_required) {
+      // The sync log was compacted past where we stood: `delta.actions` is
+      // empty and can't close the gap incrementally. Bootstrap from
+      // scratch instead of applying it.
+      await this.resync();
+      return;
+    }
     runInAction(() => {
       this.applyActions(delta.actions);
       this.lastSyncId = Math.max(this.lastSyncId, delta.last_sync_id);
     });
+  }
+
+  /** Discards the pool and re-bootstraps every scope we had loaded — the
+   *  same shape as `start()`, but without tearing down the frame listener
+   *  (the connection itself is still fine; only our local copy is stale). */
+  private async resync(): Promise<void> {
+    const openPrs = [...this.loadedPrs];
+    this.pool.clear();
+    this.loadedPrs.clear();
+    const boot = await api.bootstrap({ scope: 'global' });
+    runInAction(() => {
+      this.applyRows(boot.rows);
+      this.lastSyncId = boot.last_sync_id;
+    });
+    for (const pr of openPrs) await this.openPr(pr);
   }
 
   private applyActions(actions: WireAction[]): void {

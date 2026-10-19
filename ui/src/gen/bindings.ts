@@ -422,6 +422,13 @@ export type SyncFrame = {
 	from_sync_id: number,
 	last_sync_id: number,
 	actions: WireAction[],
+	/**
+	 *  Set on a `catch_up` response whose `since` fell behind the sync
+	 *  log's compaction horizon: `actions` is empty and cannot be trusted
+	 *  to close the gap — the caller must bootstrap from scratch instead
+	 *  of applying this frame incrementally. Always `false` otherwise.
+	 */
+	resync_required?: boolean,
 };
 
 export type TaskDecision = {
