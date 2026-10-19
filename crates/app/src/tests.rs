@@ -2858,6 +2858,7 @@ async fn pr_spend_sums_skill_run_and_chat_usage() {
             usd: 1.5,
         }),
         at: 0,
+        failed: None,
     };
     f.store
         .apply(vec![NewAction {
@@ -3076,4 +3077,292 @@ async fn bootstrap_does_not_block_the_executor_on_a_slow_store() {
     );
 
     bootstrap.await.unwrap().expect("bootstrap");
+}
+
+// ── failed agent runs (ask / run_skill), enable/disable, worktree leases ────
+
+fn chat_messages(f: &Fixtures, pr: &PrId) -> Vec<theodore_contract::ChatMessage> {
+    f.store
+        .all(models::CHAT_MESSAGE)
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| serde_json::from_value::<theodore_contract::ChatMessage>(r.data).ok())
+        .filter(|m| &m.pr == pr)
+        .collect()
+}
+
+#[tokio::test]
+async fn ask_persists_a_failed_chat_message_on_agent_error() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "boom".into(),
+        stderr_tail: String::new(),
+    }]);
+
+    core.ask(theodore_contract::AskRequest {
+        pr: pr.clone(),
+        question: "why?".into(),
+        about: None,
+        group: None,
+        agent: Some(AgentId::Claude),
+    })
+    .await
+    .expect("ask");
+
+    wait_until(|| {
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| m.failed.as_deref() == Some("boom"))
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn ask_persists_a_failed_chat_message_on_cancel() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.agents.hang_next_run();
+
+    let message_id = core
+        .ask(theodore_contract::AskRequest {
+            pr: pr.clone(),
+            question: "why?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+        })
+        .await
+        .expect("ask");
+    core.cancel_run(format!("ask:{message_id}"))
+        .await
+        .expect("cancel_run");
+
+    wait_until(|| {
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| m.failed.as_deref() == Some("cancelled"))
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn run_skill_persists_a_failed_chat_message_on_agent_error() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "crashed".into(),
+        stderr_tail: String::new(),
+    }]);
+
+    let run_id = core
+        .run_skill(RunSkillRequest {
+            pr: pr.clone(),
+            skill: "security".into(),
+            agents: vec![AgentId::Claude],
+        })
+        .await
+        .expect("run_skill");
+
+    wait_until(|| {
+        f.store
+            .get(models::SKILL_RUN, &run_id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.data.get("status").cloned())
+            .map(|s| s == json!("failed"))
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| m.failed.as_deref() == Some("crashed")),
+        "a failed skill run must also leave a failed chat message"
+    );
+}
+
+#[tokio::test]
+async fn run_skill_refuses_when_every_requested_agent_is_disabled() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    put_setting(&f, "agents.claude.enabled", "user", json!(false));
+
+    let err = core
+        .run_skill(RunSkillRequest {
+            pr: pr.clone(),
+            skill: "security".into(),
+            agents: vec![AgentId::Claude],
+        })
+        .await;
+    assert!(matches!(err, Err(AppError::Invalid(_))));
+}
+
+#[tokio::test]
+async fn run_skill_holds_the_prs_worktree_lease_for_the_run() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let pr_ref = fixture_pr_ref();
+    f.agents.hang_next_run();
+
+    let run_id = core
+        .run_skill(RunSkillRequest {
+            pr: pr.clone(),
+            skill: "security".into(),
+            agents: vec![AgentId::Claude],
+        })
+        .await
+        .expect("run_skill");
+
+    wait_until(|| f.worktree_lease.acquired().contains(&pr_ref)).await;
+    assert!(
+        f.worktree_lease.is_held(&pr_ref),
+        "the lease must still be held while the run is in flight"
+    );
+
+    core.cancel_run(run_id).await.expect("cancel_run");
+    wait_until(|| !f.worktree_lease.is_held(&pr_ref)).await;
+}
+
+#[tokio::test]
+async fn ask_holds_the_prs_worktree_lease_for_the_run() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let pr_ref = fixture_pr_ref();
+    f.agents.hang_next_run();
+
+    let message_id = core
+        .ask(theodore_contract::AskRequest {
+            pr: pr.clone(),
+            question: "why?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+        })
+        .await
+        .expect("ask");
+
+    wait_until(|| f.worktree_lease.acquired().contains(&pr_ref)).await;
+    assert!(f.worktree_lease.is_held(&pr_ref));
+
+    core.cancel_run(format!("ask:{message_id}"))
+        .await
+        .expect("cancel_run");
+    wait_until(|| !f.worktree_lease.is_held(&pr_ref)).await;
+}
+
+#[tokio::test]
+async fn regroup_falls_back_to_an_enabled_installed_agent_when_configured_one_is_disabled() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    put_setting(&f, "agents.grouping", "user", json!("claude"));
+    put_setting(&f, "agents.claude.enabled", "user", json!(false));
+
+    core.regroup(pr).await.expect("regroup");
+
+    assert_ne!(
+        f.grouper.last_agent(),
+        Some(AgentId::Claude),
+        "a disabled grouping agent must not be used"
+    );
+}
+
+#[tokio::test]
+async fn regroup_holds_the_prs_worktree_lease() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let pr_ref = fixture_pr_ref();
+
+    core.regroup(pr).await.expect("regroup");
+
+    assert!(f.worktree_lease.acquired().contains(&pr_ref));
+    assert!(
+        !f.worktree_lease.is_held(&pr_ref),
+        "the lease must be released once the (synchronous, fast-fake) regroup returns"
+    );
+}
+
+#[tokio::test]
+async fn agent_enabled_defaults_to_true_and_honours_the_setting() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+
+    assert!(core.agent_enabled(AgentId::Claude).await);
+
+    put_setting(&f, "agents.claude.enabled", "user", json!(false));
+    assert!(!core.agent_enabled(AgentId::Claude).await);
+}
+
+#[tokio::test]
+async fn stall_after_ms_defaults_and_is_overridable() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+
+    assert_eq!(
+        core.stall_after_ms().await,
+        crate::settings::DEFAULT_STALL_AFTER_MS
+    );
+
+    put_setting(&f, "agents.stall_after_ms", "user", json!(5_000));
+    assert_eq!(core.stall_after_ms().await, 5_000);
+}
+
+#[tokio::test]
+async fn delegate_task_persists_a_failed_chat_message_on_agent_error() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-fail", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "edit crashed".into(),
+        stderr_tail: String::new(),
+    }]);
+
+    core.delegate_task(DelegateRequest {
+        task: task.id.clone(),
+        agent: Some(AgentId::Codex),
+    })
+    .await
+    .expect("delegate_task");
+
+    wait_until(|| task_row(&f, &task.id).status == TaskStatus::Todo).await;
+    assert!(
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| m.failed.as_deref() == Some("edit crashed")),
+        "a failed fix run must leave a failed chat message"
+    );
+}
+
+#[tokio::test]
+async fn delegate_task_holds_the_prs_worktree_lease_for_the_run() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let pr_ref = fixture_pr_ref();
+    let task = sample_task("t-lease", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    f.agents.hang_next_run();
+
+    let run_id = core
+        .delegate_task(DelegateRequest {
+            task: task.id.clone(),
+            agent: Some(AgentId::Codex),
+        })
+        .await
+        .expect("delegate_task");
+
+    wait_until(|| f.worktree_lease.acquired().contains(&pr_ref)).await;
+    assert!(f.worktree_lease.is_held(&pr_ref));
+
+    core.cancel_run(run_id).await.expect("cancel_run");
+    wait_until(|| !f.worktree_lease.is_held(&pr_ref)).await;
+}
+
+#[tokio::test]
+async fn open_pr_refs_reports_every_pr_open_in_this_session() {
+    let f = fixtures();
+    let (core, _recv, _pr, _head) = open_fixture_pr(&f).await;
+
+    let open = core.open_pr_refs().await;
+    assert_eq!(open, vec![fixture_pr_ref()]);
 }

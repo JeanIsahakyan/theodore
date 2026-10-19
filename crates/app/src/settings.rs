@@ -45,8 +45,19 @@ pub fn defaults() -> Vec<Setting> {
             scope: SCOPE_USER.into(),
             value: serde_json::json!("stable"),
         },
+        Setting {
+            key: "agents.stall_after_ms".into(),
+            scope: SCOPE_USER.into(),
+            value: serde_json::json!(DEFAULT_STALL_AFTER_MS),
+        },
     ]
 }
+
+/// No output for this long while an agent run is alive → `AgentEvent::Stalled`
+/// (plan "failed agent runs"). 120s: long enough that a slow tool call
+/// doesn't look stuck, short enough that a genuinely hung CLI is caught
+/// well before a human gives up and force-quits the app.
+pub const DEFAULT_STALL_AFTER_MS: u64 = 120_000;
 
 impl Core {
     /// Seeds any default setting not already present. Idempotent; the shell
@@ -122,6 +133,41 @@ impl Core {
         self.setting_value_scoped(key, repo_scope)
             .await
             .and_then(|v| v.as_f64())
+    }
+
+    /// `agents.stall_after_ms`: no scope override today (a stall timeout is
+    /// a machine/CLI property, not a per-repo one), kept as `None` repo scope
+    /// so it's a one-line change if that ever needs to differ.
+    pub async fn stall_after_ms(&self) -> u64 {
+        self.setting_value_scoped("agents.stall_after_ms", None)
+            .await
+            .and_then(|v| v.as_u64())
+            .unwrap_or(DEFAULT_STALL_AFTER_MS)
+    }
+
+    /// `agents.<id>.enabled` (plan "enable/disable agents"), `user` scope
+    /// only — a machine-level preference, not something a repo's
+    /// `.review/config.yaml` overrides. Unset = enabled: installing
+    /// Theodore must not silently turn every agent off.
+    pub async fn agent_enabled(&self, agent: AgentId) -> bool {
+        let key = format!("agents.{}.enabled", agent.as_str());
+        self.setting_value_scoped(&key, None)
+            .await
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// The first of `installed` (in order) that isn't disabled. Used
+    /// wherever a configured agent setting (e.g. `agents.grouping`) names an
+    /// agent the user has since disabled — falls back instead of running a
+    /// disabled CLI.
+    pub async fn first_enabled(&self, installed: &[AgentId]) -> Option<AgentId> {
+        for &a in installed {
+            if self.agent_enabled(a).await {
+                return Some(a);
+            }
+        }
+        None
     }
 
     /// The repo slug of an open PR, for scoped setting lookups. `None` for a
