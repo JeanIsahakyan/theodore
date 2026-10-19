@@ -267,6 +267,24 @@ pub fn parse_pr_ref(input: &str) -> AppResult<PrRef> {
                 });
             }
         }
+        if url.host_str() == Some("bitbucket.org") {
+            // bitbucket.org/<workspace>/<repo>/pull-requests/<n>
+            let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
+            if let [workspace, repo, "pull-requests", n, ..] = segments.as_slice() {
+                let number: u64 = n
+                    .parse()
+                    .map_err(|_| AppError::Invalid(format!("bad PR number in {input}")))?;
+                return Ok(PrRef {
+                    repo: RepoRef {
+                        host: HostKind::Bitbucket,
+                        owner: workspace.to_string(),
+                        name: repo.to_string(),
+                    },
+                    number,
+                    host_id: None,
+                });
+            }
+        }
         return Err(AppError::Invalid(format!("unsupported PR url: {input}")));
     }
     if let Some((slug, num)) = input.rsplit_once('#')
@@ -304,10 +322,20 @@ mod parse_tests {
     }
 
     #[test]
+    fn parses_bitbucket_pull_request_urls() {
+        let pr = parse_pr_ref("https://bitbucket.org/acme/widgets/pull-requests/42").unwrap();
+        assert_eq!(pr.repo.host, HostKind::Bitbucket);
+        assert_eq!(pr.repo.owner, "acme");
+        assert_eq!(pr.repo.name, "widgets");
+        assert_eq!(pr.number, 42);
+    }
+
+    #[test]
     fn pr_ids_round_trip() {
         for url in [
             "https://github.com/o/r/pull/7",
             "https://gitlab.com/g/s/p/-/merge_requests/3",
+            "https://bitbucket.org/ws/repo/pull-requests/9",
         ] {
             let pr = parse_pr_ref(url).unwrap();
             assert_eq!(pr_ref_from_id(&pr.id()).unwrap(), pr);

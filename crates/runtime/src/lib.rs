@@ -99,6 +99,10 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         Arc::new(token::GitlabToken::new(secrets.clone())),
         clock.clone(),
     ));
+    let bitbucket = Arc::new(theodore_host_bitbucket::BitbucketAdapter::new(
+        Arc::new(token::BitbucketToken::new(secrets.clone())),
+        clock.clone(),
+    ));
     let git: Arc<dyn GitPort> = Arc::new(theodore_git::GitCli::new(
         cfg.data_dir.clone(),
         token.clone(),
@@ -111,7 +115,7 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         store.clone(),
         git.clone(),
     ));
-    let host = Arc::new(Hosts::new(github, Some(gitlab), local));
+    let host = Arc::new(Hosts::new(github, Some(gitlab), Some(bitbucket), local));
     Ok(Adapters {
         host,
         git,

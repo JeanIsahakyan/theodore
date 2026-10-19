@@ -101,6 +101,9 @@ impl CredentialSource for HostToken {
     fn token_for(&self, repo: &RepoRef) -> Option<String> {
         match repo.host {
             theodore_domain::HostKind::Gitlab => GitlabToken::new(self.secrets.clone()).lookup(),
+            theodore_domain::HostKind::Bitbucket => {
+                BitbucketToken::new(self.secrets.clone()).lookup()
+            }
             _ => theodore_host_http::TokenSource::token(self),
         }
     }
@@ -125,6 +128,34 @@ impl GitlabToken {
 }
 
 impl theodore_host_http::TokenSource for GitlabToken {
+    fn token(&self) -> Option<String> {
+        self.lookup()
+    }
+}
+
+/// Bitbucket token: keychain → `BITBUCKET_TOKEN`. Holds either the
+/// `username:app_password` Basic form or a bare access token (plan §6.8);
+/// `host-bitbucket`'s own `Credentials::from_token` tells the two apart.
+pub struct BitbucketToken {
+    secrets: Arc<dyn Secrets>,
+}
+
+impl BitbucketToken {
+    pub fn new(secrets: Arc<dyn Secrets>) -> Self {
+        Self { secrets }
+    }
+
+    fn lookup(&self) -> Option<String> {
+        match self.secrets.get(theodore_secrets::BITBUCKET_TOKEN) {
+            Ok(Some(t)) => Some(t),
+            _ => std::env::var("BITBUCKET_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty()),
+        }
+    }
+}
+
+impl theodore_host_http::TokenSource for BitbucketToken {
     fn token(&self) -> Option<String> {
         self.lookup()
     }

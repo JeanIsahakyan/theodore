@@ -259,12 +259,16 @@ app ──▶ host::HostAdapter (traits, host-neutral models, capabilities)
             │
             ├─ host-github     GraphQL (cynic, typed against the schema) + REST
             ├─ host-gitlab     REST v4 (+ GraphQL where it is simpler)   — M7
-            └─ host-bitbucket  REST 2.0                                   — later
+            └─ host-bitbucket  REST 2.0                                 — M7.1
             │
-            └─ host::http   one client for all adapters:
+            └─ host::http   one client for GitHub and GitLab:
                  auth injection · ETag cache · rate limiter · retry/backoff ·
                  token redaction in logs
 ```
+
+`host-bitbucket` owns a second, smaller HTTP client rather than sharing
+`host::http`: that one only ever sends `Authorization: Bearer`, and
+Bitbucket's app-password flow needs Basic auth instead (§6.8).
 
 `reqwest` + `cynic`, no `octocrab`: we need full control over ETags, limits and
 retries, and would use a fraction of it.
@@ -304,9 +308,9 @@ Host ids are opaque strings inside the domain.
 | Feature | GitHub | GitLab | Bitbucket Cloud |
 | --- | --- | --- | --- |
 | Viewed per file on the server | `markFileAsViewed` | no (kept locally) | no (kept locally) |
-| Batched review (drafts → submit) | pending review | draft notes + bulk publish | emulated by the outbox (to verify) |
+| Batched review (drafts → submit) | pending review | draft notes + bulk publish | no — comments post immediately, approve/request-changes is a separate call |
 | Resolve thread | yes | yes (discussions) | yes |
-| Suggestions | yes | yes | to verify |
+| Suggestions | yes | yes | no |
 | Merge queue | yes | merge trains | no |
 | Checks | checks + statuses | pipelines | build statuses |
 
@@ -336,7 +340,8 @@ GitHub:    GET /notifications  (If-Modified-Since, honours X-Poll-Interval)
               └─ something changed ─▶ GraphQL for the changed PRs only
            open PR: GET /pulls/{n} with ETag every 10–30 s (304s are free)
 GitLab:    ?updated_after=<cursor>
-Bitbucket: q=updated_on><cursor>
+Bitbucket: re-lists the viewer's involved PRs every poll — no indexed
+           "updated after" filter cheap enough to use as a real delta probe
 ```
 
 GraphQL is POST, so it has no conditional requests: polling the inbox through
@@ -364,7 +369,7 @@ get it. For those, fall back to GraphQL `search` on a slow interval.
 | --- | --- |
 | GitHub | `gh auth token` if present → else OAuth device flow (client id only) → else PAT |
 | GitLab | OAuth + PKCE or PAT |
-| Bitbucket Cloud | API token |
+| Bitbucket Cloud | app password (Basic, `username:app_password`) or an access token (Bearer) |
 
 Tokens live in the keychain. Never in `.git/config`, never in process arguments,
 never in the webview.
@@ -418,6 +423,32 @@ app ──▶ linear::LinearClient ──▶ https://api.linear.app/graphql
   connected/user/workspace for Settings → Integrations.
 - **Scope.** Read-only. Creating or updating a Linear issue from Theodore is
   future work, not covered here.
+
+### 6.11 Bitbucket
+
+`PrRef.repo.owner`/`.name` are the workspace and repo slug directly — unlike
+GitLab's nested namespaces, Bitbucket slugs are always one path segment, so
+there is no project-id lookup to cache.
+
+Bitbucket's `/pullrequests/{id}` endpoint returns a flat list with no
+"discussion" object; a thread is reconstructed by walking each comment's
+`parent` id up to its root, and the root's `resolution` field (present once a
+thread is resolved) carries the thread's resolved state. Comments anchor to a
+diff with `inline{path, to, from}` — one line per comment, so a multi-line
+`Anchor` collapses to its end point on write and never round-trips back as a
+range.
+
+`merge_strategy` is one of `merge_commit` / `squash` / `fast_forward`;
+`MergeMethod::Rebase` maps to `fast_forward`, the closest analogue to a true
+rebase-and-merge Bitbucket has (it fails outright if the branches diverged,
+rather than rebasing).
+
+Capabilities: `resolve_threads` only. No server-side Viewed, no pending/draft
+review, no suggestions, no merge queue, no auto-merge, no reactions — the UI
+hides those from `capabilities()` the same way it does for any other host
+gap. `merge_status`, reviewer management and draft-state toggling stay
+`Unsupported` for now; `viewer`, `search`/`search_repo`, `get_pr`,
+`submit_review`, the thread operations, `list_repos` and `merge` are real.
 
 ---
 
@@ -649,11 +680,12 @@ M0 scaffold ─▶ M1 grouping spike ─▶ M2 core + sync + UI ─▶ M3 GitHub
 | M5 | Push detection, interdiff, DISMISSED, incremental regroup, anchor remap, snooze by event | author push handled without losing reads or comments | 1 |
 | M6 | Onboarding, layered settings UI, keychain, beta channel, big-PR performance | signed DMG installs and updates on a clean Mac | 1–2 |
 | M7 | GitLab adapter; freeze `HostAdapter` | same review round-trip on GitLab | 1 |
+| M7.1 | Bitbucket Cloud adapter (§6.10) | same review round-trip on Bitbucket | 1 |
 
-Total: ~11–14 sessions to v1 on GitHub, +1 for GitLab.
+Total: ~11–14 sessions to v1 on GitHub, +1 for GitLab, +1 for Bitbucket.
 
-Later: Bitbucket, LSP go-to-definition, Linear integration, merge queue UI,
-org settings via repo file, Windows/Linux, accounts and billing, telemetry.
+Later: LSP go-to-definition, Linear integration, merge queue UI, org settings
+via repo file, Windows/Linux, accounts and billing, telemetry.
 
 ---
 
