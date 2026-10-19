@@ -37,7 +37,6 @@ import {
   SearchField,
   Separator,
   Surface,
-  Table,
   Tabs,
   Tag,
   TagGroup,
@@ -873,82 +872,79 @@ const ProjectBranches = observer(function ProjectBranches({
       />
     );
   }
+  // A fixed grid, not a table: columns keep their width at any window size
+  // and the commit column takes what's left (and truncates).
+  const cols =
+    'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_56px_124px] items-center gap-3';
   return (
-    <Table className="m-4">
-      <Table.ScrollContainer>
-        <Table.Content aria-label="Branches">
-          <Table.Header>
-            <Table.Column isRowHeader width={200}>
-              branch
-            </Table.Column>
-            <Table.Column>last commit</Table.Column>
-            <Table.Column width={120}>
-              <span className="whitespace-nowrap">ahead / behind</span>
-            </Table.Column>
-            <Table.Column width={56}>PR</Table.Column>
-            <Table.Column width={132}> </Table.Column>
-          </Table.Header>
-          <Table.Body>
-            {branches.map((b) => {
-              const match = branchPr(b.name, project.repo, items);
-              return (
-                <Table.Row key={b.name} id={b.name}>
-                  <Table.Cell className="min-w-0 font-mono text-sm">
-                    <span
-                      className="inline-flex min-w-0 max-w-full items-center gap-1.5"
-                      title={b.name}
-                    >
-                      <BranchesRight className="size-3.5 shrink-0 text-muted" />
-                      <span className="truncate">{b.name}</span>
-                      {b.name === project.default_branch && (
-                        <Chip size="sm" variant="soft" className="shrink-0">
-                          default
-                        </Chip>
-                      )}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell className="min-w-0">
-                    <span className="block truncate text-sm" title={b.subject}>
-                      {b.subject}
-                    </span>
-                    <span className="block truncate text-xs text-muted">
-                      {b.author || 'unknown'} · {ago(b.updated_at)}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell className="whitespace-nowrap text-xs tabular-nums text-muted">
-                    +{b.ahead} / −{b.behind}
-                  </Table.Cell>
-                  <Table.Cell className="text-xs">
-                    {match ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-1.5 font-mono text-xs"
-                        onPress={() => ui.go({ name: 'review', pr: match.id })}
-                      >
-                        #{match.pr.number}
-                      </Button>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Button
-                      size="sm"
-                      variant="tertiary"
-                      isPending={opening === b.name}
-                      onPress={() => open(b)}
-                    >
-                      Review branch
-                    </Button>
-                  </Table.Cell>
-                </Table.Row>
-              );
-            })}
-          </Table.Body>
-        </Table.Content>
-      </Table.ScrollContainer>
-    </Table>
+    <div className="branches flex min-h-0 min-w-0 flex-1 flex-col overflow-auto px-6 pb-20">
+      <div
+        className={`${cols} sticky top-0 z-[1] border-b border-separator bg-background py-2 text-xs text-muted`}
+      >
+        <span>branch</span>
+        <span>last commit</span>
+        <span className="whitespace-nowrap text-right">ahead / behind</span>
+        <span>PR</span>
+        <span />
+      </div>
+      {branches.map((b) => {
+        const match = branchPr(b.name, project.repo, items);
+        return (
+          <div
+            key={b.name}
+            className={`${cols} border-b border-separator py-2.5 last:border-b-0`}
+          >
+            <span
+              className="flex min-w-0 items-center gap-1.5 font-mono text-sm"
+              title={b.name}
+            >
+              <BranchesRight className="size-3.5 shrink-0 text-muted" />
+              <span className="truncate">{b.name}</span>
+              {b.name === project.default_branch && (
+                <Chip size="sm" variant="soft" className="shrink-0">
+                  default
+                </Chip>
+              )}
+            </span>
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-sm" title={b.subject}>
+                {b.subject}
+              </span>
+              <span className="truncate text-xs text-muted">
+                {b.author || 'unknown'} · {ago(b.updated_at)}
+              </span>
+            </span>
+            <span className="whitespace-nowrap text-right text-xs tabular-nums text-muted">
+              +{b.ahead} / −{b.behind}
+            </span>
+            <span className="text-xs">
+              {match ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1.5 font-mono text-xs"
+                  onPress={() => ui.go({ name: 'review', pr: match.id })}
+                >
+                  #{match.pr.number}
+                </Button>
+              ) : (
+                <span className="text-muted">—</span>
+              )}
+            </span>
+            <span className="flex justify-end">
+              <Button
+                size="sm"
+                variant="tertiary"
+                isPending={opening === b.name}
+                onPress={() => open(b)}
+              >
+                Review branch
+              </Button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 });
 
