@@ -392,6 +392,13 @@ export const CommandMenu = observer(function CommandMenu() {
     },
     {
       group: 'Go to',
+      label: 'Skills',
+      icon: <Sparkles />,
+      keys: 'G K',
+      run: () => ui.go({ name: 'skills' }),
+    },
+    {
+      group: 'Go to',
       label: 'Settings',
       icon: <Gear />,
       keys: 'G S',
@@ -484,12 +491,13 @@ export function useGlobalKeys() {
         (e.target as HTMLElement).closest('input,textarea,select')
       ) {
         return;
-      } else if (inSequence() && /^[itsam]$/.test(e.key)) {
+      } else if (inSequence() && /^[itsamk]$/.test(e.key)) {
         gAt = 0;
         if (e.key === 'i') ui.go({ name: 'inbox' });
         if (e.key === 't') ui.go({ name: 'tasks' });
         if (e.key === 's') ui.go({ name: 'settings', page: 'agents' });
         if (e.key === 'm' && FEATURES.currentUser) ui.go({ name: 'mine' });
+        if (e.key === 'k') ui.go({ name: 'skills' });
       } else if (e.key === 'g') {
         gAt = Date.now();
       } else if (e.key === '[') {

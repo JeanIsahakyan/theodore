@@ -6,6 +6,7 @@ import {
   ListCheck,
   Link,
   Plus,
+  Sparkles,
   Tray,
   Xmark,
 } from '@gravity-ui/icons';
@@ -31,6 +32,8 @@ function useLabel(r: Route): {
       return { icon: <CodePullRequest />, title: 'My PRs' };
     case 'tasks':
       return { icon: <ListCheck />, title: 'Tasks' };
+    case 'skills':
+      return { icon: <Sparkles />, title: 'Skills' };
     case 'settings':
       return { icon: <Gear />, title: 'Settings' };
     case 'new':

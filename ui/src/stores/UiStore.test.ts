@@ -18,4 +18,54 @@ describe('UiStore tabs', () => {
       'new',
     ]);
   });
+
+  it('navigates to the standalone skills route like any other view', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.go({ name: 'skills' });
+    expect(ui.route).toEqual({ name: 'skills' });
+  });
+});
+
+describe('UiStore modals', () => {
+  it('carries targets through openModal for the modal to read', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.openModal('assign', ['task-1']);
+    expect(ui.modal).toBe('assign');
+    expect(ui.modalTargets).toEqual(['task-1']);
+  });
+
+  it('clears targets to the default empty list when none are given', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.openModal('snooze', ['pr-1']);
+    ui.openModal('help');
+    expect(ui.modalTargets).toEqual([]);
+  });
+
+  it('closing a modal does not touch its targets', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.openModal('assign', ['task-1']);
+    ui.closeModal();
+    expect(ui.modal).toBeNull();
+    expect(ui.modalTargets).toEqual(['task-1']);
+  });
+});
+
+describe('UiStore.resetOnboarding', () => {
+  it('forgets onboarding was finished', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.finishOnboarding();
+    expect(ui.onboarded).toBe(true);
+
+    ui.resetOnboarding();
+    expect(ui.onboarded).toBe(false);
+    expect(localStorage.getItem('theodore-onboarded')).toBeNull();
+
+    // A fresh load (e.g. app relaunch) should also see it reset.
+    expect(new UiStore().onboarded).toBe(false);
+  });
 });

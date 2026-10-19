@@ -8,6 +8,7 @@ import {
   Magnifier,
   Moon,
   Plus,
+  Sparkles,
   Tray,
 } from '@gravity-ui/icons';
 import {
@@ -27,6 +28,7 @@ import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
 import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
+import { SyncStatus } from './shell/SyncStatus';
 
 interface NavItem {
   key: string;
@@ -122,6 +124,12 @@ export const Sidebar = observer(function Sidebar() {
           label: 'Tasks',
           n: tasksOpen,
           route: { name: 'tasks' },
+        },
+        {
+          key: routeKey({ name: 'skills' }),
+          icon: <Sparkles />,
+          label: 'Skills',
+          route: { name: 'skills' },
         },
       ],
     },
@@ -249,8 +257,14 @@ export const Sidebar = observer(function Sidebar() {
 
       <Separator />
       <Toolbar
+        aria-label="Sync status"
+        className="flex w-full items-center px-5 pt-2.5"
+      >
+        <SyncStatus />
+      </Toolbar>
+      <Toolbar
         aria-label="App"
-        className="flex w-full items-center gap-1 px-5 py-3"
+        className="flex w-full items-center gap-1 px-5 pb-3 pt-1.5"
       >
         {viewer ? (
           <>

@@ -16,9 +16,11 @@ import { ProjectView } from './Projects';
 import { Review } from './Review';
 import { Sidebar } from './Sidebar';
 import { SettingsNav, SettingsPage } from './Settings';
+import { SkillsPage } from './Skills';
 import { TabBar } from './TabBar';
 import { Tasks } from './Tasks';
 import { Onboarding } from './Onboarding';
+import { StatusBanners } from './shell/StatusBanners';
 
 /** Fallback for any surface with no menu of its own: inputs get Cut/Copy/
  *  Paste/Select all, a text selection gets Copy + "Ask agent about
@@ -147,6 +149,7 @@ export const App = observer(function App() {
           (r.name === 'settings' ? <SettingsNav page={r.page} /> : <Sidebar />)}
         <Surface className="flex min-w-0 flex-1 flex-col rounded-none">
           <TabBar showOpen={!ui.sidebar} />
+          <StatusBanners />
           <div className="flex min-h-0 flex-1">
             {r.name === 'inbox' ? (
               <Inbox />
@@ -154,6 +157,8 @@ export const App = observer(function App() {
               <Mine />
             ) : r.name === 'tasks' ? (
               <Tasks />
+            ) : r.name === 'skills' ? (
+              <SkillsPage />
             ) : r.name === 'settings' ? (
               <SettingsPage page={r.page} />
             ) : r.name === 'new' ? (
