@@ -266,7 +266,7 @@ function RepoRow({
         {body}
         {prCount > 0 && (
           <Chip size="sm" variant="soft" color="accent" className="shrink-0">
-            {prCount} PRs with you
+            {prCount} {prCount === 1 ? 'PR' : 'PRs'} with you
           </Chip>
         )}
       </Checkbox.Content>
