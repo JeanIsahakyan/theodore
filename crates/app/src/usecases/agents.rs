@@ -17,9 +17,15 @@ use crate::error::{AppError, AppResult};
 impl Core {
     pub async fn run_skill(&self, req: RunSkillRequest) -> AppResult<String> {
         self.ensure_open(&req.pr).await?;
+        self.check_budget(&req.pr).await?;
+        let repo_scope = self.repo_scope_of(&req.pr).await;
         let agents = if req.agents.is_empty() {
-            self.setting_agents("agents.skills", vec![AgentId::Claude])
-                .await
+            self.setting_agents_scoped(
+                "agents.skills",
+                repo_scope.as_deref(),
+                vec![AgentId::Claude],
+            )
+            .await
         } else {
             req.agents.clone()
         };
@@ -85,6 +91,7 @@ impl Core {
 
     pub async fn ask(&self, req: AskRequest) -> AppResult<String> {
         self.ensure_open(&req.pr).await?;
+        self.check_budget(&req.pr).await?;
         let message_id = uuid::Uuid::new_v4().to_string();
         let now = self.0.deps.clock.now();
         let question = ChatMessage {
@@ -107,7 +114,11 @@ impl Core {
 
         let agent = match req.agent {
             Some(a) => a,
-            None => self.setting_agent("agents.chat", AgentId::Claude).await,
+            None => {
+                let repo_scope = self.repo_scope_of(&req.pr).await;
+                self.setting_agent_scoped("agents.chat", repo_scope.as_deref(), AgentId::Claude)
+                    .await
+            }
         };
         let cwd = {
             let head = self.0.current_head.read().await.get(&req.pr).cloned();
@@ -252,7 +263,7 @@ async fn drive_skill_run(
             .map(|t| t.register(&run_id, &pr, agent));
         let req = AgentRequest {
             agent,
-            prompt: skill_prompt(&skill, agent, &cwd),
+            prompt: skill_prompt(&skill, agent, &cwd, &core.0.deps.claude_home),
             system: None,
             cwd: cwd.clone(),
             mode: AgentMode::ReadOnly,
@@ -334,7 +345,7 @@ impl Drop for ToolsGuard<'_> {
 /// Claude discovers `SKILL.md` files under `~/.claude/skills` and the
 /// worktree's `.claude/skills` on its own (plan §8.4), so it only needs the
 /// skill referenced by name. Every other agent gets the full text inlined.
-fn skill_prompt(skill: &str, agent: AgentId, worktree: &Path) -> String {
+fn skill_prompt(skill: &str, agent: AgentId, worktree: &Path, claude_home: &Path) -> String {
     let instructions = "Start with the review-tools `get_pr_context` tool. Report every issue \
          you find with `add_finding` (file path, line on the new side, severity \
          info|warn|high, short title, body). Do not edit files. Finish with a \
@@ -342,7 +353,7 @@ fn skill_prompt(skill: &str, agent: AgentId, worktree: &Path) -> String {
     if agent == AgentId::Claude {
         return format!("Review this pull request with the `{skill}` skill. {instructions}");
     }
-    match crate::usecases::skills::resolve_skill_content(skill, worktree) {
+    match crate::usecases::skills::resolve_skill_content(skill, worktree, claude_home) {
         Some(content) => format!(
             "{content}\n\n---\n\nReview this pull request using the skill above. {instructions}"
         ),

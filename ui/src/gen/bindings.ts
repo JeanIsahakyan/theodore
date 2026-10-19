@@ -51,6 +51,24 @@ export const commands = {
 	refreshProject: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("refresh_project", { id })),
 	listBranches: (project: string) => typedError<LocalBranch[], CommandError>(__TAURI_INVOKE("list_branches", { project })),
 	openBranch: (req: OpenBranchRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("open_branch", { req })),
+	mergeInfo: (pr: PrId) => typedError<MergeInfo, CommandError>(__TAURI_INVOKE("merge_info", { pr })),
+	mergePr: (req: MergeRequest) => typedError<null, CommandError>(__TAURI_INVOKE("merge_pr", { req })),
+	assignableUsers: (pr: PrId) => typedError<Person[], CommandError>(__TAURI_INVOKE("assignable_users", { pr })),
+	setReviewers: (req: ReviewersRequest) => typedError<null, CommandError>(__TAURI_INVOKE("set_reviewers", { req })),
+	setDraft: (req: DraftStateRequest) => typedError<null, CommandError>(__TAURI_INVOKE("set_draft", { req })),
+	updateBranch: (pr: PrId) => typedError<null, CommandError>(__TAURI_INVOKE("update_branch", { pr })),
+	react: (req: ReactRequest) => typedError<null, CommandError>(__TAURI_INVOKE("react", { req })),
+	editComment: (req: EditCommentRequest) => typedError<null, CommandError>(__TAURI_INVOKE("edit_comment", { req })),
+	commitSuggestions: (req: CommitSuggestionsRequest) => typedError<null, CommandError>(__TAURI_INVOKE("commit_suggestions", { req })),
+	getSkill: (id: string, pr: string | null) => typedError<SkillBody, CommandError>(__TAURI_INVOKE("get_skill", { id, pr })),
+	saveSkill: (req: SaveSkillRequest) => typedError<SkillInfo, CommandError>(__TAURI_INVOKE("save_skill", { req })),
+	prSpend: (pr: PrId) => typedError<PrSpend, CommandError>(__TAURI_INVOKE("pr_spend", { pr })),
+	/**
+	 *  Native folder picker for the Add project dialog. Runs on a background
+	 *  thread: the dialog plugin's blocking call would otherwise stall the
+	 *  async runtime until the user picks a folder or cancels.
+	 */
+	pickFolder: () => typedError<string | null, CommandError>(__TAURI_INVOKE("pick_folder")),
 };
 
 /* Types */
@@ -112,6 +130,15 @@ export type CommandError = {
 	message: string,
 };
 
+export type CommentId = string;
+
+export type CommitSuggestionsRequest = {
+	pr: PrId,
+	/**  Review comments whose ```suggestion blocks to apply. */
+	comments: CommentId[],
+	message: string,
+};
+
 export type DelegateRequest = {
 	task: TaskId,
 	/**  Empty = use the `agents.fix` setting. */
@@ -123,6 +150,18 @@ export type DiffLine = {
 	text: string,
 	old_no: number | null,
 	new_no: number | null,
+};
+
+export type DraftStateRequest = {
+	pr: PrId,
+	draft: boolean,
+};
+
+export type EditCommentRequest = {
+	pr: PrId,
+	comment: CommentId,
+	/**  `None` deletes the comment. */
+	body: string | null,
 };
 
 export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } | { type: "toast"; level: ToastLevel; text: string } |
@@ -197,6 +236,30 @@ export type LocalBranch = {
 	updated_at: number,
 };
 
+export type MergeInfo = {
+	mergeable: boolean | null,
+	state: MergeState,
+	allowed_methods: MergeMethod[],
+	auto_merge_enabled: boolean,
+	in_queue: boolean,
+	required_approvals: number | null,
+};
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+export type MergeRequest = {
+	pr: PrId,
+	method: MergeMethod,
+	title: string | null,
+	body: string | null,
+	/**  Merge when requirements pass instead of now. */
+	auto: boolean,
+	/**  Add to the merge queue instead of merging. */
+	queue: boolean,
+};
+
+export type MergeState = "clean" | "blocked" | "behind" | "dirty" | "unstable" | "unknown";
+
 export type MutationOp = { op: "create"; model: string; id: string; data: unknown } |
 /**  `data` holds changed fields only. */
 { op: "update"; model: string; id: string; data: unknown } | { op: "archive"; model: string; id: string } | { op: "delete"; model: string; id: string };
@@ -226,6 +289,13 @@ export type Person = {
 
 export type PrId = string;
 
+export type PrSpend = {
+	pr: PrId,
+	usage: Usage,
+	/**  `budget.per_pr_usd` setting; agent runs stop at this spend. */
+	budget_usd: number | null,
+};
+
 /**
  *  A connected repository: a host repo (bare clone under `~/.theodore/repos`)
  *  or a local folder (mirrored into the same cache, the user's repo is never
@@ -244,6 +314,14 @@ export type Project = {
 };
 
 export type ProjectStatus = "cloning" | "ready" | "error";
+
+export type ReactRequest = {
+	pr: PrId,
+	comment: CommentId,
+	/**  GitHub content name: +1, -1, laugh, hooray, confused, heart, rocket, eyes. */
+	emoji: string,
+	on: boolean,
+};
 
 export type ReplyRequest = {
 	pr: PrId,
@@ -266,6 +344,13 @@ export type ResolveRequest = {
 
 export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
 
+export type ReviewersRequest = {
+	pr: PrId,
+	add: string[],
+	add_teams: string[],
+	remove: string[],
+};
+
 /**  One revision of a PR's diff: `base...head`. */
 export type Revision = {
 	base: Sha,
@@ -285,6 +370,17 @@ export type RunSkillRequest = {
 	agents: AgentId[],
 };
 
+export type SaveSkillRequest = {
+	id: string,
+	/**
+	 *  `user` (~/.claude/skills) or `repo` (the PR repo's .claude/skills —
+	 *  committed on a branch only when the user asks).
+	 */
+	scope: string,
+	pr: PrId | null,
+	body: string,
+};
+
 export type SetTokenRequest = {
 	host: HostKind,
 	/**  `None` removes the stored token. */
@@ -294,6 +390,13 @@ export type SetTokenRequest = {
 export type Sha = string;
 
 export type Side = "old" | "new";
+
+export type SkillBody = {
+	info: SkillInfo,
+	/**  Full SKILL.md text (front matter included). */
+	body: string,
+	editable: boolean,
+};
 
 export type SkillInfo = {
 	id: string,
@@ -350,6 +453,12 @@ export type UpdateInfo = {
 	version: string,
 	notes: string,
 	downloaded: boolean,
+};
+
+export type Usage = {
+	input_tokens: number,
+	output_tokens: number,
+	usd: number | null,
 };
 
 export type WireAction = {

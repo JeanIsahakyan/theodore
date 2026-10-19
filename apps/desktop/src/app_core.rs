@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use theodore_app::{AppError, Core};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    DelegateRequest, FileRequest, HostAuthStatus, LocalBranch, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, Project, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
-    SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision, Transaction,
-    TransactionResult, UpdateInfo,
+    CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
+    HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
+    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -149,6 +150,42 @@ impl CoreApi for AppCore {
     }
     async fn open_branch(&self, req: OpenBranchRequest) -> Result<OpenPrResponse, CommandError> {
         self.core.open_branch(req).await.map_err(err)
+    }
+    async fn merge_info(&self, pr: PrId) -> Result<MergeInfo, CommandError> {
+        self.core.merge_info(pr).await.map_err(err)
+    }
+    async fn merge_pr(&self, req: MergeRequest) -> Result<(), CommandError> {
+        self.core.merge_pr(req).await.map_err(err)
+    }
+    async fn assignable_users(&self, pr: PrId) -> Result<Vec<Person>, CommandError> {
+        self.core.assignable_users(pr).await.map_err(err)
+    }
+    async fn set_reviewers(&self, req: ReviewersRequest) -> Result<(), CommandError> {
+        self.core.set_reviewers(req).await.map_err(err)
+    }
+    async fn set_draft(&self, req: DraftStateRequest) -> Result<(), CommandError> {
+        self.core.set_draft(req).await.map_err(err)
+    }
+    async fn update_branch(&self, pr: PrId) -> Result<(), CommandError> {
+        self.core.update_branch(pr).await.map_err(err)
+    }
+    async fn react(&self, req: ReactRequest) -> Result<(), CommandError> {
+        self.core.react(req).await.map_err(err)
+    }
+    async fn edit_comment(&self, req: EditCommentRequest) -> Result<(), CommandError> {
+        self.core.edit_comment(req).await.map_err(err)
+    }
+    async fn commit_suggestions(&self, req: CommitSuggestionsRequest) -> Result<(), CommandError> {
+        self.core.commit_suggestions(req).await.map_err(err)
+    }
+    async fn get_skill(&self, id: String, pr: Option<PrId>) -> Result<SkillBody, CommandError> {
+        self.core.get_skill(&id, pr).await.map_err(err)
+    }
+    async fn save_skill(&self, req: SaveSkillRequest) -> Result<SkillInfo, CommandError> {
+        self.core.save_skill(req).await.map_err(err)
+    }
+    async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError> {
+        self.core.pr_spend(pr).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await

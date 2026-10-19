@@ -21,6 +21,9 @@ pub mod testkit;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod git_integration_tests;
+
 pub use core::{Core, Receivers};
 pub use deps::{Deps, Grouper, RunTools, TokenStatus};
 pub use error::{AppError, AppResult, GrouperError};

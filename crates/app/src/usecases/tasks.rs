@@ -20,11 +20,17 @@ use crate::usecases::agents::ToolsGuard;
 impl Core {
     pub async fn delegate_task(&self, req: DelegateRequest) -> AppResult<String> {
         let task = self.load_task(&req.task).await?;
+        self.check_budget(&task.pr).await?;
         let agent = match req.agent {
             Some(a) => a,
             None => {
-                self.setting_agent("agents.fix", theodore_domain::AgentId::Claude)
-                    .await
+                let repo_scope = self.repo_scope_of(&task.pr).await;
+                self.setting_agent_scoped(
+                    "agents.fix",
+                    repo_scope.as_deref(),
+                    theodore_domain::AgentId::Claude,
+                )
+                .await
             }
         };
         let worktree = self
@@ -91,7 +97,7 @@ impl Core {
         serde_json::from_value(row.data).map_err(|e| AppError::Invalid(e.to_string()))
     }
 
-    async fn worktree_of(&self, pr: &theodore_domain::PrId) -> Option<PathBuf> {
+    pub(crate) async fn worktree_of(&self, pr: &theodore_domain::PrId) -> Option<PathBuf> {
         let head = self.0.current_head.read().await.get(pr).cloned()?;
         let revisions = self.0.revisions.read().await;
         revisions

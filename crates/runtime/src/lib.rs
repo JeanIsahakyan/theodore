@@ -138,6 +138,9 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
     };
     let backend = Arc::new(CoreTools::default());
     let mcp = Arc::new(McpRunTools::start(backend.clone()).await?);
+    let claude_home = dirs::home_dir()
+        .map(|h| h.join(".claude/skills"))
+        .unwrap_or_else(|| PathBuf::from(".claude/skills"));
     let deps = Deps {
         host: a.host,
         git: a.git,
@@ -148,6 +151,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         clock: a.clock,
         tools: Some(mcp.clone()),
         token_status: a.token_status,
+        claude_home,
     };
     let (core, receivers) = Core::start(deps);
     backend.attach(core.clone());

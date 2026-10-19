@@ -51,6 +51,19 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::refresh_project,
             commands::list_branches,
             commands::open_branch,
+            commands::merge_info,
+            commands::merge_pr,
+            commands::assignable_users,
+            commands::set_reviewers,
+            commands::set_draft,
+            commands::update_branch,
+            commands::react,
+            commands::edit_comment,
+            commands::commit_suggestions,
+            commands::get_skill,
+            commands::save_skill,
+            commands::pr_spend,
+            commands::pick_folder,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()
@@ -95,6 +108,7 @@ pub fn run(core: Arc<dyn CoreApi>, forward: impl FnOnce(CoreEvents<tauri::Wry>) 
         .on_menu_event(menu::on_event)
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(builder.invoke_handler())
         .manage(core.clone())
         .manage(updater::UpdateState::default())

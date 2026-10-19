@@ -11,6 +11,7 @@ use crate::error::{AppError, AppResult};
 impl Core {
     pub async fn regroup(&self, pr: PrId) -> AppResult<()> {
         self.ensure_open(&pr).await?;
+        self.check_budget(&pr).await?;
         let head = self.0.current_head.read().await.get(&pr).cloned();
         let Some(head) = head else {
             return Err(AppError::Invalid("pr is not open".into()));
@@ -33,7 +34,10 @@ impl Core {
             .await
             .map_err(AppError::join)??;
         let prev: Option<Grouping> = prev_row.and_then(|r| serde_json::from_value(r.data).ok());
-        let agent = self.setting_agent("agents.grouping", AgentId::Claude).await;
+        let repo_scope = detail.summary.pr.repo.slug();
+        let agent = self
+            .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
+            .await;
 
         let grouping = match &prev {
             Some(p) => {

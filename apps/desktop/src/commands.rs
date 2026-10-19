@@ -7,10 +7,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    DelegateRequest, FileRequest, HostAuthStatus, LocalBranch, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, Project, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
-    SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision, Transaction,
-    TransactionResult, UpdateInfo,
+    CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
+    HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
+    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -246,6 +247,131 @@ pub async fn open_branch(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<OpenPrResponse, CommandError> {
     core.open_branch(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn merge_info(
+    pr: PrId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<MergeInfo, CommandError> {
+    core.merge_info(pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn merge_pr(
+    req: MergeRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.merge_pr(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn assignable_users(
+    pr: PrId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<Person>, CommandError> {
+    core.assignable_users(pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_reviewers(
+    req: ReviewersRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.set_reviewers(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_draft(
+    req: DraftStateRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.set_draft(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_branch(
+    pr: PrId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.update_branch(pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn react(
+    req: ReactRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.react(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn edit_comment(
+    req: EditCommentRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.edit_comment(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn commit_suggestions(
+    req: CommitSuggestionsRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.commit_suggestions(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_skill(
+    id: String,
+    pr: Option<PrId>,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<SkillBody, CommandError> {
+    core.get_skill(id, pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn save_skill(
+    req: SaveSkillRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<SkillInfo, CommandError> {
+    core.save_skill(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn pr_spend(
+    pr: PrId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<PrSpend, CommandError> {
+    core.pr_spend(pr).await
+}
+
+/// Native folder picker for the Add project dialog. Runs on a background
+/// thread: the dialog plugin's blocking call would otherwise stall the
+/// async runtime until the user picks a folder or cancels.
+#[tauri::command]
+#[specta::specta]
+pub async fn pick_folder(app: AppHandle) -> Result<Option<String>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || app.dialog().file().blocking_pick_folder())
+        .await
+        .map(|picked| picked.map(|p| p.to_string()))
+        .map_err(|e| CommandError {
+            code: "internal".into(),
+            message: e.to_string(),
+        })
 }
 
 /// The core doesn't know about updates the shell already downloaded in the

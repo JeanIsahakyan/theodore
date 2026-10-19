@@ -33,6 +33,7 @@ specta-typescript.workspace = true
 tauri = { workspace = true, features = ["devtools", "specta"] }
 tauri-plugin-updater.workspace = true
 tauri-plugin-process.workspace = true
+tauri-plugin-dialog = "2"
 tauri-specta = { workspace = true, features = ["derive", "typescript"] }
 
 [dev-dependencies]

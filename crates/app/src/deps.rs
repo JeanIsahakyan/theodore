@@ -67,4 +67,8 @@ pub struct Deps {
     /// `None` when the shell doesn't wire one in (tests, the CLI): `viewer`
     /// and friends still work, `host_status` just reports `TokenSource::None`.
     pub token_status: Option<Arc<dyn TokenStatus>>,
+    /// `~/.claude/skills` in production; whoever builds `Deps` resolves it
+    /// (plan §8.4) — kept out of `app` itself so tests can point it at a
+    /// throwaway directory instead of the real home directory.
+    pub claude_home: std::path::PathBuf,
 }
