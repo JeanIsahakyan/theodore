@@ -34,16 +34,44 @@ use theodore_ports::{
 
 use process::GitProc;
 
+/// Where a repo's remote lives, overriding the host's real URL (the sandbox
+/// points every repo at a local `file://` bare repository).
+pub type RemoteUrls = Arc<dyn Fn(&RepoRef) -> Option<String> + Send + Sync>;
+
 /// GitPort over the system `git` binary. Bare clones under `<root>/repos`,
 /// one worktree per PR under `<root>/wt`.
 pub struct GitCli {
     root: PathBuf,
     creds: Arc<dyn CredentialSource>,
+    remote_urls: Option<RemoteUrls>,
 }
 
 impl GitCli {
     pub fn new(root: PathBuf, creds: Arc<dyn CredentialSource>) -> Self {
-        Self { root, creds }
+        Self {
+            root,
+            creds,
+            remote_urls: None,
+        }
+    }
+
+    /// Every clone, fetch and push goes to `urls(repo)` instead of the
+    /// host's own URL or the stored `origin`. Authoritative: a repo it
+    /// returns `None` for has no remote at all — never a fallback to the
+    /// real host.
+    pub fn with_remote_urls(mut self, urls: RemoteUrls) -> Self {
+        self.remote_urls = Some(urls);
+        self
+    }
+
+    /// `Ok(None)`: no override, use the host URL / `origin` as usual.
+    pub(crate) fn remote_override(&self, repo: &RepoRef) -> GitResult<Option<String>> {
+        match &self.remote_urls {
+            None => Ok(None),
+            Some(f) => f(repo).map(Some).ok_or_else(|| {
+                GitError::Parse(format!("no remote configured for {}", repo.slug()))
+            }),
+        }
     }
 
     pub(crate) fn ensure_askpass(&self) -> GitResult<PathBuf> {
@@ -103,11 +131,12 @@ impl GitCli {
         let askpass = self.ensure_askpass()?;
         let dir = self.repo_dir(repo)?;
         let token = self.token_for(repo);
+        let remote = self.remote_override(repo)?;
 
         if dir.join("HEAD").exists() {
             let args = [
                 "fetch",
-                "origin",
+                remote.as_deref().unwrap_or("origin"),
                 "+refs/heads/*:refs/heads/*",
                 "--prune",
                 "--tags",
@@ -124,9 +153,12 @@ impl GitCli {
             return Ok(dir);
         }
 
-        let url = auth::clone_url(repo.host, &repo.owner, &repo.name).ok_or_else(|| {
-            GitError::Parse(format!("{:?} repos have no remote to clone", repo.host))
-        })?;
+        let url = match remote {
+            Some(url) => url,
+            None => auth::clone_url(repo.host, &repo.owner, &repo.name).ok_or_else(|| {
+                GitError::Parse(format!("{:?} repos have no remote to clone", repo.host))
+            })?,
+        };
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -154,7 +186,12 @@ impl GitCli {
         let remote_ref = auth::remote_pr_ref(pr.repo.host, pr.number);
         let local_ref = auth::local_pr_ref(pr.number);
         let refspec = format!("+{remote_ref}:{local_ref}");
-        let fetch_args = ["fetch", "origin", refspec.as_str()];
+        let remote = self.remote_override(&pr.repo)?;
+        let fetch_args = [
+            "fetch",
+            remote.as_deref().unwrap_or("origin"),
+            refspec.as_str(),
+        ];
         GitProc {
             cwd: &dir,
             askpass: &askpass,
