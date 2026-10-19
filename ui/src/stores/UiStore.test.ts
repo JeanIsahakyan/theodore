@@ -88,3 +88,19 @@ describe('UiStore.resetOnboarding', () => {
     expect(new UiStore().onboarded).toBe(false);
   });
 });
+
+describe('UiStore aside drawer', () => {
+  it('starts closed in drawer layouts and leaves the saved column state alone', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.toggleAside(true); // the wide-layout column is on
+    ui.setAsideIsDrawer(true);
+    expect(ui.asideShown).toBe(false);
+    ui.toggleAside();
+    expect(ui.asideShown).toBe(true);
+    expect(ui.aside).toBe(true);
+    ui.setAsideIsDrawer(false);
+    expect(ui.asideDrawerOpen).toBe(false);
+    expect(ui.asideShown).toBe(true);
+  });
+});

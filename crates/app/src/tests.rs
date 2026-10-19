@@ -4128,3 +4128,28 @@ async fn ensure_open_recovers_a_branch_review_of_a_host_project_after_a_restart(
         .await
         .expect("a branch review reopens without the host");
 }
+
+#[tokio::test]
+async fn opening_a_pr_keeps_its_inbox_reasons() {
+    let f = fixtures();
+    // As if an inbox refresh had stored it with a reason.
+    let pr_id = fixture_pr_ref().id();
+    let mut summary = serde_json::to_value(testkit::sample_pr_summary(
+        &fixture_pr_ref(),
+        &Sha::new("head111"),
+    ))
+    .unwrap();
+    summary["reasons"] = json!(["review_requested"]);
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr_id.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(summary),
+        }])
+        .unwrap();
+
+    let (_core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let row = f.store.get(models::PR, &pr.0).unwrap().unwrap();
+    assert_eq!(row.data["reasons"], json!(["review_requested"]));
+}

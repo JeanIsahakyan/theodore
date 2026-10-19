@@ -126,6 +126,10 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // Groups-pane drawer is page-local — unlike `ui.aside`, which the user may
   // also toggle off at wide widths, this only ever matters once collapsed.
   const [groupsOpen, setGroupsOpen] = useState(false);
+  useEffect(() => {
+    ui.setAsideIsDrawer(layout.aside === 'drawer');
+  }, [ui, layout.aside]);
+  useEffect(() => () => ui.setAsideIsDrawer(false), [ui]);
   // Grouped by default — the point of the product; Files is the fallback view.
   const [mode, setMode] = useState<ReviewMode>({
     mode: 'groups',
@@ -603,14 +607,14 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           <ToggleButton
             isIconOnly
             size="sm"
-            isSelected={ui.aside}
+            isSelected={ui.asideShown}
             onChange={(v) => ui.toggleAside(v)}
             aria-label="AI panel"
           >
             <LayoutSideContentRight className="size-4" />
           </ToggleButton>
           <Tooltip.Content>
-            {ui.aside ? 'Hide' : 'Show'} AI, tasks and threads <K>]</K>
+            {ui.asideShown ? 'Hide' : 'Show'} AI, tasks and threads <K>]</K>
           </Tooltip.Content>
         </Tooltip>
       </Toolbar>
@@ -849,17 +853,19 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   />
                 </>
               )}
-              {!showAsideColumn && layout.aside === 'drawer' && ui.aside && (
-                <>
-                  <div className="absolute inset-y-0 right-0 z-20 grid w-[352px] max-w-[85vw] grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] border-l border-separator bg-background shadow-xl">
-                    <SidePanel pr={pr} />
-                  </div>
-                  <div
-                    className="absolute inset-0 z-10 bg-black/40"
-                    onClick={() => ui.toggleAside(false)}
-                  />
-                </>
-              )}
+              {!showAsideColumn &&
+                layout.aside === 'drawer' &&
+                ui.asideShown && (
+                  <>
+                    <div className="absolute inset-y-0 right-0 z-20 grid w-[352px] max-w-[85vw] grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] border-l border-separator bg-background shadow-xl">
+                      <SidePanel pr={pr} />
+                    </div>
+                    <div
+                      className="absolute inset-0 z-10 bg-black/40"
+                      onClick={() => ui.toggleAside(false)}
+                    />
+                  </>
+                )}
             </div>
           );
         })()

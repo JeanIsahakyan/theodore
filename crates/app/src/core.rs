@@ -258,8 +258,27 @@ impl Core {
         detail: &theodore_domain::PrDetail,
     ) -> crate::error::AppResult<()> {
         let pr_s = detail.summary.pr.id().0.clone();
-        let summary_data = serde_json::to_value(&detail.summary)
+        let mut summary_data = serde_json::to_value(&detail.summary)
             .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
+        // `reasons` comes from the inbox searches, not from fetching one PR:
+        // a fresh `get_pr` has none, and writing it as-is dropped an opened
+        // PR out of the inbox. Keep what the inbox last said.
+        if detail.summary.reasons.is_empty() {
+            let store = self.0.deps.store.clone();
+            let id = pr_s.clone();
+            let stored = tokio::task::spawn_blocking(move || store.get(models::PR, &id))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten();
+            if let Some(reasons) = stored
+                .as_ref()
+                .and_then(|r| r.data.get("reasons"))
+                .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+            {
+                summary_data["reasons"] = reasons.clone();
+            }
+        }
         let detail_data = serde_json::to_value(detail)
             .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
         let actions = vec![

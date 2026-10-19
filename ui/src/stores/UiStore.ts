@@ -4,6 +4,7 @@
  * desktop app has no address bar, so this plays the role a router would.
  */
 import {
+  computed,
   makeObservable,
   observable,
   observableRef,
@@ -98,6 +99,9 @@ export class UiStore {
       peek: observable,
       sidebar: observable,
       aside: observable,
+      asideIsDrawer: observable,
+      asideDrawerOpen: observable,
+      asideShown: computed,
       diffView: observable,
       modal: observableRef,
       modalTargets: observableShallow,
@@ -235,7 +239,32 @@ export class UiStore {
     });
   }
 
-  toggleAside(open = !this.aside): void {
+  /** The review screen is too narrow for the aside column, so the aside
+   *  is an overlay drawer (set by `Review` from its layout). */
+  asideIsDrawer = false;
+  /** Drawer open state — never persisted, so the drawer doesn't cover the
+   *  diff every time a PR opens. */
+  asideDrawerOpen = false;
+
+  /** Whether the aside (AI / tasks / threads) is showing in the current layout. */
+  get asideShown(): boolean {
+    return this.asideIsDrawer ? this.asideDrawerOpen : this.aside;
+  }
+
+  setAsideIsDrawer(drawer: boolean): void {
+    runInAction(() => {
+      this.asideIsDrawer = drawer;
+      if (!drawer) this.asideDrawerOpen = false;
+    });
+  }
+
+  toggleAside(open = !this.asideShown): void {
+    if (this.asideIsDrawer) {
+      runInAction(() => {
+        this.asideDrawerOpen = open;
+      });
+      return;
+    }
     localStorage.setItem(LS_ASIDE, open ? '1' : '0');
     runInAction(() => {
       this.aside = open;
