@@ -33,14 +33,14 @@ a review.
 ### Projects and branch reviews
 - Add, browse and remove projects from any configured host.
 - Open a local review of a branch against its project's base, with no hosted PR; stays out of PR counts.
-- Groupings are versioned; reopening after an algorithm change or a push offers a Regroup.
 
 ### The review screen
 - Diff grouped by meaning into titled groups, each with a *why*, a checklist and a risk; a tour bar steps through them.
+- Groupings are versioned: a grouping from an older algorithm is redone automatically on open; ↻ regroups from scratch.
 - Keyboard-driven reading, with per-hunk read state.
 - Interdiff: after a push, only new/changed hunks are flagged, with a "what changed" view.
-- Markdown diffs render as rendered Markdown, not raw text; image diffs render side by side.
-- A per-file symbol outline via `git grep` — not a language server, so no cross-file go-to-definition.
+- Markdown diffs have a rendered Preview next to the code; image diffs show side by side, swipe or onion skin.
+- ⌘-click an identifier for definitions and references across the worktree, found with `git grep` and per-language patterns — not a language server.
 
 ### Comments, suggestions and reactions
 - Threads: reply, resolve — written back to the host.
