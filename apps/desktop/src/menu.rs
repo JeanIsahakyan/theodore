@@ -97,7 +97,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .item(&i(
             "submit-review",
             "Submit Review…",
-            Some("CmdOrCtrl+Enter"),
+            // Not plain ⌘↵: that adds a comment in the composer, and a menu
+            // accelerator fires on top of whatever the page does with it.
+            Some("CmdOrCtrl+Shift+Enter"),
         )?)
         .separator()
         .item(&i("tour", "Start / Stop Tour", None)?)

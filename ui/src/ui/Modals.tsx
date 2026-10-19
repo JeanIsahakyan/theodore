@@ -34,13 +34,18 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
   const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const drafts = store.models.drafts.byPr(pr);
   const reads = new Set(store.models.hunkReads.byPr(pr).map((r) => r.hunk));
-  const unread = store.models.groups
-    .all()
+  // This PR's groups only — `groups.all()` spans every open PR.
+  const unread = store.models
+    .groupsOf(pr)
     .filter((g) => g.kind !== 'hidden')
     .flatMap((g) => g.hunks)
     .filter((h) => !reads.has(h)).length;
   return (
-    <Shell title={`Review · ${pr}`} size="lg" onClose={() => ui.closeModal()}>
+    <Shell
+      title={`Review · ${prLabel(store.models.prSummaries.get(pr), pr)}`}
+      size="lg"
+      onClose={() => ui.closeModal()}
+    >
       {unread > 0 && (
         <div className="text-xs text-warning">Unread hunks: {unread}</div>
       )}
@@ -227,6 +232,21 @@ function HelpModalInner() {
       </Table>
     </Shell>
   );
+}
+
+/** "migratro #77" for a host PR, the branch for a branch review. */
+function prLabel(
+  p:
+    | {
+        pr: { repo: { name: string }; number: number };
+        url: string;
+        head_ref: string;
+      }
+    | undefined,
+  id: string,
+): string {
+  if (!p) return id;
+  return p.url ? `${p.pr.repo.name} #${p.pr.number}` : p.head_ref;
 }
 
 export const Modals = observer(function Modals() {
