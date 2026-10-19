@@ -160,8 +160,10 @@ function Ref({ a }: { a: Anchor }) {
       title={`${a.path}:${a.line}`}
     >
       <FileCode className="size-3.5 shrink-0" />
+      {/* The file name, not the path: the chip shares a narrow row with the
+       *  author; the full path is in the tooltip. */}
       <span className="min-w-0 truncate">
-        {a.path}:{a.line}
+        {a.path.slice(a.path.lastIndexOf('/') + 1)}:{a.line}
       </span>
     </span>
   );
@@ -1325,14 +1327,24 @@ function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
             <Avatar key={login} person={person} size={20} />
           ))}
         </AvatarGroup>
-        <span className="min-w-0 truncate text-sm font-medium">
+        <span className="min-w-12 max-w-[50%] shrink-0 truncate text-sm font-medium">
           {people.map(([login]) => login).join(', ')}
         </span>
         <span className="flex-1" />
-        {thread.anchor && <Ref a={thread.anchor} />}
+        {thread.anchor && (
+          <span className="flex min-w-0 shrink justify-end">
+            <Ref a={thread.anchor} />
+          </span>
+        )}
       </div>
       <p className="line-clamp-2 text-sm text-muted">
-        <span className="text-foreground">{last.author.login}:</span>{' '}
+        {/* Name the speaker only when more than one person is in the thread;
+         *  the header already shows a lone author. */}
+        {people.length > 1 && (
+          <>
+            <span className="text-foreground">{last.author.login}:</span>{' '}
+          </>
+        )}
         {stripHtmlComments(last.body)}
       </p>
       <div className="flex items-center justify-between text-xs text-muted">
