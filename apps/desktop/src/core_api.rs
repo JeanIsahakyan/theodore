@@ -4,14 +4,14 @@
 
 use async_trait::async_trait;
 use theodore_contract::{
-    AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
-    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
-    UpdateInfo,
+    AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
+    CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
+    DraftStateRequest, EditCommentRequest, FileRequest, GetBlobRequest, HostAuthStatus,
+    InterdiffEntry, InterdiffRequest, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame,
+    TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -75,6 +75,11 @@ pub trait CoreApi: Send + Sync {
     async fn login_poll(&self) -> Result<LoginState, CommandError>;
     async fn rerun_check(&self, req: RerunCheckRequest) -> Result<(), CommandError>;
     async fn triage(&self, req: TriageRequest) -> Result<(), CommandError>;
+    /// Raw bytes of a changed file at `base`/`head`, base64'd (plan "image diff").
+    async fn get_blob(&self, req: GetBlobRequest) -> Result<BlobResponse, CommandError>;
+    /// Locally-detected conflicting paths (plan "conflicts"); `Unsupported`
+    /// on a `git` older than 2.38 — the UI hides the list on that code.
+    async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -233,6 +238,12 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn triage(&self, _req: TriageRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn get_blob(&self, _req: GetBlobRequest) -> Result<BlobResponse, CommandError> {
+        Err(not_ready())
+    }
+    async fn conflicts(&self, _pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {
         Err(not_ready())
     }
 }
