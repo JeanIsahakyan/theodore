@@ -8,7 +8,6 @@ use theodore_contract::{HunkRead, MutationOp, models};
 use theodore_domain::{Anchor, Draft, FindingState, PrId, Task, TaskStatus};
 
 use crate::core::Core;
-use theodore_domain::tasks::{TaskEvent, transition};
 
 pub(super) async fn validate_op(core: &Core, op: &MutationOp) -> Result<(), String> {
     let model = match op {
@@ -191,29 +190,27 @@ async fn validate_task_update(
             "task: field '{bad}' cannot be changed by a client transaction"
         ));
     }
-    let Some(status_val) = data.get("status") else {
-        return Ok(());
-    };
-    let requested: TaskStatus =
-        serde_json::from_value(status_val.clone()).map_err(|e| format!("bad status: {e}"))?;
+    if let Some(status_val) = data.get("status") {
+        // A valid `TaskStatus`, nothing more: the lifecycle itself (todo ->
+        // progress -> review -> done) is enforced where it's actually
+        // driven — `delegate_task`/`decide_task` apply directly, bypassing
+        // this validator entirely. Gating a *forward* move here too would
+        // also gate the UI's undo/redo, which resends this same op shape
+        // with the field's old value to roll a change back (plan "sync":
+        // undo is a normal transaction, not a local-only rollback) — e.g.
+        // undoing `assignTask`'s `progress` sends `status: "todo"` back,
+        // which is not a legal forward transition but must still succeed.
+        serde_json::from_value::<TaskStatus>(status_val.clone())
+            .map_err(|e| format!("bad status: {e}"))?;
+    }
     let store = core.0.deps.store.clone();
     let id_owned = id.to_string();
     let row = tokio::task::spawn_blocking(move || store.get(models::TASK, &id_owned))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    let Some(row) = row else {
+    if row.is_none() {
         return Err("task: not found".into());
-    };
-    let task: Task = serde_json::from_value(row.data).map_err(|e| format!("bad task row: {e}"))?;
-    let event = match requested {
-        TaskStatus::Progress => TaskEvent::Start,
-        TaskStatus::Review => TaskEvent::FixReady,
-        TaskStatus::Done => TaskEvent::Accept,
-        TaskStatus::Todo if task.status == TaskStatus::Review => TaskEvent::Reject,
-        TaskStatus::Todo => TaskEvent::Reopen,
-    };
-    transition(&task, event)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    }
+    Ok(())
 }

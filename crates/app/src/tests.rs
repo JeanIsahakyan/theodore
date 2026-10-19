@@ -444,6 +444,186 @@ async fn transact_validates_draft_update_anchors_like_create() {
     );
 }
 
+/// The UI's undo queue (`ui/src/sync/UndoQueue.ts`) never rolls back
+/// locally: it resends the inverse of a committed op as a brand new
+/// transaction (plan "sync" §UndoQueue doc comment) — same model and id,
+/// same changed keys for an `update`, the old value in place of the new
+/// one. The allowlist must accept that inverse exactly as readily as the
+/// forward op, for every op shape `ui/src/actions.ts` actually sends.
+#[tokio::test]
+async fn transact_accepts_the_undo_inverse_of_every_client_op() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    // task: assignTask's `{assignee, status: "progress"}`, then undo's
+    // `{assignee: <old>, status: "todo"}` — not a legal forward lifecycle
+    // transition, but a legal undo.
+    let mut task = sample_task("t-undo", &pr, None, None, f.clock.now());
+    task.assignee = Assignee::Human("someone".into());
+    put_task(&f, &task);
+
+    let forward = core
+        .transact(single_op_tx(
+            "tx-assign-forward",
+            MutationOp::Update {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: json!({
+                    "assignee": Assignee::Agent(AgentId::Claude),
+                    "status": "progress",
+                }),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(forward, TransactionResult::Ok { .. }),
+        "assignTask's forward update must be accepted, got {forward:?}"
+    );
+
+    let inverse = core
+        .transact(single_op_tx(
+            "tx-assign-undo",
+            MutationOp::Update {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: json!({
+                    "assignee": Assignee::Human("someone".to_string()),
+                    "status": "todo",
+                }),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(inverse, TransactionResult::Ok { .. }),
+        "undoing assignTask must be accepted even though it isn't a forward transition, got {inverse:?}"
+    );
+
+    // inbox_state: markDone's `create`, then undo's `delete`.
+    let create_inbox = core
+        .transact(single_op_tx(
+            "tx-inbox-create",
+            MutationOp::Create {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+                data: json!({"pr": pr.0, "done": true, "snooze": null}),
+            },
+        ))
+        .await;
+    assert!(matches!(create_inbox, TransactionResult::Ok { .. }));
+    let delete_inbox = core
+        .transact(single_op_tx(
+            "tx-inbox-undo",
+            MutationOp::Delete {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(delete_inbox, TransactionResult::Ok { .. }),
+        "undoing markDone's create must be accepted, got {delete_inbox:?}"
+    );
+
+    // inbox_state: unsnooze's `update` with the old value restored.
+    put_model_row(
+        &f,
+        models::INBOX_STATE,
+        &pr.0,
+        json!({"pr": pr.0, "done": false, "snooze": {"kind": "next_push"}}),
+    );
+    let snooze_forward = core
+        .transact(single_op_tx(
+            "tx-unsnooze-forward",
+            MutationOp::Update {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+                data: json!({"snooze": null}),
+            },
+        ))
+        .await;
+    assert!(matches!(snooze_forward, TransactionResult::Ok { .. }));
+    let snooze_undo = core
+        .transact(single_op_tx(
+            "tx-unsnooze-undo",
+            MutationOp::Update {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+                data: json!({"snooze": {"kind": "next_push"}}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(snooze_undo, TransactionResult::Ok { .. }),
+        "undoing unsnooze must restore the old snooze value, got {snooze_undo:?}"
+    );
+
+    // draft: addDraft's `create`, then undo's `delete`.
+    let anchor = testkit::sample_anchor("src/lib.rs", 2);
+    let create_draft = core
+        .transact(single_op_tx(
+            "tx-draft-create",
+            MutationOp::Create {
+                model: models::DRAFT.into(),
+                id: "d-undo".into(),
+                data: json!({
+                    "id": "d-undo", "pr": pr.0, "anchor": anchor, "body": "x",
+                    "source": {"kind": "me"},
+                }),
+            },
+        ))
+        .await;
+    assert!(matches!(create_draft, TransactionResult::Ok { .. }));
+    let delete_draft = core
+        .transact(single_op_tx(
+            "tx-draft-create-undo",
+            MutationOp::Delete {
+                model: models::DRAFT.into(),
+                id: "d-undo".into(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(delete_draft, TransactionResult::Ok { .. }),
+        "undoing addDraft's create must be accepted, got {delete_draft:?}"
+    );
+
+    // draft: editDraft's `update` body, then undo's `update` with the old body.
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-edit",
+        json!({
+            "id": "d-edit", "pr": pr.0, "anchor": anchor, "body": "before",
+            "source": {"kind": "me"}, "outdated": false,
+        }),
+    );
+    let edit_forward = core
+        .transact(single_op_tx(
+            "tx-draft-edit-forward",
+            MutationOp::Update {
+                model: models::DRAFT.into(),
+                id: "d-edit".into(),
+                data: json!({"body": "after"}),
+            },
+        ))
+        .await;
+    assert!(matches!(edit_forward, TransactionResult::Ok { .. }));
+    let edit_undo = core
+        .transact(single_op_tx(
+            "tx-draft-edit-undo",
+            MutationOp::Update {
+                model: models::DRAFT.into(),
+                id: "d-edit".into(),
+                data: json!({"body": "before"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(edit_undo, TransactionResult::Ok { .. }),
+        "undoing editDraft must restore the old body, got {edit_undo:?}"
+    );
+}
+
 #[tokio::test]
 async fn catch_up_replays_the_requested_gap() {
     let f = fixtures();
