@@ -33,24 +33,65 @@ const BUILTINS: &[Builtin] = &[
 ];
 
 /// Front matter `name`/`description` (`---\nname: ...\ndescription: ...\n---`).
+/// Handles the YAML shapes skill files actually use: plain and quoted
+/// scalars, and block scalars (`>`, `>-`, `|`, `|-`) whose text sits on the
+/// indented lines below the key.
 fn front_matter(text: &str) -> (Option<String>, Option<String>) {
     let mut name = None;
     let mut description = None;
-    let mut lines = text.lines();
-    if lines.next() != Some("---") {
+    let mut lines = text.lines().peekable();
+    if lines.next().map(str::trim_end) != Some("---") {
         return (name, description);
     }
-    for line in lines {
-        if line == "---" {
+    while let Some(line) = lines.next() {
+        if line.trim_end() == "---" {
             break;
         }
-        if let Some(v) = line.strip_prefix("name:") {
-            name = Some(v.trim().to_string());
-        } else if let Some(v) = line.strip_prefix("description:") {
-            description = Some(v.trim().to_string());
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.starts_with([' ', '\t']) {
+            continue;
+        }
+        let value = value.trim();
+        let value = if value.starts_with(['>', '|']) {
+            let folded = value.starts_with('>');
+            let mut parts = Vec::new();
+            while let Some(next) = lines.peek() {
+                let indented = next.starts_with([' ', '\t']) || next.trim().is_empty();
+                if next.trim_end() == "---" || !indented {
+                    break;
+                }
+                parts.push(next.trim());
+                lines.next();
+            }
+            let sep = if folded { " " } else { "\n" };
+            parts
+                .into_iter()
+                .filter(|p| !folded || !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(sep)
+                .trim()
+                .to_string()
+        } else {
+            unquote(value).to_string()
+        };
+        match key.trim() {
+            "name" => name = Some(value),
+            "description" => description = Some(value),
+            _ => {}
         }
     }
     (name, description)
+}
+
+fn unquote(v: &str) -> &str {
+    for q in ['"', '\''] {
+        if let Some(inner) = v.strip_prefix(q).and_then(|v| v.strip_suffix(q)) {
+            return inner;
+        }
+    }
+    v
 }
 
 fn skill_info(id: &str, content: &str, source: &str) -> SkillInfo {
@@ -243,6 +284,38 @@ impl Core {
             }
             other => Err(AppError::Invalid(format!("unknown skill scope {other}"))),
         }
+    }
+}
+
+#[cfg(test)]
+mod front_matter_tests {
+    use super::front_matter;
+
+    #[test]
+    fn reads_plain_quoted_and_block_scalars() {
+        let plain = "---\nname: bugs\ndescription: Find bugs\n---\nbody";
+        assert_eq!(
+            front_matter(plain),
+            (Some("bugs".into()), Some("Find bugs".into()))
+        );
+
+        let quoted = "---\nname: 'x'\ndescription: \"Say: hi\"\n---\n";
+        assert_eq!(
+            front_matter(quoted),
+            (Some("x".into()), Some("Say: hi".into()))
+        );
+
+        let folded = "---\nname: autopilot\ndescription: >-\n  Drives the review\n  end to end.\nmodel: opus\n---\n";
+        assert_eq!(
+            front_matter(folded),
+            (
+                Some("autopilot".into()),
+                Some("Drives the review end to end.".into())
+            )
+        );
+
+        let literal = "---\ndescription: |\n  line one\n  line two\n---\n";
+        assert_eq!(front_matter(literal).1, Some("line one\nline two".into()));
     }
 }
 

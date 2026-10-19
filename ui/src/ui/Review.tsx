@@ -851,7 +851,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                    *  stretches that child to fill both axes by default, the
                    *  same way `GroupsPane`'s `Surface` fills its slot as a
                    *  grid column above — no height to hand it otherwise. */}
-                  <div className="absolute inset-y-0 left-0 z-20 grid w-64 border-r border-separator bg-background shadow-xl">
+                  <div className="absolute inset-y-0 left-0 z-20 grid w-64 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] border-r border-separator bg-background shadow-xl">
                     <GroupsPane
                       pr={pr}
                       rev={revision.data!}
@@ -870,7 +870,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               )}
               {!showAsideColumn && layout.aside === 'drawer' && ui.aside && (
                 <>
-                  <div className="absolute inset-y-0 right-0 z-20 grid w-[352px] max-w-[85vw] border-l border-separator bg-background shadow-xl">
+                  <div className="absolute inset-y-0 right-0 z-20 grid w-[352px] max-w-[85vw] grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] border-l border-separator bg-background shadow-xl">
                     <SidePanel pr={pr} />
                   </div>
                   <div

@@ -939,7 +939,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
 
       <div className="chat-input flex flex-col gap-2.5 border-t border-separator px-4 pb-3 pt-3">
         {matches && matches.length > 0 && (
-          <Card className="slash-menu gap-0 p-1.5 shadow-overlay">
+          <Card className="slash-menu min-w-0 gap-0 p-1.5 shadow-overlay">
             <ListBox
               aria-label="Skills"
               selectionMode="none"
@@ -947,7 +947,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 const s = matches.find((x) => x.id === String(k));
                 if (s) runMatch(s);
               }}
-              className="p-0"
+              className="max-h-72 overflow-y-auto p-0"
             >
               {matches.map((s, i) => (
                 <ListBox.Item
@@ -955,15 +955,20 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                   id={s.id}
                   textValue={s.title}
                   onHoverStart={() => setHi(i)}
-                  className={`flex-col items-start gap-0.5 rounded-2xl px-3 py-2 ${i === Math.min(hi, matches.length - 1) ? 'bg-default' : ''}`}
+                  className={`min-w-0 flex-col items-start gap-0.5 rounded-2xl px-3 py-2 ${i === Math.min(hi, matches.length - 1) ? 'bg-default' : ''}`}
                 >
-                  <span className="flex w-full items-center gap-2">
-                    <span className="font-mono text-sm">/{s.id}</span>
-                    <span className="ms-auto text-xs text-muted">
+                  <span className="flex w-full min-w-0 items-center gap-2">
+                    <span className="truncate font-mono text-sm">/{s.id}</span>
+                    <span className="ms-auto max-w-40 shrink-0 truncate text-xs text-muted">
                       {s.source}
                     </span>
                   </span>
-                  <span className="text-xs text-muted">{s.description}</span>
+                  <span
+                    className="line-clamp-2 w-full text-xs text-muted"
+                    title={s.description}
+                  >
+                    {s.description}
+                  </span>
                 </ListBox.Item>
               ))}
             </ListBox>
