@@ -24,7 +24,7 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Person, PrId } from '../gen/contract';
+import type { Person, PrId, RepoRef, StackInfo } from '../gen/contract';
 import {
   delegateTask,
   markDone,
@@ -34,8 +34,9 @@ import {
   unsnooze,
 } from '../actions';
 import { api } from '../core/api';
-import { useRootStore } from '../stores/context';
+import { useRootStore, useUi } from '../stores/context';
 import { AgentTag, Avatar, Btn, CheckIcon } from './bits';
+import { prIdFor } from './List';
 import {
   ConflictsIcon,
   PRIcon,
@@ -83,6 +84,56 @@ function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
       </Btn>
       <Tooltip.Content>Not available yet</Tooltip.Content>
     </Tooltip>
+  );
+}
+
+/** "stacked on #n" / "n stacked" chips (plan "Stack"): same relation List's
+ *  row chip shows, spelled out in full since Peek has the room for it. */
+function StackChips({ repo, stack }: { repo: RepoRef; stack: StackInfo }) {
+  const ui = useUi();
+  const open = (number: number) =>
+    ui.go({ name: 'review', pr: prIdFor(repo, number) });
+  if (stack.base_pr == null && stack.children.length === 0) return null;
+  return (
+    <div className="stack-chips flex flex-wrap items-center gap-1.5 text-xs">
+      {stack.base_pr != null && (
+        <Btn
+          tone="ghost"
+          className="stack-chip h-6 rounded-full px-2 text-xs"
+          onPress={() => open(stack.base_pr!)}
+        >
+          stacked on #{stack.base_pr}
+        </Btn>
+      )}
+      {stack.children.length === 1 && (
+        <Btn
+          tone="ghost"
+          className="stack-chip h-6 rounded-full px-2 text-xs"
+          onPress={() => open(stack.children[0]!)}
+        >
+          #{stack.children[0]} is stacked on this
+        </Btn>
+      )}
+      {stack.children.length > 1 && (
+        <Dropdown>
+          <Btn tone="ghost" className="stack-chip h-6 rounded-full px-2 text-xs">
+            {stack.children.length} stacked on this
+          </Btn>
+          <Dropdown.Popover placement="bottom start">
+            <Dropdown.Menu
+              aria-label="Stacked PRs"
+              onAction={(k) => open(Number(k))}
+            >
+              {stack.children.map((n) => (
+                <Dropdown.Item key={n} id={String(n)} textValue={`#${n}`}>
+                  #{n}
+                </Dropdown.Item>
+              ))}
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
+      )}
+    </div>
   );
 }
 
@@ -216,6 +267,7 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
           <span className="text-success">+{p.additions}</span>{' '}
           <span className="text-danger">−{p.deletions}</span>
         </div>
+        {p.stack && <StackChips repo={p.pr.repo} stack={p.stack} />}
       </header>
 
       <Toolbar
@@ -345,6 +397,8 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
 
       <Separator />
       <dl className="props grid grid-cols-[96px_1fr] items-center gap-x-3 gap-y-3 text-sm [&>dt]:text-muted">
+        <dt>Opened</dt>
+        <dd>{ago(p.created_at ?? p.updated_at)} ago</dd>
         <dt>Checks</dt>
         <dd className="flex items-center gap-1.5">
           <CheckIcon s={p.checks} />

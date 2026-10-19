@@ -107,4 +107,24 @@ describe('oldestOpenPrAge', () => {
     ];
     expect(oldestOpenPrAge(items, now)).toEqual({ number: 2, ageMs: 5 * DAY });
   });
+
+  it('prefers created_at over updated_at when the host filled it', () => {
+    const now = 10 * DAY;
+    const items = [
+      // Updated recently but opened long ago: the real age is 9 days, not 1.
+      pr({
+        id: '1',
+        created_at: now - 9 * DAY,
+        updated_at: now - DAY,
+        pr: { repo, number: 1, host_id: null },
+      }),
+      // No created_at: falls back to updated_at, and is "younger" than #1.
+      pr({
+        id: '2',
+        updated_at: now - 2 * DAY,
+        pr: { repo, number: 2, host_id: null },
+      }),
+    ];
+    expect(oldestOpenPrAge(items, now)).toEqual({ number: 1, ageMs: 9 * DAY });
+  });
 });

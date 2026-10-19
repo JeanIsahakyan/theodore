@@ -56,4 +56,21 @@ describe('projectActivity', () => {
     const items = Array.from({ length: 5 }, (_, i) => pr({ id: String(i) }));
     expect(projectActivity(items, 3)).toHaveLength(3);
   });
+
+  it('uses created_at for an opened event when the host filled it', () => {
+    const items = [pr({ id: '1', state: 'open', created_at: 5, updated_at: 50 })];
+    expect(projectActivity(items)[0]?.at).toBe(5);
+  });
+
+  it('falls back to updated_at for opened when created_at is missing', () => {
+    const items = [pr({ id: '1', state: 'open', updated_at: 50 })];
+    expect(projectActivity(items)[0]?.at).toBe(50);
+  });
+
+  it('still uses updated_at for merged/closed even with created_at set', () => {
+    const items = [
+      pr({ id: '1', state: 'merged', created_at: 5, updated_at: 50 }),
+    ];
+    expect(projectActivity(items)[0]?.at).toBe(50);
+  });
 });

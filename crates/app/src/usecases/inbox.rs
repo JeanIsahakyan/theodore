@@ -75,6 +75,7 @@ impl Core {
         }
 
         self.apply(actions).await?;
+        self.refresh_stacks().await?;
         Ok(())
     }
 }

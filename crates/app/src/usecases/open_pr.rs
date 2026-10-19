@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use theodore_contract::{Ephemeral, OpenPrRequest, OpenPrResponse, ToastLevel, models};
-use theodore_domain::{AgentId, HostKind, PrDetail, PrId, PrRef, RepoRef, Revision};
+use theodore_domain::{AgentId, HostKind, PrDetail, PrId, PrRef, PrSummary, RepoRef, Revision};
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
 use crate::core::{Core, RevisionEntry};
@@ -105,11 +105,55 @@ impl Core {
         }
 
         self.apply_pr_detail(&detail).await?;
+        self.refresh_stacks().await?;
 
         // Group in the background; the UI gets it as a `grouping` sync row.
         self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
 
         Ok(OpenPrResponse { pr: pr_id, head })
+    }
+}
+
+impl Core {
+    /// Recomputes the PR-chain ("stack") indicator across every stored PR
+    /// row (plan "Stack"): cheap — no extra host call, since same-repo PRs
+    /// are already in the store from an inbox refresh or an open. Only
+    /// patches the rows whose computed `StackInfo` actually changed.
+    /// Called after every write that can add or remove a same-repo PR row
+    /// (`open_pr`/`ensure_open`'s `finish_open`, `refresh_inbox`).
+    pub(crate) async fn refresh_stacks(&self) -> AppResult<()> {
+        let store = self.0.deps.store.clone();
+        let rows = tokio::task::spawn_blocking(move || store.all(models::PR))
+            .await
+            .map_err(AppError::join)??;
+
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in rows {
+            if let Ok(summary) = serde_json::from_value::<PrSummary>(row.data) {
+                summaries.push((row.id, summary));
+            }
+        }
+        let all: Vec<PrSummary> = summaries.iter().map(|(_, s)| s.clone()).collect();
+        let computed = theodore_domain::stack::compute_stacks(&all);
+
+        let actions: Vec<NewAction> = summaries
+            .iter()
+            .filter_map(|(id, summary)| {
+                let next = computed.get(&summary.pr.id()).cloned();
+                if next == summary.stack {
+                    return None;
+                }
+                Some(NewAction {
+                    model: models::PR.into(),
+                    model_id: id.clone(),
+                    action: SyncActionCode::C,
+                    data: Some(serde_json::json!({ "stack": next })),
+                })
+            })
+            .collect();
+
+        self.apply(actions).await?;
+        Ok(())
     }
 }
 
