@@ -214,3 +214,448 @@ async fn validate_task_update(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    //! Table-driven audit of the allowlist against every op shape the UI
+    //! actually sends (`grep -rn "\.transact(" ui/src` — `ui/src/actions.ts`
+    //! and `ui/src/ui/SidePanel.tsx`), plus the undo inverses
+    //! `ui/src/sync/UndoQueue.ts`/`TransactionQueue.ts`'s `buildInverse`
+    //! produces for the ones currently wrapped in `undo.run` (`assignTask`,
+    //! `markDone`, `snoozePrs`, `unsnooze`), and a representative set of
+    //! core-owned writes that must stay rejected.
+
+    use theodore_contract::{RevisionRequest, Transaction, TransactionResult, models};
+    use theodore_domain::{HostKind, PrRef, RepoRef, Sha};
+    use theodore_ports::{Fetched, NewAction, Store, SyncActionCode};
+
+    use crate::core::Core;
+    use crate::testkit::{self, fixtures};
+
+    use super::MutationOp;
+
+    fn put(store: &dyn Store, model: &str, id: &str, data: serde_json::Value) {
+        store
+            .apply(vec![NewAction {
+                model: model.into(),
+                model_id: id.into(),
+                action: SyncActionCode::I,
+                data: Some(data),
+            }])
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn allowlist_matches_every_op_shape_the_ui_sends() {
+        let f = fixtures();
+        let (core, _recv) = Core::start(f.deps());
+
+        let pr_ref = PrRef {
+            repo: RepoRef {
+                host: HostKind::Github,
+                owner: "acme".into(),
+                name: "widgets".into(),
+            },
+            number: 7,
+            host_id: Some("node-7".into()),
+        };
+        let detail = testkit::sample_pr_detail(&pr_ref, &Sha::new("base000"), &Sha::new("head111"));
+        f.host.push_get_pr(Ok(Fetched::Modified {
+            etag: Some("etag-1".into()),
+            value: detail,
+        }));
+
+        let resp = core
+            .open_pr(theodore_contract::OpenPrRequest {
+                url: "https://github.com/acme/widgets/pull/7".into(),
+            })
+            .await
+            .expect("open_pr");
+        let pr = resp.pr;
+        let revision = core
+            .get_revision(RevisionRequest {
+                pr: pr.clone(),
+                head: resp.head,
+            })
+            .await
+            .expect("get_revision");
+        let hunks = testkit::hunk_ids(&revision);
+        let anchor = testkit::sample_anchor("src/lib.rs", 2);
+
+        // Pre-existing rows the "update"/"delete" cases below act on —
+        // planted directly in the store, like `editDraft`/`setTaskStatus`
+        // etc. act on a row that already synced down from an earlier
+        // transaction.
+        put(
+            f.store.as_ref(),
+            models::DRAFT,
+            "d1",
+            serde_json::json!({
+                "id": "d1", "pr": pr.0, "anchor": anchor, "body": "orig",
+                "source": {"kind": "me"},
+            }),
+        );
+        put(
+            f.store.as_ref(),
+            models::FINDING,
+            "find1",
+            serde_json::json!({
+                "id": "find1", "pr": pr.0, "skill": "s1", "agents": [],
+                "anchor": anchor, "severity": "warn", "title": "t", "body": "b",
+                "state": "open", "fix": null,
+            }),
+        );
+        put(
+            f.store.as_ref(),
+            models::TASK,
+            "task1",
+            serde_json::json!({
+                "id": "task1", "pr": pr.0, "title": "t", "body": "b",
+                "anchor": null, "thread": null, "status": "todo",
+                "assignee": {"kind": "human", "id": "author"}, "fix": null,
+                "created_at": 0,
+            }),
+        );
+        put(
+            f.store.as_ref(),
+            models::SKILL_RUN,
+            "run1",
+            serde_json::json!({"id": "run1", "pr": pr.0}),
+        );
+        put(
+            f.store.as_ref(),
+            models::INBOX_STATE,
+            &pr.0,
+            serde_json::json!({"pr": pr.0, "done": false, "snooze": {"kind": "next_push"}}),
+        );
+
+        struct Case {
+            desc: &'static str,
+            op: MutationOp,
+            accepted: bool,
+        }
+
+        let cases = vec![
+            // ── markHunkRead ────────────────────────────────────────────
+            Case {
+                desc: "markHunkRead: create hunk_read",
+                op: MutationOp::Create {
+                    model: models::HUNK_READ.into(),
+                    id: format!("{}:{}", pr.0, hunks[0]),
+                    data: serde_json::json!({"pr": pr.0, "hunk": hunks[0]}),
+                },
+                accepted: true,
+            },
+            // ── setFileViewed (rust-review audit: previously untested) ──
+            Case {
+                desc: "setFileViewed: create file_viewed",
+                op: MutationOp::Create {
+                    model: models::FILE_VIEWED.into(),
+                    id: format!("{}:src/lib.rs", pr.0),
+                    data: serde_json::json!({"pr": pr.0, "path": "src/lib.rs", "state": "viewed"}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "setFileViewed: update file_viewed",
+                op: MutationOp::Update {
+                    model: models::FILE_VIEWED.into(),
+                    id: format!("{}:src/lib.rs", pr.0),
+                    data: serde_json::json!({"pr": pr.0, "path": "src/lib.rs", "state": "unviewed"}),
+                },
+                accepted: true,
+            },
+            // ── addDraft / editDraft / removeDraft ──────────────────────
+            Case {
+                desc: "addDraft: create draft",
+                op: MutationOp::Create {
+                    model: models::DRAFT.into(),
+                    id: "d-new".into(),
+                    data: serde_json::json!({
+                        "id": "d-new", "pr": pr.0, "anchor": anchor, "body": "x",
+                        "source": {"kind": "me"},
+                    }),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "editDraft: update draft body",
+                op: MutationOp::Update {
+                    model: models::DRAFT.into(),
+                    id: "d1".into(),
+                    data: serde_json::json!({"body": "edited"}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "removeDraft: delete draft",
+                op: MutationOp::Delete {
+                    model: models::DRAFT.into(),
+                    id: "d1".into(),
+                },
+                accepted: true,
+            },
+            // ── ignoreFinding / findingToDraft's finding update ─────────
+            Case {
+                desc: "ignoreFinding: update finding state to ignored",
+                op: MutationOp::Update {
+                    model: models::FINDING.into(),
+                    id: "find1".into(),
+                    data: serde_json::json!({"state": "ignored"}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "findingToDraft: update finding state to drafted",
+                op: MutationOp::Update {
+                    model: models::FINDING.into(),
+                    id: "find1".into(),
+                    data: serde_json::json!({"state": "drafted"}),
+                },
+                accepted: true,
+            },
+            // ── findingToTask ────────────────────────────────────────────
+            Case {
+                desc: "findingToTask: create task starting in todo",
+                op: MutationOp::Create {
+                    model: models::TASK.into(),
+                    id: "task-new".into(),
+                    data: serde_json::json!({
+                        "id": "task-new", "pr": pr.0, "title": "t", "body": "b",
+                        "anchor": anchor, "thread": null, "status": "todo",
+                        "assignee": {"kind": "human", "id": "me"}, "fix": null,
+                        "created_at": 0,
+                    }),
+                },
+                accepted: true,
+            },
+            // ── setTaskStatus ────────────────────────────────────────────
+            Case {
+                desc: "setTaskStatus: update status",
+                op: MutationOp::Update {
+                    model: models::TASK.into(),
+                    id: "task1".into(),
+                    data: serde_json::json!({"status": "review"}),
+                },
+                accepted: true,
+            },
+            // ── assignTask (undo-wrapped) + its undo inverse ────────────
+            Case {
+                desc: "assignTask: update assignee + status",
+                op: MutationOp::Update {
+                    model: models::TASK.into(),
+                    id: "task1".into(),
+                    data: serde_json::json!({
+                        "assignee": {"kind": "agent", "id": "claude"},
+                        "status": "progress",
+                    }),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "assignTask undo: not a forward transition, still accepted",
+                op: MutationOp::Update {
+                    model: models::TASK.into(),
+                    id: "task1".into(),
+                    data: serde_json::json!({
+                        "assignee": {"kind": "human", "id": "author"},
+                        "status": "todo",
+                    }),
+                },
+                accepted: true,
+            },
+            // ── SidePanel's skill_run dismiss ────────────────────────────
+            Case {
+                desc: "dismiss skill_run: archive",
+                op: MutationOp::Archive {
+                    model: models::SKILL_RUN.into(),
+                    id: "run1".into(),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "skill_run update is not allowed (only archive is)",
+                op: MutationOp::Update {
+                    model: models::SKILL_RUN.into(),
+                    id: "run1".into(),
+                    data: serde_json::json!({"id": "run1"}),
+                },
+                accepted: false,
+            },
+            // ── markDone (undo-wrapped) + its undo inverse (delete) ─────
+            Case {
+                desc: "markDone: update inbox_state",
+                op: MutationOp::Update {
+                    model: models::INBOX_STATE.into(),
+                    id: pr.0.clone(),
+                    data: serde_json::json!({"done": true, "snooze": null}),
+                },
+                accepted: true,
+            },
+            // ── unsnooze (undo-wrapped) ──────────────────────────────────
+            Case {
+                desc: "unsnooze: update snooze to null",
+                op: MutationOp::Update {
+                    model: models::INBOX_STATE.into(),
+                    id: pr.0.clone(),
+                    data: serde_json::json!({"snooze": null}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "unsnooze undo: restores the old snooze value",
+                op: MutationOp::Update {
+                    model: models::INBOX_STATE.into(),
+                    id: pr.0.clone(),
+                    data: serde_json::json!({"snooze": {"kind": "next_push"}}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "inbox_state create (markDone when no row exists yet)",
+                op: MutationOp::Create {
+                    model: models::INBOX_STATE.into(),
+                    id: "github:acme/widgets#999".into(),
+                    data: serde_json::json!({"pr": "github:acme/widgets#999", "done": true, "snooze": null}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "its undo inverse: delete inbox_state",
+                op: MutationOp::Delete {
+                    model: models::INBOX_STATE.into(),
+                    id: "github:acme/widgets#999".into(),
+                },
+                accepted: true,
+            },
+            // ── setSetting ───────────────────────────────────────────────
+            Case {
+                desc: "setSetting: create setting",
+                op: MutationOp::Create {
+                    model: models::SETTING.into(),
+                    id: "user:custom.key".into(),
+                    data: serde_json::json!({"key": "custom.key", "scope": "user", "value": 1}),
+                },
+                accepted: true,
+            },
+            Case {
+                desc: "setSetting: update setting",
+                op: MutationOp::Update {
+                    model: models::SETTING.into(),
+                    id: "user:custom.key".into(),
+                    data: serde_json::json!({"key": "custom.key", "scope": "user", "value": 2}),
+                },
+                accepted: true,
+            },
+            // ── core-owned models: the client never writes these ────────
+            Case {
+                desc: "core-owned: pr create",
+                op: MutationOp::Create {
+                    model: models::PR.into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "core-owned: pr_detail create",
+                op: MutationOp::Create {
+                    model: models::PR_DETAIL.into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "core-owned: grouping create",
+                op: MutationOp::Create {
+                    model: models::GROUPING.into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "core-owned: project create",
+                op: MutationOp::Create {
+                    model: models::PROJECT.into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "core-owned: chat_message create",
+                op: MutationOp::Create {
+                    model: models::CHAT_MESSAGE.into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "core-owned: thread update (goes through reply/resolve commands)",
+                op: MutationOp::Update {
+                    model: models::THREAD.into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "core-owned: task delete (lifecycle is core-driven, not a client op)",
+                op: MutationOp::Delete {
+                    model: models::TASK.into(),
+                    id: "task1".into(),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "finding: fields other than state are core-owned",
+                op: MutationOp::Update {
+                    model: models::FINDING.into(),
+                    id: "find1".into(),
+                    data: serde_json::json!({"title": "hacked"}),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "task: a new task cannot skip todo",
+                op: MutationOp::Create {
+                    model: models::TASK.into(),
+                    id: "task-bad".into(),
+                    data: serde_json::json!({
+                        "id": "task-bad", "pr": pr.0, "title": "t", "body": "b",
+                        "anchor": null, "thread": null, "status": "done",
+                        "assignee": {"kind": "human", "id": "me"}, "fix": null,
+                        "created_at": 0,
+                    }),
+                },
+                accepted: false,
+            },
+            Case {
+                desc: "unknown model is rejected",
+                op: MutationOp::Create {
+                    model: "no_such_model".into(),
+                    id: "x".into(),
+                    data: serde_json::json!({}),
+                },
+                accepted: false,
+            },
+        ];
+
+        for (i, case) in cases.into_iter().enumerate() {
+            let tx = Transaction {
+                id: format!("tx-{i}"),
+                ops: vec![case.op],
+            };
+            let result = core.transact(tx).await;
+            let ok = matches!(result, TransactionResult::Ok { .. });
+            assert_eq!(
+                ok, case.accepted,
+                "{}: expected accepted={}, got {result:?}",
+                case.desc, case.accepted
+            );
+        }
+    }
+}
