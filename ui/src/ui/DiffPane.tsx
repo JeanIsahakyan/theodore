@@ -19,8 +19,6 @@ import {
   Card,
   Checkbox,
   Chip,
-  Kbd,
-  Surface,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -33,6 +31,7 @@ import type {
   Anchor,
   DiffLine,
   FileDiff,
+  Group,
   Hunk,
   HunkId,
   PrId,
@@ -48,15 +47,18 @@ import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import {
   gapsAbove,
   gapTail,
+  sinceCountsFor,
   splitRows,
   wordMarks,
   type Gap,
   type SinceKind,
 } from './diff';
 import { groupsForRevision, type ReviewMode } from './GroupsPane';
+import { nextReviewableGroup } from './review/groups';
+import { TourBar } from './review/TourBar';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 
-interface ComposerState {
+export interface ComposerState {
   path: string;
   side: Side;
   line: number;
@@ -64,7 +66,9 @@ interface ComposerState {
   startLine?: number;
 }
 
-function lineAnchor(
+/** Exported so `Review`'s `C` shortcut can open the composer on the focused
+ *  hunk's first changed line the same way a mouse click does. */
+export function lineAnchor(
   rev: Revision['head'],
   path: string,
   l: DiffLine,
@@ -159,7 +163,19 @@ export const DiffPane = observer(function DiffPane({
   setMode,
   since,
   sinceOnly,
+  /** The head you had open last visit, shown short in the since-only banner
+   *  — `null` on a first visit, when there's nothing to compare against. */
+  baselineSha,
   tour,
+  /** Focused hunk and open composer are owned by `Review` — its `J`/`K`/`C`
+   *  shortcuts drive them, and the diff pane just renders what they say. */
+  focusHunk,
+  setFocusHunk,
+  composer,
+  setComposer,
+  /** Bumping `nonce` for a hunk's id fully reveals the context gap directly
+   *  above it — `Review`'s `E` shortcut. */
+  expandHunk = null,
 }: {
   pr: PrId;
   rev: Revision;
@@ -167,7 +183,20 @@ export const DiffPane = observer(function DiffPane({
   setMode: (m: ReviewMode) => void;
   since?: Map<HunkId, SinceKind> | null;
   sinceOnly?: boolean;
-  tour?: boolean;
+  baselineSha?: string | null;
+  /** Active tour state — the reviewable groups in order, which one is
+   *  current, and the Back/Next handlers; `null`/absent outside a tour. */
+  tour?: {
+    groups: Group[];
+    index: number;
+    onBack: () => void;
+    onNext: () => void;
+  } | null;
+  focusHunk: HunkId | null;
+  setFocusHunk: (h: HunkId | null) => void;
+  composer: ComposerState | null;
+  setComposer: (c: ComposerState | null) => void;
+  expandHunk?: { hunk: HunkId; nonce: number } | null;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -178,15 +207,14 @@ export const DiffPane = observer(function DiffPane({
   const splitRequested = ui.diffView === 'split';
   const effectiveSplit = splitRequested && diffWidth >= SPLIT_MIN_WIDTH;
   const splitDowngraded = splitRequested && !effectiveSplit;
-  const [composer, setComposer] = useState<ComposerState | null>(null);
   const [rangeStart, setRangeStart] = useState<{
     path: string;
     side: Side;
     line: number;
   } | null>(null);
   const [outliersOpen, setOutliersOpen] = useState<Record<string, boolean>>({});
+  const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
-  const [focusHunk, setFocusHunk] = useState<HunkId | null>(null);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
 
   // Holding ⌘/Ctrl turns identifiers in the diff into links (styles.css: body.cmd).
@@ -216,6 +244,10 @@ export const DiffPane = observer(function DiffPane({
     group.outliers.length > 0 &&
     !outliersOpen[group.id];
   const outlierSet = group ? new Set(group.outliers) : null;
+  // Lockfiles and generated code: collapsed by default, same as the
+  // prototype — "show anyway" reveals this group's diff like any other.
+  const groupCollapsed =
+    !!group && group.kind === 'hidden' && !hiddenOpen[group.id];
 
   let files: FileDiff[] =
     mode.mode === 'files'
@@ -254,17 +286,23 @@ export const DiffPane = observer(function DiffPane({
           .length
       : 0;
 
+  const sinceTotals = sinceCountsFor(
+    rev.files.flatMap((f) => f.hunks),
+    since,
+  );
+
   return (
     <main
       ref={mainRef}
       className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
     >
       {tour && (
-        <Surface className="tour sticky -top-5 z-[3] -mx-6 -mt-5 mb-5 flex items-center gap-3 border-b border-separator px-6 py-3">
-          <Sparkles className="size-4 text-accent" />
-          Tour mode — press <Kbd className="font-mono">R</Kbd> to mark this
-          group read and continue
-        </Surface>
+        <TourBar
+          groups={tour.groups}
+          index={tour.index}
+          onBack={tour.onBack}
+          onNext={tour.onNext}
+        />
       )}
       {splitDowngraded && (
         <Alert status="default" className="split-note mb-4">
@@ -279,8 +317,14 @@ export const DiffPane = observer(function DiffPane({
         <Alert status="accent" className="since-banner mb-4">
           <Alert.Content>
             <Alert.Title>
-              Showing only what changed since your last visit.
+              Showing only what changed since your last visit
+              {baselineSha ? ` (${baselineSha.slice(0, 7)})` : ''}.
             </Alert.Title>
+            <Alert.Description>
+              {sinceTotals.changed}{' '}
+              {sinceTotals.changed === 1 ? 'hunk' : 'hunks'} changed,{' '}
+              {sinceTotals.new} new — the rest you've already seen.
+            </Alert.Description>
           </Alert.Content>
         </Alert>
       )}
@@ -316,39 +360,58 @@ export const DiffPane = observer(function DiffPane({
           </Btn>
         </Alert>
       )}
-      {visibleFiles.map((f) => (
-        <FileBlock
-          key={f.path}
-          pr={pr}
-          rev={rev.head}
-          base={rev.base}
-          allFiles={rev.files}
-          file={f}
-          since={since}
-          groupHunkIds={mode.mode === 'groups' ? groupHunkIds : null}
-          mode={mode}
-          setMode={setMode}
-          split={effectiveSplit}
-          composer={composer}
-          setComposer={setComposer}
-          rangeStart={rangeStart}
-          setRangeStart={setRangeStart}
-          focusHunk={focusHunk}
-          setFocusHunk={setFocusHunk}
-          peek={peek}
-          setPeek={setPeek}
-        />
-      ))}
-      {files.length > visibleFiles.length && (
-        <div className="more-files flex items-center justify-center gap-3 py-2 text-sm text-muted">
-          Showing {visibleFiles.length} of {files.length} files
-          <Btn onPress={() => setLimit((n) => n + CHUNK * 2)}>
-            {Math.min(CHUNK * 2, files.length - visibleFiles.length)} more
-          </Btn>
-          <Btn tone="ghost" onPress={() => setLimit(files.length)}>
-            All
+      {groupCollapsed ? (
+        <div className="hidden-group flex items-center gap-3 rounded-2xl border border-dashed border-separator p-3.5 text-muted">
+          <span className="flex-1">
+            Hidden: {group!.why || 'mechanical or generated changes'} —
+            collapsed by default.
+          </span>
+          <Btn
+            tone="tertiary"
+            className="show-hidden"
+            onPress={() => setHiddenOpen((o) => ({ ...o, [group!.id]: true }))}
+          >
+            Show anyway
           </Btn>
         </div>
+      ) : (
+        <>
+          {visibleFiles.map((f) => (
+            <FileBlock
+              key={f.path}
+              pr={pr}
+              rev={rev.head}
+              base={rev.base}
+              allFiles={rev.files}
+              file={f}
+              since={since}
+              groupHunkIds={mode.mode === 'groups' ? groupHunkIds : null}
+              mode={mode}
+              setMode={setMode}
+              split={effectiveSplit}
+              composer={composer}
+              setComposer={setComposer}
+              rangeStart={rangeStart}
+              setRangeStart={setRangeStart}
+              focusHunk={focusHunk}
+              setFocusHunk={setFocusHunk}
+              expandHunk={expandHunk}
+              peek={peek}
+              setPeek={setPeek}
+            />
+          ))}
+          {files.length > visibleFiles.length && (
+            <div className="more-files flex items-center justify-center gap-3 py-2 text-sm text-muted">
+              Showing {visibleFiles.length} of {files.length} files
+              <Btn onPress={() => setLimit((n) => n + CHUNK * 2)}>
+                {Math.min(CHUNK * 2, files.length - visibleFiles.length)} more
+              </Btn>
+              <Btn tone="ghost" onPress={() => setLimit(files.length)}>
+                All
+              </Btn>
+            </div>
+          )}
+        </>
       )}
       <div className="flex justify-center py-4">
         {mode.mode === 'groups' && !tour && (
@@ -373,11 +436,9 @@ const GroupCard = observer(function GroupCard({
   const g = store.models.groupsOf(pr).find((x) => x.id === groupId);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   if (!g) return null;
-  const n =
-    store.models
-      .groupsOf(pr)
-      .filter((x) => x.kind !== 'hidden')
-      .findIndex((x) => x.id === g.id) + 1;
+  // Same sequence `GroupsPane` numbers groups in — includes hidden groups
+  // so a badge doesn't shift when one gets "shown anyway".
+  const n = store.models.groupsOf(pr).findIndex((x) => x.id === g.id) + 1;
   const read = store.models.hunkReads
     .where((r) => r.pr === pr)
     .map((r) => r.hunk);
@@ -468,7 +529,8 @@ function NextGroupInner({
 }) {
   const store = useRootStore();
   const groups = groupsForRevision(store, pr, rev);
-  const next = groups[groups.findIndex((g) => g.id === mode.group) + 1];
+  // Skips hidden groups — nothing to review there until shown by hand.
+  const next = nextReviewableGroup(groups, mode.group);
   if (!next) return null;
   return (
     <Btn
@@ -528,16 +590,28 @@ const ContextGap = observer(function ContextGap({
   path,
   gap,
   lang,
+  expand,
 }: {
   pr: PrId;
   rev: Revision['head'];
   path: string;
   gap: Gap;
   lang: ReturnType<typeof langOf>;
+  /** A nonce from `Review`'s `E` shortcut — any change fully reveals the
+   *  gap once (not on every render, so the manual "load N lines" buttons
+   *  below still work undisturbed). */
+  expand?: number | null;
 }) {
   const store = useRootStore();
   const [shown, setShown] = useState(0);
   const total = gap.to - gap.from + 1;
+  const appliedExpand = useRef<number | null>(null);
+  useEffect(() => {
+    if (expand != null && expand !== appliedExpand.current) {
+      appliedExpand.current = expand;
+      setShown(total);
+    }
+  }, [expand, total]);
   const key = `${pr}@${rev}:${path}`;
   const res =
     shown > 0
@@ -700,6 +774,7 @@ function FileBlockInner({
   setRangeStart,
   focusHunk,
   setFocusHunk,
+  expandHunk,
   peek,
   setPeek,
 }: {
@@ -715,6 +790,7 @@ function FileBlockInner({
   split: boolean;
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
+  expandHunk?: { hunk: HunkId; nonce: number } | null;
 } & Omit<LineProps, 'path'>) {
   const store = useRootStore();
   const lang = langOf(file.path);
@@ -723,6 +799,8 @@ function FileBlockInner({
     .at(-1);
   const isViewed = viewed?.state === 'viewed';
   const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
+  const fileSince = sinceCountsFor(file.hunks, since);
+  const fileSinceCount = fileSince.new + fileSince.changed;
   const [shown, setShown] = useState(false);
   const md = isMarkdown(file.path) && file.status !== 'deleted';
   const [preview, setPreview] = useState(false);
@@ -841,6 +919,23 @@ function FileBlockInner({
           <span className="text-success">+{file.additions}</span>{' '}
           <span className="text-danger">−{file.deletions}</span>
         </span>
+        {fileSinceCount > 0 && (
+          <Tooltip>
+            <Chip
+              size="sm"
+              variant="soft"
+              color={fileSince.new > 0 ? 'success' : 'warning'}
+              className="since-file shrink-0"
+            >
+              {fileSinceCount} since last visit
+            </Chip>
+            <Tooltip.Content>
+              {fileSince.new > 0 && `${fileSince.new} new`}
+              {fileSince.new > 0 && fileSince.changed > 0 && ', '}
+              {fileSince.changed > 0 && `${fileSince.changed} changed`}
+            </Tooltip.Content>
+          </Tooltip>
+        )}
         {others.map((h) => {
           const g = store.models
             .groupsOf(pr)
@@ -937,6 +1032,7 @@ function FileBlockInner({
                   path={file.path}
                   gap={gaps.get(h.id)!}
                   lang={lang}
+                  expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
                 />
               )}
               <HunkOrSplit
@@ -1048,7 +1144,8 @@ function HunkViewInner({
   ]);
   return (
     <div
-      className={`hunk border-t border-separator first:border-t-0 ${focused ? 'focus' : ''} ${read ? 'read' : ''}`}
+      id={`H-${h.id}`}
+      className={`hunk border-t border-separator first:border-t-0 ${focused ? 'focus ring-2 ring-inset ring-accent' : ''} ${read ? 'read' : ''}`}
       onMouseDown={() => !focused && setFocusHunk(h.id)}
     >
       <div
@@ -1124,7 +1221,8 @@ function SplitHunkViewInner({
   const focused = focusHunk === h.id;
   return (
     <div
-      className={`hunk split border-t border-separator first:border-t-0 ${focused ? 'focus' : ''} ${read ? 'read' : ''}`}
+      id={`H-${h.id}`}
+      className={`hunk split border-t border-separator first:border-t-0 ${focused ? 'focus ring-2 ring-inset ring-accent' : ''} ${read ? 'read' : ''}`}
       onMouseDown={() => !focused && setFocusHunk(h.id)}
     >
       <div

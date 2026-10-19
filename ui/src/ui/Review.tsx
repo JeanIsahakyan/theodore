@@ -36,21 +36,28 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { PrId } from '../gen/contract';
+import type { HunkId, PrId } from '../gen/contract';
 import { api } from '../core/api';
-import { markGroupRead, setDraft } from '../actions';
+import { markGroupRead, setDraft, setFileViewed } from '../actions';
 import { FEATURES } from '../features';
 import { Md } from '../highlight';
 import { useRootStore, useUi } from '../stores/context';
-import { Btn, CheckIcon, K } from './bits';
+import { Btn, CheckIcon, Hints, K } from './bits';
 import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
-import { DiffPane } from './DiffPane';
+import { DiffPane, lineAnchor, type ComposerState } from './DiffPane';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, groupsForRevision, type ReviewMode } from './GroupsPane';
 import { MergeDialog } from './Merge';
+import {
+  nextReviewableGroup,
+  prevReviewableGroup,
+  reviewableGroups,
+} from './review/groups';
+import { hunksInScope, moveHunkFocus } from './review/hunks';
+import { tourNextIndex, tourPrevIndex, tourStartIndex } from './review/tour';
 import { SidePanel } from './SidePanel';
 import { PRIcon, prStatusLabel } from './StatusIcon';
-import { useViewKeys } from './keys';
+import { latinKey, useViewKeys } from './keys';
 
 /** Live updates: green while synced, amber on cached/rate-limited reads, red
  *  offline. Ported from the prototype's `LiveDot`, minus the fake `feed`
@@ -167,11 +174,22 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     file: null,
   });
   const [tab, setTab] = useState<PrTab>('diff');
+  // Tour's cursor indexes into `tourGroups` below (reviewable groups only —
+  // hidden/mechanical ones are skipped, same as `N`/`P`).
   const [tour, setTour] = useState<number | null>(null);
   const [sinceOnly, setSinceOnly] = useState(false);
   const [baselineSha, setBaselineSha] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [draftBusy, setDraftBusy] = useState(false);
+  // Keyboard-driven hunk focus, the open comment composer, and a one-shot
+  // "expand context" request — owned here so `J`/`K`/`C`/`E` can reach into
+  // `DiffPane` without it keeping its own, uncontrollable state.
+  const [focusHunk, setFocusHunk] = useState<HunkId | null>(null);
+  const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [expandHunk, setExpandHunk] = useState<{
+    hunk: HunkId;
+    nonce: number;
+  } | null>(null);
   // `PrSummary` has no Linear field at all yet (`FEATURES.linear`); kept as a
   // typed placeholder so the chip's shape stays, pointed at nothing, rather
   // than being deleted — wiring up the real field later is then a one-line
@@ -227,37 +245,63 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     }
   }, [revision?.data, mode.file]);
 
-  const orderedGroups = revision?.data
+  // Every group with hunks in this revision, in reading order — includes
+  // hidden (lockfile/generated) groups, which `GroupsPane` lists collapsed.
+  const allGroups = revision?.data
     ? groupsForRevision(store, pr, revision.data)
     : [];
-  const orderedGroupIds = orderedGroups.map((g) => g.id).join();
+  const allGroupIds = allGroups.map((g) => g.id).join();
+  // The subset tour and `N`/`P` step through — hidden groups are nothing to
+  // review, so they're skipped unless opened by hand ("show anyway").
+  const tourGroups = reviewableGroups(allGroups);
+  const tourGroupIds = tourGroups.map((g) => g.id).join();
 
-  // Like the prototype: in grouped mode a group is always selected.
+  const group =
+    mode.mode === 'groups' && mode.group
+      ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
+      : null;
+  const groupHunkIds = group ? new Set(group.hunks) : null;
+
+  // Like the prototype: in grouped mode a group is always selected —
+  // preferring a reviewable one so a lockfile group is never the default.
   useEffect(() => {
-    const first = orderedGroups[0];
+    const first = tourGroups[0] ?? allGroups[0];
     if (mode.mode === 'groups' && !mode.group && first) {
       setMode((m) => ({ ...m, group: first.id }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode.mode, mode.group, orderedGroupIds]);
+  }, [mode.mode, mode.group, allGroupIds, tourGroupIds]);
 
   // Tour drives group selection; keep `mode` in sync with the tour cursor.
   useEffect(() => {
     if (tour == null) return;
-    const g = orderedGroups[tour];
+    const g = tourGroups[tour];
     if (g) setMode((m) => ({ ...m, mode: 'groups', group: g.id }));
     else setTour(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tour, orderedGroupIds]);
+  }, [tour, tourGroupIds]);
 
   const startTour = () => {
     const reads = new Set(
       store.models.hunkReads.where((r) => r.pr === pr).map((r) => r.hunk),
     );
-    const firstUnread = orderedGroups.findIndex(
-      (g) => !g.hunks.every((h) => reads.has(h)),
-    );
-    setTour(firstUnread >= 0 ? firstUnread : 0);
+    const allRead = tourGroups.map((g) => g.hunks.every((h) => reads.has(h)));
+    setTour(tourStartIndex(allRead));
+  };
+
+  // Marks the current tour group read and steps to the next one, ending the
+  // tour past the last — shared by the `R` shortcut and the tour bar's
+  // "Read, next" button.
+  const tourAdvance = () => {
+    if (tour == null) return;
+    const g = tourGroups[tour];
+    if (g) markGroupRead(store, pr, g.hunks);
+    setTour(tourNextIndex(tour, tourGroups.length));
+  };
+  const tourBack = () => {
+    if (tour == null) return;
+    const prev = tourPrevIndex(tour);
+    if (prev != null) setTour(prev);
   };
 
   // Review items of the native menu bar (see core/menu.ts).
@@ -271,7 +315,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         if (tour === null) startTour();
         else setTour(null);
       } else if (id === 'mark-group-read') {
-        const g = orderedGroups.find((x) => x.id === mode.group);
+        const g = allGroups.find((x) => x.id === mode.group);
         if (g) markGroupRead(store, pr, g.hunks);
       } else if (id === 'ask-agent') {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: '/' }));
@@ -287,16 +331,17 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   useViewKeys(
     ui,
     (e) => {
-      if (e.key === 't' || e.key === 'T') {
+      const k = latinKey(e);
+      if (k === 't') {
         if (tour === null) startTour();
         else setTour(null);
         return;
       }
-      if (e.key === 's' || e.key === 'S') {
+      if (k === 's') {
         ui.toggleDiffView();
         return;
       }
-      if (e.key === '/') {
+      if (k === '/') {
         ui.toggleAside(true);
         setTimeout(
           () =>
@@ -309,14 +354,110 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         );
         return;
       }
-      if (e.key !== 'r' && e.key !== 'R') return false;
-      if (tour == null) return false;
-      const g = orderedGroups[tour];
-      if (g) markGroupRead(store, pr, g.hunks);
-      setTour(tour + 1 < orderedGroups.length ? tour + 1 : null);
+      if (k === 'Escape') {
+        if (composer) {
+          setComposer(null);
+          return;
+        }
+        if (tour !== null) {
+          setTour(null);
+          return;
+        }
+        ui.goBack();
+        return;
+      }
+      if (k === 'r') {
+        if (tour == null) return false;
+        tourAdvance();
+        return;
+      }
+      // The rest only make sense over the diff itself.
+      if (tab !== 'diff' || !revision?.data) return false;
+      switch (k) {
+        case 'j':
+        case 'k': {
+          const hunks = hunksInScope(revision.data, mode, groupHunkIds);
+          const next = moveHunkFocus(hunks, focusHunk, k === 'j' ? 1 : -1);
+          if (next) setFocusHunk(next);
+          return;
+        }
+        case 'n':
+        case 'p': {
+          const next =
+            k === 'n'
+              ? nextReviewableGroup(allGroups, mode.group)
+              : prevReviewableGroup(allGroups, mode.group);
+          if (next) setMode((m) => ({ ...m, mode: 'groups', group: next.id }));
+          return;
+        }
+        case 'v': {
+          if (!focusHunk) return false;
+          const file = revision.data.files.find((f) =>
+            f.hunks.some((h) => h.id === focusHunk),
+          );
+          if (!file) return false;
+          const viewed = store.models.fileViews
+            .where((v) => v.pr === pr && v.path === file.path)
+            .at(-1);
+          void setFileViewed(store, pr, file.path, viewed?.state !== 'viewed');
+          return;
+        }
+        case 'c': {
+          if (!focusHunk) return false;
+          const file = revision.data.files.find((f) =>
+            f.hunks.some((h) => h.id === focusHunk),
+          );
+          const hunk = file?.hunks.find((h) => h.id === focusHunk);
+          if (!file || !hunk) return false;
+          const idx = Math.max(
+            0,
+            hunk.lines.findIndex((l) => l.kind !== 'ctx'),
+          );
+          const line = hunk.lines[idx];
+          const anchor =
+            line && lineAnchor(revision.data.head, file.path, line);
+          if (anchor) {
+            setComposer({
+              path: file.path,
+              side: anchor.side,
+              line: anchor.line,
+            });
+          }
+          return;
+        }
+        case 'e': {
+          if (!focusHunk) return false;
+          setExpandHunk({ hunk: focusHunk, nonce: Date.now() });
+          return;
+        }
+        default:
+          return false;
+      }
     },
-    [tour, orderedGroupIds, pr],
+    [
+      tour,
+      tourGroupIds,
+      allGroupIds,
+      pr,
+      tab,
+      mode.mode,
+      mode.group,
+      mode.file,
+      focusHunk,
+      composer,
+      revision?.data,
+      groupHunkIds,
+    ],
   );
+
+  // Keep the keyboard-focused hunk in view, same id `DiffPane` renders it
+  // under (`H-<hunkId>`).
+  useEffect(() => {
+    if (!focusHunk) return;
+    document
+      .getElementById(`H-${focusHunk}`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [focusHunk]);
 
   const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
   const local = summary?.pr.repo.host === 'local';
@@ -655,7 +796,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               ? 'grid-cols-[minmax(520px,1fr)_352px]'
               : 'grid-cols-[minmax(520px,1fr)]';
           const onTourFrom = (groupId: string) => {
-            const idx = orderedGroups.findIndex((g) => g.id === groupId);
+            const idx = tourGroups.findIndex((g) => g.id === groupId);
             if (idx >= 0) setTour(idx);
           };
           return (
@@ -685,7 +826,22 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   setMode={setMode}
                   since={since}
                   sinceOnly={sinceOnly && sinceCount > 0}
-                  tour={tour !== null}
+                  baselineSha={baselineSha}
+                  tour={
+                    tour !== null
+                      ? {
+                          groups: tourGroups,
+                          index: tour,
+                          onBack: tourBack,
+                          onNext: tourAdvance,
+                        }
+                      : null
+                  }
+                  focusHunk={focusHunk}
+                  setFocusHunk={setFocusHunk}
+                  composer={composer}
+                  setComposer={setComposer}
+                  expandHunk={expandHunk}
                 />
               )}
               {showAsideColumn && <SidePanel pr={pr} />}
@@ -726,6 +882,15 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             </div>
           );
         })()
+      )}
+      {tab === 'diff' && (
+        <Hints>
+          <K>J</K>
+          <K>K</K> hunk <K>N</K>
+          <K>P</K> group <K>V</K> viewed <K>C</K> comment <K>E</K> context{' '}
+          <K>T</K> tour <K>S</K> split <K>/</K> ask AI <K>]</K> AI panel{' '}
+          <K>Esc</K> back
+        </Hints>
       )}
       {mergeOpen && <MergeDialog pr={pr} onClose={() => setMergeOpen(false)} />}
     </div>
