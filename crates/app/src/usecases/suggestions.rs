@@ -4,7 +4,7 @@
 //! else's suggestions go through `decide_task`'s draft path instead.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use theodore_contract::CommitSuggestionsRequest;
 use theodore_domain::{Anchor, CommentId, HostKind, PrDetail};
@@ -141,6 +141,44 @@ fn check_no_overlap(edits: &[SuggestionEdit]) -> AppResult<()> {
     Ok(())
 }
 
+/// Resolves `path` (host-sourced: a review thread's `Anchor.path`, not an
+/// IPC string a client controls directly, but still not trusted) inside
+/// `worktree`, rejecting anything that could land outside it:
+///
+/// - an absolute path, or one with a `..` component — checked on the path
+///   text itself, before touching the filesystem;
+/// - a symlink inside the worktree that resolves outside it, which
+///   neither of those checks catches — caught by canonicalizing both
+///   sides and requiring the result to stay under the worktree.
+async fn safe_join(worktree: &Path, path: &str) -> AppResult<PathBuf> {
+    let rel = Path::new(path);
+    if rel.is_absolute() {
+        return Err(AppError::Invalid(format!(
+            "suggestion path must be relative: {path}"
+        )));
+    }
+    if rel
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(AppError::Invalid(format!(
+            "suggestion path must not contain ..: {path}"
+        )));
+    }
+    let canon_worktree = tokio::fs::canonicalize(worktree)
+        .await
+        .map_err(|e| AppError::Invalid(format!("worktree: {e}")))?;
+    let canon_joined = tokio::fs::canonicalize(worktree.join(rel))
+        .await
+        .map_err(|e| AppError::Invalid(format!("resolving {path}: {e}")))?;
+    if !canon_joined.starts_with(&canon_worktree) {
+        return Err(AppError::Invalid(format!(
+            "suggestion path escapes the worktree: {path}"
+        )));
+    }
+    Ok(canon_joined)
+}
+
 /// Applies every edit to the files under `worktree`, replacing the fewest
 /// lines possible per edit (within one file, bottom-to-top so earlier
 /// edits' line numbers stay valid).
@@ -151,7 +189,7 @@ async fn apply_suggestions(worktree: &Path, edits: &[SuggestionEdit]) -> AppResu
     }
     for (path, mut es) in by_path {
         es.sort_by_key(|e| std::cmp::Reverse(range_of(&e.anchor).0));
-        let full_path = worktree.join(path);
+        let full_path = safe_join(worktree, path).await?;
         let content = tokio::fs::read_to_string(&full_path)
             .await
             .map_err(|e| AppError::Invalid(format!("reading {path}: {e}")))?;
@@ -275,6 +313,62 @@ mod tests {
         apply_suggestions(dir.path(), &edits).await.unwrap();
         let out = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(out, "a\nB\nc\nD1\nD2\n");
+    }
+
+    #[tokio::test]
+    async fn safe_join_accepts_a_plain_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir(dir.path().join("sub")).await.unwrap();
+        tokio::fs::write(dir.path().join("sub/f.txt"), "x")
+            .await
+            .unwrap();
+
+        let resolved = safe_join(dir.path(), "sub/f.txt").await.unwrap();
+        assert_eq!(
+            resolved,
+            tokio::fs::canonicalize(dir.path().join("sub/f.txt"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn safe_join_rejects_an_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = safe_join(dir.path(), "/etc/passwd").await.unwrap_err();
+        assert!(matches!(err, AppError::Invalid(_)));
+    }
+
+    #[tokio::test]
+    async fn safe_join_rejects_a_dot_dot_component() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("f.txt"), "x")
+            .await
+            .unwrap();
+        let err = safe_join(dir.path(), "../f.txt").await.unwrap_err();
+        assert!(matches!(err, AppError::Invalid(_)));
+
+        // `..` is rejected even buried inside an otherwise-plausible path,
+        // not just at the start.
+        let err = safe_join(dir.path(), "sub/../../f.txt").await.unwrap_err();
+        assert!(matches!(err, AppError::Invalid(_)));
+    }
+
+    #[tokio::test]
+    async fn safe_join_rejects_a_symlink_that_escapes_the_worktree() {
+        let worktree = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        tokio::fs::write(outside.path().join("secret.txt"), "x")
+            .await
+            .unwrap();
+        // No `..`, no absolute path in the request — the escape is
+        // entirely inside a symlink planted in the worktree.
+        std::os::unix::fs::symlink(outside.path(), worktree.path().join("linked")).unwrap();
+
+        let err = safe_join(worktree.path(), "linked/secret.txt")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Invalid(_)));
     }
 
     #[test]
