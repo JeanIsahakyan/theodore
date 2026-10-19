@@ -80,7 +80,7 @@ export const Onboarding = observer(function Onboarding() {
   ];
 
   return (
-    <div className="onboarding flex h-full items-center justify-center overflow-auto bg-background p-6">
+    <div className="onboarding flex h-full items-center-safe justify-center-safe overflow-auto bg-background p-6">
       <Card className="w-full max-w-[600px] gap-0 p-0">
         <div className="flex flex-col gap-4 px-8 pb-6 pt-8">
           <div className="flex items-center gap-2.5">
