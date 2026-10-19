@@ -11,7 +11,7 @@ import {
 } from '@gravity-ui/icons';
 import { Button, Tabs, Toolbar, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
@@ -61,6 +61,16 @@ export const TabBar = observer(function TabBar({
 }) {
   const ui = useUi();
   const closable = ui.tabs.length > 1;
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedKey = key(ui.route);
+  // Many tabs open + a short list width: keep the one you just switched to
+  // in view instead of leaving it scrolled off either edge.
+  useEffect(() => {
+    const el = listRef.current?.querySelector(
+      '[aria-selected="true"]',
+    ) as HTMLElement | null;
+    el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selectedKey]);
   return (
     <Toolbar
       aria-label="Tabs"
@@ -84,27 +94,31 @@ export const TabBar = observer(function TabBar({
         </Tooltip>
       )}
       <Tabs
-        selectedKey={key(ui.route)}
+        selectedKey={selectedKey}
         onSelectionChange={(k) => {
           const t = ui.tabs.find((x) => key(x) === k);
           if (t) ui.go(t);
         }}
         className="min-w-0 shrink"
       >
-        <Tabs.List
-          aria-label="Open tabs"
-          className="flex w-fit max-w-full overflow-x-auto scrollbar-none"
-        >
-          {ui.tabs.map((t, i) => (
-            <TabItem
-              key={key(t)}
-              t={t}
-              i={i}
-              closable={closable}
-              onClose={() => ui.closeTab(t)}
-            />
-          ))}
-        </Tabs.List>
+        {/* `display: contents` — a plain ref anchor to query the selected
+         *  tab from, without affecting the flex layout below it. */}
+        <div ref={listRef} className="contents">
+          <Tabs.List
+            aria-label="Open tabs"
+            className="flex w-fit max-w-full overflow-x-auto scrollbar-none"
+          >
+            {ui.tabs.map((t, i) => (
+              <TabItem
+                key={key(t)}
+                t={t}
+                i={i}
+                closable={closable}
+                onClose={() => ui.closeTab(t)}
+              />
+            ))}
+          </Tabs.List>
+        </div>
       </Tabs>
       <span className="flex-1" />
       <Tooltip>
@@ -148,7 +162,7 @@ const TabItem = observer(function TabItem({
         {l.icon}
       </span>
       <span
-        className="truncate"
+        className="min-w-0 truncate"
         title={`${l.title}${i < 9 ? `  ⌥${i + 1}` : ''}`}
       >
         {l.title}
