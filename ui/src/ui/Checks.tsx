@@ -86,22 +86,24 @@ export const Checks = observer(function Checks({
                       size="sm"
                       variant="soft"
                       color={STATUS_COLOR[c.status]}
+                      className="shrink-0"
                     >
                       {c.status}
                     </Chip>
-                    <b>{c.name}</b>
-                    <span className="text-muted">
+                    <b className="min-w-0 flex-1 truncate" title={c.name}>
+                      {c.name}
+                    </b>
+                    <span className="shrink-0 whitespace-nowrap text-muted">
                       {c.status === 'pending'
                         ? STATUS_LABEL.pending
                         : duration(c.duration_ms)}
                     </span>
-                    <span className="flex-1" />
                     {c.url && (
                       <a
                         href={c.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs text-accent"
+                        className="shrink-0 text-xs text-accent"
                         onClick={(e) => e.stopPropagation()}
                       >
                         details
@@ -205,7 +207,7 @@ const REVIEW_COLOR: Record<
 export function ReviewerStrip({ reviewers }: { reviewers: Reviewer[] }) {
   if (!reviewers.length) return null;
   return (
-    <div className="reviewer-strip flex min-w-0 items-center gap-1.5 overflow-hidden">
+    <div className="reviewer-strip flex min-w-0 items-center gap-1.5 overflow-x-auto scrollbar-none">
       {reviewers.map((r, i) => (
         <Tooltip key={r.team ?? r.person.login ?? i}>
           <Chip
