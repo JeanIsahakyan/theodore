@@ -357,6 +357,30 @@ async fn timeline_actions_and_ci_transitions_apply() {
 }
 
 #[test]
+fn due_timeline_events_fire_once_on_tick() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("scenario");
+    default_scenario::write(&dir).unwrap();
+    let mut s = theodore_sandbox::Scenario::load(&dir).unwrap();
+    s.timeline[0].at = Some("0s".into());
+    s.save(&dir).unwrap();
+    let sb = Sandbox::open(&dir, &tmp.path().join("data")).unwrap();
+    let bare = sb.world().bare("acme", "storefront");
+    let before = bare.branch_tip("mira/ABC-101-cart-rounding").unwrap();
+    sb.tick();
+    let after = bare.branch_tip("mira/ABC-101-cart-rounding").unwrap();
+    assert_ne!(before, after, "push-101 fired");
+    sb.tick();
+    assert_eq!(
+        bare.branch_tip("mira/ABC-101-cart-rounding").unwrap(),
+        after,
+        "and only once"
+    );
+    let status = sb.status();
+    assert!(status.events.iter().any(|e| e.id == "push-101" && e.fired));
+}
+
+#[test]
 fn control_spool_round_trips_through_a_ticking_sandbox() {
     let (sb, _tmp) = open();
     let root = sb.root().to_path_buf();

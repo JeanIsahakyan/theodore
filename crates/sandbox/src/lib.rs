@@ -252,9 +252,12 @@ impl Sandbox {
         }
         let started = *self.world.started_at.lock().unwrap();
         let elapsed = now_ms() - started;
-        let due: Vec<String> = {
-            let l = self.world.lock();
-            self.world
+        // Claimed (marked fired) under the lock before running, so a manual
+        // `fire` racing the ticker can't run a due event twice.
+        let due: Vec<scenario::EventSpec> = {
+            let mut l = self.world.lock();
+            let due: Vec<scenario::EventSpec> = self
+                .world
                 .scenario
                 .timeline
                 .iter()
@@ -264,18 +267,20 @@ impl Sandbox {
                         .and_then(|a| parse_duration(a).ok())
                         .is_some_and(|at| elapsed >= at)
                 })
-                .map(|e| e.id.clone())
-                .collect()
+                .cloned()
+                .collect();
+            for e in &due {
+                l.st.fired.insert(e.id.clone());
+            }
+            if !due.is_empty() {
+                l.save();
+            }
+            due
         };
-        for id in due {
-            match self.fire(&id) {
-                Ok(m) => tracing::info!("sandbox timeline {id}: {m}"),
-                Err(e) => {
-                    tracing::warn!("sandbox timeline {id} failed: {e}");
-                    let mut l = self.world.lock();
-                    l.st.fired.insert(id);
-                    l.save();
-                }
+        for e in due {
+            match self.apply(&e.action) {
+                Ok(m) => tracing::info!("sandbox timeline {}: {m}", e.id),
+                Err(err) => tracing::warn!("sandbox timeline {} failed: {err}", e.id),
             }
         }
         let root = self.world.root.clone();
