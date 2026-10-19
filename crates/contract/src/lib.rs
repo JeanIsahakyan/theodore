@@ -76,6 +76,12 @@ pub struct SyncFrame {
     pub from_sync_id: u64,
     pub last_sync_id: u64,
     pub actions: Vec<WireAction>,
+    /// Set on a `catch_up` response whose `since` fell behind the sync
+    /// log's compaction horizon: `actions` is empty and cannot be trusted
+    /// to close the gap — the caller must bootstrap from scratch instead
+    /// of applying this frame incrementally. Always `false` otherwise.
+    #[serde(default)]
+    pub resync_required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

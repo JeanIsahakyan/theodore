@@ -125,6 +125,64 @@ describe('SyncClient', () => {
     expect(client.lastSyncId).toBe(4);
   });
 
+  it('resyncs from scratch when catch_up reports the log was compacted past us', async () => {
+    transport.queueResult('bootstrap', {
+      last_sync_id: 0,
+      rows: [row('task', 'stale', { title: 'will be discarded' })],
+    } satisfies Bootstrap);
+    const client = new SyncClient();
+    await client.start();
+
+    transport.queueResult('bootstrap', {
+      last_sync_id: 0,
+      rows: [row('draft', 'd1', { id: 'd1' })],
+    } satisfies Bootstrap);
+    await client.openPr('pr1');
+
+    const gapFrame: SyncFrame = {
+      from_sync_id: 3,
+      last_sync_id: 4,
+      actions: [action(4, 'task', 't1', 'I', { title: 'latest' })],
+      resync_required: false,
+    };
+    const resyncDelta: SyncFrame = {
+      from_sync_id: 0,
+      last_sync_id: 10,
+      actions: [],
+      resync_required: true,
+    };
+    transport.queueResult('catch_up', resyncDelta);
+    // The resync's fresh global bootstrap, then re-opening pr1.
+    transport.queueResult(
+      'bootstrap',
+      {
+        last_sync_id: 10,
+        rows: [row('task', 'fresh', { title: 'from the new bootstrap' })],
+      } satisfies Bootstrap,
+      {
+        last_sync_id: 10,
+        rows: [row('draft', 'd2', { id: 'd2' })],
+      } satisfies Bootstrap,
+    );
+
+    transport.emit('sync', gapFrame);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The stale pre-resync rows are gone; only the fresh bootstrap's rows remain.
+    expect(client.pool.get('task', 'stale')).toBeUndefined();
+    expect(client.pool.get('task', 'fresh')).toMatchObject({
+      title: 'from the new bootstrap',
+    });
+    expect(client.pool.get('draft', 'd1')).toBeUndefined();
+    expect(client.pool.get('draft', 'd2')).toBeDefined();
+    // The frame that triggered catch_up never got applied directly either.
+    expect(client.pool.get('task', 't1')).toBeUndefined();
+    expect(client.lastSyncId).toBe(10);
+    expect(client.isPrLoaded('pr1')).toBe(true);
+  });
+
   it('ignores a stale/duplicate frame', async () => {
     transport.queueResult('bootstrap', {
       last_sync_id: 10,

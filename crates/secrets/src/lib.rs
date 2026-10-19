@@ -76,12 +76,17 @@ impl CommandRunner for RealCommandRunner {
         value: &str,
     ) -> Result<(), SecretsError> {
         // Use interactive stdin to avoid passing the secret as a command-line argument.
-        // Format: `add-generic-password -U -s <service> -a <account> -w <quoted-json>`
+        // Format: `add-generic-password -U -s <service> -a <account> -w <quoted>`.
+        // No trailing `quit`: `security -i` has no such command (it exits
+        // 0 on EOF, which closing `stdin` below already delivers) — a
+        // bogus `quit` line makes the whole interactive session's exit
+        // status 1 even though `add-generic-password` itself succeeded,
+        // which previously made every real write look like a failure.
         let cmd = format!(
-            "add-generic-password -U -s {} -a {} -w {}\nquit\n",
-            shell_quote(service),
-            shell_quote(account),
-            shell_quote(value)
+            "add-generic-password -U -s {} -a {} -w {}\n",
+            security_quote(service),
+            security_quote(account),
+            security_quote(value)
         );
 
         let mut child = Command::new("/usr/bin/security")
@@ -125,18 +130,70 @@ impl CommandRunner for RealCommandRunner {
     }
 }
 
-/// Quote a string for the security command's interactive parser.
-/// The security tool parses quoted strings similarly to a shell.
-/// We need to handle: quotes, backslashes, spaces, unicode.
-fn shell_quote(s: &str) -> String {
-    // Use single quotes to avoid most special character issues,
-    // but we need to escape any single quotes in the string.
-    if s.contains('\'') {
-        // Replace ' with '\'' (end quote, escaped quote, start quote)
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        format!("'{}'", s)
+/// Quote a string for `/usr/bin/security -i`'s interactive command parser.
+///
+/// This is NOT a shell — its quoting rules are undocumented (no man page
+/// section covers them) and were verified empirically against the real
+/// `security` binary (see the `#[ignore]`d `real_keychain_roundtrip*`
+/// tests below) rather than assumed from shell convention:
+///
+/// - A single-quoted string does *not* support the POSIX `'\''` trick to
+///   embed a literal `'` — `security` rejects it outright (extra tokens,
+///   "Usage: add-generic-password" on stderr). Never use single quotes
+///   for a value that might contain one.
+/// - A double-quoted string supports exactly two escapes: `\\` for a
+///   literal backslash and `\"` for a literal double quote. A backslash
+///   before any other character is silently dropped (`"a\tb"` stores
+///   `atb`, not a tab) — so this must never be asked to pass through an
+///   escape sequence it doesn't itself produce.
+/// - A literal control character (real tab, real newline) in the value
+///   can't be represented at all: `security -i` reads one command per
+///   line, so a raw `\n` byte ends the command early. Callers must keep
+///   the text handed to this function free of raw control bytes and
+///   non-ASCII bytes — `KeychainSecrets` does this by only ever quoting
+///   the output of `ascii_escape_json`, which turns both into plain-ASCII
+///   `\u00XX` / backslash-letter escapes before this function ever sees
+///   them.
+fn security_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(c),
+        }
     }
+    out.push('"');
+    out
+}
+
+/// Re-escapes every non-ASCII character of a JSON string as `\uXXXX`
+/// (surrogate pairs for anything past `U+FFFF`), on top of `serde_json`'s
+/// own escaping of control characters, `"` and `\`. The result is always
+/// pure printable ASCII.
+///
+/// This exists because `/usr/bin/security find-generic-password -w`
+/// prints the hex encoding of the password instead of the password
+/// itself whenever it contains a byte outside `isprint()` — which
+/// includes every non-ASCII UTF-8 continuation byte. A vault value with
+/// so much as one accented character or emoji would otherwise make the
+/// *entire* vault blob unreadable (the hex dump doesn't parse as JSON).
+/// Keeping the on-keychain bytes pure ASCII sidesteps that entirely;
+/// `serde_json::from_str` undoes the `\u` escapes transparently on read.
+fn ascii_escape_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u16; 2];
+            for unit in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    out
 }
 
 /// Keychain-backed secrets (macOS production implementation).
@@ -201,10 +258,13 @@ impl KeychainSecrets {
         Ok(vault)
     }
 
-    /// Save the vault to the keychain.
+    /// Save the vault to the keychain. The stored text is always pure
+    /// ASCII (see `ascii_escape_json`) so a later `read_keychain` never
+    /// hits `security`'s hex-dump-on-non-printable fallback.
     fn save_vault(&self, vault: &HashMap<String, String>) -> Result<(), SecretsError> {
         let json_str = serde_json::to_string(vault)
             .map_err(|e| SecretsError::Keychain(format!("failed to serialize vault: {}", e)))?;
+        let json_str = ascii_escape_json(&json_str);
 
         self.runner
             .write_keychain(VAULT_SERVICE, VAULT_ACCOUNT, &json_str)?;
@@ -478,26 +538,44 @@ mod tests {
     }
 
     #[test]
-    fn test_shell_quote_simple() {
-        assert_eq!(shell_quote("hello"), "'hello'");
+    fn test_security_quote_simple() {
+        assert_eq!(security_quote("hello"), "\"hello\"");
     }
 
     #[test]
-    fn test_shell_quote_with_spaces() {
-        assert_eq!(shell_quote("hello world"), "'hello world'");
+    fn test_security_quote_with_spaces() {
+        assert_eq!(security_quote("hello world"), "\"hello world\"");
     }
 
     #[test]
-    fn test_shell_quote_with_quotes() {
-        // Single quotes are escaped as '\'' (end quote, escaped quote, start quote)
-        assert_eq!(shell_quote("it's"), r#"'it'\''s'"#);
-        assert_eq!(shell_quote("a'b'c"), r#"'a'\''b'\''c'"#);
+    fn test_security_quote_with_single_quotes() {
+        // A single quote needs no escaping inside a double-quoted value —
+        // `security -i` has no special meaning for `'` there.
+        assert_eq!(security_quote("it's"), "\"it's\"");
+        assert_eq!(security_quote("a'b'c"), "\"a'b'c\"");
     }
 
     #[test]
-    fn test_shell_quote_with_unicode() {
-        assert_eq!(shell_quote("café"), "'café'");
-        assert_eq!(shell_quote("你好"), "'你好'");
+    fn test_security_quote_with_double_quotes_and_backslashes() {
+        assert_eq!(security_quote(r#"say "hi""#), r#""say \"hi\"""#);
+        assert_eq!(security_quote(r"back\slash"), r#""back\\slash""#);
+    }
+
+    #[test]
+    fn test_security_quote_with_unicode() {
+        // Not escaped by `security_quote` itself — callers must have
+        // already run the text through `ascii_escape_json` first.
+        assert_eq!(security_quote("café"), "\"café\"");
+        assert_eq!(security_quote("你好"), "\"你好\"");
+    }
+
+    #[test]
+    fn test_ascii_escape_json_escapes_non_ascii_only() {
+        let json = serde_json::to_string(&"café 你好 😀 plain \"q\" \\b\\").unwrap();
+        let escaped = ascii_escape_json(&json);
+        assert!(escaped.is_ascii());
+        let back: String = serde_json::from_str(&escaped).unwrap();
+        assert_eq!(back, "café 你好 😀 plain \"q\" \\b\\");
     }
 
     #[test]
@@ -562,33 +640,80 @@ mod tests {
         }
     }
 
-    // Ignored test for real keychain round-trip. Run with:
-    // cargo test --package theodore-secrets -- --ignored --nocapture real_keychain_roundtrip
+    /// Never the real `VAULT_SERVICE`/`VAULT_ACCOUNT` — a throwaway item,
+    /// deleted in `Drop` regardless of how the test exits.
+    const TEST_SERVICE: &str = "app.theodore.test.secrets.rust-review-23";
+    const TEST_ACCOUNT: &str = "roundtrip";
+
+    struct DeleteTestItemOnDrop;
+
+    impl Drop for DeleteTestItemOnDrop {
+        fn drop(&mut self) {
+            let _ = Command::new("/usr/bin/security")
+                .args([
+                    "delete-generic-password",
+                    "-s",
+                    TEST_SERVICE,
+                    "-a",
+                    TEST_ACCOUNT,
+                ])
+                .output();
+        }
+    }
+
+    /// Exercises the real `/usr/bin/security -i` / `find-generic-password`
+    /// against a throwaway test-only item, through the exact same code
+    /// `KeychainSecrets` uses (`RealCommandRunner`, `security_quote`,
+    /// `ascii_escape_json`) — not a fake. Covers the characters finding
+    /// #23 flagged as unverified: quotes (both kinds), backslashes,
+    /// spaces, a newline, and unicode (accented, CJK, emoji).
+    ///
+    /// Run manually: grant keychain access when prompted.
+    ///   cargo test --package theodore-secrets -- --ignored --nocapture real_keychain_roundtrip
     #[test]
     #[ignore]
     fn real_keychain_roundtrip() {
-        const TEST_SERVICE: &str = "app.theodore.test.secrets";
-        const TEST_ACCOUNT: &str = "vault";
+        let _cleanup = DeleteTestItemOnDrop;
+        // Best-effort: clear any leftover item from a previous crashed run.
+        drop(
+            Command::new("/usr/bin/security")
+                .args([
+                    "delete-generic-password",
+                    "-s",
+                    TEST_SERVICE,
+                    "-a",
+                    TEST_ACCOUNT,
+                ])
+                .output(),
+        );
 
-        // Clean up any previous test data (best-effort).
-        let _ = Command::new("/usr/bin/security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                TEST_SERVICE,
-                "-a",
-                TEST_ACCOUNT,
-            ])
-            .output();
+        let value =
+            "it's a \"test\" with \\backslash\\, a newline\nand unicode: café 你好 😀 and a tab\t.";
+        let mut vault = HashMap::new();
+        vault.insert(GITHUB_TOKEN.to_string(), value.to_string());
+        vault.insert("other".to_string(), "plain".to_string());
 
-        // This test requires modifying VAULT_SERVICE and VAULT_ACCOUNT to use test names.
-        // For now, we document how to run this test manually:
-        // 1. Create a test-specific module with its own constants.
-        // 2. Run: cargo test --package theodore-secrets -- --ignored --nocapture
-        // 3. Grant keychain access when prompted.
-        // 4. Verify the test passes and the entry is created in Keychain.app.
-        //
-        // The test would set/get/delete with the real keychain and verify round-trip.
+        let runner = RealCommandRunner;
+        let json = serde_json::to_string(&vault).unwrap();
+        let encoded = ascii_escape_json(&json);
+        assert!(
+            encoded.is_ascii(),
+            "the on-keychain text must be pure ASCII or `security -w` may \
+             hex-dump it back instead of the real value"
+        );
+
+        runner
+            .write_keychain(TEST_SERVICE, TEST_ACCOUNT, &encoded)
+            .expect("write to the real keychain");
+
+        let read_back = runner
+            .read_keychain(TEST_SERVICE, TEST_ACCOUNT)
+            .expect("read from the real keychain")
+            .expect("item was just written");
+        let decoded: HashMap<String, String> = serde_json::from_str(&read_back)
+            .expect("the stored text must still parse as the original JSON");
+
+        assert_eq!(decoded, vault, "value must round-trip byte-for-byte");
     }
 
     /// Regression guard for the `set`/`delete` race: two concurrent `set`

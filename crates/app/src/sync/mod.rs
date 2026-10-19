@@ -2,6 +2,9 @@
 //! other write path in `app` (outbox results, the poller, agent runs) goes
 //! through `Core::apply` too, so all of them share one sync-id sequence.
 
+pub(crate) mod compactor;
+#[cfg(test)]
+mod test_support;
 mod validate;
 
 use std::sync::atomic::Ordering;
@@ -84,9 +87,34 @@ impl Core {
     }
 
     /// Replays `(since, last]` over IPC (the UI calls this after a missed
-    /// `sync` event, per the event's doc).
+    /// `sync` event, per the event's doc). If `since` has fallen behind the
+    /// sync log's compaction horizon (`Store::compact`), there's a gap
+    /// `since` can no longer close incrementally — returns
+    /// `resync_required` instead of silently skipping the missing ids.
     pub async fn catch_up(&self, since: u64) -> AppResult<SyncFrame> {
         let store = self.0.deps.store.clone();
+        let oldest = {
+            let store = store.clone();
+            tokio::task::spawn_blocking(move || store.oldest_sync_id())
+                .await
+                .map_err(AppError::join)??
+        };
+        if let Some(oldest) = oldest
+            && since + 1 < oldest
+        {
+            let last_sync_id = tokio::task::spawn_blocking({
+                let store = store.clone();
+                move || store.last_sync_id()
+            })
+            .await
+            .map_err(AppError::join)??;
+            return Ok(SyncFrame {
+                from_sync_id: since,
+                last_sync_id,
+                actions: Vec::new(),
+                resync_required: true,
+            });
+        }
         let actions = tokio::task::spawn_blocking(move || store.since(since, 5_000))
             .await
             .map_err(AppError::join)??;
@@ -95,6 +123,7 @@ impl Core {
             from_sync_id: since,
             last_sync_id: last,
             actions: actions.into_iter().map(to_wire_action).collect(),
+            resync_required: false,
         })
     }
 
@@ -177,5 +206,84 @@ fn op_to_new_action(op: &MutationOp) -> NewAction {
             action: SyncActionCode::D,
             data: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use theodore_ports::{NewAction, Store, SyncActionCode};
+
+    use super::test_support::sqlite_deps;
+    use crate::core::Core;
+    use crate::testkit::fixtures;
+
+    fn put(store: &dyn Store, id: &str, n: i32) {
+        store
+            .apply(vec![NewAction {
+                model: "setting".into(),
+                model_id: id.into(),
+                action: SyncActionCode::I,
+                data: Some(serde_json::json!({ "n": n })),
+            }])
+            .unwrap();
+    }
+
+    /// rust-review #22: a client whose `since` falls below the sync log's
+    /// compaction horizon would otherwise get a frame that silently skips
+    /// the deleted ids (`since()`'s `WHERE id > since` just starts later).
+    /// `catch_up` must flag this instead.
+    #[tokio::test]
+    async fn catch_up_flags_resync_once_since_is_behind_the_compaction_horizon() {
+        let f = fixtures();
+        let (deps, store) = sqlite_deps(&f);
+        let (core, _recv) = Core::start(deps);
+
+        for i in 0..5 {
+            put(store.as_ref(), &format!("k{i}"), i);
+        }
+        // Drops ids 1..3, keeping 4 and 5 — oldest_sync_id becomes 4.
+        store.compact_before(4).unwrap();
+
+        let frame = core.catch_up(0).await.unwrap();
+        assert!(
+            frame.resync_required,
+            "since=0 is missing ids 1..3, which no longer exist"
+        );
+        assert!(frame.actions.is_empty());
+        assert_eq!(frame.from_sync_id, 0);
+        assert_eq!(frame.last_sync_id, 5);
+    }
+
+    /// The boundary case: a client standing exactly at the compaction
+    /// horizon's lower edge (`since == oldest - 1`) has already received
+    /// everything that was dropped — `since()` picks up right where the
+    /// log still goes back to, no gap, no resync needed.
+    #[tokio::test]
+    async fn catch_up_serves_a_normal_frame_right_at_the_compaction_boundary() {
+        let f = fixtures();
+        let (deps, store) = sqlite_deps(&f);
+        let (core, _recv) = Core::start(deps);
+
+        for i in 0..5 {
+            put(store.as_ref(), &format!("k{i}"), i);
+        }
+        store.compact_before(4).unwrap(); // oldest_sync_id == 4
+
+        let frame = core.catch_up(3).await.unwrap();
+        assert!(!frame.resync_required);
+        assert_eq!(frame.actions.len(), 2); // ids 4 and 5
+        assert_eq!(frame.last_sync_id, 5);
+    }
+
+    /// An implementation that never compacts (`oldest_sync_id` -> `None`
+    /// by the `Store` trait's default) never triggers `resync_required`,
+    /// however far behind `since` is.
+    #[tokio::test]
+    async fn catch_up_never_resyncs_against_a_store_that_does_not_compact() {
+        let f = fixtures();
+        let (core, _recv) = Core::start(f.deps()); // FakeStore: no compaction
+
+        let frame = core.catch_up(0).await.unwrap();
+        assert!(!frame.resync_required);
     }
 }

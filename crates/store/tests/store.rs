@@ -397,6 +397,53 @@ fn compaction_keeps_the_log_bounded() {
     assert_eq!(visible.first().unwrap().id, 4);
 }
 
+fn real_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+#[test]
+fn compact_keeps_everything_when_the_age_window_retains_more_than_the_count() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    for i in 0..5 {
+        insert(&store, "pr", &i.to_string(), json!({"n": i}));
+    }
+    // Count policy alone would keep only the last 3; the age window is wide
+    // enough to cover everything, so the "whichever keeps more" policy must
+    // keep all 5 and remove nothing.
+    let removed = store.compact(3, i64::MAX / 2, real_now_ms()).unwrap();
+    assert_eq!(removed, 0);
+    assert_eq!(store.oldest_sync_id().unwrap(), Some(1));
+    assert_eq!(store.last_sync_id().unwrap(), 5);
+}
+
+#[test]
+fn compact_falls_back_to_the_count_policy_when_the_age_window_excludes_everything() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    for i in 0..5 {
+        insert(&store, "pr", &i.to_string(), json!({"n": i}));
+    }
+    // `now` is far enough ahead that no row's `at` falls inside a
+    // zero-width age window; the count policy (keep the last 3) must win
+    // instead of the age policy deleting everything.
+    let removed = store.compact(3, 0, real_now_ms() + 1_000_000).unwrap();
+    assert_eq!(removed, 2); // ids 1, 2
+    assert_eq!(store.oldest_sync_id().unwrap(), Some(3));
+    assert_eq!(store.last_sync_id().unwrap(), 5);
+}
+
+#[test]
+fn compact_on_an_empty_log_is_a_no_op() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let removed = store
+        .compact(10_000, 7 * 24 * 60 * 60 * 1000, real_now_ms())
+        .unwrap();
+    assert_eq!(removed, 0);
+    assert_eq!(store.oldest_sync_id().unwrap(), None);
+}
+
 #[test]
 fn concurrent_applies_from_several_threads_are_all_persisted_with_unique_ids() {
     let store = Arc::new(SqliteStore::open_in_memory().unwrap());
