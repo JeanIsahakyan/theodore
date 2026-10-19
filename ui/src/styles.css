@@ -244,6 +244,30 @@ body.cmd .lines .src span:hover {
   color: var(--foreground);
 }
 
+/* Tab bar: a scrolled-off edge fades out instead of cutting a tab in half,
+ * and the keyboard focus ring sits inside the tab where the scroll
+ * container can't clip it. */
+.tabbar .fade-l {
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+.tabbar .fade-r {
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+.tabbar .fade-l.fade-r {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+}
+.tabbar .tabs__tab:focus-visible,
+.tabbar .tabs__tab[data-focus-visible='true'] {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
 /* Closing tab: collapses to nothing before it leaves (UiStore.requestCloseTab,
  * TAB_CLOSE_MS). Its measured width is pinned inline first, hence !important. */
 .tabs__tab.tab-closing {

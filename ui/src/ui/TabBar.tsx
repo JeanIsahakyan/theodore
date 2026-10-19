@@ -12,7 +12,13 @@ import {
 } from '@gravity-ui/icons';
 import { Button, Tabs, Toolbar, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
@@ -74,6 +80,27 @@ export const TabBar = observer(function TabBar({
     ) as HTMLElement | null;
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [selectedKey]);
+  // Fade whichever edge has tabs scrolled out of view behind it.
+  const [edges, setEdges] = useState({ left: false, right: false });
+  useEffect(() => {
+    const list =
+      listRef.current?.querySelector<HTMLElement>('[role="tablist"]');
+    if (!list) return;
+    const update = () =>
+      setEdges({
+        left: list.scrollLeft > 1,
+        right: list.scrollLeft + list.clientWidth < list.scrollWidth - 1,
+      });
+    update();
+    list.addEventListener('scroll', update, { passive: true });
+    const ro =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    ro?.observe(list);
+    return () => {
+      list.removeEventListener('scroll', update);
+      ro?.disconnect();
+    };
+  }, [ui.tabs.length]);
   return (
     <Toolbar
       aria-label="Tabs"
@@ -109,7 +136,7 @@ export const TabBar = observer(function TabBar({
         <div ref={listRef} className="contents">
           <Tabs.List
             aria-label="Open tabs"
-            className="flex w-fit max-w-full overflow-x-auto scrollbar-none"
+            className={`flex w-fit max-w-full overflow-x-auto scrollbar-none ${edges.left ? 'fade-l' : ''} ${edges.right ? 'fade-r' : ''}`}
           >
             {ui.tabs.map((t, i) => (
               <TabItem
@@ -129,6 +156,7 @@ export const TabBar = observer(function TabBar({
           isIconOnly
           size="sm"
           variant="ghost"
+          className="ms-1 shrink-0"
           aria-label="New tab"
           onPress={() => ui.newTab()}
         >
