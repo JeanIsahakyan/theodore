@@ -9,9 +9,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use theodore_contract::TokenSource;
 use theodore_domain::{
-    AgentId, Anchor, CheckRollup, FileDiff, FileStatus, Group, GroupId, GroupKind, Grouping, Hunk,
-    HunkId, LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, Revision, Sha,
-    Side,
+    AgentId, Anchor, CheckRollup, FileDiff, FileStatus, Group, GroupId, GroupKind, Grouping,
+    HostRepo, Hunk, HunkId, LineKind, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef,
+    Revision, Sha, Side,
 };
 use theodore_ports::{
     AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo, Capabilities,
@@ -590,6 +590,7 @@ pub struct FakeHost {
     pub rerun_check_responses: Mutex<VecDeque<HostResult<()>>>,
     /// Every check id `rerun_check` was called with, for assertions.
     pub rerun_check_calls: Mutex<Vec<String>>,
+    pub repo_info_responses: Mutex<VecDeque<HostResult<HostRepo>>>,
 }
 
 impl FakeHost {
@@ -682,6 +683,9 @@ impl FakeHost {
     }
     pub fn rerun_check_calls(&self) -> Vec<String> {
         self.rerun_check_calls.lock().unwrap().clone()
+    }
+    pub fn push_repo_info(&self, r: HostResult<HostRepo>) {
+        self.repo_info_responses.lock().unwrap().push_back(r);
     }
 }
 
@@ -938,6 +942,17 @@ impl HostAdapter for FakeHost {
             .unwrap()
             .pop_front()
             .unwrap_or(Ok(()))
+    }
+    async fn repo_info(&self, repo: &RepoRef) -> HostResult<HostRepo> {
+        self.repo_info_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(HostError::Unsupported("repo_info")))
+            .map(|r| HostRepo {
+                repo: repo.clone(),
+                ..r
+            })
     }
 }
 

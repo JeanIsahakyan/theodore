@@ -17,8 +17,8 @@ use theodore_contract::{
 };
 use theodore_domain::{
     AgentId, Anchor, Assignee, Check, CheckStatus, Comment, CommentId, FileDiff, FileStatus, Fix,
-    FixStatus, HostKind, HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha, Side,
-    Task, TaskId, TaskStatus, Thread, ThreadId, Usage, ViewedState,
+    FixStatus, HostKind, HostRepo, HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha,
+    Side, Task, TaskId, TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
     AgentEvent, BranchInfo, Clock, CommitLog, DevicePoll, Fetched, HostError,
@@ -2320,6 +2320,7 @@ async fn list_branches_reads_the_mirror_for_a_local_project() {
             name: "main".into(),
             head: Sha::new("m1"),
             subject: "base".into(),
+            author: "Ada".into(),
             ahead: 0,
             behind: 0,
             updated_at: 1,
@@ -2328,6 +2329,7 @@ async fn list_branches_reads_the_mirror_for_a_local_project() {
             name: "feature".into(),
             head: Sha::new("f1"),
             subject: "feature work".into(),
+            author: "Grace".into(),
             ahead: 2,
             behind: 1,
             updated_at: 2,
@@ -2342,6 +2344,112 @@ async fn list_branches_reads_the_mirror_for_a_local_project() {
     let feature = branches.iter().find(|b| b.name == "feature").unwrap();
     assert_eq!((feature.ahead, feature.behind), (2, 1));
     assert_eq!(feature.subject, "feature work");
+    assert_eq!(feature.author, "Grace");
+}
+
+#[tokio::test]
+async fn refresh_project_fetches_merged_and_closed_prs_and_fills_host_metadata() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+
+    let repo = RepoRef {
+        host: HostKind::Github,
+        owner: "acme".into(),
+        name: "widgets".into(),
+    };
+    // Drain the clone's own first refresh with empty results so the
+    // assertions below only see the explicit `refresh_project` call.
+    f.host.push_search(Ok(vec![]));
+    f.host.push_search(Ok(vec![]));
+    f.host.push_search(Ok(vec![]));
+    let project = core
+        .add_project(AddProjectRequest {
+            repo: Some(repo.clone()),
+            path: None,
+        })
+        .await
+        .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, &project.id)
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+
+    let open_ref = PrRef {
+        repo: repo.clone(),
+        number: 1,
+        host_id: Some("n1".into()),
+    };
+    let merged_ref = PrRef {
+        repo: repo.clone(),
+        number: 2,
+        host_id: Some("n2".into()),
+    };
+    let closed_ref = PrRef {
+        repo: repo.clone(),
+        number: 3,
+        host_id: Some("n3".into()),
+    };
+    f.host.push_search(Ok(vec![testkit::sample_pr_summary(
+        &open_ref,
+        &Sha::new("h1"),
+    )]));
+    f.host.push_search(Ok(vec![testkit::sample_pr_summary(
+        &merged_ref,
+        &Sha::new("h2"),
+    )]));
+    f.host.push_search(Ok(vec![testkit::sample_pr_summary(
+        &closed_ref,
+        &Sha::new("h3"),
+    )]));
+    f.host.push_repo_info(Ok(HostRepo {
+        repo: repo.clone(),
+        description: Some("Widgets".into()),
+        private: true,
+        pushed_at: Some(123),
+    }));
+
+    core.refresh_project(&project.id)
+        .await
+        .expect("refresh_project");
+
+    wait_until(|| f.store.get(models::PR, &open_ref.id().0).unwrap().is_some()).await;
+    assert!(
+        f.store
+            .get(models::PR, &merged_ref.id().0)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        f.store
+            .get(models::PR, &closed_ref.id().0)
+            .unwrap()
+            .is_some()
+    );
+
+    let row = f.store.get(models::PROJECT, &project.id).unwrap().unwrap();
+    assert_eq!(row.data["description"], json!("Widgets"));
+    assert_eq!(row.data["private"], json!(true));
+    assert_eq!(row.data["pushed_at"], json!(123));
+    assert!(row.data["last_fetched_at"].as_i64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn refresh_project_without_repo_info_support_keeps_the_rest_of_the_refresh() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+
+    // A local project never calls the host at all; refresh still stamps
+    // `last_fetched_at` and succeeds.
+    core.refresh_project(&project.id)
+        .await
+        .expect("refresh_project");
+    let row = f.store.get(models::PROJECT, &project.id).unwrap().unwrap();
+    assert!(row.data["last_fetched_at"].as_i64().unwrap() > 0);
+    assert_eq!(row.data["description"], json!(null));
 }
 
 #[tokio::test]

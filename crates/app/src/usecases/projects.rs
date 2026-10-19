@@ -59,6 +59,10 @@ impl Core {
             error: None,
             default_branch: None,
             added_at: self.0.deps.clock.now(),
+            description: None,
+            private: false,
+            pushed_at: None,
+            last_fetched_at: None,
         };
         self.apply(vec![NewAction {
             model: models::PROJECT.into(),
@@ -92,8 +96,11 @@ impl Core {
         Ok(())
     }
 
-    /// Fetches/refreshes the project's cache, keeps `default_branch` fresh,
-    /// and — for a host project — writes its open PRs as `pr` rows.
+    /// Fetches/refreshes the project's cache, keeps `default_branch` and the
+    /// host's own repo metadata fresh, and — for a host project — writes its
+    /// open, recently merged and recently closed PRs as `pr` rows. Stamps
+    /// `last_fetched_at` unconditionally (local projects included), for the
+    /// header's "fetched Nm ago".
     pub async fn refresh_project(&self, id: &str) -> AppResult<()> {
         let project = self
             .project_row(id)
@@ -101,41 +108,28 @@ impl Core {
             .ok_or_else(|| AppError::NotFound(format!("project {id}")))?;
         let repo_path = self.ensure_project_cache(&project).await?;
 
+        let mut patch = serde_json::Map::new();
+        patch.insert(
+            "last_fetched_at".into(),
+            serde_json::json!(self.0.deps.clock.now()),
+        );
+
         if let Ok(Some(default_branch)) = self.0.deps.git.default_branch(&repo_path).await
             && project.default_branch.as_deref() != Some(default_branch.as_str())
         {
-            self.apply(vec![NewAction {
-                model: models::PROJECT.into(),
-                model_id: id.into(),
-                action: SyncActionCode::C,
-                data: Some(serde_json::json!({ "default_branch": default_branch })),
-            }])
-            .await?;
+            patch.insert("default_branch".into(), serde_json::json!(default_branch));
         }
 
         if project.repo.host != HostKind::Local {
-            let query = format!("is:pr is:open repo:{}", project.repo.slug());
-            match self
-                .0
-                .deps
-                .host
-                .search_repo(&project.repo, &InboxSection::Query(query))
-                .await
-            {
-                Ok(summaries) => {
-                    let mut actions = Vec::with_capacity(summaries.len());
-                    for summary in summaries {
-                        let data = serde_json::to_value(&summary)
-                            .map_err(|e| AppError::Invalid(e.to_string()))?;
-                        actions.push(NewAction {
-                            model: models::PR.into(),
-                            model_id: summary.pr.id().0,
-                            action: SyncActionCode::U,
-                            data: Some(data),
-                        });
-                    }
-                    self.apply(actions).await?;
+            match self.0.deps.host.repo_info(&project.repo).await {
+                Ok(info) => {
+                    patch.insert("description".into(), serde_json::json!(info.description));
+                    patch.insert("private".into(), serde_json::json!(info.private));
+                    patch.insert("pushed_at".into(), serde_json::json!(info.pushed_at));
                 }
+                // No per-repo metadata endpoint on this host — the header
+                // just keeps whatever it already had.
+                Err(theodore_ports::HostError::Unsupported(_)) => {}
                 Err(e) => {
                     self.emit(Ephemeral::Toast {
                         level: ToastLevel::Warn,
@@ -143,7 +137,72 @@ impl Core {
                     });
                 }
             }
+
+            let slug = project.repo.slug();
+            let now = self.0.deps.clock.now();
+            // Open PRs aren't capped (there's rarely many); merged/closed
+            // are capped to the last 14 days or 30 items, whichever bites
+            // first — both queries sort newest-first, so a plain `take`
+            // after the age cutoff is enough.
+            let queries = [
+                (format!("is:pr is:open repo:{slug}"), false),
+                (
+                    format!("is:pr repo:{slug} is:merged sort:updated-desc"),
+                    true,
+                ),
+                (
+                    format!("is:pr repo:{slug} is:closed is:unmerged sort:updated-desc"),
+                    true,
+                ),
+            ];
+            let mut by_id = std::collections::HashMap::new();
+            for (query, cap) in queries {
+                match self
+                    .0
+                    .deps
+                    .host
+                    .search_repo(&project.repo, &InboxSection::Query(query))
+                    .await
+                {
+                    Ok(summaries) => {
+                        let summaries = if cap {
+                            recent(summaries, now, FOURTEEN_DAYS_MS, 30)
+                        } else {
+                            summaries
+                        };
+                        for summary in summaries {
+                            by_id.entry(summary.pr.id().0).or_insert(summary);
+                        }
+                    }
+                    Err(e) => {
+                        self.emit(Ephemeral::Toast {
+                            level: ToastLevel::Warn,
+                            text: format!("project refresh failed: {e}"),
+                        });
+                    }
+                }
+            }
+            let mut actions = Vec::with_capacity(by_id.len());
+            for summary in by_id.into_values() {
+                let data =
+                    serde_json::to_value(&summary).map_err(|e| AppError::Invalid(e.to_string()))?;
+                actions.push(NewAction {
+                    model: models::PR.into(),
+                    model_id: summary.pr.id().0,
+                    action: SyncActionCode::U,
+                    data: Some(data),
+                });
+            }
+            self.apply(actions).await?;
         }
+
+        self.apply(vec![NewAction {
+            model: models::PROJECT.into(),
+            model_id: id.into(),
+            action: SyncActionCode::C,
+            data: Some(serde_json::Value::Object(patch)),
+        }])
+        .await?;
         Ok(())
     }
 
@@ -166,6 +225,7 @@ impl Core {
                 name: b.name,
                 head: b.head,
                 subject: b.subject,
+                author: b.author,
                 ahead: b.ahead,
                 behind: b.behind,
                 updated_at: b.updated_at,
@@ -410,6 +470,24 @@ fn project_id_for_repo(repo: &RepoRef) -> String {
     }
 }
 
+const FOURTEEN_DAYS_MS: i64 = 14 * 24 * 60 * 60 * 1000;
+
+/// `summaries` sorted newest-first (as a `sort:updated-desc` search query
+/// returns them): keeps a prefix no older than `max_age_ms` and no longer
+/// than `max_items` — whichever bound is hit first.
+fn recent(
+    summaries: Vec<PrSummary>,
+    now: i64,
+    max_age_ms: i64,
+    max_items: usize,
+) -> Vec<PrSummary> {
+    summaries
+        .into_iter()
+        .take(max_items)
+        .take_while(|p| now - p.updated_at <= max_age_ms)
+        .collect()
+}
+
 /// Deterministic across restarts (unlike `DefaultHasher`, whose seed is
 /// randomized per process) — FNV-1a over the branch name.
 fn stable_hash_u32(s: &str) -> u32 {
@@ -439,5 +517,59 @@ mod tests {
             name: "widgets".into(),
         };
         assert_eq!(project_id_for_repo(&repo), "github:acme/widgets");
+    }
+
+    fn summary_at(updated_at: i64) -> PrSummary {
+        PrSummary {
+            pr: PrRef {
+                repo: RepoRef {
+                    host: HostKind::Github,
+                    owner: "acme".into(),
+                    name: "widgets".into(),
+                },
+                number: 1,
+                host_id: None,
+            },
+            title: "t".into(),
+            author: theodore_domain::Person {
+                login: "a".into(),
+                name: None,
+                avatar_url: None,
+            },
+            state: theodore_domain::PrState::Merged,
+            base_ref: "main".into(),
+            head_ref: "f".into(),
+            head_sha: theodore_domain::Sha::new("s"),
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+            reasons: vec![],
+            checks: theodore_domain::CheckRollup::None,
+            approvals: 0,
+            required_approvals: None,
+            updated_at,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            review_decision: None,
+            conflicts: false,
+        }
+    }
+
+    #[test]
+    fn recent_drops_items_older_than_the_age_cutoff() {
+        let now = 1_000_000_000;
+        let items = vec![
+            summary_at(now),
+            summary_at(now - 1_000),
+            summary_at(now - FOURTEEN_DAYS_MS - 1),
+        ];
+        let kept = recent(items, now, FOURTEEN_DAYS_MS, 30);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn recent_caps_item_count_even_within_the_age_window() {
+        let items: Vec<_> = (0..40).map(|_| summary_at(0)).collect();
+        let kept = recent(items, 0, FOURTEEN_DAYS_MS, 30);
+        assert_eq!(kept.len(), 30);
     }
 }
