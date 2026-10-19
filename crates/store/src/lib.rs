@@ -477,10 +477,14 @@ fn configure(conn: &Connection) -> StoreResult<()> {
 }
 
 /// Crash recovery: anything left `in_flight` from a previous run was never
-/// confirmed done, so it goes back to `pending` and will be retried.
+/// confirmed done, so it goes back to `pending` and will be retried. Bump
+/// `attempts` too: the item really was handed to a worker before (it may
+/// have landed its side effect right before the crash), so op handlers that
+/// key "did I already do this?" off `attempts == 0` must not treat this
+/// re-pickup as a fresh first try.
 fn reset_inflight(conn: &Connection) -> StoreResult<()> {
     conn.execute(
-        "UPDATE outbox SET status = 'pending' WHERE status = 'in_flight'",
+        "UPDATE outbox SET status = 'pending', attempts = attempts + 1 WHERE status = 'in_flight'",
         [],
     )
     .map_err(de)?;

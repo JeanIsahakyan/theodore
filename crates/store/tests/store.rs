@@ -410,3 +410,30 @@ fn outbox_in_flight_items_recover_as_pending_after_a_crash() {
     assert_eq!(recovered.id, id);
     assert_eq!(recovered.status, OutboxStatus::InFlight);
 }
+
+#[test]
+fn outbox_items_recovered_after_a_crash_count_as_attempted() {
+    // A worker may have already landed the op's side effect (e.g. posted a
+    // review) right before the process died. If the recovered item still
+    // reports `attempts == 0`, op handlers that skip their idempotency-marker
+    // check on a "first" attempt would blindly repost it.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("theodore.db");
+
+    let id = {
+        let store = SqliteStore::open(&path).unwrap();
+        let id = store.outbox_push("op", json!({})).unwrap();
+        let item = store.outbox_take(0).unwrap().unwrap();
+        assert_eq!(item.attempts, 0, "a fresh pickup is not yet an attempt");
+        id
+    };
+
+    let store = SqliteStore::open(&path).unwrap();
+    let recovered = store.outbox_take(0).unwrap().unwrap();
+    assert_eq!(recovered.id, id);
+    assert!(
+        recovered.attempts >= 1,
+        "an item re-picked after a crash must count as attempted, got {}",
+        recovered.attempts
+    );
+}
