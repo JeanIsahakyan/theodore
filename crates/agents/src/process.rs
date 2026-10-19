@@ -28,6 +28,16 @@ const CHANNEL_CAPACITY: usize = 256;
 /// (e.g. a shell command the agent spawned and didn't wait on) that escaped
 /// `terminate`'s process-group signal and is still holding the write end open.
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// A single stdout "line" (between two `\n`s) longer than this is truncated
+/// rather than buffered in full — a misbehaving or malicious agent CLI must
+/// not be able to grow this process's memory without bound just by never
+/// emitting a newline.
+pub const MAX_STDOUT_LINE_BYTES: usize = 1024 * 1024;
+/// Hard ceiling on one run's wall-clock time, independent of the stall
+/// detector (which only catches *silence*, not a run that keeps talking
+/// forever). `0` disables it. `AgentCli` sets this to `DEFAULT_MAX_RUNTIME_MS`
+/// unless a future config wires up something else.
+pub const DEFAULT_MAX_RUNTIME_MS: u64 = 30 * 60 * 1000;
 
 /// Turns one stdout line into zero or more `AgentEvent`s. Each call is a pure
 /// function of `(self, line)`: no I/O, deterministic, unit-testable directly
@@ -44,6 +54,8 @@ pub struct SpawnSpec {
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
     pub stall_after_ms: u64,
+    /// Hard cap on total run time; `0` disables it. See `DEFAULT_MAX_RUNTIME_MS`.
+    pub max_runtime_ms: u64,
     /// Dropped only once the run loop ends (e.g. a Gemini temp settings file
     /// that must outlive the child process).
     pub guards: Vec<Box<dyn std::any::Any + Send>>,
@@ -63,8 +75,11 @@ impl Drop for PidMarker {
 
 /// Kill agent process groups recorded in `dir` by a previous Theodore process
 /// that died without cleaning up. Only pids whose command is still an agent
-/// CLI are signalled (pids get reused).
-pub fn reap_orphans(dir: &std::path::Path) -> usize {
+/// CLI are signalled (pids get reused). Async (`tokio::process`, not
+/// `std::process`) so a caller can run it without blocking the executing
+/// worker thread; `AgentCli::with_pid_dir` spawns it instead of awaiting it
+/// directly, so it never blocks startup either.
+pub async fn reap_orphans(dir: &std::path::Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
@@ -78,9 +93,10 @@ pub fn reap_orphans(dir: &std::path::Path) -> usize {
         else {
             continue;
         };
-        let comm = std::process::Command::new("ps")
+        let comm = tokio::process::Command::new("ps")
             .args(["-o", "command=", "-p", &pid.to_string()])
             .output()
+            .await
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
             .unwrap_or_default();
@@ -88,9 +104,10 @@ pub fn reap_orphans(dir: &std::path::Path) -> usize {
             .iter()
             .any(|a| comm.contains(a))
         {
-            let _ = std::process::Command::new("kill")
+            let _ = tokio::process::Command::new("kill")
                 .args(["-TERM", &format!("-{pid}")])
-                .status();
+                .status()
+                .await;
             killed += 1;
         }
         let _ = std::fs::remove_file(&path);
@@ -138,6 +155,9 @@ pub fn spawn_and_stream(
     let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
     let cancel = CancellationToken::new();
 
+    let run_deadline = (spec.max_runtime_ms > 0)
+        .then(|| tokio::time::Instant::now() + Duration::from_millis(spec.max_runtime_ms));
+
     tokio::spawn(run_loop(
         child,
         stdout,
@@ -145,11 +165,23 @@ pub fn spawn_and_stream(
         tx,
         cancel.clone(),
         stall_after,
+        spec.max_runtime_ms,
+        run_deadline,
         parser,
         guards,
     ));
 
     Ok(AgentRun { events: rx, cancel })
+}
+
+/// `deadline`'s `Sleep`, or a future that never resolves if there is none —
+/// lets the runtime cap live as one more `tokio::select!` branch instead of
+/// an `if`/`else` around the whole loop.
+async fn sleep_until_or_pending(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -160,23 +192,28 @@ async fn run_loop(
     tx: mpsc::Sender<AgentEvent>,
     cancel: CancellationToken,
     stall_after: Duration,
+    max_runtime_ms: u64,
+    run_deadline: Option<tokio::time::Instant>,
     mut parser: Box<dyn LineParser>,
     _guards: Vec<Box<dyn std::any::Any + Send>>,
 ) {
-    let mut lines = BufReader::new(stdout).lines();
+    let mut reader = BufReader::new(stdout);
     let mut terminal_sent = false;
     let mut stalled_notified = false;
     let mut exit_success: Option<bool> = None;
 
-    // Drain stderr into a bounded tail buffer on its own task.
+    // Drain stderr into a bounded tail buffer on its own task, trimming as
+    // it goes (never buffering the whole stream before trimming).
     let stderr_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = stderr.read_to_end(&mut buf).await;
-        if buf.len() > STDERR_TAIL_BYTES {
-            buf.split_off(buf.len() - STDERR_TAIL_BYTES)
-        } else {
-            buf
+        let mut tail: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stderr.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => push_capped_tail(&mut tail, &chunk[..n], STDERR_TAIL_BYTES),
+            }
         }
+        tail
     });
 
     while !terminal_sent {
@@ -185,9 +222,28 @@ async fn run_loop(
                 exit_success = Some(terminate(&mut child).await);
                 break;
             }
-            line = lines.next_line() => {
+            _ = sleep_until_or_pending(run_deadline) => {
+                let _ = terminate(&mut child).await;
+                terminal_sent = true;
+                let ev = AgentEvent::Error {
+                    message: format!(
+                        "agent run exceeded its {max_runtime_ms}ms runtime cap and was terminated"
+                    ),
+                    stderr_tail: String::new(),
+                };
+                let _ = tx.send(ev).await;
+                break;
+            }
+            line = read_line_capped(&mut reader, MAX_STDOUT_LINE_BYTES) => {
                 match line {
-                    Ok(Some(l)) => {
+                    Ok(Some((l, truncated))) => {
+                        if truncated {
+                            tracing::warn!(
+                                len = l.len(),
+                                "agent stdout line exceeded the {}-byte cap; truncated",
+                                MAX_STDOUT_LINE_BYTES
+                            );
+                        }
                         stalled_notified = false;
                         for ev in parser.on_line(&l) {
                             let terminal = is_terminal(&ev);
@@ -255,5 +311,113 @@ async fn terminate(child: &mut Child) -> bool {
             let _ = child.start_kill();
             child.wait().await.map(|s| s.success()).unwrap_or(false)
         }
+    }
+}
+
+/// Appends `chunk` to `tail`, keeping at most `max` trailing bytes —
+/// trims as it goes instead of accumulating the whole stream first (the
+/// difference between a bounded tail and an unbounded buffer that happens
+/// to get truncated at the end).
+fn push_capped_tail(tail: &mut Vec<u8>, chunk: &[u8], max: usize) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > max {
+        let excess = tail.len() - max;
+        tail.drain(0..excess);
+    }
+}
+
+/// Reads one `\n`-delimited line, capped at `max` bytes. Operates directly
+/// on `reader`'s own buffer (`fill_buf`/`consume`) so a line with no
+/// newline in sight is never copied into an ever-growing `Vec` the way
+/// `AsyncBufReadExt::lines()` would: bytes beyond `max` are counted (to set
+/// `truncated`) and discarded, never stored. Returns `Ok(None)` only at a
+/// clean EOF with nothing left to return (including the trailing partial
+/// line at EOF, which is still returned once).
+async fn read_line_capped<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+) -> std::io::Result<Option<(String, bool)>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    let mut any_bytes = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            break; // EOF
+        }
+        any_bytes = true;
+        let newline_at = available.iter().position(|&b| b == b'\n');
+        let take = newline_at.map_or(available.len(), |p| p + 1);
+        let content = &available[..newline_at.unwrap_or(available.len())];
+        if buf.len() < max {
+            let room = max - buf.len();
+            let n = room.min(content.len());
+            buf.extend_from_slice(&content[..n]);
+            truncated |= content.len() > n;
+        } else {
+            truncated |= !content.is_empty();
+        }
+        reader.consume(take);
+        if newline_at.is_some() {
+            break;
+        }
+    }
+    if !any_bytes {
+        return Ok(None);
+    }
+    Ok(Some((
+        String::from_utf8_lossy(&buf).into_owned(),
+        truncated,
+    )))
+}
+
+#[cfg(test)]
+mod bounded_io_tests {
+    use super::*;
+    use tokio::io::BufReader;
+
+    #[test]
+    fn capped_tail_never_grows_past_max() {
+        let mut tail = Vec::new();
+        for _ in 0..1000 {
+            push_capped_tail(&mut tail, b"0123456789", 10);
+            assert!(tail.len() <= 10);
+        }
+        assert_eq!(tail, b"0123456789");
+    }
+
+    #[tokio::test]
+    async fn capped_line_under_the_limit_is_returned_whole() {
+        let mut reader = BufReader::new(std::io::Cursor::new(b"hello\nworld\n".to_vec()));
+        let (line, truncated) = read_line_capped(&mut reader, 1024).await.unwrap().unwrap();
+        assert_eq!(line, "hello");
+        assert!(!truncated);
+        let (line, truncated) = read_line_capped(&mut reader, 1024).await.unwrap().unwrap();
+        assert_eq!(line, "world");
+        assert!(!truncated);
+        assert!(read_line_capped(&mut reader, 1024).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn capped_line_over_the_limit_is_truncated_and_resyncs_on_the_next_line() {
+        let input = format!("{}\nsecond\n", "a".repeat(50));
+        let mut reader = BufReader::new(std::io::Cursor::new(input.into_bytes()));
+        let (line, truncated) = read_line_capped(&mut reader, 10).await.unwrap().unwrap();
+        assert_eq!(line, "a".repeat(10));
+        assert!(truncated);
+        // The overflow is discarded, not buffered — the next call picks up
+        // cleanly at the next line rather than returning leftover "a"s.
+        let (line, truncated) = read_line_capped(&mut reader, 10).await.unwrap().unwrap();
+        assert_eq!(line, "second");
+        assert!(!truncated);
+    }
+
+    #[tokio::test]
+    async fn trailing_line_without_a_newline_at_eof_is_still_returned_once() {
+        let mut reader = BufReader::new(std::io::Cursor::new(b"no newline".to_vec()));
+        let (line, truncated) = read_line_capped(&mut reader, 1024).await.unwrap().unwrap();
+        assert_eq!(line, "no newline");
+        assert!(!truncated);
+        assert!(read_line_capped(&mut reader, 1024).await.unwrap().is_none());
     }
 }

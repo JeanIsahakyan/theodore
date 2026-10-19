@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use theodore_agents::process::{LineParser, SpawnSpec, spawn_and_stream};
+use theodore_agents::process::{LineParser, SpawnSpec, reap_orphans, spawn_and_stream};
 use theodore_ports::agent::AgentEvent;
 
 fn fake_agent() -> PathBuf {
@@ -42,6 +42,10 @@ impl LineParser for EchoParser {
 }
 
 fn spec(mode: &str, stall_after_ms: u64) -> SpawnSpec {
+    spec_with_runtime_cap(mode, stall_after_ms, 0)
+}
+
+fn spec_with_runtime_cap(mode: &str, stall_after_ms: u64, max_runtime_ms: u64) -> SpawnSpec {
     SpawnSpec {
         pid_dir: None,
         program: fake_agent(),
@@ -49,6 +53,7 @@ fn spec(mode: &str, stall_after_ms: u64) -> SpawnSpec {
         cwd: std::env::temp_dir(),
         env: vec![],
         stall_after_ms,
+        max_runtime_ms,
         guards: vec![],
     }
 }
@@ -164,4 +169,86 @@ async fn exactly_one_terminal_event_even_with_extra_output_after() {
         .filter(|e| matches!(e, AgentEvent::Done { .. } | AgentEvent::Error { .. }))
         .count();
     assert_eq!(terminals, 1);
+}
+
+#[tokio::test]
+async fn stderr_tail_is_bounded_even_for_output_far_larger_than_the_cap() {
+    // Regression guard for the `read_to_end`-before-trimming bug: this
+    // writes ~20KB to stderr, five times the 4KB tail, so a reintroduced
+    // unbounded buffer would still "pass" functionally but defeat the point.
+    let run = spawn_and_stream(spec("bigstderr", 5_000), Box::new(EchoParser)).unwrap();
+    let events = collect(run.events).await;
+    match events.last() {
+        Some(AgentEvent::Error { stderr_tail, .. }) => {
+            assert!(
+                stderr_tail.len() <= 4096,
+                "tail was {} bytes",
+                stderr_tail.len()
+            );
+            assert!(
+                stderr_tail.ends_with("END"),
+                "tail must keep the most recent bytes: {stderr_tail:?}"
+            );
+        }
+        other => panic!("expected a terminal Error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn oversized_stdout_line_is_truncated_not_unbounded() {
+    let run = spawn_and_stream(spec("bigline", 5_000), Box::new(EchoParser)).unwrap();
+    let events = collect(run.events).await;
+    let text = events
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("expected a Text event for the oversized line");
+    assert_eq!(
+        text.len(),
+        1024 * 1024,
+        "an oversized line must be capped at MAX_STDOUT_LINE_BYTES, not dropped or left unbounded"
+    );
+    assert!(matches!(events.last(), Some(AgentEvent::Done { .. })));
+}
+
+#[tokio::test]
+async fn runtime_cap_terminates_a_hanging_process_well_before_its_own_sleep() {
+    // "hang" sleeps 60s; a 100ms cap must end it long before that, the same
+    // way `cancel` does, but driven by the cap instead of an explicit cancel.
+    let run = spawn_and_stream(
+        spec_with_runtime_cap("hang", 5_000, 100),
+        Box::new(EchoParser),
+    )
+    .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(10), collect(run.events)).await;
+    let events = result.expect("the runtime cap must end the run well under 10s");
+    match events.last() {
+        Some(AgentEvent::Error { message, .. }) => {
+            assert!(
+                message.contains("runtime cap"),
+                "expected a runtime-cap message, got {message:?}"
+            );
+        }
+        other => panic!("expected a terminal Error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn reap_orphans_is_async_and_cleans_up_stale_markers() {
+    // `reap_orphans` is `async` precisely so its `ps`/`kill` calls (now
+    // `tokio::process`, not `std::process`) never block the executing
+    // worker thread; this just exercises it as an async fn end to end.
+    let dir = tempfile::tempdir().unwrap();
+    // A pid astronomically unlikely to be a real, running process.
+    std::fs::write(dir.path().join("999999999"), "claude").unwrap();
+
+    let killed = reap_orphans(dir.path()).await;
+
+    assert_eq!(killed, 0, "no live process should match that pid");
+    assert!(
+        !dir.path().join("999999999").exists(),
+        "the stale marker must be removed regardless"
+    );
 }
