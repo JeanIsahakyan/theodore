@@ -234,11 +234,23 @@ impl Core {
             .get(&pr)
             .cloned()
             .unwrap_or_else(|| detail.summary.head_sha.clone());
+        // The host computes mergeability against the base branch as it is
+        // now; `base_sha` is the base as of the PR's last update and can be
+        // far behind (kdb#83: GitHub reported conflicts, the stale base had
+        // none). Prefer the fetched branch tip.
+        let base_ref = format!("refs/heads/{}", detail.summary.base_ref);
+        let base = self
+            .0
+            .deps
+            .git
+            .resolve_ref(&repo_path, &base_ref)
+            .await
+            .unwrap_or_else(|_| detail.base_sha.clone());
         let entries = self
             .0
             .deps
             .git
-            .merge_tree_conflicts(&repo_path, &detail.base_sha, &head)
+            .merge_tree_conflicts(&repo_path, &base, &head)
             .await?;
         Ok(entries
             .into_iter()

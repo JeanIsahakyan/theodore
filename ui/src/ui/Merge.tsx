@@ -121,7 +121,13 @@ function gatesFor(
     });
   }
   if (toVerify) gates.push({ ok: false, label: `${toVerify} tasks to verify` });
-  if (info && info.state !== 'clean' && info.state !== 'unknown') {
+  // `dirty` is the host's word for the conflicts gate above — don't list it twice.
+  if (
+    info &&
+    info.state !== 'clean' &&
+    info.state !== 'unknown' &&
+    !(info.state === 'dirty' && summary?.conflicts)
+  ) {
     gates.push({ ok: false, label: STATE_LABEL[info.state] });
   }
   return gates;
@@ -446,7 +452,11 @@ export const MergeDialog = observer(function MergeDialog({
                 />
               </>
             )}
-            <span className="text-xs text-muted">
+          </Modal.Body>
+          {/* The status line sits outside the scrolling body so it never
+           *  ends up half hidden under the buttons. */}
+          <Modal.Footer className="flex-col items-stretch gap-2">
+            <span className="text-xs text-muted empty:hidden">
               {blocked.length
                 ? `Can't merge yet: ${blocked.map((g) => g.label.toLowerCase()).join('; ')}. Auto-merge will merge once everything is resolved.`
                 : canMergeNow
@@ -455,8 +465,8 @@ export const MergeDialog = observer(function MergeDialog({
                     ? 'No PR to merge.'
                     : ''}
             </span>
-          </Modal.Body>
-          <Modal.Footer>{footer}</Modal.Footer>
+            <div className="flex flex-wrap justify-end gap-2">{footer}</div>
+          </Modal.Footer>
         </Modal.Dialog>
       </Modal.Container>
     </Modal.Backdrop>

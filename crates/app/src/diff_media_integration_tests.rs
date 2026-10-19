@@ -234,3 +234,29 @@ async fn conflicts_is_empty_for_a_clean_merge() {
     let files = core.conflicts(pr_ref.id()).await.expect("conflicts");
     assert!(files.is_empty());
 }
+
+#[tokio::test]
+async fn conflicts_checks_the_current_base_branch_not_a_stale_base_sha() {
+    // The host's `base_sha` is the base as of the PR's last update; `main`
+    // has since gained a conflicting commit. The host reports the PR as
+    // conflicting against today's `main`, so `conflicts` must too.
+    let fx = setup(|origin| {
+        std::fs::write(origin.join("note.txt"), "one\ntwo FEATURE\nthree\n").unwrap();
+    });
+    let origin = fx._tmp.path().join("origin");
+    std::fs::write(origin.join("note.txt"), "one\ntwo BASE\nthree\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "base moved on"]);
+    let clone = fx.root.join("repos/github/acme/widget.git");
+    git(
+        &clone,
+        &["fetch", "-q", "origin", "+refs/heads/main:refs/heads/main"],
+    );
+
+    // `fx.base_sha` is still the original, pre-conflict base.
+    let core = open_fixture(&fx).await;
+    let pr_ref = testkit::sample_pr_ref("acme", "widget", 1);
+
+    let files = core.conflicts(pr_ref.id()).await.expect("conflicts");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "note.txt");
+}
