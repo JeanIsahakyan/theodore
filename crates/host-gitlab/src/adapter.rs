@@ -502,6 +502,9 @@ impl HostAdapter for GitlabAdapter {
             auto_merge_enabled: mr.merge_when_pipeline_succeeds,
             in_queue: false,
             required_approvals: approvals.approvals_required,
+            // "Merge when pipeline succeeds" is always available.
+            auto_merge_allowed: true,
+            merge_queue: false,
         })
     }
 

@@ -412,6 +412,10 @@ pub struct MergeInfo {
     pub auto_merge_enabled: bool,
     pub in_queue: bool,
     pub required_approvals: Option<u32>,
+    #[serde(default)]
+    pub auto_merge_allowed: bool,
+    #[serde(default)]
+    pub merge_queue: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

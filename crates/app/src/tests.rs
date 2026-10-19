@@ -2755,6 +2755,8 @@ async fn merge_info_maps_the_hosts_status() {
         auto_merge_enabled: false,
         in_queue: false,
         required_approvals: Some(2),
+        auto_merge_allowed: true,
+        merge_queue: false,
     }));
 
     let info = core.merge_info(pr).await.expect("merge_info");

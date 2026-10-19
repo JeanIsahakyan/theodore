@@ -544,6 +544,8 @@ impl HostAdapter for GithubAdapter {
             auto_merge_enabled: status.auto_merge_request.is_some(),
             in_queue: status.is_in_merge_queue,
             required_approvals: None,
+            auto_merge_allowed: settings.auto_merge_allowed,
+            merge_queue: status.is_merge_queue_enabled,
         })
     }
 

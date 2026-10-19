@@ -228,24 +228,29 @@ export const MergeDialog = observer(function MergeDialog({
     </Btn>
   ) : (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <Btn
-        tone="tertiary"
-        icon={<CodeMerge />}
-        className="merge-queue"
-        isPending={merging === 'queue'}
-        onPress={() => doMerge({ queue: true })}
-      >
-        Add to merge queue
-      </Btn>
-      <Btn
-        tone={info.auto_merge_enabled ? 'secondary' : 'tertiary'}
-        icon={<CodeMerge />}
-        className="enable-auto-merge"
-        isPending={merging === 'auto'}
-        onPress={() => doMerge({ auto: !info.auto_merge_enabled })}
-      >
-        {info.auto_merge_enabled ? 'Disable auto-merge' : 'Enable auto-merge'}
-      </Btn>
+      {/* Only what the repo actually has turned on. */}
+      {info.merge_queue && (
+        <Btn
+          tone="tertiary"
+          icon={<CodeMerge />}
+          className="merge-queue"
+          isPending={merging === 'queue'}
+          onPress={() => doMerge({ queue: true })}
+        >
+          Add to merge queue
+        </Btn>
+      )}
+      {(info.auto_merge_allowed || info.auto_merge_enabled) && (
+        <Btn
+          tone={info.auto_merge_enabled ? 'secondary' : 'tertiary'}
+          icon={<CodeMerge />}
+          className="enable-auto-merge"
+          isPending={merging === 'auto'}
+          onPress={() => doMerge({ auto: !info.auto_merge_enabled })}
+        >
+          {info.auto_merge_enabled ? 'Disable auto-merge' : 'Enable auto-merge'}
+        </Btn>
+      )}
       <Btn
         tone="success"
         icon={<CodeMerge />}
@@ -458,7 +463,7 @@ export const MergeDialog = observer(function MergeDialog({
           <Modal.Footer className="flex-col items-stretch gap-2">
             <span className="text-xs text-muted empty:hidden">
               {blocked.length
-                ? `Can't merge yet: ${blocked.map((g) => g.label.toLowerCase()).join('; ')}. Auto-merge will merge once everything is resolved.`
+                ? `Can't merge yet: ${blocked.map((g) => g.label.toLowerCase()).join('; ')}.${info?.auto_merge_allowed ? ' Auto-merge will merge once everything is resolved.' : ''}`
                 : canMergeNow
                   ? 'All checks passed.'
                   : local

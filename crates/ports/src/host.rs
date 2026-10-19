@@ -127,6 +127,10 @@ pub struct MergeStatus {
     pub auto_merge_enabled: bool,
     pub in_queue: bool,
     pub required_approvals: Option<u32>,
+    /// The repo lets a PR merge itself once requirements pass.
+    pub auto_merge_allowed: bool,
+    /// The base branch merges through a merge queue.
+    pub merge_queue: bool,
 }
 
 #[async_trait]

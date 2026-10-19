@@ -91,6 +91,8 @@ impl Core {
             auto_merge_enabled: status.auto_merge_enabled,
             in_queue: status.in_queue,
             required_approvals: status.required_approvals,
+            auto_merge_allowed: status.auto_merge_allowed,
+            merge_queue: status.merge_queue,
         })
     }
 

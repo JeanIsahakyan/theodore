@@ -424,6 +424,8 @@ export type MergeInfo = {
 	auto_merge_enabled: boolean,
 	in_queue: boolean,
 	required_approvals: number | null,
+	auto_merge_allowed?: boolean,
+	merge_queue?: boolean,
 };
 
 export type MergeMethod = "merge" | "squash" | "rebase";

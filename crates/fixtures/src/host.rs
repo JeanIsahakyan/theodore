@@ -545,6 +545,8 @@ impl HostAdapter for FixtureHost {
             auto_merge_enabled: false,
             in_queue: false,
             required_approvals: detail.summary.required_approvals,
+            auto_merge_allowed: true,
+            merge_queue: false,
         })
     }
 

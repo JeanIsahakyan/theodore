@@ -1254,10 +1254,12 @@ query($owner: String!, $repo: String!, $number: Int!) {
     mergeCommitAllowed
     squashMergeAllowed
     rebaseMergeAllowed
+    autoMergeAllowed
     pullRequest(number: $number) {
       mergeable
       mergeStateStatus
       isInMergeQueue
+      isMergeQueueEnabled
       autoMergeRequest { enabledAt }
     }
   }
@@ -1272,6 +1274,8 @@ pub(crate) struct GqlRepoMergeSettings {
     pub squash_merge_allowed: bool,
     #[serde(rename = "rebaseMergeAllowed")]
     pub rebase_merge_allowed: bool,
+    #[serde(rename = "autoMergeAllowed", default)]
+    pub auto_merge_allowed: bool,
     #[serde(rename = "pullRequest")]
     pub pull_request: Option<GqlPrMergeStatus>,
 }
@@ -1283,6 +1287,8 @@ pub(crate) struct GqlPrMergeStatus {
     pub merge_state_status: String,
     #[serde(rename = "isInMergeQueue")]
     pub is_in_merge_queue: bool,
+    #[serde(rename = "isMergeQueueEnabled", default)]
+    pub is_merge_queue_enabled: bool,
     #[serde(rename = "autoMergeRequest")]
     pub auto_merge_request: Option<serde_json::Value>,
 }

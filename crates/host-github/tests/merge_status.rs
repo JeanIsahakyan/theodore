@@ -30,10 +30,12 @@ async fn merge_status_maps_a_clean_mergeable_pr() {
                     "mergeCommitAllowed": true,
                     "squashMergeAllowed": true,
                     "rebaseMergeAllowed": false,
+                    "autoMergeAllowed": true,
                     "pullRequest": {
                         "mergeable": "MERGEABLE",
                         "mergeStateStatus": "CLEAN",
                         "isInMergeQueue": false,
+                        "isMergeQueueEnabled": false,
                         "autoMergeRequest": null
                     }
                 }
@@ -51,6 +53,8 @@ async fn merge_status_maps_a_clean_mergeable_pr() {
     );
     assert!(!status.auto_merge_enabled);
     assert!(!status.in_queue);
+    assert!(status.auto_merge_allowed);
+    assert!(!status.merge_queue);
 }
 
 #[tokio::test]
