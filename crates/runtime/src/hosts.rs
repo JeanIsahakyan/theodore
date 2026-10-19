@@ -58,6 +58,18 @@ impl HostAdapter for Hosts {
     async fn viewer(&self) -> HostResult<Person> {
         self.primary.viewer().await
     }
+    async fn viewer_for(&self, host: HostKind) -> HostResult<Person> {
+        match host {
+            HostKind::Gitlab => {
+                self.gitlab
+                    .as_ref()
+                    .ok_or(HostError::Unsupported("gitlab"))?
+                    .viewer()
+                    .await
+            }
+            _ => self.primary.viewer_for(host).await,
+        }
+    }
     async fn changed_since(&self, cursor: Option<&str>) -> HostResult<Changes> {
         self.primary.changed_since(cursor).await
     }
@@ -181,6 +193,10 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
+        async fn viewer(&self) -> HostResult<Person> {
+            self.1.lock().unwrap().push("viewer".into());
+            Err(HostError::Unsupported("viewer"))
+        }
         async fn changed_since(&self, _cursor: Option<&str>) -> HostResult<Changes> {
             Err(HostError::Unsupported("changed_since"))
         }
@@ -272,6 +288,17 @@ mod tests {
             .unwrap();
         assert_eq!(github.1.lock().unwrap().len(), 1);
         assert_eq!(gitlab.1.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn viewer_for_gitlab_asks_the_gitlab_adapter() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let gitlab = Arc::new(TaggedHost::new(HostKind::Gitlab));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), local);
+        let _ = hosts.viewer_for(HostKind::Gitlab).await;
+        assert!(github.1.lock().unwrap().is_empty());
+        assert_eq!(gitlab.1.lock().unwrap().as_slice(), ["viewer"]);
     }
 
     #[tokio::test]
