@@ -46,6 +46,10 @@ pub async fn check_and_install<R: Runtime>(
     app: &AppHandle<R>,
     core: &Arc<dyn CoreApi>,
 ) -> Option<UpdateInfo> {
+    // A sandbox window never reaches the network (docs/sandbox.md).
+    if !core.updates_enabled().await {
+        return None;
+    }
     let channel = core.update_channel().await;
     let endpoint = endpoint_for_channel(&channel);
 

@@ -4948,6 +4948,7 @@ dependencies = [
  "theodore-domain",
  "theodore-ports",
  "theodore-runtime",
+ "theodore-sandbox",
  "tokio",
  "tracing",
  "tracing-subscriber",

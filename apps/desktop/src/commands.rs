@@ -510,3 +510,30 @@ pub async fn conflicts(
 ) -> Result<Vec<ConflictFile>, CommandError> {
     core.conflicts(pr).await
 }
+
+/// Settings → Sandbox (docs/sandbox.md): `null` outside sandbox mode.
+#[tauri::command]
+#[specta::specta]
+pub async fn sandbox_status(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Option<theodore_contract::SandboxStatus>, CommandError> {
+    core.sandbox_status().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn sandbox_set_fault(
+    req: theodore_contract::SandboxFaultRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::SandboxStatus, CommandError> {
+    core.sandbox_set_fault(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn sandbox_fire_event(
+    id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::SandboxStatus, CommandError> {
+    core.sandbox_fire_event(id).await
+}

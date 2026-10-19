@@ -11,7 +11,9 @@ use tokio::sync::broadcast::error::RecvError;
 /// after changing a command signature); otherwise launches the app.
 ///
 /// `THEODORE_FIXTURES=<dir>` runs on fixture adapters (plan §12.1);
-/// `THEODORE_DATA_DIR` overrides `~/.theodore`.
+/// `THEODORE_SANDBOX=<dir>` or `--sandbox <dir>` runs against the sandbox
+/// host (docs/sandbox.md); `THEODORE_DATA_DIR` overrides `~/.theodore`
+/// (`~/.theodore-sandbox` in sandbox mode).
 fn main() {
     if std::env::args().any(|a| a == "--export-bindings") {
         let out = "ui/src/gen/bindings.ts";
@@ -21,13 +23,19 @@ fn main() {
     }
 
     tracing_subscriber::fmt::init();
-    let cfg = theodore_runtime::RuntimeConfig::from_env();
+    let cfg = match sandbox_arg(std::env::args().skip(1)) {
+        Some(dir) => theodore_runtime::RuntimeConfig::sandbox(dir),
+        None => theodore_runtime::RuntimeConfig::from_env(),
+    };
     let rt = tauri::async_runtime::block_on(theodore_runtime::start(&cfg))
         .expect("starting the Theodore core");
     let theodore_runtime::Runtime {
-        core, receivers, ..
+        core,
+        receivers,
+        sandbox,
+        ..
     } = rt;
-    let api = Arc::new(AppCore::new(core));
+    let api = Arc::new(AppCore::new(core).with_sandbox(sandbox));
 
     run(api, move |events| {
         let mut sync = receivers.sync;
@@ -53,4 +61,38 @@ fn main() {
             }
         });
     });
+}
+
+/// `--sandbox <dir>` or `--sandbox=<dir>`.
+fn sandbox_arg(mut args: impl Iterator<Item = String>) -> Option<std::path::PathBuf> {
+    while let Some(a) = args.next() {
+        if a == "--sandbox" {
+            return args.next().map(Into::into);
+        }
+        if let Some(dir) = a.strip_prefix("--sandbox=") {
+            return Some(dir.into());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sandbox_arg;
+
+    #[test]
+    fn sandbox_flag_takes_a_directory_both_ways() {
+        let args = |v: &[&str]| {
+            v.iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        assert_eq!(sandbox_arg(args(&["--sandbox", "s"])), Some("s".into()));
+        assert_eq!(
+            sandbox_arg(args(&["x", "--sandbox=d/s"])),
+            Some("d/s".into())
+        );
+        assert_eq!(sandbox_arg(args(&["--other"])), None);
+    }
 }
