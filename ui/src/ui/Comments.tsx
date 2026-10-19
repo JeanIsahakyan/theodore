@@ -408,7 +408,7 @@ export const ThreadView = observer(function ThreadView({
           fullWidth
           value={text}
           placeholder="Reply…"
-          className="font-sans text-xs"
+          className="min-w-0 flex-1 font-sans text-xs"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && text.trim()) {
@@ -511,7 +511,7 @@ function ComposerInner({
   };
   return (
     <Card className="composer max-w-[760px] gap-1.5 p-2">
-      <div className="flex items-center gap-2 px-1 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted">
         <Tabs
           data-plain
           selectedKey={preview ? 'preview' : 'write'}

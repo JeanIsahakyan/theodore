@@ -230,12 +230,16 @@ export const Sidebar = observer(function Sidebar() {
                 }
                 className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
               >
-                <span className="grid size-4 place-items-center text-muted [&>svg]:size-4">
+                <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
                   {i.icon}
                 </span>
-                <span className="min-w-0 flex-1 truncate">{i.label}</span>
+                <span className="min-w-0 flex-1 truncate" title={i.label}>
+                  {i.label}
+                </span>
                 {i.n !== undefined && i.n !== 0 && (
-                  <span className="text-xs tabular-nums text-muted">{i.n}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted">
+                    {i.n}
+                  </span>
                 )}
               </ListBox.Item>
             ))}
