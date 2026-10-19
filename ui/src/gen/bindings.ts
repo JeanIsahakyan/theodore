@@ -311,6 +311,8 @@ export type LocalBranch = {
 	head: Sha,
 	/**  Last commit subject. */
 	subject: string,
+	/**  Last commit author's name. */
+	author?: string,
 	/**  Commits ahead of / behind the project's default branch. */
 	ahead: number,
 	behind: number,
@@ -401,6 +403,19 @@ export type Project = {
 	error: string | null,
 	default_branch: string | null,
 	added_at: number,
+	/**
+	 *  Host-side repo description, filled by `refresh_project` (empty for a
+	 *  local project, or before the first successful refresh).
+	 */
+	description?: string | null,
+	private?: boolean,
+	/**  Host's last push to any branch, not just the default one. */
+	pushed_at?: number | null,
+	/**
+	 *  When `refresh_project` last completed, host or local — drives the
+	 *  header's "fetched Nm ago".
+	 */
+	last_fetched_at?: number | null,
 };
 
 export type ProjectStatus = "cloning" | "ready" | "error";
