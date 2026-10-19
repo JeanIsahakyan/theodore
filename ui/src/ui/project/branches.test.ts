@@ -77,3 +77,18 @@ describe('branchPr', () => {
     expect(branchPr('feature', repo, [older, newer])).toBe(newer);
   });
 });
+
+describe('branchPr and branch reviews', () => {
+  it('never links a branch to its own branch review', () => {
+    const repo = { host: 'github', owner: 'acme', name: 'web' } as const;
+    const review = {
+      id: 'github:acme/web#123456',
+      pr: { repo, number: 123456, host_id: 'feat' },
+      head_ref: 'feat',
+      state: 'open',
+      url: '',
+      updated_at: 1,
+    } as unknown as InboxPr;
+    expect(branchPr('feat', repo, [review])).toBeNull();
+  });
+});
