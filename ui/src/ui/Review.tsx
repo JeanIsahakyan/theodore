@@ -1,6 +1,6 @@
 import { REVIEW_EVENT } from '../core/menu';
 import { DiffSkeleton } from './Loading';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ClockArrowRotateLeft,
@@ -46,9 +46,10 @@ import { Btn, CheckIcon, Hints, K } from './bits';
 import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
 import { DiffPane, lineAnchor, type ComposerState } from './DiffPane';
 import { sinceHunks, type SinceKind } from './diff';
-import { GroupsPane, groupsForRevision, type ReviewMode } from './GroupsPane';
+import { GroupsPane, type ReviewMode } from './GroupsPane';
 import { MergeDialog } from './Merge';
 import {
+  groupsInRevision,
   nextReviewableGroup,
   prevReviewableGroup,
   reviewableGroups,
@@ -233,10 +234,16 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         api.getRevision({ pr, head: baselineSha! }),
       )
     : null;
-  const since: Map<string, SinceKind> | null =
-    baselineRevision?.status === 'ready' && revision?.data
-      ? sinceHunks(baselineRevision.data!.files, revision.data.files)
-      : null;
+  // Memoized so `DiffPane`/`GroupsPane` (both memoized) see the same map
+  // until a revision actually changes — revisions are immutable once loaded.
+  const revData = revision?.data;
+  const baseData =
+    baselineRevision?.status === 'ready' ? baselineRevision.data : undefined;
+  const since: Map<string, SinceKind> | null = useMemo(
+    () =>
+      baseData && revData ? sinceHunks(baseData.files, revData.files) : null,
+    [baseData, revData],
+  );
   const sinceCount = since?.size ?? 0;
 
   useEffect(() => {
@@ -247,13 +254,20 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
 
   // Every group with hunks in this revision, in reading order — includes
   // hidden (lockfile/generated) groups, which `GroupsPane` lists collapsed.
-  const allGroups = revision?.data
-    ? groupsForRevision(store, pr, revision.data)
-    : [];
+  // Same as `groupsForRevision`, memoized on the grouping row (replaced
+  // whenever its groups change) so the tour props keep their identity.
+  const grouping = store.models.groupings.get(pr);
+  const allGroups = useMemo(() => {
+    if (!revData) return [];
+    const hunkIds = new Set(
+      revData.files.flatMap((f) => f.hunks.map((h) => h.id)),
+    );
+    return groupsInRevision(grouping?.groups ?? [], hunkIds);
+  }, [grouping, revData]);
   const allGroupIds = allGroups.map((g) => g.id).join();
   // The subset tour and `N`/`P` step through — hidden groups are nothing to
   // review, so they're skipped unless opened by hand ("show anyway").
-  const tourGroups = reviewableGroups(allGroups);
+  const tourGroups = useMemo(() => reviewableGroups(allGroups), [allGroups]);
   const tourGroupIds = tourGroups.map((g) => g.id).join();
 
   const group =
@@ -282,9 +296,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   }, [tour, tourGroupIds]);
 
   const startTour = () => {
-    const reads = new Set(
-      store.models.hunkReads.byPr(pr).map((r) => r.hunk),
-    );
+    const reads = new Set(store.models.hunkReads.byPr(pr).map((r) => r.hunk));
     const allRead = tourGroups.map((g) => g.hunks.every((h) => reads.has(h)));
     setTour(tourStartIndex(allRead));
   };
@@ -292,17 +304,36 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // Marks the current tour group read and steps to the next one, ending the
   // tour past the last — shared by the `R` shortcut and the tour bar's
   // "Read, next" button.
-  const tourAdvance = () => {
+  const tourAdvance = useCallback(() => {
     if (tour == null) return;
     const g = tourGroups[tour];
     if (g) markGroupRead(store, pr, g.hunks);
     setTour(tourNextIndex(tour, tourGroups.length));
-  };
-  const tourBack = () => {
+  }, [tour, tourGroups, store, pr]);
+  const tourBack = useCallback(() => {
     if (tour == null) return;
     const prev = tourPrevIndex(tour);
     if (prev != null) setTour(prev);
-  };
+  }, [tour]);
+  const tourState = useMemo(
+    () =>
+      tour !== null
+        ? {
+            groups: tourGroups,
+            index: tour,
+            onBack: tourBack,
+            onNext: tourAdvance,
+          }
+        : null,
+    [tour, tourGroups, tourBack, tourAdvance],
+  );
+  const onTourFrom = useCallback(
+    (groupId: string) => {
+      const idx = tourGroups.findIndex((g) => g.id === groupId);
+      if (idx >= 0) setTour(idx);
+    },
+    [tourGroups],
+  );
 
   // Review items of the native menu bar (see core/menu.ts).
   useEffect(() => {
@@ -793,10 +824,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             : showAsideColumn
               ? 'grid-cols-[minmax(520px,1fr)_352px]'
               : 'grid-cols-[minmax(520px,1fr)]';
-          const onTourFrom = (groupId: string) => {
-            const idx = tourGroups.findIndex((g) => g.id === groupId);
-            if (idx >= 0) setTour(idx);
-          };
           return (
             <div
               className={`relative grid min-h-0 flex-1 overflow-hidden ${gridColsClass}`}
@@ -825,16 +852,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   since={since}
                   sinceOnly={sinceOnly && sinceCount > 0}
                   baselineSha={baselineSha}
-                  tour={
-                    tour !== null
-                      ? {
-                          groups: tourGroups,
-                          index: tour,
-                          onBack: tourBack,
-                          onNext: tourAdvance,
-                        }
-                      : null
-                  }
+                  tour={tourState}
                   focusHunk={focusHunk}
                   setFocusHunk={setFocusHunk}
                   composer={composer}
