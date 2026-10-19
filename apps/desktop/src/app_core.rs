@@ -3,15 +3,15 @@
 use async_trait::async_trait;
 use theodore_app::{AppError, Core};
 use theodore_contract::{
-    AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, FindSymbolRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
+    CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
+    DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
+    HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
+    LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
+    OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
+    SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -30,6 +30,9 @@ impl AppCore {
 fn err(e: AppError) -> CommandError {
     let code = match &e {
         AppError::Store(_) => "store",
+        // An old local `git` lacking `merge-tree --write-tree` (`conflicts`):
+        // the UI hides the conflicts list on this code instead of toasting it.
+        AppError::Git(theodore_ports::GitError::Unsupported(_)) => "unsupported",
         AppError::Git(_) => "git",
         AppError::Host(theodore_ports::HostError::Auth) => "auth",
         AppError::Host(_) => "host",
@@ -222,6 +225,12 @@ impl CoreApi for AppCore {
     }
     async fn find_symbol(&self, req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError> {
         self.core.find_symbol(req).await.map_err(err)
+    }
+    async fn get_blob(&self, req: GetBlobRequest) -> Result<BlobResponse, CommandError> {
+        self.core.get_blob(req).await.map_err(err)
+    }
+    async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {
+        self.core.conflicts(pr).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await

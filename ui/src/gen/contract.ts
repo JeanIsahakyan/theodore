@@ -45,6 +45,21 @@ export type Assignee = { kind: "human"; id: string } | { kind: "agent"; id: Agen
 
 export type Author = { kind: "me" } | { kind: "agent"; agent: AgentId };
 
+/**
+ *  A file's raw bytes at one side of a diff (plan "image diff"), for the UI
+ *  to render directly — `data:<mime>;base64,<base64>` is already a valid
+ *  image `src`. Rejects instead of filling `base64` past ~10 MB.
+ */
+export type BlobResponse = {
+	mime: string,
+	base64: string,
+	/**
+	 *  Original byte length (pre-base64) — the size the UI's "+3.2 KB" diff
+	 *  is computed from without decoding `base64` first.
+	 */
+	bytes: number,
+};
+
 export type Bootstrap = {
 	last_sync_id: number,
 	rows: WireRow[],
@@ -124,6 +139,17 @@ export type CommitSuggestionsRequest = {
 	message: string,
 };
 
+export type ConflictFile = {
+	path: string,
+	kind: ConflictKind,
+};
+
+/**
+ *  The `CONFLICT (<kind>): ...` tag `git merge-tree` reports for a path
+ *  (plan "conflicts"); `other` covers any future kind `git` adds.
+ */
+export type ConflictKind = "content" | "add_add" | "modify_delete" | "rename_delete" | "rename_rename" | "directory_file" | "submodule" | "other";
+
 export type DelegateRequest = {
 	task: TaskId,
 	/**  Empty = use the `agents.fix` setting. */
@@ -147,6 +173,12 @@ export type DiffLine = {
 	old_no: number | null,
 	new_no: number | null,
 };
+
+/**
+ *  Which side of a changed file to fetch (`get_blob`): the PR's base
+ *  commit, or its current head.
+ */
+export type DiffSide = "base" | "head";
 
 export type Draft = {
 	id: DraftId,
@@ -264,6 +296,12 @@ export type Fix = {
 };
 
 export type FixStatus = "generating" | "ready" | "applied" | "suggested" | "rejected";
+
+export type GetBlobRequest = {
+	pr: PrId,
+	path: string,
+	side: DiffSide,
+};
 
 export type Group = {
 	id: GroupId,

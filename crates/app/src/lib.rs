@@ -25,8 +25,9 @@ mod tests;
 mod git_integration_tests;
 
 #[cfg(test)]
+mod diff_media_integration_tests;
+#[cfg(test)]
 mod interdiff_tests;
-
 #[cfg(test)]
 mod linear_tests;
 

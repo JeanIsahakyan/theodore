@@ -15,11 +15,11 @@ use theodore_domain::{
 };
 use theodore_ports::{
     AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo, Capabilities,
-    Changes, Clock, CommitLog, DeviceCodeStart, DeviceLoginPort, DevicePoll, DiffOptions, Fetched,
-    GitError, GitPort, GitResult, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
-    MergeStatus, ModelRow, NewAction, OutboxItem, OutboxStatus, ReviewSubmission, Secrets,
-    SecretsError, Store, StoreError, StoreResult, SubmittedReview, SyncAction, SyncActionCode,
-    Worktree,
+    Changes, Clock, CommitLog, ConflictEntry, DeviceCodeStart, DeviceLoginPort, DevicePoll,
+    DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter, HostError, HostResult,
+    InboxSection, MergeMethod, MergeStatus, ModelRow, NewAction, OutboxItem, OutboxStatus,
+    ReviewSubmission, Secrets, SecretsError, Store, StoreError, StoreResult, SubmittedReview,
+    SyncAction, SyncActionCode, Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -359,6 +359,23 @@ pub struct FakeGit {
     commits: Mutex<HashMap<String, CommitLog>>,
     commit_log_value: Mutex<Vec<CommitLog>>,
     removed_repos: Mutex<Vec<RepoRef>>,
+    conflicts_value: Mutex<GitResult<Vec<ConflictEntry>>>,
+}
+
+/// `GitResult` isn't `Clone` (`GitError` holds a `std::io::Error`); a fake
+/// field that stores one still needs to be read more than once, so this
+/// clones the `Ok` case and rebuilds a fresh `Unsupported`/`Command` error
+/// otherwise (as good as any other canned error for a test).
+fn clone_git_result<T: Clone>(r: &GitResult<T>) -> GitResult<T> {
+    match r {
+        Ok(v) => Ok(v.clone()),
+        Err(GitError::Unsupported(s)) => Err(GitError::Unsupported(s)),
+        Err(e) => Err(GitError::Command {
+            args: "fake".into(),
+            code: 1,
+            stderr: e.to_string(),
+        }),
+    }
 }
 
 impl FakeGit {
@@ -379,7 +396,15 @@ impl FakeGit {
             commits: Mutex::new(HashMap::new()),
             commit_log_value: Mutex::new(Vec::new()),
             removed_repos: Mutex::new(Vec::new()),
+            conflicts_value: Mutex::new(Ok(Vec::new())),
         })
+    }
+
+    /// Makes `merge_tree_conflicts` return `value` (`Ok(vec![...])`,
+    /// `Ok(vec![])`, or `Err(GitError::Unsupported(...))` for an old-`git`
+    /// test), instead of the default empty-conflicts `Ok`.
+    pub fn set_conflicts(&self, value: GitResult<Vec<ConflictEntry>>) {
+        *self.conflicts_value.lock().unwrap() = value;
     }
 
     pub fn push_commit_and_push(&self, r: GitResult<Sha>) {
@@ -548,6 +573,14 @@ impl GitPort for FakeGit {
     async fn remove_repo(&self, repo: &RepoRef) -> GitResult<()> {
         self.removed_repos.lock().unwrap().push(repo.clone());
         Ok(())
+    }
+    async fn merge_tree_conflicts(
+        &self,
+        _repo: &Path,
+        _base: &Sha,
+        _head: &Sha,
+    ) -> GitResult<Vec<ConflictEntry>> {
+        clone_git_result(&self.conflicts_value.lock().unwrap())
     }
 }
 

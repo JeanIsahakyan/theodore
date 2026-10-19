@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use serde_json::json;
 use theodore_contract::{
-    AddProjectRequest, BootstrapScope, CommitSuggestionsRequest, DelegateRequest, DeviceLogin,
-    DraftStateRequest, EditCommentRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
+    AddProjectRequest, BlobResponse, BootstrapScope, CommitSuggestionsRequest,
+    ConflictKind as WireConflictKind, DelegateRequest, DeviceLogin, DiffSide, DraftStateRequest,
+    EditCommentRequest, Ephemeral, FileViewedRow, GetBlobRequest, HostAuthStatus, HunkRead,
     InboxState, LoginState, MergeMethod as WireMergeMethod, MergeRequest, MutationOp,
     OpenBranchRequest, OpenPrRequest, ProjectStatus, ReactRequest, ReplyRequest, RerunCheckRequest,
     ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
@@ -21,9 +22,9 @@ use theodore_domain::{
     Revision, Sha, Side, Task, TaskId, TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
-    AgentEvent, BranchInfo, Clock, CommitLog, DevicePoll, Fetched, HostError,
-    MergeMethod as PortMergeMethod, MergeState, MergeStatus, NewAction, OutboxStatus, Secrets,
-    Store, SyncActionCode,
+    AgentEvent, BranchInfo, Clock, CommitLog, ConflictEntry, ConflictKind as PortConflictKind,
+    DevicePoll, Fetched, GitError, HostError, MergeMethod as PortMergeMethod, MergeState,
+    MergeStatus, NewAction, OutboxStatus, Secrets, Store, SyncActionCode,
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
@@ -3947,4 +3948,90 @@ async fn open_pr_refs_reports_every_pr_open_in_this_session() {
 
     let open = core.open_pr_refs().await;
     assert_eq!(open, vec![fixture_pr_ref()]);
+}
+
+#[tokio::test]
+async fn get_blob_returns_base64_and_mime_for_an_image_path() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let png_bytes: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    f.git.put_file(&head, "logo.png", png_bytes);
+
+    let resp: BlobResponse = core
+        .get_blob(GetBlobRequest {
+            pr,
+            path: "logo.png".into(),
+            side: DiffSide::Head,
+        })
+        .await
+        .expect("get_blob");
+    assert_eq!(resp.mime, "image/png");
+    assert_eq!(resp.bytes, png_bytes.len() as u64);
+    use base64::Engine;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(resp.base64)
+            .unwrap(),
+        png_bytes
+    );
+}
+
+#[tokio::test]
+async fn get_blob_rejects_a_file_over_the_size_cap() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let huge = vec![0u8; 10 * 1024 * 1024 + 1];
+    f.git.put_file(&head, "huge.png", &huge);
+
+    let err = core
+        .get_blob(GetBlobRequest {
+            pr,
+            path: "huge.png".into(),
+            side: DiffSide::Head,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+}
+
+#[tokio::test]
+async fn get_blob_on_a_missing_path_is_not_found() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let err = core
+        .get_blob(GetBlobRequest {
+            pr,
+            path: "nope.png".into(),
+            side: DiffSide::Head,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+}
+
+#[tokio::test]
+async fn conflicts_maps_git_entries_to_wire_conflict_files() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.git.set_conflicts(Ok(vec![ConflictEntry {
+        path: "f.txt".into(),
+        kind: PortConflictKind::Content,
+    }]));
+
+    let files = core.conflicts(pr).await.expect("conflicts");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "f.txt");
+    assert_eq!(files[0].kind, WireConflictKind::Content);
+}
+
+#[tokio::test]
+async fn conflicts_propagates_unsupported_on_an_old_git() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.git
+        .set_conflicts(Err(GitError::Unsupported("merge_tree_conflicts")));
+
+    let err = core.conflicts(pr).await.unwrap_err();
+    assert!(matches!(err, AppError::Git(GitError::Unsupported(_))));
 }

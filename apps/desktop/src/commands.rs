@@ -6,15 +6,15 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 use theodore_contract::{
-    AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, FindSymbolRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
+    CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
+    DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
+    HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
+    LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
+    OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
+    SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -491,4 +491,22 @@ pub async fn install_update(
         app.request_restart();
     }
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_blob(
+    req: GetBlobRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<BlobResponse, CommandError> {
+    core.get_blob(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn conflicts(
+    pr: PrId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<ConflictFile>, CommandError> {
+    core.conflicts(pr).await
 }

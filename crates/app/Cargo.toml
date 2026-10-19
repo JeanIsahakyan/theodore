@@ -25,6 +25,7 @@ tokio-util.workspace = true
 uuid.workspace = true
 url.workspace = true
 serde_yaml = "0.9"
+base64 = "0.22"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
