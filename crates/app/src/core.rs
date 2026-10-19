@@ -182,6 +182,26 @@ impl Core {
         Ok(id)
     }
 
+    /// `apply` plus `enqueue_outbox`, atomically (plan "Fix target" accept
+    /// flow): a caller that both changes a model row and enqueues a host
+    /// write for it must not land one half without the other.
+    pub(crate) async fn apply_with_outbox(
+        &self,
+        actions: Vec<NewAction>,
+        op: &'static str,
+        payload: serde_json::Value,
+    ) -> theodore_ports::StoreResult<Vec<SyncAction>> {
+        let _guard = self.0.apply_lock.lock().await;
+        let store = self.0.deps.store.clone();
+        let (applied, _outbox_id) =
+            tokio::task::spawn_blocking(move || store.apply_with_outbox(actions, op, payload))
+                .await
+                .map_err(|e| theodore_ports::StoreError::Db(e.to_string()))??;
+        self.publish(&applied);
+        self.0.outbox_notify.notify_one();
+        Ok(applied)
+    }
+
     /// Looks up the host-side `PrRef` for a locally known PR (outbox calls
     /// need it; the UI only ever deals in `PrId`).
     pub(crate) async fn pr_ref(&self, pr: &PrId) -> Option<PrRef> {

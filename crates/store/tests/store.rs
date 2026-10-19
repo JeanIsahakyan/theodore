@@ -192,6 +192,59 @@ fn apply_is_one_transaction_and_ids_stay_gap_free_on_rollback() {
 }
 
 #[test]
+fn apply_with_outbox_rolls_back_the_outbox_push_too() {
+    // Mirrors `accept_task`: a model write and an outbox push (e.g.
+    // resolve_thread) must land together or not at all.
+    let store = SqliteStore::open_in_memory().unwrap();
+
+    let err = store
+        .apply_with_outbox(
+            vec![NewAction {
+                model: "task".into(),
+                model_id: "missing".into(),
+                action: SyncActionCode::C,
+                data: Some(json!({"status": "done"})),
+            }],
+            "resolve_thread",
+            json!({"thread": "t1"}),
+        )
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Db(_)));
+    assert!(
+        store.outbox_take(0).unwrap().is_none(),
+        "the outbox push must not survive a rollback of the model write"
+    );
+}
+
+#[test]
+fn apply_with_outbox_commits_both_halves_together() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    insert(&store, "task", "t1", json!({"status": "review"}));
+
+    let (applied, outbox_id) = store
+        .apply_with_outbox(
+            vec![NewAction {
+                model: "task".into(),
+                model_id: "t1".into(),
+                action: SyncActionCode::C,
+                data: Some(json!({"status": "done"})),
+            }],
+            "resolve_thread",
+            json!({"thread": "t1"}),
+        )
+        .unwrap();
+    assert_eq!(applied.len(), 1);
+    assert_eq!(
+        store.get("task", "t1").unwrap().unwrap().data["status"],
+        "done"
+    );
+
+    let item = store.outbox_take(0).unwrap().expect("outbox item");
+    assert_eq!(item.id, outbox_id);
+    assert_eq!(item.op, "resolve_thread");
+}
+
+#[test]
 fn since_and_last_sync_id() {
     let store = SqliteStore::open_in_memory().unwrap();
     insert(&store, "pr", "1", json!({"n": 1}));

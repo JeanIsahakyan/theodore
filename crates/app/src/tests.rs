@@ -1636,6 +1636,138 @@ async fn decide_task_reject_resets_to_todo_with_a_reason() {
     assert_eq!(reason, Some(json!("doesn't fix the root cause")));
 }
 
+/// Wraps a `Store` whose `apply` fails for any action on the `task` model —
+/// standing in for a crash or a disk error partway through accepting a
+/// task, so the test can see whether the *other* half of the accept
+/// (enqueuing `resolve_thread`) landed anyway.
+struct FailingTaskApplyStore(Arc<testkit::FakeStore>);
+
+impl Store for FailingTaskApplyStore {
+    fn apply(
+        &self,
+        actions: Vec<NewAction>,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        if actions.iter().any(|a| a.model == models::TASK) {
+            return Err(theodore_ports::StoreError::Db("simulated failure".into()));
+        }
+        self.0.apply(actions)
+    }
+    fn last_sync_id(&self) -> theodore_ports::StoreResult<u64> {
+        self.0.last_sync_id()
+    }
+    fn since(
+        &self,
+        sync_id: u64,
+        limit: u32,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        self.0.since(sync_id, limit)
+    }
+    fn get(
+        &self,
+        model: &str,
+        id: &str,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::ModelRow>> {
+        self.0.get(model, id)
+    }
+    fn query(
+        &self,
+        model: &str,
+        field: &str,
+        value: &str,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.query(model, field, value)
+    }
+    fn all(&self, model: &str) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.all(model)
+    }
+    fn outbox_push(
+        &self,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> theodore_ports::StoreResult<u64> {
+        self.0.outbox_push(op, payload)
+    }
+    fn outbox_take(
+        &self,
+        now: i64,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::OutboxItem>> {
+        self.0.outbox_take(now)
+    }
+    fn outbox_done(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_done(id)
+    }
+    fn outbox_retry(&self, id: u64, not_before: i64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_retry(id, not_before)
+    }
+    fn outbox_fail(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_fail(id)
+    }
+    fn kv_get(&self, key: &str) -> theodore_ports::StoreResult<Option<serde_json::Value>> {
+        self.0.kv_get(key)
+    }
+    fn kv_set(&self, key: &str, value: &serde_json::Value) -> theodore_ports::StoreResult<()> {
+        self.0.kv_set(key, value)
+    }
+}
+
+#[tokio::test]
+async fn accept_task_does_not_leave_an_orphaned_resolve_thread_outbox_item() {
+    let f = fixtures();
+    let pr_ref = fixture_pr_ref();
+    let head = Sha::new("head111");
+    let base = Sha::new("base000");
+    let detail = testkit::sample_pr_detail(&pr_ref, &base, &head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-1".into()),
+        value: detail,
+    }));
+    let mut deps = f.deps();
+    deps.store = Arc::new(FailingTaskApplyStore(f.store.clone()));
+    let (core, _recv) = Core::start(deps);
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+    let pr = resp.pr;
+
+    let mut task = sample_task(
+        "t-atomic",
+        &pr,
+        None,
+        Some(ThreadId::new("thread-1")),
+        f.clock.now(),
+    );
+    task.status = TaskStatus::Review;
+    task.fix = Some(Fix {
+        status: FixStatus::Ready,
+        patch: None,
+        commit: None,
+    });
+    put_task(&f, &task);
+
+    let result = core
+        .decide_task(TaskDecision {
+            task: task.id.clone(),
+            accept: true,
+            reason: None,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "expected the simulated task write failure to surface, got {result:?}"
+    );
+
+    assert!(
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .all(|i| i.op != "resolve_thread"),
+        "a failed task write must not leave a resolve_thread outbox item behind"
+    );
+}
+
 // ── agents.grouping setting ──────────────────────────────────────────────────
 
 #[tokio::test]

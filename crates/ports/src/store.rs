@@ -90,6 +90,25 @@ pub trait Store: Send + Sync {
     fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()>;
     fn outbox_fail(&self, id: u64) -> StoreResult<()>;
 
+    /// `apply` plus one `outbox_push`, as a single atomic unit: a caller
+    /// that both changes a model row and enqueues a host write for it (e.g.
+    /// accepting a task: mark it `Done`, enqueue `resolve_thread`) must not
+    /// land one half on a crash between the two calls. Default: the two
+    /// calls in sequence, for implementations with no real transaction to
+    /// share (e.g. an in-memory test fake, where there's nothing to
+    /// interleave with and nothing to crash mid-way). `SqliteStore` runs
+    /// both in one DB transaction.
+    fn apply_with_outbox(
+        &self,
+        actions: Vec<NewAction>,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> StoreResult<(Vec<SyncAction>, u64)> {
+        let applied = self.apply(actions)?;
+        let outbox_id = self.outbox_push(op, payload)?;
+        Ok((applied, outbox_id))
+    }
+
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>>;
     fn kv_set(&self, key: &str, value: &serde_json::Value) -> StoreResult<()>;
 

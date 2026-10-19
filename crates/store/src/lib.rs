@@ -105,108 +105,146 @@ impl SqliteStore {
     }
 }
 
-impl Store for SqliteStore {
-    fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(de)?;
-        let now = now_ms();
-        let mut out = Vec::with_capacity(actions.len());
+/// The body of `apply`, run inside a caller-supplied transaction so
+/// `apply_with_outbox` can share one with its outbox insert.
+fn apply_actions_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    actions: Vec<NewAction>,
+) -> StoreResult<Vec<SyncAction>> {
+    let now = now_ms();
+    let mut out = Vec::with_capacity(actions.len());
 
-        for action in actions {
-            match action.action {
-                SyncActionCode::I => {
-                    let data = require_data(&action)?;
-                    let text = serde_json::to_string(data).map_err(se)?;
-                    tx.execute(
+    for action in actions {
+        match action.action {
+            SyncActionCode::I => {
+                let data = require_data(&action)?;
+                let text = serde_json::to_string(data).map_err(se)?;
+                tx.execute(
                         "INSERT INTO models (model, id, data, archived, updated_sync_id) VALUES (?1, ?2, ?3, 0, 0)
                          ON CONFLICT (model, id) DO UPDATE SET data = excluded.data, archived = 0",
                         params![action.model, action.model_id, text],
                     )
                     .map_err(de)?;
-                }
-                SyncActionCode::U => {
-                    let data = require_data(&action)?;
-                    let text = serde_json::to_string(data).map_err(se)?;
-                    tx.execute(
+            }
+            SyncActionCode::U => {
+                let data = require_data(&action)?;
+                let text = serde_json::to_string(data).map_err(se)?;
+                tx.execute(
                         "INSERT INTO models (model, id, data, archived, updated_sync_id) VALUES (?1, ?2, ?3, 0, 0)
                          ON CONFLICT (model, id) DO UPDATE SET data = excluded.data",
                         params![action.model, action.model_id, text],
                     )
                     .map_err(de)?;
-                }
-                SyncActionCode::C => {
-                    let data = require_data(&action)?;
-                    let text = serde_json::to_string(data).map_err(se)?;
-                    let changed = tx
+            }
+            SyncActionCode::C => {
+                let data = require_data(&action)?;
+                let text = serde_json::to_string(data).map_err(se)?;
+                let changed = tx
                         .execute(
                             "UPDATE models SET data = json_patch(data, ?3) WHERE model = ?1 AND id = ?2",
                             params![action.model, action.model_id, text],
                         )
                         .map_err(de)?;
-                    if changed == 0 {
-                        return Err(StoreError::Db(format!(
-                            "merge-patch: no row for {}:{}",
-                            action.model, action.model_id
-                        )));
-                    }
+                if changed == 0 {
+                    return Err(StoreError::Db(format!(
+                        "merge-patch: no row for {}:{}",
+                        action.model, action.model_id
+                    )));
                 }
-                SyncActionCode::A => {
-                    let changed = tx
-                        .execute(
-                            "UPDATE models SET archived = 1 WHERE model = ?1 AND id = ?2",
-                            params![action.model, action.model_id],
-                        )
-                        .map_err(de)?;
-                    if changed == 0 {
-                        return Err(StoreError::Db(format!(
-                            "archive: no row for {}:{}",
-                            action.model, action.model_id
-                        )));
-                    }
-                }
-                SyncActionCode::D => {
-                    tx.execute(
-                        "DELETE FROM models WHERE model = ?1 AND id = ?2",
+            }
+            SyncActionCode::A => {
+                let changed = tx
+                    .execute(
+                        "UPDATE models SET archived = 1 WHERE model = ?1 AND id = ?2",
                         params![action.model, action.model_id],
                     )
                     .map_err(de)?;
+                if changed == 0 {
+                    return Err(StoreError::Db(format!(
+                        "archive: no row for {}:{}",
+                        action.model, action.model_id
+                    )));
                 }
             }
-
-            let log_data_text: Option<String> = action
-                .data
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(se)?;
-            tx.execute(
-                "INSERT INTO sync_log (model, model_id, action, data, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![action.model, action.model_id, code_str(action.action), log_data_text, now],
-            )
-            .map_err(de)?;
-            // Monotonic, gap-free across commits: AUTOINCREMENT's counter update is
-            // part of this same transaction, so a rollback un-reserves the id too.
-            let log_id = tx.last_insert_rowid() as u64;
-
-            if action.action != SyncActionCode::D {
+            SyncActionCode::D => {
                 tx.execute(
-                    "UPDATE models SET updated_sync_id = ?1 WHERE model = ?2 AND id = ?3",
-                    params![log_id as i64, action.model, action.model_id],
+                    "DELETE FROM models WHERE model = ?1 AND id = ?2",
+                    params![action.model, action.model_id],
                 )
                 .map_err(de)?;
             }
-
-            out.push(SyncAction {
-                id: log_id,
-                model: action.model,
-                model_id: action.model_id,
-                action: action.action,
-                data: action.data,
-            });
         }
 
+        let log_data_text: Option<String> = action
+            .data
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(se)?;
+        tx.execute(
+            "INSERT INTO sync_log (model, model_id, action, data, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                action.model,
+                action.model_id,
+                code_str(action.action),
+                log_data_text,
+                now
+            ],
+        )
+        .map_err(de)?;
+        // Monotonic, gap-free across commits: AUTOINCREMENT's counter update is
+        // part of this same transaction, so a rollback un-reserves the id too.
+        let log_id = tx.last_insert_rowid() as u64;
+
+        if action.action != SyncActionCode::D {
+            tx.execute(
+                "UPDATE models SET updated_sync_id = ?1 WHERE model = ?2 AND id = ?3",
+                params![log_id as i64, action.model, action.model_id],
+            )
+            .map_err(de)?;
+        }
+
+        out.push(SyncAction {
+            id: log_id,
+            model: action.model,
+            model_id: action.model_id,
+            action: action.action,
+            data: action.data,
+        });
+    }
+
+    Ok(out)
+}
+
+impl Store for SqliteStore {
+    fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(de)?;
+        let out = apply_actions_in_tx(&tx, actions)?;
         tx.commit().map_err(de)?;
         Ok(out)
+    }
+
+    fn apply_with_outbox(
+        &self,
+        actions: Vec<NewAction>,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> StoreResult<(Vec<SyncAction>, u64)> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(de)?;
+        let out = apply_actions_in_tx(&tx, actions)?;
+        let now = now_ms();
+        let text = serde_json::to_string(&payload).map_err(se)?;
+        tx.execute(
+            "INSERT INTO outbox (op, payload, attempts, status, not_before, created_at, updated_at)
+             VALUES (?1, ?2, 0, 'pending', 0, ?3, ?3)",
+            params![op, text, now],
+        )
+        .map_err(de)?;
+        let outbox_id = tx.last_insert_rowid() as u64;
+        tx.commit().map_err(de)?;
+        Ok((out, outbox_id))
     }
 
     fn last_sync_id(&self) -> StoreResult<u64> {
