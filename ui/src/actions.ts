@@ -377,6 +377,16 @@ export async function loadViewer(store: RootStore): Promise<void> {
   }
 }
 
+/** `app_info` once at startup — version, channel, and whether this window
+ *  runs against the sandbox host (the SANDBOX badge and Settings page). */
+export async function loadAppInfo(store: RootStore): Promise<void> {
+  try {
+    store.ephemeral.setAppInfo(await api.appInfo());
+  } catch {
+    // Already toasted by `api.ts`; the badge just stays hidden.
+  }
+}
+
 // ── opening a PR ─────────────────────────────────────────────────────────────
 
 /** `null` on a rejected `open_pr` (bad URL, no access, …) — already toasted

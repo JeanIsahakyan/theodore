@@ -211,7 +211,15 @@ fn backoff_ms(attempts: u32) -> i64 {
 
 async fn classify_host_error(core: &Core, item: &OutboxItem, err: HostError) -> Outcome {
     match err {
-        HostError::RateLimited { reset_at } => Outcome::RetryAt(reset_at),
+        HostError::RateLimited { reset_at } => {
+            // The UI's rate-limit banner counts down to this.
+            core.emit(Ephemeral::HostStatus {
+                online: true,
+                rate_limited_until: Some(reset_at),
+                auth_ok: true,
+            });
+            Outcome::RetryAt(reset_at)
+        }
         HostError::Network(_) | HostError::Protocol(_) => {
             let now = core.0.deps.clock.now();
             Outcome::RetryAt(now + backoff_ms(item.attempts))

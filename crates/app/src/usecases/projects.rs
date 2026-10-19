@@ -185,6 +185,9 @@ impl Core {
             let mut actions = Vec::with_capacity(by_id.len());
             for summary in by_id.into_values() {
                 let id = summary.pr.id().0;
+                if self.is_stale_summary(&id, summary.updated_at).await {
+                    continue;
+                }
                 let mut data =
                     serde_json::to_value(&summary).map_err(|e| AppError::Invalid(e.to_string()))?;
                 self.keep_inbox_reasons(&id, &mut data).await;

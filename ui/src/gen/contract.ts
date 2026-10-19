@@ -31,6 +31,8 @@ export type AppInfo = {
 	version: string,
 	channel: string,
 	update: UpdateInfo | null,
+	/**  Set only when running against the sandbox host (docs/sandbox.md). */
+	sandbox?: SandboxInfo | null,
 };
 
 export type AskRequest = {
@@ -737,6 +739,53 @@ export type RunSkillRequest = {
 
 export type RunStatus = "running" | "done" | "cancelled" | "failed" | "stalled";
 
+/**  One scripted timeline event. */
+export type SandboxEvent = {
+	id: string,
+	/**  Due this long after the sandbox started; `None` = manual only. */
+	at_ms: number | null,
+	label: string,
+	fired: boolean,
+};
+
+/**  One injectable fault (offline, auth, rate limit, …). */
+export type SandboxFault = {
+	/**  Stable name, as used by `theodore sandbox fault <name> on|off`. */
+	name: string,
+	on: boolean,
+	/**  Human description, including the active parameter (e.g. `250 ms`). */
+	detail: string,
+};
+
+export type SandboxFaultRequest = {
+	name: string,
+	on: boolean,
+};
+
+/**
+ *  `AppInfo.sandbox`: which scenario this window runs, so the UI can show
+ *  a badge that can't be mistaken for the real app.
+ */
+export type SandboxInfo = {
+	/**  Scenario name from `scenario.json`. */
+	scenario: string,
+	/**  Scenario directory the sandbox was started from. */
+	scenario_dir: string,
+	/**  Data dir in use (never `~/.theodore`). */
+	data_dir: string,
+};
+
+/**  Settings → Sandbox panel state. */
+export type SandboxStatus = {
+	info: SandboxInfo,
+	faults: SandboxFault[],
+	events: SandboxEvent[],
+	/**  Viewer login the sandbox host authenticates as. */
+	viewer: string,
+	/**  Number of simulated PRs. */
+	prs: number,
+};
+
 export type SaveSkillRequest = {
 	id: string,
 	/**
@@ -897,7 +946,9 @@ export type ThreadId = string;
 
 export type ToastLevel = "info" | "warn" | "error";
 
-export type TokenSource = "keychain" | "gh" | "env" | "none";
+export type TokenSource = "keychain" | "gh" | "env" | "none" |
+/**  The simulated sandbox host (docs/sandbox.md): no real token at all. */
+"sandbox";
 
 export type Transaction = {
 	/**  Client-generated, for de-duplication on retry. */

@@ -77,6 +77,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::find_symbol,
             commands::get_blob,
             commands::conflicts,
+            commands::sandbox_status,
+            commands::sandbox_set_fault,
+            commands::sandbox_fire_event,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()

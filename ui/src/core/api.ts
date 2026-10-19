@@ -45,6 +45,8 @@ import type {
   ResolveRequest,
   ReviewersRequest,
   RunSkillRequest,
+  SandboxFaultRequest,
+  SandboxStatus,
   SaveSkillRequest,
   SetLinearTokenRequest,
   SetTokenRequest,
@@ -166,6 +168,12 @@ export const api = {
   findSymbol: (req: FindSymbolRequest) =>
     call<SymbolHit[]>('find_symbol', { req }),
   getBlob: (req: GetBlobRequest) => call<BlobResponse>('get_blob', { req }),
+  /** Settings → Sandbox: `null` outside sandbox mode. */
+  sandboxStatus: () => call<SandboxStatus | null>('sandbox_status'),
+  sandboxSetFault: (req: SandboxFaultRequest) =>
+    call<SandboxStatus>('sandbox_set_fault', { req }),
+  sandboxFireEvent: (id: string) =>
+    call<SandboxStatus>('sandbox_fire_event', { id }),
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */

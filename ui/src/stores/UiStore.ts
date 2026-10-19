@@ -16,7 +16,14 @@ import type { PrId } from '../gen/contract';
 import type { ContextMenuItem } from '../ui/ContextMenu';
 
 export type SettingsPage =
-  'account' | 'agents' | 'integrations' | 'projects' | 'updates' | 'about';
+  | 'account'
+  | 'agents'
+  | 'integrations'
+  | 'projects'
+  | 'updates'
+  | 'about'
+  /** Listed only in sandbox mode (`AppInfo.sandbox`). */
+  | 'sandbox';
 
 export interface ContextMenuState {
   x: number;

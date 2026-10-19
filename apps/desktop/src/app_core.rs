@@ -19,12 +19,47 @@ use crate::core_api::CoreApi;
 
 pub struct AppCore {
     core: Core,
+    sandbox: Option<theodore_sandbox::Sandbox>,
 }
 
 impl AppCore {
     pub fn new(core: Core) -> Self {
-        Self { core }
+        Self {
+            core,
+            sandbox: None,
+        }
     }
+
+    /// Sandbox mode (docs/sandbox.md): `app_info` carries the badge info
+    /// and the `sandbox_*` commands work.
+    pub fn with_sandbox(mut self, sandbox: Option<theodore_sandbox::Sandbox>) -> Self {
+        self.sandbox = sandbox;
+        self
+    }
+
+    fn sandbox(&self) -> Result<theodore_sandbox::Sandbox, CommandError> {
+        self.sandbox.clone().ok_or_else(|| CommandError {
+            code: "invalid".into(),
+            message: "not running in sandbox mode".into(),
+        })
+    }
+}
+
+/// Sandbox calls shell out to git under a lock: keep them off the runtime.
+async fn sandbox_call<T: Send + 'static>(
+    sb: theodore_sandbox::Sandbox,
+    f: impl FnOnce(&theodore_sandbox::Sandbox) -> theodore_sandbox::SandboxResult<T> + Send + 'static,
+) -> Result<T, CommandError> {
+    tokio::task::spawn_blocking(move || f(&sb))
+        .await
+        .map_err(|e| CommandError {
+            code: "internal".into(),
+            message: e.to_string(),
+        })?
+        .map_err(|e| CommandError {
+            code: "invalid".into(),
+            message: e.to_string(),
+        })
 }
 
 fn err(e: AppError) -> CommandError {
@@ -103,6 +138,7 @@ impl CoreApi for AppCore {
             version: env!("CARGO_PKG_VERSION").into(),
             channel: self.update_channel().await,
             update: None,
+            sandbox: self.sandbox.as_ref().map(|s| s.info()),
         })
     }
     async fn check_update(&self) -> Result<Option<UpdateInfo>, CommandError> {
@@ -240,5 +276,35 @@ impl CoreApi for AppCore {
     }
     async fn is_idle(&self) -> bool {
         self.core.is_idle().await
+    }
+    async fn updates_enabled(&self) -> bool {
+        self.sandbox.is_none()
+    }
+    async fn sandbox_status(
+        &self,
+    ) -> Result<Option<theodore_contract::SandboxStatus>, CommandError> {
+        match self.sandbox.clone() {
+            Some(sb) => sandbox_call(sb, |s| Ok(s.status())).await.map(Some),
+            None => Ok(None),
+        }
+    }
+    async fn sandbox_set_fault(
+        &self,
+        req: theodore_contract::SandboxFaultRequest,
+    ) -> Result<theodore_contract::SandboxStatus, CommandError> {
+        sandbox_call(self.sandbox()?, move |s| {
+            s.set_fault(&req.name, req.on, None)
+        })
+        .await
+    }
+    async fn sandbox_fire_event(
+        &self,
+        id: String,
+    ) -> Result<theodore_contract::SandboxStatus, CommandError> {
+        sandbox_call(self.sandbox()?, move |s| {
+            s.fire(&id)?;
+            Ok(s.status())
+        })
+        .await
     }
 }

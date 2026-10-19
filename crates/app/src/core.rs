@@ -249,6 +249,22 @@ impl Core {
         Some(summary.pr)
     }
 
+    /// A search result older than the stored row (its `updated_at` is
+    /// behind): the search started before a write the core already applied
+    /// — a merge, a fresh `get_pr` — and must not roll the row back.
+    pub(crate) async fn is_stale_summary(&self, pr_id: &str, incoming_updated_at: i64) -> bool {
+        let store = self.0.deps.store.clone();
+        let id = pr_id.to_string();
+        let stored = tokio::task::spawn_blocking(move || store.get(models::PR, &id))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten();
+        stored
+            .and_then(|r| r.data.get("updated_at").and_then(|v| v.as_i64()))
+            .is_some_and(|stored_at| stored_at > incoming_updated_at)
+    }
+
     /// `reasons` comes from the inbox searches, not from fetching one PR or
     /// a project's PR list: those carry none, and writing them as-is drops
     /// a PR out of the inbox. Keep what the inbox last said.

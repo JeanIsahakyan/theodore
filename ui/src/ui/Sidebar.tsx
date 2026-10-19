@@ -29,6 +29,7 @@ import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { inInbox } from './List';
 import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
+import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SyncStatus } from './shell/SyncStatus';
 
 interface NavItem {
@@ -263,9 +264,11 @@ export const Sidebar = observer(function Sidebar() {
       <Separator />
       <Toolbar
         aria-label="Sync status"
-        className="flex w-full items-center px-5 pt-2.5"
+        className="flex w-full items-center gap-2 px-5 pt-2.5"
       >
         <SyncStatus />
+        <span className="flex-1" />
+        <SandboxBadge />
       </Toolbar>
       <Toolbar
         aria-label="App"

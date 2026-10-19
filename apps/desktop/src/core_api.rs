@@ -14,6 +14,7 @@ use theodore_contract::{
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
+use theodore_contract::{SandboxFaultRequest, SandboxStatus};
 use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
 
 fn not_ready() -> CommandError {
@@ -107,6 +108,34 @@ pub trait CoreApi: Send + Sync {
     /// Gates `install_update`'s restart: no agent running, outbox empty.
     async fn is_idle(&self) -> bool {
         true
+    }
+
+    /// `false` in sandbox mode: no update checks (no network at all).
+    async fn updates_enabled(&self) -> bool {
+        true
+    }
+
+    /// Settings → Sandbox (docs/sandbox.md); `None` outside sandbox mode.
+    async fn sandbox_status(&self) -> Result<Option<SandboxStatus>, CommandError> {
+        Ok(None)
+    }
+    /// Turns one sandbox fault on or off.
+    async fn sandbox_set_fault(
+        &self,
+        _req: SandboxFaultRequest,
+    ) -> Result<SandboxStatus, CommandError> {
+        Err(not_sandbox())
+    }
+    /// Fires one scripted sandbox timeline event now.
+    async fn sandbox_fire_event(&self, _id: String) -> Result<SandboxStatus, CommandError> {
+        Err(not_sandbox())
+    }
+}
+
+fn not_sandbox() -> CommandError {
+    CommandError {
+        code: "invalid".into(),
+        message: "not running in sandbox mode".into(),
     }
 }
 

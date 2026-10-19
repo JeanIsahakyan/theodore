@@ -4,6 +4,7 @@
 mod grouper;
 mod hosts;
 mod local_host;
+mod sandbox;
 mod token;
 mod tools;
 mod worktree_gc;
@@ -38,18 +39,43 @@ pub struct RuntimeConfig {
     /// Run on fixture adapters from this directory instead of GitHub, git
     /// and real agents (dev and e2e, plan §12.1).
     pub fixtures: Option<PathBuf>,
+    /// Run against the sandbox host built from this scenario directory
+    /// (docs/sandbox.md): real git and agents, a simulated host.
+    pub sandbox: Option<PathBuf>,
 }
 
 impl RuntimeConfig {
     pub fn from_env() -> Self {
+        if let Some(dir) = std::env::var_os("THEODORE_SANDBOX") {
+            return Self::sandbox(PathBuf::from(dir));
+        }
         let data_dir = std::env::var_os("THEODORE_DATA_DIR")
             .map(PathBuf::from)
             .or_else(|| dirs::home_dir().map(|h| h.join(".theodore")))
             .unwrap_or_else(|| PathBuf::from(".theodore"));
         let fixtures = std::env::var_os("THEODORE_FIXTURES").map(PathBuf::from);
-        Self { data_dir, fixtures }
+        Self {
+            data_dir,
+            fixtures,
+            sandbox: None,
+        }
+    }
+
+    /// Sandbox mode on `scenario`: `THEODORE_DATA_DIR` or
+    /// `~/.theodore-sandbox`, never `~/.theodore` (`start` refuses it).
+    pub fn sandbox(scenario: PathBuf) -> Self {
+        let data_dir = std::env::var_os("THEODORE_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(sandbox::default_data_dir);
+        Self {
+            data_dir,
+            fixtures: None,
+            sandbox: Some(scenario),
+        }
     }
 }
+
+pub use sandbox::default_data_dir as sandbox_data_dir;
 
 pub struct Runtime {
     pub core: Core,
@@ -67,6 +93,9 @@ pub struct Runtime {
     /// (`worktree_gc::spawn_periodic`, started here) for as long as an
     /// agent run or similar needs it alive, even past its PR closing.
     pub worktree_locks: Arc<WorktreeLocks>,
+    /// The sandbox in sandbox mode (status, faults, events); its ticker is
+    /// already running.
+    pub sandbox: Option<theodore_sandbox::Sandbox>,
 }
 
 struct Adapters {
@@ -154,9 +183,16 @@ fn fixture_adapters(dir: &std::path::Path) -> anyhow::Result<Adapters> {
 
 /// Build every adapter, start the MCP server and the core.
 pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
-    let a = match &cfg.fixtures {
-        Some(dir) => fixture_adapters(dir)?,
-        None => real_adapters(cfg)?,
+    let (a, sandbox) = match (&cfg.sandbox, &cfg.fixtures) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("THEODORE_SANDBOX and THEODORE_FIXTURES can't be combined")
+        }
+        (Some(scenario), None) => {
+            let (a, sb) = sandbox::adapters(&cfg.data_dir, scenario)?;
+            (a, Some(sb))
+        }
+        (None, Some(dir)) => (fixture_adapters(dir)?, None),
+        (None, None) => (real_adapters(cfg)?, None),
     };
     let backend = Arc::new(CoreTools::default());
     let mcp = Arc::new(McpRunTools::start(backend.clone()).await?);
@@ -197,6 +233,11 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         WORKTREE_GC_INTERVAL,
     );
 
+    if let Some(sb) = &sandbox {
+        sb.spawn();
+        sandbox::seed_projects(&core, sb).await;
+    }
+
     Ok(Runtime {
         core,
         receivers,
@@ -205,5 +246,6 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         fixture_clock: a.fixture_clock,
         fixture_host: a.fixture_host,
         worktree_locks,
+        sandbox,
     })
 }

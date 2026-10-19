@@ -203,9 +203,16 @@ export function prsWithYou(items: InboxPr[], repo: RepoRef): number {
 }
 
 /** GitHub serves an owner/org's avatar at this fixed URL — no such
- *  convention for other hosts. */
-function ownerAvatarUrl(host: string, owner: string): string | null {
-  return host === 'github' ? `https://github.com/${owner}.png` : null;
+ *  convention for other hosts. `null` in sandbox mode: a sandbox window
+ *  makes no network requests. */
+export function ownerAvatarUrl(
+  host: string,
+  owner: string,
+  sandbox: boolean,
+): string | null {
+  return host === 'github' && !sandbox
+    ? `https://github.com/${owner}.png`
+    : null;
 }
 
 /** One repo row in the picker: a disabled "Added" row for repos that are
@@ -368,7 +375,11 @@ export const ProjectPicker = observer(function ProjectPicker({
                       person={{
                         login: owner,
                         name: null,
-                        avatar_url: ownerAvatarUrl(group[0]!.repo.host, owner),
+                        avatar_url: ownerAvatarUrl(
+                          group[0]!.repo.host,
+                          owner,
+                          store.ephemeral.sandbox !== null,
+                        ),
                       }}
                       size={16}
                     />

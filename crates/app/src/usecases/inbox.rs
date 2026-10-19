@@ -42,14 +42,24 @@ impl Core {
                     continue;
                 }
                 let pr_s = pr_id.0.clone();
-                let data =
-                    serde_json::to_value(&summary).map_err(|e| AppError::Invalid(e.to_string()))?;
-                actions.push(NewAction {
-                    model: models::PR.into(),
-                    model_id: pr_s.clone(),
-                    action: SyncActionCode::U,
-                    data: Some(data),
-                });
+                if self.is_stale_summary(&pr_s, summary.updated_at).await {
+                    // Keep the newer row; only the inbox's reasons are news.
+                    actions.push(NewAction {
+                        model: models::PR.into(),
+                        model_id: pr_s.clone(),
+                        action: SyncActionCode::C,
+                        data: Some(serde_json::json!({ "reasons": summary.reasons })),
+                    });
+                } else {
+                    let data = serde_json::to_value(&summary)
+                        .map_err(|e| AppError::Invalid(e.to_string()))?;
+                    actions.push(NewAction {
+                        model: models::PR.into(),
+                        model_id: pr_s.clone(),
+                        action: SyncActionCode::U,
+                        data: Some(data),
+                    });
+                }
 
                 let store = self.0.deps.store.clone();
                 let existing =

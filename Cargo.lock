@@ -4903,6 +4903,7 @@ dependencies = [
  "tempfile",
  "theodore-agents",
  "theodore-app",
+ "theodore-contract",
  "theodore-domain",
  "theodore-git",
  "theodore-grouping",
@@ -4910,6 +4911,7 @@ dependencies = [
  "theodore-mcp",
  "theodore-ports",
  "theodore-runtime",
+ "theodore-sandbox",
  "theodore-secrets",
  "thiserror 2.0.21",
  "tokio",
@@ -4948,6 +4950,7 @@ dependencies = [
  "theodore-domain",
  "theodore-ports",
  "theodore-runtime",
+ "theodore-sandbox",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4981,6 +4984,8 @@ dependencies = [
  "tempfile",
  "theodore-contract",
  "theodore-domain",
+ "theodore-grouping",
+ "theodore-mcp",
  "theodore-ports",
  "thiserror 2.0.21",
  "tokio",
@@ -5167,11 +5172,31 @@ dependencies = [
  "theodore-host-http",
  "theodore-mcp",
  "theodore-ports",
+ "theodore-sandbox",
  "theodore-secrets",
  "theodore-store",
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "theodore-sandbox"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "theodore-contract",
+ "theodore-domain",
+ "theodore-ports",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

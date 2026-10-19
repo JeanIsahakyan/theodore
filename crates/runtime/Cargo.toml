@@ -21,6 +21,7 @@ theodore-store.workspace = true
 theodore-secrets.workspace = true
 theodore-grouping.workspace = true
 theodore-fixtures = { path = "../fixtures" }
+theodore-sandbox = { path = "../sandbox" }
 async-trait.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

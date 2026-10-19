@@ -56,10 +56,11 @@ impl GitCli {
         .await?;
         let token = self.token_for(repo);
         let refspec = format!("HEAD:refs/heads/{branch}");
+        let remote = self.remote_override(repo)?;
         GitProc {
             cwd: worktree,
             askpass: &askpass,
-            args: &["push", "origin", &refspec],
+            args: &["push", remote.as_deref().unwrap_or("origin"), &refspec],
             token: token.as_deref(),
             stdin: None,
         }

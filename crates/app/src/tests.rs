@@ -835,6 +835,37 @@ async fn outbox_pauses_on_auth_error_and_reports_host_status() {
 }
 
 #[tokio::test]
+async fn outbox_reports_a_rate_limit_with_its_reset_time() {
+    let f = fixtures();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: pr.clone(),
+            head,
+        })
+        .await
+        .unwrap();
+    let hunks = testkit::hunk_ids(&revision);
+
+    let reset_at = f.clock.now() + 30_000;
+    f.host
+        .push_set_viewed(Err(HostError::RateLimited { reset_at }));
+    f.host.push_set_viewed(Ok(()));
+    for (i, h) in hunks.iter().enumerate() {
+        core.transact(hunk_read_tx(&format!("read-{i}"), &pr, h))
+            .await;
+    }
+
+    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::HostStatus { .. })).await;
+    assert!(matches!(
+        event,
+        Ephemeral::HostStatus { rate_limited_until: Some(t), auth_ok: true, .. } if t == reset_at
+    ));
+    f.clock.advance(31_000);
+    wait_until(|| f.store.outbox_snapshot()[0].status == OutboxStatus::Done).await;
+}
+
+#[tokio::test]
 async fn outbox_compensates_on_a_permanent_failure() {
     let f = fixtures();
     let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
@@ -4224,4 +4255,34 @@ async fn refreshing_a_project_keeps_inbox_reasons() {
     .await;
     let row = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
     assert_eq!(row.data["reasons"], json!(["authored"]));
+}
+
+#[tokio::test]
+async fn an_older_search_result_does_not_roll_back_a_merged_pr() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let pr_ref = fixture_pr_ref();
+    // Stored: merged at t=2000 (e.g. our own merge, already applied).
+    let mut merged =
+        serde_json::to_value(testkit::sample_pr_summary(&pr_ref, &Sha::new("h"))).unwrap();
+    merged["state"] = json!("merged");
+    merged["updated_at"] = json!(2000);
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr_ref.id().0,
+            action: SyncActionCode::U,
+            data: Some(merged),
+        }])
+        .unwrap();
+    // A search that started before the merge answers with the open PR.
+    let mut stale = testkit::sample_pr_summary(&pr_ref, &Sha::new("h"));
+    stale.updated_at = 1000;
+    stale.reasons = vec![theodore_domain::InboxReason::ReviewRequested];
+    f.host.push_search(Ok(vec![stale]));
+
+    core.refresh_inbox().await.expect("refresh_inbox");
+    let row = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
+    assert_eq!(row.data["state"], json!("merged"));
+    assert_eq!(row.data["reasons"], json!(["review_requested"]));
 }

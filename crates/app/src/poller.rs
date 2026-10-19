@@ -101,6 +101,11 @@ async fn handle_push(
             }
         }
     };
+    // The new head isn't in the local clone yet: fetch it before checking
+    // it out (a local branch review has no host to fetch from).
+    if pr_ref.repo.host != theodore_domain::HostKind::Local {
+        let _ = core.0.deps.git.fetch_pr(pr_ref).await;
+    }
     let worktree = match core.0.deps.git.worktree(pr_ref, &new_head).await {
         Ok(w) => w,
         Err(_) => return,
