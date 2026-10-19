@@ -9,6 +9,9 @@ use theodore_domain::{
     TaskId, Thread, ThreadId, Usage, ViewedState,
 };
 
+mod login;
+pub use login::*;
+
 /// Model names used in transactions and sync frames.
 pub mod models {
     pub const PR: &str = "pr";
@@ -239,6 +242,11 @@ pub struct HostAuthStatus {
     pub connected: bool,
     pub login: Option<String>,
     pub source: TokenSource,
+    /// Whether `login_start`'s device flow has a client id configured
+    /// (plan "login"): with none, the UI hides that button and keeps the
+    /// token/`gh` paths.
+    #[serde(default)]
+    pub device_login_available: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -612,7 +620,9 @@ pub fn types() -> specta::Types {
         .register::<CommitSuggestionsRequest>()
         .register::<SkillBody>()
         .register::<SaveSkillRequest>()
-        .register::<PrSpend>();
+        .register::<PrSpend>()
+        .register::<DeviceLogin>()
+        .register::<LoginState>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()
