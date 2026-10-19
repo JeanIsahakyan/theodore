@@ -5017,6 +5017,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "theodore-host-bitbucket"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "theodore-domain",
+ "theodore-host-github",
+ "theodore-host-http",
+ "theodore-ports",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "theodore-host-github"
 version = "0.0.1"
 dependencies = [
