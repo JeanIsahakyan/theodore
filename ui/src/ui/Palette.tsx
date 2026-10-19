@@ -142,22 +142,28 @@ export function Palette({
                       key={n}
                       id={n}
                       textValue={it.label}
-                      className={`pal-item h-9 gap-2.5 rounded-2xl px-2.5 ${n === i ? 'on bg-default' : ''}`}
+                      className={`pal-item h-9 min-w-0 gap-2.5 rounded-2xl px-2.5 ${n === i ? 'on bg-default' : ''}`}
                       onHoverStart={() => setI(n)}
                     >
-                      <span className="grid w-[18px] place-items-center text-muted">
+                      <span className="grid w-[18px] shrink-0 place-items-center text-muted">
                         {it.icon}
                       </span>
-                      <span>{it.label}</span>
+                      <span className="min-w-0 truncate" title={it.label}>
+                        {it.label}
+                      </span>
                       {it.sub && (
-                        <span className="text-xs text-muted">{it.sub}</span>
+                        <span className="shrink-0 truncate text-xs text-muted">
+                          {it.sub}
+                        </span>
                       )}
-                      <span className="flex-1" />
-                      {digits && n < 9 && !q ? (
-                        <K>{n + 1}</K>
-                      ) : (
-                        it.keys && <K>{it.keys}</K>
-                      )}
+                      <span className="min-w-2 flex-1" />
+                      <span className="shrink-0">
+                        {digits && n < 9 && !q ? (
+                          <K>{n + 1}</K>
+                        ) : (
+                          it.keys && <K>{it.keys}</K>
+                        )}
+                      </span>
                     </ListBox.Item>
                   ))}
                 </ListBox.Section>

@@ -184,7 +184,8 @@ export function Shell({
           aria-label={title}
           className={`modal flex flex-col gap-3 p-4 ${size === 'lg' ? 'w-[760px] max-w-[92vw]' : 'w-[520px] max-w-[92vw]'}`}
         >
-          <Modal.Heading>{title}</Modal.Heading>
+          <Modal.CloseTrigger aria-label="Close" />
+          <Modal.Heading className="pe-8">{title}</Modal.Heading>
           {children}
           {footer && <div className="flex justify-end gap-2">{footer}</div>}
         </Modal.Dialog>

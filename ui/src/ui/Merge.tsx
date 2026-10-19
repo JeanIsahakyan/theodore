@@ -172,7 +172,7 @@ export const MergeDialog = observer(function MergeDialog({
       Already in the merge queue
     </Btn>
   ) : (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <Btn
         tone="tertiary"
         icon={<CodeMerge />}
@@ -214,8 +214,10 @@ export const MergeDialog = observer(function MergeDialog({
       >
         <Modal.Dialog className="modal w-[640px] max-w-[92vw]">
           <Modal.CloseTrigger />
-          <Modal.Header className="modal-h">
-            <Modal.Heading>Merge · {slug}</Modal.Heading>
+          <Modal.Header className="modal-h min-w-0">
+            <Modal.Heading className="min-w-0 truncate pe-8" title={slug}>
+              Merge · {slug}
+            </Modal.Heading>
           </Modal.Header>
           <Modal.Body className="flex flex-col gap-3">
             {loadError && (

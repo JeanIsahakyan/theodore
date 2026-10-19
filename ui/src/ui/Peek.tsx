@@ -110,13 +110,16 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
   );
 
   return (
-    <Surface className="peek flex w-96 shrink-0 flex-col gap-5 overflow-auto rounded-none border-l border-separator p-6 pb-20">
+    <Surface className="peek flex w-[clamp(280px,32vw,384px)] shrink-0 flex-col gap-5 overflow-auto rounded-none border-l border-separator p-6 pb-20">
       <header className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-xs text-muted">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
           <PRIcon status={p.state} progress={progressOf(store, id)} />
-          {prStatusLabel[p.state]}
+          <span className="shrink-0">{prStatusLabel[p.state]}</span>
           <span className="flex-1" />
-          <span className="font-mono">
+          <span
+            className="min-w-0 truncate font-mono"
+            title={`${p.pr.repo.name}#${p.pr.number}`}
+          >
             {p.pr.repo.name}#{p.pr.number}
           </span>
         </div>

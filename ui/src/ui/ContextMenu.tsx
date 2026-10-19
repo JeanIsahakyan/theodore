@@ -58,10 +58,10 @@ function MenuItems({ items }: { items: ContextMenuItem[] }) {
             <Dropdown.Item
               id={it.id}
               textValue={labelText(it)}
-              className="gap-2"
+              className="max-w-[320px] gap-2"
             >
               {it.icon}
-              <span className="flex-1">{it.label}</span>
+              <span className="min-w-0 flex-1 truncate">{it.label}</span>
               <Dropdown.SubmenuIndicator />
             </Dropdown.Item>
             <Dropdown.Popover placement="right top">
@@ -76,17 +76,19 @@ function MenuItems({ items }: { items: ContextMenuItem[] }) {
             id={it.id}
             textValue={labelText(it)}
             isDisabled={it.isDisabled}
-            className={`gap-2 ${it.danger ? 'text-danger' : ''}`}
+            className={`max-w-[320px] gap-2 ${it.danger ? 'text-danger' : ''}`}
           >
             {it.icon}
-            <span className="flex-1">{it.label}</span>
+            <span className="min-w-0 flex-1 truncate">{it.label}</span>
             {it.isDisabled ? (
-              <span className="ms-2 text-xs text-muted">
+              <span className="ms-2 shrink-0 text-xs text-muted">
                 {it.disabledReason ?? 'Not available yet'}
               </span>
             ) : (
               it.kbd && (
-                <span className="ms-2 text-xs text-muted">{it.kbd}</span>
+                <span className="ms-2 shrink-0 text-xs text-muted">
+                  {it.kbd}
+                </span>
               )
             )}
           </Dropdown.Item>

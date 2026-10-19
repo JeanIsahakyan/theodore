@@ -170,13 +170,15 @@ export function SkillBrowser({
                       textValue={s.title}
                       className="flex-col items-start gap-0.5 rounded-xl px-3 py-2"
                     >
-                      <span className="flex w-full items-center gap-2">
-                        <span className="font-mono text-sm">/{s.id}</span>
-                        <span className="ms-auto text-xs text-muted">
+                      <span className="flex w-full min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate font-mono text-sm">
+                          /{s.id}
+                        </span>
+                        <span className="ms-auto shrink-0 truncate text-xs text-muted">
                           {s.source}
                         </span>
                       </span>
-                      <span className="truncate text-xs text-muted">
+                      <span className="w-full truncate text-xs text-muted">
                         {s.description}
                       </span>
                     </ListBox.Item>
@@ -403,10 +405,12 @@ export const SkillsManagerModal = observer(function SkillsManagerModal({
                         key={k.id}
                         id={k.id}
                         textValue={k.title}
-                        className="flex-col items-start gap-0.5 px-3 py-2"
+                        className="w-full min-w-0 flex-col items-start gap-0.5 px-3 py-2"
                       >
-                        <span className="font-mono text-sm">/{k.id}</span>
-                        <span className="truncate text-xs text-muted">
+                        <span className="w-full truncate font-mono text-sm">
+                          /{k.id}
+                        </span>
+                        <span className="w-full truncate text-xs text-muted">
                           {k.description}
                         </span>
                       </ListBox.Item>

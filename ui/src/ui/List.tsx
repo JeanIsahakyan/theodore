@@ -8,9 +8,9 @@ import {
   ChevronRight,
   Clock,
   CodePullRequest,
+  Link,
   LayoutSideContentRight,
   Persons,
-  Plus,
   Sliders,
   Sparkles,
 } from '@gravity-ui/icons';
@@ -19,7 +19,6 @@ import {
   Card,
   Checkbox,
   Header,
-  InputGroup,
   Label,
   ListBox,
   Popover,
@@ -28,7 +27,6 @@ import {
   Switch,
   Tag,
   TagGroup,
-  TextField,
   ToggleButton,
   Toolbar,
   Tooltip,
@@ -36,7 +34,7 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { InboxReason, PrId, PrState, PrSummary } from '../gen/contract';
-import { markDone, openPr, refreshInbox, snoozePrs } from '../actions';
+import { markDone, refreshInbox, snoozePrs } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
@@ -106,10 +104,10 @@ export const PROP_LABEL: Record<RowProp, string> = {
 
 export const COL: Record<RowProp, string> = {
   id: '72px',
-  reasons: '150px',
+  reasons: 'minmax(0,150px)',
   checks: '16px',
-  author: '20px',
-  age: '36px',
+  author: '22px',
+  age: '40px',
 };
 
 interface Display {
@@ -177,47 +175,6 @@ function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
   );
 }
 
-function OpenPrFieldInner() {
-  const store = useRootStore();
-  const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-  const submit = () => {
-    const u = url.trim();
-    if (!u) return;
-    setBusy(true);
-    void openPr(store, u).finally(() => {
-      setBusy(false);
-      setUrl('');
-    });
-  };
-  return (
-    <TextField
-      aria-label="Open a PR"
-      value={url}
-      onChange={setUrl}
-      className="w-72"
-    >
-      <InputGroup fullWidth>
-        <InputGroup.Input
-          placeholder="Open a PR by URL…"
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
-        />
-        <InputGroup.Suffix>
-          <Button
-            isIconOnly
-            size="sm"
-            aria-label="Open"
-            isPending={busy}
-            onPress={submit}
-          >
-            <Plus className="size-4" />
-          </Button>
-        </InputGroup.Suffix>
-      </InputGroup>
-    </TextField>
-  );
-}
-
 export function ViewHeader({
   title,
   count,
@@ -230,12 +187,16 @@ export function ViewHeader({
   return (
     <Toolbar
       aria-label={title}
-      className="view-h flex h-14 w-full shrink-0 items-center gap-3 border-b border-separator px-6"
+      className="view-h flex h-14 w-full min-w-0 shrink-0 items-center gap-3 overflow-x-auto border-b border-separator px-6"
     >
-      <Typography.Heading level={6}>{title}</Typography.Heading>
-      {count !== undefined && <span className="text-muted">{count}</span>}
+      <Typography.Heading level={6} className="min-w-0 shrink truncate" title={title}>
+        {title}
+      </Typography.Heading>
+      {count !== undefined && (
+        <span className="shrink-0 text-muted">{count}</span>
+      )}
       <span className="flex-1" />
-      {children}
+      <div className="flex shrink-0 items-center gap-3">{children}</div>
     </Toolbar>
   );
 }
@@ -355,13 +316,18 @@ export const PrRow = observer(function PrRow({
           {p.pr.repo.name} #{p.pr.number}
         </span>
       )}
-      <span className="truncate font-medium">{p.title}</span>
+      <span className="min-w-0 truncate font-medium" title={p.title}>
+        {p.title}
+      </span>
       {on('reasons') && (
-        <span className="flex gap-1 overflow-hidden">
+        <span
+          className="flex min-w-0 gap-1 overflow-hidden"
+          title={p.reasons.map((r) => REASON_LABEL[r]).join(', ')}
+        >
           {p.reasons.slice(0, 2).map((r) => (
             <span
               key={r}
-              className="chip rounded-full bg-default px-2 py-0.5 text-xs"
+              className="chip min-w-0 shrink truncate rounded-full bg-default px-2 py-0.5 text-xs"
             >
               {REASON_LABEL[r]}
             </span>
@@ -369,7 +335,11 @@ export const PrRow = observer(function PrRow({
         </span>
       )}
       {on('checks') && <CheckIcon s={p.checks} />}
-      {on('author') && <Avatar person={p.author} size={22} />}
+      {on('author') && (
+        <span className="shrink-0">
+          <Avatar person={p.author} size={22} />
+        </span>
+      )}
       {on('age') && (
         <span className="text-right text-xs text-muted">
           {ago(p.updated_at)}
@@ -484,9 +454,14 @@ export function BulkBar({
   onClear: () => void;
 }) {
   return (
-    <Card className="bulk absolute bottom-16 left-1/2 z-10 -translate-x-1/2 px-4 py-2.5 shadow-overlay">
-      <Toolbar aria-label="Bulk actions" className="flex items-center gap-1.5">
-        <span className="me-2 ps-1 font-medium tabular-nums">{n} selected</span>
+    <Card className="bulk absolute bottom-16 left-1/2 z-10 max-w-[calc(100%-2rem)] -translate-x-1/2 px-4 py-2.5 shadow-overlay">
+      <Toolbar
+        aria-label="Bulk actions"
+        className="flex items-center gap-1.5 overflow-x-auto"
+      >
+        <span className="me-2 ps-1 shrink-0 font-medium tabular-nums">
+          {n} selected
+        </span>
         <Btn tone="tertiary" kbd="E" icon={<Archive />} onPress={onDone}>
           Done
         </Btn>
@@ -846,7 +821,6 @@ export const Inbox = observer(function Inbox() {
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
       <ViewHeader title="Inbox" count={active.length}>
-        <OpenPrField />
         <Tooltip>
           <Button
             isIconOnly
@@ -885,7 +859,12 @@ export const Inbox = observer(function Inbox() {
               <Empty
                 icon={<CodePullRequest />}
                 title="Inbox is empty"
-                text="Open a PR by URL above, or wait for a review request to show up here."
+                text="Wait for a review request to show up here, or open a pull request by link."
+                action={
+                  <Btn tone="tertiary" icon={<Link className="size-4" />} onPress={() => ui.newTab()}>
+                    Open a PR link…
+                  </Btn>
+                }
               />
             )
           }
@@ -917,5 +896,3 @@ function ListHints() {
     </Hints>
   );
 }
-
-const OpenPrField = observer(OpenPrFieldInner);
