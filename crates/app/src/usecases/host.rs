@@ -46,6 +46,47 @@ impl Core {
         Ok(self.0.deps.host.viewer().await?)
     }
 
+    /// Connection state of one host (GitLab, Bitbucket, …): whether a token
+    /// is saved for it, and whose. `host_status` covers only the primary host.
+    pub async fn host_status_for(&self, host: HostKind) -> AppResult<HostAuthStatus> {
+        if host == self.0.deps.host.kind() {
+            return self.host_status().await;
+        }
+        let key = token_key(host)?;
+        let secrets = self.0.deps.secrets.clone();
+        let saved = tokio::task::spawn_blocking(move || secrets.get(key))
+            .await
+            .map_err(AppError::join)?
+            .ok()
+            .flatten()
+            .is_some();
+        let device_login_available = false;
+        if !saved {
+            return Ok(HostAuthStatus {
+                host,
+                connected: false,
+                login: None,
+                source: TokenSource::None,
+                device_login_available,
+            });
+        }
+        let login = self
+            .0
+            .deps
+            .host
+            .viewer_for(host)
+            .await
+            .ok()
+            .map(|p| p.login);
+        Ok(HostAuthStatus {
+            host,
+            connected: login.is_some(),
+            login,
+            source: TokenSource::Keychain,
+            device_login_available,
+        })
+    }
+
     pub async fn host_status(&self) -> AppResult<HostAuthStatus> {
         let host = self.0.deps.host.kind();
         let source = self.token_source();

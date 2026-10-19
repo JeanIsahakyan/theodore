@@ -40,6 +40,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::refresh_inbox,
             commands::viewer,
             commands::host_status,
+            commands::host_status_for,
             commands::set_host_token,
             commands::reply_thread,
             commands::resolve_thread,

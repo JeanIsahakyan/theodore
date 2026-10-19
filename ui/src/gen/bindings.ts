@@ -39,6 +39,8 @@ export const commands = {
 	refreshInbox: () => typedError<null, CommandError>(__TAURI_INVOKE("refresh_inbox")),
 	viewer: () => typedError<Person, CommandError>(__TAURI_INVOKE("viewer")),
 	hostStatus: () => typedError<HostAuthStatus, CommandError>(__TAURI_INVOKE("host_status")),
+	/**  Connection state of a non-primary host (GitLab, Bitbucket). */
+	hostStatusFor: (host: HostKind) => typedError<HostAuthStatus, CommandError>(__TAURI_INVOKE("host_status_for", { host })),
 	setHostToken: (req: SetTokenRequest) => typedError<HostAuthStatus, CommandError>(__TAURI_INVOKE("set_host_token", { req })),
 	replyThread: (req: ReplyRequest) => typedError<null, CommandError>(__TAURI_INVOKE("reply_thread", { req })),
 	resolveThread: (req: ResolveRequest) => typedError<null, CommandError>(__TAURI_INVOKE("resolve_thread", { req })),

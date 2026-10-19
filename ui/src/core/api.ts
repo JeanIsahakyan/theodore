@@ -16,8 +16,10 @@ import type {
   DraftStateRequest,
   EditCommentRequest,
   FileRequest,
-  FindSymbolRequest, GetBlobRequest,
+  FindSymbolRequest,
+  GetBlobRequest,
   HostAuthStatus,
+  HostKind,
   InterdiffEntry,
   InterdiffRequest,
   HostRepo,
@@ -117,6 +119,8 @@ export const api = {
   refreshInbox: () => call<null>('refresh_inbox'),
   viewer: () => call<Person>('viewer'),
   hostStatus: () => call<HostAuthStatus>('host_status'),
+  hostStatusFor: (host: HostKind) =>
+    call<HostAuthStatus>('host_status_for', { host }),
   setHostToken: (req: SetTokenRequest) =>
     call<HostAuthStatus>('set_host_token', { req }),
   replyThread: (req: ReplyRequest) => call<null>('reply_thread', { req }),

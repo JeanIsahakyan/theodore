@@ -14,7 +14,7 @@ use theodore_contract::{
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
-use theodore_domain::{HostRepo, Person, PrId, Revision};
+use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
 
 fn not_ready() -> CommandError {
     CommandError {
@@ -45,6 +45,7 @@ pub trait CoreApi: Send + Sync {
     async fn refresh_inbox(&self) -> Result<(), CommandError>;
     async fn viewer(&self) -> Result<Person, CommandError>;
     async fn host_status(&self) -> Result<HostAuthStatus, CommandError>;
+    async fn host_status_for(&self, host: HostKind) -> Result<HostAuthStatus, CommandError>;
     async fn set_host_token(&self, req: SetTokenRequest) -> Result<HostAuthStatus, CommandError>;
     async fn reply_thread(&self, req: ReplyRequest) -> Result<(), CommandError>;
     async fn resolve_thread(&self, req: ResolveRequest) -> Result<(), CommandError>;
@@ -167,6 +168,9 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn host_status(&self) -> Result<HostAuthStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn host_status_for(&self, _host: HostKind) -> Result<HostAuthStatus, CommandError> {
         Err(not_ready())
     }
     async fn set_host_token(&self, _req: SetTokenRequest) -> Result<HostAuthStatus, CommandError> {

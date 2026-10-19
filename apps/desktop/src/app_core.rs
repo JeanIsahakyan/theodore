@@ -13,7 +13,7 @@ use theodore_contract::{
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
-use theodore_domain::{HostRepo, Person, PrId, Revision};
+use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 
@@ -120,6 +120,9 @@ impl CoreApi for AppCore {
     }
     async fn host_status(&self) -> Result<HostAuthStatus, CommandError> {
         self.core.host_status().await.map_err(err)
+    }
+    async fn host_status_for(&self, host: HostKind) -> Result<HostAuthStatus, CommandError> {
+        self.core.host_status_for(host).await.map_err(err)
     }
     async fn set_host_token(&self, req: SetTokenRequest) -> Result<HostAuthStatus, CommandError> {
         self.core.set_host_token(req).await.map_err(err)

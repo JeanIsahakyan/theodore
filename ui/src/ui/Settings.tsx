@@ -28,7 +28,6 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
-  Tooltip,
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
@@ -157,21 +156,45 @@ export function isAgentEnabled(
   return v !== false;
 }
 
-/** Bitbucket has no device-flow login and no primary-host `host_status`
- *  query the way GitHub does; its connection state only comes back from
- *  whatever the last `setHostToken` call returned. */
-const BitbucketSection = observer(function BitbucketSection() {
+/** A host connected by a pasted token (GitLab, Bitbucket): no device-flow
+ *  login, and not the primary host `host_status` reports on. */
+const TokenHostSection = observer(function TokenHostSection({
+  host,
+  title,
+  domain,
+  hint,
+  placeholder,
+}: {
+  host: 'gitlab' | 'bitbucket';
+  title: string;
+  domain: string;
+  hint: string;
+  placeholder: string;
+}) {
   const [status, setStatus] = useState<HostAuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let live = true;
+    void api
+      .hostStatusFor(host)
+      .then((s) => live && setStatus(s))
+      .catch(() => {
+        // stays "Not connected"
+      });
+    return () => {
+      live = false;
+    };
+  }, [host]);
+
   const setToken_ = (value: string | null) => {
     setError(null);
     setBusy(true);
     void api
-      .setHostToken({ host: 'bitbucket', token: value })
+      .setHostToken({ host, token: value })
       .then((s) => {
         setStatus(s);
         setEditing(false);
@@ -185,19 +208,17 @@ const BitbucketSection = observer(function BitbucketSection() {
 
   return (
     <section className="flex flex-col gap-2">
-      <Typography.Heading level={6}>Bitbucket</Typography.Heading>
+      <Typography.Heading level={6}>{title}</Typography.Heading>
       <Card variant="secondary" className="gap-0 p-0">
         <div className="flex items-center gap-3 px-4 py-3">
           <span className="size-7 shrink-0 rounded-full bg-default" />
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-sm font-medium">
               {status?.login ?? 'Not connected'}{' '}
-              <span className="text-muted">· bitbucket.org</span>
+              <span className="text-muted">· {domain}</span>
             </span>
             <span className="text-xs text-muted">
-              {status?.connected
-                ? 'Signed in using a saved token'
-                : 'An app password (username:app_password) or an access token'}
+              {status?.connected ? 'Signed in using a saved token' : hint}
             </span>
           </div>
         </div>
@@ -210,12 +231,10 @@ const BitbucketSection = observer(function BitbucketSection() {
               type="password"
               className="flex-1"
             >
-              <Label className="sr-only">
-                Bitbucket app password or access token
-              </Label>
+              <Label className="sr-only">{title} token</Label>
               <Input
                 autoFocus
-                placeholder="username:app_password"
+                placeholder={placeholder}
                 className="font-mono text-sm"
               />
             </TextField>
@@ -241,11 +260,11 @@ const BitbucketSection = observer(function BitbucketSection() {
           <div className="flex items-center gap-2 p-1">
             <Button
               variant="ghost"
-              className="bb-add-token m-1 justify-start gap-2"
+              className="m-1 justify-start gap-2"
               onPress={() => setEditing(true)}
             >
               <Lock className="size-4" />{' '}
-              {status?.connected ? 'Replace token' : 'Connect Bitbucket'}
+              {status?.connected ? 'Replace token' : `Connect ${title}`}
             </Button>
             {status?.connected && (
               <Button
@@ -410,29 +429,20 @@ const AccountPage = observer(function AccountPage() {
         </Card>
         {error && <span className="text-xs text-danger">{error}</span>}
       </section>
-      <BitbucketSection />
-      <section className="flex flex-col gap-2">
-        <Typography.Heading level={6}>Devices</Typography.Heading>
-        <Tooltip>
-          <Card variant="secondary" className="gap-0 p-0 opacity-60">
-            <div className="flex items-center gap-3 px-4 py-3">
-              <span className="flex-1 text-sm">
-                This Mac <span className="text-muted">· now</span>
-              </span>
-              <Chip size="sm" variant="secondary">
-                this device
-              </Chip>
-            </div>
-          </Card>
-          <Tooltip.Content>Device management not available yet</Tooltip.Content>
-        </Tooltip>
-      </section>
-      <Tooltip>
-        <Button variant="danger-soft" className="self-start" isDisabled>
-          Sign out everywhere
-        </Button>
-        <Tooltip.Content>Not available yet</Tooltip.Content>
-      </Tooltip>
+      <TokenHostSection
+        host="gitlab"
+        title="GitLab"
+        domain="gitlab.com"
+        hint="A personal access token with the api scope"
+        placeholder="glpat-…"
+      />
+      <TokenHostSection
+        host="bitbucket"
+        title="Bitbucket"
+        domain="bitbucket.org"
+        hint="An app password (username:app_password) or an access token"
+        placeholder="username:app_password"
+      />
     </>
   );
 });

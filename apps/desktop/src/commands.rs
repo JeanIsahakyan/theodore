@@ -16,7 +16,7 @@ use theodore_contract::{
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
-use theodore_domain::{HostRepo, Person, PrId, Revision};
+use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 use crate::updater;
@@ -143,6 +143,16 @@ pub async fn host_status(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<HostAuthStatus, CommandError> {
     core.host_status().await
+}
+
+/// Connection state of a non-primary host (GitLab, Bitbucket).
+#[tauri::command]
+#[specta::specta]
+pub async fn host_status_for(
+    host: HostKind,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<HostAuthStatus, CommandError> {
+    core.host_status_for(host).await
 }
 
 #[tauri::command]
