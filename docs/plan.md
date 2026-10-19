@@ -368,6 +368,23 @@ get it. For those, fall back to GraphQL `search` on a slow interval.
 Tokens live in the keychain. Never in `.git/config`, never in process arguments,
 never in the webview.
 
+#### GitHub device-flow client id
+
+The "Sign in with GitHub" button (Onboarding and Settings → Account) runs
+GitHub's OAuth device flow — no pasted token, no `gh` required — but it needs
+an OAuth app's client id. Theodore never ships one; the owner creates a GitHub
+OAuth App (device flow enabled, no client secret needed) and configures its
+client id one of two ways, checked in this order:
+
+1. The `THEODORE_GITHUB_CLIENT_ID` environment variable.
+2. The `host.github.client_id` setting (Settings → Account writes this
+   indirectly today only through `THEODORE_GITHUB_CLIENT_ID`; setting it
+   directly is a `transact` on the `setting` model, scope `user`).
+
+With neither set, `host_status`'s `device_login_available` is `false`, the
+button is hidden, and sign-in falls back to `gh`'s own login or a pasted
+token — nothing else about auth changes.
+
 ### 6.9 Tests
 
 - One contract test suite, run against every adapter on recorded HTTP fixtures

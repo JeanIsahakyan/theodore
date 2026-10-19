@@ -5,12 +5,12 @@
 use async_trait::async_trait;
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
-    HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
-    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
-    SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision,
-    Transaction, TransactionResult, UpdateInfo,
+    CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
+    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
+    ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame,
+    TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -68,6 +68,10 @@ pub trait CoreApi: Send + Sync {
     async fn save_skill(&self, req: SaveSkillRequest) -> Result<SkillInfo, CommandError>;
     async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError>;
     async fn interdiff(&self, req: InterdiffRequest) -> Result<Vec<InterdiffEntry>, CommandError>;
+    /// Starts a GitHub OAuth device-flow login (plan "login").
+    async fn login_start(&self) -> Result<DeviceLogin, CommandError>;
+    /// Polls once for that login's outcome.
+    async fn login_poll(&self) -> Result<LoginState, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -214,6 +218,12 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn interdiff(&self, _req: InterdiffRequest) -> Result<Vec<InterdiffEntry>, CommandError> {
+        Err(not_ready())
+    }
+    async fn login_start(&self) -> Result<DeviceLogin, CommandError> {
+        Err(not_ready())
+    }
+    async fn login_poll(&self) -> Result<LoginState, CommandError> {
         Err(not_ready())
     }
 }

@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use serde_json::json;
 use theodore_contract::{
-    AddProjectRequest, BootstrapScope, CommitSuggestionsRequest, DelegateRequest,
+    AddProjectRequest, BootstrapScope, CommitSuggestionsRequest, DelegateRequest, DeviceLogin,
     DraftStateRequest, EditCommentRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
-    MergeMethod as WireMergeMethod, MergeRequest, MutationOp, OpenBranchRequest, OpenPrRequest,
-    ProjectStatus, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest,
-    RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting, SubmitReviewRequest, TaskDecision,
-    ToastLevel, TokenSource, Transaction, TransactionResult, models,
+    LoginState, MergeMethod as WireMergeMethod, MergeRequest, MutationOp, OpenBranchRequest,
+    OpenPrRequest, ProjectStatus, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting,
+    SubmitReviewRequest, TaskDecision, ToastLevel, TokenSource, Transaction, TransactionResult,
+    models,
 };
 use theodore_domain::{
     AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, FileStatus, Fix, FixStatus, HostKind,
@@ -20,8 +21,9 @@ use theodore_domain::{
     TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
-    AgentEvent, BranchInfo, Clock, CommitLog, Fetched, HostError, MergeMethod as PortMergeMethod,
-    MergeState, MergeStatus, NewAction, OutboxStatus, Secrets, Store, SyncActionCode,
+    AgentEvent, BranchInfo, Clock, CommitLog, DevicePoll, Fetched, HostError,
+    MergeMethod as PortMergeMethod, MergeState, MergeStatus, NewAction, OutboxStatus, Secrets,
+    Store, SyncActionCode,
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
@@ -1356,6 +1358,145 @@ async fn set_host_token_for_a_non_primary_host_never_touches_the_primarys_token(
     assert_eq!(f.secrets.get(theodore_secrets::GITLAB_TOKEN).unwrap(), None);
 }
 
+// ── login (GitHub device flow) ──────────────────────────────────────────
+
+async fn set_client_id(core: &Core, client_id: &str) {
+    let setting = Setting {
+        key: "host.github.client_id".into(),
+        scope: "user".into(),
+        value: json!(client_id),
+    };
+    let tx = Transaction {
+        id: format!("client-id-{client_id}"),
+        ops: vec![MutationOp::Create {
+            model: models::SETTING.into(),
+            id: setting.key.clone(),
+            data: serde_json::to_value(&setting).unwrap(),
+        }],
+    };
+    let result = core.transact(tx).await;
+    assert!(
+        matches!(result, TransactionResult::Ok { .. }),
+        "expected the client id setting to apply, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn host_status_reports_device_login_available_only_with_a_client_id() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.token_status.set(TokenSource::None);
+
+    let status = core.host_status().await.expect("host_status");
+    assert!(!status.device_login_available);
+
+    set_client_id(&core, "cid-123").await;
+    let status = core.host_status().await.expect("host_status");
+    assert!(status.device_login_available);
+}
+
+#[tokio::test]
+async fn login_start_fails_with_no_client_id_configured() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+
+    let err = core.login_start().await.unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(f.device_login.calls().is_empty());
+}
+
+#[tokio::test]
+async fn login_start_returns_the_device_code_and_login_poll_reports_pending() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    set_client_id(&core, "cid-123").await;
+
+    f.device_login.set_start(theodore_ports::DeviceCodeStart {
+        device_code: "dc-1".into(),
+        user_code: "WXYZ-9876".into(),
+        verification_uri: "https://github.com/login/device".into(),
+        expires_in: 900,
+        interval: 5,
+    });
+    let device = core.login_start().await.expect("login_start");
+    assert_eq!(
+        device,
+        DeviceLogin {
+            user_code: "WXYZ-9876".into(),
+            verification_uri: "https://github.com/login/device".into(),
+            expires_in: 900,
+            interval: 5,
+        }
+    );
+
+    f.device_login.push_poll(DevicePoll::Pending);
+    let state = core.login_poll().await.expect("login_poll");
+    assert_eq!(state, LoginState::Pending);
+}
+
+#[tokio::test]
+async fn login_poll_without_a_prior_start_is_rejected() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    set_client_id(&core, "cid-123").await;
+
+    let err = core.login_poll().await.unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+}
+
+#[tokio::test]
+async fn login_poll_slow_down_denied_and_expired() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    set_client_id(&core, "cid-123").await;
+
+    core.login_start().await.expect("login_start");
+    f.device_login
+        .push_poll(DevicePoll::SlowDown { interval: 10 });
+    let state = core.login_poll().await.expect("login_poll");
+    assert_eq!(state, LoginState::SlowDown { interval: 10 });
+
+    f.device_login.push_poll(DevicePoll::AccessDenied);
+    let state = core.login_poll().await.expect("login_poll");
+    assert_eq!(state, LoginState::Denied);
+    // Denied clears the session: the next poll has nothing to poll for.
+    let err = core.login_poll().await.unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+
+    core.login_start().await.expect("login_start again");
+    f.device_login.push_poll(DevicePoll::ExpiredToken);
+    let state = core.login_poll().await.expect("login_poll");
+    assert_eq!(state, LoginState::Expired);
+}
+
+#[tokio::test]
+async fn login_poll_success_stores_the_token_like_set_host_token_does() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    set_client_id(&core, "cid-123").await;
+
+    core.login_start().await.expect("login_start");
+    f.device_login.push_poll(DevicePoll::Success {
+        access_token: "ghu_abc123".into(),
+    });
+    f.host.push_viewer(Ok(testkit::sample_person("octocat")));
+
+    let state = core.login_poll().await.expect("login_poll");
+    match state {
+        LoginState::Done { status } => {
+            assert!(status.connected);
+            assert_eq!(status.login, Some("octocat".into()));
+            assert_eq!(status.source, TokenSource::Keychain);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("ghu_abc123".into())
+    );
+    assert!(f.token_status.invalidations() >= 1);
+}
+
 // ── submit_review ────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -2000,6 +2141,7 @@ fn host_auth_status_is_constructible() {
         connected: true,
         login: Some("me".into()),
         source: TokenSource::Gh,
+        device_login_available: false,
     };
 }
 

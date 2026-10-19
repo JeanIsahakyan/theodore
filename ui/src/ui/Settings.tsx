@@ -40,10 +40,12 @@ import type {
 } from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
 import { setSetting } from '../actions';
+import { useDeviceLogin } from '../core/deviceLogin';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
+import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { projectLabel } from './Projects';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
@@ -160,6 +162,8 @@ const AccountPage = observer(function AccountPage() {
   };
   useEffect(load, []);
 
+  const deviceLogin = useDeviceLogin(setStatus);
+
   const setToken_ = (value: string | null) => {
     setError(null);
     setBusy(true);
@@ -238,6 +242,10 @@ const AccountPage = observer(function AccountPage() {
                 Cancel
               </Button>
             </div>
+          ) : deviceLogin.phase !== 'idle' ? (
+            <div className="px-4 py-3">
+              <DeviceLoginPanel state={deviceLogin} />
+            </div>
           ) : (
             <div className="flex items-center gap-2 p-1">
               <Button
@@ -248,6 +256,15 @@ const AccountPage = observer(function AccountPage() {
                 <Lock className="size-4" />{' '}
                 {status?.connected ? 'Replace token' : 'Sign in with a token'}
               </Button>
+              {deviceLogin.available && !status?.connected && (
+                <Button
+                  variant="ghost"
+                  className="gh-device-login m-1 justify-start gap-2"
+                  onPress={deviceLogin.start}
+                >
+                  <LogoGithub className="size-4" /> Sign in with GitHub
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 className="m-1 justify-start gap-2"

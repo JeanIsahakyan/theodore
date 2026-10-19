@@ -15,10 +15,11 @@ use theodore_domain::{
 };
 use theodore_ports::{
     AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo, Capabilities,
-    Changes, Clock, CommitLog, DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter,
-    HostError, HostResult, InboxSection, MergeMethod, MergeStatus, ModelRow, NewAction, OutboxItem,
-    OutboxStatus, ReviewSubmission, Secrets, SecretsError, Store, StoreError, StoreResult,
-    SubmittedReview, SyncAction, SyncActionCode, Worktree,
+    Changes, Clock, CommitLog, DeviceCodeStart, DeviceLoginPort, DevicePoll, DiffOptions, Fetched,
+    GitError, GitPort, GitResult, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
+    MergeStatus, ModelRow, NewAction, OutboxItem, OutboxStatus, ReviewSubmission, Secrets,
+    SecretsError, Store, StoreError, StoreResult, SubmittedReview, SyncAction, SyncActionCode,
+    Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -1073,6 +1074,80 @@ impl TokenStatus for FakeTokenStatus {
     }
 }
 
+// ── device login ────────────────────────────────────────────────────────
+
+/// Controllable fake for GitHub's device flow (plan "login"): a canned
+/// `start` response, a queue of `poll` outcomes (defaulting to `Pending`
+/// once drained), and an optional one-shot failure for either call.
+pub struct FakeDeviceLogin {
+    start: Mutex<DeviceCodeStart>,
+    polls: Mutex<VecDeque<DevicePoll>>,
+    fail_next: Mutex<bool>,
+    calls: Mutex<Vec<&'static str>>,
+}
+
+impl FakeDeviceLogin {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            start: Mutex::new(DeviceCodeStart {
+                device_code: "dc-1".into(),
+                user_code: "ABCD-1234".into(),
+                verification_uri: "https://github.com/login/device".into(),
+                expires_in: 900,
+                interval: 5,
+            }),
+            polls: Mutex::new(VecDeque::new()),
+            fail_next: Mutex::new(false),
+            calls: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub fn set_start(&self, start: DeviceCodeStart) {
+        *self.start.lock().unwrap() = start;
+    }
+
+    pub fn push_poll(&self, outcome: DevicePoll) {
+        self.polls.lock().unwrap().push_back(outcome);
+    }
+
+    pub fn fail_next_call(&self) {
+        *self.fail_next.lock().unwrap() = true;
+    }
+
+    pub fn calls(&self) -> Vec<&'static str> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl DeviceLoginPort for FakeDeviceLogin {
+    async fn start(&self, _client_id: &str, _scope: &str) -> HostResult<DeviceCodeStart> {
+        self.calls.lock().unwrap().push("start");
+        if std::mem::take(&mut *self.fail_next.lock().unwrap()) {
+            return Err(HostError::Network("fake device login failure".into()));
+        }
+        Ok(self.start.lock().unwrap().clone())
+    }
+
+    async fn poll(
+        &self,
+        _client_id: &str,
+        _device_code: &str,
+        _current_interval: u32,
+    ) -> HostResult<DevicePoll> {
+        self.calls.lock().unwrap().push("poll");
+        if std::mem::take(&mut *self.fail_next.lock().unwrap()) {
+            return Err(HostError::Network("fake device login failure".into()));
+        }
+        Ok(self
+            .polls
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(DevicePoll::Pending))
+    }
+}
+
 // ── fixtures ──────────────────────────────────────────────────────────────
 
 pub struct Fixtures {
@@ -1084,6 +1159,7 @@ pub struct Fixtures {
     pub secrets: Arc<FakeSecrets>,
     pub grouper: Arc<FakeGrouper>,
     pub token_status: Arc<FakeTokenStatus>,
+    pub device_login: Arc<FakeDeviceLogin>,
     /// A throwaway `~/.claude/skills` stand-in (plan §8.4): kept alive for
     /// the fixture's lifetime, deleted on drop. Never the real home dir.
     pub claude_home: Arc<tempfile::TempDir>,
@@ -1102,6 +1178,7 @@ impl Fixtures {
             tools: None,
             claude_home: self.claude_home.path().to_path_buf(),
             token_status: Some(self.token_status.clone()),
+            device_login: self.device_login.clone(),
         }
     }
 }
@@ -1124,6 +1201,7 @@ pub fn fixtures() -> Fixtures {
             groups: vec![],
         }),
         token_status: FakeTokenStatus::new(TokenSource::Keychain),
+        device_login: FakeDeviceLogin::new(),
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
     }
 }

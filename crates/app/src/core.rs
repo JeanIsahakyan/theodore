@@ -49,6 +49,10 @@ pub(crate) struct Inner {
     pub open_lock: tokio::sync::Mutex<()>,
     /// PRs whose grouping is running, so a PR is never grouped twice at once.
     pub grouping_inflight: std::sync::Mutex<std::collections::HashSet<PrId>>,
+    /// The device flow's `device_code` + poll interval between `login_start`
+    /// and the login finishing (plan "login"): kept in memory only, never
+    /// persisted — a restart just means starting over.
+    pub login: Mutex<Option<crate::usecases::host::LoginSession>>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -82,6 +86,7 @@ impl Core {
             shutdown: CancellationToken::new(),
             open_lock: tokio::sync::Mutex::new(()),
             grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            login: Mutex::new(None),
         });
 
         let core = Core(inner.clone());

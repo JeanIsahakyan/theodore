@@ -7,12 +7,12 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
-    HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
-    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
-    SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision,
-    Transaction, TransactionResult, UpdateInfo,
+    CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
+    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
+    ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame,
+    TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -366,6 +366,18 @@ pub async fn interdiff(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Vec<InterdiffEntry>, CommandError> {
     core.interdiff(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn login_start(core: State<'_, Arc<dyn CoreApi>>) -> Result<DeviceLogin, CommandError> {
+    core.login_start().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn login_poll(core: State<'_, Arc<dyn CoreApi>>) -> Result<LoginState, CommandError> {
+    core.login_poll().await
 }
 
 /// Native folder picker for the Add project dialog. Runs on a background

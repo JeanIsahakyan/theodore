@@ -10,6 +10,7 @@ import type {
   CommandError,
   CommitSuggestionsRequest,
   DelegateRequest,
+  DeviceLogin,
   DraftStateRequest,
   EditCommentRequest,
   FileRequest,
@@ -17,6 +18,7 @@ import type {
   InterdiffEntry,
   InterdiffRequest,
   LocalBranch,
+  LoginState,
   MergeInfo,
   MergeRequest,
   OpenBranchRequest,
@@ -138,4 +140,6 @@ export const api = {
   pickFolder: () => call<string | null>('pick_folder'),
   interdiff: (req: InterdiffRequest) =>
     call<InterdiffEntry[]>('interdiff', { req }),
+  loginStart: () => call<DeviceLogin>('login_start'),
+  loginPoll: () => call<LoginState>('login_poll'),
 };
