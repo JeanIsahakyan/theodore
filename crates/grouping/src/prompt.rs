@@ -257,9 +257,38 @@ pub fn build_prompts(
         by_dir.entry(top_level_dir(&f.path)).or_default().push(f);
     }
 
-    by_dir
+    // Pack whole directories into as few chunks as the budget allows: one
+    // agent call per directory fragmented a PR with many small areas into
+    // as many calls (and at least as many groups). A directory over budget
+    // on its own still gets its own chunk.
+    let mut packs: Vec<(Vec<String>, Vec<&theodore_domain::FileDiff>)> = Vec::new();
+    for (dir, files) in by_dir {
+        if let Some((dirs, packed)) = packs.last_mut() {
+            let mut candidate = packed.clone();
+            candidate.extend(files.iter().copied());
+            if user_prompt(pr, &candidate, prepass, budget).len() <= budget.max_chars {
+                dirs.push(dir);
+                *packed = candidate;
+                continue;
+            }
+        }
+        packs.push((vec![dir], files));
+    }
+
+    packs
         .into_iter()
-        .map(|(dir, files)| {
+        .map(|(dirs, files)| {
+            let label = dirs
+                .iter()
+                .map(|d| {
+                    if d.is_empty() {
+                        "(repository root)"
+                    } else {
+                        d.as_str()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             let chunk_hunks: usize = files.iter().map(|f| f.hunks.len()).sum();
             let chunk_target =
                 crate::target::scaled_for_chunk(whole_target, chunk_hunks, total_hunks);
@@ -269,11 +298,11 @@ pub fn build_prompts(
                 .flat_map(|f| f.hunks.iter().map(|h| h.id.clone()))
                 .collect();
             PromptChunk {
-                label: dir.clone(),
                 prompt: PromptPart {
-                    system: system_prompt(chunk_target, chunk_hunks, Some(&dir)),
+                    system: system_prompt(chunk_target, chunk_hunks, Some(&label)),
                     user,
                 },
+                label,
                 hunk_ids,
             }
         })
@@ -439,6 +468,66 @@ mod tests {
         let labels: Vec<&str> = chunks.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"a"));
         assert!(labels.contains(&"b"));
+    }
+
+    #[test]
+    fn packs_small_directories_into_one_chunk() {
+        let files: Vec<_> = (0..6)
+            .map(|i| mk_file(&format!("d{i}/f.ts"), vec![mk_hunk(&format!("h{i}"), 20)]))
+            .collect();
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files,
+        };
+        let prepass = PrePass::default();
+        let whole = build_prompts(&PrMeta::default(), &rev, &prepass, &PromptBudget::default());
+        let whole_len = whole[0].prompt.user.len();
+        // Room for about half the PR per chunk: 2 chunks, not 6.
+        let budget = PromptBudget {
+            max_chars: whole_len / 2 + whole_len / 6,
+            ..PromptBudget::default()
+        };
+        let chunks = build_prompts(&PrMeta::default(), &rev, &prepass, &budget);
+        assert_eq!(
+            chunks.len(),
+            2,
+            "{:?}",
+            chunks.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+        let ids: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
+        assert_eq!(ids, 6);
+    }
+
+    #[test]
+    fn root_files_share_one_chunk() {
+        let files: Vec<_> = (0..5)
+            .map(|i| {
+                mk_file(
+                    &format!("entry{i}.php"),
+                    vec![mk_hunk(&format!("h{i}"), 20)],
+                )
+            })
+            .chain([mk_file("lib/big.ts", vec![mk_hunk("hx", 20)])])
+            .collect();
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files,
+        };
+        let prepass = PrePass::default();
+        let tiny_budget = PromptBudget {
+            max_chars: 10,
+            ..PromptBudget::default()
+        };
+        let chunks = build_prompts(&PrMeta::default(), &rev, &prepass, &tiny_budget);
+        // Over budget everywhere: one chunk per area, and the root is one area.
+        assert_eq!(chunks.len(), 2);
+        assert!(
+            chunks
+                .iter()
+                .any(|c| c.label == "(repository root)" && c.hunk_ids.len() == 5)
+        );
     }
 
     #[test]

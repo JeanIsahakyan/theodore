@@ -4,8 +4,14 @@
 //! with (`coarsen::merge_tiny_groups`). Kept in one place so both agree on
 //! what "same area" means.
 
+/// Files in the repository root share one area, `""`: treating each root
+/// file as its own "directory" split a PR with 33 root-level entry points
+/// into 33 prompts and 33 one-hunk groups.
 pub(crate) fn top_level_dir(path: &str) -> &str {
-    path.split('/').next().unwrap_or(path)
+    match path.split_once('/') {
+        Some((dir, _)) => dir,
+        None => "",
+    }
 }
 
 #[cfg(test)]
@@ -15,7 +21,8 @@ mod tests {
     #[test]
     fn splits_on_first_slash() {
         assert_eq!(top_level_dir("crates/grouping/src/lib.rs"), "crates");
-        assert_eq!(top_level_dir("README.md"), "README.md");
+        assert_eq!(top_level_dir("README.md"), "");
+        assert_eq!(top_level_dir("al_audio.php"), top_level_dir("al_wall.php"));
         assert_eq!(top_level_dir(""), "");
     }
 }
