@@ -69,6 +69,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::login_poll,
             commands::rerun_check,
             commands::triage,
+            commands::set_linear_token,
+            commands::linear_status,
+            commands::linear_issues,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()

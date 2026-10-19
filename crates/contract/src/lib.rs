@@ -11,6 +11,8 @@ use theodore_domain::{
 
 mod interdiff;
 pub use interdiff::*;
+mod linear;
+pub use linear::*;
 mod login;
 pub use login::*;
 mod pr_state;
@@ -667,7 +669,11 @@ pub fn types() -> specta::Types {
         .register::<HostRepo>()
         .register::<RerunCheckRequest>()
         .register::<TriageRequest>()
-        .register::<TriageAction>();
+        .register::<TriageAction>()
+        .register::<SetLinearTokenRequest>()
+        .register::<LinearStatus>()
+        .register::<LinearIssuesRequest>()
+        .register::<LinearIssue>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

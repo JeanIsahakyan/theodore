@@ -5,10 +5,11 @@ use theodore_app::{AppError, Core};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
-    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
     SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
     UpdateInfo,
 };
@@ -203,6 +204,21 @@ impl CoreApi for AppCore {
     }
     async fn triage(&self, req: TriageRequest) -> Result<(), CommandError> {
         self.core.triage(req).await.map_err(err)
+    }
+    async fn set_linear_token(
+        &self,
+        req: SetLinearTokenRequest,
+    ) -> Result<LinearStatus, CommandError> {
+        self.core.set_linear_token(req).await.map_err(err)
+    }
+    async fn linear_status(&self) -> Result<LinearStatus, CommandError> {
+        self.core.linear_status().await.map_err(err)
+    }
+    async fn linear_issues(
+        &self,
+        req: LinearIssuesRequest,
+    ) -> Result<Vec<LinearIssue>, CommandError> {
+        self.core.linear_issues(req).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await

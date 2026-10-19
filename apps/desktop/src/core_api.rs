@@ -6,10 +6,11 @@ use async_trait::async_trait;
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
-    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
     SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
     UpdateInfo,
 };
@@ -75,6 +76,18 @@ pub trait CoreApi: Send + Sync {
     async fn login_poll(&self) -> Result<LoginState, CommandError>;
     async fn rerun_check(&self, req: RerunCheckRequest) -> Result<(), CommandError>;
     async fn triage(&self, req: TriageRequest) -> Result<(), CommandError>;
+    /// Validates the token via Linear's `viewer` query, then stores it
+    /// (`token: None` disconnects).
+    async fn set_linear_token(
+        &self,
+        req: SetLinearTokenRequest,
+    ) -> Result<LinearStatus, CommandError>;
+    async fn linear_status(&self) -> Result<LinearStatus, CommandError>;
+    /// Issues linked to a PR by a key found in its title, head branch or body.
+    async fn linear_issues(
+        &self,
+        req: LinearIssuesRequest,
+    ) -> Result<Vec<LinearIssue>, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -233,6 +246,21 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn triage(&self, _req: TriageRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn set_linear_token(
+        &self,
+        _req: SetLinearTokenRequest,
+    ) -> Result<LinearStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn linear_status(&self) -> Result<LinearStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn linear_issues(
+        &self,
+        _req: LinearIssuesRequest,
+    ) -> Result<Vec<LinearIssue>, CommandError> {
         Err(not_ready())
     }
 }

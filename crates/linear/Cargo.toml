@@ -1,0 +1,22 @@
+[package]
+name = "theodore-linear"
+description = "Read-only GraphQL client for Linear: viewer/workspace status and issue lookup by identifier."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true
