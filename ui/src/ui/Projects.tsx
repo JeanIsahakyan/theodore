@@ -255,7 +255,9 @@ function RepoRow({
   return (
     <Checkbox
       value={repoKey(r.repo)}
-      className="rounded-2xl px-3 py-2 hover:bg-default/50"
+      // `.checkbox-group` puts mt-4 on every checkbox; rows here are spaced
+      // by the list, like the non-checkbox "Added" rows.
+      className="mt-0 rounded-2xl px-3 py-2 hover:bg-default/50"
     >
       <Checkbox.Content className="w-full">
         <Checkbox.Control>

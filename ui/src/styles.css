@@ -283,6 +283,12 @@ body.cmd .lines .src span:hover {
     opacity 120ms ease-out;
 }
 
+/* Add project: rows are spaced by the list, not by the checkbox group's
+ * own mt-4 per checkbox (which made checkbox rows sit lower than "Added"). */
+.repo-list [data-slot='checkbox'] {
+  margin-top: 0;
+}
+
 /* Toasts: long messages (a raw host error) wrap inside the window instead
  * of running off its right edge. */
 .toast-region {
