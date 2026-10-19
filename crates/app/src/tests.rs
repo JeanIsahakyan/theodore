@@ -4177,3 +4177,51 @@ async fn host_status_for_reports_a_saved_gitlab_token() {
     assert_eq!(saved.source, TokenSource::Keychain);
     assert_eq!(saved.host, HostKind::Gitlab);
 }
+
+#[tokio::test]
+async fn refreshing_a_project_keeps_inbox_reasons() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let repo = RepoRef {
+        host: HostKind::Github,
+        owner: "acme".into(),
+        name: "widgets".into(),
+    };
+    let pr_ref = PrRef {
+        repo: repo.clone(),
+        number: 9,
+        host_id: Some("node-9".into()),
+    };
+    // The inbox stored it with a reason; the project search has none.
+    let mut inbox =
+        serde_json::to_value(testkit::sample_pr_summary(&pr_ref, &Sha::new("h9"))).unwrap();
+    inbox["reasons"] = json!(["authored"]);
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr_ref.id().0,
+            action: SyncActionCode::U,
+            data: Some(inbox),
+        }])
+        .unwrap();
+    f.host.push_search(Ok(vec![testkit::sample_pr_summary(
+        &pr_ref,
+        &Sha::new("h9"),
+    )]));
+
+    core.add_project(AddProjectRequest {
+        repo: Some(repo),
+        path: None,
+    })
+    .await
+    .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, "github:acme/widgets")
+            .unwrap()
+            .is_some_and(|r| r.data.get("last_fetched_at").is_some())
+    })
+    .await;
+    let row = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
+    assert_eq!(row.data["reasons"], json!(["authored"]));
+}

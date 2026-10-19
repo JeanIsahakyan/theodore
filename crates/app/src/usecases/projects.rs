@@ -184,11 +184,13 @@ impl Core {
             }
             let mut actions = Vec::with_capacity(by_id.len());
             for summary in by_id.into_values() {
-                let data =
+                let id = summary.pr.id().0;
+                let mut data =
                     serde_json::to_value(&summary).map_err(|e| AppError::Invalid(e.to_string()))?;
+                self.keep_inbox_reasons(&id, &mut data).await;
                 actions.push(NewAction {
                     model: models::PR.into(),
-                    model_id: summary.pr.id().0,
+                    model_id: id,
                     action: SyncActionCode::U,
                     data: Some(data),
                 });

@@ -249,6 +249,33 @@ impl Core {
         Some(summary.pr)
     }
 
+    /// `reasons` comes from the inbox searches, not from fetching one PR or
+    /// a project's PR list: those carry none, and writing them as-is drops
+    /// a PR out of the inbox. Keep what the inbox last said.
+    pub(crate) async fn keep_inbox_reasons(&self, pr_id: &str, summary: &mut serde_json::Value) {
+        let empty = summary
+            .get("reasons")
+            .and_then(|v| v.as_array())
+            .is_none_or(|a| a.is_empty());
+        if !empty {
+            return;
+        }
+        let store = self.0.deps.store.clone();
+        let id = pr_id.to_string();
+        let stored = tokio::task::spawn_blocking(move || store.get(models::PR, &id))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten();
+        if let Some(reasons) = stored
+            .as_ref()
+            .and_then(|r| r.data.get("reasons"))
+            .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+        {
+            summary["reasons"] = reasons.clone();
+        }
+    }
+
     /// Writes `pr` + `pr_detail` from an already-fetched `PrDetail` (plan
     /// §3/§6): the one place every path that has a fresh `PrDetail` —
     /// opening a PR, a push, a host-write follow-up refresh — turns it
@@ -260,25 +287,7 @@ impl Core {
         let pr_s = detail.summary.pr.id().0.clone();
         let mut summary_data = serde_json::to_value(&detail.summary)
             .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
-        // `reasons` comes from the inbox searches, not from fetching one PR:
-        // a fresh `get_pr` has none, and writing it as-is dropped an opened
-        // PR out of the inbox. Keep what the inbox last said.
-        if detail.summary.reasons.is_empty() {
-            let store = self.0.deps.store.clone();
-            let id = pr_s.clone();
-            let stored = tokio::task::spawn_blocking(move || store.get(models::PR, &id))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .flatten();
-            if let Some(reasons) = stored
-                .as_ref()
-                .and_then(|r| r.data.get("reasons"))
-                .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
-            {
-                summary_data["reasons"] = reasons.clone();
-            }
-        }
+        self.keep_inbox_reasons(&pr_s, &mut summary_data).await;
         let detail_data = serde_json::to_value(detail)
             .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
         let actions = vec![

@@ -354,9 +354,14 @@ export const PrRow = observer(function PrRow({
       {on('id') && (
         <span
           className="max-w-36 truncate whitespace-nowrap text-xs tabular-nums text-muted"
-          title={`${p.pr.repo.owner}/${p.pr.repo.name} #${p.pr.number}`}
+          title={
+            p.url
+              ? `${p.pr.repo.owner}/${p.pr.repo.name} #${p.pr.number}`
+              : `${p.pr.repo.owner}/${p.pr.repo.name} · branch ${p.head_ref}`
+          }
         >
-          {p.pr.repo.name} #{p.pr.number}
+          {/* A branch review has no PR number, only a hash of its branch. */}
+          {p.url ? `${p.pr.repo.name} #${p.pr.number}` : p.head_ref}
         </span>
       )}
       <span className="flex min-w-0 items-center gap-1.5">
