@@ -124,14 +124,14 @@ export function layoutFor(width: number): ReviewLayout {
  *  ever updates, which is fine since nothing in this file is DOM-rendered
  *  under vitest today. */
 function useElementWidth(ref: { current: HTMLElement | null }): number {
-  const [width, setWidth] = useState(
-    () =>
-      ref.current?.clientWidth ??
-      (typeof window !== 'undefined' ? window.innerWidth : ASIDE_BREAKPOINT),
+  const [width, setWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : ASIDE_BREAKPOINT,
   );
   useEffect(() => {
     const el = ref.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
+    if (!el) return;
+    setWidth(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width;
       if (w != null) setWidth(w);
@@ -691,7 +691,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               {showAsideColumn && <SidePanel pr={pr} />}
               {!showGroupsColumn && groupsOpen && (
                 <>
-                  <div className="absolute inset-y-0 left-0 z-20 w-64 border-r border-separator bg-background shadow-xl">
+                  {/* `grid` (not `flex`/`block`): a single-child grid cell
+                   *  stretches that child to fill both axes by default, the
+                   *  same way `GroupsPane`'s `Surface` fills its slot as a
+                   *  grid column above — no height to hand it otherwise. */}
+                  <div className="absolute inset-y-0 left-0 z-20 grid w-64 border-r border-separator bg-background shadow-xl">
                     <GroupsPane
                       pr={pr}
                       rev={revision.data!}
@@ -710,7 +714,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               )}
               {!showAsideColumn && layout.aside === 'drawer' && ui.aside && (
                 <>
-                  <div className="absolute inset-y-0 right-0 z-20 w-[352px] max-w-[85vw] border-l border-separator bg-background shadow-xl">
+                  <div className="absolute inset-y-0 right-0 z-20 grid w-[352px] max-w-[85vw] border-l border-separator bg-background shadow-xl">
                     <SidePanel pr={pr} />
                   </div>
                   <div
