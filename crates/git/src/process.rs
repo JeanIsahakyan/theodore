@@ -83,6 +83,30 @@ impl GitProc<'_> {
     pub(crate) async fn run_text(&self) -> GitResult<String> {
         Ok(String::from_utf8_lossy(&self.run().await?).into_owned())
     }
+
+    /// Like `run`, but never turns a non-zero exit into `Err`: some
+    /// subcommands (`merge-tree`) use the exit code itself to mean
+    /// something (0 clean, 1 conflicts, >1 a real error) and still write
+    /// useful stdout on exit 1, which `run` would otherwise discard.
+    pub(crate) async fn run_raw(&self) -> GitResult<RawOutput> {
+        let mut cmd = self.command();
+        let mut child = cmd.spawn().map_err(io_err)?;
+        if let (Some(data), Some(mut pipe)) = (self.stdin, child.stdin.take()) {
+            pipe.write_all(data).await.map_err(io_err)?;
+        }
+        let output = child.wait_with_output().await.map_err(io_err)?;
+        Ok(RawOutput {
+            status: output.status.code().unwrap_or(-1),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+}
+
+pub(crate) struct RawOutput {
+    pub status: i32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
 fn io_err(e: std::io::Error) -> GitError {

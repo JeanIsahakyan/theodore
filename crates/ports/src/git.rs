@@ -254,6 +254,40 @@ pub trait GitPort: Send + Sync {
         };
         Ok((detail, revision))
     }
+
+    /// Conflicting paths of merging `head` into `base` (`git merge-tree
+    /// --write-tree --name-only`, git >= 2.38): no worktree checkout, no
+    /// index changes (plan "conflicts"). `Unsupported` by default, and on
+    /// an older local `git`.
+    async fn merge_tree_conflicts(
+        &self,
+        repo: &Path,
+        base: &Sha,
+        head: &Sha,
+    ) -> GitResult<Vec<ConflictEntry>> {
+        let _ = (repo, base, head);
+        Err(GitError::Unsupported("merge_tree_conflicts"))
+    }
+}
+
+/// One locally-detected conflicting path, from `merge_tree_conflicts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictEntry {
+    pub path: String,
+    pub kind: ConflictKind,
+}
+
+/// The `CONFLICT (<kind>): ...` tag `git merge-tree` reports for a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    Content,
+    AddAdd,
+    ModifyDelete,
+    RenameDelete,
+    RenameRename,
+    DirectoryFile,
+    Submodule,
+    Other,
 }
 
 fn person_of(c: &CommitLog) -> Person {

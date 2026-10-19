@@ -11,6 +11,7 @@
 
 mod auth;
 mod branches;
+mod conflicts;
 mod diff;
 mod generated;
 mod local;
@@ -26,7 +27,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use theodore_domain::{PrRef, RepoRef, Revision, Sha};
 use theodore_ports::{
-    BranchInfo, CommitLog, CredentialSource, DiffOptions, GitError, GitPort, GitResult, Worktree,
+    BranchInfo, CommitLog, ConflictEntry, CredentialSource, DiffOptions, GitError, GitPort,
+    GitResult, Worktree,
 };
 
 use process::GitProc;
@@ -267,6 +269,15 @@ impl GitPort for GitCli {
 
     async fn list_branches(&self, repo: &Path, default_branch: &str) -> GitResult<Vec<BranchInfo>> {
         self.list_branches_op(repo, default_branch).await
+    }
+
+    async fn merge_tree_conflicts(
+        &self,
+        repo: &Path,
+        base: &Sha,
+        head: &Sha,
+    ) -> GitResult<Vec<ConflictEntry>> {
+        self.merge_tree_conflicts_op(repo, base, head).await
     }
 }
 
