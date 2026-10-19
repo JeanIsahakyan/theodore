@@ -149,12 +149,18 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
 /** A finding's anchor as an informational file:line chip. Not clickable:
  *  nothing outside `Review`'s own local diff state can jump the diff pane
  *  to a line yet, so this only orients, same as the prototype's `Ref` did,
- *  minus the jump. */
+ *  minus the jump. Capped to its container's width — a long path truncates
+ *  inside the chip instead of forcing the panel wider. */
 function Ref({ a }: { a: Anchor }) {
   return (
-    <span className="ref inline-flex h-6 items-center gap-1.5 rounded-full border border-separator px-2.5 font-mono text-xs text-muted">
-      <FileCode className="size-3.5" />
-      {a.path}:{a.line}
+    <span
+      className="ref inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-separator px-2.5 font-mono text-xs text-muted"
+      title={`${a.path}:${a.line}`}
+    >
+      <FileCode className="size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">
+        {a.path}:{a.line}
+      </span>
     </span>
   );
 }
@@ -835,8 +841,11 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                     <span className="grid size-4 shrink-0 place-items-center font-mono text-muted">
                       /
                     </span>
-                    <span className="font-mono">{k.id}</span>
-                    <span className="truncate text-xs text-muted">
+                    <span className="shrink-0 font-mono">{k.id}</span>
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs text-muted"
+                      title={k.description}
+                    >
                       {k.description}
                     </span>
                   </ListBox.Item>
@@ -1008,37 +1017,41 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                   size="sm"
                   variant="tertiary"
                   aria-label="Skills"
-                  className="slash-btn rounded-full font-mono"
+                  className="slash-btn shrink-0 rounded-full font-mono"
                   onPress={() => setText('/')}
                 >
                   /
                 </Button>
                 <Tooltip.Content>Run a skill</Tooltip.Content>
               </Tooltip>
-              <SkillBrowser
-                pr={pr}
-                skills={skills}
-                agents={skillAgents}
-                onRun={(s, agents) => {
-                  if (overBudgetReason) {
-                    store.ephemeral.handle({
-                      type: 'toast',
-                      level: 'warn',
-                      text: overBudgetReason,
-                    });
-                    return;
-                  }
-                  void runSkill(store, pr, s.id, agents);
-                }}
-              />
+              <span className="shrink-0">
+                <SkillBrowser
+                  pr={pr}
+                  skills={skills}
+                  agents={skillAgents}
+                  onRun={(s, agents) => {
+                    if (overBudgetReason) {
+                      store.ephemeral.handle({
+                        type: 'toast',
+                        level: 'warn',
+                        text: overBudgetReason,
+                      });
+                      return;
+                    }
+                    void runSkill(store, pr, s.id, agents);
+                  }}
+                />
+              </span>
               <Dropdown>
                 <Button
                   size="sm"
                   variant="tertiary"
-                  className="gap-1.5 rounded-full px-3 text-xs"
+                  className="min-w-0 shrink gap-1.5 rounded-full px-3 text-xs"
                 >
-                  {skillAgents.join(' + ')}
-                  <ChevronDown className="size-3 text-muted" />
+                  <span className="min-w-0 truncate">
+                    {skillAgents.join(' + ')}
+                  </span>
+                  <ChevronDown className="size-3 shrink-0 text-muted" />
                 </Button>
                 <Dropdown.Popover placement="top start">
                   <Dropdown.Menu
@@ -1069,7 +1082,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                     isIconOnly
                     size="sm"
                     aria-label="Send"
-                    className="rounded-full"
+                    className="shrink-0 rounded-full"
                     isDisabled
                   >
                     <ArrowUp className="size-4" />
@@ -1081,7 +1094,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                   isIconOnly
                   size="sm"
                   aria-label="Send"
-                  className="rounded-full"
+                  className="shrink-0 rounded-full"
                   isDisabled={!text.trim()}
                   onPress={send}
                 >
@@ -1155,10 +1168,7 @@ function DraftCard({ d }: { d: Draft }) {
         </Chip>
         {d.source.kind === 'agent' && <AgentTag id={d.source.agent} />}
         <span className="flex-1" />
-        <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
-          <FileCode className="size-3.5" />
-          {d.anchor.path}:{d.anchor.line}
-        </span>
+        <Ref a={d.anchor} />
       </div>
       <p className="line-clamp-2 text-sm text-muted">
         {stripHtmlComments(d.body)}
@@ -1198,16 +1208,11 @@ function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
             <Avatar key={login} person={person} size={20} />
           ))}
         </AvatarGroup>
-        <span className="truncate text-sm font-medium">
+        <span className="min-w-0 truncate text-sm font-medium">
           {people.map(([login]) => login).join(', ')}
         </span>
         <span className="flex-1" />
-        {thread.anchor && (
-          <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
-            <FileCode className="size-3.5" />
-            {thread.anchor.path}:{thread.anchor.line}
-          </span>
-        )}
+        {thread.anchor && <Ref a={thread.anchor} />}
       </div>
       <p className="line-clamp-2 text-sm text-muted">
         <span className="text-foreground">{last.author.login}:</span>{' '}
@@ -1285,7 +1290,7 @@ const SuggestionBatchBar = observer(function SuggestionBatchBar({
   return (
     <div className="batch-bar sticky bottom-0 z-[3] flex items-center gap-3 rounded-2xl border border-accent/40 bg-surface px-4 py-2 text-sm shadow-lg">
       <Layers className="size-4 text-accent" />
-      <span className="flex-1">
+      <span className="min-w-0 flex-1">
         {plural(
           batch.length,
           'batched suggestion',
