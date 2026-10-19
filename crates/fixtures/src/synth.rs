@@ -884,3 +884,703 @@ impl AgentPort for SynthAgents {
         Ok(AgentRun { events: rx, cancel })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use theodore_domain::{
+        DiffLine, FileDiff, FileStatus, FindingId, Group, GroupId, GroupKind, Grouping, Hunk,
+        HunkId, LineKind, PrId, Revision, RunId, Sha, grouping,
+    };
+    use theodore_grouping::prompt::{PromptBudget, build_prompts, merge_prompt, repair_prompt};
+    use theodore_grouping::{GroupingOptions, PrMeta, group_revision, prepass, regroup};
+    use theodore_mcp::{
+        BackendError, FileSummary, GroupSummary, GroupWithHunks, McpServer, NewFinding, NewPatch,
+        PrContext, ReviewToolsBackend, RunContext,
+    };
+
+    use super::*;
+
+    fn line(kind: LineKind, text: &str) -> DiffLine {
+        DiffLine {
+            kind,
+            text: text.into(),
+            old_no: None,
+            new_no: None,
+        }
+    }
+
+    fn hunk(id: &str, path: &str, new_start: u32, lines: Vec<DiffLine>) -> Hunk {
+        let old = lines.iter().filter(|l| l.kind != LineKind::Add).count() as u32;
+        let new = lines.iter().filter(|l| l.kind != LineKind::Del).count() as u32;
+        Hunk {
+            id: HunkId::new(id),
+            path: path.into(),
+            old_start: new_start,
+            old_lines: old,
+            new_start,
+            new_lines: new,
+            header: "fn thing()".into(),
+            lines,
+        }
+    }
+
+    fn code_hunk(id: &str, path: &str, new_start: u32) -> Hunk {
+        hunk(
+            id,
+            path,
+            new_start,
+            vec![
+                line(LineKind::Ctx, "fn thing() {"),
+                line(LineKind::Del, &format!("    old_{id}();")),
+                line(LineKind::Add, &format!("    new_{id}();")),
+            ],
+        )
+    }
+
+    fn file(path: &str, hunks: Vec<Hunk>) -> FileDiff {
+        FileDiff {
+            path: path.into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            similarity: None,
+            old_mode: None,
+            new_mode: None,
+            flags: vec![],
+            additions: 1,
+            deletions: 1,
+            hunks,
+        }
+    }
+
+    /// Three directories, a root file, Markdown in the root and in `docs/`,
+    /// and one import-only hunk the pre-pass flags as a skim candidate.
+    fn sample_rev() -> Revision {
+        Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files: vec![
+                file(
+                    "src/lib.rs",
+                    vec![
+                        code_hunk("h-src-1", "src/lib.rs", 1),
+                        code_hunk("h-src-2", "src/lib.rs", 40),
+                    ],
+                ),
+                file(
+                    "src/imports.rs",
+                    vec![hunk(
+                        "h-src-imp",
+                        "src/imports.rs",
+                        1,
+                        vec![
+                            line(LineKind::Del, "use std::io;"),
+                            line(LineKind::Add, "use std::fmt;"),
+                        ],
+                    )],
+                ),
+                file("web/app.ts", vec![code_hunk("h-web-1", "web/app.ts", 3)]),
+                file(
+                    "crates/core/mod.rs",
+                    vec![code_hunk("h-crates-1", "crates/core/mod.rs", 9)],
+                ),
+                file("Cargo.toml", vec![code_hunk("h-root-1", "Cargo.toml", 2)]),
+                file("README.md", vec![code_hunk("h-docs-1", "README.md", 5)]),
+                file(
+                    "docs/guide.md",
+                    vec![code_hunk("h-docs-2", "docs/guide.md", 7)],
+                ),
+            ],
+        }
+    }
+
+    fn pr() -> PrMeta {
+        PrMeta {
+            title: "Rework the widget pipeline".into(),
+            body: "Moves things around.".into(),
+            commits: vec!["rework widgets".into()],
+        }
+    }
+
+    fn parse_groups(text: &str) -> Vec<Group> {
+        let v: Value = serde_json::from_str(text).expect("answer is bare JSON");
+        serde_json::from_value(v["groups"].clone()).expect("groups match the domain shape")
+    }
+
+    fn ids(groups: &[Group]) -> Vec<&str> {
+        groups.iter().map(|g| g.id.as_str()).collect()
+    }
+
+    fn request(
+        prompt: &str,
+        mode: AgentMode,
+        cwd: &Path,
+        mcp: Option<McpEndpoint>,
+    ) -> AgentRequest {
+        AgentRequest {
+            agent: AgentId::Claude,
+            prompt: prompt.to_string(),
+            system: None,
+            cwd: cwd.to_path_buf(),
+            mode,
+            mcp,
+            model: None,
+            stall_after_ms: 90_000,
+        }
+    }
+
+    async fn drain(mut run: AgentRun) -> Vec<AgentEvent> {
+        let mut events = Vec::new();
+        while let Some(ev) = run.events.recv().await {
+            events.push(ev);
+        }
+        events
+    }
+
+    fn final_text(events: &[AgentEvent]) -> &str {
+        let dones: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::Done { final_text, .. } => Some(final_text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dones.len(), 1, "exactly one Done: {events:?}");
+        assert!(
+            matches!(events.last(), Some(AgentEvent::Done { .. })),
+            "Done is last: {events:?}"
+        );
+        dones[0]
+    }
+
+    const SKILL_PROMPT: &str = "Review this pull request with the `x` skill. Start with the \
+        review-tools `get_pr_context` tool. Report every issue you find with `add_finding`.";
+
+    // ── pure parsing ────────────────────────────────────────────────────────
+
+    #[test]
+    fn parses_files_and_hunks_from_a_real_prompt() {
+        let rev = sample_rev();
+        let chunks = build_prompts(&pr(), &rev, &prepass::run(&rev), &PromptBudget::default());
+        assert_eq!(chunks.len(), 1);
+        let files = parse_files_and_hunks(&chunks[0].prompt.user);
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "src/lib.rs",
+                "src/imports.rs",
+                "web/app.ts",
+                "crates/core/mod.rs",
+                "Cargo.toml",
+                "README.md",
+                "docs/guide.md"
+            ]
+        );
+        assert!(files.iter().all(|f| f.status == "Modified"));
+        let skim: Vec<&str> = files
+            .iter()
+            .flat_map(|f| &f.hunks)
+            .filter(|h| h.skim)
+            .map(|h| h.id.as_str())
+            .collect();
+        assert_eq!(skim, ["h-src-imp"]);
+    }
+
+    #[test]
+    fn initial_grouping_is_a_valid_partition() {
+        let rev = sample_rev();
+        let chunks = build_prompts(&pr(), &rev, &prepass::run(&rev), &PromptBudget::default());
+        let prompt = &chunks[0].prompt;
+        let groups = parse_groups(&synth_grouping(&prompt.system, &prompt.user));
+        assert_eq!(
+            ids(&groups),
+            [
+                "dir-src",
+                "dir-web",
+                "dir-crates",
+                "root",
+                "docs",
+                "dir-src-skim"
+            ]
+        );
+        let skim = groups
+            .iter()
+            .find(|g| g.id.as_str() == "dir-src-skim")
+            .unwrap();
+        assert_eq!(skim.kind, GroupKind::Skim);
+        assert_eq!(skim.title, "Mechanical edits in src/");
+        let docs = groups.iter().find(|g| g.id.as_str() == "docs").unwrap();
+        assert_eq!(
+            docs.hunks,
+            [HunkId::new("h-docs-1"), HunkId::new("h-docs-2")]
+        );
+        assert!(
+            groups
+                .iter()
+                .all(|g| g.risk.is_none() && g.check.len() == 1)
+        );
+        let grouping = Grouping {
+            rev: rev.head.clone(),
+            groups,
+        };
+        assert_eq!(grouping::validate(&rev, &grouping), Ok(()));
+    }
+
+    #[test]
+    fn chunked_grouping_ids_stay_unique_across_chunks() {
+        let rev = sample_rev();
+        let tiny = PromptBudget {
+            max_chars: 10,
+            ..PromptBudget::default()
+        };
+        let chunks = build_prompts(&pr(), &rev, &prepass::run(&rev), &tiny);
+        assert!(chunks.len() > 1);
+        let groups: Vec<Group> = chunks
+            .iter()
+            .flat_map(|c| parse_groups(&synth_grouping(&c.prompt.system, &c.prompt.user)))
+            .collect();
+        let grouping = Grouping {
+            rev: rev.head.clone(),
+            groups,
+        };
+        assert_eq!(grouping::validate(&rev, &grouping), Ok(()));
+    }
+
+    #[test]
+    fn merge_answer_lists_every_group_in_order() {
+        let rev = sample_rev();
+        let chunks = build_prompts(&pr(), &rev, &prepass::run(&rev), &PromptBudget::default());
+        let groups = parse_groups(&synth_grouping(
+            &chunks[0].prompt.system,
+            &chunks[0].prompt.user,
+        ));
+        let prompt = merge_prompt(&pr(), &groups);
+        let v: Value = serde_json::from_str(&synth_merge(&prompt.user)).unwrap();
+        let order: Vec<&str> = v["order"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap())
+            .collect();
+        assert_eq!(order, ids(&groups));
+    }
+
+    #[test]
+    fn repair_answer_puts_every_known_id_in_one_group() {
+        let known = [HunkId::new("a1"), HunkId::new("b2"), HunkId::new("c3")];
+        let prompt = repair_prompt(
+            &known,
+            "{\"groups\": []}",
+            &["hunk a1 is in no group".into()],
+        );
+        let groups = parse_groups(&synth_repair(&prompt.user));
+        assert_eq!(ids(&groups), ["all-changes"]);
+        assert_eq!(groups[0].hunks, known);
+    }
+
+    #[test]
+    fn regroup_without_existing_groups_declares_pushed() {
+        let prompt = "# PR\nTitle: t\n\n# Existing groups\n\n# New / changed hunks to place\n\n\
+                      ## hunk n1 — src/a.rs (fn a(x: u32))\n+x\n\n## hunk n2 — b.md ()\n+y\n";
+        let v: Value = serde_json::from_str(&synth_regroup(prompt)).unwrap();
+        assert_eq!(v["new_groups"][0]["id"], "pushed");
+        assert_eq!(
+            v["assignments"],
+            json!([{"hunk": "n1", "group": "pushed"}, {"hunk": "n2", "group": "pushed"}])
+        );
+    }
+
+    #[test]
+    fn regroup_prefers_the_matching_directory_group() {
+        let prompt = "# PR\nTitle: t\n\n# Existing groups\n- other — \"Other\" (Normal, 1 hunks)\n\
+                      - dir-src — \"Changes in src/\" (Normal, 2 hunks)\n\
+                      - docs — \"Docs\" (Normal, 1 hunks)\n\n# New / changed hunks to place\n\n\
+                      ## hunk n1 — src/a.rs (fn a)\n+x\n\n## hunk n2 — web/b.ts ()\n+y\n\n\
+                      ## hunk n3 — README.md ()\n+z\n";
+        let v: Value = serde_json::from_str(&synth_regroup(prompt)).unwrap();
+        assert_eq!(v["new_groups"], json!([]));
+        assert_eq!(
+            v["assignments"],
+            json!([
+                {"hunk": "n1", "group": "dir-src"},
+                {"hunk": "n2", "group": "other"},
+                {"hunk": "n3", "group": "docs"},
+            ])
+        );
+    }
+
+    #[test]
+    fn first_added_line_uses_new_side_numbers() {
+        let hunks = vec![
+            hunk(
+                "x",
+                "src/a.rs",
+                10,
+                vec![
+                    line(LineKind::Ctx, "a"),
+                    line(LineKind::Del, "b"),
+                    line(LineKind::Ctx, "c"),
+                    line(LineKind::Add, "d"),
+                ],
+            ),
+            hunk("y", "src/b.rs", 1, vec![line(LineKind::Add, "e")]),
+        ];
+        let diff = theodore_mcp::tools::render_unified_diff(&hunks);
+        assert_eq!(first_added_line(&diff), Some(("src/a.rs".into(), 12)));
+        let only_dels = theodore_mcp::tools::render_unified_diff(&[hunk(
+            "z",
+            "src/c.rs",
+            3,
+            vec![line(LineKind::Del, "gone")],
+        )]);
+        assert_eq!(first_added_line(&only_dels), None);
+    }
+
+    #[test]
+    fn path_candidates_strip_line_suffixes_and_reject_escapes() {
+        let got = path_candidates(
+            "Fix `src/lib.rs:42` and (web/app.ts), not /etc/passwd or ../x.rs or https://a.b/c.",
+        );
+        assert_eq!(got, ["src/lib.rs", "web/app.ts"]);
+    }
+
+    #[test]
+    fn chat_answer_echoes_the_last_line() {
+        assert_eq!(
+            synth_chat("context\n\n  what does this do?  \n\n"),
+            "Synthetic answer: what does this do?"
+        );
+        let long = "x".repeat(200);
+        assert_eq!(synth_chat(&long).len(), "Synthetic answer: ".len() + 80);
+    }
+
+    // ── the port ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn detect_reports_every_agent_as_synthetic() {
+        let infos = SynthAgents::new().detect().await;
+        assert_eq!(infos.len(), AgentId::ALL.len());
+        assert!(
+            infos
+                .iter()
+                .all(|i| i.installed && i.version.as_deref() == Some("synthetic"))
+        );
+    }
+
+    #[tokio::test]
+    async fn group_revision_is_valid_first_try() {
+        let rev = sample_rev();
+        let cwd = tempfile::tempdir().unwrap();
+        let report = group_revision(
+            &SynthAgents::new(),
+            &pr(),
+            &rev,
+            cwd.path(),
+            &GroupingOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert!(report.valid_first_try, "{report:?}");
+        assert_eq!(report.attempts, 1);
+        assert_eq!(report.usage.input_tokens, 500);
+    }
+
+    #[tokio::test]
+    async fn chunked_group_revision_with_merge_pass_is_valid_first_try() {
+        let rev = sample_rev();
+        let cwd = tempfile::tempdir().unwrap();
+        let opts = GroupingOptions {
+            budget: PromptBudget {
+                max_chars: 10,
+                ..PromptBudget::default()
+            },
+            ..GroupingOptions::default()
+        };
+        let report = group_revision(&SynthAgents::new(), &pr(), &rev, cwd.path(), &opts)
+            .await
+            .unwrap();
+        assert!(report.valid_first_try, "{report:?}");
+        assert!(
+            report.attempts > 2,
+            "chunks + merge pass: {}",
+            report.attempts
+        );
+    }
+
+    #[tokio::test]
+    async fn regroup_after_push_is_valid_first_try() {
+        let agents = SynthAgents::new();
+        let cwd = tempfile::tempdir().unwrap();
+        let opts = GroupingOptions::default();
+        let old = sample_rev();
+        let previous = group_revision(&agents, &pr(), &old, cwd.path(), &opts)
+            .await
+            .unwrap()
+            .grouping;
+
+        let mut new = old.clone();
+        new.head = Sha::new("head2");
+        new.files[0]
+            .hunks
+            .push(code_hunk("h-src-new", "src/lib.rs", 500));
+        new.files.push(file(
+            "tests/it.rs",
+            vec![code_hunk("h-tests-new", "tests/it.rs", 1)],
+        ));
+        let changes = theodore_domain::interdiff::classify(&old, &new);
+
+        let report = regroup(&agents, &pr(), &previous, &new, &changes, cwd.path(), &opts)
+            .await
+            .unwrap();
+        assert!(report.valid_first_try, "{report:?}");
+        let owner = |hunk: &str| {
+            report
+                .grouping
+                .groups
+                .iter()
+                .find(|g| g.hunks.contains(&HunkId::new(hunk)))
+                .map(|g| g.id.clone())
+        };
+        let previous_ids: BTreeSet<&GroupId> = previous.groups.iter().map(|g| &g.id).collect();
+        let src_owner = owner("h-src-new").unwrap();
+        assert!(previous_ids.contains(&src_owner));
+        if previous_ids.contains(&GroupId::new("dir-src")) {
+            assert_eq!(src_owner, GroupId::new("dir-src"));
+        }
+        assert_eq!(owner("h-tests-new"), Some(previous.groups[0].id.clone()));
+    }
+
+    #[tokio::test]
+    async fn fix_appends_a_comment_to_the_mentioned_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("a.txt"), "first\n").unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), "fn main() {}").unwrap();
+        let prompt = "Fix this review task in the pull request.\n\nTitle: Handle the empty case\n\n\
+                      The loop in `src/lib.rs:1` panics on empty input.\n\n\
+                      Make the necessary code changes directly in this worktree. Do not commit or push.";
+        let run = SynthAgents::new()
+            .run(request(prompt, AgentMode::Edit, dir.path(), None))
+            .await
+            .unwrap();
+        let events = drain(run).await;
+        let text = final_text(&events);
+        assert!(text.contains("src/lib.rs"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(),
+            "fn main() {}\n// sandbox fix: Handle the empty case\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "first\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn fix_without_a_path_edits_the_first_text_file_outside_dot_git() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".git/config"), "[core]\n").unwrap();
+        std::fs::write(dir.path().join("a.bin"), [0u8, 1, 2]).unwrap();
+        std::fs::write(dir.path().join("b.py"), "print(1)\n").unwrap();
+        let prompt = "Fix this review task in the pull request.\n\nTitle: Tidy up\n\nMake it nicer";
+        let run = SynthAgents::new()
+            .run(request(prompt, AgentMode::Edit, dir.path(), None))
+            .await
+            .unwrap();
+        final_text(&drain(run).await);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("b.py")).unwrap(),
+            "print(1)\n# sandbox fix: Tidy up\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".git/config")).unwrap(),
+            "[core]\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_run_streams_text_then_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = SynthAgents::new()
+            .run(request(
+                "Why is this here?",
+                AgentMode::ReadOnly,
+                dir.path(),
+                None,
+            ))
+            .await
+            .unwrap();
+        let events = drain(run).await;
+        assert!(matches!(events[0], AgentEvent::Text { .. }));
+        assert_eq!(final_text(&events), "Synthetic answer: Why is this here?");
+        assert_eq!(events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn cancel_during_delay_ends_in_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut run = SynthAgents::new()
+            .with_delay_ms(60_000)
+            .run(request("hello", AgentMode::ReadOnly, dir.path(), None))
+            .await
+            .unwrap();
+        assert!(matches!(
+            run.events.recv().await,
+            Some(AgentEvent::Text { .. })
+        ));
+        run.cancel.cancel();
+        let rest = drain(run).await;
+        assert!(
+            matches!(rest.as_slice(), [AgentEvent::Error { message, .. }] if message == "cancelled"),
+            "{rest:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_run_without_mcp_still_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = SynthAgents::new()
+            .run(request(SKILL_PROMPT, AgentMode::ReadOnly, dir.path(), None))
+            .await
+            .unwrap();
+        let events = drain(run).await;
+        assert!(final_text(&events).contains("no review-tools MCP endpoint"));
+    }
+
+    #[derive(Default)]
+    struct FakeBackend {
+        findings: tokio::sync::Mutex<Vec<NewFinding>>,
+    }
+
+    #[async_trait]
+    impl ReviewToolsBackend for FakeBackend {
+        async fn get_pr_context(&self, _run: &RunContext) -> Result<PrContext, BackendError> {
+            Ok(PrContext {
+                title: "t".into(),
+                body: String::new(),
+                commits: vec![],
+                files: vec![FileSummary {
+                    path: "src/lib.rs".into(),
+                    status: FileStatus::Modified,
+                    additions: 1,
+                    deletions: 0,
+                }],
+                groups: vec![GroupSummary {
+                    id: "g1".into(),
+                    title: "G".into(),
+                    why: "w".into(),
+                    hunk_count: 1,
+                }],
+            })
+        }
+
+        async fn get_group(
+            &self,
+            _run: &RunContext,
+            _group_id: &str,
+        ) -> Result<GroupWithHunks, BackendError> {
+            let h = hunk(
+                "h1",
+                "src/lib.rs",
+                7,
+                vec![
+                    line(LineKind::Ctx, "fn run() {"),
+                    line(LineKind::Add, "retry();"),
+                ],
+            );
+            Ok(GroupWithHunks {
+                group: Group {
+                    id: GroupId::new("g1"),
+                    title: "G".into(),
+                    why: "w".into(),
+                    kind: GroupKind::Normal,
+                    risk: None,
+                    check: vec![],
+                    hunks: vec![h.id.clone()],
+                    outliers: vec![],
+                },
+                hunks: vec![h],
+            })
+        }
+
+        async fn get_base_file(
+            &self,
+            _run: &RunContext,
+            _path: &str,
+        ) -> Result<Option<String>, BackendError> {
+            Ok(None)
+        }
+
+        async fn add_finding(
+            &self,
+            _run: &RunContext,
+            finding: NewFinding,
+        ) -> Result<FindingId, BackendError> {
+            self.findings.lock().await.push(finding);
+            Ok(FindingId::new("finding-1"))
+        }
+
+        async fn propose_patch(
+            &self,
+            _run: &RunContext,
+            _patch: NewPatch,
+        ) -> Result<(), BackendError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skill_run_reports_one_finding_over_mcp() {
+        let backend = Arc::new(FakeBackend::default());
+        let handle = McpServer::start(backend.clone()).await.unwrap();
+        let endpoint = handle.register_run(RunContext {
+            run_id: RunId::new("run-1"),
+            pr: PrId::new("github:acme/widgets#42"),
+            agent: AgentId::Claude,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let run = SynthAgents::new()
+            .run(request(
+                SKILL_PROMPT,
+                AgentMode::ReadOnly,
+                dir.path(),
+                Some(endpoint),
+            ))
+            .await
+            .unwrap();
+        let events = drain(run).await;
+        assert_eq!(final_text(&events), "reported 1 finding");
+        let calls: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolCall { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls, ["get_pr_context", "get_group", "add_finding"]);
+        assert!(
+            events
+                .iter()
+                .filter(|e| matches!(e, AgentEvent::ToolResult { .. }))
+                .all(|e| matches!(e, AgentEvent::ToolResult { ok: true, .. })),
+            "{events:?}"
+        );
+        {
+            let findings = backend.findings.lock().await;
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].file, "src/lib.rs");
+            assert_eq!(findings[0].line, 8);
+            assert_eq!(findings[0].title, "Synthetic finding");
+            assert_eq!(
+                findings[0].body,
+                "Deterministic sandbox finding on src/lib.rs:8."
+            );
+        }
+        handle.shutdown().await;
+    }
+}
