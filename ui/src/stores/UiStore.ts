@@ -64,6 +64,9 @@ function loadTabs(): { tabs: Route[]; route: Route } {
   return { tabs: [{ name: 'inbox' }], route: { name: 'inbox' } };
 }
 
+/** Length of the tab collapse animation (`.tab-closing` in styles.css). */
+export const TAB_CLOSE_MS = 180;
+
 export class UiStore {
   onboarded = localStorage.getItem(LS_ONBOARDED) === '1';
   route: Route = loadTabs().route;
@@ -81,6 +84,8 @@ export class UiStore {
   modalTargets: string[] = [];
   /** The one custom context menu, open at a pointer point — see `ContextMenu.tsx`. */
   contextMenu: ContextMenuState | null = null;
+  /** Tabs mid close animation (`JSON.stringify(route)`); removed after it. */
+  closingTabs: string[] = [];
 
   constructor() {
     makeObservable(this, {
@@ -97,6 +102,7 @@ export class UiStore {
       modal: observableRef,
       modalTargets: observableShallow,
       contextMenu: observableRef,
+      closingTabs: observableShallow,
     });
     reaction(
       () => ({ tabs: this.tabs, route: this.route }),
@@ -156,6 +162,26 @@ export class UiStore {
 
   goBack(): void {
     this.go(this.back);
+  }
+
+  /** Closes a tab after it collapses (see `TabBar`); instantly when the
+   *  user prefers reduced motion or it is the last tab. */
+  requestCloseTab(route: Route): void {
+    const k = JSON.stringify(route);
+    if (this.closingTabs.includes(k)) return;
+    const reduced =
+      typeof matchMedia !== 'undefined' &&
+      matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || this.tabs.length <= 1) return this.closeTab(route);
+    runInAction(() => {
+      this.closingTabs = [...this.closingTabs, k];
+    });
+    setTimeout(() => {
+      runInAction(() => {
+        this.closingTabs = this.closingTabs.filter((x) => x !== k);
+      });
+      this.closeTab(route);
+    }, TAB_CLOSE_MS);
   }
 
   closeTab(route: Route): void {

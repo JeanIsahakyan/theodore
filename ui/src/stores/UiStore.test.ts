@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { UiStore } from './UiStore';
+import { describe, expect, it, vi } from 'vitest';
+import { TAB_CLOSE_MS, UiStore } from './UiStore';
 
 describe('UiStore tabs', () => {
   it('opens every new tab at the end', () => {
@@ -17,6 +17,25 @@ describe('UiStore tabs', () => {
       'github:o/r#3',
       'new',
     ]);
+  });
+
+  it('keeps a closing tab until its collapse animation ends', () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.clear();
+      const ui = new UiStore();
+      const pr = { name: 'review', pr: 'github:o/r#1' } as const;
+      ui.go(pr);
+      ui.requestCloseTab(pr);
+      expect(ui.closingTabs).toEqual([JSON.stringify(pr)]);
+      expect(ui.tabs).toHaveLength(2);
+      vi.advanceTimersByTime(TAB_CLOSE_MS);
+      expect(ui.closingTabs).toEqual([]);
+      expect(ui.tabs).toEqual([{ name: 'inbox' }]);
+      expect(ui.route).toEqual({ name: 'inbox' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('navigates to the standalone skills route like any other view', () => {

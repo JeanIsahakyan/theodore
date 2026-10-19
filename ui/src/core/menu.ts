@@ -30,7 +30,7 @@ export function runMenu(store: RootStore, id: string): void {
     case 'add-project':
       return ui.openModal('add-project');
     case 'close-tab':
-      return ui.closeTab(ui.route);
+      return ui.requestCloseTab(ui.route);
     case 'toggle-sidebar':
       return ui.toggleSidebar();
     case 'toggle-aside':

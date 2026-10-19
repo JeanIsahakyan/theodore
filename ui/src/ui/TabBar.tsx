@@ -12,7 +12,7 @@ import {
 } from '@gravity-ui/icons';
 import { Button, Tabs, Toolbar, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
@@ -117,7 +117,7 @@ export const TabBar = observer(function TabBar({
                 t={t}
                 i={i}
                 closable={closable}
-                onClose={() => ui.closeTab(t)}
+                onClose={() => ui.requestCloseTab(t)}
               />
             ))}
           </Tabs.List>
@@ -154,6 +154,18 @@ const TabItem = observer(function TabItem({
   onClose: () => void;
 }) {
   const l = useLabel(t);
+  const ui = useUi();
+  const closing = ui.closingTabs.includes(key(t));
+  const anchor = useRef<HTMLSpanElement>(null);
+  // Collapse from the tab's real width to 0: a CSS transition can't start
+  // from `width: auto`, so pin the measured width first, then animate.
+  useLayoutEffect(() => {
+    const el = anchor.current?.closest<HTMLElement>('[role="tab"]');
+    if (!closing || !el) return;
+    el.style.width = `${el.offsetWidth}px`;
+    void el.offsetWidth;
+    el.classList.add('tab-closing');
+  }, [closing]);
   return (
     <Tabs.Tab
       id={key(t)}
@@ -161,7 +173,10 @@ const TabItem = observer(function TabItem({
       className="tab group w-auto min-w-28 max-w-64 shrink justify-start gap-2 px-3 text-sm"
     >
       {i > 0 && <Tabs.Separator />}
-      <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+      <span
+        ref={anchor}
+        className="grid size-4 shrink-0 place-items-center [&>svg]:size-4"
+      >
         {l.icon}
       </span>
       <span

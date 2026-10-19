@@ -244,6 +244,21 @@ body.cmd .lines .src span:hover {
   color: var(--foreground);
 }
 
+/* Closing tab: collapses to nothing before it leaves (UiStore.requestCloseTab,
+ * TAB_CLOSE_MS). Its measured width is pinned inline first, hence !important. */
+.tabs__tab.tab-closing {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding-inline: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    width 180ms var(--ease-out, ease-out),
+    padding 180ms var(--ease-out, ease-out),
+    opacity 120ms ease-out;
+}
+
 /* Markdown (PR descriptions, comments) */
 .md > :first-child {
   margin-top: 0;

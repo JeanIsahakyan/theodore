@@ -481,7 +481,7 @@ export function useGlobalKeys() {
         if (e.shiftKey) void store.sync.undo.redo();
         else void store.sync.undo.undo();
       } else if (e.altKey && e.code === 'KeyW' && !ui.modal) {
-        ui.closeTab(ui.route);
+        ui.requestCloseTab(ui.route);
       } else if (e.altKey && /^Digit[1-9]$/.test(e.code) && !ui.modal) {
         ui.switchTab(Number(e.code.slice(5)) - 1);
       } else if (
