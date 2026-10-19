@@ -27,6 +27,7 @@ import {
 import { observer } from 'mobx-react-lite';
 import { Code, langOf, rich } from '../highlight';
 import { api } from '../core/api';
+import { countRender } from '../core/perf';
 import type {
   Anchor,
   DiffLine,
@@ -467,10 +468,7 @@ const GroupCard = observer(function GroupCard({
   // Same sequence `GroupsPane` numbers groups in — includes hidden groups
   // so a badge doesn't shift when one gets "shown anyway".
   const n = store.models.groupsOf(pr).findIndex((x) => x.id === g.id) + 1;
-  const read = store.models.hunkReads
-    .where((r) => r.pr === pr)
-    .map((r) => r.hunk);
-  const allRead = g.hunks.every((h) => read.includes(h));
+  const allRead = g.hunks.every((h) => store.models.hunkReads.isRead(pr, h));
   return (
     <Card className="gcard mb-5 gap-4 p-5">
       <div className="flex items-center gap-3">
@@ -824,11 +822,10 @@ function FileBlockInner({
   setFocusHunk: (h: HunkId | null) => void;
   expandHunk?: { hunk: HunkId; nonce: number } | null;
 } & Omit<LineProps, 'path'>) {
+  countRender('FileBlock');
   const store = useRootStore();
   const lang = langOf(file.path);
-  const viewed = store.models.fileViews
-    .where((v) => v.pr === pr && v.path === file.path)
-    .at(-1);
+  const viewed = store.models.fileViews.of(pr, file.path);
   const isViewed = viewed?.state === 'viewed';
   const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const fileSince = sinceCountsFor(file.hunks, since);
@@ -1141,10 +1138,9 @@ function HunkViewInner({
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
 } & LineProps) {
+  countRender('Hunk');
   const store = useRootStore();
-  const read =
-    store.models.hunkReads.where((r) => r.pr === pr && r.hunk === h.id).length >
-    0;
+  const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
@@ -1266,9 +1262,7 @@ function SplitHunkViewInner({
   setFocusHunk: (h: HunkId | null) => void;
 } & LineProps) {
   const store = useRootStore();
-  const read =
-    store.models.hunkReads.where((r) => r.pr === pr && r.hunk === h.id).length >
-    0;
+  const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const rows = useMemo(() => splitRows(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
@@ -1374,29 +1368,18 @@ const Line = observer(function Line({
   lang: ReturnType<typeof langOf>;
   marks?: [number, number][];
 } & LineProps) {
+  countRender('Line');
   const store = useRootStore();
   const ui = useUi();
   const anchor = lineAnchor(rev, path, l);
-  const prThreads = store.models.prDetails.get(pr)?.threads ?? [];
   const threads = anchor
-    ? prThreads.filter(
-        (t) =>
-          !!t.anchor && sameAnchor(t.anchor, path, anchor.side, anchor.line),
-      )
+    ? store.models.threadIdsAt(pr, path, anchor.side, anchor.line)
     : [];
   const drafts = anchor
-    ? store.models.drafts.where(
-        (d) =>
-          d.pr === pr && sameAnchor(d.anchor, path, anchor.side, anchor.line),
-      )
+    ? store.models.drafts.at(pr, path, anchor.side, anchor.line)
     : [];
   const findings = anchor
-    ? store.models.findings.where(
-        (f) =>
-          f.pr === pr &&
-          f.state !== 'ignored' &&
-          sameAnchor(f.anchor, path, anchor.side, anchor.line),
-      )
+    ? store.models.findings.shownAt(pr, path, anchor.side, anchor.line)
     : [];
   const composing =
     anchor &&
@@ -1552,8 +1535,8 @@ const Line = observer(function Line({
           {peekHere && peek && (
             <SymbolPeek target={peek} onClose={() => setPeek(null)} />
           )}
-          {threads.map((t) => (
-            <ThreadView key={t.id} pr={pr} id={t.id} />
+          {threads.map((id) => (
+            <ThreadView key={id} pr={pr} id={id} />
           ))}
           {drafts.map((d) => (
             <DraftView key={d.id} d={d} />

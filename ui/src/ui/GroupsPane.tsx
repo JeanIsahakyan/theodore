@@ -105,9 +105,9 @@ export const GroupsPane = observer(function GroupsPane({
   const local = summary?.pr.repo.host === 'local';
   const groups = groupsForRevision(store, pr, rev);
   const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
-  const hunkReads = store.models.hunkReads.where((r) => r.pr === pr);
+  const hunkReads = store.models.hunkReads.byPr(pr);
   const readSet = new Set(hunkReads.map((r) => r.hunk));
-  const fileViews = store.models.fileViews.where((v) => v.pr === pr);
+  const fileViews = store.models.fileViews.byPr(pr);
   const viewedCount = fileViews.filter((v) => v.state === 'viewed').length;
 
   const hunkFile = new Map<HunkId, string>();
@@ -446,9 +446,7 @@ const Viewed = observer(function Viewed({
   local: boolean;
 }) {
   const store = useRootStore();
-  const v = store.models.fileViews
-    .where((x) => x.pr === pr && x.path === path)
-    .at(-1);
+  const v = store.models.fileViews.of(pr, path);
   const viewed = v?.state === 'viewed';
   return (
     <span className="viewed inline-flex items-center gap-0.5">
@@ -542,7 +540,7 @@ const FileTree = observer(function FileTree({
   onSelect: (path: string) => void;
 }) {
   const store = useRootStore();
-  const fileViews = store.models.fileViews.where((v) => v.pr === pr);
+  const fileViews = store.models.fileViews.byPr(pr);
   const files = rev.files;
   const tree = buildTree(files);
   const [closed, setClosed] = useState<Record<string, boolean>>(() =>

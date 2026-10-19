@@ -150,7 +150,7 @@ function useElementWidth(ref: { current: HTMLElement | null }): number {
 }
 
 function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
-  const reads = store.models.hunkReads.where((r) => r.pr === pr);
+  const reads = store.models.hunkReads.byPr(pr);
   const groups = store.models.groupsOf(pr).filter((g) => g.kind !== 'hidden');
   const hunks = groups.flatMap((g) => g.hunks);
   if (!hunks.length) return 0;
@@ -283,7 +283,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
 
   const startTour = () => {
     const reads = new Set(
-      store.models.hunkReads.where((r) => r.pr === pr).map((r) => r.hunk),
+      store.models.hunkReads.byPr(pr).map((r) => r.hunk),
     );
     const allRead = tourGroups.map((g) => g.hunks.every((h) => reads.has(h)));
     setTour(tourStartIndex(allRead));
@@ -396,9 +396,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             f.hunks.some((h) => h.id === focusHunk),
           );
           if (!file) return false;
-          const viewed = store.models.fileViews
-            .where((v) => v.pr === pr && v.path === file.path)
-            .at(-1);
+          const viewed = store.models.fileViews.of(pr, file.path);
           void setFileViewed(store, pr, file.path, viewed?.state !== 'viewed');
           return;
         }

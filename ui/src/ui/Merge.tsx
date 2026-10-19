@@ -69,7 +69,7 @@ function gatesFor(
 ): Gate[] {
   const summary = store.models.prSummaries.get(pr);
   const detail = store.models.prDetails.get(pr);
-  const tasks = store.models.tasks.where((t) => t.pr === pr);
+  const tasks = store.models.tasks.byPr(pr);
   const toVerify = tasks.filter((t) => t.status === 'review').length;
   const checks = detail?.checks ?? [];
   const failing = checks.filter((c) => c.status === 'fail').length;
