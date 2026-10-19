@@ -466,7 +466,9 @@ const AgentsPage = observer(function AgentsPage() {
                   <Switch
                     size="sm"
                     aria-label={`${a.id} enabled`}
-                    isSelected={enabled}
+                    // A missing CLI can't run, whatever its setting says.
+                    isSelected={a.installed && enabled}
+                    isDisabled={!a.installed}
                     onChange={(v) =>
                       setSetting(store, 'user', `agents.${a.id}.enabled`, v)
                     }
@@ -591,16 +593,16 @@ const BudgetRow = observer(function BudgetRow() {
         value={text}
         onChange={setText}
         aria-label="Budget per PR (USD)"
-        className="w-28"
+        className="w-32 shrink-0"
       >
-        <InputGroup className="rounded-xl">
+        <InputGroup className="w-full rounded-xl">
           <InputGroup.Prefix className="text-xs text-muted">
             $
           </InputGroup.Prefix>
           <InputGroup.Input
             placeholder="No limit"
             inputMode="decimal"
-            className="text-right text-sm"
+            className="w-full min-w-0 text-right text-sm"
             onBlur={commit}
             onKeyDown={(e) => e.key === 'Enter' && commit()}
           />
