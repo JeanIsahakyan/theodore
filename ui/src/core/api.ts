@@ -5,15 +5,18 @@ import type {
   AgentStatus,
   AppInfo,
   AskRequest,
+  BlobResponse,
   Bootstrap,
   BootstrapScope,
   CommandError,
   CommitSuggestionsRequest,
+  ConflictFile,
   DelegateRequest,
   DeviceLogin,
   DraftStateRequest,
   EditCommentRequest,
   FileRequest,
+  GetBlobRequest,
   HostAuthStatus,
   InterdiffEntry,
   InterdiffRequest,
@@ -146,4 +149,28 @@ export const api = {
   loginPoll: () => call<LoginState>('login_poll'),
   rerunCheck: (req: RerunCheckRequest) => call<null>('rerun_check', { req }),
   triage: (req: TriageRequest) => call<null>('triage', { req }),
+  getBlob: (req: GetBlobRequest) => call<BlobResponse>('get_blob', { req }),
+  /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
+   *  the Merge dialog hides the list instead of toasting a routine
+   *  degrade; any other failure still toasts like every other command. */
+  conflicts: async (pr: PrId): Promise<ConflictFile[] | null> => {
+    try {
+      return await getTransport().invoke<ConflictFile[]>('conflicts', { pr });
+    } catch (e) {
+      if (
+        e &&
+        typeof e === 'object' &&
+        'code' in e &&
+        (e as CommandError).code === 'unsupported'
+      ) {
+        return null;
+      }
+      if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
+        const failure = new CommandFailure(e as CommandError);
+        onFailure?.(failure);
+        throw failure;
+      }
+      throw e;
+    }
+  },
 };

@@ -1,5 +1,7 @@
 import { MarkdownDiff } from './MarkdownDiff';
 import { isMarkdown } from './mdDiff';
+import { ImageDiffCard } from './media/ImageDiffCard';
+import { isImageDiffPath } from './media/imageDiff';
 import {
   createContext,
   memo,
@@ -1063,6 +1065,9 @@ function FileBlockInner({
   const flag = file.flags.find(
     (f) => f.kind === 'oversize' || f.kind === 'binary',
   );
+  if (isImageDiffPath(file.path) || flag?.kind === 'binary') {
+    return <ImageDiffCard pr={pr} base={base} rev={rev} file={file} />;
+  }
   if (flag) {
     return (
       <Card className="file mb-4 gap-0 overflow-hidden p-4 text-sm text-muted">
