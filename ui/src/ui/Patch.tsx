@@ -14,14 +14,19 @@ export function PatchView({
   const lang = langOf(patch.path);
   return (
     <Card variant="secondary" className="patch gap-0 overflow-hidden p-0">
-      <div className="flex items-center gap-2 border-b border-separator px-3 py-2 text-xs">
+      <div className="flex min-w-0 items-center gap-2 border-b border-separator px-3 py-2 text-xs">
         <AgentTag id={patch.by} />
-        <span className="truncate font-mono text-muted">{patch.path}</span>
-        <span className="flex-1" />
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-muted"
+          title={patch.path}
+        >
+          {patch.path}
+        </span>
         {status && (
           <Chip
             size="sm"
             variant="soft"
+            className="shrink-0"
             color={status === 'rejected' ? 'default' : 'success'}
           >
             {status}
