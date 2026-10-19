@@ -64,6 +64,13 @@ impl HostAdapter for Hosts {
     async fn search(&self, section: &InboxSection) -> HostResult<Vec<PrSummary>> {
         self.primary.search(section).await
     }
+    async fn search_repo(
+        &self,
+        repo: &RepoRef,
+        section: &InboxSection,
+    ) -> HostResult<Vec<PrSummary>> {
+        self.for_repo(repo)?.search(section).await
+    }
     async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
         self.primary.list_repos().await
     }
@@ -149,5 +156,137 @@ impl HostAdapter for Hosts {
     }
     async fn update_branch(&self, pr: &PrRef) -> HostResult<()> {
         self.for_pr(pr)?.update_branch(pr).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal `HostAdapter` that only tags which fake instance a
+    /// `search` landed on, for the `search_repo` routing test below.
+    struct TaggedHost(HostKind, std::sync::Mutex<Vec<String>>);
+
+    impl TaggedHost {
+        fn new(kind: HostKind) -> Self {
+            Self(kind, std::sync::Mutex::new(Vec::new()))
+        }
+    }
+
+    #[async_trait]
+    impl HostAdapter for TaggedHost {
+        fn kind(&self) -> HostKind {
+            self.0
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+        async fn changed_since(&self, _cursor: Option<&str>) -> HostResult<Changes> {
+            Err(HostError::Unsupported("changed_since"))
+        }
+        async fn search(&self, section: &InboxSection) -> HostResult<Vec<PrSummary>> {
+            if let InboxSection::Query(q) = section {
+                self.1.lock().unwrap().push(q.clone());
+            }
+            Ok(vec![])
+        }
+        async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+            Ok(vec![])
+        }
+        async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
+            Err(HostError::Unsupported("get_pr"))
+        }
+        async fn set_viewed(&self, _pr: &PrRef, _path: &str, _viewed: bool) -> HostResult<()> {
+            Err(HostError::Unsupported("set_viewed"))
+        }
+        async fn submit_review(
+            &self,
+            _pr: &PrRef,
+            _review: &ReviewSubmission,
+        ) -> HostResult<SubmittedReview> {
+            Err(HostError::Unsupported("submit_review"))
+        }
+        async fn find_marker(&self, _pr: &PrRef, _marker: &str) -> HostResult<Option<CommentId>> {
+            Err(HostError::Unsupported("find_marker"))
+        }
+        async fn reply(
+            &self,
+            _pr: &PrRef,
+            _thread: &ThreadId,
+            _body: &str,
+        ) -> HostResult<CommentId> {
+            Err(HostError::Unsupported("reply"))
+        }
+        async fn resolve(
+            &self,
+            _pr: &PrRef,
+            _thread: &ThreadId,
+            _resolved: bool,
+        ) -> HostResult<()> {
+            Err(HostError::Unsupported("resolve"))
+        }
+        async fn edit_comment(
+            &self,
+            _pr: &PrRef,
+            _comment: &CommentId,
+            _body: &str,
+        ) -> HostResult<()> {
+            Err(HostError::Unsupported("edit_comment"))
+        }
+        async fn delete_comment(&self, _pr: &PrRef, _comment: &CommentId) -> HostResult<()> {
+            Err(HostError::Unsupported("delete_comment"))
+        }
+    }
+
+    fn repo(host: HostKind, name: &str) -> RepoRef {
+        RepoRef {
+            host,
+            owner: "o".into(),
+            name: name.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn search_repo_routes_gitlab_repos_to_the_gitlab_adapter() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let gitlab = Arc::new(TaggedHost::new(HostKind::Gitlab));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), local);
+
+        hosts
+            .search_repo(
+                &repo(HostKind::Gitlab, "b"),
+                &InboxSection::Query("q".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gitlab.1.lock().unwrap().len(), 1);
+        assert_eq!(github.1.lock().unwrap().len(), 0);
+
+        hosts
+            .search_repo(
+                &repo(HostKind::Github, "a"),
+                &InboxSection::Query("q".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(github.1.lock().unwrap().len(), 1);
+        assert_eq!(gitlab.1.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn search_repo_without_a_gitlab_adapter_is_unsupported_for_a_gitlab_repo() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github, None, local);
+
+        let err = hosts
+            .search_repo(
+                &repo(HostKind::Gitlab, "b"),
+                &InboxSection::Query("q".into()),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, HostError::Unsupported(_)));
     }
 }
