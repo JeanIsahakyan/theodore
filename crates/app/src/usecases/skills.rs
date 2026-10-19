@@ -85,6 +85,26 @@ pub(crate) fn builtin_content(id: &str) -> Option<&'static str> {
     BUILTINS.iter().find(|b| b.id == id).map(|b| b.content)
 }
 
+/// A skill id is one path component: letters, digits, `-`, `_`, `.`, not
+/// starting with `.`. It is joined into filesystem paths, so anything else
+/// (`/`, `..`) would escape the skills directory.
+pub(crate) fn is_valid_skill_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 100
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn check_skill_id(id: &str) -> AppResult<()> {
+    if is_valid_skill_id(id) {
+        Ok(())
+    } else {
+        Err(AppError::Invalid(format!("invalid skill id {id:?}")))
+    }
+}
+
 /// Loads a skill's full `SKILL.md` text, for inlining into a non-Claude
 /// agent's prompt: built-ins first, then `claude_home`, then the PR
 /// worktree's own `.claude/skills`.
@@ -95,6 +115,9 @@ pub(crate) fn resolve_skill_content(
 ) -> Option<String> {
     if let Some(c) = builtin_content(id) {
         return Some(c.to_string());
+    }
+    if !is_valid_skill_id(id) {
+        return None;
     }
     if let Ok(s) = std::fs::read_to_string(claude_home.join(id).join("SKILL.md")) {
         return Some(s);
@@ -144,6 +167,7 @@ impl Core {
                 editable: false,
             });
         }
+        check_skill_id(id)?;
         let path = self.0.deps.claude_home.join(id).join("SKILL.md");
         if let Ok(content) = tokio::fs::read_to_string(&path).await {
             return Ok(SkillBody {
@@ -175,6 +199,7 @@ impl Core {
     /// never committed or pushed; the toast makes that explicit since
     /// `SkillInfo` has no field for it.
     pub async fn save_skill(&self, req: SaveSkillRequest) -> AppResult<SkillInfo> {
+        check_skill_id(&req.id)?;
         match req.scope.as_str() {
             "user" => {
                 let dir = self.0.deps.claude_home.join(&req.id);
@@ -217,6 +242,29 @@ impl Core {
                 Ok(skill_info(&req.id, &req.body, &source))
             }
             other => Err(AppError::Invalid(format!("unknown skill scope {other}"))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod skill_id_tests {
+    use super::is_valid_skill_id;
+
+    #[test]
+    fn rejects_path_escapes() {
+        for bad in [
+            "",
+            "..",
+            "../x",
+            "a/b",
+            "a\\b",
+            ".hidden",
+            "../../Library/LaunchAgents/x",
+        ] {
+            assert!(!is_valid_skill_id(bad), "{bad}");
+        }
+        for ok in ["bugs", "security-review", "my_skill.v2"] {
+            assert!(is_valid_skill_id(ok), "{ok}");
         }
     }
 }
