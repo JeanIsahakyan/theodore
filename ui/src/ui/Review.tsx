@@ -44,7 +44,12 @@ import { Md } from '../highlight';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, Hints, K } from './bits';
 import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
-import { DiffPane, lineAnchor, type ComposerState } from './DiffPane';
+import {
+  DiffPane,
+  pendingJump,
+  lineAnchor,
+  type ComposerState,
+} from './DiffPane';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
 import { LinearChips } from './linear/LinearChips';
@@ -289,6 +294,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       const file = revision?.data?.files.find((f) => f.path === path);
       const inGroup = g ? new Set(g.hunks) : null;
       const first = file?.hunks.find((h) => !inGroup || inGroup.has(h.id));
+      if (first) pendingJump.current = true;
       setMode({ mode: 'groups', group: groupId, file: path });
       if (first) {
         setJumpStart(true);

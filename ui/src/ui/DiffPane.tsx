@@ -149,6 +149,10 @@ const STEP = 20;
 const SPLIT_MIN_WIDTH = 760;
 
 /** The diff's scroll container — the root files measure their distance to. */
+/** Set by a file jump just before it changes the view, so the view change
+ *  doesn't reset the scroll the jump is about to set. */
+export const pendingJump = { current: false };
+
 const ScrollRoot = createContext<{ current: HTMLElement | null }>({
   current: null,
 });
@@ -469,6 +473,13 @@ export const DiffPane = observer(function DiffPane({
   // jump inside a group re-aims right after (Review's focus effect).
   const viewKey = mode.mode === 'files' ? `f:${mode.file}` : `g:${mode.group}`;
   useEffect(() => {
+    // A file jump lands in another group and scrolls itself (Review's focus
+    // effect, which runs after this one); resetting to the top here would
+    // undo it. `pendingJump` is set by that jump, read and cleared once.
+    if (pendingJump.current) {
+      pendingJump.current = false;
+      return;
+    }
     if (mainRef.current) mainRef.current.scrollTop = 0;
   }, [viewKey]);
   // A jump target past the loaded chunk must still render.
