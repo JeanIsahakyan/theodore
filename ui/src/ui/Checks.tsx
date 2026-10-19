@@ -1,6 +1,6 @@
 /** The Checks and Commits tabs of a PR — `PrDetail.checks` / `.commits`. */
 import { useEffect, useState } from 'react';
-import { PersonPlus } from '@gravity-ui/icons';
+import { ArrowRotateRight, PersonPlus } from '@gravity-ui/icons';
 import {
   Accordion,
   Button,
@@ -19,7 +19,7 @@ import type {
   PrId,
   Reviewer,
 } from '../gen/contract';
-import { ask, setReviewers } from '../actions';
+import { ask, rerunCheck, setReviewers } from '../actions';
 import { api } from '../core/api';
 import { useRootStore } from '../stores/context';
 import { ago } from './List';
@@ -64,6 +64,7 @@ export const Checks = observer(function Checks({
   checks: Check[];
 }) {
   const store = useRootStore();
+  const [rerunning, setRerunning] = useState<string | null>(null);
   const sorted = [...checks].sort((a, b) => ORDER[a.status] - ORDER[b.status]);
   const failed = sorted.filter((c) => c.status === 'fail').map((c) => c.id);
   return (
@@ -115,22 +116,38 @@ export const Checks = observer(function Checks({
                   <Accordion.Body className="flex flex-col gap-2">
                     <Toolbar aria-label={c.name} className="flex gap-1.5">
                       {c.status === 'fail' && (
-                        <Btn
-                          tone="tertiary"
-                          onPress={() =>
-                            void ask(store, {
-                              pr,
-                              question: `why did ${c.name} fail?`,
-                              about: null,
-                              group: null,
-                              agent: null,
-                            }).catch(() => {
-                              // toasted by api.ts
-                            })
-                          }
-                        >
-                          Why did it fail
-                        </Btn>
+                        <>
+                          <Btn
+                            tone="tertiary"
+                            icon={<ArrowRotateRight />}
+                            isPending={rerunning === c.id}
+                            onPress={() => {
+                              setRerunning(c.id);
+                              void rerunCheck(store, {
+                                pr,
+                                check: c.id,
+                              }).finally(() => setRerunning(null));
+                            }}
+                          >
+                            Re-run
+                          </Btn>
+                          <Btn
+                            tone="tertiary"
+                            onPress={() =>
+                              void ask(store, {
+                                pr,
+                                question: `why did ${c.name} fail?`,
+                                about: null,
+                                group: null,
+                                agent: null,
+                              }).catch(() => {
+                                // toasted by api.ts
+                              })
+                            }
+                          >
+                            Why did it fail
+                          </Btn>
+                        </>
                       )}
                     </Toolbar>
                   </Accordion.Body>
@@ -144,7 +161,11 @@ export const Checks = observer(function Checks({
   );
 });
 
+/** Commits newer than the viewer's last submitted review (`after_my_review`)
+ *  get a highlight and, above the first one, a one-time divider — "new since
+ *  you last looked" (plan "Commits tab"). */
 export function Commits({ commits }: { commits: Commit[] }) {
+  const firstNewSha = commits.find((c) => c.after_my_review)?.sha;
   return (
     <main className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5">
       <Table className="max-w-[900px]">
@@ -163,21 +184,47 @@ export function Commits({ commits }: { commits: Commit[] }) {
                 </span>
               )}
             >
-              {commits.map((c) => (
-                <Table.Row key={c.sha} id={c.sha}>
-                  <Table.Cell className="font-mono text-accent">
-                    {c.sha.slice(0, 7)}
-                  </Table.Cell>
-                  <Table.Cell>{c.title}</Table.Cell>
-                  <Table.Cell>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Avatar person={c.author} size={16} />
-                      {c.author.name ?? c.author.login}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell className="text-muted">{ago(c.at)}</Table.Cell>
-                </Table.Row>
-              ))}
+              {commits.flatMap((c) => {
+                const rows = [];
+                if (c.sha === firstNewSha) {
+                  rows.push(
+                    <Table.Row
+                      key={`${c.sha}-divider`}
+                      id={`${c.sha}-divider`}
+                      className="commit-divider"
+                    >
+                      <Table.Cell
+                        colSpan={4}
+                        className="bg-accent-soft py-1 text-center text-xs font-medium text-accent"
+                      >
+                        New since your last review
+                      </Table.Cell>
+                    </Table.Row>,
+                  );
+                }
+                rows.push(
+                  <Table.Row
+                    key={c.sha}
+                    id={c.sha}
+                    className={
+                      c.after_my_review ? 'bg-accent-soft/40' : undefined
+                    }
+                  >
+                    <Table.Cell className="font-mono text-accent">
+                      {c.sha.slice(0, 7)}
+                    </Table.Cell>
+                    <Table.Cell>{c.title}</Table.Cell>
+                    <Table.Cell>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Avatar person={c.author} size={16} />
+                        {c.author.name ?? c.author.login}
+                      </span>
+                    </Table.Cell>
+                    <Table.Cell className="text-muted">{ago(c.at)}</Table.Cell>
+                  </Table.Row>,
+                );
+                return rows;
+              })}
             </Table.Body>
           </Table.Content>
         </Table.ScrollContainer>

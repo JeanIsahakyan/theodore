@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PrState, Project, RepoRef } from '../gen/contract';
+import type { HostRepo, PrState, Project, RepoRef } from '../gen/contract';
 import type { InboxPr } from './List';
 import {
   boardColumns,
@@ -15,6 +15,13 @@ const repo = (over: Partial<RepoRef> = {}): RepoRef => ({
   owner: 'acme',
   name: 'web',
   ...over,
+});
+
+const hostRepo = (over: Partial<RepoRef> = {}): HostRepo => ({
+  repo: repo(over),
+  description: null,
+  private: false,
+  pushed_at: null,
 });
 
 const project = (over: Partial<Project> = {}): Project => ({
@@ -76,9 +83,9 @@ describe('projectLabel', () => {
 
 describe('filterHostRepos', () => {
   const repos = [
-    repo({ name: 'web' }),
-    repo({ name: 'api' }),
-    repo({ owner: 'other', name: 'tool' }),
+    hostRepo({ name: 'web' }),
+    hostRepo({ name: 'api' }),
+    hostRepo({ owner: 'other', name: 'tool' }),
   ];
 
   it('returns everything for an empty query', () => {
@@ -87,9 +94,11 @@ describe('filterHostRepos', () => {
   });
 
   it('matches on "owner/name", case-insensitively', () => {
-    expect(filterHostRepos(repos, 'ACME/W')).toEqual([repo({ name: 'web' })]);
+    expect(filterHostRepos(repos, 'ACME/W')).toEqual([
+      hostRepo({ name: 'web' }),
+    ]);
     expect(filterHostRepos(repos, 'other')).toEqual([
-      repo({ owner: 'other', name: 'tool' }),
+      hostRepo({ owner: 'other', name: 'tool' }),
     ]);
   });
 

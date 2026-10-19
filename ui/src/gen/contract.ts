@@ -98,6 +98,11 @@ export type Commit = {
 	title: string,
 	author: Person,
 	at: number,
+	/**
+	 *  Landed after the viewer's last submitted review on this PR (plan
+	 *  "Commits tab"): new work the viewer hasn't seen yet.
+	 */
+	after_my_review?: boolean,
 };
 
 export type CommitSuggestionsRequest = {
@@ -257,6 +262,17 @@ export type HostKind = "github" | "gitlab" | "bitbucket" |
 /**  A local branch reviewed without a host. */
 "local";
 
+/**
+ *  A repository as listed by a host, for the Add project picker. Not a
+ *  synced model — returned directly by the `list_host_repos` command.
+ */
+export type HostRepo = {
+	repo: RepoRef,
+	description: string | null,
+	private: boolean,
+	pushed_at: number | null,
+};
+
 /**  Unit of grouping. Belongs to exactly one group. */
 export type Hunk = {
 	id: HunkId,
@@ -412,6 +428,12 @@ export type PrSummary = {
 	required_approvals: number | null,
 	updated_at: number,
 	url: string,
+	review_decision?: ReviewDecision | null,
+	/**
+	 *  True when the host reports the PR as not cleanly mergeable (merge
+	 *  conflicts with the base branch).
+	 */
+	conflicts?: boolean,
 };
 
 /**
@@ -454,11 +476,23 @@ export type RepoRef = {
 	name: string,
 };
 
+export type RerunCheckRequest = {
+	pr: PrId,
+	/**  `Check::id`, as reported in `PrDetail::checks`. */
+	check: string,
+};
+
 export type ResolveRequest = {
 	pr: PrId,
 	thread: ThreadId,
 	resolved: boolean,
 };
+
+/**
+ *  Host-level rollup of the PR's reviews (GitHub's `reviewDecision`; GitLab
+ *  has no 1:1 equivalent — derived best-effort from approvals).
+ */
+export type ReviewDecision = "approved" | "changes_requested" | "review_required";
 
 export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
 
@@ -631,6 +665,19 @@ export type Transaction = {
 export type TransactionResult = { status: "ok"; last_sync_id: number } |
 /**  Rejected by domain validation; the UI rolls back. */
 { status: "rejected"; reason: string };
+
+export type TriageAction =
+/**  The viewer takes the review themselves. */
+{ action: "take" } |
+/**  The viewer declines; the inbox row is marked done. */
+{ action: "decline" } |
+/**  Hand the review to someone else (logins). */
+{ action: "reassign"; to: string[] };
+
+export type TriageRequest = {
+	pr: PrId,
+	action: TriageAction,
+};
 
 export type UpdateInfo = {
 	version: string,

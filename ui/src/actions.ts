@@ -17,12 +17,14 @@ import type {
   OpenBranchRequest,
   PrId,
   Project,
+  RerunCheckRequest,
   ReviewEvent,
   ReviewersRequest,
   SaveSkillRequest,
   SkillBody,
   SnoozeUntil,
   TaskStatus,
+  TriageAction,
 } from './gen/contract';
 import type { RootStore } from './stores/RootStore';
 
@@ -509,6 +511,32 @@ export async function setDraft(
 ): Promise<void> {
   try {
     await api.setDraft(req);
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+export async function rerunCheck(
+  store: RootStore,
+  req: RerunCheckRequest,
+): Promise<void> {
+  try {
+    await api.rerunCheck(req);
+    store.ephemeral.toast('Re-running check…', 'info');
+  } catch {
+    // toasted by api.ts
+  }
+}
+
+/** Take, decline, or reassign a review request straight from the inbox
+ *  (plan "Triage") — no need to open the PR first. */
+export async function triage(
+  _store: RootStore,
+  pr: PrId,
+  action: TriageAction,
+): Promise<void> {
+  try {
+    await api.triage({ pr, action });
   } catch {
     // toasted by api.ts
   }

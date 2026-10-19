@@ -14,6 +14,7 @@ import type {
   EditCommentRequest,
   FileRequest,
   HostAuthStatus,
+  HostRepo,
   LocalBranch,
   MergeInfo,
   MergeRequest,
@@ -26,7 +27,7 @@ import type {
   Project,
   ReactRequest,
   ReplyRequest,
-  RepoRef,
+  RerunCheckRequest,
   Revision,
   RevisionRequest,
   ResolveRequest,
@@ -41,6 +42,7 @@ import type {
   TaskDecision,
   Transaction,
   TransactionResult,
+  TriageRequest,
   UpdateInfo,
 } from '../gen/contract';
 
@@ -111,7 +113,7 @@ export const api = {
   delegateTask: (req: DelegateRequest) =>
     call<string>('delegate_task', { req }),
   decideTask: (req: TaskDecision) => call<null>('decide_task', { req }),
-  listHostRepos: () => call<RepoRef[]>('list_host_repos'),
+  listHostRepos: () => call<HostRepo[]>('list_host_repos'),
   addProject: (req: AddProjectRequest) => call<Project>('add_project', { req }),
   removeProject: (id: string) => call<null>('remove_project', { id }),
   refreshProject: (id: string) => call<null>('refresh_project', { id }),
@@ -134,4 +136,6 @@ export const api = {
   saveSkill: (req: SaveSkillRequest) => call<SkillInfo>('save_skill', { req }),
   prSpend: (pr: PrId) => call<PrSpend>('pr_spend', { pr }),
   pickFolder: () => call<string | null>('pick_folder'),
+  rerunCheck: (req: RerunCheckRequest) => call<null>('rerun_check', { req }),
+  triage: (req: TriageRequest) => call<null>('triage', { req }),
 };

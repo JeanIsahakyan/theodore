@@ -1,4 +1,4 @@
-import type { PrState, TaskStatus } from '../gen/contract';
+import type { PrState, ReviewDecision, TaskStatus } from '../gen/contract';
 
 const R = 5.5;
 const C = 2 * Math.PI * R;
@@ -109,6 +109,34 @@ export function PRIcon({
     case 'closed':
       return <Ring color="var(--muted)" cross title={t} />;
   }
+}
+
+export const reviewDecisionLabel: Record<ReviewDecision, string> = {
+  approved: 'Approved',
+  changes_requested: 'Changes requested',
+  review_required: 'Review required',
+};
+
+/** `PrSummary.review_decision` — approved / changes requested / review
+ *  required, the way the prototype's `PRIcon` folds review state into its
+ *  status ring. */
+export function ReviewDecisionIcon({ decision }: { decision: ReviewDecision }) {
+  const t = reviewDecisionLabel[decision];
+  switch (decision) {
+    case 'approved':
+      return <Ring color="var(--success)" check title={t} />;
+    case 'changes_requested':
+      return <Ring color="var(--danger)" cross title={t} />;
+    case 'review_required':
+      return <Ring color="var(--muted)" title={t} />;
+  }
+}
+
+/** `PrSummary.conflicts` — merge conflicts with the base branch. */
+export function ConflictsIcon() {
+  return (
+    <Ring color="var(--danger)" cross title="Conflicts with base branch" />
+  );
 }
 
 export const taskLabel: Record<TaskStatus, string> = {

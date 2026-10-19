@@ -18,6 +18,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Dropdown,
   Header,
   Label,
   ListBox,
@@ -33,13 +34,25 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { InboxReason, PrId, PrState, PrSummary } from '../gen/contract';
-import { markDone, refreshInbox, snoozePrs } from '../actions';
+import type {
+  InboxReason,
+  Person,
+  PrId,
+  PrState,
+  PrSummary,
+} from '../gen/contract';
+import { markDone, refreshInbox, snoozePrs, triage } from '../actions';
+import { api } from '../core/api';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { Peek } from './Peek';
-import { PRIcon, prStatusLabel } from './StatusIcon';
+import {
+  ConflictsIcon,
+  PRIcon,
+  ReviewDecisionIcon,
+  prStatusLabel,
+} from './StatusIcon';
 import { useViewKeys } from './keys';
 
 /** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
@@ -189,7 +202,11 @@ export function ViewHeader({
       aria-label={title}
       className="view-h flex h-14 w-full min-w-0 shrink-0 items-center gap-3 overflow-x-auto border-b border-separator px-6"
     >
-      <Typography.Heading level={6} className="min-w-0 shrink truncate" title={title}>
+      <Typography.Heading
+        level={6}
+        className="min-w-0 shrink truncate"
+        title={title}
+      >
         {title}
       </Typography.Heading>
       {count !== undefined && (
@@ -284,6 +301,7 @@ export const PrRow = observer(function PrRow({
   const cols = [
     '16px',
     '16px',
+    '16px',
     ...(on('id') ? [COL.id] : []),
     'minmax(200px,1.5fr)',
     ...ROW_PROPS.filter((k) => k !== 'id' && on(k)).map((k) => COL[k]),
@@ -308,6 +326,13 @@ export const PrRow = observer(function PrRow({
         </Checkbox.Content>
       </Checkbox>
       <PRIcon status={p.state} />
+      <span className="flex items-center justify-center">
+        {p.state === 'open' && p.conflicts ? (
+          <ConflictsIcon />
+        ) : p.state === 'open' && p.review_decision ? (
+          <ReviewDecisionIcon decision={p.review_decision} />
+        ) : null}
+      </span>
       {on('id') && (
         <span
           className="max-w-36 truncate whitespace-nowrap text-xs tabular-nums text-muted"
@@ -442,15 +467,71 @@ export function RowList({
   );
 }
 
+/** Bulk "Reassign" (plan "Triage"): one login, applied to every selected
+ *  PR, from `firstPr`'s `assignable_users` (a stand-in for "whoever can
+ *  review any of these" when the selection spans more than one repo). */
+function BulkReassign({
+  firstPr,
+  onReassign,
+}: {
+  firstPr: PrId;
+  onReassign: (login: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [users, setUsers] = useState<Person[] | null>(null);
+
+  useEffect(() => {
+    if (!open || users) return;
+    let live = true;
+    void api
+      .assignableUsers(firstPr)
+      .then((u) => live && setUsers(u))
+      .catch(() => live && setUsers([]));
+    return () => {
+      live = false;
+    };
+  }, [open, firstPr, users]);
+
+  return (
+    <Dropdown isOpen={open} onOpenChange={setOpen}>
+      <Btn tone="tertiary" icon={<Persons />}>
+        Reassign
+      </Btn>
+      <Dropdown.Popover placement="top">
+        {users === null ? (
+          <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted">
+            Loading…
+          </div>
+        ) : (
+          <Dropdown.Menu
+            aria-label="Reassign to"
+            onAction={(login) => onReassign(String(login))}
+          >
+            {users.map((u) => (
+              <Dropdown.Item key={u.login} id={u.login} textValue={u.login}>
+                {u.login}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Menu>
+        )}
+      </Dropdown.Popover>
+    </Dropdown>
+  );
+}
+
 export function BulkBar({
   n,
+  firstPr,
   onDone,
   onSnooze,
+  onReassign,
   onClear,
 }: {
   n: number;
+  firstPr: PrId;
   onDone: () => void;
   onSnooze: () => void;
+  onReassign: (login: string) => void;
   onClear: () => void;
 }) {
   return (
@@ -468,9 +549,7 @@ export function BulkBar({
         <Btn tone="tertiary" kbd="H" icon={<Clock />} onPress={onSnooze}>
           Snooze
         </Btn>
-        <GatedBtn tone="tertiary" icon={<Persons />}>
-          Reassign
-        </GatedBtn>
+        <BulkReassign firstPr={firstPr} onReassign={onReassign} />
         <GatedBtn tone="tertiary" icon={<Sparkles />}>
           Pre-review
         </GatedBtn>
@@ -861,7 +940,11 @@ export const Inbox = observer(function Inbox() {
                 title="Inbox is empty"
                 text="Wait for a review request to show up here, or open a pull request by link."
                 action={
-                  <Btn tone="tertiary" icon={<Link className="size-4" />} onPress={() => ui.newTab()}>
+                  <Btn
+                    tone="tertiary"
+                    icon={<Link className="size-4" />}
+                    onPress={() => ui.newTab()}
+                  >
                     Open a PR link…
                   </Btn>
                 }
@@ -875,11 +958,19 @@ export const Inbox = observer(function Inbox() {
       {ui.picked.length > 0 && (
         <BulkBar
           n={ui.picked.length}
+          firstPr={ui.picked[0]!}
           onDone={() => {
             markDone(store, ui.picked);
             ui.clearPicked();
           }}
           onSnooze={() => ui.openModal('snooze', ui.picked)}
+          onReassign={(login) => {
+            const ids = ui.picked;
+            for (const id of ids) {
+              void triage(store, id, { action: 'reassign', to: [login] });
+            }
+            ui.clearPicked();
+          }}
           onClear={() => ui.clearPicked()}
         />
       )}

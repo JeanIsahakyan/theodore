@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Archive,
   ArrowRotateRight,
@@ -14,6 +14,7 @@ import {
 } from '@gravity-ui/icons';
 import {
   Chip,
+  Dropdown,
   Label,
   ListBox,
   Separator,
@@ -23,17 +24,25 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { PrId } from '../gen/contract';
+import type { Person, PrId } from '../gen/contract';
 import {
   delegateTask,
   markDone,
   setDraft,
   setReviewers,
+  triage,
   unsnooze,
 } from '../actions';
+import { api } from '../core/api';
 import { useRootStore } from '../stores/context';
 import { AgentTag, Avatar, Btn, CheckIcon } from './bits';
-import { PRIcon, TaskIcon, prStatusLabel } from './StatusIcon';
+import {
+  ConflictsIcon,
+  PRIcon,
+  ReviewDecisionIcon,
+  TaskIcon,
+  prStatusLabel,
+} from './StatusIcon';
 
 const Sec = ({ title, children }: { title: string; children: ReactNode }) => (
   <section className="flex flex-col gap-2">
@@ -61,10 +70,10 @@ function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
   return hunks.filter((h) => readSet.has(h)).length / hunks.length;
 }
 
-/** Wraps a `Btn` whose action has no backing command at all — reassigning a
- *  PR, declining a review request, or adding a reviewer (no picker fits this
- *  compact panel; use the PR page) aren't in `.context/commands.md`: shown
- *  disabled, with a tooltip explaining why, never deleted. */
+/** Wraps a `Btn` whose action has no backing command at all — adding a
+ *  reviewer (no picker fits this compact panel; use the PR page) isn't in
+ *  `.context/commands.md`: shown disabled, with a tooltip explaining why,
+ *  never deleted. */
 function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
   const { kbd: _kbd, ...disabledRest } = rest;
   return (
@@ -77,6 +86,64 @@ function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
   );
 }
 
+/** "Reassign" (plan "Triage"): hands the review to someone else, from the
+ *  same `assignable_users` pool the full reviewer picker uses. */
+function ReassignMenu({ pr }: { pr: PrId }) {
+  const store = useRootStore();
+  const [open, setOpen] = useState(false);
+  const [users, setUsers] = useState<Person[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || users) return;
+    let live = true;
+    void api
+      .assignableUsers(pr)
+      .then((u) => live && setUsers(u))
+      .catch(() => live && setUsers([]));
+    return () => {
+      live = false;
+    };
+  }, [open, pr, users]);
+
+  return (
+    <Dropdown isOpen={open} onOpenChange={setOpen}>
+      <Btn
+        tone="tertiary"
+        icon={<Persons />}
+        isPending={busy}
+        className="reassign"
+      >
+        Reassign
+      </Btn>
+      <Dropdown.Popover placement="bottom end">
+        {users === null ? (
+          <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted">
+            Loading…
+          </div>
+        ) : (
+          <Dropdown.Menu
+            aria-label="Reassign to"
+            onAction={(login) => {
+              setBusy(true);
+              void triage(store, pr, {
+                action: 'reassign',
+                to: [String(login)],
+              }).finally(() => setBusy(false));
+            }}
+          >
+            {users.map((u) => (
+              <Dropdown.Item key={u.login} id={u.login} textValue={u.login}>
+                {u.login}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Menu>
+        )}
+      </Dropdown.Popover>
+    </Dropdown>
+  );
+}
+
 /** Side panel that previews a PR without fully opening it — toggled by
  *  `ui.peek` / Space, shown next to `Inbox`'s list. Ported from the
  *  prototype's `Peek`: sections that had no backing data at all (Linear,
@@ -86,7 +153,9 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
   const store = useRootStore();
   const ui = store.ui;
   const p = store.models.prSummaries.get(id);
-  const [busy, setBusy] = useState<'ready' | 'rerequest' | null>(null);
+  const [busy, setBusy] = useState<
+    'ready' | 'rerequest' | 'take' | 'decline' | null
+  >(null);
   if (!p) return null;
   const detail = store.models.prDetails.get(id);
   const tasks = store.models.tasks.where((t) => t.pr === id);
@@ -115,6 +184,21 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
           <PRIcon status={p.state} progress={progressOf(store, id)} />
           <span className="shrink-0">{prStatusLabel[p.state]}</span>
+          {p.state === 'open' && p.conflicts && (
+            <span className="flex shrink-0 items-center gap-1 text-danger">
+              <ConflictsIcon /> conflicts
+            </span>
+          )}
+          {p.state === 'open' && !p.conflicts && p.review_decision && (
+            <span className="flex shrink-0 items-center gap-1">
+              <ReviewDecisionIcon decision={p.review_decision} />
+              {p.review_decision === 'approved'
+                ? 'approved'
+                : p.review_decision === 'changes_requested'
+                  ? 'changes requested'
+                  : 'review required'}
+            </span>
+          )}
           <span className="flex-1" />
           <span
             className="min-w-0 truncate font-mono"
@@ -157,11 +241,32 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         )}
         {requested && (
           <>
-            <GatedBtn icon={<PersonPlus />}>Take</GatedBtn>
-            <GatedBtn icon={<Persons />}>Reassign</GatedBtn>
-            <GatedBtn tone="tertiary" icon={<PersonXmark />}>
+            <Btn
+              icon={<PersonPlus />}
+              isPending={busy === 'take'}
+              onPress={() => {
+                setBusy('take');
+                void triage(store, id, { action: 'take' }).finally(() =>
+                  setBusy(null),
+                );
+              }}
+            >
+              Take
+            </Btn>
+            <ReassignMenu pr={id} />
+            <Btn
+              tone="tertiary"
+              icon={<PersonXmark />}
+              isPending={busy === 'decline'}
+              onPress={() => {
+                setBusy('decline');
+                void triage(store, id, { action: 'decline' }).finally(() =>
+                  setBusy(null),
+                );
+              }}
+            >
               Decline
-            </GatedBtn>
+            </Btn>
           </>
         )}
         {!local && mine && p.state === 'draft' && (

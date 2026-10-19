@@ -574,7 +574,7 @@ async fn do_triage(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
                 .0
                 .deps
                 .host
-                .request_reviewers(&pr_ref, &[viewer.login.clone()], &[])
+                .request_reviewers(&pr_ref, std::slice::from_ref(&viewer.login), &[])
                 .await
             {
                 return Err(classify_host_error(core, item, e).await);
