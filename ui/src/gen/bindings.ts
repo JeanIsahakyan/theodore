@@ -69,6 +69,8 @@ export const commands = {
 	 *  async runtime until the user picks a folder or cancels.
 	 */
 	pickFolder: () => typedError<string | null, CommandError>(__TAURI_INVOKE("pick_folder")),
+	loginStart: () => typedError<DeviceLogin, CommandError>(__TAURI_INVOKE("login_start")),
+	loginPoll: () => typedError<LoginState, CommandError>(__TAURI_INVOKE("login_poll")),
 };
 
 /* Types */
@@ -145,6 +147,17 @@ export type DelegateRequest = {
 	agent: AgentId | null,
 };
 
+/**
+ *  `login_start`'s response: what to show the user, and how often
+ *  `login_poll` should be called while waiting.
+ */
+export type DeviceLogin = {
+	user_code: string,
+	verification_uri: string,
+	expires_in: number,
+	interval: number,
+};
+
 export type DiffLine = {
 	kind: LineKind,
 	text: string,
@@ -201,6 +214,12 @@ export type HostAuthStatus = {
 	connected: boolean,
 	login: string | null,
 	source: TokenSource,
+	/**
+	 *  Whether `login_start`'s device flow has a client id configured
+	 *  (plan "login"): with none, the UI hides that button and keeps the
+	 *  token/`gh` paths.
+	 */
+	device_login_available?: boolean,
 };
 
 export type HostKind = "github" | "gitlab" | "bitbucket" |
@@ -235,6 +254,15 @@ export type LocalBranch = {
 	behind: number,
 	updated_at: number,
 };
+
+/**  `login_poll`'s response. */
+export type LoginState = { state: "pending" } |
+/**
+ *  Poll again no sooner than `interval` seconds from now (plan
+ *  "login": GitHub's own device-flow spec bumps this by at least 5s
+ *  each time it's hit).
+ */
+{ state: "slow_down"; interval: number } | { state: "expired" } | { state: "denied" } | { state: "done"; status: HostAuthStatus };
 
 export type MergeInfo = {
 	mergeable: boolean | null,

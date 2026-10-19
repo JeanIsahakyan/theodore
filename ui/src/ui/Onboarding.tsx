@@ -21,8 +21,10 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { AgentStatus, HostAuthStatus } from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
+import { useDeviceLogin } from '../core/deviceLogin';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, Spinner } from './bits';
+import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { ProjectPicker } from './Projects';
 
 const STEPS = ['GitHub', 'Agents', 'Projects', 'Done'];
@@ -61,6 +63,8 @@ export const Onboarding = observer(function Onboarding() {
   useEffect(() => {
     void api.detectAgents().then(setAgents);
   }, []);
+
+  const deviceLogin = useDeviceLogin((s) => setHost(s));
 
   const connectWithToken = () => {
     setTokenError(null);
@@ -183,6 +187,10 @@ export const Onboarding = observer(function Onboarding() {
                     </Button>
                   </div>
                 </div>
+              ) : deviceLogin.phase !== 'idle' ? (
+                <div className="flex flex-col gap-3">
+                  <DeviceLoginPanel state={deviceLogin} />
+                </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   <Button
@@ -201,6 +209,16 @@ export const Onboarding = observer(function Onboarding() {
                       </>
                     )}
                   </Button>
+                  {deviceLogin.available && (
+                    <Button
+                      variant="ghost"
+                      className="gh-device-login self-start"
+                      onPress={deviceLogin.start}
+                    >
+                      <LogoGithub className="size-4" />
+                      Sign in with GitHub
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     className="self-start px-0 text-muted"
