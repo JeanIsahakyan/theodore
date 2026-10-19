@@ -971,6 +971,32 @@ async fn a_push_clears_reads_and_dismisses_a_file_whose_hunk_vanished_with_no_re
 }
 
 #[tokio::test]
+async fn poller_applies_pr_detail_updates_even_when_the_head_is_unchanged() {
+    let f = fixtures();
+    let (_core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    // Same head — not a push — but the host reports a change: a label was
+    // added. There's no new revision to diff, just an updated pr_detail
+    // that must not be dropped just because the head didn't move.
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    detail.labels = vec!["needs-review".into()];
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-labels".into()),
+        value: detail,
+    }));
+
+    f.clock.advance(15_000);
+
+    wait_until(|| {
+        f.store
+            .get(models::PR_DETAIL, &pr.0)
+            .unwrap()
+            .is_some_and(|r| r.data["labels"] == json!(["needs-review"]))
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn a_push_remaps_moved_anchors_and_marks_rewritten_ones_outdated() {
     let f = fixtures();
     let (_core, _recv, pr, head) = open_fixture_pr(&f).await;

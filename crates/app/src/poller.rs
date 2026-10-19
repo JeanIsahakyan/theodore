@@ -13,7 +13,7 @@ use theodore_domain::snooze::PrEvent;
 use theodore_domain::{
     AgentId, Anchor, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
 };
-use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
+use theodore_ports::{DiffOptions, NewAction, SyncActionCode};
 
 use crate::core::{Core, Inner, RevisionEntry};
 
@@ -56,17 +56,13 @@ async fn poll_one_pr(core: &Core, pr: &PrId) {
     let Some(pr_ref) = core.pr_ref(pr).await else {
         return;
     };
-    let etag = core.0.etags.read().await.get(pr).cloned();
-    let fetched = match core.0.deps.host.get_pr(&pr_ref, etag.as_deref()).await {
-        Ok(f) => f,
-        Err(_) => return, // transient; the next tick retries
-    };
-    let Fetched::Modified { etag, value } = fetched else {
+    // `refresh_pr` applies `pr`/`pr_detail` whenever the host reports a
+    // change, head moved or not — comments, threads, checks and labels can
+    // all change between pushes, and must not be dropped just because this
+    // tick isn't a push.
+    let Some(value) = core.refresh_pr(pr, &pr_ref).await else {
         return;
     };
-    if let Some(etag) = etag {
-        core.0.etags.write().await.insert(pr.clone(), etag);
-    }
     let new_head = value.summary.head_sha.clone();
     let old_head = core.0.current_head.read().await.get(pr).cloned();
     if old_head.as_ref() == Some(&new_head) {
@@ -197,24 +193,8 @@ async fn handle_push(
         );
     }
 
-    let pr_s = pr.0.clone();
-    let detail_data = serde_json::to_value(&detail).expect("serializable");
-    let summary_data = serde_json::to_value(&detail.summary).expect("serializable");
-    let actions = vec![
-        NewAction {
-            model: models::PR_DETAIL.into(),
-            model_id: pr_s.clone(),
-            action: SyncActionCode::U,
-            data: Some(detail_data),
-        },
-        NewAction {
-            model: models::PR.into(),
-            model_id: pr_s,
-            action: SyncActionCode::U,
-            data: Some(summary_data),
-        },
-    ];
-    let _ = core.apply(actions).await;
+    // `pr`/`pr_detail` were already written by `poll_one_pr`'s `refresh_pr`
+    // call, from this same fetch — nothing left to apply here.
 
     core.emit(Ephemeral::Toast {
         level: ToastLevel::Info,

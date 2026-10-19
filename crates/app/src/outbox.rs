@@ -10,7 +10,7 @@ use theodore_domain::{
     Anchor, Comment, CommentId, Person, PrId, PrRef, ReviewEvent, Sha, ThreadId, ViewedState,
 };
 use theodore_ports::{
-    Fetched, HostError, MergeMethod, NewAction, OutboxItem, ReviewComment, ReviewSubmission,
+    HostError, MergeMethod, NewAction, OutboxItem, ReviewComment, ReviewSubmission,
     SubmittedReview, SyncActionCode,
 };
 
@@ -523,37 +523,7 @@ async fn do_edit_comment(core: &Core, item: &OutboxItem) -> Result<(), Outcome> 
 /// Re-fetches `pr_detail` so a thread write (reply, resolve) is reflected
 /// without waiting for the next poll tick.
 async fn refresh_pr_detail(core: &Core, pr: &PrId, pr_ref: &PrRef) {
-    let etag = core.0.etags.read().await.get(pr).cloned();
-    let Ok(Fetched::Modified { etag, value }) =
-        core.0.deps.host.get_pr(pr_ref, etag.as_deref()).await
-    else {
-        return;
-    };
-    if let Some(etag) = etag {
-        core.0.etags.write().await.insert(pr.clone(), etag);
-    }
-    let pr_s = pr.0.clone();
-    let Ok(detail_data) = serde_json::to_value(&value) else {
-        return;
-    };
-    let Ok(summary_data) = serde_json::to_value(&value.summary) else {
-        return;
-    };
-    let actions = vec![
-        NewAction {
-            model: models::PR_DETAIL.into(),
-            model_id: pr_s.clone(),
-            action: SyncActionCode::U,
-            data: Some(detail_data),
-        },
-        NewAction {
-            model: models::PR.into(),
-            model_id: pr_s,
-            action: SyncActionCode::U,
-            data: Some(summary_data),
-        },
-    ];
-    let _ = core.apply(actions).await;
+    core.refresh_pr(pr, pr_ref).await;
 }
 
 async fn apply_submitted_review(

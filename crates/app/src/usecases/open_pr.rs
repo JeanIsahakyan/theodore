@@ -104,26 +104,7 @@ impl Core {
             );
         }
 
-        let pr_s = pr_id.0.clone();
-        let summary_data =
-            serde_json::to_value(&detail.summary).map_err(|e| AppError::Invalid(e.to_string()))?;
-        let detail_data =
-            serde_json::to_value(&detail).map_err(|e| AppError::Invalid(e.to_string()))?;
-        let actions = vec![
-            NewAction {
-                model: models::PR.into(),
-                model_id: pr_s.clone(),
-                action: SyncActionCode::U,
-                data: Some(summary_data),
-            },
-            NewAction {
-                model: models::PR_DETAIL.into(),
-                model_id: pr_s,
-                action: SyncActionCode::U,
-                data: Some(detail_data),
-            },
-        ];
-        self.apply(actions).await?;
+        self.apply_pr_detail(&detail).await?;
 
         // Group in the background; the UI gets it as a `grouping` sync row.
         self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
