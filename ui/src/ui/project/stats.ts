@@ -2,6 +2,7 @@
  *  split out from `Projects.tsx` so they're covered by vitest without a
  *  DOM. */
 import type { InboxPr } from '../List';
+import { isBranchReview } from './sections';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -21,8 +22,9 @@ export function projectStats(
   viewerLogin: string | null,
   now: number,
 ): ProjectStats {
+  // Branch reviews aren't pull requests: they don't count as open PRs.
   const openish = items.filter(
-    (p) => p.state === 'open' || p.state === 'draft',
+    (p) => (p.state === 'open' || p.state === 'draft') && !isBranchReview(p),
   );
   return {
     open: openish.length,
@@ -48,7 +50,11 @@ export function projectStats(
 export function noOpenPrsBanner(
   items: InboxPr[],
 ): { number: number; mergedAt: number } | null {
-  if (items.some((p) => p.state === 'open' || p.state === 'draft')) {
+  if (
+    items.some(
+      (p) => (p.state === 'open' || p.state === 'draft') && !isBranchReview(p),
+    )
+  ) {
     return null;
   }
   const merged = items

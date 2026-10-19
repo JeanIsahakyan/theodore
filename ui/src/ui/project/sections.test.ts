@@ -147,8 +147,21 @@ describe('projectPrSections', () => {
       'yours',
       'open',
       'drafts',
+      'branches',
       'merged',
       'closed',
     ]);
+  });
+});
+
+describe('branch reviews', () => {
+  it('get their own section and stay out of the open PR count', async () => {
+    const { projectStats } = await import('./stats');
+    const branch = { ...pr({ id: 'b', state: 'open' }), url: '' };
+    const real = pr({ id: 'r', state: 'open' });
+    const groups = projectPrSections([branch, real], null);
+    expect(groups.find((g) => g.id === 'branches')!.items).toEqual([branch]);
+    expect(groups.find((g) => g.id === 'open')!.items).toEqual([real]);
+    expect(projectStats([branch, real], null, 0).open).toBe(1);
   });
 });

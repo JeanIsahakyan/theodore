@@ -34,11 +34,31 @@ impl Core {
         if self.0.current_head.read().await.contains_key(pr) {
             return Ok(());
         }
-        if pr.0.starts_with("local:") {
+        if pr.0.starts_with("local:") || self.is_branch_review(pr).await {
             return self.ensure_open_local(pr).await;
         }
         let pr_ref = pr_ref_from_id(pr)?;
         self.open_ref(pr_ref).await.map(|_| ())
+    }
+
+    /// A "Review branch" of a host project keeps its host in the id
+    /// (`github:owner/repo#<branch hash>`) but has no PR on the host: its
+    /// stored row carries the branch and no host URL. Reopening it must go
+    /// through the local path, not the host (which answers 404).
+    async fn is_branch_review(&self, pr: &PrId) -> bool {
+        let Ok(Some(row)) = self.get_row(models::PR, &pr.0).await else {
+            return false;
+        };
+        let url_empty = row
+            .get("url")
+            .and_then(|v| v.as_str())
+            .is_none_or(str::is_empty);
+        let branch = row
+            .get("pr")
+            .and_then(|p| p.get("host_id"))
+            .and_then(|v| v.as_str())
+            .is_some();
+        url_empty && branch
     }
 
     async fn open_ref(&self, pr_ref: PrRef) -> AppResult<OpenPrResponse> {

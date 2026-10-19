@@ -4080,3 +4080,51 @@ async fn opening_a_pr_regroups_a_grouping_made_by_an_older_algorithm() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn ensure_open_recovers_a_branch_review_of_a_host_project_after_a_restart() {
+    // "Review branch" in a GitHub project keeps `github:` in its id but has
+    // no PR on the host; reopening it must not ask the host (the fake
+    // answers NotFound, like GitHub's 404).
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let repo = RepoRef {
+        host: HostKind::Github,
+        owner: "acme".into(),
+        name: "widgets".into(),
+    };
+    core.add_project(AddProjectRequest {
+        repo: Some(repo),
+        path: None,
+    })
+    .await
+    .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, "github:acme/widgets")
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+    let resp = core
+        .open_branch(OpenBranchRequest {
+            project: "github:acme/widgets".into(),
+            branch: "feature".into(),
+            base: Some("main".into()),
+        })
+        .await
+        .expect("open_branch");
+    assert!(resp.pr.0.starts_with("github:"));
+
+    let (core2, _recv2) = started_core(&f).await;
+    core2
+        .ensure_open(&resp.pr)
+        .await
+        .expect("a branch review reopens without the host");
+}

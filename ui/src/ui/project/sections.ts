@@ -5,13 +5,26 @@
 import type { InboxPr } from '../List';
 
 export type ProjectSection =
-  'needs_review' | 'yours' | 'open' | 'drafts' | 'merged' | 'closed';
+  | 'needs_review'
+  | 'yours'
+  | 'open'
+  | 'drafts'
+  | 'branches'
+  | 'merged'
+  | 'closed';
+
+/** A "Review branch" review: a branch with no PR on the host, stored as a
+ *  `pr` row with no host URL. Not a pull request — kept out of PR counts. */
+export function isBranchReview(p: Pick<InboxPr, 'url'>): boolean {
+  return !p.url;
+}
 
 const SECTION_TITLE: Record<ProjectSection, string> = {
   needs_review: 'Needs your review',
   yours: 'Yours',
   open: 'Open',
   drafts: 'Drafts',
+  branches: 'Branch reviews',
   merged: 'Recently merged',
   closed: 'Closed',
 };
@@ -23,11 +36,13 @@ const SECTION_ORDER: ProjectSection[] = [
   'yours',
   'open',
   'drafts',
+  'branches',
   'merged',
   'closed',
 ];
 
 function sectionOf(p: InboxPr, viewerLogin: string | null): ProjectSection {
+  if (isBranchReview(p)) return 'branches';
   const openish = p.state === 'open' || p.state === 'draft';
   const needsReview =
     openish &&
