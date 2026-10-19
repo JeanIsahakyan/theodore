@@ -215,6 +215,19 @@ pub(crate) async fn cancel_merge_when_pipeline_succeeds(
     http.post_no_content(&path, &serde_json::json!({})).await
 }
 
+/// `POST /projects/:id/pipelines/:pipeline_id/retry`: re-runs every failed
+/// (or canceled) job of a pipeline. A `Check` is one pipeline here (plan
+/// "re-run a check"), so this is GitLab's whole re-run story — there's no
+/// finer-grained per-job check the way GitHub's check runs are.
+pub(crate) async fn retry_pipeline(
+    http: &HttpClient,
+    project: &str,
+    pipeline_id: &str,
+) -> HostResult<()> {
+    let path = format!("projects/{project}/pipelines/{pipeline_id}/retry");
+    http.post_no_content(&path, &serde_json::json!({})).await
+}
+
 pub(crate) async fn rebase(http: &HttpClient, project: &str, iid: u64) -> HostResult<()> {
     let path = format!("projects/{project}/merge_requests/{iid}/rebase");
     let _: theodore_host_http::HttpResponse<serde_json::Value> =

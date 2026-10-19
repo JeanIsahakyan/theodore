@@ -224,6 +224,8 @@ pub trait GitPort: Send + Sync {
             required_approvals: None,
             updated_at: head_commit.at,
             url: String::new(),
+            review_decision: None,
+            conflicts: false,
         };
         let detail = PrDetail {
             summary,
@@ -236,6 +238,9 @@ pub trait GitPort: Send + Sync {
                     title: c.title.clone(),
                     author: person_of(&c),
                     at: c.at,
+                    // A local branch review has no host-side reviews to
+                    // measure freshness against.
+                    after_my_review: false,
                 })
                 .collect(),
             checks: Vec::new(),

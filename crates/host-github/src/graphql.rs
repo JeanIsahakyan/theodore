@@ -130,7 +130,7 @@ mod cynic_probe_tests {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GqlActor {
-    login: String,
+    pub(crate) login: String,
     #[serde(rename = "avatarUrl")]
     avatar_url: Option<String>,
     name: Option<String>,
@@ -192,6 +192,7 @@ pub(crate) async fn resolve_pr_node_id(
 
 const PR_CORE_QUERY: &str = r#"
 query($owner: String!, $repo: String!, $number: Int!) {
+  viewer { login }
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       id
@@ -208,6 +209,8 @@ query($owner: String!, $repo: String!, $number: Int!) {
       baseRefOid
       headRefOid
       updatedAt
+      reviewDecision
+      mergeable
       author { login avatarUrl ... on User { name } }
       labels(first: 100) { nodes { name } }
       assignees(first: 100) { nodes { login name avatarUrl } }
@@ -223,6 +226,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
       latestReviews(first: 100) {
         nodes {
           state
+          submittedAt
           author { login avatarUrl ... on User { name } }
         }
       }
@@ -241,7 +245,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
         contexts(first: 100) {
           nodes {
             __typename
-            ... on CheckRun { id name status conclusion detailsUrl startedAt completedAt }
+            ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt }
             ... on StatusContext { id context state targetUrl }
           }
         }
@@ -250,6 +254,11 @@ query($owner: String!, $repo: String!, $number: Int!) {
   }
 }
 "#;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GqlViewer {
+    pub login: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GqlPrCore {
@@ -274,6 +283,12 @@ pub(crate) struct GqlPrCore {
     pub head_ref_oid: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
+    /// `APPROVED` / `CHANGES_REQUESTED` / `REVIEW_REQUIRED`, or `null`
+    /// before any review has been requested.
+    #[serde(rename = "reviewDecision")]
+    pub review_decision: Option<String>,
+    /// `MERGEABLE` / `CONFLICTING` / `UNKNOWN` (still computing).
+    pub mergeable: Option<String>,
     pub author: Option<GqlActor>,
     pub labels: Option<Connection<GqlLabel>>,
     #[serde(default)]
@@ -312,6 +327,8 @@ pub(crate) struct GqlRequestedReviewer {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GqlReview {
     pub state: String,
+    #[serde(rename = "submittedAt")]
+    pub submitted_at: Option<String>,
     pub author: Option<GqlActor>,
 }
 
@@ -354,6 +371,12 @@ pub(crate) struct GqlCheckContext {
     #[serde(rename = "__typename")]
     pub typename: String,
     pub id: String,
+    /// `CheckRun.databaseId`: the REST numeric id `rerun_check` needs
+    /// (`id` above is the opaque GraphQL node id). Absent entirely for a
+    /// `StatusContext` node (it's a `CheckRun`-only field), which has no
+    /// REST check-run resource to re-run.
+    #[serde(rename = "databaseId", default)]
+    pub database_id: Option<i64>,
     pub name: Option<String>,
     pub status: Option<String>,
     pub conclusion: Option<String>,
@@ -370,14 +393,22 @@ pub(crate) struct GqlCheckContext {
     pub target_url: Option<String>,
 }
 
+/// `fetch_pr_core`'s result plus the authenticated viewer's login, fetched
+/// in the same round trip (`PR_CORE_QUERY` asks for both).
+pub(crate) struct PrCoreAndViewer {
+    pub core: GqlPrCore,
+    pub viewer_login: String,
+}
+
 pub(crate) async fn fetch_pr_core(
     http: &HttpClient,
     owner: &str,
     repo: &str,
     number: u64,
-) -> HostResult<GqlPrCore> {
+) -> HostResult<PrCoreAndViewer> {
     #[derive(Debug, Deserialize)]
     struct Data {
+        viewer: GqlViewer,
         repository: Option<RepoWrap<GqlPrCore>>,
     }
     let data: Data = graphql(
@@ -386,9 +417,14 @@ pub(crate) async fn fetch_pr_core(
         json!({ "owner": owner, "repo": repo, "number": number }),
     )
     .await?;
-    data.repository
+    let core = data
+        .repository
         .and_then(|r| r.pull_request)
-        .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}#{number}")))
+        .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}#{number}")))?;
+    Ok(PrCoreAndViewer {
+        core,
+        viewer_login: data.viewer.login,
+    })
 }
 
 // ── files (paginated) ───────────────────────────────────────────────────
@@ -777,6 +813,8 @@ query($q: String!, $after: String) {
         headRefName
         headRefOid
         updatedAt
+        reviewDecision
+        mergeable
         repository { name owner { login } }
         author { login avatarUrl ... on User { name } }
         latestReviews(first: 20) { nodes { state } }
@@ -809,6 +847,9 @@ pub(crate) struct GqlSearchPr {
     pub head_ref_oid: Option<String>,
     #[serde(rename = "updatedAt")]
     pub updated_at: Option<String>,
+    #[serde(rename = "reviewDecision")]
+    pub review_decision: Option<String>,
+    pub mergeable: Option<String>,
     pub repository: Option<GqlSearchRepo>,
     pub author: Option<GqlActor>,
     #[serde(rename = "latestReviews")]
@@ -856,7 +897,7 @@ query($after: String) {
   viewer {
     repositories(first: 100, after: $after, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]) {
       pageInfo { hasNextPage endCursor }
-      nodes { name owner { login } }
+      nodes { name owner { login } description isPrivate pushedAt }
     }
   }
 }
@@ -866,6 +907,11 @@ query($after: String) {
 pub(crate) struct GqlRepo {
     pub name: String,
     pub owner: GqlOwner,
+    pub description: Option<String>,
+    #[serde(rename = "isPrivate")]
+    pub is_private: bool,
+    #[serde(rename = "pushedAt")]
+    pub pushed_at: Option<String>,
 }
 
 pub(crate) async fn list_repos(http: &HttpClient) -> HostResult<Vec<GqlRepo>> {

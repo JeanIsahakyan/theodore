@@ -80,6 +80,11 @@ async fn get_pr_probes_etag_then_builds_full_detail() {
     assert_eq!(detail.summary.checks, CheckRollup::Pass);
     assert_eq!(detail.summary.approvals, 1);
     assert_eq!(detail.summary.required_approvals, Some(1));
+    assert_eq!(
+        detail.summary.review_decision,
+        Some(theodore_domain::ReviewDecision::Approved)
+    );
+    assert!(!detail.summary.conflicts);
     assert_eq!(detail.summary.additions, 2);
     assert_eq!(detail.summary.deletions, 1);
     assert_eq!(detail.summary.changed_files, 1);

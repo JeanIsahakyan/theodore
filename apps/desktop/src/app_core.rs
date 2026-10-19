@@ -6,11 +6,12 @@ use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
     HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision,
+    Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
-use theodore_domain::{Person, PrId, RepoRef, Revision};
+use theodore_domain::{HostRepo, Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 
@@ -133,7 +134,7 @@ impl CoreApi for AppCore {
     async fn decide_task(&self, req: TaskDecision) -> Result<(), CommandError> {
         self.core.decide_task(req).await.map_err(err)
     }
-    async fn list_host_repos(&self) -> Result<Vec<RepoRef>, CommandError> {
+    async fn list_host_repos(&self) -> Result<Vec<HostRepo>, CommandError> {
         self.core.list_host_repos().await.map_err(err)
     }
     async fn add_project(&self, req: AddProjectRequest) -> Result<Project, CommandError> {
@@ -186,6 +187,12 @@ impl CoreApi for AppCore {
     }
     async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError> {
         self.core.pr_spend(pr).await.map_err(err)
+    }
+    async fn rerun_check(&self, req: RerunCheckRequest) -> Result<(), CommandError> {
+        self.core.rerun_check(req).await.map_err(err)
+    }
+    async fn triage(&self, req: TriageRequest) -> Result<(), CommandError> {
+        self.core.triage(req).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await

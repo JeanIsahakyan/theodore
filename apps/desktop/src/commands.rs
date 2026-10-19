@@ -9,11 +9,12 @@ use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
     HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision,
+    Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
-use theodore_domain::{Person, PrId, RepoRef, Revision};
+use theodore_domain::{HostRepo, Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 use crate::updater;
@@ -200,7 +201,7 @@ pub async fn decide_task(
 #[specta::specta]
 pub async fn list_host_repos(
     core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<Vec<RepoRef>, CommandError> {
+) -> Result<Vec<HostRepo>, CommandError> {
     core.list_host_repos().await
 }
 
@@ -356,6 +357,24 @@ pub async fn pr_spend(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<PrSpend, CommandError> {
     core.pr_spend(pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn rerun_check(
+    req: RerunCheckRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.rerun_check(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn triage(
+    req: TriageRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.triage(req).await
 }
 
 /// Native folder picker for the Add project dialog. Runs on a background

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_domain::{
-    Check, CheckRollup, CheckStatus, Comment, CommentId, Commit, HostKind, InboxReason, Person,
-    PrDetail, PrRef, PrState, PrSummary, RepoRef, ReviewEvent, Reviewer, ReviewerState, Sha,
-    Thread, ThreadId,
+    Check, CheckRollup, CheckStatus, Comment, CommentId, Commit, HostKind, HostRepo, InboxReason,
+    Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, ReviewDecision, ReviewEvent, Reviewer,
+    ReviewerState, Sha, Thread, ThreadId,
 };
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
@@ -146,6 +146,8 @@ impl GitlabAdapter {
             required_approvals: approvals.approvals_required,
             updated_at: time::parse_millis(&mr.updated_at),
             url: mr.web_url.clone(),
+            review_decision: review_decision_from_approvals(&approvals),
+            conflicts: gl_conflicts(&mr),
         };
 
         let base_sha = mr
@@ -233,17 +235,22 @@ impl HostAdapter for GitlabAdapter {
         Ok(mrs.iter().map(|mr| mr_to_summary(mr, reason)).collect())
     }
 
-    async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+    async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
         let projects =
             pagination::paginate_all(|page| rest::projects_page(&self.http, page)).await?;
         Ok(projects
             .iter()
             .filter_map(|p| {
                 let (owner, name) = split_namespace(&p.path_with_namespace)?;
-                Some(RepoRef {
-                    host: HostKind::Gitlab,
-                    owner,
-                    name,
+                Some(HostRepo {
+                    repo: RepoRef {
+                        host: HostKind::Gitlab,
+                        owner,
+                        name,
+                    },
+                    description: p.description.clone(),
+                    private: p.visibility.as_deref() != Some("public"),
+                    pushed_at: p.last_activity_at.as_deref().map(time::parse_millis),
                 })
             })
             .collect())
@@ -464,6 +471,11 @@ impl HostAdapter for GitlabAdapter {
     async fn update_branch(&self, pr: &PrRef) -> HostResult<()> {
         let project = project_id(pr);
         rest::rebase(&self.http, &project, pr.number).await
+    }
+
+    async fn rerun_check(&self, pr: &PrRef, check: &Check) -> HostResult<()> {
+        let project = project_id(pr);
+        rest::retry_pipeline(&self.http, &project, &check.id).await
     }
 
     async fn merge_status(&self, pr: &PrRef) -> HostResult<MergeStatus> {
@@ -738,6 +750,9 @@ fn map_commit(c: &crate::model::GlCommit) -> Commit {
             avatar_url: None,
         },
         at: time::parse_millis(&c.committed_date),
+        // Not computed for GitLab yet (plan "Commits tab" is GitHub-first;
+        // GitLab's approvals carry no per-commit "reviewed up to" marker).
+        after_my_review: false,
     }
 }
 
@@ -871,6 +886,31 @@ fn mr_to_summary(mr: &GlMergeRequest, reason: Option<InboxReason>) -> PrSummary 
         required_approvals: None,
         updated_at: time::parse_millis(&mr.updated_at),
         url: mr.web_url.clone(),
+        // No approvals fetched for a list row (plan "fill where it's
+        // cheap"): review_decision needs a second call, conflicts doesn't
+        // — the list/to-do payload already carries `merge_status`.
+        review_decision: None,
+        conflicts: gl_conflicts(mr),
+    }
+}
+
+/// GitLab's merge-status fields are returned on both the single-MR and the
+/// list/to-do shapes, so this is free wherever a `GlMergeRequest` already
+/// is.
+fn gl_conflicts(mr: &GlMergeRequest) -> bool {
+    mr.detailed_merge_status.as_deref() == Some("conflict")
+        || mr.merge_status.as_deref() == Some("cannot_be_merged")
+}
+
+/// GitLab has no `reviewDecision` equivalent; approximated from approvals:
+/// satisfied required approvals -> `Approved`, still missing some ->
+/// `ReviewRequired`. GitLab has no "changes requested" review state.
+fn review_decision_from_approvals(approvals: &crate::model::GlApprovals) -> Option<ReviewDecision> {
+    let required = approvals.approvals_required?;
+    if approvals.approved_by.len() as u32 >= required {
+        Some(ReviewDecision::Approved)
+    } else {
+        Some(ReviewDecision::ReviewRequired)
     }
 }
 

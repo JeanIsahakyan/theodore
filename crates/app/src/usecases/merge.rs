@@ -8,7 +8,7 @@
 
 use theodore_contract::{
     DraftStateRequest, EditCommentRequest, MergeInfo, MergeMethod as WireMergeMethod, MergeRequest,
-    MergeState as WireMergeState, ReactRequest, ReviewersRequest,
+    MergeState as WireMergeState, ReactRequest, RerunCheckRequest, ReviewersRequest,
 };
 use theodore_domain::{HostKind, Person, PrId, PrRef};
 use theodore_ports::{MergeMethod as PortMergeMethod, MergeState as PortMergeState};
@@ -16,8 +16,8 @@ use theodore_ports::{MergeMethod as PortMergeMethod, MergeState as PortMergeStat
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
 use crate::outbox::{
-    DraftPayload, EditCommentPayload, MergePayload, ReactPayload, ReviewersPayload,
-    UpdateBranchPayload,
+    DraftPayload, EditCommentPayload, MergePayload, ReactPayload, RerunCheckPayload,
+    ReviewersPayload, UpdateBranchPayload,
 };
 
 fn to_wire_method(m: PortMergeMethod) -> WireMergeMethod {
@@ -47,7 +47,7 @@ fn to_wire_state(s: PortMergeState) -> WireMergeState {
     }
 }
 
-fn reject_if_local(pr_ref: &PrRef, action: &str) -> AppResult<()> {
+pub(crate) fn reject_if_local(pr_ref: &PrRef, action: &str) -> AppResult<()> {
     if pr_ref.repo.host == HostKind::Local {
         return Err(AppError::Invalid(format!(
             "{action} isn't possible on a local branch review (there is no host behind it)"
@@ -180,6 +180,24 @@ impl Core {
         };
         let data = serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.enqueue_outbox("edit_comment", data).await?;
+        Ok(())
+    }
+
+    /// Re-runs one check (plan "re-run a check"). `req.check` is resolved
+    /// back to the full `Check` from the stored `pr_detail` when the outbox
+    /// item runs, so a stale UI value never reaches the adapter.
+    pub async fn rerun_check(&self, req: RerunCheckRequest) -> AppResult<()> {
+        let pr_ref = self
+            .pr_ref(&req.pr)
+            .await
+            .ok_or_else(|| AppError::NotFound(format!("pr {}", req.pr)))?;
+        reject_if_local(&pr_ref, "re-running a check")?;
+        let payload = RerunCheckPayload {
+            pr: req.pr,
+            check: req.check,
+        };
+        let data = serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
+        self.enqueue_outbox("rerun_check", data).await?;
         Ok(())
     }
 }

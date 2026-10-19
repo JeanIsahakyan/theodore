@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_domain::{
-    CommentId, HostKind, Person, PrDetail, PrRef, PrSummary, RepoRef, Sha, ThreadId,
+    Check, CommentId, HostKind, HostRepo, Person, PrDetail, PrRef, PrSummary, RepoRef, Sha,
+    ThreadId,
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
@@ -83,7 +84,7 @@ impl HostAdapter for Hosts {
     ) -> HostResult<Vec<PrSummary>> {
         self.for_repo(repo)?.search(section).await
     }
-    async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+    async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
         self.primary.list_repos().await
     }
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
@@ -169,6 +170,9 @@ impl HostAdapter for Hosts {
     async fn update_branch(&self, pr: &PrRef) -> HostResult<()> {
         self.for_pr(pr)?.update_branch(pr).await
     }
+    async fn rerun_check(&self, pr: &PrRef, check: &Check) -> HostResult<()> {
+        self.for_pr(pr)?.rerun_check(pr, check).await
+    }
 }
 
 #[cfg(test)]
@@ -206,7 +210,7 @@ mod tests {
             }
             Ok(vec![])
         }
-        async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+        async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
             Ok(vec![])
         }
         async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {

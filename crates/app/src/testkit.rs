@@ -586,6 +586,9 @@ pub struct FakeHost {
     /// Every `(add, add_teams, remove)` reviewer write, for assertions.
     pub reviewer_calls: Mutex<Vec<(Vec<String>, Vec<String>)>>,
     pub remove_reviewer_calls: Mutex<Vec<String>>,
+    pub rerun_check_responses: Mutex<VecDeque<HostResult<()>>>,
+    /// Every check id `rerun_check` was called with, for assertions.
+    pub rerun_check_calls: Mutex<Vec<String>>,
 }
 
 impl FakeHost {
@@ -673,6 +676,12 @@ impl FakeHost {
     pub fn remove_reviewer_calls(&self) -> Vec<String> {
         self.remove_reviewer_calls.lock().unwrap().clone()
     }
+    pub fn push_rerun_check(&self, r: HostResult<()>) {
+        self.rerun_check_responses.lock().unwrap().push_back(r);
+    }
+    pub fn rerun_check_calls(&self) -> Vec<String> {
+        self.rerun_check_calls.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -716,7 +725,7 @@ impl HostAdapter for FakeHost {
             .pop_front()
             .unwrap_or(Ok(vec![]))
     }
-    async fn list_repos(&self) -> HostResult<Vec<theodore_domain::RepoRef>> {
+    async fn list_repos(&self) -> HostResult<Vec<theodore_domain::HostRepo>> {
         Ok(vec![])
     }
     async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
@@ -913,6 +922,17 @@ impl HostAdapter for FakeHost {
     }
     async fn update_branch(&self, _pr: &PrRef) -> HostResult<()> {
         self.update_branch_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn rerun_check(&self, _pr: &PrRef, check: &theodore_domain::Check) -> HostResult<()> {
+        self.rerun_check_calls
+            .lock()
+            .unwrap()
+            .push(check.id.clone());
+        self.rerun_check_responses
             .lock()
             .unwrap()
             .pop_front()
@@ -1249,6 +1269,8 @@ pub fn sample_pr_summary(pr_ref: &PrRef, head: &Sha) -> PrSummary {
             "https://github.com/{}/{}/pull/{}",
             pr_ref.repo.owner, pr_ref.repo.name, pr_ref.number
         ),
+        review_decision: None,
+        conflicts: false,
     }
 }
 

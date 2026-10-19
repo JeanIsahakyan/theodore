@@ -9,14 +9,14 @@ use theodore_contract::{
     AddProjectRequest, Ephemeral, LocalBranch, OpenBranchRequest, Project, ProjectStatus,
     ToastLevel, models,
 };
-use theodore_domain::{HostKind, PrDetail, PrId, PrRef, PrSummary, RepoRef};
+use theodore_domain::{HostKind, HostRepo, PrDetail, PrId, PrRef, PrSummary, RepoRef};
 use theodore_ports::{InboxSection, NewAction, SyncActionCode};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
 
 impl Core {
-    pub async fn list_host_repos(&self) -> AppResult<Vec<RepoRef>> {
+    pub async fn list_host_repos(&self) -> AppResult<Vec<HostRepo>> {
         Ok(self.0.deps.host.list_repos().await?)
     }
 

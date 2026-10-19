@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_contract::models;
-use theodore_domain::{CommentId, HostKind, PrDetail, PrRef, PrSummary, RepoRef, ThreadId};
+use theodore_domain::{
+    CommentId, HostKind, HostRepo, PrDetail, PrRef, PrSummary, RepoRef, ThreadId,
+};
 use theodore_ports::{
     Capabilities, Changes, Fetched, GitError, GitPort, HostAdapter, HostError, HostResult,
     InboxSection, ReviewSubmission, Store, SubmittedReview,
@@ -68,7 +70,7 @@ impl HostAdapter for LocalHostAdapter {
         Err(HostError::Unsupported("search"))
     }
 
-    async fn list_repos(&self) -> HostResult<Vec<RepoRef>> {
+    async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
         Err(HostError::Unsupported("list_repos"))
     }
 
