@@ -14,6 +14,7 @@ import type {
   DraftStateRequest,
   EditCommentRequest,
   FileRequest,
+  FindSymbolRequest,
   HostAuthStatus,
   InterdiffEntry,
   InterdiffRequest,
@@ -42,6 +43,7 @@ import type {
   SkillBody,
   SkillInfo,
   SubmitReviewRequest,
+  SymbolHit,
   SyncFrame,
   TaskDecision,
   Transaction,
@@ -146,4 +148,6 @@ export const api = {
   loginPoll: () => call<LoginState>('login_poll'),
   rerunCheck: (req: RerunCheckRequest) => call<null>('rerun_check', { req }),
   triage: (req: TriageRequest) => call<null>('triage', { req }),
+  findSymbol: (req: FindSymbolRequest) =>
+    call<SymbolHit[]>('find_symbol', { req }),
 };

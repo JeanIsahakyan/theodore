@@ -70,6 +70,7 @@ import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { TourBar } from './review/TourBar';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
+import { identifierAt } from './symbols/extract';
 
 export interface ComposerState {
   path: string;
@@ -122,13 +123,7 @@ function symbolAt(e: React.MouseEvent): string | null {
   const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
   const node = range?.startContainer;
   if (!range || !node || node.nodeType !== 3) return null;
-  const text = node.textContent ?? '';
-  let a = range.startOffset;
-  let b = a;
-  while (a > 0 && /[\w$]/.test(text[a - 1]!)) a--;
-  while (b < text.length && /[\w$]/.test(text[b]!)) b++;
-  const w = text.slice(a, b);
-  return /^[A-Za-z_$][\w$]*$/.test(w) ? w : null;
+  return identifierAt(node.textContent ?? '', range.startOffset);
 }
 
 const sevBg: Record<Severity, string> = {
@@ -300,18 +295,43 @@ export const DiffPane = observer(function DiffPane({
   const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
+  // Which paths the open diff actually has, so a symbol hit elsewhere in
+  // the repo opens a read-only viewer instead of trying to scroll to a
+  // hunk that isn't there.
+  const diffPaths = useMemo(() => new Set(rev.files.map((f) => f.path)), [rev]);
+  // The hunk (if any) covering a symbol hit's new-side line, so the peek
+  // can scroll to `#H-<id>` (the id every hunk already renders) instead of
+  // opening a read-only viewer for a file that's right there in the diff.
+  const findHunk = useMemo(() => {
+    const byPath = new Map<string, Hunk[]>();
+    for (const f of rev.files) byPath.set(f.path, f.hunks);
+    return (path: string, line: number): HunkId | null => {
+      for (const h of byPath.get(path) ?? []) {
+        if (
+          h.new_lines > 0 &&
+          line >= h.new_start &&
+          line < h.new_start + h.new_lines
+        ) {
+          return h.id;
+        }
+      }
+      return null;
+    };
+  }, [rev]);
   // One stable object for every line, so a memoized line skips re-rendering
   // when only someone else's composer, peek or range changed.
   const actions = useMemo<LineActions>(
     () => ({
       setComposer,
       setPeek,
+      diffPaths,
+      findHunk,
       rangeStart: () => rangeStart.current,
       setRangeStart: (r) => {
         rangeStart.current = r;
       },
     }),
-    [setComposer],
+    [setComposer, diffPaths, findHunk],
   );
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
@@ -916,6 +936,10 @@ type RangeStart = { path: string; side: Side; line: number };
 interface LineActions {
   setComposer: (c: ComposerState | null) => void;
   setPeek: (p: SymbolPeekTarget | null) => void;
+  /** Paths the open diff covers (plan "symbols": jump vs. read-only viewer). */
+  diffPaths: ReadonlySet<string>;
+  /** The hunk covering `path`'s new-side `line`, `null` outside every hunk. */
+  findHunk: (path: string, line: number) => HunkId | null;
   /** Read at click time only; nothing renders from it. */
   rangeStart: () => RangeStart | null;
   setRangeStart: (r: RangeStart | null) => void;
@@ -1710,7 +1734,17 @@ const Line = memo(function Line(props: LineProps) {
       {(threads.length > 0 || drafts.length > 0 || composer || peek) && (
         <div className="flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
           {peek && (
-            <SymbolPeek target={peek} onClose={() => actions.setPeek(null)} />
+            <SymbolPeek
+              // A fresh click target gets a fresh mount, so its search
+              // state starts clean instead of being reset imperatively.
+              key={`${peek.path}:${peek.line}:${peek.name}`}
+              pr={pr}
+              rev={rev}
+              target={peek}
+              diffPaths={actions.diffPaths}
+              findHunk={actions.findHunk}
+              onClose={() => actions.setPeek(null)}
+            />
           )}
           {threads.map((id) => (
             <ThreadView key={id} pr={pr} id={id} />

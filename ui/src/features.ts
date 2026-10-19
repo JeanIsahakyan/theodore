@@ -20,8 +20,9 @@ export const FEATURES = {
   /** `list_host_repos` / `add_project` / `remove_project` / `refresh_project`
    *  land this wave — projects can be added, browsed and removed. */
   projects: true,
-  /** No go-to-definition / find-references command (LSP was mock-only). */
-  symbolPeek: false,
+  /** `find_symbol` lands this wave: go-to-definition / find-references via
+   *  `git grep`, not a real language server. */
+  symbolPeek: true,
   /** No Linear integration command. */
   linear: false,
   /** `reply_thread` / `resolve_thread` send to the host; the comment lands
