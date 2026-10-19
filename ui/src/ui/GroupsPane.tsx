@@ -34,6 +34,7 @@ import { ask, markGroupRead, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
+import { groupsInRevision } from './review/groups';
 
 export interface ReviewMode {
   mode: 'groups' | 'files';
@@ -67,17 +68,17 @@ const plural = (n: number, one: string, few: string, many: string) =>
 
 /** Groups loaded for this PR whose hunks are part of the open revision, in
  *  reading order — see the final report on why `Group` needs its own `pr`
- *  field. Exported so Review can drive Tour mode over the same ordering. */
+ *  field. Exported so Review can drive Tour mode over the same ordering.
+ *  Includes `hidden` groups (lockfiles, generated code): they're still
+ *  listed here, just collapsed by default in the diff — see
+ *  `review/groups.ts`'s `reviewableGroups` for the subset tour/N-P skip. */
 export function groupsForRevision(
   store: ReturnType<typeof useRootStore>,
   pr: PrId,
   rev: Revision,
 ) {
   const hunkIds = new Set(rev.files.flatMap((f) => f.hunks.map((h) => h.id)));
-  return store.models
-    .groupsOf(pr)
-    .filter((g) => g.hunks.some((h) => hunkIds.has(h)))
-    .filter((g) => g.kind !== 'hidden');
+  return groupsInRevision(store.models.groupsOf(pr), hunkIds);
 }
 
 export const GroupsPane = observer(function GroupsPane({
@@ -232,7 +233,11 @@ export const GroupsPane = observer(function GroupsPane({
                           {
                             id: 'tour-from-here',
                             label: 'Tour from here',
-                            isDisabled: !onTourFrom,
+                            isDisabled: !onTourFrom || g.kind === 'hidden',
+                            disabledReason:
+                              g.kind === 'hidden'
+                                ? 'Hidden groups are skipped by the tour'
+                                : undefined,
                             onAction: () => onTourFrom?.(g.id),
                           },
                           {
@@ -305,6 +310,7 @@ export const GroupsPane = observer(function GroupsPane({
                             <span className="text-danger">−{del}</span>
                           </span>
                           {g.kind === 'skim' && <span>skim</span>}
+                          {g.kind === 'hidden' && <span>hidden</span>}
                           <span className="ml-auto tabular-nums">
                             {read}/{hs.length}
                           </span>
