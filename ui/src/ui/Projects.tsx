@@ -180,16 +180,21 @@ export function boardColumns(
 export function groupByOwner(
   repos: HostRepo[],
 ): { owner: string; repos: HostRepo[] }[] {
-  const order: string[] = [];
+  // Most recently pushed first, inside an owner and across owners: the
+  // repos someone works in now, not ones last touched years ago.
+  const pushed = (r: HostRepo) => r.pushed_at ?? 0;
   const byOwner = new Map<string, HostRepo[]>();
   for (const r of repos) {
-    if (!byOwner.has(r.repo.owner)) {
-      order.push(r.repo.owner);
-      byOwner.set(r.repo.owner, []);
-    }
-    byOwner.get(r.repo.owner)!.push(r);
+    const list = byOwner.get(r.repo.owner) ?? [];
+    list.push(r);
+    byOwner.set(r.repo.owner, list);
   }
-  return order.map((owner) => ({ owner, repos: byOwner.get(owner)! }));
+  return [...byOwner.entries()]
+    .map(([owner, list]) => ({
+      owner,
+      repos: [...list].sort((a, b) => pushed(b) - pushed(a)),
+    }))
+    .sort((a, b) => pushed(b.repos[0]!) - pushed(a.repos[0]!));
 }
 
 /** PRs the signed-in user is already involved in, in this repo — the
@@ -398,7 +403,9 @@ export const ProjectPicker = observer(function ProjectPicker({
           isPending={addingPicked}
           onPress={() => void addPicked()}
         >
-          Add {picked.length} project{picked.length === 1 ? '' : 's'}
+          {picked.length
+            ? `Add ${picked.length} project${picked.length === 1 ? '' : 's'}`
+            : 'Add projects'}
         </Button>
       </div>
     </div>

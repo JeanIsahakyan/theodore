@@ -144,8 +144,8 @@ export const Onboarding = observer(function Onboarding() {
                   <Alert.Content>
                     <Alert.Title>GitHub sign-in isn't wired up yet</Alert.Title>
                     <Alert.Description>
-                      You can continue and open a PR by URL from the Inbox once
-                      you're in.
+                      You can continue and paste a PR link into a new tab (⌘T)
+                      once you're in.
                     </Alert.Description>
                   </Alert.Content>
                 </Alert>
@@ -278,8 +278,8 @@ export const Onboarding = observer(function Onboarding() {
               <Typography.Heading level={4}>Projects</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
                 Connect a GitHub repository, or point Theodore at a local
-                folder. Optional — you can also open a pull request by URL from
-                the Inbox and skip this.
+                folder. Optional — you can also paste a pull request link into a
+                new tab (⌘T) from the Inbox and skip this.
               </Typography.Paragraph>
               <ProjectPicker />
             </>

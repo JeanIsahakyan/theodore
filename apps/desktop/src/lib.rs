@@ -6,6 +6,7 @@ pub mod commands;
 pub mod core_api;
 pub mod events;
 pub mod menu;
+pub mod shell_path;
 pub mod updater;
 
 use std::path::Path;

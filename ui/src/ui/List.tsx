@@ -105,7 +105,10 @@ export function ago(ms: number): string {
   if (s < 60) return `${Math.round(s)}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;
   if (s < 86400) return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
+  const d = s / 86400;
+  if (d < 60) return `${Math.round(d)}d`;
+  if (d < 365) return `${Math.round(d / 30)}mo`;
+  return `${Math.round(d / 365)}y`;
 }
 
 // ── Display: grouping, ordering, which columns a row shows ────────────────

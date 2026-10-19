@@ -20,6 +20,7 @@ fn main() {
         return;
     }
 
+    theodore_desktop::shell_path::inherit_login_path();
     tracing_subscriber::fmt::init();
     let cfg = theodore_runtime::RuntimeConfig::from_env();
     let rt = tauri::async_runtime::block_on(theodore_runtime::start(&cfg))
