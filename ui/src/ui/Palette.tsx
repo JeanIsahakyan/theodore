@@ -36,6 +36,9 @@ import { Sparkles } from '@gravity-ui/icons';
 
 export interface Item {
   group?: string;
+  /** Only listed once the query matches it (e.g. every PR), so an empty
+   *  palette stays a short list of commands. */
+  searchOnly?: boolean;
   label: string;
   icon?: ReactNode;
   sub?: string;
@@ -75,10 +78,14 @@ export function Palette({
     return () => clearTimeout(t);
   }, []);
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = items.filter((it) =>
-    words.every((w) =>
-      `${it.group ?? ''} ${it.label} ${it.sub ?? ''}`.toLowerCase().includes(w),
-    ),
+  const shown = items.filter(
+    (it) =>
+      (!it.searchOnly || words.length > 0) &&
+      words.every((w) =>
+        `${it.group ?? ''} ${it.label} ${it.sub ?? ''}`
+          .toLowerCase()
+          .includes(w),
+      ),
   );
   const runAt = (n: number) => {
     const it = shown[n];
@@ -357,6 +364,19 @@ export const CommandMenu = observer(function CommandMenu() {
     icon: <Folder />,
     run: () => ui.go({ name: 'project', id: p.id }),
   }));
+  // Every PR Theodore knows about, by repo, number, title and author.
+  const pullRequests: Item[] = store.models.prSummaries
+    .all()
+    .filter((p) => !!p.url)
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .map((p) => ({
+      group: 'Pull requests',
+      searchOnly: true,
+      label: `${p.pr.repo.name} #${p.pr.number} ${p.title}`,
+      sub: `${p.pr.repo.owner}/${p.pr.repo.name} · ${p.author.login} · ${p.state}`,
+      icon: <CodePullRequest />,
+      run: () => ui.go({ name: 'review', pr: p.id }),
+    }));
   const items: Item[] = [
     ...prItems,
     {
@@ -444,6 +464,7 @@ export const CommandMenu = observer(function CommandMenu() {
       keys: '[',
       run: () => ui.toggleSidebar(),
     },
+    ...pullRequests,
     {
       group: 'General',
       label: 'Undo',
