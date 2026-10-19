@@ -26,6 +26,7 @@ impl Core {
                     models::INBOX_STATE,
                     models::TASK,
                     models::SETTING,
+                    models::PROJECT,
                 ] {
                     out.extend(store.all(m)?);
                 }

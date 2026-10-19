@@ -3077,3 +3077,17 @@ async fn bootstrap_does_not_block_the_executor_on_a_slow_store() {
 
     bootstrap.await.unwrap().expect("bootstrap");
 }
+
+#[tokio::test]
+async fn global_bootstrap_includes_projects() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    let project = add_ready_local_project(&core, &f, "/tmp/theodore-bootstrap-project").await;
+    let boot = core.bootstrap(BootstrapScope::Global).await.unwrap();
+    assert!(
+        boot.rows
+            .iter()
+            .any(|r| r.model == models::PROJECT && r.id == project.id),
+        "projects must survive a restart: the sidebar reads them from bootstrap"
+    );
+}
