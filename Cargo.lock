@@ -5177,6 +5177,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "theodore-sandbox"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "theodore-contract",
+ "theodore-domain",
+ "theodore-ports",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "theodore-secrets"
 version = "0.0.1"
 dependencies = [

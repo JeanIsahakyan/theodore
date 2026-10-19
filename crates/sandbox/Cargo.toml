@@ -1,0 +1,29 @@
+[package]
+name = "theodore-sandbox"
+description = "Sandbox host: a stateful, GitHub-like code host over local bare repos, with fault injection and a scripted timeline."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-contract.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["time", "rt", "fs", "sync", "macros"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true
+# Not in [workspace.dependencies]: only scenario assets (binary files) need it.
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lints]
+workspace = true

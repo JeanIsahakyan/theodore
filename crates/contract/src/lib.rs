@@ -23,6 +23,8 @@ mod pr_state;
 pub use pr_state::*;
 mod symbols;
 pub use symbols::*;
+mod sandbox;
+pub use sandbox::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -229,6 +231,9 @@ pub struct AppInfo {
     pub version: String,
     pub channel: String,
     pub update: Option<UpdateInfo>,
+    /// Set only when running against the sandbox host (docs/sandbox.md).
+    #[serde(default)]
+    pub sandbox: Option<SandboxInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -251,6 +256,8 @@ pub enum TokenSource {
     Gh,
     Env,
     None,
+    /// The simulated sandbox host (docs/sandbox.md): no real token at all.
+    Sandbox,
 }
 
 /// Host connection state for onboarding and Settings → Account.
@@ -688,7 +695,10 @@ pub fn types() -> specta::Types {
         .register::<GetBlobRequest>()
         .register::<BlobResponse>()
         .register::<ConflictKind>()
-        .register::<ConflictFile>();
+        .register::<ConflictFile>()
+        .register::<SandboxInfo>()
+        .register::<SandboxStatus>()
+        .register::<SandboxFaultRequest>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()
