@@ -149,14 +149,16 @@ export const TaskRow = observer(function TaskRow({
       <TaskIcon status={t.status} />
       <div className="min-w-0 flex-1">
         <div
-          className={`font-medium ${t.status === 'done' ? 'text-muted' : ''}`}
+          className={`truncate font-medium ${t.status === 'done' ? 'text-muted' : ''}`}
+          title={t.title}
         >
           {t.title}
         </div>
         {!compact && pr && (
-          <div className="mt-0.5 flex items-center gap-2.5 text-xs text-muted">
+          <div className="mt-0.5 flex min-w-0 items-center gap-2.5 text-xs text-muted">
             <span
-              className="inline-flex cursor-pointer items-center gap-1 font-mono hover:text-accent"
+              className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate font-mono hover:text-accent"
+              title={`#${pr.pr.number} ${pr.title}`}
               onClick={(e) => {
                 e.stopPropagation();
                 ui.go({ name: 'review', pr: t.pr });
@@ -205,7 +207,7 @@ export const TaskRow = observer(function TaskRow({
         )}
       </div>
       <span
-        className={`task-act flex gap-1 ${t.status === 'review' || sel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+        className={`task-act flex shrink-0 gap-1 ${t.status === 'review' || sel ? '' : 'opacity-0 group-hover:opacity-100'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {t.status === 'review' && !rejecting && (
@@ -254,12 +256,14 @@ export const TaskRow = observer(function TaskRow({
           </Dropdown>
         )}
       </span>
-      <span className="flex min-w-[50px] items-center justify-end gap-1.5">
+      <span className="flex min-w-[50px] shrink-0 items-center justify-end gap-1.5">
         {t.status === 'progress' && <Spinner />}
         {t.assignee.kind === 'agent' ? (
           <AgentTag id={t.assignee.id} />
         ) : (
-          <span className="text-xs text-muted">{t.assignee.id}</span>
+          <span className="truncate text-xs text-muted" title={t.assignee.id}>
+            {t.assignee.id}
+          </span>
         )}
       </span>
     </div>
