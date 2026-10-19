@@ -83,6 +83,8 @@ impl Core {
         let pr_id = pr_ref.id();
         let head = detail.summary.head_sha.clone();
 
+        self.load_repo_settings(&worktree_path, &pr_ref.repo).await;
+
         {
             self.0
                 .current_head
@@ -169,7 +171,10 @@ impl Core {
                 running: true,
                 error: None,
             });
-            let agent = core.setting_agent("agents.grouping", AgentId::Claude).await;
+            let repo_scope = detail.summary.pr.repo.slug();
+            let agent = core
+                .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
+                .await;
             let result = core
                 .0
                 .deps

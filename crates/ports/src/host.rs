@@ -142,6 +142,19 @@ pub trait HostAdapter: Send + Sync {
     // inbox
     async fn changed_since(&self, cursor: Option<&str>) -> HostResult<Changes>;
     async fn search(&self, section: &InboxSection) -> HostResult<Vec<PrSummary>>;
+    /// Like `search`, but routed to the host that owns `repo`. A composed
+    /// adapter (several hosts behind one `HostAdapter`) can't tell GitHub
+    /// and GitLab apart from a bare query string, so project refreshes
+    /// (plan "projects") call this instead of `search`; a single-host
+    /// adapter just ignores `repo` and defers to `search`.
+    async fn search_repo(
+        &self,
+        repo: &RepoRef,
+        section: &InboxSection,
+    ) -> HostResult<Vec<PrSummary>> {
+        let _ = repo;
+        self.search(section).await
+    }
     async fn list_repos(&self) -> HostResult<Vec<RepoRef>>;
 
     // pulls

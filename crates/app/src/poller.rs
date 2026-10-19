@@ -108,6 +108,7 @@ async fn handle_push(
         Ok(w) => w,
         Err(_) => return,
     };
+    core.load_repo_settings(&worktree.path, &pr_ref.repo).await;
     let new_rev = match core
         .0
         .deps
@@ -289,7 +290,10 @@ async fn regroup_after_push(
         .and_then(|r| r.ok())
         .flatten();
     let prev: Option<Grouping> = prev_row.and_then(|r| serde_json::from_value(r.data).ok());
-    let agent = core.setting_agent("agents.grouping", AgentId::Claude).await;
+    let repo_scope = detail.summary.pr.repo.slug();
+    let agent = core
+        .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
+        .await;
     let result = match &prev {
         Some(p) => {
             core.0

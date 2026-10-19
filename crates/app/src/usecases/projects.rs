@@ -115,7 +115,13 @@ impl Core {
 
         if project.repo.host != HostKind::Local {
             let query = format!("is:pr is:open repo:{}", project.repo.slug());
-            match self.0.deps.host.search(&InboxSection::Query(query)).await {
+            match self
+                .0
+                .deps
+                .host
+                .search_repo(&project.repo, &InboxSection::Query(query))
+                .await
+            {
                 Ok(summaries) => {
                     let mut actions = Vec::with_capacity(summaries.len());
                     for summary in summaries {

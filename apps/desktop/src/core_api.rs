@@ -5,10 +5,11 @@
 use async_trait::async_trait;
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
-    DelegateRequest, FileRequest, HostAuthStatus, LocalBranch, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, Project, ReplyRequest, ResolveRequest, RevisionRequest, RunSkillRequest,
-    SetTokenRequest, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision, Transaction,
-    TransactionResult, UpdateInfo,
+    CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
+    HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
+    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -53,6 +54,18 @@ pub trait CoreApi: Send + Sync {
     async fn refresh_project(&self, id: String) -> Result<(), CommandError>;
     async fn list_branches(&self, project: String) -> Result<Vec<LocalBranch>, CommandError>;
     async fn open_branch(&self, req: OpenBranchRequest) -> Result<OpenPrResponse, CommandError>;
+    async fn merge_info(&self, pr: PrId) -> Result<MergeInfo, CommandError>;
+    async fn merge_pr(&self, req: MergeRequest) -> Result<(), CommandError>;
+    async fn assignable_users(&self, pr: PrId) -> Result<Vec<Person>, CommandError>;
+    async fn set_reviewers(&self, req: ReviewersRequest) -> Result<(), CommandError>;
+    async fn set_draft(&self, req: DraftStateRequest) -> Result<(), CommandError>;
+    async fn update_branch(&self, pr: PrId) -> Result<(), CommandError>;
+    async fn react(&self, req: ReactRequest) -> Result<(), CommandError>;
+    async fn edit_comment(&self, req: EditCommentRequest) -> Result<(), CommandError>;
+    async fn commit_suggestions(&self, req: CommitSuggestionsRequest) -> Result<(), CommandError>;
+    async fn get_skill(&self, id: String, pr: Option<PrId>) -> Result<SkillBody, CommandError>;
+    async fn save_skill(&self, req: SaveSkillRequest) -> Result<SkillInfo, CommandError>;
+    async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -160,6 +173,42 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn open_branch(&self, _req: OpenBranchRequest) -> Result<OpenPrResponse, CommandError> {
+        Err(not_ready())
+    }
+    async fn merge_info(&self, _pr: PrId) -> Result<MergeInfo, CommandError> {
+        Err(not_ready())
+    }
+    async fn merge_pr(&self, _req: MergeRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn assignable_users(&self, _pr: PrId) -> Result<Vec<Person>, CommandError> {
+        Err(not_ready())
+    }
+    async fn set_reviewers(&self, _req: ReviewersRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn set_draft(&self, _req: DraftStateRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn update_branch(&self, _pr: PrId) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn react(&self, _req: ReactRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn edit_comment(&self, _req: EditCommentRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn commit_suggestions(&self, _req: CommitSuggestionsRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn get_skill(&self, _id: String, _pr: Option<PrId>) -> Result<SkillBody, CommandError> {
+        Err(not_ready())
+    }
+    async fn save_skill(&self, _req: SaveSkillRequest) -> Result<SkillInfo, CommandError> {
+        Err(not_ready())
+    }
+    async fn pr_spend(&self, _pr: PrId) -> Result<PrSpend, CommandError> {
         Err(not_ready())
     }
 }

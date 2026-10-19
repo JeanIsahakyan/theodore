@@ -6,18 +6,21 @@ use std::time::Duration;
 
 use serde_json::json;
 use theodore_contract::{
-    AddProjectRequest, BootstrapScope, DelegateRequest, Ephemeral, FileViewedRow, HostAuthStatus,
-    HunkRead, MutationOp, OpenBranchRequest, OpenPrRequest, ProjectStatus, ReplyRequest,
-    ResolveRequest, RevisionRequest, RunSkillRequest, SetTokenRequest, TaskDecision, ToastLevel,
+    AddProjectRequest, BootstrapScope, CommitSuggestionsRequest, DelegateRequest,
+    DraftStateRequest, EditCommentRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
+    MergeMethod as WireMergeMethod, MergeRequest, MutationOp, OpenBranchRequest, OpenPrRequest,
+    ProjectStatus, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest,
+    RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting, TaskDecision, ToastLevel,
     TokenSource, Transaction, TransactionResult, models,
 };
 use theodore_domain::{
-    AgentId, Assignee, FileDiff, Fix, FixStatus, HostKind, HunkId, Patch, PrId, PrRef, RepoRef,
-    Revision, Sha, Task, TaskId, TaskStatus, ThreadId, Usage, ViewedState,
+    AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, Fix, FixStatus, HostKind, HunkId,
+    Patch, PrId, PrRef, RepoRef, Revision, Sha, Side, Task, TaskId, TaskStatus, Thread, ThreadId,
+    Usage, ViewedState,
 };
 use theodore_ports::{
-    AgentEvent, BranchInfo, Clock, CommitLog, Fetched, HostError, NewAction, OutboxStatus, Secrets,
-    Store, SyncActionCode,
+    AgentEvent, BranchInfo, Clock, CommitLog, Fetched, HostError, MergeMethod as PortMergeMethod,
+    MergeState, MergeStatus, NewAction, OutboxStatus, Secrets, Store, SyncActionCode,
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
@@ -142,6 +145,18 @@ fn task_row(f: &Fixtures, id: &TaskId) -> Task {
 
 fn worktree_dir(head: &Sha) -> PathBuf {
     PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0))
+}
+
+/// `worktree_dir` is a fixed real path shared by every test using the
+/// default fixture head — removes `path` (recursively) even if the test
+/// panics, so a file one test plants there (e.g. `.review/config.yaml`)
+/// never leaks into a test that runs after it in the same process.
+struct RemoveOnDrop(PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 // ── transact / sync frame / de-dup / rejection ──────────────────────────────
@@ -1368,4 +1383,678 @@ async fn ensure_open_recovers_a_local_pr_after_a_restart() {
         .await
         .expect("get_revision after recovery");
     assert!(!revision.files.is_empty());
+}
+
+// ── merge / reviewers / draft / update_branch / react / edit_comment ───────
+
+#[tokio::test]
+async fn merge_pr_merges_now_by_default() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+
+    core.merge_pr(MergeRequest {
+        pr: pr.clone(),
+        method: WireMergeMethod::Squash,
+        title: Some("t".into()),
+        body: None,
+        auto: false,
+        queue: false,
+    })
+    .await
+    .expect("merge_pr");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "merge_pr" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    let calls = f.host.merge_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, PortMergeMethod::Squash);
+    assert_eq!(calls[0].1, Some("t".to_string()));
+}
+
+#[tokio::test]
+async fn merge_pr_auto_enables_auto_merge_instead_of_merging() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+
+    core.merge_pr(MergeRequest {
+        pr,
+        method: WireMergeMethod::Merge,
+        title: None,
+        body: None,
+        auto: true,
+        queue: false,
+    })
+    .await
+    .expect("merge_pr");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "merge_pr" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert!(
+        f.host.merge_calls().is_empty(),
+        "must not call merge directly"
+    );
+}
+
+#[tokio::test]
+async fn merge_pr_on_a_local_pr_rejects_synchronously() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+    let resp = core
+        .open_branch(OpenBranchRequest {
+            project: project.id.clone(),
+            branch: "feature".into(),
+            base: None,
+        })
+        .await
+        .expect("open_branch");
+
+    let err = core
+        .merge_pr(MergeRequest {
+            pr: resp.pr,
+            method: WireMergeMethod::Merge,
+            title: None,
+            body: None,
+            auto: false,
+            queue: false,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("local branch review"));
+    assert!(f.store.outbox_snapshot().is_empty());
+}
+
+#[tokio::test]
+async fn merge_info_maps_the_hosts_status() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.host.push_merge_status(Ok(MergeStatus {
+        mergeable: Some(true),
+        state: MergeState::Clean,
+        allowed_methods: vec![PortMergeMethod::Squash],
+        auto_merge_enabled: false,
+        in_queue: false,
+        required_approvals: Some(2),
+    }));
+
+    let info = core.merge_info(pr).await.expect("merge_info");
+    assert_eq!(info.mergeable, Some(true));
+    assert_eq!(info.required_approvals, Some(2));
+    assert_eq!(info.allowed_methods, vec![WireMergeMethod::Squash]);
+}
+
+#[tokio::test]
+async fn assignable_users_reads_through_to_the_host() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    f.host
+        .push_assignable_users(Ok(vec![testkit::sample_person("bob")]));
+
+    let users = core.assignable_users(pr).await.expect("assignable_users");
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].login, "bob");
+}
+
+#[tokio::test]
+async fn set_reviewers_enqueues_adds_and_removes_in_one_outbox_item() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+
+    core.set_reviewers(ReviewersRequest {
+        pr,
+        add: vec!["carol".into()],
+        add_teams: vec!["core".into()],
+        remove: vec!["dave".into()],
+    })
+    .await
+    .expect("set_reviewers");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "set_reviewers" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert_eq!(
+        f.host.reviewer_calls(),
+        vec![(vec!["carol".to_string()], vec!["core".to_string()])]
+    );
+    assert_eq!(f.host.remove_reviewer_calls(), vec!["dave".to_string()]);
+}
+
+#[tokio::test]
+async fn set_draft_converts_to_draft_and_back_to_ready() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    for _ in 0..2 {
+        f.host.push_get_pr(Ok(Fetched::Modified {
+            etag: Some("e".into()),
+            value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+        }));
+    }
+
+    core.set_draft(DraftStateRequest {
+        pr: pr.clone(),
+        draft: true,
+    })
+    .await
+    .expect("set_draft true");
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .filter(|i| i.op == "set_draft" && i.status == OutboxStatus::Done)
+            .count()
+            == 1
+    })
+    .await;
+
+    core.set_draft(DraftStateRequest { pr, draft: false })
+        .await
+        .expect("set_draft false");
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .filter(|i| i.op == "set_draft" && i.status == OutboxStatus::Done)
+            .count()
+            == 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn update_branch_enqueues_and_refreshes() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+    }));
+
+    core.update_branch(pr).await.expect("update_branch");
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "update_branch" && i.status == OutboxStatus::Done)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn react_adds_and_removes_a_reaction() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    for _ in 0..2 {
+        f.host.push_get_pr(Ok(Fetched::Modified {
+            etag: Some("e".into()),
+            value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+        }));
+    }
+
+    core.react(ReactRequest {
+        pr: pr.clone(),
+        comment: CommentId::new("c1"),
+        emoji: "+1".into(),
+        on: true,
+    })
+    .await
+    .expect("react on");
+    core.react(ReactRequest {
+        pr,
+        comment: CommentId::new("c1"),
+        emoji: "+1".into(),
+        on: false,
+    })
+    .await
+    .expect("react off");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .filter(|i| i.op == "react" && i.status == OutboxStatus::Done)
+            .count()
+            == 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn edit_comment_edits_or_deletes_depending_on_body() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    for _ in 0..2 {
+        f.host.push_get_pr(Ok(Fetched::Modified {
+            etag: Some("e".into()),
+            value: testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head),
+        }));
+    }
+
+    core.edit_comment(EditCommentRequest {
+        pr: pr.clone(),
+        comment: CommentId::new("c1"),
+        body: Some("edited".into()),
+    })
+    .await
+    .expect("edit");
+    core.edit_comment(EditCommentRequest {
+        pr,
+        comment: CommentId::new("c1"),
+        body: None,
+    })
+    .await
+    .expect("delete");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .filter(|i| i.op == "edit_comment" && i.status == OutboxStatus::Done)
+            .count()
+            == 2
+    })
+    .await;
+}
+
+// ── commit_suggestions ───────────────────────────────────────────────────────
+
+fn suggestion_comment(id: &str, body: &str) -> Comment {
+    Comment {
+        id: CommentId::new(id),
+        author: testkit::sample_person("author"),
+        body: body.into(),
+        created_at: 0,
+        edited: false,
+    }
+}
+
+fn suggestion_anchor(path: &str, line: u32, start_line: Option<u32>) -> Anchor {
+    Anchor {
+        rev: Sha::new("head111"),
+        path: path.into(),
+        side: Side::New,
+        line,
+        start_line,
+        start_side: None,
+    }
+}
+
+#[tokio::test]
+async fn commit_suggestions_applies_and_pushes_one_commit_on_the_authors_own_pr() {
+    let f = fixtures();
+    // The viewer is the PR's own author, so suggestions may be committed
+    // directly instead of drafted.
+    f.host.push_viewer(Ok(testkit::sample_person("author")));
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    std::fs::create_dir_all(worktree_dir(&head)).unwrap();
+    let note_path = worktree_dir(&head).join("note.txt");
+    std::fs::write(&note_path, "one\ntwo\nthree\n").unwrap();
+
+    let thread = Thread {
+        id: ThreadId::new("t1"),
+        anchor: Some(suggestion_anchor("note.txt", 2, None)),
+        resolved: false,
+        outdated: false,
+        comments: vec![suggestion_comment("c1", "```suggestion\nTWO FIXED\n```")],
+    };
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    detail.threads = vec![thread];
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR_DETAIL.into(),
+            model_id: pr.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(serde_json::to_value(&detail).unwrap()),
+        }])
+        .unwrap();
+
+    core.commit_suggestions(CommitSuggestionsRequest {
+        pr,
+        comments: vec![CommentId::new("c1")],
+        message: "apply suggestion".into(),
+    })
+    .await
+    .expect("commit_suggestions");
+
+    let content = std::fs::read_to_string(&note_path).unwrap();
+    assert_eq!(content, "one\nTWO FIXED\nthree\n");
+    let push = f.git.last_push.lock().unwrap().clone().expect("pushed");
+    assert_eq!(push.0, "feature");
+    assert_eq!(push.1, "apply suggestion");
+}
+
+#[tokio::test]
+async fn commit_suggestions_rejects_on_someone_elses_pr() {
+    let f = fixtures();
+    // Default viewer is "me"; the fixture PR's author is "author" — not own.
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let err = core
+        .commit_suggestions(CommitSuggestionsRequest {
+            pr,
+            comments: vec![CommentId::new("c1")],
+            message: "m".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("own PR"));
+}
+
+#[tokio::test]
+async fn commit_suggestions_rejects_overlapping_ranges() {
+    let f = fixtures();
+    f.host.push_viewer(Ok(testkit::sample_person("author")));
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    // The overlap check runs before any file is touched, so this test
+    // never needs `note.txt` to exist on disk.
+    let thread1 = Thread {
+        id: ThreadId::new("t1"),
+        anchor: Some(suggestion_anchor("note.txt", 3, Some(1))),
+        resolved: false,
+        outdated: false,
+        comments: vec![suggestion_comment("c1", "```suggestion\nX\n```")],
+    };
+    let thread2 = Thread {
+        id: ThreadId::new("t2"),
+        anchor: Some(suggestion_anchor("note.txt", 2, None)),
+        resolved: false,
+        outdated: false,
+        comments: vec![suggestion_comment("c2", "```suggestion\nY\n```")],
+    };
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    detail.threads = vec![thread1, thread2];
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR_DETAIL.into(),
+            model_id: pr.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(serde_json::to_value(&detail).unwrap()),
+        }])
+        .unwrap();
+
+    let err = core
+        .commit_suggestions(CommitSuggestionsRequest {
+            pr,
+            comments: vec![CommentId::new("c1"), CommentId::new("c2")],
+            message: "m".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("overlapping"));
+}
+
+// ── get_skill / save_skill ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn get_skill_returns_builtins_read_only() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let body = core.get_skill("bugs", None).await.expect("get_skill");
+    assert!(!body.editable);
+    assert_eq!(body.info.source, "built-in");
+    assert!(!body.body.is_empty());
+}
+
+#[tokio::test]
+async fn get_skill_errors_for_an_unknown_id_with_no_pr() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    assert!(core.get_skill("no-such-skill", None).await.is_err());
+}
+
+#[tokio::test]
+async fn save_skill_user_scope_writes_to_the_home_skills_dir() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+
+    let info = core
+        .save_skill(SaveSkillRequest {
+            id: "my-skill".into(),
+            scope: "user".into(),
+            pr: None,
+            body: "---\nname: my-skill\ndescription: d\n---\nbody".into(),
+        })
+        .await
+        .expect("save_skill");
+    assert_eq!(info.source, "~/.claude/skills");
+
+    let saved = core
+        .get_skill("my-skill", None)
+        .await
+        .expect("get_skill after save");
+    assert!(saved.editable);
+    assert_eq!(saved.info.description, "d");
+}
+
+#[tokio::test]
+async fn save_skill_repo_scope_writes_into_the_worktree_and_toasts() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let info = core
+        .save_skill(SaveSkillRequest {
+            id: "repo-skill".into(),
+            scope: "repo".into(),
+            pr: Some(pr.clone()),
+            body: "---\nname: repo-skill\ndescription: d\n---\nbody".into(),
+        })
+        .await
+        .expect("save_skill");
+    assert!(info.source.contains(".claude/skills"));
+
+    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::Toast { .. })).await;
+    assert!(matches!(
+        event,
+        Ephemeral::Toast {
+            level: ToastLevel::Info,
+            ..
+        }
+    ));
+
+    let saved = core
+        .get_skill("repo-skill", Some(pr))
+        .await
+        .expect("get_skill after repo save");
+    assert!(saved.editable);
+}
+
+// ── budget / pr_spend ─────────────────────────────────────────────────────────
+
+fn skill_run_row(id: &str, pr: &PrId, usd: f64) -> theodore_contract::SkillRun {
+    theodore_contract::SkillRun {
+        id: id.into(),
+        pr: pr.clone(),
+        skill: "bugs".into(),
+        agents: vec![AgentId::Claude],
+        status: theodore_contract::RunStatus::Done,
+        usage: Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            usd,
+        },
+        error: None,
+        started_at: 0,
+    }
+}
+
+fn put_setting(f: &Fixtures, key: &str, scope: &str, value: serde_json::Value) {
+    let setting = Setting {
+        key: key.into(),
+        scope: scope.into(),
+        value,
+    };
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: format!("{scope}:{key}"),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(&setting).unwrap()),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn pr_spend_sums_skill_run_and_chat_usage() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    f.store
+        .apply(vec![NewAction {
+            model: models::SKILL_RUN.into(),
+            model_id: "run-1".into(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(skill_run_row("run-1", &pr, 2.0)).unwrap()),
+        }])
+        .unwrap();
+    let chat = theodore_contract::ChatMessage {
+        id: "m1".into(),
+        pr: pr.clone(),
+        author: theodore_domain::Author::Agent(AgentId::Claude),
+        text: "reply".into(),
+        refs: vec![],
+        usage: Some(Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            usd: 1.5,
+        }),
+        at: 0,
+    };
+    f.store
+        .apply(vec![NewAction {
+            model: models::CHAT_MESSAGE.into(),
+            model_id: "m1".into(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(&chat).unwrap()),
+        }])
+        .unwrap();
+
+    let spend = core.pr_spend(pr).await.expect("pr_spend");
+    assert!((spend.usage.usd - 3.5).abs() < 1e-9);
+    assert_eq!(spend.budget_usd, None);
+}
+
+#[tokio::test]
+async fn run_skill_refuses_once_the_per_pr_budget_is_reached() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+    put_setting(&f, "budget.per_pr_usd", "user", json!(1.0));
+    f.store
+        .apply(vec![NewAction {
+            model: models::SKILL_RUN.into(),
+            model_id: "run-1".into(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(skill_run_row("run-1", &pr, 2.0)).unwrap()),
+        }])
+        .unwrap();
+
+    let err = core
+        .run_skill(RunSkillRequest {
+            pr,
+            skill: "bugs".into(),
+            agents: vec![],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("budget"));
+    let event = expect_ephemeral(&mut recv, |e| {
+        matches!(
+            e,
+            Ephemeral::Toast {
+                level: ToastLevel::Error,
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(matches!(event, Ephemeral::Toast { .. }));
+}
+
+// ── repo settings (.review/config.yaml) ──────────────────────────────────────
+
+#[tokio::test]
+async fn repo_settings_yaml_overrides_the_user_scoped_agent_setting() {
+    let f = fixtures();
+    // A head unique to this test (not the shared `head111` every other test
+    // in this file uses): its worktree directory is therefore private, so
+    // the `.review/config.yaml` planted here can never leak into — or be
+    // raced by — another test running concurrently in the same process.
+    let head = Sha::new("repo-settings-head");
+    let base = Sha::new("repo-settings-base");
+    f.git.set_head(head.clone());
+    let pr_ref = fixture_pr_ref();
+    let detail = testkit::sample_pr_detail(&pr_ref, &base, &head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-repo-settings".into()),
+        value: detail,
+    }));
+
+    let config_dir = worktree_dir(&head).join(".review");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let _cleanup = RemoveOnDrop(worktree_dir(&head));
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        "agents:\n  grouping: codex\nbudget:\n  per_pr_usd: 3.5\n",
+    )
+    .unwrap();
+
+    let (core, _recv) = Core::start(f.deps());
+    core.open_pr(OpenPrRequest {
+        url: "https://github.com/acme/widgets/pull/7".into(),
+    })
+    .await
+    .expect("open_pr");
+
+    let rows = f
+        .store
+        .query(models::SETTING, "key", "agents.grouping")
+        .unwrap();
+    let repo_row = rows
+        .iter()
+        .find(|r| r.data["scope"] == json!("repo:acme/widgets"))
+        .expect("repo-scoped agents.grouping row");
+    assert_eq!(repo_row.data["value"], json!("codex"));
+
+    let budget_rows = f
+        .store
+        .query(models::SETTING, "key", "budget.per_pr_usd")
+        .unwrap();
+    assert!(
+        budget_rows
+            .iter()
+            .any(|r| r.data["scope"] == json!("repo:acme/widgets") && r.data["value"] == json!(3.5))
+    );
+
+    wait_until(|| f.grouper.last_agent() == Some(AgentId::Codex)).await;
 }

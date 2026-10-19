@@ -10,8 +10,8 @@ use theodore_domain::{
     Anchor, Comment, CommentId, Person, PrId, PrRef, ReviewEvent, Sha, ThreadId, ViewedState,
 };
 use theodore_ports::{
-    Fetched, HostError, NewAction, OutboxItem, ReviewComment, ReviewSubmission, SubmittedReview,
-    SyncActionCode,
+    Fetched, HostError, MergeMethod, NewAction, OutboxItem, ReviewComment, ReviewSubmission,
+    SubmittedReview, SyncActionCode,
 };
 
 use crate::core::{Core, Inner};
@@ -59,6 +59,50 @@ pub struct ResolvePayload {
     pub resolved: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergePayload {
+    pub pr: PrId,
+    pub method: MergeMethod,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub auto: bool,
+    pub queue: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewersPayload {
+    pub pr: PrId,
+    pub add: Vec<String>,
+    pub add_teams: Vec<String>,
+    pub remove: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftPayload {
+    pub pr: PrId,
+    pub draft: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateBranchPayload {
+    pub pr: PrId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReactPayload {
+    pub pr: PrId,
+    pub comment: CommentId,
+    pub emoji: String,
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditCommentPayload {
+    pub pr: PrId,
+    pub comment: CommentId,
+    pub body: Option<String>,
+}
+
 enum Outcome {
     RetryAt(i64),
     AuthPaused(i64),
@@ -104,6 +148,12 @@ async fn process_item(core: &Core, item: OutboxItem) {
         "submit_review" => do_submit_review(core, &item).await,
         "reply_thread" => do_reply_thread(core, &item).await,
         "resolve_thread" => do_resolve_thread(core, &item).await,
+        "merge_pr" => do_merge_pr(core, &item).await,
+        "set_reviewers" => do_set_reviewers(core, &item).await,
+        "set_draft" => do_set_draft(core, &item).await,
+        "update_branch" => do_update_branch(core, &item).await,
+        "react" => do_react(core, &item).await,
+        "edit_comment" => do_edit_comment(core, &item).await,
         other => Err(Outcome::Fail(format!("unknown outbox op {other}"))),
     };
     let store = core.0.deps.store.clone();
@@ -278,6 +328,167 @@ async fn do_resolve_thread(core: &Core, item: &OutboxItem) -> Result<(), Outcome
         .resolve(&pr_ref, &payload.thread, payload.resolved)
         .await
     {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_merge_pr(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: MergePayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    let result = if payload.queue {
+        core.0.deps.host.enqueue(&pr_ref).await
+    } else if payload.auto {
+        core.0
+            .deps
+            .host
+            .enable_auto_merge(&pr_ref, payload.method)
+            .await
+    } else {
+        core.0
+            .deps
+            .host
+            .merge(
+                &pr_ref,
+                payload.method,
+                payload.title.clone(),
+                payload.body.clone(),
+            )
+            .await
+            .map(|_sha| ())
+    };
+    match result {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_set_reviewers(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: ReviewersPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    if (!payload.add.is_empty() || !payload.add_teams.is_empty())
+        && let Err(e) = core
+            .0
+            .deps
+            .host
+            .request_reviewers(&pr_ref, &payload.add, &payload.add_teams)
+            .await
+    {
+        return Err(classify_host_error(core, item, e).await);
+    }
+    for user in &payload.remove {
+        if let Err(e) = core.0.deps.host.remove_reviewer(&pr_ref, user).await {
+            return Err(classify_host_error(core, item, e).await);
+        }
+    }
+    refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+    Ok(())
+}
+
+async fn do_set_draft(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: DraftPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    let result = if payload.draft {
+        core.0.deps.host.convert_to_draft(&pr_ref).await
+    } else {
+        core.0.deps.host.mark_ready(&pr_ref).await
+    };
+    match result {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_update_branch(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: UpdateBranchPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    match core.0.deps.host.update_branch(&pr_ref).await {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_react(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: ReactPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    let result = if payload.on {
+        core.0
+            .deps
+            .host
+            .add_reaction(&pr_ref, &payload.comment, &payload.emoji)
+            .await
+    } else {
+        core.0
+            .deps
+            .host
+            .remove_reaction(&pr_ref, &payload.comment, &payload.emoji)
+            .await
+    };
+    match result {
+        Ok(()) => {
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            Ok(())
+        }
+        Err(e) => Err(classify_host_error(core, item, e).await),
+    }
+}
+
+async fn do_edit_comment(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: EditCommentPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = core
+        .pr_ref(&payload.pr)
+        .await
+        .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    let result = match &payload.body {
+        Some(body) => {
+            core.0
+                .deps
+                .host
+                .edit_comment(&pr_ref, &payload.comment, body)
+                .await
+        }
+        None => {
+            core.0
+                .deps
+                .host
+                .delete_comment(&pr_ref, &payload.comment)
+                .await
+        }
+    };
+    match result {
         Ok(()) => {
             refresh_pr_detail(core, &payload.pr, &pr_ref).await;
             Ok(())

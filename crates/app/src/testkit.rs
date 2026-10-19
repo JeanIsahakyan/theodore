@@ -16,9 +16,9 @@ use theodore_domain::{
 use theodore_ports::{
     AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo, Capabilities,
     Changes, Clock, CommitLog, DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter,
-    HostError, HostResult, InboxSection, ModelRow, NewAction, OutboxItem, OutboxStatus,
-    ReviewSubmission, Secrets, SecretsError, Store, StoreError, StoreResult, SubmittedReview,
-    SyncAction, SyncActionCode, Worktree,
+    HostError, HostResult, InboxSection, MergeMethod, MergeStatus, ModelRow, NewAction, OutboxItem,
+    OutboxStatus, ReviewSubmission, Secrets, SecretsError, Store, StoreError, StoreResult,
+    SubmittedReview, SyncAction, SyncActionCode, Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -552,6 +552,9 @@ impl GitPort for FakeGit {
 
 // ── host ──────────────────────────────────────────────────────────────────
 
+/// `(method, title, body)` of one `FakeHost::merge` call.
+pub type MergeCall = (MergeMethod, Option<String>, Option<String>);
+
 #[derive(Default)]
 pub struct FakeHost {
     pub get_pr_responses: Mutex<VecDeque<HostResult<Fetched<PrDetail>>>>,
@@ -563,6 +566,23 @@ pub struct FakeHost {
     pub viewer_responses: Mutex<VecDeque<HostResult<Person>>>,
     pub reply_responses: Mutex<VecDeque<HostResult<theodore_domain::CommentId>>>,
     pub resolve_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub merge_status_responses: Mutex<VecDeque<HostResult<MergeStatus>>>,
+    pub merge_responses: Mutex<VecDeque<HostResult<theodore_domain::Sha>>>,
+    pub enable_auto_merge_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub enqueue_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub assignable_users_responses: Mutex<VecDeque<HostResult<Vec<Person>>>>,
+    pub request_reviewers_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub remove_reviewer_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub mark_ready_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub convert_to_draft_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub update_branch_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub add_reaction_responses: Mutex<VecDeque<HostResult<()>>>,
+    pub remove_reaction_responses: Mutex<VecDeque<HostResult<()>>>,
+    /// Every `(method, title, body)` a `merge` call was made with, for assertions.
+    pub merge_calls: Mutex<Vec<MergeCall>>,
+    /// Every `(add, add_teams, remove)` reviewer write, for assertions.
+    pub reviewer_calls: Mutex<Vec<(Vec<String>, Vec<String>)>>,
+    pub remove_reviewer_calls: Mutex<Vec<String>>,
 }
 
 impl FakeHost {
@@ -595,6 +615,57 @@ impl FakeHost {
     }
     pub fn push_resolve(&self, r: HostResult<()>) {
         self.resolve_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_merge_status(&self, r: HostResult<MergeStatus>) {
+        self.merge_status_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_merge(&self, r: HostResult<theodore_domain::Sha>) {
+        self.merge_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_enable_auto_merge(&self, r: HostResult<()>) {
+        self.enable_auto_merge_responses
+            .lock()
+            .unwrap()
+            .push_back(r);
+    }
+    pub fn push_enqueue(&self, r: HostResult<()>) {
+        self.enqueue_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_assignable_users(&self, r: HostResult<Vec<Person>>) {
+        self.assignable_users_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_request_reviewers(&self, r: HostResult<()>) {
+        self.request_reviewers_responses
+            .lock()
+            .unwrap()
+            .push_back(r);
+    }
+    pub fn push_remove_reviewer(&self, r: HostResult<()>) {
+        self.remove_reviewer_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_mark_ready(&self, r: HostResult<()>) {
+        self.mark_ready_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_convert_to_draft(&self, r: HostResult<()>) {
+        self.convert_to_draft_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_update_branch(&self, r: HostResult<()>) {
+        self.update_branch_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_add_reaction(&self, r: HostResult<()>) {
+        self.add_reaction_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_remove_reaction(&self, r: HostResult<()>) {
+        self.remove_reaction_responses.lock().unwrap().push_back(r);
+    }
+    pub fn merge_calls(&self) -> Vec<MergeCall> {
+        self.merge_calls.lock().unwrap().clone()
+    }
+    pub fn reviewer_calls(&self) -> Vec<(Vec<String>, Vec<String>)> {
+        self.reviewer_calls.lock().unwrap().clone()
+    }
+    pub fn remove_reviewer_calls(&self) -> Vec<String> {
+        self.remove_reviewer_calls.lock().unwrap().clone()
     }
 }
 
@@ -719,6 +790,123 @@ impl HostAdapter for FakeHost {
         _comment: &theodore_domain::CommentId,
     ) -> HostResult<()> {
         Ok(())
+    }
+    async fn add_reaction(
+        &self,
+        _pr: &PrRef,
+        _comment: &theodore_domain::CommentId,
+        _emoji: &str,
+    ) -> HostResult<()> {
+        self.add_reaction_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn remove_reaction(
+        &self,
+        _pr: &PrRef,
+        _comment: &theodore_domain::CommentId,
+        _emoji: &str,
+    ) -> HostResult<()> {
+        self.remove_reaction_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn assignable_users(&self, _repo: &RepoRef) -> HostResult<Vec<Person>> {
+        self.assignable_users_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(vec![]))
+    }
+    async fn request_reviewers(
+        &self,
+        _pr: &PrRef,
+        users: &[String],
+        teams: &[String],
+    ) -> HostResult<()> {
+        self.reviewer_calls
+            .lock()
+            .unwrap()
+            .push((users.to_vec(), teams.to_vec()));
+        self.request_reviewers_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn remove_reviewer(&self, _pr: &PrRef, user: &str) -> HostResult<()> {
+        self.remove_reviewer_calls
+            .lock()
+            .unwrap()
+            .push(user.to_string());
+        self.remove_reviewer_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn mark_ready(&self, _pr: &PrRef) -> HostResult<()> {
+        self.mark_ready_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn convert_to_draft(&self, _pr: &PrRef) -> HostResult<()> {
+        self.convert_to_draft_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn merge_status(&self, _pr: &PrRef) -> HostResult<MergeStatus> {
+        self.merge_status_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(HostError::NotFound("no fixture queued".into())))
+    }
+    async fn merge(
+        &self,
+        _pr: &PrRef,
+        method: MergeMethod,
+        title: Option<String>,
+        body: Option<String>,
+    ) -> HostResult<theodore_domain::Sha> {
+        self.merge_calls
+            .lock()
+            .unwrap()
+            .push((method, title.clone(), body.clone()));
+        self.merge_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Ok(theodore_domain::Sha::new("merged-sha")))
+    }
+    async fn enable_auto_merge(&self, _pr: &PrRef, _method: MergeMethod) -> HostResult<()> {
+        self.enable_auto_merge_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn enqueue(&self, _pr: &PrRef) -> HostResult<()> {
+        self.enqueue_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+    async fn update_branch(&self, _pr: &PrRef) -> HostResult<()> {
+        self.update_branch_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
     }
 }
 
@@ -886,6 +1074,9 @@ pub struct Fixtures {
     pub secrets: Arc<FakeSecrets>,
     pub grouper: Arc<FakeGrouper>,
     pub token_status: Arc<FakeTokenStatus>,
+    /// A throwaway `~/.claude/skills` stand-in (plan §8.4): kept alive for
+    /// the fixture's lifetime, deleted on drop. Never the real home dir.
+    pub claude_home: Arc<tempfile::TempDir>,
 }
 
 impl Fixtures {
@@ -899,6 +1090,7 @@ impl Fixtures {
             clock: self.clock.clone(),
             grouper: self.grouper.clone(),
             tools: None,
+            claude_home: self.claude_home.path().to_path_buf(),
             token_status: Some(self.token_status.clone()),
         }
     }
@@ -922,6 +1114,7 @@ pub fn fixtures() -> Fixtures {
             groups: vec![],
         }),
         token_status: FakeTokenStatus::new(TokenSource::Keychain),
+        claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
     }
 }
 

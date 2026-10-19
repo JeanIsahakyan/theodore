@@ -1,13 +1,16 @@
 //! Use cases (plan §2.1): each is `impl Core` in its own file.
 
 pub mod agents;
+pub mod budget;
 pub mod grouping;
 pub mod host;
 pub mod inbox;
+pub mod merge;
 pub mod open_pr;
 pub mod projects;
 pub mod review;
 pub mod revision;
 pub mod skills;
+pub mod suggestions;
 pub mod tasks;
 pub mod threads;
