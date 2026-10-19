@@ -24,6 +24,8 @@ theodore-host-github.workspace = true
 theodore-agents.workspace = true
 theodore-secrets.workspace = true
 theodore-runtime = { path = "../../crates/runtime" }
+theodore-sandbox = { path = "../../crates/sandbox" }
+theodore-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

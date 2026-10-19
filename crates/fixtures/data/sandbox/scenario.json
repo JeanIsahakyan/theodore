@@ -1,0 +1,2457 @@
+{
+  "name": "default",
+  "viewer": "sam",
+  "users": [
+    {
+      "login": "sam",
+      "name": "Sam Rivera",
+      "avatar": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc2NCcgaGVpZ2h0PSc2NCc+PGNpcmNsZSBjeD0nMzInIGN5PSczMicgcj0nMzInIGZpbGw9JyMyNTYzZWInLz48dGV4dCB4PSczMicgeT0nNDEnIGZvbnQtZmFtaWx5PSdIZWx2ZXRpY2EsQXJpYWwnIGZvbnQtc2l6ZT0nMjYnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZpbGw9J3doaXRlJz5TUjwvdGV4dD48L3N2Zz4=",
+      "bot": false
+    },
+    {
+      "login": "mira",
+      "name": "Mira Chen",
+      "avatar": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc2NCcgaGVpZ2h0PSc2NCc+PGNpcmNsZSBjeD0nMzInIGN5PSczMicgcj0nMzInIGZpbGw9JyNkYjI3NzcnLz48dGV4dCB4PSczMicgeT0nNDEnIGZvbnQtZmFtaWx5PSdIZWx2ZXRpY2EsQXJpYWwnIGZvbnQtc2l6ZT0nMjYnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZpbGw9J3doaXRlJz5NQzwvdGV4dD48L3N2Zz4=",
+      "bot": false
+    },
+    {
+      "login": "lee",
+      "name": "Lee Okafor",
+      "avatar": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc2NCcgaGVpZ2h0PSc2NCc+PGNpcmNsZSBjeD0nMzInIGN5PSczMicgcj0nMzInIGZpbGw9JyMwNTk2NjknLz48dGV4dCB4PSczMicgeT0nNDEnIGZvbnQtZmFtaWx5PSdIZWx2ZXRpY2EsQXJpYWwnIGZvbnQtc2l6ZT0nMjYnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZpbGw9J3doaXRlJz5MTzwvdGV4dD48L3N2Zz4=",
+      "bot": false
+    },
+    {
+      "login": "priya",
+      "name": "Priya Nair",
+      "avatar": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc2NCcgaGVpZ2h0PSc2NCc+PGNpcmNsZSBjeD0nMzInIGN5PSczMicgcj0nMzInIGZpbGw9JyNkOTc3MDYnLz48dGV4dCB4PSczMicgeT0nNDEnIGZvbnQtZmFtaWx5PSdIZWx2ZXRpY2EsQXJpYWwnIGZvbnQtc2l6ZT0nMjYnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZpbGw9J3doaXRlJz5QTjwvdGV4dD48L3N2Zz4=",
+      "bot": false
+    },
+    {
+      "login": "tomas",
+      "name": "Tomás Varga",
+      "avatar": null,
+      "bot": false
+    },
+    {
+      "login": "ci-bot",
+      "name": "CI",
+      "avatar": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc2NCcgaGVpZ2h0PSc2NCc+PGNpcmNsZSBjeD0nMzInIGN5PSczMicgcj0nMzInIGZpbGw9JyM0YjU1NjMnLz48dGV4dCB4PSczMicgeT0nNDEnIGZvbnQtZmFtaWx5PSdIZWx2ZXRpY2EsQXJpYWwnIGZvbnQtc2l6ZT0nMjYnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZpbGw9J3doaXRlJz5DSTwvdGV4dD48L3N2Zz4=",
+      "bot": true
+    },
+    {
+      "login": "renovate-bot",
+      "name": "Renovate",
+      "avatar": null,
+      "bot": true
+    }
+  ],
+  "teams": [
+    {
+      "slug": "web-core",
+      "members": [
+        "sam",
+        "mira",
+        "lee"
+      ]
+    },
+    {
+      "slug": "platform",
+      "members": [
+        "priya",
+        "tomas"
+      ]
+    }
+  ],
+  "repos": [
+    {
+      "owner": "acme",
+      "name": "storefront",
+      "description": "The Acme web shop",
+      "private": true,
+      "default_branch": "main",
+      "hosted": true,
+      "require_up_to_date": false,
+      "branches": [
+        {
+          "name": "main",
+          "from": null,
+          "commits": [
+            {
+              "message": "Initial storefront",
+              "author": "mira",
+              "ago": "4w",
+              "files": [
+                {
+                  "path": "package.json",
+                  "text": "{\n  \"name\": \"storefront\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"test\": \"vitest\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.3.1\",\n    \"react-router\": \"^6.26.0\"\n  }\n}\n"
+                },
+                {
+                  "path": "pnpm-lock.yaml",
+                  "text": "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n\nimporters:\n  .:\n    dependencies:\n      react:\n        specifier: ^18.3.1\n        version: 18.3.1\n      react-router:\n        specifier: ^6.26.0\n        version: 6.26.0\n\npackages:\n\n  dep-00@1.1.0:\n    resolution: {integrity: sha512-0000000100009e37}\n    engines: {node: '>=18'}\n\n  dep-01@1.8.0:\n    resolution: {integrity: sha512-9e3779b200013c6e}\n    engines: {node: '>=18'}\n\n  dep-02@1.15.0:\n    resolution: {integrity: sha512-3c6ef3630001daa5}\n    engines: {node: '>=18'}\n\n  dep-03@1.22.0:\n    resolution: {integrity: sha512-daa66d14000278dc}\n    engines: {node: '>=18'}\n\n  dep-04@1.6.0:\n    resolution: {integrity: sha512-78dde6c500031713}\n    engines: {node: '>=18'}\n\n  dep-05@1.13.0:\n    resolution: {integrity: sha512-171560760003b54a}\n    engines: {node: '>=18'}\n\n  dep-06@1.20.0:\n    resolution: {integrity: sha512-b54cda2700045381}\n    engines: {node: '>=18'}\n\n  dep-07@1.4.0:\n    resolution: {integrity: sha512-538453d80004f1b8}\n    engines: {node: '>=18'}\n\n  dep-08@1.11.0:\n    resolution: {integrity: sha512-f1bbcd8900058fef}\n    engines: {node: '>=18'}\n\n  dep-09@1.18.0:\n    resolution: {integrity: sha512-8ff3473a00062e26}\n    engines: {node: '>=18'}\n\n  dep-10@1.2.0:\n    resolution: {integrity: sha512-2e2ac0eb0006cc5d}\n    engines: {node: '>=18'}\n\n  dep-11@1.9.0:\n    resolution: {integrity: sha512-cc623a9c00076a94}\n    engines: {node: '>=18'}\n\n  dep-12@1.16.0:\n    resolution: {integrity: sha512-6a99b44d000808cb}\n    engines: {node: '>=18'}\n\n  dep-13@1.0.0:\n    resolution: {integrity: sha512-08d12dfe0008a702}\n    engines: {node: '>=18'}\n\n  dep-14@1.7.0:\n    resolution: {integrity: sha512-a708a7af00094539}\n    engines: {node: '>=18'}\n\n  dep-15@1.14.0:\n    resolution: {integrity: sha512-454021600009e370}\n    engines: {node: '>=18'}\n\n  dep-16@1.21.0:\n    resolution: {integrity: sha512-e3779b11000a81a7}\n    engines: {node: '>=18'}\n\n  dep-17@1.5.0:\n    resolution: {integrity: sha512-81af14c2000b1fde}\n    engines: {node: '>=18'}\n\n  dep-18@1.12.0:\n    resolution: {integrity: sha512-1fe68e73000bbe15}\n    engines: {node: '>=18'}\n\n  dep-19@1.19.0:\n    resolution: {integrity: sha512-be1e0824000c5c4c}\n    engines: {node: '>=18'}\n\n  dep-20@1.3.0:\n    resolution: {integrity: sha512-5c5581d5000cfa83}\n    engines: {node: '>=18'}\n\n  dep-21@1.10.0:\n    resolution: {integrity: sha512-fa8cfb86000d98ba}\n    engines: {node: '>=18'}\n\n  dep-22@1.17.0:\n    resolution: {integrity: sha512-98c47537000e36f1}\n    engines: {node: '>=18'}\n\n  dep-23@1.1.0:\n    resolution: {integrity: sha512-36fbeee8000ed528}\n    engines: {node: '>=18'}\n\n  dep-24@1.8.0:\n    resolution: {integrity: sha512-d5336899000f735f}\n    engines: {node: '>=18'}\n\n  dep-25@1.15.0:\n    resolution: {integrity: sha512-736ae24a00101196}\n    engines: {node: '>=18'}\n\n  dep-26@1.22.0:\n    resolution: {integrity: sha512-11a25bfb0010afcd}\n    engines: {node: '>=18'}\n\n  dep-27@1.6.0:\n    resolution: {integrity: sha512-afd9d5ac00114e04}\n    engines: {node: '>=18'}\n\n  dep-28@1.13.0:\n    resolution: {integrity: sha512-4e114f5d0011ec3b}\n    engines: {node: '>=18'}\n\n  dep-29@1.20.0:\n    resolution: {integrity: sha512-ec48c90e00128a72}\n    engines: {node: '>=18'}\n\n  dep-30@1.4.0:\n    resolution: {integrity: sha512-8a8042bf001328a9}\n    engines: {node: '>=18'}\n\n  dep-31@1.11.0:\n    resolution: {integrity: sha512-28b7bc700013c6e0}\n    engines: {node: '>=18'}\n\n  dep-32@1.18.0:\n    resolution: {integrity: sha512-c6ef362100146517}\n    engines: {node: '>=18'}\n\n  dep-33@1.2.0:\n    resolution: {integrity: sha512-6526afd20015034e}\n    engines: {node: '>=18'}\n\n  dep-34@1.9.0:\n    resolution: {integrity: sha512-035e29830015a185}\n    engines: {node: '>=18'}\n\n  dep-35@1.16.0:\n    resolution: {integrity: sha512-a195a33400163fbc}\n    engines: {node: '>=18'}\n\n  dep-36@1.0.0:\n    resolution: {integrity: sha512-3fcd1ce50016ddf3}\n    engines: {node: '>=18'}\n\n  dep-37@1.7.0:\n    resolution: {integrity: sha512-de04969600177c2a}\n    engines: {node: '>=18'}\n\n  dep-38@1.14.0:\n    resolution: {integrity: sha512-7c3c104700181a61}\n    engines: {node: '>=18'}\n\n  dep-39@1.21.0:\n    resolution: {integrity: sha512-1a7389f80018b898}\n    engines: {node: '>=18'}\n\n  dep-40@1.5.0:\n    resolution: {integrity: sha512-b8ab03a9001956cf}\n    engines: {node: '>=18'}\n\n  dep-41@1.12.0:\n    resolution: {integrity: sha512-56e27d5a0019f506}\n    engines: {node: '>=18'}\n\n  dep-42@1.19.0:\n    resolution: {integrity: sha512-f519f70b001a933d}\n    engines: {node: '>=18'}\n\n  dep-43@1.3.0:\n    resolution: {integrity: sha512-935170bc001b3174}\n    engines: {node: '>=18'}\n\n  dep-44@1.10.0:\n    resolution: {integrity: sha512-3188ea6d001bcfab}\n    engines: {node: '>=18'}\n\n  dep-45@1.17.0:\n    resolution: {integrity: sha512-cfc0641e001c6de2}\n    engines: {node: '>=18'}\n\n  dep-46@1.1.0:\n    resolution: {integrity: sha512-6df7ddcf001d0c19}\n    engines: {node: '>=18'}\n\n  dep-47@1.8.0:\n    resolution: {integrity: sha512-0c2f5780001daa50}\n    engines: {node: '>=18'}\n\n  dep-48@1.15.0:\n    resolution: {integrity: sha512-aa66d131001e4887}\n    engines: {node: '>=18'}\n\n  dep-49@1.22.0:\n    resolution: {integrity: sha512-489e4ae2001ee6be}\n    engines: {node: '>=18'}\n\n  dep-50@1.6.0:\n    resolution: {integrity: sha512-e6d5c493001f84f5}\n    engines: {node: '>=18'}\n\n  dep-51@1.13.0:\n    resolution: {integrity: sha512-850d3e440020232c}\n    engines: {node: '>=18'}\n\n  dep-52@1.20.0:\n    resolution: {integrity: sha512-2344b7f50020c163}\n    engines: {node: '>=18'}\n\n  dep-53@1.4.0:\n    resolution: {integrity: sha512-c17c31a600215f9a}\n    engines: {node: '>=18'}\n\n  dep-54@1.11.0:\n    resolution: {integrity: sha512-5fb3ab570021fdd1}\n    engines: {node: '>=18'}\n\n  dep-55@1.18.0:\n    resolution: {integrity: sha512-fdeb250800229c08}\n    engines: {node: '>=18'}\n\n  dep-56@1.2.0:\n    resolution: {integrity: sha512-9c229eb900233a3f}\n    engines: {node: '>=18'}\n\n  dep-57@1.9.0:\n    resolution: {integrity: sha512-3a5a186a0023d876}\n    engines: {node: '>=18'}\n\n  dep-58@1.16.0:\n    resolution: {integrity: sha512-d891921b002476ad}\n    engines: {node: '>=18'}\n\n  dep-59@1.0.0:\n    resolution: {integrity: sha512-76c90bcc002514e4}\n    engines: {node: '>=18'}\n"
+                },
+                {
+                  "path": "tsconfig.json",
+                  "text": "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"jsx\": \"react-jsx\"\n  }\n}\n"
+                },
+                {
+                  "path": ".gitattributes",
+                  "text": "src/generated/** linguist-generated=true\n"
+                },
+                {
+                  "path": "README.md",
+                  "text": "# Storefront\n\nThe Acme web shop.\n\n## Develop\n\n```sh\npnpm install\npnpm dev\n```\n"
+                },
+                {
+                  "path": "docs/architecture.md",
+                  "text": "# Architecture\n\nPages compose components; components never fetch.\n"
+                },
+                {
+                  "path": "src/lib/price.ts",
+                  "text": "export function formatPrice(cents: number, currency = 'USD'): string {\n  const value = (cents / 100).toFixed(2);\n  return `${currency} ${value}`;\n}\n\nexport function parsePrice(input: string): number {\n  const n = Number(input.replace(/[^0-9.]/g, ''));\n  return Math.round(n * 100);\n}\n"
+                },
+                {
+                  "path": "src/lib/cart.ts",
+                  "text": "export interface LineItem {\n  sku: string;\n  price: number;\n  qty: number;\n}\n\nexport function subtotal(items: LineItem[]): number {\n  return items.reduce((sum, i) => sum + i.price * i.qty, 0);\n}\n\nexport function total(items: LineItem[], taxRate: number): number {\n  const sub = subtotal(items);\n  return sub + sub * taxRate;\n}\n\nexport function isEmpty(items: LineItem[]): boolean {\n  return items.length === 0;\n}\n"
+                },
+                {
+                  "path": "src/lib/search.ts",
+                  "text": "export function search(items: string[], q: string): string[] {\n  const needle = q.toLowerCase();\n  return items.filter((i) => i.toLowerCase().includes(needle));\n}\n"
+                },
+                {
+                  "path": "src/lib/orders.ts",
+                  "text": "export interface Order {\n  id: string;\n  placedAt: string;\n  totalCents: number;\n}\n\nexport async function listOrders(): Promise<Order[]> {\n  const res = await fetch('/api/orders');\n  return res.json();\n}\n"
+                },
+                {
+                  "path": "src/lib/payments.ts",
+                  "text": "export const PAYMENTS_URL = '/api/payments';\n"
+                },
+                {
+                  "path": "src/generated/routes.gen.ts",
+                  "text": "// @generated by router-gen v1. Do not edit.\n\nexport const routes = [\n  { path: '/home', page: () => import('../pages/Home') },\n  { path: '/product', page: () => import('../pages/Product') },\n  { path: '/cart', page: () => import('../pages/Cart') },\n  { path: '/checkout', page: () => import('../pages/Checkout') },\n  { path: '/orders', page: () => import('../pages/Orders') },\n  { path: '/search', page: () => import('../pages/Search') },\n  { path: '/account', page: () => import('../pages/Account') },\n  { path: '/wishlist', page: () => import('../pages/Wishlist') },\n] as const;\n"
+                },
+                {
+                  "path": "assets/placeholder.png",
+                  "asset": "assets/placeholder-v1.png"
+                },
+                {
+                  "path": "assets/logo.svg",
+                  "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"32\">\n  <rect width=\"120\" height=\"32\" rx=\"6\" fill=\"#111827\"/>\n  <text x=\"60\" y=\"21\" fill=\"#ffffff\" text-anchor=\"middle\">acme</text>\n</svg>\n"
+                },
+                {
+                  "path": "src/styles/theme.css",
+                  "text": ":root {\n  --color-text: #1f2937;\n  --color-surface: #ffffff;\n}\n"
+                },
+                {
+                  "path": "tests/cart.test.ts",
+                  "text": "import { total } from '../src/lib/cart';\n\ntest('total', () => {\n  expect(total([{ sku: 'a', price: 10, qty: 2 }], 0.1)).toBe(22);\n});\n"
+                },
+                {
+                  "path": "tests/search.test.ts",
+                  "text": "import { search } from '../src/lib/search';\n\ntest('search', () => {\n  expect(search(['Mug', 'Hat'], 'mu')).toEqual(['Mug']);\n});\n"
+                },
+                {
+                  "path": "src/components/Button.tsx",
+                  "text": "import React from 'react';\n\nexport interface ButtonProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Button({ label, children }: ButtonProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"button\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Card.tsx",
+                  "text": "import React from 'react';\n\nexport interface CardProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Card({ label, children }: CardProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"card\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Header.tsx",
+                  "text": "import React from 'react';\n\nexport interface HeaderProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Header({ label, children }: HeaderProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"header\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Footer.tsx",
+                  "text": "import React from 'react';\n\nexport interface FooterProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Footer({ label, children }: FooterProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"footer\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Modal.tsx",
+                  "text": "import React from 'react';\n\nexport interface ModalProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Modal({ label, children }: ModalProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"modal\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/ProductTile.tsx",
+                  "text": "import React from 'react';\n\nexport interface ProductTileProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function ProductTile({ label, children }: ProductTileProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"product-tile\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/PriceTag.tsx",
+                  "text": "import React from 'react';\n\nexport interface PriceTagProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function PriceTag({ label, children }: PriceTagProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"price-tag\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/CartIcon.tsx",
+                  "text": "import React from 'react';\n\nexport interface CartIconProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function CartIcon({ label, children }: CartIconProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"cart-icon\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/SearchBox.tsx",
+                  "text": "import React from 'react';\n\nexport interface SearchBoxProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function SearchBox({ label, children }: SearchBoxProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"search-box\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Badge.tsx",
+                  "text": "import React from 'react';\n\nexport interface BadgeProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Badge({ label, children }: BadgeProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"badge\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Avatar.tsx",
+                  "text": "import React from 'react';\n\nexport interface AvatarProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Avatar({ label, children }: AvatarProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"avatar\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Tabs.tsx",
+                  "text": "import React from 'react';\n\nexport interface TabsProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Tabs({ label, children }: TabsProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"tabs\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Toast.tsx",
+                  "text": "import React from 'react';\n\nexport interface ToastProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Toast({ label, children }: ToastProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"toast\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Spinner.tsx",
+                  "text": "import React from 'react';\n\nexport interface SpinnerProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Spinner({ label, children }: SpinnerProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"spinner\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Rating.tsx",
+                  "text": "import React from 'react';\n\nexport interface RatingProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Rating({ label, children }: RatingProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"rating\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Pagination.tsx",
+                  "text": "import React from 'react';\n\nexport interface PaginationProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Pagination({ label, children }: PaginationProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"pagination\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Breadcrumbs.tsx",
+                  "text": "import React from 'react';\n\nexport interface BreadcrumbsProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Breadcrumbs({ label, children }: BreadcrumbsProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"breadcrumbs\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Drawer.tsx",
+                  "text": "import React from 'react';\n\nexport interface DrawerProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Drawer({ label, children }: DrawerProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"drawer\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Tooltip.tsx",
+                  "text": "import React from 'react';\n\nexport interface TooltipProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Tooltip({ label, children }: TooltipProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"tooltip\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Select.tsx",
+                  "text": "import React from 'react';\n\nexport interface SelectProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Select({ label, children }: SelectProps) {\nconst style = {\n    color: '#1f2937',\n    background: '#ffffff',\n    borderRadius: 6,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"select\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Home.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function HomePage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Home</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Product.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function ProductPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Product</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Cart.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function CartPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Cart</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Checkout.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function CheckoutPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Checkout</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Orders.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function OrdersPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Orders</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Search.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function SearchPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Search</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Account.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function AccountPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Account</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Wishlist.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function WishlistPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Wishlist</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/styles/base.css",
+                  "text": ".base {\n  color: #1f2937;\n  background: #ffffff;\n  margin: 0;\n}\n\n.base--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/layout.css",
+                  "text": ".layout {\n  color: #1f2937;\n  background: #ffffff;\n  margin: 0;\n}\n\n.layout--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/buttons.css",
+                  "text": ".buttons {\n  color: #1f2937;\n  background: #ffffff;\n  margin: 0;\n}\n\n.buttons--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/cards.css",
+                  "text": ".cards {\n  color: #1f2937;\n  background: #ffffff;\n  margin: 0;\n}\n\n.cards--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/forms.css",
+                  "text": ".forms {\n  color: #1f2937;\n  background: #ffffff;\n  margin: 0;\n}\n\n.forms--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useCart.ts",
+                  "text": "import { useEffect, useState } from 'react';\n\nexport function useCart<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), 150);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useSearch.ts",
+                  "text": "import { useEffect, useState } from 'react';\n\nexport function useSearch<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), 150);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useOrders.ts",
+                  "text": "import { useEffect, useState } from 'react';\n\nexport function useOrders<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), 150);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useToast.ts",
+                  "text": "import { useEffect, useState } from 'react';\n\nexport function useToast<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), 150);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useMedia.ts",
+                  "text": "import { useEffect, useState } from 'react';\n\nexport function useMedia<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), 150);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "babel.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'babel.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "jest.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'jest.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "postcss.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'postcss.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "tailwind.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'tailwind.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "vite.config.ts",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'vite.config.ts',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "vitest.config.ts",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'vitest.config.ts',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "playwright.config.ts",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'playwright.config.ts',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "eslint.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'eslint.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "prettier.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'prettier.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "commitlint.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'commitlint.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "lint-staged.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'lint-staged.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "stylelint.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'stylelint.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "svgo.config.js",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'svgo.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "storybook.config.ts",
+                  "text": "// Copyright (c) 2025 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'storybook.config.ts',\n  root: true,\n};\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "lee/ABC-160-price-locale",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-160 Locale-aware price formatting",
+              "author": "lee",
+              "ago": "2d",
+              "files": [
+                {
+                  "path": "src/lib/price.ts",
+                  "text": "export function formatPrice(cents: number, currency = 'USD', locale = 'en-US'): string {\n  const value = (cents / 100).toFixed(2);\n  return locale === 'de-DE' ? `${value} ${currency}` : `${currency} ${value}`;\n}\n\nexport function parsePrice(input: string): number {\n  const n = Number(input.replace(/[^0-9.,]/g, '').replace(',', '.'));\n  return Math.round(n * 100);\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "lee/ABC-120-grid",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-120 Virtualize the product grid",
+              "author": "lee",
+              "ago": "4d",
+              "files": [
+                {
+                  "path": "src/lib/grid.ts",
+                  "text": "export function visibleRange(scrollTop: number, rowHeight: number, rows: number) {\n  const first = Math.floor(scrollTop / rowHeight);\n  return [first, first + rows] as const;\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "tomas/css-in-js",
+          "from": "main",
+          "commits": [
+            {
+              "message": "Try CSS-in-JS for buttons",
+              "author": "tomas",
+              "ago": "6d",
+              "files": [
+                {
+                  "path": "src/styles/css-in-js.ts",
+                  "text": "export const button = {\n  padding: '8px 12px',\n  borderRadius: 6,\n};\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "main",
+          "from": null,
+          "commits": [
+            {
+              "message": "Format prices with Intl.NumberFormat",
+              "author": "mira",
+              "ago": "20h",
+              "files": [
+                {
+                  "path": "src/lib/price.ts",
+                  "text": "export function formatPrice(cents: number, currency = 'USD'): string {\n  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);\n}\n\nexport function parsePrice(input: string): number {\n  const n = Number(input.replace(/[^0-9.]/g, ''));\n  return Math.round(n * 100);\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "mira/ABC-101-cart-rounding",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-101 Round cart totals to cents",
+              "author": "mira",
+              "ago": "5h",
+              "files": [
+                {
+                  "path": "src/lib/cart.ts",
+                  "text": "export interface LineItem {\n  sku: string;\n  price: number;\n  qty: number;\n}\n\nexport function subtotal(items: LineItem[]): number {\n  return items.reduce((sum, i) => sum + i.price * i.qty, 0);\n}\n\nexport function total(items: LineItem[], taxRate: number): number {\n  const sub = subtotal(items);\n  const raw = sub + sub * taxRate;\n  return Math.round(raw * 100) / 100;\n}\n\nexport function isEmpty(items: LineItem[]): boolean {\n  return items.length === 0;\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "lee/ABC-142-design-tokens",
+          "from": "main",
+          "commits": [
+            {
+              "message": "Add design tokens",
+              "author": "lee",
+              "ago": "3d",
+              "files": [
+                {
+                  "path": "src/styles/tokens.ts",
+                  "text": "export const tokens = {\n  text: 'var(--color-text)',\n  surface: 'var(--color-surface)',\n  radius: 8,\n  space: (n: number) => `${n * 4}px`,\n  motion: { fast: 120, slow: 300 },\n} as const;\n"
+                },
+                {
+                  "path": "src/styles/tokens/theme.css",
+                  "text": ":root {\n  --color-text: #111827;\n  --color-surface: #ffffff;\n  --color-accent: #4f46e5;\n}\n",
+                  "rename_from": "src/styles/theme.css"
+                },
+                {
+                  "path": "src/styles/base.css",
+                  "text": ".base {\n  color: var(--color-text);\n  background: var(--color-surface);\n  margin: 0;\n}\n\n.base--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/layout.css",
+                  "text": ".layout {\n  color: var(--color-text);\n  background: var(--color-surface);\n  margin: 0;\n}\n\n.layout--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/buttons.css",
+                  "text": ".buttons {\n  color: var(--color-text);\n  background: var(--color-surface);\n  margin: 0;\n}\n\n.buttons--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/cards.css",
+                  "text": ".cards {\n  color: var(--color-text);\n  background: var(--color-surface);\n  margin: 0;\n}\n\n.cards--muted {\n  opacity: 0.7;\n}\n"
+                },
+                {
+                  "path": "src/styles/forms.css",
+                  "text": ".forms {\n  color: var(--color-text);\n  background: var(--color-surface);\n  margin: 0;\n}\n\n.forms--muted {\n  opacity: 0.7;\n}\n"
+                }
+              ]
+            },
+            {
+              "message": "Use tokens in components, pages and hooks",
+              "author": "lee",
+              "ago": "2d",
+              "files": [
+                {
+                  "path": "src/components/Button.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface ButtonProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Button({ label, children }: ButtonProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"button\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Card.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface CardProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Card({ label, children }: CardProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"card\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Header.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface HeaderProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Header({ label, children }: HeaderProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"header\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Footer.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface FooterProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Footer({ label, children }: FooterProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"footer\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Modal.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface ModalProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Modal({ label, children }: ModalProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"modal\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/ProductTile.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface ProductTileProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function ProductTile({ label, children }: ProductTileProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"product-tile\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/PriceTag.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface PriceTagProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function PriceTag({ label, children }: PriceTagProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"price-tag\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/CartIcon.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface CartIconProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function CartIcon({ label, children }: CartIconProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"cart-icon\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/SearchBox.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface SearchBoxProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function SearchBox({ label, children }: SearchBoxProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"search-box\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Badge.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface BadgeProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Badge({ label, children }: BadgeProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"badge\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Avatar.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface AvatarProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Avatar({ label, children }: AvatarProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"avatar\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Tabs.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface TabsProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Tabs({ label, children }: TabsProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"tabs\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Toast.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface ToastProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Toast({ label, children }: ToastProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"toast\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Spinner.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface SpinnerProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Spinner({ label, children }: SpinnerProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"spinner\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Rating.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface RatingProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Rating({ label, children }: RatingProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"rating\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Pagination.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface PaginationProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Pagination({ label, children }: PaginationProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"pagination\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Breadcrumbs.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface BreadcrumbsProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Breadcrumbs({ label, children }: BreadcrumbsProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"breadcrumbs\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Drawer.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface DrawerProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Drawer({ label, children }: DrawerProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"drawer\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Tooltip.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface TooltipProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Tooltip({ label, children }: TooltipProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"tooltip\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/components/Select.tsx",
+                  "text": "import React from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport interface SelectProps {\n  label?: string;\n  children?: React.ReactNode;\n}\n\nexport function Select({ label, children }: SelectProps) {\nconst style = {\n    color: tokens.text,\n    background: tokens.surface,\n    borderRadius: tokens.radius,\n    padding: '8px 12px',\n  };\nreturn (\n    <div className=\"select\" style={style} aria-label={label}>\n      {children}\n    </div>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Home.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function HomePage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Home</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Product.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function ProductPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Product</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Cart.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function CartPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Cart</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Checkout.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function CheckoutPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Checkout</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Orders.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function OrdersPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Orders</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Search.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function SearchPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Search</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Account.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function AccountPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Account</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/pages/Wishlist.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { tokens } from '../styles/tokens';\n\nexport default function WishlistPage() {\n  return (\n    <main style={{ display: 'grid', gap: tokens.space(4) }}>\n      <Header />\n      <h1>Wishlist</h1>\n      <Footer />\n    </main>\n  );\n}\n"
+                },
+                {
+                  "path": "src/hooks/useCart.ts",
+                  "text": "import { useEffect, useState } from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport function useCart<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), tokens.motion.fast);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useSearch.ts",
+                  "text": "import { useEffect, useState } from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport function useSearch<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), tokens.motion.fast);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useOrders.ts",
+                  "text": "import { useEffect, useState } from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport function useOrders<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), tokens.motion.fast);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useToast.ts",
+                  "text": "import { useEffect, useState } from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport function useToast<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), tokens.motion.fast);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                },
+                {
+                  "path": "src/hooks/useMedia.ts",
+                  "text": "import { useEffect, useState } from 'react';\nimport { tokens } from '../styles/tokens';\n\nexport function useMedia<T>(load: () => Promise<T>) {\n  const [value, setValue] = useState<T | null>(null);\nuseEffect(() => {\n    const id = setTimeout(() => load().then(setValue), tokens.motion.fast);\n    return () => clearTimeout(id);\n  }, [load]);\n  return value;\n}\n"
+                }
+              ]
+            },
+            {
+              "message": "Test and document tokens",
+              "author": "lee",
+              "ago": "1d",
+              "files": [
+                {
+                  "path": "tests/tokens/text.test.ts",
+                  "text": "import { tokens } from '../../src/styles/tokens';\n\ntest('text token exists', () => {\n  expect(tokens).toHaveProperty('text');\n});\n"
+                },
+                {
+                  "path": "tests/tokens/surface.test.ts",
+                  "text": "import { tokens } from '../../src/styles/tokens';\n\ntest('surface token exists', () => {\n  expect(tokens).toHaveProperty('surface');\n});\n"
+                },
+                {
+                  "path": "tests/tokens/radius.test.ts",
+                  "text": "import { tokens } from '../../src/styles/tokens';\n\ntest('radius token exists', () => {\n  expect(tokens).toHaveProperty('radius');\n});\n"
+                },
+                {
+                  "path": "tests/tokens/space.test.ts",
+                  "text": "import { tokens } from '../../src/styles/tokens';\n\ntest('space token exists', () => {\n  expect(tokens).toHaveProperty('space');\n});\n"
+                },
+                {
+                  "path": "tests/tokens/motion.test.ts",
+                  "text": "import { tokens } from '../../src/styles/tokens';\n\ntest('motion token exists', () => {\n  expect(tokens).toHaveProperty('motion');\n});\n"
+                },
+                {
+                  "path": "tests/tokens/theme.test.ts",
+                  "text": "import { tokens } from '../../src/styles/tokens';\n\ntest('theme token exists', () => {\n  expect(tokens).toHaveProperty('theme');\n});\n"
+                },
+                {
+                  "path": "docs/tokens.md",
+                  "text": "# Design tokens\n\nUse `tokens.*` instead of literal colors, radii and spacing.\n\n| Token | Value |\n| --- | --- |\n| `text` | `--color-text` |\n| `surface` | `--color-surface` |\n| `radius` | 8 |\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "tomas/copyright-2026",
+          "from": "main",
+          "commits": [
+            {
+              "message": "Bump copyright headers to 2026",
+              "author": "tomas",
+              "ago": "1d",
+              "files": [
+                {
+                  "path": "babel.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'babel.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "jest.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'jest.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "postcss.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'postcss.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "tailwind.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'tailwind.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "vite.config.ts",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'vite.config.ts',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "vitest.config.ts",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'vitest.config.ts',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "playwright.config.ts",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'playwright.config.ts',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "eslint.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'eslint.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "prettier.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'prettier.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "commitlint.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'commitlint.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "lint-staged.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'lint-staged.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "stylelint.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'stylelint.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "svgo.config.js",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'svgo.config.js',\n  root: true,\n};\n"
+                },
+                {
+                  "path": "storybook.config.ts",
+                  "text": "// Copyright (c) 2026 Acme Inc. All rights reserved.\n// SPDX-License-Identifier: MIT\n\nmodule.exports = {\n  name: 'storybook.config.ts',\n  root: true,\n};\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "renovate/react-router-7",
+          "from": "main",
+          "commits": [
+            {
+              "message": "chore(deps): update react-router to v7",
+              "author": "renovate-bot",
+              "ago": "9h",
+              "files": [
+                {
+                  "path": "package.json",
+                  "text": "{\n  \"name\": \"storefront\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"test\": \"vitest\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.3.1\",\n    \"react-router\": \"^7.1.0\"\n  }\n}\n"
+                },
+                {
+                  "path": "pnpm-lock.yaml",
+                  "text": "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n\nimporters:\n  .:\n    dependencies:\n      react:\n        specifier: ^18.3.1\n        version: 18.3.1\n      react-router:\n        specifier: ^7.1.0\n        version: 7.1.0\n\npackages:\n\n  dep-00@1.5.0:\n    resolution: {integrity: sha512-0000000500031713}\n    engines: {node: '>=18'}\n\n  dep-01@1.12.0:\n    resolution: {integrity: sha512-9e3779b60003b54a}\n    engines: {node: '>=18'}\n\n  dep-02@1.19.0:\n    resolution: {integrity: sha512-3c6ef36700045381}\n    engines: {node: '>=18'}\n\n  dep-03@1.3.0:\n    resolution: {integrity: sha512-daa66d180004f1b8}\n    engines: {node: '>=18'}\n\n  dep-04@1.10.0:\n    resolution: {integrity: sha512-78dde6c900058fef}\n    engines: {node: '>=18'}\n\n  dep-05@1.17.0:\n    resolution: {integrity: sha512-1715607a00062e26}\n    engines: {node: '>=18'}\n\n  dep-06@1.1.0:\n    resolution: {integrity: sha512-b54cda2b0006cc5d}\n    engines: {node: '>=18'}\n\n  dep-07@1.8.0:\n    resolution: {integrity: sha512-538453dc00076a94}\n    engines: {node: '>=18'}\n\n  dep-08@1.15.0:\n    resolution: {integrity: sha512-f1bbcd8d000808cb}\n    engines: {node: '>=18'}\n\n  dep-09@1.22.0:\n    resolution: {integrity: sha512-8ff3473e0008a702}\n    engines: {node: '>=18'}\n\n  dep-10@1.6.0:\n    resolution: {integrity: sha512-2e2ac0ef00094539}\n    engines: {node: '>=18'}\n\n  dep-11@1.13.0:\n    resolution: {integrity: sha512-cc623aa00009e370}\n    engines: {node: '>=18'}\n\n  dep-12@1.20.0:\n    resolution: {integrity: sha512-6a99b451000a81a7}\n    engines: {node: '>=18'}\n\n  dep-13@1.4.0:\n    resolution: {integrity: sha512-08d12e02000b1fde}\n    engines: {node: '>=18'}\n\n  dep-14@1.11.0:\n    resolution: {integrity: sha512-a708a7b3000bbe15}\n    engines: {node: '>=18'}\n\n  dep-15@1.18.0:\n    resolution: {integrity: sha512-45402164000c5c4c}\n    engines: {node: '>=18'}\n\n  dep-16@1.2.0:\n    resolution: {integrity: sha512-e3779b15000cfa83}\n    engines: {node: '>=18'}\n\n  dep-17@1.9.0:\n    resolution: {integrity: sha512-81af14c6000d98ba}\n    engines: {node: '>=18'}\n\n  dep-18@1.16.0:\n    resolution: {integrity: sha512-1fe68e77000e36f1}\n    engines: {node: '>=18'}\n\n  dep-19@1.0.0:\n    resolution: {integrity: sha512-be1e0828000ed528}\n    engines: {node: '>=18'}\n\n  dep-20@1.7.0:\n    resolution: {integrity: sha512-5c5581d9000f735f}\n    engines: {node: '>=18'}\n\n  dep-21@1.14.0:\n    resolution: {integrity: sha512-fa8cfb8a00101196}\n    engines: {node: '>=18'}\n\n  dep-22@1.21.0:\n    resolution: {integrity: sha512-98c4753b0010afcd}\n    engines: {node: '>=18'}\n\n  dep-23@1.5.0:\n    resolution: {integrity: sha512-36fbeeec00114e04}\n    engines: {node: '>=18'}\n\n  dep-24@1.12.0:\n    resolution: {integrity: sha512-d533689d0011ec3b}\n    engines: {node: '>=18'}\n\n  dep-25@1.19.0:\n    resolution: {integrity: sha512-736ae24e00128a72}\n    engines: {node: '>=18'}\n\n  dep-26@1.3.0:\n    resolution: {integrity: sha512-11a25bff001328a9}\n    engines: {node: '>=18'}\n\n  dep-27@1.10.0:\n    resolution: {integrity: sha512-afd9d5b00013c6e0}\n    engines: {node: '>=18'}\n\n  dep-28@1.17.0:\n    resolution: {integrity: sha512-4e114f6100146517}\n    engines: {node: '>=18'}\n\n  dep-29@1.1.0:\n    resolution: {integrity: sha512-ec48c9120015034e}\n    engines: {node: '>=18'}\n\n  dep-30@1.8.0:\n    resolution: {integrity: sha512-8a8042c30015a185}\n    engines: {node: '>=18'}\n\n  dep-31@1.15.0:\n    resolution: {integrity: sha512-28b7bc7400163fbc}\n    engines: {node: '>=18'}\n\n  dep-32@1.22.0:\n    resolution: {integrity: sha512-c6ef36250016ddf3}\n    engines: {node: '>=18'}\n\n  dep-33@1.6.0:\n    resolution: {integrity: sha512-6526afd600177c2a}\n    engines: {node: '>=18'}\n\n  dep-34@1.13.0:\n    resolution: {integrity: sha512-035e298700181a61}\n    engines: {node: '>=18'}\n\n  dep-35@1.20.0:\n    resolution: {integrity: sha512-a195a3380018b898}\n    engines: {node: '>=18'}\n\n  dep-36@1.4.0:\n    resolution: {integrity: sha512-3fcd1ce9001956cf}\n    engines: {node: '>=18'}\n\n  dep-37@1.11.0:\n    resolution: {integrity: sha512-de04969a0019f506}\n    engines: {node: '>=18'}\n\n  dep-38@1.18.0:\n    resolution: {integrity: sha512-7c3c104b001a933d}\n    engines: {node: '>=18'}\n\n  dep-39@1.2.0:\n    resolution: {integrity: sha512-1a7389fc001b3174}\n    engines: {node: '>=18'}\n\n  dep-40@1.9.0:\n    resolution: {integrity: sha512-b8ab03ad001bcfab}\n    engines: {node: '>=18'}\n\n  dep-41@1.16.0:\n    resolution: {integrity: sha512-56e27d5e001c6de2}\n    engines: {node: '>=18'}\n\n  dep-42@1.0.0:\n    resolution: {integrity: sha512-f519f70f001d0c19}\n    engines: {node: '>=18'}\n\n  dep-43@1.7.0:\n    resolution: {integrity: sha512-935170c0001daa50}\n    engines: {node: '>=18'}\n\n  dep-44@1.14.0:\n    resolution: {integrity: sha512-3188ea71001e4887}\n    engines: {node: '>=18'}\n\n  dep-45@1.21.0:\n    resolution: {integrity: sha512-cfc06422001ee6be}\n    engines: {node: '>=18'}\n\n  dep-46@1.5.0:\n    resolution: {integrity: sha512-6df7ddd3001f84f5}\n    engines: {node: '>=18'}\n\n  dep-47@1.12.0:\n    resolution: {integrity: sha512-0c2f57840020232c}\n    engines: {node: '>=18'}\n\n  dep-48@1.19.0:\n    resolution: {integrity: sha512-aa66d1350020c163}\n    engines: {node: '>=18'}\n\n  dep-49@1.3.0:\n    resolution: {integrity: sha512-489e4ae600215f9a}\n    engines: {node: '>=18'}\n\n  dep-50@1.10.0:\n    resolution: {integrity: sha512-e6d5c4970021fdd1}\n    engines: {node: '>=18'}\n\n  dep-51@1.17.0:\n    resolution: {integrity: sha512-850d3e4800229c08}\n    engines: {node: '>=18'}\n\n  dep-52@1.1.0:\n    resolution: {integrity: sha512-2344b7f900233a3f}\n    engines: {node: '>=18'}\n\n  dep-53@1.8.0:\n    resolution: {integrity: sha512-c17c31aa0023d876}\n    engines: {node: '>=18'}\n\n  dep-54@1.15.0:\n    resolution: {integrity: sha512-5fb3ab5b002476ad}\n    engines: {node: '>=18'}\n\n  dep-55@1.22.0:\n    resolution: {integrity: sha512-fdeb250c002514e4}\n    engines: {node: '>=18'}\n\n  dep-56@1.6.0:\n    resolution: {integrity: sha512-9c229ebd0025b31b}\n    engines: {node: '>=18'}\n\n  dep-57@1.13.0:\n    resolution: {integrity: sha512-3a5a186e00265152}\n    engines: {node: '>=18'}\n\n  dep-58@1.20.0:\n    resolution: {integrity: sha512-d891921f0026ef89}\n    engines: {node: '>=18'}\n\n  dep-59@1.4.0:\n    resolution: {integrity: sha512-76c90bd000278dc0}\n    engines: {node: '>=18'}\n"
+                },
+                {
+                  "path": "src/generated/routes.gen.ts",
+                  "text": "// @generated by router-gen v2. Do not edit.\n\nexport const routes = [\n  { path: '/home', page: () => import('../pages/Home') },\n  { path: '/product', page: () => import('../pages/Product') },\n  { path: '/cart', page: () => import('../pages/Cart') },\n  { path: '/checkout', page: () => import('../pages/Checkout') },\n  { path: '/orders', page: () => import('../pages/Orders') },\n  { path: '/search', page: () => import('../pages/Search') },\n  { path: '/account', page: () => import('../pages/Account') },\n] as const;\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "priya/ABC-150-placeholder-art",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-150 Refresh placeholder art",
+              "author": "priya",
+              "ago": "7h",
+              "files": [
+                {
+                  "path": "assets/placeholder.png",
+                  "asset": "assets/placeholder-v2.png"
+                },
+                {
+                  "path": "assets/badge.png",
+                  "asset": "assets/badge.png"
+                },
+                {
+                  "path": "assets/logo.svg",
+                  "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"32\">\n  <rect width=\"120\" height=\"32\" rx=\"16\" fill=\"#4f46e5\"/>\n  <text x=\"60\" y=\"21\" fill=\"#ffffff\" text-anchor=\"middle\">acme</text>\n</svg>\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "mira/checkout-docs",
+          "from": "main",
+          "commits": [
+            {
+              "message": "Document the checkout flow",
+              "author": "mira",
+              "ago": "6h",
+              "files": [
+                {
+                  "path": "docs/checkout.md",
+                  "text": "# Checkout flow\n\nHow an order moves from the cart to a confirmed payment.\n\n## Steps\n\n1. **Cart** — line items and coupons are validated client-side.\n2. **Address** — shipping options depend on the country.\n3. **Payment** — the card token never touches our servers.\n4. **Confirmation** — the order id is shown and emailed.\n\n## Failure modes\n\n| Step | Failure | What the user sees |\n| --- | --- | --- |\n| Payment | card declined | inline error, cart kept |\n| Payment | timeout | retry button |\n\n```ts\nconst id = await payments.charge(totalCents, token);\n```\n\n> Payments are retried at most three times.\n"
+                },
+                {
+                  "path": "README.md",
+                  "text": "# Storefront\n\nThe Acme web shop.\n\n## Develop\n\n```sh\npnpm install\npnpm dev\n```\n\n## Docs\n\n- [Checkout flow](docs/checkout.md)\n- [Architecture](docs/architecture.md)\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sam/wishlist-sync",
+          "from": "main",
+          "commits": [
+            {
+              "message": "WIP wishlist sync",
+              "author": "sam",
+              "ago": "3h",
+              "files": [
+                {
+                  "path": "src/lib/wishlist.ts",
+                  "text": "export async function syncWishlist(ids: string[]) {\n  // TODO: conflict resolution\n  await fetch('/api/wishlist', { method: 'PUT', body: JSON.stringify(ids) });\n}\n"
+                },
+                {
+                  "path": "src/pages/Wishlist.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\n\nexport default function WishlistPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Wishlist</h1>\n      <p>Synced across devices.</p>\n      <Footer />\n    </main>\n  );\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "tomas/ABC-171-search-suggestions",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-171 Search suggestions",
+              "author": "tomas",
+              "ago": "8h",
+              "files": [
+                {
+                  "path": "src/lib/search.ts",
+                  "text": "export function search(items: string[], q: string): string[] {\n  const needle = q.toLowerCase();\n  return items.filter((i) => i.toLowerCase().includes(needle));\n}\n\nexport function suggest(items: string[], q: string, limit = 5): string[] {\n  if (q.length < 2) return [];\n  return search(items, q)\n    .sort((a, b) => a.length - b.length)\n    .slice(0, limit + 1);\n}\n"
+                },
+                {
+                  "path": "tests/search.test.ts",
+                  "text": "import { search, suggest } from '../src/lib/search';\n\ntest('search', () => {\n  expect(search(['Mug', 'Hat'], 'mu')).toEqual(['Mug']);\n});\n\ntest('suggest caps results', () => {\n  expect(suggest(['Mug', 'Mugs', 'Muggle'], 'mu', 2)).toHaveLength(2);\n});\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sam/ABC-175-order-history",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-175 Order history page",
+              "author": "sam",
+              "ago": "2d",
+              "files": [
+                {
+                  "path": "src/lib/orders.ts",
+                  "text": "export interface Order {\n  id: string;\n  placedAt: string;\n  totalCents: number;\n  status: 'placed' | 'shipped' | 'delivered';\n}\n\nexport async function listOrders(page = 1): Promise<Order[]> {\n  const res = await fetch(`/api/orders?page=${page}`);\n  if (!res.ok) throw new Error(`orders: ${res.status}`);\n  return res.json();\n}\n"
+                },
+                {
+                  "path": "src/pages/Orders.tsx",
+                  "text": "import React from 'react';\nimport { listOrders, type Order } from '../lib/orders';\n\nexport default function OrdersPage() {\n  const [orders, setOrders] = React.useState<Order[]>([]);\n  React.useEffect(() => {\n    listOrders().then(setOrders);\n  }, []);\nreturn (\n    <table>\n      <tbody>\n        {orders.map((o) => (\n          <tr key={o.id}>\n            <td>{o.id}</td>\n            <td>{o.status}</td>\n          </tr>\n        ))}\n      </tbody>\n    </table>\n  );\n}\n"
+                }
+              ]
+            },
+            {
+              "message": "Paginate orders",
+              "author": "sam",
+              "ago": "1d",
+              "files": [
+                {
+                  "path": "src/pages/Orders.tsx",
+                  "text": "import React from 'react';\nimport { listOrders, type Order } from '../lib/orders';\n\nexport default function OrdersPage() {\n  const [orders, setOrders] = React.useState<Order[]>([]);\n  React.useEffect(() => {\n    listOrders(1).then(setOrders);\n  }, []);\nreturn (\n    <table>\n      <tbody>\n        {orders.map((o) => (\n          <tr key={o.id}>\n            <td>{o.id}</td>\n            <td>{o.status}</td>\n          </tr>\n        ))}\n      </tbody>\n    </table>\n  );\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sam/ABC-180-coupons",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-180 Validate coupon codes",
+              "author": "sam",
+              "ago": "1d",
+              "files": [
+                {
+                  "path": "src/lib/coupons.ts",
+                  "text": "export interface CouponResult {\n  ok: boolean;\n  reason?: string;\n}\n\nexport function validateCoupon(code: string, now = new Date()): CouponResult {\n  if (code.length === 0) return { ok: false, reason: 'empty' };\n  if (!/^[A-Z0-9-]+$/.test(code)) return { ok: false, reason: 'format' };\n  const expiry = expiries[code];\n  if (expiry && expiry < now) return { ok: false, reason: 'expired' };\n  return { ok: true };\n}\n\nconst expiries: Record<string, Date> = {\n  'SPRING-24': new Date('2024-06-01'),\n};\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "priya/ABC-190-1-payment-client",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-190 Extract the payment client",
+              "author": "priya",
+              "ago": "3d",
+              "files": [
+                {
+                  "path": "src/lib/payments/client.ts",
+                  "text": "export interface PaymentClient {\n  charge(cents: number, token: string): Promise<string>;\n}\n\nexport function createClient(baseUrl: string): PaymentClient {\n  return {\n    async charge(cents, token) {\n      const res = await fetch(`${baseUrl}/charge`, {\n        method: 'POST',\n        body: JSON.stringify({ cents, token }),\n      });\n      return (await res.json()).id;\n    },\n  };\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "priya/ABC-190-2-retries",
+          "from": "priya/ABC-190-1-payment-client",
+          "commits": [
+            {
+              "message": "ABC-190 Retry failed charges",
+              "author": "priya",
+              "ago": "3d",
+              "files": [
+                {
+                  "path": "src/lib/payments/client.ts",
+                  "text": "export interface PaymentClient {\n  charge(cents: number, token: string): Promise<string>;\n}\n\nconst RETRIES = 3;\n\nexport function createClient(baseUrl: string): PaymentClient {\n  return {\n    async charge(cents, token) {\n      for (let attempt = 1; ; attempt++) {\n        const res = await fetch(`${baseUrl}/charge`, {\n          method: 'POST',\n          body: JSON.stringify({ cents, token }),\n        });\n        if (res.ok || attempt >= RETRIES) return (await res.json()).id;\n      }\n    },\n  };\n}\n"
+                }
+              ]
+            },
+            {
+              "message": "ABC-190 Name the retry budget",
+              "author": "priya",
+              "ago": "20h",
+              "files": [
+                {
+                  "path": "src/lib/payments/client.ts",
+                  "text": "export interface PaymentClient {\n  charge(cents: number, token: string): Promise<string>;\n}\n\n/** Attempts per charge, including the first. */\nconst RETRIES = 3;\n\nexport function createClient(baseUrl: string): PaymentClient {\n  return {\n    async charge(cents, token) {\n      for (let attempt = 1; ; attempt++) {\n        const res = await fetch(`${baseUrl}/charge`, {\n          method: 'POST',\n          body: JSON.stringify({ cents, token }),\n        });\n        if (res.ok || attempt >= RETRIES) return (await res.json()).id;\n      }\n    },\n  };\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "priya/ABC-190-3-checkout",
+          "from": "priya/ABC-190-2-retries",
+          "commits": [
+            {
+              "message": "ABC-190 Charge through the client at checkout",
+              "author": "priya",
+              "ago": "18h",
+              "files": [
+                {
+                  "path": "src/pages/Checkout.tsx",
+                  "text": "import React from 'react';\nimport { Header } from '../components/Header';\nimport { Footer } from '../components/Footer';\nimport { createClient } from '../lib/payments/client';\n\nconst payments = createClient('/api/payments');\n\nexport default function CheckoutPage() {\n  return (\n    <main style={{ display: 'grid', gap: '16px' }}>\n      <Header />\n      <h1>Checkout</h1>\n      <button onClick={() => payments.charge(1999, 'tok_test')}>Pay</button>\n      <Footer />\n    </main>\n  );\n}\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "tomas/ABC-199-footer-links",
+          "from": "main",
+          "commits": [
+            {
+              "message": "ABC-199 Footer links",
+              "author": "tomas",
+              "ago": "2h",
+              "files": [
+                {
+                  "path": "src/lib/links.ts",
+                  "text": "export const footerLinks = [\n  { href: '/help', label: 'Help' },\n  { href: '/returns', label: 'Returns' },\n  { href: '/privacy', label: 'Privacy' },\n];\n"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "acme",
+      "name": "billing",
+      "description": "Invoices, payments and webhooks",
+      "private": true,
+      "default_branch": "main",
+      "hosted": true,
+      "require_up_to_date": false,
+      "branches": [
+        {
+          "name": "main",
+          "from": null,
+          "commits": [
+            {
+              "message": "Initial billing service",
+              "author": "priya",
+              "ago": "6w",
+              "files": [
+                {
+                  "path": "pyproject.toml",
+                  "text": "[project]\nname = \"billing\"\nrequires-python = \">=3.9\"\n"
+                },
+                {
+                  "path": "poetry.lock",
+                  "text": "# This file is automatically @generated by Poetry and should not be changed by hand.\n\n[[package]]\nname = \"lib00\"\nversion = \"2.1.1\"\noptional = false\n\n[[package]]\nname = \"lib01\"\nversion = \"2.2.4\"\noptional = false\n\n[[package]]\nname = \"lib02\"\nversion = \"2.3.0\"\noptional = false\n\n[[package]]\nname = \"lib03\"\nversion = \"2.4.3\"\noptional = false\n\n[[package]]\nname = \"lib04\"\nversion = \"2.5.6\"\noptional = false\n\n[[package]]\nname = \"lib05\"\nversion = \"2.6.2\"\noptional = false\n\n[[package]]\nname = \"lib06\"\nversion = \"2.7.5\"\noptional = false\n\n[[package]]\nname = \"lib07\"\nversion = \"2.8.1\"\noptional = false\n\n[[package]]\nname = \"lib08\"\nversion = \"2.0.4\"\noptional = false\n\n[[package]]\nname = \"lib09\"\nversion = \"2.1.0\"\noptional = false\n\n[[package]]\nname = \"lib10\"\nversion = \"2.2.3\"\noptional = false\n\n[[package]]\nname = \"lib11\"\nversion = \"2.3.6\"\noptional = false\n\n[[package]]\nname = \"lib12\"\nversion = \"2.4.2\"\noptional = false\n\n[[package]]\nname = \"lib13\"\nversion = \"2.5.5\"\noptional = false\n\n[[package]]\nname = \"lib14\"\nversion = \"2.6.1\"\noptional = false\n\n[[package]]\nname = \"lib15\"\nversion = \"2.7.4\"\noptional = false\n\n[[package]]\nname = \"lib16\"\nversion = \"2.8.0\"\noptional = false\n\n[[package]]\nname = \"lib17\"\nversion = \"2.0.3\"\noptional = false\n\n[[package]]\nname = \"lib18\"\nversion = \"2.1.6\"\noptional = false\n\n[[package]]\nname = \"lib19\"\nversion = \"2.2.2\"\noptional = false\n\n[[package]]\nname = \"lib20\"\nversion = \"2.3.5\"\noptional = false\n\n[[package]]\nname = \"lib21\"\nversion = \"2.4.1\"\noptional = false\n\n[[package]]\nname = \"lib22\"\nversion = \"2.5.4\"\noptional = false\n\n[[package]]\nname = \"lib23\"\nversion = \"2.6.0\"\noptional = false\n\n[[package]]\nname = \"lib24\"\nversion = \"2.7.3\"\noptional = false\n\n[[package]]\nname = \"lib25\"\nversion = \"2.8.6\"\noptional = false\n\n[[package]]\nname = \"lib26\"\nversion = \"2.0.2\"\noptional = false\n\n[[package]]\nname = \"lib27\"\nversion = \"2.1.5\"\noptional = false\n\n[[package]]\nname = \"lib28\"\nversion = \"2.2.1\"\noptional = false\n\n[[package]]\nname = \"lib29\"\nversion = \"2.3.4\"\noptional = false\n\n[[package]]\nname = \"lib30\"\nversion = \"2.4.0\"\noptional = false\n\n[[package]]\nname = \"lib31\"\nversion = \"2.5.3\"\noptional = false\n\n[[package]]\nname = \"lib32\"\nversion = \"2.6.6\"\noptional = false\n\n[[package]]\nname = \"lib33\"\nversion = \"2.7.2\"\noptional = false\n\n[[package]]\nname = \"lib34\"\nversion = \"2.8.5\"\noptional = false\n\n[[package]]\nname = \"lib35\"\nversion = \"2.0.1\"\noptional = false\n\n[[package]]\nname = \"lib36\"\nversion = \"2.1.4\"\noptional = false\n\n[[package]]\nname = \"lib37\"\nversion = \"2.2.0\"\noptional = false\n\n[[package]]\nname = \"lib38\"\nversion = \"2.3.3\"\noptional = false\n\n[[package]]\nname = \"lib39\"\nversion = \"2.4.6\"\noptional = false\n"
+                },
+                {
+                  "path": "README.md",
+                  "text": "# Billing\n\nInvoices, payments and webhooks.\n"
+                },
+                {
+                  "path": "billing/__init__.py",
+                  "text": ""
+                },
+                {
+                  "path": "billing/invoice.py",
+                  "text": "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Item:\n    name: str\n    cents: int\n\n\n@dataclass\nclass Invoice:\n    number: str\n    items: list[Item] = field(default_factory=list)\n\n    def total(self) -> int:\n        return sum(i.cents for i in self.items)\n"
+                },
+                {
+                  "path": "billing/render.py",
+                  "text": "\"\"\"Render invoices.\"\"\"\n\nfrom billing.invoice import Invoice\n\n\ndef render_text(invoice: Invoice) -> str:\n    lines = [f\"Invoice {invoice.number}\"]\n    for item in invoice.items:\n        lines.append(f\"{item.name}: {item.cents / 100:.2f}\")\n    return \"\\n\".join(lines)\n"
+                },
+                {
+                  "path": "billing/webhooks.py",
+                  "text": "import requests\n\n\ndef deliver(url: str, payload: dict) -> bool:\n    response = requests.post(url, json=payload, timeout=5)\n    return response.ok\n"
+                },
+                {
+                  "path": "tests/test_invoice.py",
+                  "text": "from billing.invoice import Invoice, Item\n\n\ndef test_total():\n    assert Invoice(\"1\", [Item(\"a\", 250)]).total() == 250\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "lee/BIL-9-py310",
+          "from": "main",
+          "commits": [
+            {
+              "message": "BIL-9 Require Python 3.10",
+              "author": "lee",
+              "ago": "8d",
+              "files": [
+                {
+                  "path": "pyproject.toml",
+                  "text": "[project]\nname = \"billing\"\nrequires-python = \">=3.10\"\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "priya/BIL-12-pdf",
+          "from": "main",
+          "commits": [
+            {
+              "message": "BIL-12 Invoice PDF export",
+              "author": "priya",
+              "ago": "4h",
+              "files": [
+                {
+                  "path": "billing/pdf.py",
+                  "text": "\"\"\"Render invoices as text or PDF.\"\"\"\n\nfrom billing.invoice import Invoice\n\n\ndef render_text(invoice: Invoice) -> str:\n    lines = [f\"Invoice {invoice.number}\"]\n    for item in invoice.items:\n        lines.append(f\"{item.name}: {item.cents / 100:.2f}\")\n    return \"\\n\".join(lines)\n\n\ndef render_pdf(invoice: Invoice) -> bytes:\n    text = render_text(invoice)\n    return b\"%PDF-1.4\\n\" + text.encode()\n",
+                  "rename_from": "billing/render.py"
+                },
+                {
+                  "path": "billing/invoice.py",
+                  "text": "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Item:\n    name: str\n    cents: int\n\n\n@dataclass\nclass Invoice:\n    number: str\n    currency: str = \"USD\"\n    items: list[Item] = field(default_factory=list)\n\n    def total(self) -> int:\n        return sum(i.cents for i in self.items)\n"
+                },
+                {
+                  "path": "tests/test_pdf.py",
+                  "text": "from billing.invoice import Invoice\nfrom billing.pdf import render_pdf\n\n\ndef test_pdf_header():\n    assert render_pdf(Invoice(\"7\")).startswith(b\"%PDF\")\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sam/BIL-15-webhook-retries",
+          "from": "main",
+          "commits": [
+            {
+              "message": "BIL-15 Retry webhook deliveries with backoff",
+              "author": "sam",
+              "ago": "1d",
+              "files": [
+                {
+                  "path": "billing/webhooks.py",
+                  "text": "import time\n\nimport requests\n\nMAX_ATTEMPTS = 5\n\n\ndef deliver(url: str, payload: dict) -> bool:\n    for attempt in range(MAX_ATTEMPTS):\n        response = requests.post(url, json=payload, timeout=5)\n        if response.ok:\n            return True\n        if response.status_code < 500:\n            return False\n        time.sleep(2 ** attempt)\n    return False\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "renovate/poetry-lock",
+          "from": "main",
+          "commits": [
+            {
+              "message": "chore(deps): refresh poetry.lock",
+              "author": "renovate-bot",
+              "ago": "12h",
+              "files": [
+                {
+                  "path": "poetry.lock",
+                  "text": "# This file is automatically @generated by Poetry and should not be changed by hand.\n\n[[package]]\nname = \"lib00\"\nversion = \"2.4.4\"\noptional = false\n\n[[package]]\nname = \"lib01\"\nversion = \"2.5.0\"\noptional = false\n\n[[package]]\nname = \"lib02\"\nversion = \"2.6.3\"\noptional = false\n\n[[package]]\nname = \"lib03\"\nversion = \"2.7.6\"\noptional = false\n\n[[package]]\nname = \"lib04\"\nversion = \"2.8.2\"\noptional = false\n\n[[package]]\nname = \"lib05\"\nversion = \"2.0.5\"\noptional = false\n\n[[package]]\nname = \"lib06\"\nversion = \"2.1.1\"\noptional = false\n\n[[package]]\nname = \"lib07\"\nversion = \"2.2.4\"\noptional = false\n\n[[package]]\nname = \"lib08\"\nversion = \"2.3.0\"\noptional = false\n\n[[package]]\nname = \"lib09\"\nversion = \"2.4.3\"\noptional = false\n\n[[package]]\nname = \"lib10\"\nversion = \"2.5.6\"\noptional = false\n\n[[package]]\nname = \"lib11\"\nversion = \"2.6.2\"\noptional = false\n\n[[package]]\nname = \"lib12\"\nversion = \"2.7.5\"\noptional = false\n\n[[package]]\nname = \"lib13\"\nversion = \"2.8.1\"\noptional = false\n\n[[package]]\nname = \"lib14\"\nversion = \"2.0.4\"\noptional = false\n\n[[package]]\nname = \"lib15\"\nversion = \"2.1.0\"\noptional = false\n\n[[package]]\nname = \"lib16\"\nversion = \"2.2.3\"\noptional = false\n\n[[package]]\nname = \"lib17\"\nversion = \"2.3.6\"\noptional = false\n\n[[package]]\nname = \"lib18\"\nversion = \"2.4.2\"\noptional = false\n\n[[package]]\nname = \"lib19\"\nversion = \"2.5.5\"\noptional = false\n\n[[package]]\nname = \"lib20\"\nversion = \"2.6.1\"\noptional = false\n\n[[package]]\nname = \"lib21\"\nversion = \"2.7.4\"\noptional = false\n\n[[package]]\nname = \"lib22\"\nversion = \"2.8.0\"\noptional = false\n\n[[package]]\nname = \"lib23\"\nversion = \"2.0.3\"\noptional = false\n\n[[package]]\nname = \"lib24\"\nversion = \"2.1.6\"\noptional = false\n\n[[package]]\nname = \"lib25\"\nversion = \"2.2.2\"\noptional = false\n\n[[package]]\nname = \"lib26\"\nversion = \"2.3.5\"\noptional = false\n\n[[package]]\nname = \"lib27\"\nversion = \"2.4.1\"\noptional = false\n\n[[package]]\nname = \"lib28\"\nversion = \"2.5.4\"\noptional = false\n\n[[package]]\nname = \"lib29\"\nversion = \"2.6.0\"\noptional = false\n\n[[package]]\nname = \"lib30\"\nversion = \"2.7.3\"\noptional = false\n\n[[package]]\nname = \"lib31\"\nversion = \"2.8.6\"\noptional = false\n\n[[package]]\nname = \"lib32\"\nversion = \"2.0.2\"\noptional = false\n\n[[package]]\nname = \"lib33\"\nversion = \"2.1.5\"\noptional = false\n\n[[package]]\nname = \"lib34\"\nversion = \"2.2.1\"\noptional = false\n\n[[package]]\nname = \"lib35\"\nversion = \"2.3.4\"\noptional = false\n\n[[package]]\nname = \"lib36\"\nversion = \"2.4.0\"\noptional = false\n\n[[package]]\nname = \"lib37\"\nversion = \"2.5.3\"\noptional = false\n\n[[package]]\nname = \"lib38\"\nversion = \"2.6.6\"\noptional = false\n\n[[package]]\nname = \"lib39\"\nversion = \"2.7.2\"\noptional = false\n"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "acme",
+      "name": "handbook",
+      "description": "Team handbook (local folder project)",
+      "private": true,
+      "default_branch": "main",
+      "hosted": false,
+      "require_up_to_date": false,
+      "branches": [
+        {
+          "name": "main",
+          "from": null,
+          "commits": [
+            {
+              "message": "Start the handbook",
+              "author": "sam",
+              "ago": "3w",
+              "files": [
+                {
+                  "path": "README.md",
+                  "text": "# Handbook\n\n- [Onboarding](onboarding.md)\n- [On-call](on-call.md)\n"
+                },
+                {
+                  "path": "onboarding.md",
+                  "text": "# Onboarding\n\n1. Get a laptop.\n2. Clone the repos.\n3. Ship something small in week one.\n"
+                },
+                {
+                  "path": "on-call.md",
+                  "text": "# On-call\n\nOne week at a time, Monday to Monday.\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "draft/on-call-rotation",
+          "from": "main",
+          "commits": [
+            {
+              "message": "Describe the on-call handover",
+              "author": "sam",
+              "ago": "2d",
+              "files": [
+                {
+                  "path": "on-call.md",
+                  "text": "# On-call\n\nOne week at a time, Monday to Monday.\n\n## Handover\n\n- open incidents\n- noisy alerts\n- anything paged twice\n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "fix/typos",
+          "from": "main",
+          "commits": [
+            {
+              "message": "Fix typos in onboarding",
+              "author": "mira",
+              "ago": "1d",
+              "files": [
+                {
+                  "path": "onboarding.md",
+                  "text": "# Onboarding\n\n1. Get a laptop.\n2. Clone the repositories.\n3. Ship something small in your first week.\n"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "prs": [
+    {
+      "repo": "acme/storefront",
+      "number": 101,
+      "title": "ABC-101 Round cart totals to cents",
+      "body": "Totals were showing `21.999999` for some tax rates.\n\nFixes ABC-101.",
+      "author": "mira",
+      "head": "mira/ABC-101-cart-rounding",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [
+        {
+          "path": "src/lib/cart.ts",
+          "line": 14,
+          "side": "new",
+          "start_line": null,
+          "resolved": false,
+          "outdated": false,
+          "comments": [
+            {
+              "author": "lee",
+              "body": "Should this be banker's rounding? Finance rounds half to even.",
+              "ago": "2h",
+              "reactions": {
+                "+1": [
+                  "mira"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 102,
+      "title": "ABC-142 Introduce design tokens",
+      "body": "Replaces literal colors, radii and spacing with `tokens.*` across components, pages, styles and hooks.\n\n- moves `theme.css` under `styles/tokens/`\n- adds token tests and docs\n\nPart of ABC-142.",
+      "author": "lee",
+      "head": "lee/ABC-142-design-tokens",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [
+        "design-system"
+      ],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": null,
+          "team": "web-core",
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [
+        {
+          "path": "src/styles/tokens.ts",
+          "line": 4,
+          "side": "new",
+          "start_line": null,
+          "resolved": false,
+          "outdated": false,
+          "comments": [
+            {
+              "author": "mira",
+              "body": "8px radius is a visible change on every card — intended?",
+              "ago": "20h",
+              "reactions": {}
+            }
+          ]
+        }
+      ],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 103,
+      "title": "Bump copyright headers to 2026",
+      "body": "Mechanical: the year in every root config header.",
+      "author": "tomas",
+      "head": "tomas/copyright-2026",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [
+        "sam"
+      ],
+      "reviewers": [],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 104,
+      "title": "chore(deps): update react-router to v7",
+      "body": "Updates `react-router` from 6.26.0 to 7.1.0.\n\nRegenerates the lockfile and `routes.gen.ts`.",
+      "author": "renovate-bot",
+      "head": "renovate/react-router-7",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [
+        "dependencies"
+      ],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 105,
+      "title": "ABC-150 Refresh placeholder art",
+      "body": "New placeholder gradient, a badge and a rounder logo.\n\n@sam can you check the contrast on the badge?",
+      "author": "priya",
+      "head": "priya/ABC-150-placeholder-art",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "mira",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 106,
+      "title": "Document the checkout flow",
+      "body": "Adds `docs/checkout.md` and links it from the README.",
+      "author": "mira",
+      "head": "mira/checkout-docs",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [
+        "docs"
+      ],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 107,
+      "title": "ABC-160 Locale-aware price formatting",
+      "body": "German locale puts the currency after the amount. Also parses `12,50`.",
+      "author": "lee",
+      "head": "lee/ABC-160-price-locale",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [
+        {
+          "path": "src/lib/price.ts",
+          "line": 3,
+          "side": "new",
+          "start_line": null,
+          "resolved": false,
+          "outdated": false,
+          "comments": [
+            {
+              "author": "mira",
+              "body": "@sam this collides with the Intl change on main — who rebases?",
+              "ago": "1d",
+              "reactions": {}
+            }
+          ]
+        }
+      ],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 108,
+      "title": "WIP: Wishlist sync",
+      "body": "Not ready: conflict resolution is still a TODO.",
+      "author": "sam",
+      "head": "sam/wishlist-sync",
+      "base": null,
+      "state": "draft",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pending",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 109,
+      "title": "ABC-171 Search suggestions",
+      "body": "Suggests up to five matches once two characters are typed.",
+      "author": "tomas",
+      "head": "tomas/ABC-171-search-suggestions",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "fail",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "fail",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 110,
+      "title": "ABC-175 Order history page",
+      "body": "Lists past orders with their status, paginated.",
+      "author": "sam",
+      "head": "sam/ABC-175-order-history",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "mira",
+          "team": null,
+          "state": "approved",
+          "ago": "20h",
+          "body": "Looks good."
+        },
+        {
+          "user": "lee",
+          "team": null,
+          "state": "approved",
+          "ago": "18h",
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": 2
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 111,
+      "title": "ABC-180 Validate coupon codes",
+      "body": "Rejects empty, malformed and expired codes.",
+      "author": "sam",
+      "head": "sam/ABC-180-coupons",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "lee",
+          "team": null,
+          "state": "changes_requested",
+          "ago": "10h",
+          "body": "A couple of edge cases, see inline."
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [
+        {
+          "path": "src/lib/coupons.ts",
+          "line": 7,
+          "side": "new",
+          "start_line": null,
+          "resolved": false,
+          "outdated": false,
+          "comments": [
+            {
+              "author": "lee",
+              "body": "Whitespace-only codes slip through:\n\n```suggestion\n  if (!code.trim()) return { ok: false, reason: 'empty' };\n```",
+              "ago": "10h",
+              "reactions": {
+                "+1": [
+                  "mira",
+                  "sam"
+                ],
+                "eyes": [
+                  "priya"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/lib/coupons.ts",
+          "line": 8,
+          "side": "new",
+          "start_line": null,
+          "resolved": true,
+          "outdated": false,
+          "comments": [
+            {
+              "author": "mira",
+              "body": "nit: accept lowercase and upper-case it?",
+              "ago": "9h",
+              "reactions": {}
+            },
+            {
+              "author": "sam",
+              "body": "Good call, will do in a follow-up.",
+              "ago": "8h",
+              "reactions": {}
+            }
+          ]
+        },
+        {
+          "path": "src/lib/coupons.ts",
+          "line": 3,
+          "side": "new",
+          "start_line": null,
+          "resolved": false,
+          "outdated": true,
+          "comments": [
+            {
+              "author": "priya",
+              "body": "Should `reason` be a union of literals?",
+              "ago": "1d",
+              "reactions": {}
+            }
+          ]
+        }
+      ],
+      "required_approvals": 1
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 112,
+      "title": "ABC-190 [1/3] Extract the payment client",
+      "body": "First of three: moves charging into `lib/payments/client.ts`.",
+      "author": "priya",
+      "head": "priya/ABC-190-1-payment-client",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 113,
+      "title": "ABC-190 [2/3] Retry failed charges",
+      "body": "Second of three: up to three attempts per charge.",
+      "author": "priya",
+      "head": "priya/ABC-190-2-retries",
+      "base": "priya/ABC-190-1-payment-client",
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "commented",
+          "ago": "2d",
+          "body": "Name the retry budget?"
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 114,
+      "title": "ABC-190 [3/3] Charge through the client at checkout",
+      "body": "Last of three: the checkout page uses the new client.",
+      "author": "priya",
+      "head": "priya/ABC-190-3-checkout",
+      "base": "priya/ABC-190-2-retries",
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "lee",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pending",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 115,
+      "title": "ABC-120 Virtualize the product grid",
+      "body": "Only renders visible rows.",
+      "author": "lee",
+      "head": "lee/ABC-120-grid",
+      "base": null,
+      "state": "merged",
+      "created_ago": null,
+      "updated_ago": "3d",
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "approved",
+          "ago": "3d",
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 116,
+      "title": "Try CSS-in-JS for buttons",
+      "body": "Experiment; closing in favour of design tokens.",
+      "author": "tomas",
+      "head": "tomas/css-in-js",
+      "base": null,
+      "state": "closed",
+      "created_ago": null,
+      "updated_ago": "5d",
+      "labels": [],
+      "assignees": [],
+      "reviewers": [],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/storefront",
+      "number": 117,
+      "title": "ABC-199 Footer links",
+      "body": "Help, returns and privacy links in the footer.",
+      "author": "tomas",
+      "head": "tomas/ABC-199-footer-links",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/billing",
+      "number": 201,
+      "title": "BIL-12 Invoice PDF export",
+      "body": "Renames `render.py` to `pdf.py` and adds `render_pdf`.",
+      "author": "priya",
+      "head": "priya/BIL-12-pdf",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "sam",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pending",
+          "duration_ms": null,
+          "url": null,
+          "after": "45s",
+          "then": "pass"
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/billing",
+      "number": 202,
+      "title": "BIL-15 Retry webhook deliveries with backoff",
+      "body": "5xx responses are retried up to five times; 4xx never are.",
+      "author": "sam",
+      "head": "sam/BIL-15-webhook-retries",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [],
+      "reviewers": [
+        {
+          "user": "lee",
+          "team": null,
+          "state": "requested",
+          "ago": null,
+          "body": ""
+        }
+      ],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/billing",
+      "number": 203,
+      "title": "BIL-9 Require Python 3.10",
+      "body": "",
+      "author": "lee",
+      "head": "lee/BIL-9-py310",
+      "base": null,
+      "state": "merged",
+      "created_ago": null,
+      "updated_ago": "7d",
+      "labels": [],
+      "assignees": [],
+      "reviewers": [],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    },
+    {
+      "repo": "acme/billing",
+      "number": 204,
+      "title": "chore(deps): refresh poetry.lock",
+      "body": "Lockfile maintenance.",
+      "author": "renovate-bot",
+      "head": "renovate/poetry-lock",
+      "base": null,
+      "state": "open",
+      "created_ago": null,
+      "updated_ago": null,
+      "labels": [],
+      "assignees": [
+        "sam"
+      ],
+      "reviewers": [],
+      "checks": [
+        {
+          "name": "ci/build",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "ci/test",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        },
+        {
+          "name": "lint",
+          "status": "pass",
+          "duration_ms": null,
+          "url": null,
+          "after": null,
+          "then": null
+        }
+      ],
+      "threads": [],
+      "required_approvals": null
+    }
+  ],
+  "projects": [
+    {
+      "repo": "acme/storefront"
+    },
+    {
+      "repo": "acme/billing"
+    },
+    {
+      "local": "handbook",
+      "from": "acme/handbook"
+    }
+  ],
+  "agents": "real",
+  "faults": {
+    "latency": false,
+    "latency_ms": 400,
+    "latency_by_call": {},
+    "offline": false,
+    "auth": false,
+    "rate_limit": false,
+    "rate_limit_reset_ms": 60000,
+    "server_errors": false,
+    "server_error_rate": 0.3,
+    "not_found": false,
+    "not_found_prs": [
+      107
+    ],
+    "slow_merge_status": false,
+    "slow_merge_status_ms": 4000,
+    "merge_queue": false,
+    "required_approvals": false,
+    "required_approvals_count": 2
+  },
+  "ci": {
+    "push_after": "8s",
+    "push_result": "pass",
+    "rerun_after": "8s",
+    "rerun_result": "pass",
+    "queue_after": "8s"
+  },
+  "timeline": [
+    {
+      "id": "push-101",
+      "at": "45s",
+      "label": null,
+      "action": {
+        "do": "push",
+        "pr": 101,
+        "files": [
+          {
+            "path": "src/lib/cart.ts",
+            "text": "export interface LineItem {\n  sku: string;\n  price: number;\n  qty: number;\n}\n\nexport function subtotal(items: LineItem[]): number {\n  return items.reduce((sum, i) => sum + i.price * i.qty, 0);\n}\n\nexport function total(items: LineItem[], taxRate: number): number {\n  const sub = subtotal(items);\n  const raw = sub + sub * taxRate;\n  return Math.round((raw + Number.EPSILON) * 100) / 100;\n}\n\nexport function isEmpty(items: LineItem[]): boolean {\n  return items.length === 0;\n}\n"
+          }
+        ],
+        "message": "Guard rounding against float error",
+        "author": null
+      }
+    },
+    {
+      "id": "comment-110",
+      "at": "60s",
+      "label": null,
+      "action": {
+        "do": "comment",
+        "pr": 110,
+        "path": "src/pages/Orders.tsx",
+        "line": 7,
+        "side": "new",
+        "body": "Could this effect cancel on unmount? It can set state after the page is gone.",
+        "author": "lee"
+      }
+    },
+    {
+      "id": "lint-109",
+      "at": "75s",
+      "label": null,
+      "action": {
+        "do": "check",
+        "pr": 109,
+        "name": "lint",
+        "status": "pass"
+      }
+    },
+    {
+      "id": "request-117",
+      "at": "90s",
+      "label": null,
+      "action": {
+        "do": "request_review",
+        "pr": 117,
+        "user": null,
+        "team": null
+      }
+    },
+    {
+      "id": "merge-106",
+      "at": "150s",
+      "label": null,
+      "action": {
+        "do": "merge",
+        "pr": 106,
+        "author": "lee"
+      }
+    },
+    {
+      "id": "push-102",
+      "at": null,
+      "label": null,
+      "action": {
+        "do": "push",
+        "pr": 102,
+        "files": [],
+        "message": null,
+        "author": null
+      }
+    },
+    {
+      "id": "fail-110",
+      "at": null,
+      "label": null,
+      "action": {
+        "do": "check",
+        "pr": 110,
+        "name": "ci/test",
+        "status": "fail"
+      }
+    },
+    {
+      "id": "approve-111",
+      "at": null,
+      "label": null,
+      "action": {
+        "do": "review",
+        "pr": 111,
+        "author": "lee",
+        "state": "approved",
+        "body": "Thanks for the fixes."
+      }
+    }
+  ]
+}

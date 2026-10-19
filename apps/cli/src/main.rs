@@ -1,7 +1,7 @@
 //! `theodore` CLI: grouping eval and debugging (docs/plan.md §5.4).
 
 use clap::{Parser, Subcommand};
-use theodore_cli::{deps, eval, group, mcp_bridge};
+use theodore_cli::{deps, eval, group, mcp_bridge, sandbox};
 use theodore_domain::AgentId;
 
 #[derive(Parser)]
@@ -19,6 +19,9 @@ enum Command {
     Eval(eval::EvalArgs),
     /// stdio↔HTTP bridge for agent CLIs without HTTP MCP.
     McpBridge(mcp_bridge::McpBridgeArgs),
+    /// Simulated host: write a scenario, drive a running sandbox
+    /// (docs/sandbox.md).
+    Sandbox(sandbox::SandboxArgs),
 }
 
 #[tokio::main]
@@ -28,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Group(args) => run_group(args).await,
         Command::Eval(args) => run_eval(args).await,
         Command::McpBridge(args) => mcp_bridge::run(&args).await,
+        Command::Sandbox(args) => tokio::task::spawn_blocking(move || sandbox::run(&args)).await?,
     }
 }
 
