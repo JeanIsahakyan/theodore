@@ -146,6 +146,19 @@ impl Core {
         &self.0.deps
     }
 
+    /// Every PR open in this session (plan "worktree locks"): the GC
+    /// keep-list must never drop one of these, even if its host state has
+    /// gone to closed/merged underneath it since it was opened.
+    pub async fn open_pr_refs(&self) -> Vec<PrRef> {
+        let current = self.0.current_head.read().await;
+        let revisions = self.0.revisions.read().await;
+        current
+            .iter()
+            .filter_map(|(pr, head)| revisions.get(&(pr.clone(), head.clone())))
+            .map(|e| e.pr_ref.clone())
+            .collect()
+    }
+
     pub fn emit(&self, event: Ephemeral) {
         let _ = self.0.ephemeral_tx.send(event);
     }
