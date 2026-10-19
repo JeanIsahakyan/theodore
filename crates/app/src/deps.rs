@@ -8,7 +8,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use theodore_contract::TokenSource;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
-use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, McpEndpoint, Secrets, Store};
+use theodore_ports::{
+    AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, McpEndpoint, Secrets, Store,
+};
 
 use crate::error::GrouperError;
 
@@ -62,6 +64,10 @@ pub struct Deps {
     pub secrets: Arc<dyn Secrets>,
     pub clock: Arc<dyn Clock>,
     pub grouper: Arc<dyn Grouper>,
+    /// GitHub's OAuth device flow (plan "login"). `NoDeviceLogin` when the
+    /// shell has no client id story (fixtures, the CLI) — `login_start`
+    /// then just reports `Unsupported`.
+    pub device_login: Arc<dyn DeviceLoginPort>,
     /// `None` runs agents without MCP (tests, CLI).
     pub tools: Option<Arc<dyn RunTools>>,
     /// `None` when the shell doesn't wire one in (tests, the CLI): `viewer`
