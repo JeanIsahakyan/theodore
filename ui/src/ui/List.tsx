@@ -67,6 +67,12 @@ const REASON_LABEL: Record<InboxReason, string> = {
   updated_after_review: 'updated after your review',
 };
 
+/** A PR belongs in the inbox only while open and with a reason to be there —
+ *  project refreshes also store merged/closed PRs and ones with no reason. */
+export function inInbox(p: Pick<PrSummary, 'state' | 'reasons'>): boolean {
+  return (p.state === 'open' || p.state === 'draft') && p.reasons.length > 0;
+}
+
 const SECTIONS: { id: string; title: string; reasons: InboxReason[] }[] = [
   {
     id: 'review',
@@ -879,7 +885,7 @@ export const Inbox = observer(function Inbox() {
     void refreshInbox(store).finally(() => setRefreshing(false));
   };
 
-  const prs = store.models.prSummaries.all();
+  const prs = store.models.prSummaries.all().filter(inInbox);
   const inboxStates = store.models.inboxStates.all();
   // First state per PR, as `find` would pick — one pass, not one per row.
   const stateByPr = new Map<string, (typeof inboxStates)[number]>();

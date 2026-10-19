@@ -27,6 +27,7 @@ import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
 import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
+import { inInbox } from './List';
 import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
 import { SyncStatus } from './shell/SyncStatus';
 
@@ -86,6 +87,7 @@ export const Sidebar = observer(function Sidebar() {
   for (const s of inboxStates) if (!stateByPr.has(s.pr)) stateByPr.set(s.pr, s);
   const stateOf = (pr: string) => stateByPr.get(pr);
   const inboxCount = prs.filter((p) => {
+    if (!inInbox(p)) return false;
     const s = stateOf(p.id);
     return !s?.done && !s?.snooze;
   }).length;
