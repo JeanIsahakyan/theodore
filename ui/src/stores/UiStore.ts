@@ -139,7 +139,12 @@ export class UiStore {
           ? [...tabs, route]
           : tabs.map((t, i) => (i === cur ? route : t));
       }
-      this.back = this.route.name === 'review' ? this.back : this.route;
+      // Back means "where you were before this view": reviews don't count,
+      // and moving between Settings pages keeps pointing out of Settings.
+      const withinSettings =
+        this.route.name === 'settings' && route.name === 'settings';
+      this.back =
+        this.route.name === 'review' || withinSettings ? this.back : this.route;
       this.tabs = tabs;
       this.route = route;
       this.modal = null;
