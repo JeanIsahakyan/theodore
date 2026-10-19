@@ -39,6 +39,7 @@ import type {
   UpdateInfo,
 } from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
+import { useViewKeys } from './keys';
 import { setSetting } from '../actions';
 import { useDeviceLogin } from '../core/deviceLogin';
 import { useRootStore, useUi } from '../stores/context';
@@ -91,6 +92,16 @@ export const SettingsNav = observer(function SettingsNav({
   page: Page;
 }) {
   const ui = useUi();
+  // Esc leaves Settings, as the hint by "Back" says (inputs and dialogs keep
+  // their own Esc: `useViewKeys` skips them).
+  useViewKeys(
+    ui,
+    (e) => {
+      if (e.key !== 'Escape') return false;
+      ui.goBack();
+    },
+    [],
+  );
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
       <div data-tauri-drag-region className="px-3 pb-2 pt-11">
