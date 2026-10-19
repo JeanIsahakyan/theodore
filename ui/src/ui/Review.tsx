@@ -61,40 +61,6 @@ import { SidePanel } from './SidePanel';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
-/** Live updates: green while synced, amber on cached/rate-limited reads, red
- *  offline. Ported from the prototype's `LiveDot`, minus the fake `feed`
- *  popover (nothing backs it) — driven by the real `hostStatus` instead of
- *  demo fault injection. */
-const LiveDot = observer(function LiveDot() {
-  const store = useRootStore();
-  const s = store.ephemeral.hostStatus;
-  const rateLimited = !!s.rateLimitedUntil && s.rateLimitedUntil > Date.now();
-  const [color, text] = !s.online
-    ? ['bg-danger', 'offline — showing cache']
-    : rateLimited || !s.authOk
-      ? ['bg-warning', 'updates paused']
-      : ['bg-success', 'live'];
-  return (
-    <Tooltip>
-      <Chip
-        size="sm"
-        variant="secondary"
-        className="live-dot shrink-0 gap-1.5 px-1.5"
-      >
-        <span className="relative flex size-2">
-          {color === 'bg-success' && (
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
-          )}
-          <span
-            className={`relative inline-flex size-2 rounded-full ${color}`}
-          />
-        </span>
-      </Chip>
-      <Tooltip.Content>Updates: {text}</Tooltip.Content>
-    </Tooltip>
-  );
-});
-
 type PrTab = 'diff' | 'checks' | 'commits';
 
 const lastSeenKey = (pr: PrId) => `theodore-lastseen:${pr}`;
@@ -572,7 +538,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 </Chip>
               ))}
               {FEATURES.linear && <LinearChips pr={pr} />}
-              {summary.pr.repo.host !== 'local' && <LiveDot />}
             </>
           ) : (
             <Spinner size="sm" />
@@ -908,7 +873,17 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           <K>Esc</K> back
         </Hints>
       )}
-      {mergeOpen && <MergeDialog pr={pr} onClose={() => setMergeOpen(false)} />}
+      {mergeOpen && (
+        <MergeDialog
+          pr={pr}
+          onClose={() => setMergeOpen(false)}
+          onOpenFile={(path) => {
+            setMergeOpen(false);
+            setTab('diff');
+            setMode({ mode: 'files', group: mode.group, file: path });
+          }}
+        />
+      )}
     </div>
   );
 });
