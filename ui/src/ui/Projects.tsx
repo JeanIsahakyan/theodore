@@ -771,10 +771,12 @@ const ProjectBranches = observer(function ProjectBranches({
       <Table.ScrollContainer>
         <Table.Content aria-label="Branches">
           <Table.Header>
-            <Table.Column isRowHeader>branch</Table.Column>
+            <Table.Column isRowHeader width={240}>
+              branch
+            </Table.Column>
             <Table.Column>last commit</Table.Column>
-            <Table.Column>ahead / behind</Table.Column>
-            <Table.Column>updated</Table.Column>
+            <Table.Column width={110}>ahead / behind</Table.Column>
+            <Table.Column width={90}>updated</Table.Column>
           </Table.Header>
           <Table.Body>
             {branches.map((b) => (
@@ -784,15 +786,20 @@ const ProjectBranches = observer(function ProjectBranches({
                 onAction={() => open(b)}
                 className="cursor-pointer"
               >
-                <Table.Cell className="font-mono text-sm">
-                  <span className="inline-flex items-center gap-1.5">
-                    <BranchesRight className="size-3.5 text-muted" />
-                    {b.name}
+                <Table.Cell className="min-w-0 font-mono text-sm">
+                  <span
+                    className="inline-flex min-w-0 max-w-full items-center gap-1.5"
+                    title={b.name}
+                  >
+                    <BranchesRight className="size-3.5 shrink-0 text-muted" />
+                    <span className="truncate">{b.name}</span>
                     {opening === b.name && <Spinner />}
                   </span>
                 </Table.Cell>
-                <Table.Cell className="truncate text-xs text-muted">
-                  {b.subject}
+                <Table.Cell className="min-w-0 text-xs text-muted">
+                  <span className="block truncate" title={b.subject}>
+                    {b.subject}
+                  </span>
                 </Table.Cell>
                 <Table.Cell className="text-xs tabular-nums text-muted">
                   +{b.ahead} / -{b.behind}
