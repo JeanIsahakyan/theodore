@@ -27,6 +27,10 @@ export type Route =
   | { name: 'inbox' }
   | { name: 'mine' }
   | { name: 'tasks' }
+  /** The standalone skills library: every source, filterable, with the
+   *  SKILL.md editor — unlike the in-review `SkillBrowser` popover, this
+   *  one isn't scoped to a PR. */
+  | { name: 'skills' }
   | { name: 'settings'; page: SettingsPage }
   | { name: 'review'; pr: PrId }
   /** A connected repository: header, Pull requests and Branches tabs. */

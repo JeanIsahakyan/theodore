@@ -168,6 +168,16 @@ export class SyncClient {
     });
   }
 
+  /** Manual reconnect after `status` went to `error` (e.g. an offline
+   *  banner's "Retry") — tears down the old frame listener and bootstraps
+   *  again. A no-op while already connecting or connected. */
+  async retry(): Promise<void> {
+    if (this.status === 'online' || this.status === 'bootstrapping') return;
+    this.unlisten?.();
+    this.unlisten = undefined;
+    await this.start();
+  }
+
   dispose(): void {
     this.unlisten?.();
   }

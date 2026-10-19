@@ -145,6 +145,42 @@ describe('SyncClient', () => {
     expect(client.pool.get('task', 'stale')).toBeUndefined();
   });
 
+  it('retry() re-bootstraps after an error and goes back online', async () => {
+    transport.queueResult('bootstrap', new Error('network down'));
+    const client = new SyncClient();
+    await client.start();
+    expect(client.status).toBe('error');
+
+    transport.queueResult('bootstrap', {
+      last_sync_id: 7,
+      rows: [],
+    } satisfies Bootstrap);
+    await client.retry();
+
+    expect(client.status).toBe('online');
+    expect(client.lastSyncId).toBe(7);
+  });
+
+  it('retry() is a no-op while already online', async () => {
+    transport.queueResult('bootstrap', {
+      last_sync_id: 1,
+      rows: [],
+    } satisfies Bootstrap);
+    const client = new SyncClient();
+    await client.start();
+
+    const bootstrapCallsBefore = transport.calls.filter(
+      (c) => c.cmd === 'bootstrap',
+    ).length;
+    await client.retry();
+    const bootstrapCallsAfter = transport.calls.filter(
+      (c) => c.cmd === 'bootstrap',
+    ).length;
+
+    expect(bootstrapCallsAfter).toBe(bootstrapCallsBefore);
+    expect(client.status).toBe('online');
+  });
+
   it('bootstraps a PR scope once even when opened concurrently', async () => {
     transport.queueResult('bootstrap', {
       last_sync_id: 0,
