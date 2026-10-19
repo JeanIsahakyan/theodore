@@ -35,7 +35,15 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import { Code, langOf, rich } from '../highlight';
+import {
+  Code,
+  hunkLineTokens,
+  langOf,
+  rich,
+  tokenizeLines,
+  useShikiVersion,
+  type Tok,
+} from '../highlight';
 import { api } from '../core/api';
 import { countRender } from '../core/perf';
 import type {
@@ -810,10 +818,19 @@ const ContextGap = observer(function ContextGap({
     shown > 0
       ? store.files.get(key, () => api.getFile({ pr, rev, path }))
       : null;
-  if (res?.status === 'ready' && res.data != null) {
-    const allLines = res.data.split('\n');
-    const from = gap.to - shown + 1;
-    const slice = allLines.slice(from - 1, gap.to);
+  const ready = res?.status === 'ready' && res.data != null;
+  const from = gap.to - shown + 1;
+  const slice = ready ? res!.data!.split('\n').slice(from - 1, gap.to) : [];
+  // Tokenized as one block (not line by line): a gap can land mid-comment
+  // or mid-string, same as a hunk's own lines.
+  const shikiVersion = useShikiVersion();
+  const sideText = slice.join('\n');
+  const toks = useMemo(
+    () => tokenizeLines(sideText, lang),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
+    [sideText, lang, shikiVersion],
+  );
+  if (ready) {
     const left = total - shown;
     return (
       <>
@@ -833,7 +850,7 @@ const ContextGap = observer(function ContextGap({
               <span className="no">{newNo - gap.shift}</span>
               <span className="no">{newNo}</span>
               <span className="mark"> </span>
-              <Code s={text} lang={lang} />
+              <Code s={text} lang={lang} toks={toks[i]} />
               <span className="ln-act" />
             </div>
           );
@@ -876,12 +893,21 @@ const FileTail = observer(function FileTail({
     shown > 0
       ? store.files.get(key, () => api.getFile({ pr, rev, path }))
       : null;
-  if (res?.status === 'ready' && res.data != null) {
-    const allLines = res.data.split('\n');
-    const gap = gapTail(hunks, allLines.length);
+  const ready = res?.status === 'ready' && res.data != null;
+  const allLines = ready ? res!.data!.split('\n') : [];
+  const gap = gapTail(hunks, allLines.length);
+  const to = gap ? Math.min(gap.to, gap.from + shown - 1) : 0;
+  const slice = gap ? allLines.slice(gap.from - 1, to) : [];
+  // Tokenized as one block (not line by line): see `ContextGap`.
+  const shikiVersion = useShikiVersion();
+  const sideText = slice.join('\n');
+  const toks = useMemo(
+    () => tokenizeLines(sideText, lang),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
+    [sideText, lang, shikiVersion],
+  );
+  if (ready) {
     if (!gap) return null;
-    const to = Math.min(gap.to, gap.from + shown - 1);
-    const slice = allLines.slice(gap.from - 1, to);
     const total = gap.to - gap.from + 1;
     const left = total - shown;
     return (
@@ -893,7 +919,7 @@ const FileTail = observer(function FileTail({
               <span className="no">{newNo - gap.shift}</span>
               <span className="no">{newNo}</span>
               <span className="mark"> </span>
-              <Code s={text} lang={lang} />
+              <Code s={text} lang={lang} toks={toks[i]} />
               <span className="ln-act" />
             </div>
           );
@@ -1420,6 +1446,15 @@ function HunkViewInner(props: HunkProps) {
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
+  // One Shiki call per side (not per line), so grammar state — an open
+  // comment, a template literal — carries across lines; recomputed once
+  // Shiki (or this hunk's grammar) finishes loading.
+  const shikiVersion = useShikiVersion();
+  const toks = useMemo(
+    () => hunkLineTokens(h.lines, lang),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
+    [h.lines, lang, shikiVersion],
+  );
   return (
     <div
       id={`H-${h.id}`}
@@ -1467,6 +1502,7 @@ function HunkViewInner(props: HunkProps) {
             l={l}
             lang={lang}
             marks={marks.get(i)}
+            toks={toks[i]}
             actions={props.actions}
             {...lineSlice(store, props, l)}
           />
@@ -1487,6 +1523,14 @@ function SplitHunkViewInner(props: HunkProps) {
   const rows = useMemo(() => splitRows(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
+  // Same per-side tokenizing as the unified view (see `HunkViewInner`) — the
+  // old/new split here is purely a layout difference, not a second pass.
+  const shikiVersion = useShikiVersion();
+  const toks = useMemo(
+    () => hunkLineTokens(h.lines, lang),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
+    [h.lines, lang, shikiVersion],
+  );
   const cell = (i: number | null | undefined) => {
     if (i == null) return null;
     const l = h.lines[i]!;
@@ -1498,6 +1542,7 @@ function SplitHunkViewInner(props: HunkProps) {
         l={l}
         lang={lang}
         marks={marks.get(i)}
+        toks={toks[i]}
         actions={props.actions}
         {...lineSlice(store, props, l)}
       />
@@ -1616,6 +1661,10 @@ interface LineProps {
   l: DiffLine;
   lang: ReturnType<typeof langOf>;
   marks?: [number, number][];
+  /** This line's tokens, computed once for the whole hunk/gap — carries
+   *  cross-line grammar state. `undefined` only while the hunk's own
+   *  `useMemo` hasn't run yet, which `Code` handles by tokenizing alone. */
+  toks?: Tok[];
   threads: readonly string[];
   drafts: readonly DraftRow[];
   findings: readonly FindingRow[];
@@ -1637,6 +1686,7 @@ const Line = memo(function Line(props: LineProps) {
     l,
     lang,
     marks,
+    toks,
     threads,
     drafts,
     findings,
@@ -1675,7 +1725,7 @@ const Line = memo(function Line(props: LineProps) {
             <span>{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</span>
           )}
         </span>
-        <Code s={l.text} lang={lang} marks={marks} />
+        <Code s={l.text} lang={lang} marks={marks} toks={toks} />
         <span className="ln-act">
           {anchor && (
             <>
