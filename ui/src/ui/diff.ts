@@ -6,6 +6,11 @@
  */
 import type { DiffLine, FileDiff, Hunk, HunkId } from '../gen/contract';
 
+export interface SinceCounts {
+  new: number;
+  changed: number;
+}
+
 export type Mark = [number, number];
 
 const WORD = /\w+|\s+|[^\w\s]/g;
@@ -184,6 +189,22 @@ export function sinceHunks(
       if (!match) out.set(h.id, 'new');
       else if (!sameLines(match, h)) out.set(h.id, 'changed');
     }
+  }
+  return out;
+}
+
+/** New vs. changed counts for a set of hunks, from a `sinceHunks` map — used
+ *  for both the per-file badge and the whole-PR "since last visit" banner. */
+export function sinceCountsFor(
+  hunks: { id: HunkId }[],
+  since: Map<HunkId, SinceKind> | null | undefined,
+): SinceCounts {
+  const out: SinceCounts = { new: 0, changed: 0 };
+  if (!since) return out;
+  for (const h of hunks) {
+    const kind = since.get(h.id);
+    if (kind === 'new') out.new++;
+    else if (kind === 'changed') out.changed++;
   }
   return out;
 }

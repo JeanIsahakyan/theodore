@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { DiffLine, FileDiff, Hunk } from '../gen/contract';
-import { gapTail, gapsAbove, sinceHunks, splitRows, wordMarks } from './diff';
+import {
+  gapTail,
+  gapsAbove,
+  sinceCountsFor,
+  sinceHunks,
+  splitRows,
+  wordMarks,
+} from './diff';
 
 const line = (
   kind: DiffLine['kind'],
@@ -172,5 +179,34 @@ describe('sinceHunks', () => {
     const newH = hunk({ id: 'n1', new_start: 1, new_lines: 1, lines });
     const since = sinceHunks([file('a.ts', [oldH])], [file('a.ts', [newH])]);
     expect(since.has('n1')).toBe(false);
+  });
+});
+
+describe('sinceCountsFor', () => {
+  const since = new Map([
+    ['h1', 'new' as const],
+    ['h2', 'changed' as const],
+    ['h3', 'new' as const],
+  ]);
+
+  it('counts new and changed separately, among just the given hunks', () => {
+    expect(sinceCountsFor([{ id: 'h1' }, { id: 'h2' }], since)).toEqual({
+      new: 1,
+      changed: 1,
+    });
+  });
+
+  it('ignores hunks with no entry in the map', () => {
+    expect(sinceCountsFor([{ id: 'h4' }], since)).toEqual({
+      new: 0,
+      changed: 0,
+    });
+  });
+
+  it('is all-zero without a baseline', () => {
+    expect(sinceCountsFor([{ id: 'h1' }], null)).toEqual({
+      new: 0,
+      changed: 0,
+    });
   });
 });
