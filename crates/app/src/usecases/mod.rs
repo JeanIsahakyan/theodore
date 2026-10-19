@@ -5,6 +5,7 @@ pub mod budget;
 pub mod grouping;
 pub mod host;
 pub mod inbox;
+pub mod interdiff;
 pub mod merge;
 pub mod open_pr;
 pub mod projects;

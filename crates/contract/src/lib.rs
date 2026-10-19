@@ -9,6 +9,9 @@ use theodore_domain::{
     TaskId, Thread, ThreadId, Usage, ViewedState,
 };
 
+mod interdiff;
+pub use interdiff::*;
+
 /// Model names used in transactions and sync frames.
 pub mod models {
     pub const PR: &str = "pr";
@@ -612,7 +615,9 @@ pub fn types() -> specta::Types {
         .register::<CommitSuggestionsRequest>()
         .register::<SkillBody>()
         .register::<SaveSkillRequest>()
-        .register::<PrSpend>();
+        .register::<PrSpend>()
+        .register::<InterdiffRequest>()
+        .register::<InterdiffEntry>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

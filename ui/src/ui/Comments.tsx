@@ -4,15 +4,13 @@ import { stripHtmlComments } from '../highlight';
  * threads, pending drafts, and the composer that creates new ones. Ported
  * from the prototype's `Comments.tsx`.
  *
- * Still dropped vs. the prototype (no backing data exists for either — not
- * a UI choice, a contract gap):
- * - `@`-mention autocomplete (`MENTIONABLE` came from mock team data; no
- *   equivalent exists here).
+ * Still dropped vs. the prototype (no backing data exists for it — not a UI
+ * choice, a contract gap):
  * - Reaction *counts*: `Comment` carries no reactions field at all, so the
  *   reaction bar can toggle (`react`) but can only show what *we* toggled
  *   this session (`EphemeralStore.reacted`), never who else reacted.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   Check,
@@ -38,7 +36,15 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { Md } from '../highlight';
-import type { Anchor, Comment, Draft, PrId, PrSummary } from '../gen/contract';
+import { api } from '../core/api';
+import type {
+  Anchor,
+  Comment,
+  Draft,
+  Person,
+  PrId,
+  PrSummary,
+} from '../gen/contract';
 import {
   addDraft,
   ask,
@@ -52,6 +58,13 @@ import {
   resolveThread,
 } from '../actions';
 import { useRootStore } from '../stores/context';
+import {
+  filterMentions,
+  insertMention,
+  mentionQueryAt,
+  moveMentionIndex,
+  type MentionQuery,
+} from './review/mention';
 import { AgentTag, Avatar, Btn } from './bits';
 
 export const plural = (n: number, one: string, many: string) =>
@@ -94,6 +107,125 @@ const REACTIONS: [emoji: string, name: string][] = [
   ['🚀', 'rocket'],
   ['👀', 'eyes'],
 ];
+
+// ── @-mention autocomplete ───────────────────────────────────────────────
+
+/** `assignableUsers` barely changes within one PR's review session, so one
+ *  fetch is cached and shared by every composer open on it (plan §6.3). */
+const assignableCache = new Map<PrId, Promise<Person[]>>();
+function assignableUsers(pr: PrId): Promise<Person[]> {
+  let p = assignableCache.get(pr);
+  if (!p) {
+    p = api.assignableUsers(pr).catch(() => []);
+    assignableCache.set(pr, p);
+  }
+  return p;
+}
+
+interface MentionMenuState {
+  query: MentionQuery;
+  options: Person[];
+  index: number;
+}
+
+/** Drives the `@`-mention menu for one composer: tracks the candidate list
+ *  for `pr` (cached), re-derives the menu from the textarea's own caret on
+ *  every keystroke, and handles the keys the menu owns while open —
+ *  callers fall back to their own `Enter`/`Escape` handling when this
+ *  returns `false`. */
+function useMentionMenu(pr: PrId, text: string, setText: (t: string) => void) {
+  const store = useRootStore();
+  const viewerLogin = store.ephemeral.viewer?.login;
+  const [people, setPeople] = useState<Person[] | null>(null);
+  const [state, setState] = useState<MentionMenuState | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void assignableUsers(pr).then((p) => {
+      if (live) setPeople(p);
+    });
+    return () => {
+      live = false;
+    };
+  }, [pr]);
+
+  const sync = (value: string, caret: number) => {
+    const q = mentionQueryAt(value, caret);
+    if (!q || !people) {
+      setState(null);
+      return;
+    }
+    const options = filterMentions(people, q.query, viewerLogin);
+    setState(options.length ? { query: q, options, index: 0 } : null);
+  };
+
+  const pick = (login: string, target: HTMLTextAreaElement | null) => {
+    if (!state) return;
+    const next = insertMention(text, state.query, login);
+    setText(next.text);
+    setState(null);
+    // The textarea's value updates on the next render; queue the caret
+    // move just after, so a direct keystroke doesn't land before the
+    // inserted mention.
+    setTimeout(() => target?.setSelectionRange(next.caret, next.caret), 0);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (!state) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      setState((s) =>
+        s
+          ? { ...s, index: moveMentionIndex(s.options.length, s.index, delta) }
+          : s,
+      );
+      return true;
+    }
+    if ((e.key === 'Enter' || e.key === 'Tab') && state.options.length) {
+      e.preventDefault();
+      pick(state.options[state.index]!.login, e.currentTarget);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      setState(null);
+      return true;
+    }
+    return false;
+  };
+
+  return { state, sync, onKeyDown, pick };
+}
+
+/** The open menu itself — styled like the prototype's inline mention bar:
+ *  one soft button per candidate, the keyboard-selected one highlighted. */
+function MentionMenu({
+  options,
+  index,
+  onPick,
+}: {
+  options: Person[];
+  index: number;
+  onPick: (login: string) => void;
+}) {
+  return (
+    <div className="mention-menu flex flex-wrap items-center gap-1 px-1 text-xs text-muted">
+      <span>mention:</span>
+      {options.map((p, i) => (
+        <Button
+          key={p.login}
+          size="sm"
+          variant={i === index ? 'secondary' : 'ghost'}
+          className="h-6 gap-1 rounded-full px-2 text-xs"
+          onPress={() => onPick(p.login)}
+        >
+          @{p.login}
+        </Button>
+      ))}
+      <span>↑↓ · Tab/⏎ select · Esc close</span>
+    </div>
+  );
+}
 
 /** Markdown, plus a GitHub-style suggestion block rendered as a diff line. */
 export function Body({ text }: { text: string }) {
@@ -198,6 +330,8 @@ export const CommentView = observer(function CommentView({
   const summary = store.models.prSummaries.get(pr);
   const writable = canCommitSuggestions(summary, viewer?.login);
   const inBatch = store.ephemeral.batchOf(pr).has(c.id);
+  const mention = useMentionMenu(pr, text, setText);
+  const editRef = useRef<HTMLTextAreaElement>(null);
   return (
     <div className="comment group flex gap-3">
       <Avatar person={c.author} size={24} />
@@ -246,13 +380,27 @@ export const CommentView = observer(function CommentView({
         {editing ? (
           <div className="flex flex-col gap-1.5">
             <TextArea
+              ref={editRef}
               autoFocus
               rows={3}
               aria-label="Edit comment"
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                mention.sync(e.target.value, e.target.selectionStart ?? 0);
+              }}
+              onKeyDown={(e) => {
+                mention.onKeyDown(e);
+              }}
               className="comment-edit text-sm"
             />
+            {mention.state && (
+              <MentionMenu
+                options={mention.state.options}
+                index={mention.state.index}
+                onPick={(login) => mention.pick(login, editRef.current)}
+              />
+            )}
             <div className="flex justify-end gap-1.5">
               <Button
                 size="sm"
@@ -322,6 +470,8 @@ export const ThreadView = observer(function ThreadView({
   const [open, setOpen] = useState(() => !t?.resolved);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const mention = useMentionMenu(pr, text, setText);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   if (!t) return null;
   const people = [
     ...new Map(t.comments.map((c) => [c.author.login, c.author])).values(),
@@ -401,31 +551,49 @@ export const ThreadView = observer(function ThreadView({
           <CommentView key={c.id ?? i} pr={pr} c={c} />
         ))}
       </div>
-      <div className="flex items-center gap-1.5 border-t border-separator px-3 py-2">
-        <TextArea
-          aria-label="Reply"
-          rows={1}
-          fullWidth
-          value={text}
-          placeholder="Reply…"
-          className="min-w-0 flex-1 font-sans text-xs"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && text.trim()) {
-              send();
-            }
-          }}
-        />
-        <Button
-          isIconOnly
-          size="sm"
-          aria-label="Send reply"
-          isPending={busy}
-          isDisabled={!text.trim()}
-          onPress={send}
-        >
-          <ArrowUp className="size-4" />
-        </Button>
+      <div className="flex flex-col gap-1.5 border-t border-separator px-3 py-2">
+        {mention.state && (
+          <MentionMenu
+            options={mention.state.options}
+            index={mention.state.index}
+            onPick={(login) => mention.pick(login, replyRef.current)}
+          />
+        )}
+        <div className="flex items-center gap-1.5">
+          <TextArea
+            ref={replyRef}
+            aria-label="Reply"
+            rows={1}
+            fullWidth
+            value={text}
+            placeholder="Reply…"
+            className="min-w-0 flex-1 font-sans text-xs"
+            onChange={(e) => {
+              setText(e.target.value);
+              mention.sync(e.target.value, e.target.selectionStart ?? 0);
+            }}
+            onKeyDown={(e) => {
+              if (mention.onKeyDown(e)) return;
+              if (
+                e.key === 'Enter' &&
+                (e.metaKey || e.ctrlKey) &&
+                text.trim()
+              ) {
+                send();
+              }
+            }}
+          />
+          <Button
+            isIconOnly
+            size="sm"
+            aria-label="Send reply"
+            isPending={busy}
+            isDisabled={!text.trim()}
+            onPress={send}
+          >
+            <ArrowUp className="size-4" />
+          </Button>
+        </div>
       </div>
     </Card>
   );
@@ -436,6 +604,8 @@ function DraftViewInner({ d }: { d: Draft }) {
   const store = useRootStore();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(d.body);
+  const mention = useMentionMenu(d.pr, text, setText);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const label =
     d.anchor.start_line != null
       ? `${d.anchor.start_line}–${d.anchor.line}`
@@ -474,13 +644,27 @@ function DraftViewInner({ d }: { d: Draft }) {
         </Button>
       </div>
       {editing ? (
-        <TextArea
-          fullWidth
-          aria-label="draft"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={4}
-        />
+        <div className="flex flex-col gap-1.5">
+          <TextArea
+            ref={draftRef}
+            fullWidth
+            aria-label="draft"
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              mention.sync(e.target.value, e.target.selectionStart ?? 0);
+            }}
+            onKeyDown={(e) => mention.onKeyDown(e)}
+            rows={4}
+          />
+          {mention.state && (
+            <MentionMenu
+              options={mention.state.options}
+              index={mention.state.index}
+              onPick={(login) => mention.pick(login, draftRef.current)}
+            />
+          )}
+        </div>
       ) : (
         <Body text={d.body} />
       )}
@@ -503,6 +687,8 @@ function ComposerInner({
   const store = useRootStore();
   const [text, setText] = useState('');
   const [preview, setPreview] = useState(false);
+  const mention = useMentionMenu(pr, text, setText);
+  const textRef = useRef<HTMLTextAreaElement>(null);
   const submit = () => {
     const body = text.trim();
     if (!body) return;
@@ -554,18 +740,30 @@ function ComposerInner({
         </div>
       ) : (
         <TextArea
+          ref={textRef}
           autoFocus
           fullWidth
           rows={3}
           aria-label="comment"
           value={text}
-          placeholder="Comment… markdown, ⌘⏎ to add to review"
+          placeholder="Comment… markdown, ⌘⏎ to add to review, @ to mention"
           className="font-mono text-xs"
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            mention.sync(e.target.value, e.target.selectionStart ?? 0);
+          }}
           onKeyDown={(e) => {
+            if (mention.onKeyDown(e)) return;
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
             if (e.key === 'Escape') onClose();
           }}
+        />
+      )}
+      {!preview && mention.state && (
+        <MentionMenu
+          options={mention.state.options}
+          index={mention.state.index}
+          onPick={(login) => mention.pick(login, textRef.current)}
         />
       )}
       <div className="flex items-center gap-1.5">
