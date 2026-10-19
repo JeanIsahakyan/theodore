@@ -454,16 +454,26 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // under (`H-<hunkId>`).
   useEffect(() => {
     if (!focusHunk) return;
-    // Wait a frame: a jump may have just switched group, so the target's
-    // file only mounts in this commit.
-    const id = requestAnimationFrame(() => {
-      document.getElementById(`H-${focusHunk}`)?.scrollIntoView({
-        block: jumpStart ? 'start' : 'nearest',
-        behavior: 'smooth',
-      });
-      setJumpStart(false);
-    });
-    return () => cancelAnimationFrame(id);
+    const target = () => document.getElementById(`H-${focusHunk}`);
+    if (!jumpStart) {
+      // J/K: a small step, smooth is fine and nothing above it moves.
+      const id = requestAnimationFrame(() =>
+        target()?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+      );
+      return () => cancelAnimationFrame(id);
+    }
+    // A jump (file click, group switch): files above the target mount as
+    // they come near the viewport and grow from their placeholder height,
+    // which moves the target after a smooth scroll has aimed at it. Jump
+    // instantly, then re-aim until the layout settles.
+    setJumpStart(false);
+    const timers = [0, 80, 200, 400, 700].map((ms) =>
+      setTimeout(
+        () => target()?.scrollIntoView({ block: 'start', behavior: 'auto' }),
+        ms,
+      ),
+    );
+    return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusHunk, jumpSeq]);
 
