@@ -158,7 +158,7 @@ const TabItem = observer(function TabItem({
     <Tabs.Tab
       id={key(t)}
       // Tabs shrink to fit (title truncates); past their minimum the list scrolls.
-      className="tab group min-w-28 max-w-64 shrink gap-2 text-sm"
+      className="tab group w-auto min-w-28 max-w-64 shrink justify-start gap-2 px-3 text-sm"
     >
       {i > 0 && <Tabs.Separator />}
       <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
@@ -182,7 +182,7 @@ const TabItem = observer(function TabItem({
           size="sm"
           variant="ghost"
           aria-label="close tab"
-          className="tab-x -me-1 size-5 min-w-5 rounded-xl opacity-0 group-hover:opacity-100 group-data-[selected=true]:opacity-100"
+          className="tab-x -me-1 ms-auto size-5 min-w-5 rounded-xl opacity-0 group-hover:opacity-100 group-data-[selected=true]:opacity-100"
           onPress={onClose}
         >
           <Xmark className="size-3.5" />
