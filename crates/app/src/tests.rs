@@ -835,6 +835,37 @@ async fn outbox_pauses_on_auth_error_and_reports_host_status() {
 }
 
 #[tokio::test]
+async fn outbox_reports_a_rate_limit_with_its_reset_time() {
+    let f = fixtures();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: pr.clone(),
+            head,
+        })
+        .await
+        .unwrap();
+    let hunks = testkit::hunk_ids(&revision);
+
+    let reset_at = f.clock.now() + 30_000;
+    f.host
+        .push_set_viewed(Err(HostError::RateLimited { reset_at }));
+    f.host.push_set_viewed(Ok(()));
+    for (i, h) in hunks.iter().enumerate() {
+        core.transact(hunk_read_tx(&format!("read-{i}"), &pr, h))
+            .await;
+    }
+
+    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::HostStatus { .. })).await;
+    assert!(matches!(
+        event,
+        Ephemeral::HostStatus { rate_limited_until: Some(t), auth_ok: true, .. } if t == reset_at
+    ));
+    f.clock.advance(31_000);
+    wait_until(|| f.store.outbox_snapshot()[0].status == OutboxStatus::Done).await;
+}
+
+#[tokio::test]
 async fn outbox_compensates_on_a_permanent_failure() {
     let f = fixtures();
     let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
