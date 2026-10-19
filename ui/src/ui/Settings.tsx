@@ -6,6 +6,7 @@ import {
   CircleCheckFill,
   CircleInfo,
   Cpu,
+  Flask,
   Folder,
   Gear,
   Keyboard,
@@ -48,6 +49,9 @@ import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
 import { projectLabel } from './Projects';
+import { SandboxBadge } from './sandbox/SandboxBadge';
+import { SandboxPage } from './sandbox/SandboxPage';
+import { visibleSettingsPages } from './sandbox/sandbox';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 const AI_KEYS = ['agents.grouping', 'agents.chat', 'agents.fix'] as const;
@@ -67,6 +71,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'projects', title: 'Projects', icon: <Folder /> },
   { id: 'updates', title: 'Updates', icon: <ArrowRotateRight /> },
   { id: 'about', title: 'About', icon: <CircleInfo /> },
+  { id: 'sandbox', title: 'Sandbox', icon: <Flask /> },
 ];
 
 const SUB: Record<Page, string> = {
@@ -76,6 +81,7 @@ const SUB: Record<Page, string> = {
   projects: 'Connected repositories and the settings effective in each.',
   updates: 'Check for and install new versions of Theodore.',
   about: 'Version and release channel.',
+  sandbox: 'The simulated host this window runs against: faults and timeline.',
 };
 
 const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
@@ -92,7 +98,9 @@ export const SettingsNav = observer(function SettingsNav({
 }: {
   page: Page;
 }) {
+  const store = useRootStore();
   const ui = useUi();
+  const pages = visibleSettingsPages(PAGES, store.ephemeral.sandbox);
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
       <div data-tauri-drag-region className="px-3 pb-2 pt-11">
@@ -107,9 +115,12 @@ export const SettingsNav = observer(function SettingsNav({
           <span className="flex-1" />
           <K>Esc</K>
         </Button>
-        <Typography.Heading level={6} className="mt-3 px-2">
-          Settings
-        </Typography.Heading>
+        <div className="mt-3 flex items-center gap-2 px-2">
+          <Typography.Heading level={6} className="flex-1">
+            Settings
+          </Typography.Heading>
+          <SandboxBadge />
+        </div>
       </div>
       <ListBox
         aria-label="Settings pages"
@@ -121,7 +132,7 @@ export const SettingsNav = observer(function SettingsNav({
         }}
         className="min-h-0 flex-1 overflow-auto px-2 pb-3"
       >
-        {PAGES.map((p) => (
+        {pages.map((p) => (
           <ListBox.Item
             key={p.id}
             id={p.id}
@@ -901,6 +912,8 @@ export const SettingsPage = observer(function SettingsPage({
           <ProjectsPage />
         ) : page === 'updates' ? (
           <UpdatesPage />
+        ) : page === 'sandbox' ? (
+          <SandboxPage />
         ) : (
           <AboutPage />
         )}

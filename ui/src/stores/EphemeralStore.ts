@@ -3,6 +3,7 @@
  * host status) — never synced, kept only in memory per §3.2 of the plan.
  */
 import {
+  computed,
   makeObservable,
   observable,
   observableRef,
@@ -10,10 +11,12 @@ import {
   runInAction,
 } from 'mobx';
 import type {
+  AppInfo,
   CommentId,
   Ephemeral,
   PrId,
   Person,
+  SandboxInfo,
   ToastLevel,
 } from '../gen/contract';
 
@@ -63,6 +66,8 @@ export class EphemeralStore {
   viewer: Person | null = null;
   /** `viewer` fetch in flight — tells "loading" apart from "signed out". */
   viewerLoading = false;
+  /** `app_info`, fetched once at startup; `null` until it arrives. */
+  appInfo: AppInfo | null = null;
   /** Optimistic overlay on `Comment.reactions`, `"<comment>:<emoji>"` ->
    *  the viewer-reacted state we just set. Wins over the server's
    *  `viewer_reacted`/`count` until the next sync brings a `Comment` whose
@@ -86,6 +91,8 @@ export class EphemeralStore {
       inboxLoading: observable,
       viewer: observableRef,
       viewerLoading: observable,
+      appInfo: observableRef,
+      sandbox: computed,
       reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
     });
@@ -155,6 +162,17 @@ export class EphemeralStore {
     runInAction(() => {
       this.viewerLoading = v;
     });
+  }
+
+  setAppInfo(info: AppInfo): void {
+    runInAction(() => {
+      this.appInfo = info;
+    });
+  }
+
+  /** Set only when this window runs against the sandbox host. */
+  get sandbox(): SandboxInfo | null {
+    return this.appInfo?.sandbox ?? null;
   }
 
   setViewer(p: Person): void {
