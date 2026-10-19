@@ -2,6 +2,7 @@ import { AgentWorking, GroupsSkeleton } from './Loading';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  ArrowRotateRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
 } from '@gravity-ui/icons';
 import {
   Accordion,
+  Button,
   Checkbox,
   Chip,
   Label,
@@ -29,7 +31,7 @@ import type {
   PrId,
   Revision,
 } from '../gen/contract';
-import { ask, markGroupRead, setFileViewed } from '../actions';
+import { ask, markGroupRead, regroup, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
@@ -151,35 +153,38 @@ export const GroupsPane = observer(function GroupsPane({
       variant="secondary"
       className="groups flex min-h-0 flex-col border-r border-separator"
     >
-      <Tabs
-        selectedKey={mode.mode}
-        onSelectionChange={(k) =>
-          setMode({
-            mode: k as ReviewMode['mode'],
-            group: mode.group,
-            file: mode.file ?? rev.files[0]?.path ?? null,
-          })
-        }
-        className="mode-tabs mx-4 mb-2 mt-4"
-      >
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="How to show changes" className="w-full">
-            <Tabs.Tab
-              id="groups"
-              className="flex-1 whitespace-nowrap"
-              isDisabled={!groups.length}
-            >
-              Grouped
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="files" className="flex-1 whitespace-nowrap">
-              <Tabs.Separator />
-              Files
-              <Tabs.Indicator />
-            </Tabs.Tab>
-          </Tabs.List>
-        </Tabs.ListContainer>
-      </Tabs>
+      <div className="mx-4 mb-2 mt-4 flex items-center gap-1">
+        <Tabs
+          selectedKey={mode.mode}
+          onSelectionChange={(k) =>
+            setMode({
+              mode: k as ReviewMode['mode'],
+              group: mode.group,
+              file: mode.file ?? rev.files[0]?.path ?? null,
+            })
+          }
+          className="mode-tabs min-w-0 flex-1"
+        >
+          <Tabs.ListContainer>
+            <Tabs.List aria-label="How to show changes" className="w-full">
+              <Tabs.Tab
+                id="groups"
+                className="flex-1 whitespace-nowrap"
+                isDisabled={!groups.length}
+              >
+                Grouped
+                <Tabs.Indicator />
+              </Tabs.Tab>
+              <Tabs.Tab id="files" className="flex-1 whitespace-nowrap">
+                <Tabs.Separator />
+                Files
+                <Tabs.Indicator />
+              </Tabs.Tab>
+            </Tabs.List>
+          </Tabs.ListContainer>
+        </Tabs>
+        <RegroupButton pr={pr} />
+      </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-4">
         {mode.mode === 'groups' && groups.length === 0 && (
@@ -679,6 +684,32 @@ export const groupHunkIds = (
   groupId: string,
 ): HunkId[] =>
   store.models.groupsOf(pr).find((g) => g.id === groupId)?.hunks ?? [];
+
+/** Re-runs grouping from scratch for this PR (spins while it runs). */
+const RegroupButton = observer(function RegroupButton({ pr }: { pr: PrId }) {
+  const store = useRootStore();
+  const running = !!store.ephemeral.grouping.get(pr)?.running;
+  return (
+    <Tooltip>
+      <Button
+        isIconOnly
+        size="sm"
+        variant="ghost"
+        aria-label="Regroup"
+        className="shrink-0"
+        isDisabled={running}
+        onPress={() => void regroup(store, pr)}
+      >
+        <ArrowRotateRight
+          className={`size-4 ${running ? 'animate-spin motion-reduce:animate-none' : ''}`}
+        />
+      </Button>
+      <Tooltip.Content>
+        {running ? 'Grouping…' : 'Regroup this PR from scratch'}
+      </Tooltip.Content>
+    </Tooltip>
+  );
+});
 
 /** Shown while a PR has no grouping yet: running, failed, or not started. */
 function GroupingStatus({

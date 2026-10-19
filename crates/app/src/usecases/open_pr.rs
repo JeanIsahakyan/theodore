@@ -177,8 +177,16 @@ impl Core {
                 .ok()
                 .and_then(|r| r.ok())
                 .flatten()
-                .and_then(|r| serde_json::from_value::<theodore_domain::Grouping>(r.data).ok());
-            if stored.is_some_and(|g| g.rev == head) {
+                .and_then(|r| {
+                    let algo = theodore_domain::grouping::row_algo(&r.data);
+                    serde_json::from_value::<theodore_domain::Grouping>(r.data)
+                        .ok()
+                        .map(|g| (g, algo))
+                });
+            // Reuse a grouping of this head, unless an older algorithm made it.
+            if stored.is_some_and(|(g, algo)| {
+                g.rev == head && algo >= theodore_domain::grouping::ALGO_VERSION
+            }) {
                 return;
             }
             {
@@ -208,7 +216,7 @@ impl Core {
                 .group(&revision, &detail, &worktree, agent)
                 .await;
             let error = match result {
-                Ok(grouping) => match serde_json::to_value(&grouping) {
+                Ok(grouping) => match theodore_domain::grouping::to_row(&grouping) {
                     Ok(data) => core
                         .apply(vec![NewAction {
                             model: models::GROUPING.into(),

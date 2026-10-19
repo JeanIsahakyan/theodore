@@ -5,6 +5,27 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{Group, GroupId, GroupKind, Grouping, HunkId, Revision};
 
+/// Version of the grouping algorithm, stored next to each grouping row
+/// (`"algo"`). A stored grouping from an older version is recomputed the
+/// next time its PR is opened. Bump it when grouping output changes in a
+/// way worth redoing old PRs for.
+pub const ALGO_VERSION: u64 = 2;
+
+/// Grouping row data: the grouping plus the algorithm version that made it.
+pub fn to_row(grouping: &Grouping) -> serde_json::Result<serde_json::Value> {
+    let mut v = serde_json::to_value(grouping)?;
+    if let Some(o) = v.as_object_mut() {
+        o.insert("algo".into(), ALGO_VERSION.into());
+    }
+    Ok(v)
+}
+
+/// The algorithm version a stored grouping row was made with (0 = before
+/// versions were recorded).
+pub fn row_algo(data: &serde_json::Value) -> u64 {
+    data.get("algo").and_then(|v| v.as_u64()).unwrap_or(0)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GroupingError {
     #[error("hunk {0} is in no group")]
@@ -126,5 +147,27 @@ pub fn repair_with_other(rev: &Revision, grouping: Grouping) -> Grouping {
     Grouping {
         rev: grouping.rev,
         groups,
+    }
+}
+
+#[cfg(test)]
+mod algo_tests {
+    use super::*;
+    use crate::model::Sha;
+
+    #[test]
+    fn rows_record_the_algorithm_version() {
+        let g = Grouping {
+            rev: Sha::new("h"),
+            groups: vec![],
+        };
+        let row = to_row(&g).unwrap();
+        assert_eq!(row_algo(&row), ALGO_VERSION);
+        let back: Grouping = serde_json::from_value(row).unwrap();
+        assert_eq!(back, g);
+        assert_eq!(
+            row_algo(&serde_json::json!({ "rev": "h", "groups": [] })),
+            0
+        );
     }
 }

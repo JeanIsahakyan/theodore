@@ -87,6 +87,20 @@ async fn open_fixture_pr(f: &Fixtures) -> (Core, Receivers, PrId, Sha) {
     (core, recv, resp.pr, resp.head)
 }
 
+/// Lets the grouping `open_pr` started finish: a second run for the same PR
+/// is refused while one is in flight.
+async fn wait_grouping_idle(f: &Fixtures, core: &Core, pr: &PrId) {
+    wait_until(|| {
+        f.store
+            .get(models::GROUPING, &pr.0)
+            .ok()
+            .flatten()
+            .is_some()
+            && core.0.grouping_inflight.lock().unwrap().is_empty()
+    })
+    .await;
+}
+
 fn hunk_read_tx(id: &str, pr: &PrId, hunk: &HunkId) -> Transaction {
     Transaction {
         id: id.into(),
@@ -2167,6 +2181,7 @@ async fn regroup_honours_the_agents_grouping_setting() {
         TransactionResult::Ok { .. }
     ));
 
+    wait_grouping_idle(&f, &core, &pr).await;
     core.regroup(pr).await.expect("regroup");
     assert_eq!(f.grouper.last_agent(), Some(AgentId::Codex));
 }
@@ -3840,7 +3855,7 @@ async fn regroup_falls_back_to_an_enabled_installed_agent_when_configured_one_is
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
     put_setting(&f, "agents.grouping", "user", json!("claude"));
     put_setting(&f, "agents.claude.enabled", "user", json!(false));
-
+    wait_grouping_idle(&f, &core, &pr).await;
     core.regroup(pr).await.expect("regroup");
 
     assert_ne!(
@@ -3856,6 +3871,7 @@ async fn regroup_holds_the_prs_worktree_lease() {
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
     let pr_ref = fixture_pr_ref();
 
+    wait_grouping_idle(&f, &core, &pr).await;
     core.regroup(pr).await.expect("regroup");
 
     assert!(f.worktree_lease.acquired().contains(&pr_ref));
@@ -4034,4 +4050,33 @@ async fn conflicts_propagates_unsupported_on_an_old_git() {
 
     let err = core.conflicts(pr).await.unwrap_err();
     assert!(matches!(err, AppError::Git(GitError::Unsupported(_))));
+}
+
+#[tokio::test]
+async fn opening_a_pr_regroups_a_grouping_made_by_an_older_algorithm() {
+    let f = fixtures();
+    // A stored grouping of the same head, written before rows carried an
+    // algorithm version (`algo` missing = 0).
+    let pr_id = fixture_pr_ref().id();
+    f.store
+        .apply(vec![NewAction {
+            model: models::GROUPING.into(),
+            model_id: pr_id.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(json!({ "rev": "head111", "groups": [] })),
+        }])
+        .unwrap();
+
+    let (_core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_until(|| {
+        f.store
+            .get(models::GROUPING, &pr.0)
+            .ok()
+            .flatten()
+            .is_some_and(|r| {
+                theodore_domain::grouping::row_algo(&r.data)
+                    == theodore_domain::grouping::ALGO_VERSION
+            })
+    })
+    .await;
 }
