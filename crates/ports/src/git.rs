@@ -63,6 +63,8 @@ pub struct BranchInfo {
     pub head: Sha,
     /// Last commit subject.
     pub subject: String,
+    /// Last commit author's name.
+    pub author: String,
     /// Commits ahead of / behind the project's default branch.
     pub ahead: u32,
     pub behind: u32,

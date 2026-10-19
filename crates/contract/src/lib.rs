@@ -328,6 +328,19 @@ pub struct Project {
     pub error: Option<String>,
     pub default_branch: Option<String>,
     pub added_at: Millis,
+    /// Host-side repo description, filled by `refresh_project` (empty for a
+    /// local project, or before the first successful refresh).
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub private: bool,
+    /// Host's last push to any branch, not just the default one.
+    #[serde(default)]
+    pub pushed_at: Option<Millis>,
+    /// When `refresh_project` last completed, host or local — drives the
+    /// header's "fetched Nm ago".
+    #[serde(default)]
+    pub last_fetched_at: Option<Millis>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -345,6 +358,9 @@ pub struct LocalBranch {
     pub head: Sha,
     /// Last commit subject.
     pub subject: String,
+    /// Last commit author's name.
+    #[serde(default)]
+    pub author: String,
     /// Commits ahead of / behind the project's default branch.
     pub ahead: u32,
     pub behind: u32,
