@@ -5,10 +5,11 @@ use theodore_app::{AppError, Core};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
-    HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision,
+    Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -186,6 +187,9 @@ impl CoreApi for AppCore {
     }
     async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError> {
         self.core.pr_spend(pr).await.map_err(err)
+    }
+    async fn interdiff(&self, req: InterdiffRequest) -> Result<Vec<InterdiffEntry>, CommandError> {
+        self.core.interdiff(req).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await

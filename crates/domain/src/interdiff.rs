@@ -108,6 +108,27 @@ pub fn classify(old: &Revision, new: &Revision) -> BTreeMap<HunkId, HunkChange> 
     out
 }
 
+/// Hunks of `old` with no counterpart in `new` at all — the edit was
+/// reverted, or its lines stopped differing from base entirely. Built from
+/// `classify(old, new)`'s own output: an `old` hunk is accounted for by
+/// being reused as-is (an `Unchanged` id in `changes`) or referenced as a
+/// `Changed` hunk's `previous`; anything left over vanished.
+pub fn vanished(old: &Revision, changes: &BTreeMap<HunkId, HunkChange>) -> BTreeSet<HunkId> {
+    let referenced: BTreeSet<&HunkId> = changes
+        .iter()
+        .filter_map(|(id, change)| match change {
+            HunkChange::Unchanged => Some(id),
+            HunkChange::Changed { previous } => Some(previous),
+            HunkChange::New => None,
+        })
+        .collect();
+    old.hunks()
+        .map(|h| &h.id)
+        .filter(|id| !referenced.contains(id))
+        .cloned()
+        .collect()
+}
+
 /// Word-level diff of the resulting code between two hunk versions, for the
 /// interdiff view. Compares the "surviving" text of each side — context and
 /// added lines, joined with newlines — and diffs it word by word with
@@ -429,5 +450,83 @@ mod dedupe_tests {
         assert_eq!(unique.len(), 4);
         assert_eq!(ids[2], format!("{}-2", ids[0]));
         assert_eq!(ids[3], format!("{}-3", ids[0]));
+    }
+}
+
+#[cfg(test)]
+mod vanished_tests {
+    use super::*;
+    use crate::model::{DiffLine, FileDiff, FileStatus, LineKind, Sha};
+
+    fn hunk(id: &str, path: &str, text: &str) -> Hunk {
+        let lines = vec![DiffLine {
+            kind: LineKind::Add,
+            text: text.into(),
+            old_no: None,
+            new_no: Some(1),
+        }];
+        Hunk {
+            id: HunkId::new(id),
+            path: path.into(),
+            old_start: 1,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: 1,
+            header: String::new(),
+            lines,
+        }
+    }
+
+    fn rev(files: Vec<FileDiff>) -> Revision {
+        Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files,
+        }
+    }
+
+    fn file(path: &str, hunks: Vec<Hunk>) -> FileDiff {
+        FileDiff {
+            path: path.into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            similarity: None,
+            old_mode: None,
+            new_mode: None,
+            flags: vec![],
+            additions: 0,
+            deletions: 0,
+            hunks,
+        }
+    }
+
+    #[test]
+    fn a_hunk_with_no_counterpart_in_new_is_vanished() {
+        let old = rev(vec![file("a.rs", vec![hunk("old1", "a.rs", "x")])]);
+        let new = rev(vec![]);
+        let changes = classify(&old, &new);
+        assert_eq!(
+            vanished(&old, &changes),
+            BTreeSet::from([HunkId::new("old1")])
+        );
+    }
+
+    #[test]
+    fn an_unchanged_hunk_is_not_vanished() {
+        let h = hunk("h1", "a.rs", "x");
+        let old = rev(vec![file("a.rs", vec![h.clone()])]);
+        let new = rev(vec![file("a.rs", vec![h])]);
+        let changes = classify(&old, &new);
+        assert!(vanished(&old, &changes).is_empty());
+    }
+
+    #[test]
+    fn a_hunk_matched_as_someone_elses_previous_is_not_vanished() {
+        let old_h = hunk("old1", "a.rs", "old text");
+        let new_h = hunk("new1", "a.rs", "new text");
+        let old = rev(vec![file("a.rs", vec![old_h])]);
+        let new = rev(vec![file("a.rs", vec![new_h])]);
+        let changes = classify(&old, &new);
+        assert!(vanished(&old, &changes).is_empty());
     }
 }

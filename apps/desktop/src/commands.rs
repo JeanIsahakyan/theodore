@@ -8,10 +8,11 @@ use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DraftStateRequest, EditCommentRequest, FileRequest,
-    HostAuthStatus, LocalBranch, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest,
-    OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest,
-    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, UpdateInfo,
+    HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
+    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
+    SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SyncFrame, TaskDecision,
+    Transaction, TransactionResult, UpdateInfo,
 };
 use theodore_domain::{Person, PrId, RepoRef, Revision};
 
@@ -356,6 +357,15 @@ pub async fn pr_spend(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<PrSpend, CommandError> {
     core.pr_spend(pr).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn interdiff(
+    req: InterdiffRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<InterdiffEntry>, CommandError> {
+    core.interdiff(req).await
 }
 
 /// Native folder picker for the Add project dialog. Runs on a background
