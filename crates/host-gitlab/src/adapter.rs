@@ -148,6 +148,9 @@ impl GitlabAdapter {
             url: mr.web_url.clone(),
             review_decision: review_decision_from_approvals(&approvals),
             conflicts: gl_conflicts(&mr),
+            created_at: Some(time::parse_millis(&mr.created_at)),
+            // Computed app-side from the stored PR rows (plan "Stack").
+            stack: None,
         };
 
         let base_sha = mr
@@ -828,6 +831,11 @@ fn map_comment(n: &GlNote) -> Comment {
         body: n.body.clone(),
         created_at: time::parse_millis(&n.created_at),
         edited: n.updated_at != n.created_at,
+        // GitLab's award emoji are per-note, with no bulk field on the
+        // discussions response (plan "reactions" is GitHub-first): listing
+        // them here would cost one extra REST call per note. Left empty
+        // until that's worth it; `add_reaction`/`remove_reaction` still work.
+        reactions: Vec::new(),
     }
 }
 
@@ -891,6 +899,8 @@ fn mr_to_summary(mr: &GlMergeRequest, reason: Option<InboxReason>) -> PrSummary 
         // — the list/to-do payload already carries `merge_status`.
         review_decision: None,
         conflicts: gl_conflicts(mr),
+        created_at: Some(time::parse_millis(&mr.created_at)),
+        stack: None,
     }
 }
 

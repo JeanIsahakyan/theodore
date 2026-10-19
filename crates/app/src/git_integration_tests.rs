@@ -152,6 +152,7 @@ async fn commit_suggestions_pushes_a_real_commit_to_the_real_remote() {
             body: "```suggestion\nTWO FIXED\n```".into(),
             created_at: 0,
             edited: false,
+            reactions: Vec::new(),
         }],
     }];
     f.host.push_get_pr(Ok(Fetched::Modified {

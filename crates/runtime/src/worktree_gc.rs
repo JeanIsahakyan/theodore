@@ -198,6 +198,8 @@ mod tests {
             url: String::new(),
             review_decision: None,
             conflicts: false,
+            created_at: None,
+            stack: None,
         }
     }
 

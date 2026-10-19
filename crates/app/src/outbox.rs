@@ -646,6 +646,7 @@ async fn apply_submitted_review(
                     body: c.body.clone(),
                     created_at: core.0.deps.clock.now(),
                     edited: false,
+                    reactions: Vec::new(),
                 }],
             },
         };

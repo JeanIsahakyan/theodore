@@ -175,6 +175,27 @@ pub struct PrSummary {
     /// conflicts with the base branch).
     #[serde(default)]
     pub conflicts: bool,
+    /// When the PR was opened (GitHub/GitLab `createdAt`). `None` for a host
+    /// or code path that doesn't fill it yet.
+    #[serde(default)]
+    pub created_at: Option<Millis>,
+    /// This PR's place in a same-repo PR chain (plan "Stack"), computed app-
+    /// side from the PR rows already in the store — not host data.
+    #[serde(default)]
+    pub stack: Option<StackInfo>,
+}
+
+/// One PR's place in a same-repo chain of stacked PRs (plan "Stack"): the
+/// parent this PR is based on, and the children based on it. Computed by
+/// `theodore_domain::stack::compute_stacks` from the PR rows already synced
+/// — no extra host call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct StackInfo {
+    /// The PR this one is based on (`head_ref` of that PR == this `base_ref`).
+    pub base_pr: Option<u32>,
+    /// PRs based on this one (`base_ref` of those PRs == this `head_ref`).
+    pub children: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -382,6 +403,21 @@ pub struct Comment {
     pub body: String,
     pub created_at: Millis,
     pub edited: bool,
+    /// Reaction counts (plan "Comments & threads"), filled from the host's
+    /// per-comment reaction groups where available.
+    #[serde(default)]
+    pub reactions: Vec<ReactionCount>,
+}
+
+/// One emoji's reaction tally on a `Comment`. `emoji` matches the host's own
+/// reaction-content convention (`+1`, `-1`, `laugh`, `hooray`, `confused`,
+/// `heart`, `rocket`, `eyes`) — the same strings `ReactRequest::emoji` sends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct ReactionCount {
+    pub emoji: String,
+    pub count: u32,
+    pub viewer_reacted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

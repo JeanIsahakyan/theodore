@@ -3087,6 +3087,7 @@ fn suggestion_comment(id: &str, body: &str) -> Comment {
         body: body.into(),
         created_at: 0,
         edited: false,
+        reactions: Vec::new(),
     }
 }
 

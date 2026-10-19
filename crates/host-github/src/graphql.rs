@@ -208,6 +208,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
       headRefName
       baseRefOid
       headRefOid
+      createdAt
       updatedAt
       reviewDecision
       mergeable
@@ -281,6 +282,8 @@ pub(crate) struct GqlPrCore {
     pub base_ref_oid: String,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
     /// `APPROVED` / `CHANGES_REQUESTED` / `REVIEW_REQUIRED`, or `null`
@@ -507,6 +510,11 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String) {
               createdAt
               lastEditedAt
               author { login avatarUrl ... on User { name } }
+              reactionGroups {
+                content
+                viewerHasReacted
+                reactors(first: 1) { totalCount }
+              }
             }
           }
         }
@@ -548,6 +556,24 @@ pub(crate) struct GqlThreadComment {
     #[serde(rename = "lastEditedAt")]
     pub last_edited_at: Option<String>,
     pub author: Option<GqlActor>,
+    #[serde(rename = "reactionGroups", default)]
+    pub reaction_groups: Vec<GqlReactionGroup>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlReactionGroup {
+    /// `THUMBS_UP` / `THUMBS_DOWN` / `LAUGH` / `HOORAY` / `CONFUSED` /
+    /// `HEART` / `ROCKET` / `EYES` (GitHub's `ReactionContent` enum).
+    pub content: String,
+    #[serde(rename = "viewerHasReacted")]
+    pub viewer_has_reacted: bool,
+    pub reactors: GqlReactorConnection,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlReactorConnection {
+    #[serde(rename = "totalCount")]
+    pub total_count: u32,
 }
 
 /// `fullDatabaseId` is GitHub's `BigInt` scalar; some responses send it as a
@@ -812,6 +838,7 @@ query($q: String!, $after: String) {
         baseRefName
         headRefName
         headRefOid
+        createdAt
         updatedAt
         reviewDecision
         mergeable
@@ -845,6 +872,8 @@ pub(crate) struct GqlSearchPr {
     pub head_ref_name: Option<String>,
     #[serde(rename = "headRefOid")]
     pub head_ref_oid: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<String>,
     #[serde(rename = "updatedAt")]
     pub updated_at: Option<String>,
     #[serde(rename = "reviewDecision")]

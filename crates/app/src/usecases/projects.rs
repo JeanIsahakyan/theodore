@@ -551,6 +551,8 @@ mod tests {
             url: "https://github.com/acme/widgets/pull/1".into(),
             review_decision: None,
             conflicts: false,
+            created_at: None,
+            stack: None,
         }
     }
 

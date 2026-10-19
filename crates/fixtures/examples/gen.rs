@@ -273,6 +273,9 @@ fn main() {
             url: "https://example.com/octo/webhooks/pull/101".to_string(),
             review_decision: Some(theodore_domain::ReviewDecision::ReviewRequired),
             conflicts: false,
+            // Opened 3 days before the last update, for a plausible demo age.
+            created_at: Some(1_700_000_000_000 - 3 * 86_400_000),
+            stack: None,
         },
         body: "Retries webhook delivery with exponential backoff, dead-letters after 5 attempts."
             .to_string(),
@@ -365,6 +368,8 @@ fn main() {
             url: "https://example.com/octo/api/pull/7".to_string(),
             review_decision: Some(theodore_domain::ReviewDecision::Approved),
             conflicts: false,
+            created_at: Some(1_700_100_000_000 - 2 * 86_400_000),
+            stack: None,
         },
         body: "`next` leaked past the last page; return `null` once the cursor runs out."
             .to_string(),

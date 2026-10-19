@@ -388,6 +388,7 @@ mod tests {
                 body: "```suggestion\nx\n```".into(),
                 created_at: 0,
                 edited: false,
+                reactions: Vec::new(),
             }],
         };
         let detail = crate::testkit::sample_pr_detail(

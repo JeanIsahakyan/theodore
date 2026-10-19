@@ -63,6 +63,7 @@ pub(crate) struct GlMergeRequest {
     pub reviewers: Vec<GlUser>,
     #[serde(default)]
     pub labels: Vec<String>,
+    pub created_at: String,
     pub updated_at: String,
     pub diff_refs: Option<GlDiffRefs>,
     pub head_pipeline: Option<GlHeadPipeline>,

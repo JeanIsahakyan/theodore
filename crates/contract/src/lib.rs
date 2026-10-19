@@ -13,6 +13,8 @@ mod interdiff;
 pub use interdiff::*;
 mod login;
 pub use login::*;
+mod pr_meta;
+pub use pr_meta::*;
 mod pr_state;
 pub use pr_state::*;
 
@@ -667,7 +669,9 @@ pub fn types() -> specta::Types {
         .register::<HostRepo>()
         .register::<RerunCheckRequest>()
         .register::<TriageRequest>()
-        .register::<TriageAction>();
+        .register::<TriageAction>()
+        .register::<StackInfo>()
+        .register::<ReactionCount>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()
