@@ -50,6 +50,14 @@ pub struct ReplyPayload {
     pub pr: PrId,
     pub thread: ThreadId,
     pub body: String,
+    /// Idempotency marker embedded in the posted body (plan §6.7): a retry
+    /// after a timeout checks for it via `find_marker` before reposting.
+    #[serde(default = "new_marker")]
+    pub marker: String,
+}
+
+fn new_marker() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,11 +307,26 @@ async fn do_reply_thread(core: &Core, item: &OutboxItem) -> Result<(), Outcome> 
         .pr_ref(&payload.pr)
         .await
         .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+
+    // After a timeout, the reply may already have been posted: look it up
+    // by its marker before posting it again (plan §6.7), same as
+    // `do_submit_review`.
+    if item.attempts > 0 {
+        match core.0.deps.host.find_marker(&pr_ref, &payload.marker).await {
+            Ok(Some(_)) => {
+                refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(e) => return Err(classify_host_error(core, item, e).await),
+        }
+    }
+
     match core
         .0
         .deps
         .host
-        .reply(&pr_ref, &payload.thread, &payload.body)
+        .reply_with_marker(&pr_ref, &payload.thread, &payload.body, &payload.marker)
         .await
     {
         Ok(_) => {

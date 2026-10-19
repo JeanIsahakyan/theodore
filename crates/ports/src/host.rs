@@ -172,6 +172,21 @@ pub trait HostAdapter: Send + Sync {
 
     // threads
     async fn reply(&self, pr: &PrRef, thread: &ThreadId, body: &str) -> HostResult<CommentId>;
+    /// Like `reply`, but embeds an idempotency marker in the posted body
+    /// (the same `<!-- theodore:<marker> -->` tag `submit_review` uses) so a
+    /// retried outbox item can tell, via `find_marker`, whether the reply
+    /// already landed before retrying. Default: embeds the standard tag and
+    /// defers to `reply`; override only if a host needs a different shape.
+    async fn reply_with_marker(
+        &self,
+        pr: &PrRef,
+        thread: &ThreadId,
+        body: &str,
+        marker: &str,
+    ) -> HostResult<CommentId> {
+        let tagged = format!("{body}\n\n<!-- theodore:{marker} -->");
+        self.reply(pr, thread, &tagged).await
+    }
     async fn resolve(&self, pr: &PrRef, thread: &ThreadId, resolved: bool) -> HostResult<()>;
     async fn edit_comment(&self, pr: &PrRef, comment: &CommentId, body: &str) -> HostResult<()>;
     async fn delete_comment(&self, pr: &PrRef, comment: &CommentId) -> HostResult<()>;

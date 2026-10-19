@@ -14,6 +14,7 @@ impl Core {
             pr: req.pr,
             thread: req.thread,
             body: req.body,
+            marker: uuid::Uuid::new_v4().to_string(),
         };
         let data = serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.enqueue_outbox("reply_thread", data).await?;

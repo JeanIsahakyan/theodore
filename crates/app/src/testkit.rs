@@ -565,6 +565,9 @@ pub struct FakeHost {
     pub search_responses: Mutex<VecDeque<HostResult<Vec<PrSummary>>>>,
     pub viewer_responses: Mutex<VecDeque<HostResult<Person>>>,
     pub reply_responses: Mutex<VecDeque<HostResult<theodore_domain::CommentId>>>,
+    /// Every `(thread, body)` a `reply`/`reply_with_marker` call was made
+    /// with, for duplicate-post assertions.
+    pub reply_calls: Mutex<Vec<(theodore_domain::ThreadId, String)>>,
     pub resolve_responses: Mutex<VecDeque<HostResult<()>>>,
     pub merge_status_responses: Mutex<VecDeque<HostResult<MergeStatus>>>,
     pub merge_responses: Mutex<VecDeque<HostResult<theodore_domain::Sha>>>,
@@ -664,6 +667,9 @@ impl FakeHost {
     pub fn reviewer_calls(&self) -> Vec<(Vec<String>, Vec<String>)> {
         self.reviewer_calls.lock().unwrap().clone()
     }
+    pub fn reply_calls(&self) -> Vec<(theodore_domain::ThreadId, String)> {
+        self.reply_calls.lock().unwrap().clone()
+    }
     pub fn remove_reviewer_calls(&self) -> Vec<String> {
         self.remove_reviewer_calls.lock().unwrap().clone()
     }
@@ -755,9 +761,13 @@ impl HostAdapter for FakeHost {
     async fn reply(
         &self,
         _pr: &PrRef,
-        _thread: &theodore_domain::ThreadId,
-        _body: &str,
+        thread: &theodore_domain::ThreadId,
+        body: &str,
     ) -> HostResult<theodore_domain::CommentId> {
+        self.reply_calls
+            .lock()
+            .unwrap()
+            .push((thread.clone(), body.to_string()));
         self.reply_responses
             .lock()
             .unwrap()

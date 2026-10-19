@@ -722,6 +722,56 @@ async fn reply_thread_enqueues_outbox_and_refreshes_pr_detail_on_success() {
 }
 
 #[tokio::test]
+async fn reply_thread_does_not_repost_after_a_timeout_retry() {
+    // The first `reply` call "succeeds" host-side but the client sees a
+    // network error (as if the response was lost after the write landed).
+    // The retry must find the marker and skip reposting, not create a
+    // second reply.
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-reply-retry".into()),
+        value: detail,
+    }));
+
+    f.host.push_reply(Err(HostError::Network("timeout".into())));
+    f.host
+        .push_find_marker(Ok(Some(theodore_domain::CommentId::new("already-posted"))));
+
+    core.reply_thread(ReplyRequest {
+        pr: pr.clone(),
+        thread: ThreadId::new("thread-1"),
+        body: "thanks, fixed".into(),
+    })
+    .await
+    .expect("reply_thread");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .first()
+            .is_some_and(|i| i.attempts >= 1)
+    })
+    .await;
+
+    f.clock.advance(10_000);
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "reply_thread" && i.status == OutboxStatus::Done)
+    })
+    .await;
+
+    assert_eq!(
+        f.host.reply_calls().len(),
+        1,
+        "the retry must not post a second reply once the marker is found"
+    );
+}
+
+#[tokio::test]
 async fn resolve_thread_enqueues_outbox() {
     let f = fixtures();
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
