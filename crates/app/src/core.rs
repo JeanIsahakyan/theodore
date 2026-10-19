@@ -182,6 +182,26 @@ impl Core {
         Ok(id)
     }
 
+    /// `apply` plus `enqueue_outbox`, atomically (plan "Fix target" accept
+    /// flow): a caller that both changes a model row and enqueues a host
+    /// write for it must not land one half without the other.
+    pub(crate) async fn apply_with_outbox(
+        &self,
+        actions: Vec<NewAction>,
+        op: &'static str,
+        payload: serde_json::Value,
+    ) -> theodore_ports::StoreResult<Vec<SyncAction>> {
+        let _guard = self.0.apply_lock.lock().await;
+        let store = self.0.deps.store.clone();
+        let (applied, _outbox_id) =
+            tokio::task::spawn_blocking(move || store.apply_with_outbox(actions, op, payload))
+                .await
+                .map_err(|e| theodore_ports::StoreError::Db(e.to_string()))??;
+        self.publish(&applied);
+        self.0.outbox_notify.notify_one();
+        Ok(applied)
+    }
+
     /// Looks up the host-side `PrRef` for a locally known PR (outbox calls
     /// need it; the UI only ever deals in `PrId`).
     pub(crate) async fn pr_ref(&self, pr: &PrId) -> Option<PrRef> {
@@ -203,6 +223,66 @@ impl Core {
             .ok()??;
         let summary: PrSummary = serde_json::from_value(row.data).ok()?;
         Some(summary.pr)
+    }
+
+    /// Writes `pr` + `pr_detail` from an already-fetched `PrDetail` (plan
+    /// §3/§6): the one place every path that has a fresh `PrDetail` —
+    /// opening a PR, a push, a host-write follow-up refresh — turns it
+    /// into sync actions, so the shape can't drift between them.
+    pub(crate) async fn apply_pr_detail(
+        &self,
+        detail: &theodore_domain::PrDetail,
+    ) -> crate::error::AppResult<()> {
+        let pr_s = detail.summary.pr.id().0.clone();
+        let summary_data = serde_json::to_value(&detail.summary)
+            .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
+        let detail_data = serde_json::to_value(detail)
+            .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
+        let actions = vec![
+            NewAction {
+                model: models::PR.into(),
+                model_id: pr_s.clone(),
+                action: theodore_ports::SyncActionCode::U,
+                data: Some(summary_data),
+            },
+            NewAction {
+                model: models::PR_DETAIL.into(),
+                model_id: pr_s,
+                action: theodore_ports::SyncActionCode::U,
+                data: Some(detail_data),
+            },
+        ];
+        self.apply(actions).await?;
+        Ok(())
+    }
+
+    /// Conditionally fetches `pr` by its etag and, if the host reports it
+    /// modified, applies the fresh `pr_detail` — regardless of whether the
+    /// head moved (plan §6.6): comments, threads, checks and labels can all
+    /// change without a push, and must not be silently dropped. Returns the
+    /// detail so a caller (the poller) can keep using it without fetching
+    /// twice.
+    pub(crate) async fn refresh_pr(
+        &self,
+        pr: &PrId,
+        pr_ref: &PrRef,
+    ) -> Option<theodore_domain::PrDetail> {
+        let etag = self.0.etags.read().await.get(pr).cloned();
+        let theodore_ports::Fetched::Modified { etag, value } = self
+            .0
+            .deps
+            .host
+            .get_pr(pr_ref, etag.as_deref())
+            .await
+            .ok()?
+        else {
+            return None;
+        };
+        if let Some(etag) = etag {
+            self.0.etags.write().await.insert(pr.clone(), etag);
+        }
+        self.apply_pr_detail(&value).await.ok()?;
+        Some(value)
     }
 
     fn publish(&self, actions: &[SyncAction]) {

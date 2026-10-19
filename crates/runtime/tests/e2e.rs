@@ -261,6 +261,7 @@ async fn open_and_review(
         anchor,
         body: "Consider logging which branch this retry takes.".into(),
         source: Author::Me,
+        outdated: false,
     };
     let draft_tx = Transaction {
         id: "draft-1".into(),

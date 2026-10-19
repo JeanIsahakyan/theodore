@@ -2,6 +2,7 @@
 //! coverage list in the agent brief for this slice.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -10,13 +11,13 @@ use theodore_contract::{
     DraftStateRequest, EditCommentRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
     MergeMethod as WireMergeMethod, MergeRequest, MutationOp, OpenBranchRequest, OpenPrRequest,
     ProjectStatus, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest,
-    RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting, TaskDecision, ToastLevel,
-    TokenSource, Transaction, TransactionResult, models,
+    RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting, SubmitReviewRequest, TaskDecision,
+    ToastLevel, TokenSource, Transaction, TransactionResult, models,
 };
 use theodore_domain::{
-    AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, Fix, FixStatus, HostKind, HunkId,
-    Patch, PrId, PrRef, RepoRef, Revision, Sha, Side, Task, TaskId, TaskStatus, Thread, ThreadId,
-    Usage, ViewedState,
+    AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, FileStatus, Fix, FixStatus, HostKind,
+    HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha, Side, Task, TaskId,
+    TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
     AgentEvent, BranchInfo, Clock, CommitLog, Fetched, HostError, MergeMethod as PortMergeMethod,
@@ -24,7 +25,7 @@ use theodore_ports::{
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
-use crate::{Core, Receivers};
+use crate::{AppError, Core, Receivers};
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
     for _ in 0..400 {
@@ -124,6 +125,7 @@ fn sample_task(
         assignee: Assignee::Human("author".into()),
         fix: None,
         created_at: now,
+        outdated: false,
     }
 }
 
@@ -226,6 +228,399 @@ async fn transact_rejects_a_hunk_read_outside_the_current_revision() {
     assert!(
         matches!(result, TransactionResult::Rejected { .. }),
         "expected Rejected, got {result:?}"
+    );
+}
+
+fn single_op_tx(id: &str, op: MutationOp) -> Transaction {
+    Transaction {
+        id: id.into(),
+        ops: vec![op],
+    }
+}
+
+fn put_model_row(f: &Fixtures, model: &str, id: &str, data: serde_json::Value) {
+    f.store
+        .apply(vec![NewAction {
+            model: model.into(),
+            model_id: id.into(),
+            action: SyncActionCode::I,
+            data: Some(data),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn transact_rejects_client_writes_to_core_owned_models() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+
+    for model in [
+        models::PR,
+        models::PR_DETAIL,
+        models::GROUPING,
+        models::PROJECT,
+        models::CHAT_MESSAGE,
+    ] {
+        let tx = single_op_tx(
+            &format!("tx-core-owned-{model}"),
+            MutationOp::Create {
+                model: model.into(),
+                id: "x".into(),
+                data: json!({}),
+            },
+        );
+        let result = core.transact(tx).await;
+        assert!(
+            matches!(result, TransactionResult::Rejected { .. }),
+            "{model} create must be rejected, got {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn transact_allows_only_the_state_field_on_finding_updates() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    put_model_row(
+        &f,
+        models::FINDING,
+        "f1",
+        json!({
+            "id": "f1", "pr": "github:acme/widgets#7", "skill": "s1",
+            "agents": [], "anchor": {"path": "src/lib.rs", "side": "right", "line": 2},
+            "severity": "warn", "title": "orig", "body": "orig",
+            "state": "open", "fix": null,
+        }),
+    );
+
+    let bad = core
+        .transact(single_op_tx(
+            "tx-finding-bad",
+            MutationOp::Update {
+                model: models::FINDING.into(),
+                id: "f1".into(),
+                data: json!({"title": "hacked"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(bad, TransactionResult::Rejected { .. }),
+        "finding title must not be client-writable, got {bad:?}"
+    );
+
+    let good = core
+        .transact(single_op_tx(
+            "tx-finding-good",
+            MutationOp::Update {
+                model: models::FINDING.into(),
+                id: "f1".into(),
+                data: json!({"state": "ignored"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(good, TransactionResult::Ok { .. }),
+        "finding state must stay client-writable, got {good:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_restricts_task_updates_to_status_and_assignee() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-allowlist", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+
+    let result = core
+        .transact(single_op_tx(
+            "tx-task-bad",
+            MutationOp::Update {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: json!({"title": "retitled"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(result, TransactionResult::Rejected { .. }),
+        "task title must not be client-writable, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_rejects_a_new_task_that_does_not_start_in_todo() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let mut task = sample_task("t-skip-todo", &pr, None, None, f.clock.now());
+    task.status = TaskStatus::Done;
+
+    let result = core
+        .transact(single_op_tx(
+            "tx-task-create-bad",
+            MutationOp::Create {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: serde_json::to_value(&task).unwrap(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(result, TransactionResult::Rejected { .. }),
+        "a client-created task must start in todo, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_allows_only_archiving_a_skill_run() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    put_model_row(
+        &f,
+        models::SKILL_RUN,
+        "r1",
+        json!({"id": "r1", "pr": "github:acme/widgets#7"}),
+    );
+
+    let update = core
+        .transact(single_op_tx(
+            "tx-skillrun-update",
+            MutationOp::Update {
+                model: models::SKILL_RUN.into(),
+                id: "r1".into(),
+                data: json!({"id": "r1"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(update, TransactionResult::Rejected { .. }),
+        "skill_run must only be archivable by the client, got {update:?}"
+    );
+
+    let archive = core
+        .transact(single_op_tx(
+            "tx-skillrun-archive",
+            MutationOp::Archive {
+                model: models::SKILL_RUN.into(),
+                id: "r1".into(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(archive, TransactionResult::Ok { .. }),
+        "archiving a skill_run must stay client-writable, got {archive:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_validates_draft_update_anchors_like_create() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    // Planted directly (bypassing the validated `create` path) to simulate a
+    // draft whose anchor the diff has since outrun.
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d1",
+        json!({
+            "id": "d1", "pr": pr.0, "body": "orig",
+            "anchor": {"path": "no/such/file.rs", "side": "right", "line": 1},
+            "source": {"kind": "me"},
+        }),
+    );
+
+    let result = core
+        .transact(single_op_tx(
+            "tx-draft-update-stale",
+            MutationOp::Update {
+                model: models::DRAFT.into(),
+                id: "d1".into(),
+                data: json!({"body": "edited"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(result, TransactionResult::Rejected { .. }),
+        "a draft update must re-validate the anchor like create, got {result:?}"
+    );
+}
+
+/// The UI's undo queue (`ui/src/sync/UndoQueue.ts`) never rolls back
+/// locally: it resends the inverse of a committed op as a brand new
+/// transaction (plan "sync" §UndoQueue doc comment) — same model and id,
+/// same changed keys for an `update`, the old value in place of the new
+/// one. The allowlist must accept that inverse exactly as readily as the
+/// forward op, for every op shape `ui/src/actions.ts` actually sends.
+#[tokio::test]
+async fn transact_accepts_the_undo_inverse_of_every_client_op() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    // task: assignTask's `{assignee, status: "progress"}`, then undo's
+    // `{assignee: <old>, status: "todo"}` — not a legal forward lifecycle
+    // transition, but a legal undo.
+    let mut task = sample_task("t-undo", &pr, None, None, f.clock.now());
+    task.assignee = Assignee::Human("someone".into());
+    put_task(&f, &task);
+
+    let forward = core
+        .transact(single_op_tx(
+            "tx-assign-forward",
+            MutationOp::Update {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: json!({
+                    "assignee": Assignee::Agent(AgentId::Claude),
+                    "status": "progress",
+                }),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(forward, TransactionResult::Ok { .. }),
+        "assignTask's forward update must be accepted, got {forward:?}"
+    );
+
+    let inverse = core
+        .transact(single_op_tx(
+            "tx-assign-undo",
+            MutationOp::Update {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: json!({
+                    "assignee": Assignee::Human("someone".to_string()),
+                    "status": "todo",
+                }),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(inverse, TransactionResult::Ok { .. }),
+        "undoing assignTask must be accepted even though it isn't a forward transition, got {inverse:?}"
+    );
+
+    // inbox_state: markDone's `create`, then undo's `delete`.
+    let create_inbox = core
+        .transact(single_op_tx(
+            "tx-inbox-create",
+            MutationOp::Create {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+                data: json!({"pr": pr.0, "done": true, "snooze": null}),
+            },
+        ))
+        .await;
+    assert!(matches!(create_inbox, TransactionResult::Ok { .. }));
+    let delete_inbox = core
+        .transact(single_op_tx(
+            "tx-inbox-undo",
+            MutationOp::Delete {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(delete_inbox, TransactionResult::Ok { .. }),
+        "undoing markDone's create must be accepted, got {delete_inbox:?}"
+    );
+
+    // inbox_state: unsnooze's `update` with the old value restored.
+    put_model_row(
+        &f,
+        models::INBOX_STATE,
+        &pr.0,
+        json!({"pr": pr.0, "done": false, "snooze": {"kind": "next_push"}}),
+    );
+    let snooze_forward = core
+        .transact(single_op_tx(
+            "tx-unsnooze-forward",
+            MutationOp::Update {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+                data: json!({"snooze": null}),
+            },
+        ))
+        .await;
+    assert!(matches!(snooze_forward, TransactionResult::Ok { .. }));
+    let snooze_undo = core
+        .transact(single_op_tx(
+            "tx-unsnooze-undo",
+            MutationOp::Update {
+                model: models::INBOX_STATE.into(),
+                id: pr.0.clone(),
+                data: json!({"snooze": {"kind": "next_push"}}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(snooze_undo, TransactionResult::Ok { .. }),
+        "undoing unsnooze must restore the old snooze value, got {snooze_undo:?}"
+    );
+
+    // draft: addDraft's `create`, then undo's `delete`.
+    let anchor = testkit::sample_anchor("src/lib.rs", 2);
+    let create_draft = core
+        .transact(single_op_tx(
+            "tx-draft-create",
+            MutationOp::Create {
+                model: models::DRAFT.into(),
+                id: "d-undo".into(),
+                data: json!({
+                    "id": "d-undo", "pr": pr.0, "anchor": anchor, "body": "x",
+                    "source": {"kind": "me"},
+                }),
+            },
+        ))
+        .await;
+    assert!(matches!(create_draft, TransactionResult::Ok { .. }));
+    let delete_draft = core
+        .transact(single_op_tx(
+            "tx-draft-create-undo",
+            MutationOp::Delete {
+                model: models::DRAFT.into(),
+                id: "d-undo".into(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(delete_draft, TransactionResult::Ok { .. }),
+        "undoing addDraft's create must be accepted, got {delete_draft:?}"
+    );
+
+    // draft: editDraft's `update` body, then undo's `update` with the old body.
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-edit",
+        json!({
+            "id": "d-edit", "pr": pr.0, "anchor": anchor, "body": "before",
+            "source": {"kind": "me"}, "outdated": false,
+        }),
+    );
+    let edit_forward = core
+        .transact(single_op_tx(
+            "tx-draft-edit-forward",
+            MutationOp::Update {
+                model: models::DRAFT.into(),
+                id: "d-edit".into(),
+                data: json!({"body": "after"}),
+            },
+        ))
+        .await;
+    assert!(matches!(edit_forward, TransactionResult::Ok { .. }));
+    let edit_undo = core
+        .transact(single_op_tx(
+            "tx-draft-edit-undo",
+            MutationOp::Update {
+                model: models::DRAFT.into(),
+                id: "d-edit".into(),
+                data: json!({"body": "before"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(edit_undo, TransactionResult::Ok { .. }),
+        "undoing editDraft must restore the old body, got {edit_undo:?}"
     );
 }
 
@@ -511,6 +906,211 @@ async fn a_push_clears_reads_of_changed_hunks_and_dismisses_their_file() {
     );
 }
 
+#[tokio::test]
+async fn a_push_clears_reads_and_dismisses_a_file_whose_hunk_vanished_with_no_replacement() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: pr.clone(),
+            head: head.clone(),
+        })
+        .await
+        .unwrap();
+    let hunks = testkit::hunk_ids(&revision);
+
+    for (i, h) in hunks.iter().enumerate() {
+        core.transact(hunk_read_tx(&format!("read-{i}"), &pr, h))
+            .await;
+    }
+    wait_until(|| file_viewed_row(&f, &pr, "src/lib.rs").is_some()).await;
+
+    // The author pushes: hunk 1 is reverted outright — dropped, with
+    // nothing landing in its place — while hunk 2 survives untouched.
+    // `interdiff::classify` only walks the *new* revision's hunks, so it
+    // never sees hunk 1 at all; it must still be caught as vanished.
+    let new_head = Sha::new("head222");
+    let unchanged = revision.files[0].hunks[1].clone();
+    let new_revision = Revision {
+        base: revision.base.clone(),
+        head: new_head.clone(),
+        files: vec![FileDiff {
+            hunks: vec![unchanged],
+            ..revision.files[0].clone()
+        }],
+    };
+    f.git.set_head(new_head.clone());
+    f.git.set_revision(new_revision);
+
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &revision.base, &new_head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-vanish".into()),
+        value: detail,
+    }));
+
+    f.clock.advance(15_000);
+
+    wait_until(|| {
+        file_viewed_row(&f, &pr, "src/lib.rs")
+            .map(|fv| fv.state == ViewedState::Dismissed)
+            .unwrap_or(false)
+    })
+    .await;
+
+    let remaining_reads = f.store.query(models::HUNK_READ, "pr", &pr.0).unwrap();
+    assert_eq!(
+        remaining_reads.len(),
+        1,
+        "the vanished hunk's read must be cleared, the survivor's must not"
+    );
+    let remaining: HunkRead = serde_json::from_value(remaining_reads[0].data.clone()).unwrap();
+    assert_eq!(
+        remaining.hunk, hunks[1],
+        "the surviving hunk's read must stay"
+    );
+}
+
+#[tokio::test]
+async fn poller_applies_pr_detail_updates_even_when_the_head_is_unchanged() {
+    let f = fixtures();
+    let (_core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    // Same head — not a push — but the host reports a change: a label was
+    // added. There's no new revision to diff, just an updated pr_detail
+    // that must not be dropped just because the head didn't move.
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    detail.labels = vec!["needs-review".into()];
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-labels".into()),
+        value: detail,
+    }));
+
+    f.clock.advance(15_000);
+
+    wait_until(|| {
+        f.store
+            .get(models::PR_DETAIL, &pr.0)
+            .unwrap()
+            .is_some_and(|r| r.data["labels"] == json!(["needs-review"]))
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_push_remaps_moved_anchors_and_marks_rewritten_ones_outdated() {
+    let f = fixtures();
+    let (_core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    // Anchored well after the push's insertion point: must only shift.
+    let moving_anchor = Anchor {
+        rev: head.clone(),
+        path: "src/lib.rs".into(),
+        side: Side::New,
+        line: 20,
+        start_line: None,
+        start_side: None,
+    };
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-move",
+        json!({
+            "id": "d-move", "pr": pr.0, "anchor": moving_anchor, "body": "x",
+            "source": {"kind": "me"}, "outdated": false,
+        }),
+    );
+
+    // Anchored exactly on the line the push rewrites: must come back
+    // outdated, not moved.
+    let doomed_anchor = Anchor {
+        rev: head.clone(),
+        path: "src/lib.rs".into(),
+        side: Side::New,
+        line: 50,
+        start_line: None,
+        start_side: None,
+    };
+    put_model_row(
+        &f,
+        models::FINDING,
+        "f-outdated",
+        json!({
+            "id": "f-outdated", "pr": pr.0, "skill": "s1", "agents": [],
+            "anchor": doomed_anchor, "severity": "warn", "title": "t", "body": "b",
+            "state": "open", "fix": null, "outdated": false,
+        }),
+    );
+
+    // The push, described as the diff *between the two heads* (old_head ->
+    // new_head): 3 lines inserted at the top shift everything after them by
+    // +3; the line at old line 50 is rewritten in place.
+    let new_head = Sha::new("head222");
+    let insert = testkit::make_hunk(
+        "src/lib.rs",
+        1,
+        0,
+        1,
+        3,
+        vec![
+            testkit::line_add(1, "x"),
+            testkit::line_add(2, "y"),
+            testkit::line_add(3, "z"),
+        ],
+    );
+    let rewrite = testkit::make_hunk(
+        "src/lib.rs",
+        50,
+        1,
+        50,
+        1,
+        vec![testkit::line_add(50, "rewritten")],
+    );
+    let between = Revision {
+        base: Sha::new("base000"),
+        head: new_head.clone(),
+        files: vec![FileDiff {
+            path: "src/lib.rs".into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            similarity: None,
+            old_mode: None,
+            new_mode: None,
+            flags: vec![],
+            additions: 4,
+            deletions: 1,
+            hunks: vec![insert, rewrite],
+        }],
+    };
+    f.git.set_head(new_head.clone());
+    f.git.set_revision(between);
+
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &new_head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-anchor-remap".into()),
+        value: detail,
+    }));
+    f.clock.advance(15_000);
+
+    wait_until(|| {
+        f.store
+            .get(models::DRAFT, "d-move")
+            .unwrap()
+            .is_some_and(|r| r.data["anchor"]["line"] == json!(23))
+    })
+    .await;
+    let moved = f.store.get(models::DRAFT, "d-move").unwrap().unwrap();
+    assert_eq!(moved.data["anchor"]["rev"], json!(new_head.0));
+    assert_eq!(moved.data["outdated"], json!(false));
+
+    wait_until(|| {
+        f.store
+            .get(models::FINDING, "f-outdated")
+            .unwrap()
+            .is_some_and(|r| r.data["outdated"] == json!(true))
+    })
+    .await;
+}
+
 // ── run cancel ────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -692,6 +1292,132 @@ async fn set_host_token_validates_before_storing_and_rolls_back_on_failure() {
     assert_eq!(f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(), None);
 }
 
+#[tokio::test]
+async fn set_host_token_keys_by_host_and_leaves_other_hosts_token_alone() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.secrets
+        .set(theodore_secrets::GITHUB_TOKEN, "old-gh")
+        .unwrap();
+    f.secrets
+        .set(theodore_secrets::GITLAB_TOKEN, "old-gl")
+        .unwrap();
+
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    let status = core
+        .set_host_token(SetTokenRequest {
+            host: HostKind::Github,
+            token: Some("new-gh".into()),
+        })
+        .await
+        .expect("set_host_token");
+    assert!(status.connected);
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("new-gh".into())
+    );
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITLAB_TOKEN).unwrap(),
+        Some("old-gl".into()),
+        "setting github's token must not touch gitlab's"
+    );
+}
+
+#[tokio::test]
+async fn set_host_token_for_a_non_primary_host_never_touches_the_primarys_token() {
+    // `FakeHost::kind()` is `Github`; setting a `Gitlab` token used to be
+    // rejected outright before it ever reached the secrets vault (a flat
+    // `req.host != deps.host.kind()` gate). It must now actually attempt
+    // that host's own validation (surfacing as `AppError::Host`, not the
+    // old `AppError::Invalid("... is not configured")`), and never read,
+    // write or delete another host's token while doing so.
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    f.secrets
+        .set(theodore_secrets::GITHUB_TOKEN, "keep-me")
+        .unwrap();
+
+    let err = core
+        .set_host_token(SetTokenRequest {
+            host: HostKind::Gitlab,
+            token: Some("gl-new".into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Host(_)),
+        "expected the gitlab-specific validation to run and fail, got {err:?}"
+    );
+    assert_eq!(
+        f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(),
+        Some("keep-me".into()),
+        "github's token must survive a gitlab token attempt"
+    );
+    assert_eq!(f.secrets.get(theodore_secrets::GITLAB_TOKEN).unwrap(), None);
+}
+
+// ── submit_review ────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn submit_review_skips_outdated_drafts_with_a_toast() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-ok",
+        json!({
+            "id": "d-ok", "pr": pr.0, "anchor": testkit::sample_anchor("src/lib.rs", 2),
+            "body": "fine", "source": {"kind": "me"}, "outdated": false,
+        }),
+    );
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-stale",
+        json!({
+            "id": "d-stale", "pr": pr.0, "anchor": testkit::sample_anchor("src/lib.rs", 2),
+            "body": "stale", "source": {"kind": "me"}, "outdated": true,
+        }),
+    );
+
+    core.submit_review(SubmitReviewRequest {
+        pr: pr.clone(),
+        event: ReviewEvent::Comment,
+        body: "lgtm".into(),
+    })
+    .await
+    .expect("submit_review");
+
+    expect_ephemeral(
+        &mut recv,
+        |e| matches!(e, Ephemeral::Toast { text, .. } if text.contains("skipped")),
+    )
+    .await;
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "submit_review")
+    })
+    .await;
+    let item = f
+        .store
+        .outbox_snapshot()
+        .into_iter()
+        .find(|i| i.op == "submit_review")
+        .unwrap();
+    let comments = item.payload["comments"].as_array().unwrap();
+    assert_eq!(
+        comments.len(),
+        1,
+        "the outdated draft must not reach the host write"
+    );
+    assert_eq!(comments[0]["draft_id"], json!("d-ok"));
+}
+
 // ── reply_thread / resolve_thread ────────────────────────────────────────────
 
 #[tokio::test]
@@ -719,6 +1445,56 @@ async fn reply_thread_enqueues_outbox_and_refreshes_pr_detail_on_success() {
             .any(|i| i.op == "reply_thread" && i.status == OutboxStatus::Done)
     })
     .await;
+}
+
+#[tokio::test]
+async fn reply_thread_does_not_repost_after_a_timeout_retry() {
+    // The first `reply` call "succeeds" host-side but the client sees a
+    // network error (as if the response was lost after the write landed).
+    // The retry must find the marker and skip reposting, not create a
+    // second reply.
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-reply-retry".into()),
+        value: detail,
+    }));
+
+    f.host.push_reply(Err(HostError::Network("timeout".into())));
+    f.host
+        .push_find_marker(Ok(Some(theodore_domain::CommentId::new("already-posted"))));
+
+    core.reply_thread(ReplyRequest {
+        pr: pr.clone(),
+        thread: ThreadId::new("thread-1"),
+        body: "thanks, fixed".into(),
+    })
+    .await
+    .expect("reply_thread");
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .first()
+            .is_some_and(|i| i.attempts >= 1)
+    })
+    .await;
+
+    f.clock.advance(10_000);
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "reply_thread" && i.status == OutboxStatus::Done)
+    })
+    .await;
+
+    assert_eq!(
+        f.host.reply_calls().len(),
+        1,
+        "the retry must not post a second reply once the marker is found"
+    );
 }
 
 #[tokio::test]
@@ -1012,6 +1788,138 @@ async fn decide_task_reject_resets_to_todo_with_a_reason() {
         .kv_get(&format!("task:{}:reject_reason", task.id))
         .unwrap();
     assert_eq!(reason, Some(json!("doesn't fix the root cause")));
+}
+
+/// Wraps a `Store` whose `apply` fails for any action on the `task` model —
+/// standing in for a crash or a disk error partway through accepting a
+/// task, so the test can see whether the *other* half of the accept
+/// (enqueuing `resolve_thread`) landed anyway.
+struct FailingTaskApplyStore(Arc<testkit::FakeStore>);
+
+impl Store for FailingTaskApplyStore {
+    fn apply(
+        &self,
+        actions: Vec<NewAction>,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        if actions.iter().any(|a| a.model == models::TASK) {
+            return Err(theodore_ports::StoreError::Db("simulated failure".into()));
+        }
+        self.0.apply(actions)
+    }
+    fn last_sync_id(&self) -> theodore_ports::StoreResult<u64> {
+        self.0.last_sync_id()
+    }
+    fn since(
+        &self,
+        sync_id: u64,
+        limit: u32,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        self.0.since(sync_id, limit)
+    }
+    fn get(
+        &self,
+        model: &str,
+        id: &str,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::ModelRow>> {
+        self.0.get(model, id)
+    }
+    fn query(
+        &self,
+        model: &str,
+        field: &str,
+        value: &str,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.query(model, field, value)
+    }
+    fn all(&self, model: &str) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.all(model)
+    }
+    fn outbox_push(
+        &self,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> theodore_ports::StoreResult<u64> {
+        self.0.outbox_push(op, payload)
+    }
+    fn outbox_take(
+        &self,
+        now: i64,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::OutboxItem>> {
+        self.0.outbox_take(now)
+    }
+    fn outbox_done(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_done(id)
+    }
+    fn outbox_retry(&self, id: u64, not_before: i64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_retry(id, not_before)
+    }
+    fn outbox_fail(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_fail(id)
+    }
+    fn kv_get(&self, key: &str) -> theodore_ports::StoreResult<Option<serde_json::Value>> {
+        self.0.kv_get(key)
+    }
+    fn kv_set(&self, key: &str, value: &serde_json::Value) -> theodore_ports::StoreResult<()> {
+        self.0.kv_set(key, value)
+    }
+}
+
+#[tokio::test]
+async fn accept_task_does_not_leave_an_orphaned_resolve_thread_outbox_item() {
+    let f = fixtures();
+    let pr_ref = fixture_pr_ref();
+    let head = Sha::new("head111");
+    let base = Sha::new("base000");
+    let detail = testkit::sample_pr_detail(&pr_ref, &base, &head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-1".into()),
+        value: detail,
+    }));
+    let mut deps = f.deps();
+    deps.store = Arc::new(FailingTaskApplyStore(f.store.clone()));
+    let (core, _recv) = Core::start(deps);
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+    let pr = resp.pr;
+
+    let mut task = sample_task(
+        "t-atomic",
+        &pr,
+        None,
+        Some(ThreadId::new("thread-1")),
+        f.clock.now(),
+    );
+    task.status = TaskStatus::Review;
+    task.fix = Some(Fix {
+        status: FixStatus::Ready,
+        patch: None,
+        commit: None,
+    });
+    put_task(&f, &task);
+
+    let result = core
+        .decide_task(TaskDecision {
+            task: task.id.clone(),
+            accept: true,
+            reason: None,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "expected the simulated task write failure to surface, got {result:?}"
+    );
+
+    assert!(
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .all(|i| i.op != "resolve_thread"),
+        "a failed task write must not leave a resolve_thread outbox item behind"
+    );
 }
 
 // ── agents.grouping setting ──────────────────────────────────────────────────
@@ -2057,4 +2965,115 @@ async fn repo_settings_yaml_overrides_the_user_scoped_agent_setting() {
     );
 
     wait_until(|| f.grouper.last_agent() == Some(AgentId::Codex)).await;
+}
+
+// ── bootstrap must not block the async executor ──────────────────────────
+
+/// Wraps a `Store` whose `last_sync_id` blocks the calling thread for a
+/// while, standing in for a slow disk. If `bootstrap` ever calls it without
+/// `spawn_blocking`, that block lands on the async executor thread itself.
+struct SlowLastSyncId(Arc<testkit::FakeStore>);
+
+/// How long `SlowLastSyncId::last_sync_id` blocks its calling thread for —
+/// comfortably longer than the measurement window below so a stolen async
+/// worker thread shows up unmistakably.
+const SLOW_STORE_BLOCK: Duration = Duration::from_millis(300);
+
+impl Store for SlowLastSyncId {
+    fn apply(
+        &self,
+        actions: Vec<NewAction>,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        self.0.apply(actions)
+    }
+    fn last_sync_id(&self) -> theodore_ports::StoreResult<u64> {
+        std::thread::sleep(SLOW_STORE_BLOCK);
+        self.0.last_sync_id()
+    }
+    fn since(
+        &self,
+        sync_id: u64,
+        limit: u32,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        self.0.since(sync_id, limit)
+    }
+    fn get(
+        &self,
+        model: &str,
+        id: &str,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::ModelRow>> {
+        self.0.get(model, id)
+    }
+    fn query(
+        &self,
+        model: &str,
+        field: &str,
+        value: &str,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.query(model, field, value)
+    }
+    fn all(&self, model: &str) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.all(model)
+    }
+    fn outbox_push(
+        &self,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> theodore_ports::StoreResult<u64> {
+        self.0.outbox_push(op, payload)
+    }
+    fn outbox_take(
+        &self,
+        now: i64,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::OutboxItem>> {
+        self.0.outbox_take(now)
+    }
+    fn outbox_done(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_done(id)
+    }
+    fn outbox_retry(&self, id: u64, not_before: i64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_retry(id, not_before)
+    }
+    fn outbox_fail(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_fail(id)
+    }
+    fn kv_get(&self, key: &str) -> theodore_ports::StoreResult<Option<serde_json::Value>> {
+        self.0.kv_get(key)
+    }
+    fn kv_set(&self, key: &str, value: &serde_json::Value) -> theodore_ports::StoreResult<()> {
+        self.0.kv_set(key, value)
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bootstrap_does_not_block_the_executor_on_a_slow_store() {
+    // `current_thread`: the whole runtime (task polling + the timer that
+    // drives `tokio::time::sleep`) runs on exactly one OS thread. If
+    // `bootstrap` ever calls a blocking `Store` method inline instead of
+    // through `spawn_blocking`, that call captures the only thread for its
+    // whole duration and even an unrelated 5ms timer can't fire until it's
+    // done.
+    let f = fixtures();
+    let mut deps = f.deps();
+    deps.store = Arc::new(SlowLastSyncId(f.store.clone()));
+    let (core, _recv) = Core::start(deps);
+
+    let core2 = core.clone();
+    let bootstrap = tokio::spawn(async move { core2.bootstrap(BootstrapScope::Global).await });
+
+    // 20 x 5ms = 100ms nominal. If the executor's single thread is ever
+    // stolen for `SLOW_STORE_BLOCK` (300ms) by an un-`spawn_blocking`ed
+    // call, this loop's total wall time jumps well past that, regardless
+    // of exactly when the stolen call lands relative to this loop.
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(200),
+        "20x5ms timers took {elapsed:?}: bootstrap blocked the executor"
+    );
+
+    bootstrap.await.unwrap().expect("bootstrap");
 }

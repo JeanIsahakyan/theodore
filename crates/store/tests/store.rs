@@ -192,6 +192,59 @@ fn apply_is_one_transaction_and_ids_stay_gap_free_on_rollback() {
 }
 
 #[test]
+fn apply_with_outbox_rolls_back_the_outbox_push_too() {
+    // Mirrors `accept_task`: a model write and an outbox push (e.g.
+    // resolve_thread) must land together or not at all.
+    let store = SqliteStore::open_in_memory().unwrap();
+
+    let err = store
+        .apply_with_outbox(
+            vec![NewAction {
+                model: "task".into(),
+                model_id: "missing".into(),
+                action: SyncActionCode::C,
+                data: Some(json!({"status": "done"})),
+            }],
+            "resolve_thread",
+            json!({"thread": "t1"}),
+        )
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Db(_)));
+    assert!(
+        store.outbox_take(0).unwrap().is_none(),
+        "the outbox push must not survive a rollback of the model write"
+    );
+}
+
+#[test]
+fn apply_with_outbox_commits_both_halves_together() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    insert(&store, "task", "t1", json!({"status": "review"}));
+
+    let (applied, outbox_id) = store
+        .apply_with_outbox(
+            vec![NewAction {
+                model: "task".into(),
+                model_id: "t1".into(),
+                action: SyncActionCode::C,
+                data: Some(json!({"status": "done"})),
+            }],
+            "resolve_thread",
+            json!({"thread": "t1"}),
+        )
+        .unwrap();
+    assert_eq!(applied.len(), 1);
+    assert_eq!(
+        store.get("task", "t1").unwrap().unwrap().data["status"],
+        "done"
+    );
+
+    let item = store.outbox_take(0).unwrap().expect("outbox item");
+    assert_eq!(item.id, outbox_id);
+    assert_eq!(item.op, "resolve_thread");
+}
+
+#[test]
 fn since_and_last_sync_id() {
     let store = SqliteStore::open_in_memory().unwrap();
     insert(&store, "pr", "1", json!({"n": 1}));
@@ -409,4 +462,31 @@ fn outbox_in_flight_items_recover_as_pending_after_a_crash() {
     let recovered = store.outbox_take(0).unwrap().unwrap();
     assert_eq!(recovered.id, id);
     assert_eq!(recovered.status, OutboxStatus::InFlight);
+}
+
+#[test]
+fn outbox_items_recovered_after_a_crash_count_as_attempted() {
+    // A worker may have already landed the op's side effect (e.g. posted a
+    // review) right before the process died. If the recovered item still
+    // reports `attempts == 0`, op handlers that skip their idempotency-marker
+    // check on a "first" attempt would blindly repost it.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("theodore.db");
+
+    let id = {
+        let store = SqliteStore::open(&path).unwrap();
+        let id = store.outbox_push("op", json!({})).unwrap();
+        let item = store.outbox_take(0).unwrap().unwrap();
+        assert_eq!(item.attempts, 0, "a fresh pickup is not yet an attempt");
+        id
+    };
+
+    let store = SqliteStore::open(&path).unwrap();
+    let recovered = store.outbox_take(0).unwrap().unwrap();
+    assert_eq!(recovered.id, id);
+    assert!(
+        recovered.attempts >= 1,
+        "an item re-picked after a crash must count as attempted, got {}",
+        recovered.attempts
+    );
 }

@@ -8,11 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use theodore_contract::{Ephemeral, HunkRead, InboxState, ToastLevel, models};
+use theodore_domain::anchors::Remapped;
 use theodore_domain::snooze::PrEvent;
 use theodore_domain::{
-    AgentId, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
+    AgentId, Anchor, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
 };
-use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
+use theodore_ports::{DiffOptions, NewAction, SyncActionCode};
 
 use crate::core::{Core, Inner, RevisionEntry};
 
@@ -55,17 +56,13 @@ async fn poll_one_pr(core: &Core, pr: &PrId) {
     let Some(pr_ref) = core.pr_ref(pr).await else {
         return;
     };
-    let etag = core.0.etags.read().await.get(pr).cloned();
-    let fetched = match core.0.deps.host.get_pr(&pr_ref, etag.as_deref()).await {
-        Ok(f) => f,
-        Err(_) => return, // transient; the next tick retries
-    };
-    let Fetched::Modified { etag, value } = fetched else {
+    // `refresh_pr` applies `pr`/`pr_detail` whenever the host reports a
+    // change, head moved or not — comments, threads, checks and labels can
+    // all change between pushes, and must not be dropped just because this
+    // tick isn't a push.
+    let Some(value) = core.refresh_pr(pr, &pr_ref).await else {
         return;
     };
-    if let Some(etag) = etag {
-        core.0.etags.write().await.insert(pr.clone(), etag);
-    }
     let new_head = value.summary.head_sha.clone();
     let old_head = core.0.current_head.read().await.get(pr).cloned();
     if old_head.as_ref() == Some(&new_head) {
@@ -152,8 +149,26 @@ async fn handle_push(
                 }
             }
         }
+        // `classify` only classifies *new*-side hunks, so an old hunk with
+        // no counterpart at all in the new revision — the push dropped it
+        // outright, with nothing landing to match it against — never shows
+        // up as anyone's `previous` and would otherwise keep its stale
+        // `hunk_read` forever. Catch those directly: any old hunk id gone
+        // from the new revision, whether or not `classify` ever saw it.
+        let new_ids: BTreeSet<&HunkId> = new_rev.hunks().map(|h| &h.id).collect();
+        let mut vanished_paths: BTreeSet<&str> = BTreeSet::new();
+        for h in old_rev.hunks() {
+            if !new_ids.contains(&h.id) {
+                stale_old_ids.insert(h.id.clone());
+                vanished_paths.insert(h.path.as_str());
+            }
+        }
         clear_reads(core, pr, &stale_old_ids).await;
-        dismiss_files(core, pr, &new_rev, &changed_new_ids).await;
+        dismiss_files(core, pr, &new_rev, &changed_new_ids, &vanished_paths).await;
+    }
+
+    if let Some(old_head) = &old_head {
+        remap_anchors_after_push(core, pr, &repo_path, old_head, &new_head).await;
     }
 
     regroup_after_push(core, pr, &new_rev, &detail, &worktree.path).await;
@@ -178,29 +193,95 @@ async fn handle_push(
         );
     }
 
-    let pr_s = pr.0.clone();
-    let detail_data = serde_json::to_value(&detail).expect("serializable");
-    let summary_data = serde_json::to_value(&detail.summary).expect("serializable");
-    let actions = vec![
-        NewAction {
-            model: models::PR_DETAIL.into(),
-            model_id: pr_s.clone(),
-            action: SyncActionCode::U,
-            data: Some(detail_data),
-        },
-        NewAction {
-            model: models::PR.into(),
-            model_id: pr_s,
-            action: SyncActionCode::U,
-            data: Some(summary_data),
-        },
-    ];
-    let _ = core.apply(actions).await;
+    // `pr`/`pr_detail` were already written by `poll_one_pr`'s `refresh_pr`
+    // call, from this same fetch — nothing left to apply here.
 
     core.emit(Ephemeral::Toast {
         level: ToastLevel::Info,
         text: format!("{} pushed {new_head}", pr_ref.repo.slug()),
     });
+}
+
+/// Moves (or outdates) every open `draft`/`finding`/`task` anchor of `pr`
+/// across the push (plan §4): diffs `old_head..new_head` and runs
+/// `domain::anchors::remap` over each anchor still on file. A draft whose
+/// anchor comes back `Outdated` is marked so (never anchor-less: an
+/// outdated draft is still shown, just not submittable — `submit_review`
+/// skips it).
+async fn remap_anchors_after_push(
+    core: &Core,
+    pr: &PrId,
+    repo_path: &Path,
+    old_head: &Sha,
+    new_head: &Sha,
+) {
+    let between = match core
+        .0
+        .deps
+        .git
+        .diff(repo_path, old_head, new_head, &DiffOptions::default())
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for model in [models::DRAFT, models::FINDING, models::TASK] {
+        remap_model_anchors(core, pr, model, &between, new_head).await;
+    }
+}
+
+async fn remap_model_anchors(
+    core: &Core,
+    pr: &PrId,
+    model: &str,
+    between: &Revision,
+    new_head: &Sha,
+) {
+    let store = core.0.deps.store.clone();
+    let pr_s = pr.0.clone();
+    let model_owned = model.to_string();
+    let rows =
+        match tokio::task::spawn_blocking(move || store.query(&model_owned, "pr", &pr_s)).await {
+            Ok(Ok(r)) => r,
+            _ => return,
+        };
+    let mut actions = Vec::new();
+    for row in rows {
+        if row
+            .data
+            .get("outdated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue; // already outdated; nothing more to remap
+        }
+        let Some(anchor_val) = row.data.get("anchor").filter(|v| !v.is_null()) else {
+            continue; // task with no anchor
+        };
+        let Ok(anchor) = serde_json::from_value::<Anchor>(anchor_val.clone()) else {
+            continue;
+        };
+        match theodore_domain::anchors::remap(&anchor, between, new_head) {
+            Remapped::Moved(new_anchor) if new_anchor != anchor => {
+                actions.push(NewAction {
+                    model: model.into(),
+                    model_id: row.id,
+                    action: SyncActionCode::C,
+                    data: Some(serde_json::json!({ "anchor": new_anchor })),
+                });
+            }
+            Remapped::Moved(_) => {}
+            Remapped::Outdated => {
+                actions.push(NewAction {
+                    model: model.into(),
+                    model_id: row.id,
+                    action: SyncActionCode::C,
+                    data: Some(serde_json::json!({ "outdated": true })),
+                });
+            }
+        }
+    }
+    let _ = core.apply(actions).await;
 }
 
 async fn clear_reads(core: &Core, pr: &PrId, changed: &BTreeSet<HunkId>) {
@@ -233,13 +314,20 @@ async fn clear_reads(core: &Core, pr: &PrId, changed: &BTreeSet<HunkId>) {
     let _ = core.apply(actions).await;
 }
 
-async fn dismiss_files(core: &Core, pr: &PrId, new_rev: &Revision, changed: &BTreeSet<HunkId>) {
-    let changed_paths: BTreeSet<&str> = new_rev
+async fn dismiss_files(
+    core: &Core,
+    pr: &PrId,
+    new_rev: &Revision,
+    changed: &BTreeSet<HunkId>,
+    extra_changed_paths: &BTreeSet<&str>,
+) {
+    let mut changed_paths: BTreeSet<&str> = new_rev
         .files
         .iter()
         .filter(|f| f.hunks.iter().any(|h| changed.contains(&h.id)))
         .map(|f| f.path.as_str())
         .collect();
+    changed_paths.extend(extra_changed_paths.iter().copied());
     if changed_paths.is_empty() {
         return;
     }

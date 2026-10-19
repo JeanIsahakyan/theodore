@@ -138,6 +138,20 @@ pub trait HostAdapter: Send + Sync {
     async fn viewer(&self) -> HostResult<Person> {
         Err(HostError::Unsupported("viewer"))
     }
+    /// Like `viewer`, but explicit about which host it validates against
+    /// (plan §6.8 `set_host_token`): a caller holding several hosts behind
+    /// one `HostAdapter` (GitHub primary, GitLab, …) routes this to the
+    /// adapter for `host` rather than whichever one `kind()` happens to be.
+    /// Default: only this adapter's own kind is supported — correct for a
+    /// single-host adapter; a multi-host composition should override it to
+    /// route per `host` the way it already does for `search_repo`/`get_pr`.
+    async fn viewer_for(&self, host: theodore_domain::HostKind) -> HostResult<Person> {
+        if host == self.kind() {
+            self.viewer().await
+        } else {
+            Err(HostError::Unsupported("host"))
+        }
+    }
 
     // inbox
     async fn changed_since(&self, cursor: Option<&str>) -> HostResult<Changes>;
@@ -172,6 +186,21 @@ pub trait HostAdapter: Send + Sync {
 
     // threads
     async fn reply(&self, pr: &PrRef, thread: &ThreadId, body: &str) -> HostResult<CommentId>;
+    /// Like `reply`, but embeds an idempotency marker in the posted body
+    /// (the same `<!-- theodore:<marker> -->` tag `submit_review` uses) so a
+    /// retried outbox item can tell, via `find_marker`, whether the reply
+    /// already landed before retrying. Default: embeds the standard tag and
+    /// defers to `reply`; override only if a host needs a different shape.
+    async fn reply_with_marker(
+        &self,
+        pr: &PrRef,
+        thread: &ThreadId,
+        body: &str,
+        marker: &str,
+    ) -> HostResult<CommentId> {
+        let tagged = format!("{body}\n\n<!-- theodore:{marker} -->");
+        self.reply(pr, thread, &tagged).await
+    }
     async fn resolve(&self, pr: &PrRef, thread: &ThreadId, resolved: bool) -> HostResult<()>;
     async fn edit_comment(&self, pr: &PrRef, comment: &CommentId, body: &str) -> HostResult<()>;
     async fn delete_comment(&self, pr: &PrRef, comment: &CommentId) -> HostResult<()>;

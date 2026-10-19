@@ -175,6 +175,7 @@ impl Core {
                 anchor,
                 body,
                 source: Author::Agent(patch.by),
+                outdated: false,
             };
             let data =
                 serde_json::to_value(&draft).map_err(|e| AppError::Invalid(e.to_string()))?;
@@ -204,24 +205,33 @@ impl Core {
     }
 
     async fn finish_task_accept(&self, task: &Task, fix: Option<Fix>) -> AppResult<()> {
-        if let Some(thread) = &task.thread {
-            let payload = crate::outbox::ResolvePayload {
-                pr: task.pr.clone(),
-                thread: thread.clone(),
-                resolved: true,
-            };
-            let data =
-                serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
-            self.enqueue_outbox("resolve_thread", data).await?;
-        }
         let data = serde_json::json!({ "status": TaskStatus::Done, "fix": fix });
-        self.apply(vec![NewAction {
+        let action = NewAction {
             model: models::TASK.into(),
             model_id: task.id.0.clone(),
             action: SyncActionCode::C,
             data: Some(data),
-        }])
-        .await?;
+        };
+        match &task.thread {
+            // Mark the task Done and enqueue the thread resolve atomically
+            // (plan "Fix target" accept): either both land, or neither
+            // does — never a resolved thread on a task that's still open,
+            // or a Done task whose thread was never told.
+            Some(thread) => {
+                let payload = crate::outbox::ResolvePayload {
+                    pr: task.pr.clone(),
+                    thread: thread.clone(),
+                    resolved: true,
+                };
+                let payload_data =
+                    serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
+                self.apply_with_outbox(vec![action], "resolve_thread", payload_data)
+                    .await?;
+            }
+            None => {
+                self.apply(vec![action]).await?;
+            }
+        }
         Ok(())
     }
 

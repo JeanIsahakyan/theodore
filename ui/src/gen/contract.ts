@@ -126,6 +126,12 @@ export type Draft = {
 	anchor: Anchor,
 	body: string,
 	source: Author,
+	/**
+	 *  A push moved the diff out from under this anchor (plan §4):
+	 *  `domain::anchors::remap` returned `Outdated`. An outdated draft must
+	 *  not be submitted — the caller has to re-anchor or drop it.
+	 */
+	outdated?: boolean,
 };
 
 export type DraftId = string;
@@ -196,6 +202,8 @@ export type Finding = {
 	body: string,
 	state: FindingState,
 	fix: Fix | null,
+	/**  A push moved the diff out from under this anchor (plan §4). */
+	outdated?: boolean,
 };
 
 export type FindingId = string;
@@ -580,6 +588,11 @@ export type Task = {
 	assignee: Assignee,
 	fix: Fix | null,
 	created_at: number,
+	/**
+	 *  A push moved the diff out from under this task's anchor (plan §4);
+	 *  `None` anchor tasks are never affected.
+	 */
+	outdated?: boolean,
 };
 
 export type TaskDecision = {

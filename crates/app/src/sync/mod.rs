@@ -72,7 +72,10 @@ impl Core {
                 .map_err(AppError::join)??
             }
         };
-        let last_sync_id = self.0.deps.store.last_sync_id()?;
+        let store = self.0.deps.store.clone();
+        let last_sync_id = tokio::task::spawn_blocking(move || store.last_sync_id())
+            .await
+            .map_err(AppError::join)??;
         Ok(Bootstrap {
             last_sync_id,
             rows: rows.into_iter().map(to_wire_row).collect(),
