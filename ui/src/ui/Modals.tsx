@@ -33,9 +33,7 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
   const pr = ui.route.pr;
   const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const drafts = store.models.drafts.byPr(pr);
-  const reads = new Set(
-    store.models.hunkReads.byPr(pr).map((r) => r.hunk),
-  );
+  const reads = new Set(store.models.hunkReads.byPr(pr).map((r) => r.hunk));
   const unread = store.models.groups
     .all()
     .filter((g) => g.kind !== 'hidden')

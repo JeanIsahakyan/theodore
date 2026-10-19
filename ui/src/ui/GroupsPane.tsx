@@ -1,5 +1,5 @@
 import { AgentWorking, GroupsSkeleton } from './Loading';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Check,
@@ -25,7 +25,6 @@ import { observer } from 'mobx-react-lite';
 import type {
   FileDiff,
   FileStatus,
-  Hunk,
   HunkId,
   PrId,
   Revision,
@@ -81,6 +80,30 @@ export function groupsForRevision(
   return groupsInRevision(store.models.groupsOf(pr), hunkIds);
 }
 
+/** Per-revision lookups, built once per revision instead of per render:
+ *  each hunk's file, each file's hunks (in diff order), and line counts. */
+export function hunkIndex(rev: Revision) {
+  const hunkFile = new Map<HunkId, string>();
+  const hunksOfPath = new Map<string, HunkId[]>();
+  const lineStats = new Map<HunkId, { add: number; del: number }>();
+  for (const f of rev.files) {
+    const ids: HunkId[] = [];
+    for (const h of f.hunks) {
+      hunkFile.set(h.id, f.path);
+      ids.push(h.id);
+      let add = 0;
+      let del = 0;
+      for (const l of h.lines) {
+        if (l.kind === 'add') add++;
+        else if (l.kind === 'del') del++;
+      }
+      lineStats.set(h.id, { add, del });
+    }
+    hunksOfPath.set(f.path, ids);
+  }
+  return { hunkFile, hunksOfPath, lineStats };
+}
+
 export const GroupsPane = observer(function GroupsPane({
   pr,
   rev,
@@ -110,14 +133,10 @@ export const GroupsPane = observer(function GroupsPane({
   const fileViews = store.models.fileViews.byPr(pr);
   const viewedCount = fileViews.filter((v) => v.state === 'viewed').length;
 
-  const hunkFile = new Map<HunkId, string>();
-  const hunkById = new Map<HunkId, Hunk>();
-  for (const f of rev.files) {
-    for (const h of f.hunks) {
-      hunkFile.set(h.id, f.path);
-      hunkById.set(h.id, h);
-    }
-  }
+  const { hunkFile, hunksOfPath, lineStats } = useMemo(
+    () => hunkIndex(rev),
+    [rev],
+  );
   const hunkGroup = new Map<HunkId, string>();
   for (const g of groups) for (const h of g.hunks) hunkGroup.set(h, g.id);
 
@@ -188,17 +207,11 @@ export const GroupsPane = observer(function GroupsPane({
                 (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
               );
               const add = hs.reduce(
-                (n, h) =>
-                  n +
-                  (hunkById.get(h)?.lines.filter((l) => l.kind === 'add')
-                    .length ?? 0),
+                (n, h) => n + (lineStats.get(h)?.add ?? 0),
                 0,
               );
               const del = hs.reduce(
-                (n, h) =>
-                  n +
-                  (hunkById.get(h)?.lines.filter((l) => l.kind === 'del')
-                    .length ?? 0),
+                (n, h) => n + (lineStats.get(h)?.del ?? 0),
                 0,
               );
               const state =
@@ -327,10 +340,9 @@ export const GroupsPane = observer(function GroupsPane({
                           className={`p-0 pb-1.5 ${files.length > BIG ? 'h-72 overflow-auto' : ''}`}
                         >
                           {files.map((f) => {
-                            const elsewhere = [...hunkFile.entries()]
-                              .filter(([, path]) => path === f)
-                              .map(([h]) => h)
-                              .filter((h) => hunkGroup.get(h) !== g.id);
+                            const elsewhere = (hunksOfPath.get(f) ?? []).filter(
+                              (h) => hunkGroup.get(h) !== g.id,
+                            );
                             const others = [
                               ...new Set(
                                 elsewhere.map((h) =>
@@ -541,6 +553,9 @@ const FileTree = observer(function FileTree({
 }) {
   const store = useRootStore();
   const fileViews = store.models.fileViews.byPr(pr);
+  // First row per path, as `fileViews.find` would pick — once, not per dir.
+  const viewOf = new Map<string, (typeof fileViews)[number]>();
+  for (const v of fileViews) if (!viewOf.has(v.path)) viewOf.set(v.path, v);
   const files = rev.files;
   const tree = buildTree(files);
   const [closed, setClosed] = useState<Record<string, boolean>>(() =>
@@ -582,8 +597,7 @@ const FileTree = observer(function FileTree({
           if (row.dir) {
             const fs = allFiles(row.dir);
             const seen = fs.filter(
-              (f) =>
-                fileViews.find((v) => v.path === f.path)?.state === 'viewed',
+              (f) => viewOf.get(f.path)?.state === 'viewed',
             ).length;
             return (
               <ListBox.Item

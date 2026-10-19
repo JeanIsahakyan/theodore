@@ -881,7 +881,10 @@ export const Inbox = observer(function Inbox() {
 
   const prs = store.models.prSummaries.all();
   const inboxStates = store.models.inboxStates.all();
-  const stateOf = (id: PrId) => inboxStates.find((s) => s.pr === id);
+  // First state per PR, as `find` would pick — one pass, not one per row.
+  const stateByPr = new Map<string, (typeof inboxStates)[number]>();
+  for (const s of inboxStates) if (!stateByPr.has(s.pr)) stateByPr.set(s.pr, s);
+  const stateOf = (id: PrId) => stateByPr.get(id);
   const active = prs.filter((p) => {
     const s = stateOf(p.id);
     return !s?.done && !s?.snooze;
