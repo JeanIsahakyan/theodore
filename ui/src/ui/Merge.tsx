@@ -3,15 +3,14 @@
  * ported from the prototype's `MergeDialog`, now wired to the real
  * `merge_info` / `merge_pr` / `update_branch` commands (`FEATURES.hostWrites`).
  *
- * `PrSummary.conflicts` is a bare bool (no file list, unlike the prototype's
- * `PR.conflicts: string[]`) — real but coarser. `MergeInfo.state === 'dirty'`
- * is the live, per-open-dialog read of the same fact from the host; the
- * gates below use `conflicts` because it's already on hand for every PR row,
- * not just the one being merged. Rather than fabricate a fake conflicting
- * diff to look busy, the dialog itself still shows a plain note next to
- * "Update branch" (the one real action that can clear a `behind` or `dirty`
- * state). "Resolve with agent" has no backing command either way — kept
- * disabled.
+ * `PrSummary.conflicts` is a bare bool, so the gates below still use it
+ * (it's already on hand for every PR row, not just the one being merged),
+ * but the dialog itself now backs the file-level detail with `conflicts`
+ * (`git merge-tree`, computed locally — no host round trip): a per-file
+ * list instead of a generic "has conflicts" note. On an old local `git`
+ * (`CommandFailure.code === 'unsupported'`) `api.conflicts` resolves to
+ * `null` and the list silently falls back to the old plain-text note.
+ * "Resolve with agent" has no backing command either way — kept disabled.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -33,11 +32,29 @@ import {
   Tooltip,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AgentId, MergeInfo, MergeMethod, PrId } from '../gen/contract';
+import type {
+  AgentId,
+  ConflictFile,
+  ConflictKind,
+  MergeInfo,
+  MergeMethod,
+  PrId,
+} from '../gen/contract';
 import { mergePr, updateBranch } from '../actions';
 import { api } from '../core/api';
 import { useRootStore } from '../stores/context';
 import { Btn, Spinner } from './bits';
+
+const CONFLICT_KIND_LABEL: Record<ConflictKind, string> = {
+  content: 'content conflict',
+  add_add: 'added on both sides',
+  modify_delete: 'modified on one side, deleted on the other',
+  rename_delete: 'renamed on one side, deleted on the other',
+  rename_rename: 'renamed differently on each side',
+  directory_file: 'a file on one side, a directory on the other',
+  submodule: 'submodule conflict',
+  other: 'conflict',
+};
 
 const METHOD: Record<MergeMethod, string> = {
   squash: 'Squash and merge',
@@ -113,9 +130,13 @@ function gatesFor(
 export const MergeDialog = observer(function MergeDialog({
   pr,
   onClose,
+  onOpenFile,
 }: {
   pr: PrId;
   onClose: () => void;
+  /** Lets a conflicting file's row jump into the diff; omitted, the row
+   *  still shows the path and conflict kind, just not as a link. */
+  onOpenFile?: (path: string) => void;
 }) {
   const store = useRootStore();
   const summary = store.models.prSummaries.get(pr);
@@ -127,6 +148,12 @@ export const MergeDialog = observer(function MergeDialog({
   const [resolveAgent, setResolveAgent] = useState<AgentId | null>(null);
   const [updating, setUpdating] = useState(false);
   const [merging, setMerging] = useState<'now' | 'auto' | 'queue' | null>(null);
+  // `null` covers both "hasn't loaded yet" and "can't tell" (an old local
+  // `git`, `api.conflicts` resolving to `null`) — both fall back to the
+  // plain-text note below.
+  const [conflictFiles, setConflictFiles] = useState<ConflictFile[] | null>(
+    null,
+  );
 
   useEffect(() => {
     let live = true;
@@ -147,6 +174,18 @@ export const MergeDialog = observer(function MergeDialog({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pr]);
+
+  useEffect(() => {
+    if (!summary?.conflicts) return;
+    let live = true;
+    void api
+      .conflicts(pr)
+      .then((files) => live && setConflictFiles(files))
+      .catch(() => live && setConflictFiles(null));
+    return () => {
+      live = false;
+    };
+  }, [pr, summary?.conflicts]);
 
   if (!summary) return null;
 
@@ -267,56 +306,93 @@ export const MergeDialog = observer(function MergeDialog({
                 <Alert.Content>
                   <Alert.Title>
                     {info?.state === 'dirty'
-                      ? 'Merge conflicts — no file-level detail is reported yet'
+                      ? conflictFiles && conflictFiles.length > 0
+                        ? `Merge conflicts in ${conflictFiles.length} ${conflictFiles.length === 1 ? 'file' : 'files'}`
+                        : 'Merge conflicts'
                       : 'Behind the base branch'}
                   </Alert.Title>
-                  <Alert.Description className="flex flex-wrap items-center gap-1.5">
-                    {info?.state === 'dirty'
-                      ? 'GitHub reports this PR has conflicts with the base branch.'
-                      : 'Merge the base branch into this one to pick up its latest changes.'}
-                    <Tooltip>
-                      <Dropdown>
-                        <Button
-                          size="sm"
-                          variant="tertiary"
-                          className="resolve-agent"
-                          isDisabled
-                        >
-                          Resolve with agent
-                        </Button>
-                        <Dropdown.Popover placement="bottom end">
-                          <Dropdown.Menu
-                            aria-label="Agent"
-                            onAction={(k) => setResolveAgent(k as AgentId)}
+                  <Alert.Description className="flex flex-col gap-1.5">
+                    {info?.state === 'dirty' &&
+                      conflictFiles &&
+                      conflictFiles.length > 0 && (
+                        <ul className="conflict-files flex flex-col gap-1">
+                          {conflictFiles.map((f) => (
+                            <li
+                              key={f.path}
+                              className="flex flex-wrap items-baseline gap-1.5 text-xs"
+                            >
+                              {onOpenFile ? (
+                                <button
+                                  type="button"
+                                  className="conflict-file-link truncate font-mono text-accent underline-offset-2 hover:underline"
+                                  onClick={() => onOpenFile(f.path)}
+                                >
+                                  {f.path}
+                                </button>
+                              ) : (
+                                <span className="truncate font-mono">
+                                  {f.path}
+                                </span>
+                              )}
+                              <span className="text-muted">
+                                — {CONFLICT_KIND_LABEL[f.kind]}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {info?.state === 'dirty'
+                        ? conflictFiles === null
+                          ? 'GitHub reports this PR has conflicts with the base branch.'
+                          : conflictFiles.length === 0
+                            ? 'No local conflicts found — the base branch may have moved since GitHub last checked.'
+                            : 'Updating the branch may resolve some of these conflicts.'
+                        : 'Merge the base branch into this one to pick up its latest changes.'}
+                      <Tooltip>
+                        <Dropdown>
+                          <Button
+                            size="sm"
+                            variant="tertiary"
+                            className="resolve-agent"
+                            isDisabled
                           >
-                            {AGENTS.map((a) => (
-                              <Dropdown.Item key={a} id={a} textValue={a}>
-                                {a}
-                              </Dropdown.Item>
-                            ))}
-                          </Dropdown.Menu>
-                        </Dropdown.Popover>
-                      </Dropdown>
-                      <Tooltip.Content>Not available yet</Tooltip.Content>
-                    </Tooltip>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      isPending={updating}
-                      onPress={() => {
-                        setUpdating(true);
-                        void updateBranch(store, pr).finally(() =>
-                          setUpdating(false),
-                        );
-                      }}
-                    >
-                      Update branch
-                    </Button>
-                    {resolveAgent && (
-                      <span className="text-xs text-muted">
-                        picked {resolveAgent} — nothing to run yet
-                      </span>
-                    )}
+                            Resolve with agent
+                          </Button>
+                          <Dropdown.Popover placement="bottom end">
+                            <Dropdown.Menu
+                              aria-label="Agent"
+                              onAction={(k) => setResolveAgent(k as AgentId)}
+                            >
+                              {AGENTS.map((a) => (
+                                <Dropdown.Item key={a} id={a} textValue={a}>
+                                  {a}
+                                </Dropdown.Item>
+                              ))}
+                            </Dropdown.Menu>
+                          </Dropdown.Popover>
+                        </Dropdown>
+                        <Tooltip.Content>Not available yet</Tooltip.Content>
+                      </Tooltip>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        isPending={updating}
+                        onPress={() => {
+                          setUpdating(true);
+                          void updateBranch(store, pr).finally(() =>
+                            setUpdating(false),
+                          );
+                        }}
+                      >
+                        Update branch
+                      </Button>
+                      {resolveAgent && (
+                        <span className="text-xs text-muted">
+                          picked {resolveAgent} — nothing to run yet
+                        </span>
+                      )}
+                    </div>
                   </Alert.Description>
                 </Alert.Content>
               </Alert>
