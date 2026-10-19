@@ -2,6 +2,7 @@
 //! coverage list in the agent brief for this slice.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -2320,4 +2321,115 @@ async fn repo_settings_yaml_overrides_the_user_scoped_agent_setting() {
     );
 
     wait_until(|| f.grouper.last_agent() == Some(AgentId::Codex)).await;
+}
+
+// ── bootstrap must not block the async executor ──────────────────────────
+
+/// Wraps a `Store` whose `last_sync_id` blocks the calling thread for a
+/// while, standing in for a slow disk. If `bootstrap` ever calls it without
+/// `spawn_blocking`, that block lands on the async executor thread itself.
+struct SlowLastSyncId(Arc<testkit::FakeStore>);
+
+/// How long `SlowLastSyncId::last_sync_id` blocks its calling thread for —
+/// comfortably longer than the measurement window below so a stolen async
+/// worker thread shows up unmistakably.
+const SLOW_STORE_BLOCK: Duration = Duration::from_millis(300);
+
+impl Store for SlowLastSyncId {
+    fn apply(
+        &self,
+        actions: Vec<NewAction>,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        self.0.apply(actions)
+    }
+    fn last_sync_id(&self) -> theodore_ports::StoreResult<u64> {
+        std::thread::sleep(SLOW_STORE_BLOCK);
+        self.0.last_sync_id()
+    }
+    fn since(
+        &self,
+        sync_id: u64,
+        limit: u32,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::SyncAction>> {
+        self.0.since(sync_id, limit)
+    }
+    fn get(
+        &self,
+        model: &str,
+        id: &str,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::ModelRow>> {
+        self.0.get(model, id)
+    }
+    fn query(
+        &self,
+        model: &str,
+        field: &str,
+        value: &str,
+    ) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.query(model, field, value)
+    }
+    fn all(&self, model: &str) -> theodore_ports::StoreResult<Vec<theodore_ports::ModelRow>> {
+        self.0.all(model)
+    }
+    fn outbox_push(
+        &self,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> theodore_ports::StoreResult<u64> {
+        self.0.outbox_push(op, payload)
+    }
+    fn outbox_take(
+        &self,
+        now: i64,
+    ) -> theodore_ports::StoreResult<Option<theodore_ports::OutboxItem>> {
+        self.0.outbox_take(now)
+    }
+    fn outbox_done(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_done(id)
+    }
+    fn outbox_retry(&self, id: u64, not_before: i64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_retry(id, not_before)
+    }
+    fn outbox_fail(&self, id: u64) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_fail(id)
+    }
+    fn kv_get(&self, key: &str) -> theodore_ports::StoreResult<Option<serde_json::Value>> {
+        self.0.kv_get(key)
+    }
+    fn kv_set(&self, key: &str, value: &serde_json::Value) -> theodore_ports::StoreResult<()> {
+        self.0.kv_set(key, value)
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bootstrap_does_not_block_the_executor_on_a_slow_store() {
+    // `current_thread`: the whole runtime (task polling + the timer that
+    // drives `tokio::time::sleep`) runs on exactly one OS thread. If
+    // `bootstrap` ever calls a blocking `Store` method inline instead of
+    // through `spawn_blocking`, that call captures the only thread for its
+    // whole duration and even an unrelated 5ms timer can't fire until it's
+    // done.
+    let f = fixtures();
+    let mut deps = f.deps();
+    deps.store = Arc::new(SlowLastSyncId(f.store.clone()));
+    let (core, _recv) = Core::start(deps);
+
+    let core2 = core.clone();
+    let bootstrap = tokio::spawn(async move { core2.bootstrap(BootstrapScope::Global).await });
+
+    // 20 x 5ms = 100ms nominal. If the executor's single thread is ever
+    // stolen for `SLOW_STORE_BLOCK` (300ms) by an un-`spawn_blocking`ed
+    // call, this loop's total wall time jumps well past that, regardless
+    // of exactly when the stolen call lands relative to this loop.
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(200),
+        "20x5ms timers took {elapsed:?}: bootstrap blocked the executor"
+    );
+
+    bootstrap.await.unwrap().expect("bootstrap");
 }
