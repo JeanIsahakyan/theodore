@@ -76,7 +76,18 @@ impl AgentPort for AgentCli {
         let mut guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
 
         let args = match req.agent {
-            AgentId::Claude => claude::build_args(&req, &cfg),
+            AgentId::Claude => {
+                // Written to a 0600 temp file, not argv: `--mcp-config`'s
+                // JSON carries the review-tools bearer token, and argv is
+                // visible to any process on the host via `ps`/`/proc`.
+                let mcp_guard =
+                    claude::write_mcp_config(&req).map_err(|e| AgentError::Spawn(e.to_string()))?;
+                let mcp_path = mcp_guard.as_ref().map(|f| f.path().to_path_buf());
+                if let Some(g) = mcp_guard {
+                    guards.push(Box::new(g));
+                }
+                claude::build_args(&req, &cfg, mcp_path.as_deref())
+            }
             AgentId::Codex => {
                 if let Some(mcp) = &req.mcp {
                     child_env.push((codex::MCP_TOKEN_ENV_VAR.to_string(), mcp.token.clone()));

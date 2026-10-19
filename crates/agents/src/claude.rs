@@ -7,6 +7,8 @@
 //! not exercised live here (sandboxed shell denied a tool-using prompt); see
 //! `tests/fixtures/claude_tool_call.jsonl`, built from that documented shape.
 
+use std::path::Path;
+
 use serde_json::Value;
 use theodore_domain::Usage;
 use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
@@ -14,8 +16,53 @@ use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
 use crate::config::AgentBinaryConfig;
 use crate::process::LineParser;
 
-/// `AgentRequest` + binary config → argv (binary path is handled by the caller).
-pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
+/// The `--mcp-config` JSON, including the bearer token in its `headers`.
+/// Written to a 0600 temp file instead of argv (see `write_mcp_config`):
+/// `ps`/`/proc/<pid>/cmdline` on this host, or any other process running as
+/// the same user, can read another process's argv but not an 0600 file
+/// owned by that process's own user.
+fn mcp_config_json(mcp: &theodore_ports::agent::McpEndpoint) -> Value {
+    serde_json::json!({
+        "mcpServers": {
+            "review-tools": {
+                "type": "http",
+                "url": mcp.url,
+                "headers": { "Authorization": format!("Bearer {}", mcp.token) },
+            }
+        }
+    })
+}
+
+/// Writes `req.mcp`'s config (bearer token included) to a 0600 temp file,
+/// `None` if there's no MCP endpoint for this run. The caller keeps the
+/// returned handle alive for the run (`SpawnSpec::guards`) and passes its
+/// path to `build_args`.
+pub fn write_mcp_config(req: &AgentRequest) -> std::io::Result<Option<tempfile::NamedTempFile>> {
+    let Some(mcp) = &req.mcp else { return Ok(None) };
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix("theodore-claude-mcp-")
+        .suffix(".json")
+        .tempfile()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(mcp_config_json(mcp).to_string().as_bytes())?;
+    file.flush()?;
+    Ok(Some(file))
+}
+
+/// `AgentRequest` + binary config → argv (binary path is handled by the
+/// caller). `mcp_config_path` must be `Some` whenever `req.mcp` is —
+/// `write_mcp_config`'s output path, never the config itself.
+pub fn build_args(
+    req: &AgentRequest,
+    cfg: &AgentBinaryConfig,
+    mcp_config_path: Option<&Path>,
+) -> Vec<String> {
     let mut args = vec![
         "-p".to_string(),
         req.prompt.clone(),
@@ -29,18 +76,9 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         args.push("--append-system-prompt".to_string());
         args.push(system.clone());
     }
-    if let Some(mcp) = &req.mcp {
-        let config = serde_json::json!({
-            "mcpServers": {
-                "review-tools": {
-                    "type": "http",
-                    "url": mcp.url,
-                    "headers": { "Authorization": format!("Bearer {}", mcp.token) },
-                }
-            }
-        });
+    if let Some(path) = mcp_config_path {
         args.push("--mcp-config".to_string());
-        args.push(config.to_string());
+        args.push(path.display().to_string());
         args.push("--strict-mcp-config".to_string());
     }
     match req.mode {
@@ -354,11 +392,82 @@ mod read_only_tests {
             model: None,
             stall_after_ms: 1000,
         };
-        let args = build_args(&req, &Default::default());
+        let args = build_args(&req, &Default::default(), None);
         let i = args
             .iter()
             .position(|a| a == "--disallowedTools")
             .expect("denylist");
         assert!(args[i + 1].contains("Bash") && args[i + 1].contains("Edit"));
+    }
+}
+
+#[cfg(test)]
+mod mcp_config_tests {
+    use super::*;
+    use theodore_ports::agent::McpEndpoint;
+
+    fn req_with_mcp(token: &str) -> AgentRequest {
+        AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::ReadOnly,
+            mcp: Some(McpEndpoint {
+                url: "http://127.0.0.1:1/mcp".into(),
+                token: token.into(),
+            }),
+            model: None,
+            stall_after_ms: 1000,
+        }
+    }
+
+    /// The whole point of writing the config to a file: `ps`/`/proc` must
+    /// never see the token. Argv only ever carries the file's path.
+    #[test]
+    fn mcp_config_token_never_reaches_argv() {
+        let req = req_with_mcp("super-secret-token");
+        let guard = write_mcp_config(&req).unwrap().expect("mcp config file");
+        let args = build_args(&req, &Default::default(), Some(guard.path()));
+
+        for arg in &args {
+            assert!(
+                !arg.contains("super-secret-token"),
+                "token leaked into argv: {arg:?}"
+            );
+        }
+        let i = args
+            .iter()
+            .position(|a| a == "--mcp-config")
+            .expect("--mcp-config flag");
+        assert_eq!(args[i + 1], guard.path().display().to_string());
+
+        // The token does land in the file `--mcp-config` points at.
+        let contents = std::fs::read_to_string(guard.path()).unwrap();
+        assert!(contents.contains("super-secret-token"));
+        assert!(contents.contains("Bearer"));
+    }
+
+    #[test]
+    fn no_mcp_means_no_config_file_and_no_flag() {
+        let mut req = req_with_mcp("unused");
+        req.mcp = None;
+        assert!(write_mcp_config(&req).unwrap().is_none());
+        let args = build_args(&req, &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--mcp-config"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_config_file_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let req = req_with_mcp("t");
+        let guard = write_mcp_config(&req).unwrap().expect("mcp config file");
+        let mode = std::fs::metadata(guard.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
