@@ -11,6 +11,7 @@ pub mod git;
 pub mod host;
 pub mod secrets;
 pub mod store;
+pub mod worktree_lease;
 
 pub use agent::*;
 pub use clock::*;
@@ -19,3 +20,4 @@ pub use git::*;
 pub use host::*;
 pub use secrets::*;
 pub use store::*;
+pub use worktree_lease::*;

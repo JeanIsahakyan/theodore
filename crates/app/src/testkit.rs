@@ -1043,6 +1043,61 @@ impl Grouper for FakeGrouper {
     }
 }
 
+// ── worktree lease ───────────────────────────────────────────────────────
+
+/// Records every `acquire` call (and whether it's still held) so a test can
+/// assert a run held its PR's lease for the run's duration, not just at the
+/// start.
+#[derive(Default)]
+pub struct FakeWorktreeLease {
+    acquired: Mutex<Vec<PrRef>>,
+    held: Arc<Mutex<HashMap<PrRef, u32>>>,
+}
+
+struct FakeLeaseGuard {
+    held: Arc<Mutex<HashMap<PrRef, u32>>>,
+    pr: PrRef,
+}
+
+impl Drop for FakeLeaseGuard {
+    fn drop(&mut self) {
+        let mut held = self.held.lock().unwrap();
+        if let Some(n) = held.get_mut(&self.pr) {
+            *n -= 1;
+            if *n == 0 {
+                held.remove(&self.pr);
+            }
+        }
+    }
+}
+
+impl FakeWorktreeLease {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Every PR `acquire` was called with, in order.
+    pub fn acquired(&self) -> Vec<PrRef> {
+        self.acquired.lock().unwrap().clone()
+    }
+
+    /// Whether `pr` has at least one outstanding (not yet dropped) guard.
+    pub fn is_held(&self, pr: &PrRef) -> bool {
+        self.held.lock().unwrap().contains_key(pr)
+    }
+}
+
+impl theodore_ports::WorktreeLease for FakeWorktreeLease {
+    fn acquire(&self, pr: PrRef) -> Box<dyn std::any::Any + Send> {
+        self.acquired.lock().unwrap().push(pr.clone());
+        *self.held.lock().unwrap().entry(pr.clone()).or_insert(0) += 1;
+        Box::new(FakeLeaseGuard {
+            held: self.held.clone(),
+            pr,
+        })
+    }
+}
+
 // ── token status ────────────────────────────────────────────────────────
 
 pub struct FakeTokenStatus {
@@ -1160,6 +1215,7 @@ pub struct Fixtures {
     pub grouper: Arc<FakeGrouper>,
     pub token_status: Arc<FakeTokenStatus>,
     pub device_login: Arc<FakeDeviceLogin>,
+    pub worktree_lease: Arc<FakeWorktreeLease>,
     /// A throwaway `~/.claude/skills` stand-in (plan §8.4): kept alive for
     /// the fixture's lifetime, deleted on drop. Never the real home dir.
     pub claude_home: Arc<tempfile::TempDir>,
@@ -1179,6 +1235,7 @@ impl Fixtures {
             claude_home: self.claude_home.path().to_path_buf(),
             token_status: Some(self.token_status.clone()),
             device_login: self.device_login.clone(),
+            worktree_lease: self.worktree_lease.clone(),
         }
     }
 }
@@ -1202,6 +1259,7 @@ pub fn fixtures() -> Fixtures {
         }),
         token_status: FakeTokenStatus::new(TokenSource::Keychain),
         device_login: FakeDeviceLogin::new(),
+        worktree_lease: FakeWorktreeLease::new(),
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
     }
 }

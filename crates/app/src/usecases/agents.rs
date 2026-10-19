@@ -41,13 +41,16 @@ impl Core {
             .filter(|a| a.installed)
             .map(|a| a.id)
             .collect();
-        let agents: Vec<AgentId> = agents
-            .into_iter()
-            .filter(|a| installed.contains(a))
-            .collect();
+        let mut agents_filtered = Vec::new();
+        for a in agents {
+            if installed.contains(&a) && self.agent_enabled(a).await {
+                agents_filtered.push(a);
+            }
+        }
+        let agents = agents_filtered;
         if agents.is_empty() {
             return Err(AppError::Invalid(
-                "none of the selected agents is installed".into(),
+                "none of the selected agents is installed and enabled".into(),
             ));
         }
         let run_id = uuid::Uuid::new_v4().to_string();
@@ -79,11 +82,19 @@ impl Core {
             },
         );
 
+        // Held for the whole run (plan "worktree locks"): the GC sweep must
+        // never remove this worktree out from under a skill run in flight.
+        let lease = self
+            .pr_ref(&req.pr)
+            .await
+            .map(|r| self.0.deps.worktree_lease.acquire(r));
+
         let core = self.clone();
         let pr = req.pr.clone();
         let skill = req.skill.clone();
         let run_id2 = run_id.clone();
         tokio::spawn(async move {
+            let _lease = lease;
             drive_skill_run(&core, run_id2, pr, skill, agents, cancel).await;
         });
         Ok(run_id)
@@ -102,6 +113,7 @@ impl Core {
             refs: req.about.clone().into_iter().collect(),
             usage: None,
             at: now,
+            failed: None,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -116,8 +128,10 @@ impl Core {
             Some(a) => a,
             None => {
                 let repo_scope = self.repo_scope_of(&req.pr).await;
-                self.setting_agent_scoped("agents.chat", repo_scope.as_deref(), AgentId::Claude)
-                    .await
+                let configured = self
+                    .setting_agent_scoped("agents.chat", repo_scope.as_deref(), AgentId::Claude)
+                    .await;
+                self.effective_agent(configured).await
             }
         };
         let cwd = {
@@ -141,13 +155,41 @@ impl Core {
             },
         );
 
+        // Held for the whole run (plan "worktree locks"): see `run_skill`.
+        let lease = self
+            .pr_ref(&req.pr)
+            .await
+            .map(|r| self.0.deps.worktree_lease.acquire(r));
+
         let core = self.clone();
         let pr = req.pr.clone();
-        let question_text = req.question.clone();
         tokio::spawn(async move {
-            drive_ask(&core, run_id, pr, agent, question_text, cwd, cancel).await;
+            let _lease = lease;
+            drive_ask(&core, run_id, pr, agent, req.question, cwd, cancel).await;
         });
         Ok(message_id)
+    }
+
+    /// `configured` unless it's disabled, in which case the first enabled
+    /// installed agent (plan "enable/disable agents"): falls back instead
+    /// of silently running a CLI the user turned off. Returns `configured`
+    /// unchanged if every installed agent is disabled — a hard failure
+    /// here would be worse than running the one the setting already named.
+    pub(crate) async fn effective_agent(&self, configured: AgentId) -> AgentId {
+        if self.agent_enabled(configured).await {
+            return configured;
+        }
+        let installed: Vec<AgentId> = self
+            .0
+            .deps
+            .agents
+            .detect()
+            .await
+            .into_iter()
+            .filter(|a| a.installed)
+            .map(|a| a.id)
+            .collect();
+        self.first_enabled(&installed).await.unwrap_or(configured)
     }
 
     pub async fn cancel_run(&self, run: String) -> AppResult<()> {
@@ -233,25 +275,32 @@ async fn drive_skill_run(
     agents: Vec<AgentId>,
     cancel: CancellationToken,
 ) {
+    // `agents` is never empty (checked by `run_skill` before spawning this
+    // task) — used to attribute a setup failure that happens before any
+    // agent actually starts.
+    let first_agent = agents[0];
     let cwd = {
         let head = core.0.current_head.read().await.get(&pr).cloned();
         let Some(head) = head else {
-            fail_run(core, &run_id, "pr is not open").await;
+            fail_run(core, &run_id, &pr, first_agent, "pr is not open").await;
             return;
         };
         let revisions = core.0.revisions.read().await;
         match revisions.get(&(pr.clone(), head)) {
             Some(e) => e.worktree_path.clone(),
             None => {
-                fail_run(core, &run_id, "revision not cached").await;
+                fail_run(core, &run_id, &pr, first_agent, "revision not cached").await;
                 return;
             }
         }
     };
+    let stall_after_ms = core.stall_after_ms().await;
 
     let mut total_usage = Usage::default();
     let mut error: Option<String> = None;
+    let mut last_agent = first_agent;
     for agent in agents {
+        last_agent = agent;
         if cancel.is_cancelled() {
             break;
         }
@@ -269,7 +318,7 @@ async fn drive_skill_run(
             mode: AgentMode::ReadOnly,
             mcp: mcp.clone(),
             model: None,
-            stall_after_ms: 90_000,
+            stall_after_ms,
         };
         let _guard = ToolsGuard { core, mcp };
         match core.0.deps.agents.run(req).await {
@@ -291,6 +340,7 @@ async fn drive_skill_run(
                             AgentEvent::Usage { usage } => total_usage += usage,
                             AgentEvent::Stalled => {
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: "stalled".into() });
+                                core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                             }
                             AgentEvent::Done { usage, .. } => {
                                 total_usage += usage;
@@ -308,7 +358,8 @@ async fn drive_skill_run(
         }
     }
 
-    let status = if cancel.is_cancelled() {
+    let cancelled = cancel.is_cancelled();
+    let status = if cancelled {
         RunStatus::Cancelled
     } else if error.is_some() {
         RunStatus::Failed
@@ -324,7 +375,40 @@ async fn drive_skill_run(
             data: Some(data),
         }])
         .await;
+    if cancelled || error.is_some() {
+        let text = error.unwrap_or_else(|| "cancelled".into());
+        persist_failed_message(core, &pr, last_agent, &text).await;
+    }
     core.0.runs.write().await.remove(&run_id);
+}
+
+/// Persists a `ChatMessage` with `failed` set and `agent` as author instead
+/// of only toasting (plan "failed agent runs"), so a run that errored,
+/// crashed, hit its runtime cap, or was cancelled leaves a durable, visible,
+/// retryable record even after the app restarts. `pub(crate)`: also used by
+/// `usecases::tasks` for fix runs.
+pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentId, text: &str) {
+    let message_id = uuid::Uuid::new_v4().to_string();
+    let message = ChatMessage {
+        id: message_id.clone(),
+        pr: pr.clone(),
+        author: Author::Agent(agent),
+        text: String::new(),
+        refs: vec![],
+        usage: None,
+        at: core.0.deps.clock.now(),
+        failed: Some(text.to_string()),
+    };
+    if let Ok(data) = serde_json::to_value(&message) {
+        let _ = core
+            .apply(vec![NewAction {
+                model: models::CHAT_MESSAGE.into(),
+                model_id: message_id,
+                action: SyncActionCode::I,
+                data: Some(data),
+            }])
+            .await;
+    }
 }
 
 /// Revokes a run's MCP token when the run's driver returns. `pub(crate)`:
@@ -361,7 +445,7 @@ fn skill_prompt(skill: &str, agent: AgentId, worktree: &Path, claude_home: &Path
     }
 }
 
-async fn fail_run(core: &Core, run_id: &str, message: &str) {
+async fn fail_run(core: &Core, run_id: &str, pr: &PrId, agent: AgentId, message: &str) {
     let data = serde_json::json!({ "status": RunStatus::Failed, "error": message });
     let _ = core
         .apply(vec![NewAction {
@@ -371,6 +455,7 @@ async fn fail_run(core: &Core, run_id: &str, message: &str) {
             data: Some(data),
         }])
         .await;
+    persist_failed_message(core, pr, agent, message).await;
     core.0.runs.write().await.remove(run_id);
 }
 
@@ -397,7 +482,7 @@ async fn drive_ask(
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),
         model: None,
-        stall_after_ms: 90_000,
+        stall_after_ms: core.stall_after_ms().await,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();
@@ -413,6 +498,9 @@ async fn drive_ask(
                         AgentEvent::Text { text: t } => {
                             text.push_str(&t);
                             core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text: t });
+                        }
+                        AgentEvent::Stalled => {
+                            core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                         }
                         AgentEvent::Done { final_text, usage: u } => {
                             text = final_text;
@@ -431,20 +519,28 @@ async fn drive_ask(
         Err(e) => error = Some(e.to_string()),
     }
     core.0.runs.write().await.remove(&run_id);
-    if cancel.is_cancelled() {
+
+    // A crash, the runtime cap, or a cancel all leave a durable, retryable
+    // record instead of silently dropping the exchange (plan "failed agent
+    // runs") — cancelling mid-answer must not look, after a restart, as if
+    // nothing was ever asked.
+    if cancel.is_cancelled() || error.is_some() {
+        let text = error.unwrap_or_else(|| "cancelled".into());
+        persist_failed_message(core, &pr, agent, &text).await;
         return;
     }
+
     let message_id = uuid::Uuid::new_v4().to_string();
     let now = core.0.deps.clock.now();
-    let body = error.unwrap_or(text);
     let reply = ChatMessage {
         id: message_id.clone(),
         pr,
         author: Author::Agent(agent),
-        text: body,
+        text,
         refs: vec![],
         usage: Some(usage),
         at: now,
+        failed: None,
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

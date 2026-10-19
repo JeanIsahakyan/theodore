@@ -161,33 +161,38 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         .unwrap_or_else(|| PathBuf::from(".claude/skills"));
 
     let worktree_locks = WorktreeLocks::new();
-    // Detached on purpose: there's no runtime-wide shutdown signal to tie
-    // this to yet (the mcp server above is the same), and a 30-minute
-    // interval harmlessly outlives a short-lived process (tests, `theodore
-    // group`) before ever firing.
-    worktree_gc::spawn_periodic(
-        a.git.clone(),
-        a.store.clone(),
-        worktree_locks.clone(),
-        WORKTREE_GC_INTERVAL,
-    );
-
     let deps = Deps {
         host: a.host,
-        git: a.git,
+        git: a.git.clone(),
         grouper: Arc::new(GroupingGrouper::new(a.agents.clone())),
         agents: a.agents,
-        store: a.store,
+        store: a.store.clone(),
         secrets: a.secrets,
         clock: a.clock,
         tools: Some(mcp.clone()),
         token_status: a.token_status,
         device_login: a.device_login,
         claude_home,
+        worktree_lease: Arc::new(worktree_gc::WorktreeLeaseAdapter::new(
+            worktree_locks.clone(),
+        )),
     };
     let (core, receivers) = Core::start(deps);
     backend.attach(core.clone());
     core.ensure_default_settings().await?;
+
+    // Detached on purpose: there's no runtime-wide shutdown signal to tie
+    // this to yet (the mcp server above is the same), and a 30-minute
+    // interval harmlessly outlives a short-lived process (tests, `theodore
+    // group`) before ever firing.
+    worktree_gc::spawn_periodic(
+        a.git,
+        a.store,
+        worktree_locks.clone(),
+        core.clone(),
+        WORKTREE_GC_INTERVAL,
+    );
+
     Ok(Runtime {
         core,
         receivers,

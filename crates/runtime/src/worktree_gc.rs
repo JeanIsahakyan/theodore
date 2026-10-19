@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use theodore_app::Core;
 use theodore_contract::models;
 use theodore_domain::{PrRef, PrState, PrSummary};
-use theodore_ports::{GitPort, GitResult, Store};
+use theodore_ports::{GitPort, GitResult, Store, WorktreeLease};
 
 /// Refcounts worktrees currently in use, so a periodic sweep never removes
 /// one out from under whatever is holding it. Cheap to share: clone the
@@ -70,12 +71,32 @@ impl WorktreeLocks {
     }
 }
 
+/// Adapts `WorktreeLocks` to the `app`-facing `WorktreeLease` port: `app`
+/// depends only on the trait, never on `runtime`, so this thin wrapper is
+/// where the two sides meet.
+pub struct WorktreeLeaseAdapter(Arc<WorktreeLocks>);
+
+impl WorktreeLeaseAdapter {
+    pub fn new(locks: Arc<WorktreeLocks>) -> Self {
+        Self(locks)
+    }
+}
+
+impl WorktreeLease for WorktreeLeaseAdapter {
+    fn acquire(&self, pr: PrRef) -> Box<dyn std::any::Any + Send> {
+        Box::new(self.0.acquire(pr))
+    }
+}
+
 /// PRs to keep a worktree for: every `pr` row in `store` whose last known
 /// state is `Open`/`Draft` (a closed/merged PR's worktree is swept),
 /// unioned with whatever `locks` currently holds (an agent run in flight on
-/// one, say, even if its PR has since closed underneath it). `Store` is
-/// sync (rusqlite) — call this through `spawn_blocking` from async code.
-pub fn keep_list(store: &dyn Store, locks: &WorktreeLocks) -> Vec<PrRef> {
+/// one, say, even if its PR has since closed underneath it) and with
+/// `open` — every PR currently open in this session (`Core::open_pr_refs`),
+/// so the worktree behind a tab the user is looking at is never swept just
+/// because the host now reports it closed/merged. `Store` is sync
+/// (rusqlite) — call this through `spawn_blocking` from async code.
+pub fn keep_list(store: &dyn Store, locks: &WorktreeLocks, open: &[PrRef]) -> Vec<PrRef> {
     let mut keep: Vec<PrRef> = store
         .all(models::PR)
         .unwrap_or_default()
@@ -85,6 +106,7 @@ pub fn keep_list(store: &dyn Store, locks: &WorktreeLocks) -> Vec<PrRef> {
         .map(|s| s.pr)
         .collect();
     keep.extend(locks.snapshot());
+    keep.extend_from_slice(open);
     keep
 }
 
@@ -95,12 +117,16 @@ pub async fn sweep(
     git: &dyn GitPort,
     store: Arc<dyn Store>,
     locks: Arc<WorktreeLocks>,
+    open: Vec<PrRef>,
 ) -> GitResult<u32> {
-    let keep = match tokio::task::spawn_blocking(move || keep_list(store.as_ref(), &locks)).await {
+    let keep = match tokio::task::spawn_blocking(move || keep_list(store.as_ref(), &locks, &open))
+        .await
+    {
         Ok(keep) => keep,
         // A panicked lookup must never be treated as "nothing to keep" —
-        // that would make this sweep remove every worktree, including ones
-        // in active use. Skip this sweep instead; the next one tries again.
+        // that would make this sweep remove every worktree, including
+        // ones in active use. Skip this sweep instead; the next one
+        // tries again.
         Err(e) => {
             tracing::warn!(error = %e, "worktree gc: keep-list lookup panicked, skipping sweep");
             return Ok(0);
@@ -110,17 +136,20 @@ pub async fn sweep(
 }
 
 /// Spawns a task that sweeps every `interval` for as long as the returned
-/// handle isn't dropped/aborted.
+/// handle isn't dropped/aborted. `core` provides the live "every PR open
+/// right now" list on each tick (plan "worktree locks").
 pub fn spawn_periodic(
     git: Arc<dyn GitPort>,
     store: Arc<dyn Store>,
     locks: Arc<WorktreeLocks>,
+    core: Core,
     interval: Duration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(interval).await;
-            if let Err(e) = sweep(git.as_ref(), store.clone(), locks.clone()).await {
+            let open = core.open_pr_refs().await;
+            if let Err(e) = sweep(git.as_ref(), store.clone(), locks.clone(), open).await {
                 tracing::warn!(error = %e, "worktree gc sweep failed");
             }
         }
@@ -199,7 +228,7 @@ mod tests {
         ]);
         let locks = WorktreeLocks::new();
 
-        let keep = keep_list(&store, &locks);
+        let keep = keep_list(&store, &locks, &[]);
 
         assert!(keep.contains(&open));
         assert!(keep.contains(&draft));
@@ -215,14 +244,34 @@ mod tests {
         let guard = locks.acquire(closed.clone());
 
         assert!(
-            keep_list(&store, &locks).contains(&closed),
+            keep_list(&store, &locks, &[]).contains(&closed),
             "a run holding the worktree must block the sweep even though the PR is closed"
         );
 
         drop(guard);
         assert!(
-            !keep_list(&store, &locks).contains(&closed),
+            !keep_list(&store, &locks, &[]).contains(&closed),
             "once released, a closed PR's worktree is eligible for the sweep again"
+        );
+    }
+
+    #[test]
+    fn keep_list_keeps_a_currently_open_pr_even_when_the_host_reports_it_closed() {
+        // A PR the user has open in a tab, whose host state flipped to
+        // closed/merged after it was opened — `Core::open_pr_refs` still
+        // reports it, and it must never lose its worktree out from under
+        // the open tab.
+        let closed = pr_ref(9);
+        let store = store_with(vec![summary(closed.clone(), PrState::Merged)]);
+        let locks = WorktreeLocks::new();
+
+        assert!(
+            !keep_list(&store, &locks, &[]).contains(&closed),
+            "sanity: without `open`, a merged PR isn't kept"
+        );
+        assert!(
+            keep_list(&store, &locks, std::slice::from_ref(&closed)).contains(&closed),
+            "a PR in `open` must be kept even if the host reports it merged"
         );
     }
 
@@ -292,20 +341,51 @@ mod tests {
 
     #[tokio::test]
     async fn sweep_passes_keep_list_through_to_gc_worktrees() {
-        let open = pr_ref(7);
+        let open_pr = pr_ref(7);
         let closed = pr_ref(8);
         let store: Arc<dyn Store> = Arc::new(store_with(vec![
-            summary(open.clone(), PrState::Open),
+            summary(open_pr.clone(), PrState::Open),
             summary(closed.clone(), PrState::Closed),
         ]));
         let locks = WorktreeLocks::new();
         let git = RecordingGit::default();
 
-        let removed = sweep(&git, store, locks).await.unwrap();
+        let removed = sweep(&git, store, locks, vec![]).await.unwrap();
 
         let last_keep = git.last_keep.lock().unwrap().clone().unwrap();
-        assert!(last_keep.contains(&open));
+        assert!(last_keep.contains(&open_pr));
         assert!(!last_keep.contains(&closed));
         assert_eq!(removed, last_keep.len() as u32);
+    }
+
+    #[tokio::test]
+    async fn sweep_unions_the_live_open_list_into_gc_worktrees() {
+        let closed_but_open_in_a_tab = pr_ref(10);
+        let store: Arc<dyn Store> = Arc::new(store_with(vec![summary(
+            closed_but_open_in_a_tab.clone(),
+            PrState::Closed,
+        )]));
+        let locks = WorktreeLocks::new();
+        let git = RecordingGit::default();
+
+        sweep(&git, store, locks, vec![closed_but_open_in_a_tab.clone()])
+            .await
+            .unwrap();
+
+        let last_keep = git.last_keep.lock().unwrap().clone().unwrap();
+        assert!(last_keep.contains(&closed_but_open_in_a_tab));
+    }
+
+    #[test]
+    fn worktree_lease_adapter_forwards_to_the_underlying_locks() {
+        let locks = WorktreeLocks::new();
+        let adapter = WorktreeLeaseAdapter::new(locks.clone());
+        let pr = pr_ref(11);
+
+        let guard = WorktreeLease::acquire(&adapter, pr.clone());
+        assert!(locks.snapshot().contains(&pr));
+
+        drop(guard);
+        assert!(!locks.snapshot().contains(&pr));
     }
 }

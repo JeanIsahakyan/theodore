@@ -476,6 +476,13 @@ pub enum Ephemeral {
         agent: AgentId,
         line: String,
     },
+    /// No output for `agents.stall_after_ms` while `run` is still alive.
+    /// The run keeps going (this isn't terminal) — the UI offers Retry
+    /// (cancel + resend) or Cancel instead of waiting silently.
+    RunStalled {
+        run: String,
+        agent: AgentId,
+    },
     Toast {
         level: ToastLevel,
         text: String,
@@ -554,6 +561,12 @@ pub struct ChatMessage {
     pub refs: Vec<Anchor>,
     pub usage: Option<Usage>,
     pub at: Millis,
+    /// Set instead of a normal reply when the run behind this message
+    /// errored, crashed, hit its runtime cap, or was cancelled — the error
+    /// text (or a short cancelled/stalled note). The UI renders this as a
+    /// "stopped" card with Retry instead of as a normal agent reply.
+    #[serde(default)]
+    pub failed: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

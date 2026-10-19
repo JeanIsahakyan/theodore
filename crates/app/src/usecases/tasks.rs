@@ -25,18 +25,27 @@ impl Core {
             Some(a) => a,
             None => {
                 let repo_scope = self.repo_scope_of(&task.pr).await;
-                self.setting_agent_scoped(
-                    "agents.fix",
-                    repo_scope.as_deref(),
-                    theodore_domain::AgentId::Claude,
-                )
-                .await
+                let configured = self
+                    .setting_agent_scoped(
+                        "agents.fix",
+                        repo_scope.as_deref(),
+                        theodore_domain::AgentId::Claude,
+                    )
+                    .await;
+                self.effective_agent(configured).await
             }
         };
         let worktree = self
             .worktree_of(&task.pr)
             .await
             .ok_or_else(|| AppError::Invalid("pr is not open".into()))?;
+
+        // Held for the whole run (plan "worktree locks"): see
+        // `usecases::agents::run_skill`.
+        let lease = self
+            .pr_ref(&task.pr)
+            .await
+            .map(|r| self.0.deps.worktree_lease.acquire(r));
 
         let reason_key = format!("task:{}:reject_reason", task.id);
         let store = self.0.deps.store.clone();
@@ -73,6 +82,7 @@ impl Core {
         let core = self.clone();
         let run_id2 = run_id.clone();
         tokio::spawn(async move {
+            let _lease = lease;
             drive_fix_run(&core, run_id2, task, agent, worktree, reason, cancel).await;
         });
         Ok(run_id)
@@ -293,7 +303,7 @@ async fn drive_fix_run(
         mode: AgentMode::Edit,
         mcp: mcp.clone(),
         model: None,
-        stall_after_ms: 180_000,
+        stall_after_ms: core.stall_after_ms().await,
     };
     let _guard = ToolsGuard { core, mcp };
 
@@ -326,6 +336,7 @@ async fn drive_fix_run(
                 data: Some(data),
             }])
             .await;
+        crate::usecases::agents::persist_failed_message(core, &task.pr, agent, "cancelled").await;
         return;
     }
 
@@ -343,6 +354,10 @@ async fn drive_fix_run(
             level: ToastLevel::Error,
             text: format!("fix failed: {err}"),
         });
+        // Persisted in addition to the toast (plan "failed agent runs"): a
+        // toast disappears, but the task's chat history must still show,
+        // after a restart, that this fix run crashed and let it be retried.
+        crate::usecases::agents::persist_failed_message(core, &task.pr, agent, &err).await;
         return;
     }
 

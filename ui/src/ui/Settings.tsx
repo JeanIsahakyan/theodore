@@ -135,12 +135,23 @@ export const SettingsNav = observer(function SettingsNav({
   );
 });
 
-function settingValue(
+export function settingValue(
   store: ReturnType<typeof useRootStore>,
   scope: string,
   key: string,
 ): unknown {
   return store.models.settings.get(`${scope}:${key}`)?.value;
+}
+
+/** `agents.<id>.enabled`, `user` scope, default `true` (plan
+ *  "enable/disable agents") — shared by the Settings Agents page and the
+ *  chat/skill agent pickers in `SidePanel`. */
+export function isAgentEnabled(
+  store: ReturnType<typeof useRootStore>,
+  agent: AgentId,
+): boolean {
+  const v = settingValue(store, 'user', `agents.${agent}.enabled`);
+  return v !== false;
 }
 
 const AccountPage = observer(function AccountPage() {
@@ -350,17 +361,20 @@ const AgentsPage = observer(function AgentsPage() {
           <Spinner />
         ) : (
           <Card variant="secondary" className="agents gap-0 p-0">
-            {detected.map((a) => (
-              <div
-                key={a.id}
-                className="flex items-center gap-3 border-b border-separator px-4 py-2.5 last:border-b-0"
-              >
-                <Tooltip>
+            {detected.map((a) => {
+              const enabled = isAgentEnabled(store, a.id);
+              return (
+                <div
+                  key={a.id}
+                  className="flex items-center gap-3 border-b border-separator px-4 py-2.5 last:border-b-0"
+                >
                   <Switch
                     size="sm"
-                    aria-label={`${a.id} on`}
-                    isSelected={a.installed}
-                    isDisabled
+                    aria-label={`${a.id} enabled`}
+                    isSelected={enabled}
+                    onChange={(v) =>
+                      setSetting(store, 'user', `agents.${a.id}.enabled`, v)
+                    }
                   >
                     <Switch.Content>
                       <Switch.Control>
@@ -368,23 +382,27 @@ const AgentsPage = observer(function AgentsPage() {
                       </Switch.Control>
                     </Switch.Content>
                   </Switch>
-                  <Tooltip.Content>Not available yet</Tooltip.Content>
-                </Tooltip>
-                <div className="flex items-center gap-1.5">
-                  <AgentTag id={a.id} />
+                  <div
+                    className={`flex items-center gap-1.5 ${enabled ? '' : 'opacity-50'}`}
+                  >
+                    <AgentTag id={a.id} />
+                  </div>
+                  <span
+                    className={`min-w-0 flex-1 truncate font-mono text-xs text-muted ${enabled ? '' : 'opacity-50'}`}
+                  >
+                    {a.path ?? '—'}
+                  </span>
+                  <span className="text-xs text-muted">
+                    {a.installed ? (a.version ?? 'installed') : 'not found'}
+                  </span>
                 </div>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
-                  {a.path ?? '—'}
-                </span>
-                <span className="text-xs text-muted">
-                  {a.installed ? (a.version ?? 'installed') : 'not found'}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </Card>
         )}
         <span className="text-xs text-muted">
-          Who runs for what is set below. Agents use their own sign-in (
+          Disabled agents are hidden from the chat picker and skipped for
+          grouping, skills and fixes. Agents use their own sign-in (
           <code className="font-mono">claude login</code>
           ); keys never reach this app.
         </span>

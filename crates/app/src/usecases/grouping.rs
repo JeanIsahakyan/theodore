@@ -28,6 +28,9 @@ impl Core {
         };
         let detail = self.load_pr_detail(&pr).await?;
 
+        // Held for the whole run (plan "worktree locks"): see `agents::run_skill`.
+        let _lease = self.0.deps.worktree_lease.acquire(entry.pr_ref.clone());
+
         let pr_s = pr.0.clone();
         let store = self.0.deps.store.clone();
         let prev_row = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &pr_s))
@@ -35,9 +38,10 @@ impl Core {
             .map_err(AppError::join)??;
         let prev: Option<Grouping> = prev_row.and_then(|r| serde_json::from_value(r.data).ok());
         let repo_scope = detail.summary.pr.repo.slug();
-        let agent = self
+        let configured = self
             .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
             .await;
+        let agent = self.effective_agent(configured).await;
 
         let grouping = match &prev {
             Some(p) => {

@@ -10,6 +10,7 @@ use theodore_contract::TokenSource;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{
     AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, McpEndpoint, Secrets, Store,
+    WorktreeLease,
 };
 
 use crate::error::GrouperError;
@@ -77,4 +78,8 @@ pub struct Deps {
     /// (plan §8.4) — kept out of `app` itself so tests can point it at a
     /// throwaway directory instead of the real home directory.
     pub claude_home: std::path::PathBuf,
+    /// Holds a PR's worktree open against the periodic GC sweep for the
+    /// duration of an agent run (plan "worktree locks"). A no-op in tests
+    /// and the CLI, where nothing sweeps worktrees.
+    pub worktree_lease: Arc<dyn WorktreeLease>,
 }

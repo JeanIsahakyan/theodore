@@ -153,9 +153,10 @@ impl Core {
                 error: None,
             });
             let repo_scope = detail.summary.pr.repo.slug();
-            let agent = core
+            let configured = core
                 .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
                 .await;
+            let agent = core.effective_agent(configured).await;
             let result = core
                 .0
                 .deps
