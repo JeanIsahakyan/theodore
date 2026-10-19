@@ -420,7 +420,9 @@ function StackChips({ repo, stack }: { repo: RepoRef; stack: StackInfo }) {
           >
             #{stack.children[0]} stacked
           </button>
-          <Tooltip.Content>#{stack.children[0]} is stacked on this</Tooltip.Content>
+          <Tooltip.Content>
+            #{stack.children[0]} is stacked on this
+          </Tooltip.Content>
         </Tooltip>
       ) : stack.children.length > 1 ? (
         <Dropdown>

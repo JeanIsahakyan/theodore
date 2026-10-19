@@ -116,7 +116,10 @@ function StackChips({ repo, stack }: { repo: RepoRef; stack: StackInfo }) {
       )}
       {stack.children.length > 1 && (
         <Dropdown>
-          <Btn tone="ghost" className="stack-chip h-6 rounded-full px-2 text-xs">
+          <Btn
+            tone="ghost"
+            className="stack-chip h-6 rounded-full px-2 text-xs"
+          >
             {stack.children.length} stacked on this
           </Btn>
           <Dropdown.Popover placement="bottom start">

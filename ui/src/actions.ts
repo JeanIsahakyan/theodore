@@ -544,22 +544,25 @@ export async function triage(
 
 // ── review: reactions, edit/delete, suggestion batch ────────────────────────
 
-/** Toggles one reaction on a comment. `Comment` carries no reaction counts
- *  (no field for it in the contract) — this only forwards the toggle to the
- *  host; `EphemeralStore.suggestionBatch`'s sibling, `reacted`, remembers
- *  which emoji *we* toggled so the button can show as "on" locally. */
+/** Toggles one reaction on a comment. `currentlyReacted` is the caller's
+ *  already-merged view (server `Comment.reactions` plus any still-pending
+ *  override) — this flips it optimistically via
+ *  `EphemeralStore.reactionOverride`, sends the host call, and rolls the
+ *  override back on failure. The override is dropped once a synced
+ *  `Comment` agrees with it (`Comments.tsx`'s `Reactions`), not here. */
 export async function reactToComment(
   store: RootStore,
   pr: PrId,
   comment: CommentId,
   emoji: string,
+  currentlyReacted: boolean,
 ): Promise<void> {
-  const on = !store.ephemeral.hasReacted(comment, emoji);
-  store.ephemeral.setReacted(comment, emoji, on);
+  const on = !currentlyReacted;
+  store.ephemeral.setReactionOverride(comment, emoji, on);
   try {
     await api.react({ pr, comment, emoji, on });
   } catch {
-    store.ephemeral.setReacted(comment, emoji, !on); // roll back the optimistic flip
+    store.ephemeral.setReactionOverride(comment, emoji, currentlyReacted); // roll back
   }
 }
 

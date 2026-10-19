@@ -24,7 +24,7 @@ function kindOf(p: InboxPr): ActivityKind {
 }
 
 function atOf(p: InboxPr, kind: ActivityKind): number {
-  return kind === 'opened' ? p.created_at ?? p.updated_at : p.updated_at;
+  return kind === 'opened' ? (p.created_at ?? p.updated_at) : p.updated_at;
 }
 
 export function projectActivity(items: InboxPr[], limit = 50): ActivityEvent[] {

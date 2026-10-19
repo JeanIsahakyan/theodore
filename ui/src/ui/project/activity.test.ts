@@ -58,7 +58,9 @@ describe('projectActivity', () => {
   });
 
   it('uses created_at for an opened event when the host filled it', () => {
-    const items = [pr({ id: '1', state: 'open', created_at: 5, updated_at: 50 })];
+    const items = [
+      pr({ id: '1', state: 'open', created_at: 5, updated_at: 50 }),
+    ];
     expect(projectActivity(items)[0]?.at).toBe(5);
   });
 
