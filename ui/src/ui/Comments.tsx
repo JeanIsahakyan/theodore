@@ -667,7 +667,9 @@ function DraftViewInner({ d }: { d: Draft }) {
           pending
         </Chip>
         draft{d.source.kind === 'agent' && <AgentTag id={d.source.agent} />}
-        <span className="tabular-nums">· lines {label}</span>
+        <span className="tabular-nums">
+          · {d.anchor.start_line != null ? 'lines' : 'line'} {label}
+        </span>
         <span className="flex-1" />
         {editing ? (
           <Button
