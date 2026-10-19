@@ -1,6 +1,6 @@
 import { MarkdownDiff } from './MarkdownDiff';
 import { isMarkdown } from './mdDiff';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   Check,
@@ -125,6 +125,32 @@ const sevBg: Record<Severity, string> = {
 
 const CHUNK = 40;
 const STEP = 20;
+/** Below this, side-by-side halves are too narrow to read — fall back to
+ *  unified even if the user asked for split. */
+const SPLIT_MIN_WIDTH = 760;
+
+/** Tracks an element's rendered width (see `Review.tsx`'s twin of this —
+ *  not shared, each file owns its own small copy). No-op without
+ *  `ResizeObserver` (tests): one read of `clientWidth`/`innerWidth`, then
+ *  it never updates. */
+function useElementWidth(ref: { current: HTMLElement | null }): number {
+  const [width, setWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : SPLIT_MIN_WIDTH,
+  );
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setWidth(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w != null) setWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return width;
+}
 
 export const DiffPane = observer(function DiffPane({
   pr,
@@ -144,6 +170,14 @@ export const DiffPane = observer(function DiffPane({
   tour?: boolean;
 }) {
   const store = useRootStore();
+  const ui = useUi();
+  const mainRef = useRef<HTMLDivElement>(null);
+  const diffWidth = useElementWidth(mainRef);
+  // Split needs room for two readable halves; below that, unified is more
+  // useful than two unreadably-thin columns.
+  const splitRequested = ui.diffView === 'split';
+  const effectiveSplit = splitRequested && diffWidth >= SPLIT_MIN_WIDTH;
+  const splitDowngraded = splitRequested && !effectiveSplit;
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [rangeStart, setRangeStart] = useState<{
     path: string;
@@ -221,13 +255,25 @@ export const DiffPane = observer(function DiffPane({
       : 0;
 
   return (
-    <main className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5">
+    <main
+      ref={mainRef}
+      className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
+    >
       {tour && (
         <Surface className="tour sticky -top-5 z-[3] -mx-6 -mt-5 mb-5 flex items-center gap-3 border-b border-separator px-6 py-3">
           <Sparkles className="size-4 text-accent" />
           Tour mode — press <Kbd className="font-mono">R</Kbd> to mark this
           group read and continue
         </Surface>
+      )}
+      {splitDowngraded && (
+        <Alert status="default" className="split-note mb-4">
+          <Alert.Content>
+            <Alert.Title>
+              Showing unified — not enough room here for side-by-side.
+            </Alert.Title>
+          </Alert.Content>
+        </Alert>
       )}
       {sinceOnly && (
         <Alert status="accent" className="since-banner mb-4">
@@ -282,6 +328,7 @@ export const DiffPane = observer(function DiffPane({
           groupHunkIds={mode.mode === 'groups' ? groupHunkIds : null}
           mode={mode}
           setMode={setMode}
+          split={effectiveSplit}
           composer={composer}
           setComposer={setComposer}
           rangeStart={rangeStart}
@@ -341,7 +388,11 @@ const GroupCard = observer(function GroupCard({
         <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-sm font-semibold text-accent tabular-nums">
           {n}
         </span>
-        <Typography.Heading level={5} className="min-w-0">
+        <Typography.Heading
+          level={5}
+          className="min-w-0 truncate"
+          title={g.title}
+        >
           {g.title}
         </Typography.Heading>
         {g.risk && g.risk.length <= RISK_CHIP_MAX && (
@@ -642,6 +693,7 @@ function FileBlockInner({
   groupHunkIds,
   mode,
   setMode,
+  split,
   composer,
   setComposer,
   rangeStart,
@@ -660,6 +712,7 @@ function FileBlockInner({
   groupHunkIds: Set<HunkId> | null;
   mode: ReviewMode;
   setMode: (m: ReviewMode) => void;
+  split: boolean;
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
 } & Omit<LineProps, 'path'>) {
@@ -740,33 +793,47 @@ function FileBlockInner({
         onContextMenu={fileMenu}
       >
         <FileCode className="size-4 shrink-0 text-muted" />
-        <span className="min-w-0 truncate font-mono text-[13px]">
-          {file.old_path && (
-            <span className="text-muted line-through decoration-muted/60">
-              {file.old_path}
-            </span>
-          )}
-          {file.old_path && <span className="px-1.5 text-muted">→</span>}
-          <span className="font-medium">{file.path}</span>
+        {/* `dir="rtl"` truncates from the start so the filename (the end of
+         *  the path) stays visible; the inner `dir="ltr"` keeps old→new
+         *  order correct for renames regardless of the outer direction. */}
+        <span
+          className="min-w-0 truncate font-mono text-[13px]"
+          dir="rtl"
+          title={file.old_path ? `${file.old_path} → ${file.path}` : file.path}
+        >
+          <span dir="ltr">
+            {file.old_path && (
+              <span className="text-muted line-through decoration-muted/60">
+                {file.old_path}
+              </span>
+            )}
+            {file.old_path && <span className="px-1.5 text-muted">→</span>}
+            <span className="font-medium">{file.path}</span>
+          </span>
         </span>
         {file.status === 'added' && (
-          <Chip size="sm" variant="soft" color="success">
+          <Chip size="sm" variant="soft" color="success" className="shrink-0">
             new file
           </Chip>
         )}
         {file.status === 'renamed' && (
-          <Chip size="sm" variant="soft" color="accent" className="renamed">
+          <Chip
+            size="sm"
+            variant="soft"
+            color="accent"
+            className="renamed shrink-0"
+          >
             renamed
             {file.similarity != null ? ` · ${file.similarity}% similar` : ''}
           </Chip>
         )}
         {file.status === 'deleted' && (
-          <Chip size="sm" variant="soft" color="danger">
+          <Chip size="sm" variant="soft" color="danger" className="shrink-0">
             deleted
           </Chip>
         )}
         {generatedFlag && (
-          <Chip size="sm" variant="secondary" className="generated">
+          <Chip size="sm" variant="secondary" className="generated shrink-0">
             generated · {generatedFlag.reason}
           </Chip>
         )}
@@ -784,12 +851,12 @@ function FileBlockInner({
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 gap-1 px-2 text-xs text-accent"
+                className="h-7 max-w-40 shrink-0 gap-1 px-2 text-xs text-accent"
                 onPress={() =>
                   setMode({ mode: 'groups', group: g.id, file: file.path })
                 }
               >
-                also in “{g.title}”
+                <span className="truncate">also in “{g.title}”</span>
               </Button>
               <Tooltip.Content>
                 Another hunk of this file in group “{g.title}”
@@ -799,7 +866,7 @@ function FileBlockInner({
         })}
         <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
-          <Chip size="sm" variant="soft" color="warning">
+          <Chip size="sm" variant="soft" color="warning" className="shrink-0">
             changed since viewed
           </Chip>
         )}
@@ -809,6 +876,7 @@ function FileBlockInner({
             selectionMode="single"
             disallowEmptySelection
             aria-label="Markdown view"
+            className="shrink-0"
             selectedKeys={new Set([preview ? 'preview' : 'code'])}
             onSelectionChange={(k) => setPreview([...k][0] === 'preview')}
           >
@@ -823,7 +891,7 @@ function FileBlockInner({
           size="sm"
           isSelected={isViewed}
           onChange={() => setFileViewed(store, pr, file.path, !isViewed)}
-          className="viewed-toggle gap-1.5"
+          className="viewed-toggle shrink-0 gap-1.5"
           aria-label={local ? 'read' : 'Viewed — syncs with GitHub'}
         >
           {isViewed ? (
@@ -877,6 +945,7 @@ function FileBlockInner({
                 path={file.path}
                 h={h}
                 lang={lang}
+                split={split}
                 since={since?.get(h.id)}
                 focusHunk={focusHunk}
                 setFocusHunk={setFocusHunk}
@@ -908,17 +977,14 @@ function HunkOrSplitInner(
   props: {
     h: Hunk;
     lang: ReturnType<typeof langOf>;
+    split: boolean;
     since?: SinceKind;
     focusHunk: HunkId | null;
     setFocusHunk: (h: HunkId | null) => void;
   } & LineProps,
 ) {
-  const ui = useUi();
-  return ui.diffView === 'split' ? (
-    <SplitHunkView {...props} />
-  ) : (
-    <HunkView {...props} />
-  );
+  const { split, ...rest } = props;
+  return split ? <SplitHunkView {...rest} /> : <HunkView {...rest} />;
 }
 
 function HunkViewInner({
@@ -990,7 +1056,11 @@ function HunkViewInner({
         onContextMenu={hunkMenu}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
-        {h.header && <span className="truncate text-muted/70">{h.header}</span>}
+        {h.header && (
+          <span className="min-w-0 flex-1 truncate text-muted/70">
+            {h.header}
+          </span>
+        )}
         <SinceBadge kind={since} />
         <span className="flex-1" />
         {read && (
@@ -1061,7 +1131,11 @@ function SplitHunkViewInner({
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
-        {h.header && <span className="truncate text-muted/70">{h.header}</span>}
+        {h.header && (
+          <span className="min-w-0 flex-1 truncate text-muted/70">
+            {h.header}
+          </span>
+        )}
         <SinceBadge kind={since} />
         <span className="flex-1" />
         {read && (
