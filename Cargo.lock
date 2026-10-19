@@ -4881,6 +4881,7 @@ dependencies = [
  "theodore-git",
  "theodore-ports",
  "theodore-secrets",
+ "theodore-store",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",

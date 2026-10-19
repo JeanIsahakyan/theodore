@@ -295,6 +295,7 @@ impl Core {
             from_sync_id: from,
             last_sync_id: last,
             actions: actions.iter().cloned().map(to_wire_action).collect(),
+            resync_required: false,
         };
         self.0.last_broadcast.store(last, Ordering::SeqCst);
         let _ = self.0.sync_tx.send(frame);
