@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use theodore_domain::{
     Check, CheckRollup, CheckStatus, Comment, CommentId, Commit, FileViewed, HostKind, HostRepo,
-    InboxReason, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, ReviewDecision,
-    ReviewEvent, Reviewer, ReviewerState, Sha, Thread, ThreadId, ViewedState,
+    InboxReason, Millis, Person, PrDetail, PrRef, PrState, PrSummary, ReactionCount, RepoRef,
+    ReviewDecision, ReviewEvent, Reviewer, ReviewerState, Sha, Thread, ThreadId, ViewedState,
 };
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
@@ -230,6 +230,10 @@ impl GithubAdapter {
             url: core.url.clone(),
             review_decision: map_review_decision(core.review_decision.as_deref()),
             conflicts: core.mergeable.as_deref() == Some("CONFLICTING"),
+            created_at: Some(time::parse_millis(&core.created_at)),
+            // Computed app-side from the stored PR rows (plan "Stack"), not
+            // host data — never filled by an adapter.
+            stack: None,
         };
 
         Ok(PrDetail {
@@ -695,6 +699,36 @@ fn map_merge_state(state: &str) -> MergeState {
     }
 }
 
+/// GitHub's `ReactionContent` enum -> the REST content name used everywhere
+/// else in this codebase (`ReactRequest::emoji`, the REST reaction
+/// endpoints): `+1`, `-1`, `laugh`, `hooray`, `confused`, `heart`, `rocket`,
+/// `eyes`.
+fn reaction_emoji_name(content: &str) -> &'static str {
+    match content {
+        "THUMBS_UP" => "+1",
+        "THUMBS_DOWN" => "-1",
+        "LAUGH" => "laugh",
+        "HOORAY" => "hooray",
+        "CONFUSED" => "confused",
+        "HEART" => "heart",
+        "ROCKET" => "rocket",
+        "EYES" => "eyes",
+        _ => "eyes",
+    }
+}
+
+fn map_reactions(groups: &[graphql::GqlReactionGroup]) -> Vec<ReactionCount> {
+    groups
+        .iter()
+        .filter(|g| g.reactors.total_count > 0)
+        .map(|g| ReactionCount {
+            emoji: reaction_emoji_name(&g.content).to_string(),
+            count: g.reactors.total_count,
+            viewer_reacted: g.viewer_has_reacted,
+        })
+        .collect()
+}
+
 fn map_viewed_state(state: &str) -> ViewedState {
     match state {
         "VIEWED" => ViewedState::Viewed,
@@ -795,6 +829,7 @@ fn map_thread(t: &graphql::GqlThread, head_sha: &Sha) -> Thread {
             body: c.body.clone(),
             created_at: time::parse_millis(&c.created_at),
             edited: c.last_edited_at.is_some(),
+            reactions: map_reactions(&c.reaction_groups),
         })
         .collect();
     Thread {
@@ -901,5 +936,7 @@ fn search_node_to_summary(
         url: n.url.clone().unwrap_or_default(),
         review_decision: map_review_decision(n.review_decision.as_deref()),
         conflicts: n.mergeable.as_deref() == Some("CONFLICTING"),
+        created_at: n.created_at.as_deref().map(time::parse_millis),
+        stack: None,
     })
 }

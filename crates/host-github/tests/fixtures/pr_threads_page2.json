@@ -22,7 +22,12 @@
                     "body": "File-level note.",
                     "createdAt": "2024-01-02T04:05:00Z",
                     "lastEditedAt": "2024-01-02T04:06:00Z",
-                    "author": { "login": "bob", "avatarUrl": null, "name": "Bob" }
+                    "author": { "login": "bob", "avatarUrl": null, "name": "Bob" },
+                    "reactionGroups": [
+                      { "content": "THUMBS_UP", "viewerHasReacted": true, "reactors": { "totalCount": 2 } },
+                      { "content": "HEART", "viewerHasReacted": false, "reactors": { "totalCount": 1 } },
+                      { "content": "ROCKET", "viewerHasReacted": false, "reactors": { "totalCount": 0 } }
+                    ]
                   }
                 ]
               }

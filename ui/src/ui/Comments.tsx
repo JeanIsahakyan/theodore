@@ -3,12 +3,6 @@ import { stripHtmlComments } from '../highlight';
  * The inline comment-thread UI used under a diff line: existing review
  * threads, pending drafts, and the composer that creates new ones. Ported
  * from the prototype's `Comments.tsx`.
- *
- * Still dropped vs. the prototype (no backing data exists for it — not a UI
- * choice, a contract gap):
- * - Reaction *counts*: `Comment` carries no reactions field at all, so the
- *   reaction bar can toggle (`react`) but can only show what *we* toggled
- *   this session (`EphemeralStore.reacted`), never who else reacted.
  */
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -44,6 +38,7 @@ import type {
   Person,
   PrId,
   PrSummary,
+  ReactionCount,
 } from '../gen/contract';
 import {
   addDraft,
@@ -250,6 +245,35 @@ export function Body({ text }: { text: string }) {
   );
 }
 
+export interface ReactionView {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
+/** Merges the server's per-comment reaction counts with a pending local
+ *  override (plan "Comments & threads"): `overrideOf` wins over the
+ *  server's `viewer_reacted` until the next sync agrees with it — the
+ *  override is additive/subtractive on `count` too, so a just-added
+ *  reaction shows up immediately instead of waiting on a round trip.
+ *  Returns one row per emoji in `REACTIONS`' canonical order, including
+ *  zero-count ones (callers filter those out for display, but keep them
+ *  for the "add a reaction" picker). */
+export function mergeReactions(
+  server: ReactionCount[] | undefined,
+  overrideOf: (emoji: string) => boolean | undefined,
+): ReactionView[] {
+  return REACTIONS.map(([, emoji]) => {
+    const row = server?.find((r) => r.emoji === emoji);
+    const serverCount = row?.count ?? 0;
+    const serverMine = row?.viewer_reacted ?? false;
+    const override = overrideOf(emoji);
+    const mine = override ?? serverMine;
+    const delta = mine === serverMine ? 0 : mine ? 1 : -1;
+    return { emoji, count: Math.max(0, serverCount + delta), mine };
+  });
+}
+
 const Reactions = observer(function Reactions({
   pr,
   comment,
@@ -259,51 +283,77 @@ const Reactions = observer(function Reactions({
 }) {
   const store = useRootStore();
   const [open, setOpen] = useState(false);
-  const mine = REACTIONS.filter(([, name]) =>
-    store.ephemeral.hasReacted(comment.id, name),
+  const views = mergeReactions(comment.reactions, (emoji) =>
+    store.ephemeral.reactionOverride(comment.id, emoji),
   );
+  const shown = views.filter((v) => v.count > 0);
+
+  // The override's only job is to bridge the gap until a synced `Comment`
+  // reflects it; once it does, drop it rather than shadow real data.
+  useEffect(() => {
+    for (const { emoji, mine } of views) {
+      const override = store.ephemeral.reactionOverride(comment.id, emoji);
+      if (override === undefined) continue;
+      const serverMine =
+        comment.reactions?.find((r) => r.emoji === emoji)?.viewer_reacted ??
+        false;
+      if (serverMine === mine)
+        store.ephemeral.clearReactionOverride(comment.id, emoji);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comment.reactions, comment.id]);
+
   return (
     <div className="reactions flex flex-wrap items-center gap-1">
-      {mine.map(([emoji, name]) => (
-        <Button
-          key={name}
-          size="sm"
-          variant="secondary"
-          aria-label={name}
-          className="reaction h-6 gap-1 rounded-full px-2 text-xs ring-1 ring-accent"
-          onPress={() => void reactToComment(store, pr, comment.id, name)}
-        >
-          {emoji}
-        </Button>
-      ))}
+      {shown.map((v) => {
+        const icon = REACTIONS.find(([, name]) => name === v.emoji)?.[0];
+        return (
+          <Button
+            key={v.emoji}
+            size="sm"
+            variant="secondary"
+            aria-label={v.emoji}
+            className={`reaction h-6 gap-1 rounded-full px-2 text-xs ${v.mine ? 'ring-1 ring-accent' : ''}`}
+            onPress={() =>
+              void reactToComment(store, pr, comment.id, v.emoji, v.mine)
+            }
+          >
+            {icon}
+            <span className="tabular-nums">{v.count}</span>
+          </Button>
+        );
+      })}
       <Popover isOpen={open} onOpenChange={setOpen}>
         <Button
           isIconOnly
           size="sm"
           variant="ghost"
           aria-label="Add reaction"
-          className={`add-reaction size-6 min-w-6 text-muted ${mine.length ? '' : 'opacity-0 group-hover:opacity-100'} data-[pressed=true]:opacity-100`}
+          className={`add-reaction size-6 min-w-6 text-muted ${shown.length ? '' : 'opacity-0 group-hover:opacity-100'} data-[pressed=true]:opacity-100`}
         >
           <FaceSmile className="size-3.5" />
         </Button>
         <Popover.Content placement="top start">
           <Popover.Dialog className="flex gap-0.5 p-1">
-            {REACTIONS.map(([emoji, name]) => (
-              <Button
-                key={name}
-                isIconOnly
-                size="sm"
-                variant="ghost"
-                aria-label={name}
-                className="size-8 min-w-8 text-base"
-                onPress={() => {
-                  void reactToComment(store, pr, comment.id, name);
-                  setOpen(false);
-                }}
-              >
-                {emoji}
-              </Button>
-            ))}
+            {REACTIONS.map(([emoji, name]) => {
+              const mine = views.find((v) => v.emoji === name)?.mine ?? false;
+              return (
+                <Button
+                  key={name}
+                  isIconOnly
+                  size="sm"
+                  variant="ghost"
+                  aria-label={name}
+                  className="size-8 min-w-8 text-base"
+                  onPress={() => {
+                    void reactToComment(store, pr, comment.id, name, mine);
+                    setOpen(false);
+                  }}
+                >
+                  {emoji}
+                </Button>
+              );
+            })}
           </Popover.Dialog>
         </Popover.Content>
       </Popover>

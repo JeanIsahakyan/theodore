@@ -28,6 +28,7 @@ fn mr_json(extra: serde_json::Value) -> serde_json::Value {
         "target_branch": "main",
         "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "author": { "id": 1, "username": "alice" },
+        "created_at": "2023-12-31T00:00:00.000Z",
         "updated_at": "2024-01-01T00:00:00.000Z"
     });
     for (k, v) in extra.as_object().unwrap() {

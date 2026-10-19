@@ -242,6 +242,7 @@ impl HostAdapter for FixtureHost {
                     body: comment.body.clone(),
                     created_at: 0,
                     edited: false,
+                    reactions: Vec::new(),
                 }],
             });
             threads.push((comment.marker.clone(), thread_id));
@@ -286,6 +287,7 @@ impl HostAdapter for FixtureHost {
             body: body.to_string(),
             created_at: 0,
             edited: false,
+            reactions: Vec::new(),
         });
         Ok(comment_id)
     }

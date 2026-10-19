@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PrSummary } from '../gen/contract';
-import { canCommitSuggestions, suggestionOf } from './Comments';
+import type { PrSummary, ReactionCount } from '../gen/contract';
+import { canCommitSuggestions, mergeReactions, suggestionOf } from './Comments';
 
 describe('suggestionOf', () => {
   it('returns null for a comment with no suggestion fence', () => {
@@ -70,5 +70,60 @@ describe('canCommitSuggestions', () => {
 
   it('is false with no signed-in viewer on a host PR', () => {
     expect(canCommitSuggestions(summary(), undefined)).toBe(false);
+  });
+});
+
+const noOverride = () => undefined;
+
+describe('mergeReactions', () => {
+  it('reads server counts straight through with no override', () => {
+    const server: ReactionCount[] = [
+      { emoji: '+1', count: 3, viewer_reacted: false },
+    ];
+    const views = mergeReactions(server, noOverride);
+    expect(views.find((v) => v.emoji === '+1')).toEqual({
+      emoji: '+1',
+      count: 3,
+      mine: false,
+    });
+  });
+
+  it('returns a zero-count row for an emoji with no server data', () => {
+    const views = mergeReactions(undefined, noOverride);
+    expect(views.every((v) => v.count === 0 && !v.mine)).toBe(true);
+    expect(views).toHaveLength(8);
+  });
+
+  it('an optimistic "on" override adds 1 even before the server agrees', () => {
+    const server: ReactionCount[] = [
+      { emoji: 'heart', count: 2, viewer_reacted: false },
+    ];
+    const views = mergeReactions(server, (e) =>
+      e === 'heart' ? true : undefined,
+    );
+    const heart = views.find((v) => v.emoji === 'heart')!;
+    expect(heart).toEqual({ emoji: 'heart', count: 3, mine: true });
+  });
+
+  it('an optimistic "off" override subtracts 1 and never goes below zero', () => {
+    const server: ReactionCount[] = [
+      { emoji: 'heart', count: 1, viewer_reacted: true },
+    ];
+    const views = mergeReactions(server, (e) =>
+      e === 'heart' ? false : undefined,
+    );
+    const heart = views.find((v) => v.emoji === 'heart')!;
+    expect(heart).toEqual({ emoji: 'heart', count: 0, mine: false });
+  });
+
+  it('an override that already matches the server changes nothing', () => {
+    const server: ReactionCount[] = [
+      { emoji: 'rocket', count: 1, viewer_reacted: true },
+    ];
+    const views = mergeReactions(server, (e) =>
+      e === 'rocket' ? true : undefined,
+    );
+    const rocket = views.find((v) => v.emoji === 'rocket')!;
+    expect(rocket).toEqual({ emoji: 'rocket', count: 1, mine: true });
   });
 });

@@ -24,6 +24,9 @@ async fn review_requested_section_tags_every_result_with_the_reason() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].pr.number, 99);
     assert_eq!(results[0].reasons, vec![InboxReason::ReviewRequested]);
+    // Fixture's `createdAt` (2024-01-28) is before `updatedAt` (2024-02-01).
+    assert!(results[0].created_at.is_some());
+    assert!(results[0].created_at.unwrap() < results[0].updated_at);
 }
 
 #[tokio::test]

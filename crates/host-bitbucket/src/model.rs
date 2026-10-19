@@ -97,6 +97,8 @@ pub(crate) struct BbPullRequest {
     pub reviewers: Vec<BbUser>,
     #[serde(default)]
     pub participants: Vec<BbParticipant>,
+    #[serde(default)]
+    pub created_on: Option<String>,
     pub updated_on: String,
     pub links: BbPrLinks,
     #[serde(default)]

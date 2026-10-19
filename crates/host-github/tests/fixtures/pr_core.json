@@ -16,6 +16,7 @@
         "headRefName": "feature-x",
         "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "createdAt": "2024-01-01T09:00:00Z",
         "updatedAt": "2024-01-02T03:04:05Z",
         "reviewDecision": "APPROVED",
         "mergeable": "MERGEABLE",

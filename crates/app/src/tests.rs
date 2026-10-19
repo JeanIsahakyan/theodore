@@ -17,8 +17,8 @@ use theodore_contract::{
 };
 use theodore_domain::{
     AgentId, Anchor, Assignee, Check, CheckStatus, Comment, CommentId, FileDiff, FileStatus, Fix,
-    FixStatus, HostKind, HostRepo, HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha,
-    Side, Task, TaskId, TaskStatus, Thread, ThreadId, Usage, ViewedState,
+    FixStatus, HostKind, HostRepo, HunkId, Patch, PrId, PrRef, PrSummary, RepoRef, ReviewEvent,
+    Revision, Sha, Side, Task, TaskId, TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
     AgentEvent, BranchInfo, Clock, CommitLog, DevicePoll, Fetched, HostError,
@@ -677,6 +677,40 @@ async fn open_pr_happy_path_stores_rows_and_groups_in_background() {
     .await;
 }
 
+#[tokio::test]
+async fn opening_a_pr_links_it_to_an_already_stored_child_in_the_same_repo() {
+    let f = fixtures();
+    // Pre-seed a PR row based on the fixture PR's `head_ref` ("feature"),
+    // as if an earlier inbox refresh had already stored it.
+    let child_ref = PrRef {
+        repo: fixture_pr_ref().repo,
+        number: 8,
+        host_id: None,
+    };
+    let mut child = testkit::sample_pr_summary(&child_ref, &Sha::new("h8"));
+    child.base_ref = "feature".into();
+    child.head_ref = "feat/child".into();
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: child_ref.id().0.clone(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(&child).unwrap()),
+        }])
+        .unwrap();
+
+    // The fixture PR (`#7`, base "main", head "feature") is `#8`'s parent.
+    let (_core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let parent_row = f.store.get(models::PR, &pr.0).unwrap().unwrap();
+    let parent_summary: PrSummary = serde_json::from_value(parent_row.data).unwrap();
+    assert_eq!(parent_summary.stack.expect("has a child").children, vec![8]);
+
+    let child_row = f.store.get(models::PR, &child_ref.id().0).unwrap().unwrap();
+    let child_summary: PrSummary = serde_json::from_value(child_row.data).unwrap();
+    assert_eq!(child_summary.stack.expect("has a parent").base_pr, Some(7));
+}
+
 // ── read -> viewed -> outbox ─────────────────────────────────────────────
 
 #[tokio::test]
@@ -1217,6 +1251,55 @@ async fn refresh_inbox_writes_pr_rows_and_seeds_inbox_state_once() {
     core.refresh_inbox().await.expect("refresh_inbox again");
     let state_row = f.store.get(models::INBOX_STATE, &pr_id.0).unwrap().unwrap();
     assert_eq!(state_row.data["done"], json!(true));
+}
+
+#[tokio::test]
+async fn refresh_inbox_links_stacked_prs_in_the_same_repo() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    let repo = fixture_pr_ref().repo;
+    let parent_ref = PrRef {
+        repo: repo.clone(),
+        number: 1,
+        host_id: None,
+    };
+    let child_ref = PrRef {
+        repo: repo.clone(),
+        number: 2,
+        host_id: None,
+    };
+
+    let mut parent = testkit::sample_pr_summary(&parent_ref, &Sha::new("h1"));
+    parent.base_ref = "main".into();
+    parent.head_ref = "feat/a".into();
+    let mut child = testkit::sample_pr_summary(&child_ref, &Sha::new("h2"));
+    child.base_ref = "feat/a".into();
+    child.head_ref = "feat/b".into();
+
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![parent.clone(), child.clone()]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+
+    let parent_row = f
+        .store
+        .get(models::PR, &parent_ref.id().0)
+        .unwrap()
+        .unwrap();
+    let parent_summary: PrSummary = serde_json::from_value(parent_row.data).unwrap();
+    assert_eq!(
+        parent_summary.stack.expect("parent has a child").children,
+        vec![2]
+    );
+
+    let child_row = f.store.get(models::PR, &child_ref.id().0).unwrap().unwrap();
+    let child_summary: PrSummary = serde_json::from_value(child_row.data).unwrap();
+    assert_eq!(
+        child_summary.stack.expect("child has a parent").base_pr,
+        Some(1)
+    );
 }
 
 // ── viewer / host_status / set_host_token ───────────────────────────────────
@@ -3087,6 +3170,7 @@ fn suggestion_comment(id: &str, body: &str) -> Comment {
         body: body.into(),
         created_at: 0,
         edited: false,
+        reactions: Vec::new(),
     }
 }
 

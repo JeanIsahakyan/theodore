@@ -10,6 +10,7 @@ pub mod interdiff;
 pub mod model;
 pub mod reading;
 pub mod snooze;
+pub mod stack;
 pub mod tasks;
 
 pub use model::*;

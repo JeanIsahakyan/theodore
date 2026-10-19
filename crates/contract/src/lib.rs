@@ -15,6 +15,8 @@ mod linear;
 pub use linear::*;
 mod login;
 pub use login::*;
+mod pr_meta;
+pub use pr_meta::*;
 mod pr_state;
 pub use pr_state::*;
 mod symbols;
@@ -677,7 +679,9 @@ pub fn types() -> specta::Types {
         .register::<LinearIssuesRequest>()
         .register::<LinearIssue>()
         .register::<FindSymbolRequest>()
-        .register::<SymbolHit>();
+        .register::<SymbolHit>()
+        .register::<StackInfo>()
+        .register::<ReactionCount>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

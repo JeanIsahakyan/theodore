@@ -527,6 +527,8 @@ fn minimal_fixture_dir(claude_script: Vec<RecordedEvent>) -> tempfile::TempDir {
             url: String::new(),
             review_decision: None,
             conflicts: false,
+            created_at: None,
+            stack: None,
         },
         body: String::new(),
         base_sha: Sha::new("base"),

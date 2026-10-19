@@ -1422,6 +1422,8 @@ pub fn sample_pr_summary(pr_ref: &PrRef, head: &Sha) -> PrSummary {
         ),
         review_decision: None,
         conflicts: false,
+        created_at: None,
+        stack: None,
     }
 }
 

@@ -96,6 +96,11 @@ export type Comment = {
 	body: string,
 	created_at: number,
 	edited: boolean,
+	/**
+	 *  Reaction counts (plan "Comments & threads"), filled from the host's
+	 *  per-comment reaction groups where available.
+	 */
+	reactions?: ReactionCount[],
 };
 
 export type CommentId = string;
@@ -560,6 +565,16 @@ export type PrSummary = {
 	 *  conflicts with the base branch).
 	 */
 	conflicts?: boolean,
+	/**
+	 *  When the PR was opened (GitHub/GitLab `createdAt`). `None` for a host
+	 *  or code path that doesn't fill it yet.
+	 */
+	created_at?: number | null,
+	/**
+	 *  This PR's place in a same-repo PR chain (plan "Stack"), computed app-
+	 *  side from the PR rows already in the store — not host data.
+	 */
+	stack?: StackInfo | null,
 };
 
 /**
@@ -600,6 +615,17 @@ export type ReactRequest = {
 	/**  GitHub content name: +1, -1, laugh, hooray, confused, heart, rocket, eyes. */
 	emoji: string,
 	on: boolean,
+};
+
+/**
+ *  One emoji's reaction tally on a `Comment`. `emoji` matches the host's own
+ *  reaction-content convention (`+1`, `-1`, `laugh`, `hooray`, `confused`,
+ *  `heart`, `rocket`, `eyes`) — the same strings `ReactRequest::emoji` sends.
+ */
+export type ReactionCount = {
+	emoji: string,
+	count: number,
+	viewer_reacted: boolean,
 };
 
 export type ReplyRequest = {
@@ -739,6 +765,19 @@ export type SkillRun = {
 };
 
 export type SnoozeUntil = { kind: "time"; at: number } | { kind: "next_push" } | { kind: "checks_green" };
+
+/**
+ *  One PR's place in a same-repo chain of stacked PRs (plan "Stack"): the
+ *  parent this PR is based on, and the children based on it. Computed by
+ *  `theodore_domain::stack::compute_stacks` from the PR rows already synced
+ *  — no extra host call.
+ */
+export type StackInfo = {
+	/**  The PR this one is based on (`head_ref` of that PR == this `base_ref`). */
+	base_pr: number | null,
+	/**  PRs based on this one (`base_ref` of those PRs == this `head_ref`). */
+	children: number[],
+};
 
 export type SubmitReviewRequest = {
 	pr: PrId,

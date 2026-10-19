@@ -25,7 +25,8 @@ async fn mount(s: &support::Servers, merge_status: &str, detailed: &str, mwps: b
             "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/42",
             "source_branch": "feature-x", "target_branch": "main",
             "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "author": { "id": 1, "username": "alice" }, "updated_at": "2024-01-01T00:00:00.000Z",
+            "author": { "id": 1, "username": "alice" },
+            "created_at": "2023-12-31T00:00:00.000Z", "updated_at": "2024-01-01T00:00:00.000Z",
             "merge_status": merge_status,
             "detailed_merge_status": detailed,
             "merge_when_pipeline_succeeds": mwps
@@ -89,7 +90,8 @@ async fn merge_status_excludes_squash_when_the_project_forbids_it() {
             "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/42",
             "source_branch": "feature-x", "target_branch": "main",
             "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "author": { "id": 1, "username": "alice" }, "updated_at": "2024-01-01T00:00:00.000Z",
+            "author": { "id": 1, "username": "alice" },
+            "created_at": "2023-12-31T00:00:00.000Z", "updated_at": "2024-01-01T00:00:00.000Z",
             "merge_status": "can_be_merged",
             "detailed_merge_status": "mergeable"
         })))

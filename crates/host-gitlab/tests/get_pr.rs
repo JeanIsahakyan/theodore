@@ -85,6 +85,9 @@ async fn get_pr_probes_etag_then_builds_full_detail() {
         Some(theodore_domain::ReviewDecision::Approved)
     );
     assert!(!detail.summary.conflicts);
+    // Fixture's `created_at` (2024-01-01) is before `updated_at` (2024-01-02).
+    assert!(detail.summary.created_at.is_some());
+    assert!(detail.summary.created_at.unwrap() < detail.summary.updated_at);
     assert_eq!(detail.summary.additions, 2);
     assert_eq!(detail.summary.deletions, 1);
     assert_eq!(detail.summary.changed_files, 1);

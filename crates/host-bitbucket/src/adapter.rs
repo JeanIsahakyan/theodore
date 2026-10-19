@@ -115,6 +115,9 @@ impl BitbucketAdapter {
             // Ditto for mergeability; `merge_status` is left `Unsupported`
             // (plan §6.4 — not asked for by this slice) rather than guessed.
             conflicts: false,
+            created_at: pr.created_on.as_deref().map(time::parse_millis),
+            // Computed by the app across stored PR rows.
+            stack: None,
         };
 
         let threads = group_into_threads(comments, &head_sha);
@@ -674,6 +677,8 @@ fn pr_to_summary(pr: &BbPullRequest, reason: Option<InboxReason>) -> PrSummary {
         url: pr.links.html.href.clone(),
         review_decision: None,
         conflicts: false,
+        created_at: pr.created_on.as_deref().map(time::parse_millis),
+        stack: None,
     }
 }
 
@@ -738,5 +743,7 @@ fn map_comment(c: &BbComment) -> Comment {
         body: c.content.raw.clone(),
         created_at: time::parse_millis(&c.created_on),
         edited: c.updated_on.as_deref().is_some_and(|u| u != c.created_on),
+        // Bitbucket comments have no reactions.
+        reactions: vec![],
     }
 }

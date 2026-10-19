@@ -63,10 +63,13 @@ export class EphemeralStore {
   viewer: Person | null = null;
   /** `viewer` fetch in flight — tells "loading" apart from "signed out". */
   viewerLoading = false;
-  /** Reactions *we* toggled, `"<comment>:<emoji>"` — `Comment` carries no
-   *  reaction counts (no field for it in the contract), so this is local
-   *  memory of our own toggles, not a readback of the host's state. */
-  reacted = new Set<string>();
+  /** Optimistic overlay on `Comment.reactions`, `"<comment>:<emoji>"` ->
+   *  the viewer-reacted state we just set. Wins over the server's
+   *  `viewer_reacted`/`count` until the next sync brings a `Comment` whose
+   *  server state already matches, at which point the caller clears it
+   *  (`clearReactionOverride`) — it's then redundant, not a second source
+   *  of truth. */
+  reactionOverrides = new Map<string, boolean>();
   /** Suggestion comments queued for a batch commit, per PR. */
   suggestionBatch = new Map<PrId, Set<CommentId>>();
 
@@ -83,22 +86,33 @@ export class EphemeralStore {
       inboxLoading: observable,
       viewer: observableRef,
       viewerLoading: observable,
-      reacted: observableShallow,
+      reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
     });
   }
 
-  hasReacted(comment: CommentId, emoji: string): boolean {
-    return this.reacted.has(`${comment}:${emoji}`);
+  reactionOverride(comment: CommentId, emoji: string): boolean | undefined {
+    return this.reactionOverrides.get(`${comment}:${emoji}`);
   }
 
-  setReacted(comment: CommentId, emoji: string, on: boolean): void {
+  setReactionOverride(comment: CommentId, emoji: string, on: boolean): void {
     runInAction(() => {
-      const next = new Set(this.reacted);
-      const key = `${comment}:${emoji}`;
-      if (on) next.add(key);
-      else next.delete(key);
-      this.reacted = next;
+      const next = new Map(this.reactionOverrides);
+      next.set(`${comment}:${emoji}`, on);
+      this.reactionOverrides = next;
+    });
+  }
+
+  /** Drops the override once the server's own data agrees with it — kept
+   *  around any longer it would just be stale local state shadowing real
+   *  sync data. */
+  clearReactionOverride(comment: CommentId, emoji: string): void {
+    const key = `${comment}:${emoji}`;
+    if (!this.reactionOverrides.has(key)) return;
+    runInAction(() => {
+      const next = new Map(this.reactionOverrides);
+      next.delete(key);
+      this.reactionOverrides = next;
     });
   }
 

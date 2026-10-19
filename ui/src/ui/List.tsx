@@ -40,6 +40,8 @@ import type {
   PrId,
   PrState,
   PrSummary,
+  RepoRef,
+  StackInfo,
 } from '../gen/contract';
 import { markDone, refreshInbox, snoozePrs, triage } from '../actions';
 import { api } from '../core/api';
@@ -90,6 +92,13 @@ const SECTIONS: { id: string; title: string; reasons: InboxReason[] }[] = [
 ];
 
 export const STATUS_ORDER: PrState[] = ['draft', 'open', 'merged', 'closed'];
+
+/** Builds the local `PrId` for `{repo, number}` — mirrors Rust's
+ *  `PrRef::id()` (plan "Stack"): `StackInfo` only carries bare PR numbers,
+ *  since it's always scoped to the same repo as the row it's on. */
+export function prIdFor(repo: RepoRef, number: number): PrId {
+  return `${repo.host}:${repo.owner}/${repo.name}#${number}` as PrId;
+}
 
 export function ago(ms: number): string {
   const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -347,8 +356,11 @@ export const PrRow = observer(function PrRow({
           {p.pr.repo.name} #{p.pr.number}
         </span>
       )}
-      <span className="min-w-0 truncate font-medium" title={p.title}>
-        {p.title}
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 truncate font-medium" title={p.title}>
+          {p.title}
+        </span>
+        {p.stack && <StackChips repo={p.pr.repo} stack={p.stack} />}
       </span>
       {on('reasons') && (
         <span
@@ -379,6 +391,70 @@ export const PrRow = observer(function PrRow({
     </div>
   );
 });
+
+/** "stacked on #n" / "n stacked" chips (plan "Stack"): a PR whose
+ *  `head_ref` is this one's `base_ref` is its parent; the reverse gives
+ *  children. Each chip opens the PR(s) it names. */
+function StackChips({ repo, stack }: { repo: RepoRef; stack: StackInfo }) {
+  const ui = useUi();
+  const open = (number: number) =>
+    ui.go({ name: 'review', pr: prIdFor(repo, number) });
+  if (stack.base_pr == null && stack.children.length === 0) return null;
+  return (
+    <span
+      className="stack-chips flex shrink-0 items-center gap-1"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {stack.base_pr != null && (
+        <Tooltip>
+          <button
+            type="button"
+            className="stack-chip shrink-0 rounded-full bg-default px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground"
+            onClick={() => open(stack.base_pr!)}
+          >
+            on #{stack.base_pr}
+          </button>
+          <Tooltip.Content>Stacked on #{stack.base_pr}</Tooltip.Content>
+        </Tooltip>
+      )}
+      {stack.children.length === 1 ? (
+        <Tooltip>
+          <button
+            type="button"
+            className="stack-chip shrink-0 rounded-full bg-default px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground"
+            onClick={() => open(stack.children[0]!)}
+          >
+            #{stack.children[0]} stacked
+          </button>
+          <Tooltip.Content>
+            #{stack.children[0]} is stacked on this
+          </Tooltip.Content>
+        </Tooltip>
+      ) : stack.children.length > 1 ? (
+        <Dropdown>
+          <button
+            type="button"
+            className="stack-chip shrink-0 rounded-full bg-default px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground"
+          >
+            {stack.children.length} stacked
+          </button>
+          <Dropdown.Popover placement="bottom start">
+            <Dropdown.Menu
+              aria-label="Stacked PRs"
+              onAction={(k) => open(Number(k))}
+            >
+              {stack.children.map((n) => (
+                <Dropdown.Item key={n} id={String(n)} textValue={`#${n}`}>
+                  #{n}
+                </Dropdown.Item>
+              ))}
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
+      ) : null}
+    </span>
+  );
+}
 
 /** A section header inside a HeroUI ListBox; the caret collapses the section. */
 export function SectionHeader({

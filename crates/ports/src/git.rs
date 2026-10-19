@@ -237,6 +237,8 @@ pub trait GitPort: Send + Sync {
             url: String::new(),
             review_decision: None,
             conflicts: false,
+            created_at: Some(head_commit.at),
+            stack: None,
         };
         let detail = PrDetail {
             summary,
