@@ -83,6 +83,7 @@ const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
   gh: 'your gh CLI login',
   env: 'GITHUB_TOKEN',
   none: 'nothing',
+  sandbox: 'the sandbox (simulated host)',
 };
 
 /** The sidebar while in settings: the app's sections give way to the settings' own. */

@@ -34,6 +34,7 @@ const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
   gh: 'your gh CLI login',
   env: 'GITHUB_TOKEN',
   none: 'nothing',
+  sandbox: 'the sandbox (simulated host)',
 };
 
 /** First launch: connect GitHub (reusing `gh` if it's already logged in, or a
