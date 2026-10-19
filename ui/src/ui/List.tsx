@@ -526,7 +526,12 @@ export function RowList({
       className="list min-w-0 flex-1 overflow-auto p-0 pb-20"
     >
       {groups.map((g) => (
-        <ListBox.Section key={g.id} id={g.id}>
+        // The collection caches a section's header by key: without the count
+        // and open state in it, "Snoozed 1" stayed after an undo emptied it.
+        <ListBox.Section
+          key={`${g.id}:${g.items.length}:${closed[g.id] ? 0 : 1}`}
+          id={g.id}
+        >
           <SectionHeader
             title={g.title}
             count={g.items.length}
