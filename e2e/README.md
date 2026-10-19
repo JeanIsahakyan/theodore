@@ -46,7 +46,7 @@ pnpm typecheck
    ```sh
    cd e2e
    pnpm install
-   export TAURI_APP_BINARY="$(realpath ../target/debug/theodore-desktop)"
+   export TAURI_APP_BINARY="$(realpath ../target/debug/Theodore)"
    export THEODORE_FIXTURES="$(realpath ../crates/fixtures/data/demo)"
    xvfb-run --auto-servernum pnpm test
    ```

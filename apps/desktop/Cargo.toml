@@ -10,7 +10,8 @@ name = "theodore_desktop"
 path = "src/lib.rs"
 
 [[bin]]
-name = "theodore-desktop"
+# The process name macOS shows in the menu bar and Dock.
+name = "Theodore"
 path = "src/main.rs"
 
 [build-dependencies]

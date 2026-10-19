@@ -149,5 +149,5 @@ jobs:
       - name: run the specs
         run: xvfb-run --auto-servernum pnpm -C e2e test
         env:
-          TAURI_APP_BINARY: ${{ github.workspace }}/target/debug/theodore-desktop
+          TAURI_APP_BINARY: ${{ github.workspace }}/target/debug/Theodore
           THEODORE_FIXTURES: ${{ github.workspace }}/crates/fixtures/data/demo
