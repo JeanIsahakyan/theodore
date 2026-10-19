@@ -95,7 +95,12 @@ export function DeviceLoginPanel({ state }: { state: DeviceLoginState }) {
     return (
       <div className="flex flex-col gap-2">
         <span className="text-xs text-danger">{error}</span>
-        <Button size="sm" variant="ghost" className="self-start" onPress={start}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="self-start"
+          onPress={start}
+        >
           Retry
         </Button>
       </div>

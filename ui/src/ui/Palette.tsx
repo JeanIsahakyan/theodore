@@ -1,3 +1,4 @@
+import { latinKey } from './latin';
 import { useEffect, useRef, useState, type Key, type ReactNode } from 'react';
 import {
   EmptyState,
@@ -491,20 +492,21 @@ export function useGlobalKeys() {
         (e.target as HTMLElement).closest('input,textarea,select')
       ) {
         return;
-      } else if (inSequence() && /^[itsamk]$/.test(e.key)) {
+      } else if (inSequence() && /^[itsamk]$/.test(latinKey(e))) {
         gAt = 0;
-        if (e.key === 'i') ui.go({ name: 'inbox' });
-        if (e.key === 't') ui.go({ name: 'tasks' });
-        if (e.key === 's') ui.go({ name: 'settings', page: 'agents' });
-        if (e.key === 'm' && FEATURES.currentUser) ui.go({ name: 'mine' });
-        if (e.key === 'k') ui.go({ name: 'skills' });
-      } else if (e.key === 'g') {
+        if (latinKey(e) === 'i') ui.go({ name: 'inbox' });
+        if (latinKey(e) === 't') ui.go({ name: 'tasks' });
+        if (latinKey(e) === 's') ui.go({ name: 'settings', page: 'agents' });
+        if (latinKey(e) === 'm' && FEATURES.currentUser)
+          ui.go({ name: 'mine' });
+        if (latinKey(e) === 'k') ui.go({ name: 'skills' });
+      } else if (latinKey(e) === 'g') {
         gAt = Date.now();
-      } else if (e.key === '[') {
+      } else if (latinKey(e) === '[') {
         ui.toggleSidebar();
-      } else if (e.key === ']' && ui.route.name === 'review') {
+      } else if (latinKey(e) === ']' && ui.route.name === 'review') {
         ui.toggleAside();
-      } else if (e.key === '?') {
+      } else if (latinKey(e) === '?') {
         ui.openModal('help');
       } else {
         return;

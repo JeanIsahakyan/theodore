@@ -55,7 +55,7 @@ import {
   ReviewDecisionIcon,
   prStatusLabel,
 } from './StatusIcon';
-import { useViewKeys } from './keys';
+import { latinKey, useViewKeys } from './keys';
 
 /** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
 export type InboxPr = PrSummary & { id: PrId };
@@ -898,7 +898,7 @@ function useListKeys(order: PrId[]) {
       };
       const targets = () =>
         ui.picked.length ? ui.picked : ui.selected ? [ui.selected] : [];
-      switch (e.key) {
+      switch (latinKey(e)) {
         case 'j':
         case 'ArrowDown':
           move(1);

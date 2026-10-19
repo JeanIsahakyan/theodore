@@ -692,7 +692,10 @@ function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
 }
 
 /** Finds the user's question right before an agent's reply, for "Ask again". */
-export function priorQuestion(messages: ChatMessage[], reply: ChatMessage): string {
+export function priorQuestion(
+  messages: ChatMessage[],
+  reply: ChatMessage,
+): string {
   const i = messages.findIndex((m) => m.id === reply.id);
   for (let j = i - 1; j >= 0; j--) {
     const m = messages[j]!;
@@ -975,8 +978,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                           <Alert.Indicator />
                           <Alert.Content>
                             <Alert.Description className="text-xs">
-                              No response in a while — the agent may be
-                              stuck.
+                              No response in a while — the agent may be stuck.
                             </Alert.Description>
                           </Alert.Content>
                         </Alert>
@@ -987,8 +989,8 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                       ) : (
                         <Dots />
                       )}
-                      {(store.ephemeral.runLog.get(pending.run)?.length ??
-                        0) > 0 && (
+                      {(store.ephemeral.runLog.get(pending.run)?.length ?? 0) >
+                        0 && (
                         <ToolCalls
                           tools={store.ephemeral.runLog.get(pending.run)!}
                           running

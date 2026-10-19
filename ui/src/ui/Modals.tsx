@@ -124,9 +124,7 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
                     )}
                   </Table.Cell>
                   <Table.Cell className="max-w-[320px] text-xs">
-                    <span className="line-clamp-2">
-                      {d.body.slice(0, 110)}
-                    </span>
+                    <span className="line-clamp-2">{d.body.slice(0, 110)}</span>
                   </Table.Cell>
                 </Table.Row>
               ))}

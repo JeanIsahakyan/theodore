@@ -92,7 +92,7 @@ import {
 } from './project/summary';
 import { projectPrSections, type ProjectPrSort } from './project/sections';
 import { PRIcon, prStatusLabel } from './StatusIcon';
-import { useViewKeys } from './keys';
+import { latinKey, useViewKeys } from './keys';
 
 // ── pure helpers (tested) ───────────────────────────────────────────────
 
@@ -663,7 +663,7 @@ const ProjectPrs = observer(function ProjectPrs({
         const next = order[Math.max(0, Math.min(order.length - 1, i + d))];
         if (next) ui.select(next);
       };
-      switch (e.key) {
+      switch (latinKey(e)) {
         case 'j':
         case 'ArrowDown':
           move(1);

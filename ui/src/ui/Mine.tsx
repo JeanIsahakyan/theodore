@@ -16,7 +16,7 @@ import { Avatar, CheckIcon, Empty, Hints, K } from './bits';
 import { RowsSkeleton } from './Loading';
 import { RowList, ViewHeader, ago } from './List';
 import { PRIcon, ReviewDecisionIcon } from './StatusIcon';
-import { useViewKeys } from './keys';
+import { latinKey, useViewKeys } from './keys';
 
 export type Step =
   'merge' | 'yours' | 'waiting' | 'draft' | 'merged' | 'closed';
@@ -142,7 +142,7 @@ function useMineKeys(order: string[]) {
         const next = order[Math.max(0, Math.min(order.length - 1, i + d))];
         if (next) ui.select(next);
       };
-      switch (e.key) {
+      switch (latinKey(e)) {
         case 'j':
         case 'ArrowDown':
           move(1);
