@@ -52,11 +52,17 @@ export type ModalName =
 export const sameRoute = (a: Route, b: Route): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
 
-const LS_ONBOARDED = 'theodore-onboarded';
-const LS_DIFF_VIEW = 'theodore-diff-view';
-const LS_ASIDE = 'theodore-aside';
-const LS_THEME = 'theodore-theme';
-const LS_TABS = 'theodore-tabs';
+/** `localStorage` key prefix: `"sandbox:"` in a sandbox window (set by the
+ *  desktop shell before the page loads), so its tabs and prefs never mix
+ *  with the real app's — both share one webview storage. */
+export const STORAGE_NS: string =
+  (globalThis as { __THEODORE_STORAGE_NS__?: string })
+    .__THEODORE_STORAGE_NS__ ?? '';
+const LS_ONBOARDED = `${STORAGE_NS}theodore-onboarded`;
+const LS_DIFF_VIEW = `${STORAGE_NS}theodore-diff-view`;
+const LS_ASIDE = `${STORAGE_NS}theodore-aside`;
+const LS_THEME = `${STORAGE_NS}theodore-theme`;
+const LS_TABS = `${STORAGE_NS}theodore-tabs`;
 
 /** Open tabs and the active one, restored on the next launch. */
 function loadTabs(): { tabs: Route[]; route: Route } {

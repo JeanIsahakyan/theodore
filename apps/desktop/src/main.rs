@@ -36,9 +36,10 @@ fn main() {
         sandbox,
         ..
     } = rt;
+    let is_sandbox = sandbox.is_some();
     let api = Arc::new(AppCore::new(core).with_sandbox(sandbox));
 
-    run(api, move |events| {
+    run(api, is_sandbox, move |events| {
         let mut sync = receivers.sync;
         let mut ephemeral = receivers.ephemeral;
         let ev = events.clone();

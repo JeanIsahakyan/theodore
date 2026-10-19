@@ -114,10 +114,24 @@ pub fn export_bindings(out: impl AsRef<Path>) -> Result<(), String> {
 /// Runs the Theodore desktop shell. `core` is the use-case implementation;
 /// `forward` receives the event emitter once the app is up, to pipe the
 /// core's sync and ephemeral streams to the UI.
-pub fn run(core: Arc<dyn CoreApi>, forward: impl FnOnce(CoreEvents<tauri::Wry>) + Send + 'static) {
+pub fn run(
+    core: Arc<dyn CoreApi>,
+    sandbox: bool,
+    forward: impl FnOnce(CoreEvents<tauri::Wry>) + Send + 'static,
+) {
     let builder = specta_builder();
+    // Sandbox and real windows share one webview storage (same app id), so
+    // the UI namespaces its `localStorage` keys by this (tabs, onboarding,
+    // last-seen heads): a sandbox session never leaks into the real one.
+    let storage_ns = tauri::plugin::Builder::<tauri::Wry>::new("storage-ns")
+        .js_init_script(format!(
+            "window.__THEODORE_STORAGE_NS__ = {:?};",
+            if sandbox { "sandbox:" } else { "" }
+        ))
+        .build();
 
     tauri::Builder::default()
+        .plugin(storage_ns)
         // Native menu bar. Its Edit submenu is also what makes ⌘C / ⌘V /
         // ⌘X / ⌘A / ⌘Z work inside text fields on macOS.
         .menu(menu::build)

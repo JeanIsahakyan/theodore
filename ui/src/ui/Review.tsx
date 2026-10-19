@@ -50,6 +50,7 @@ import {
   lineAnchor,
   type ComposerState,
 } from './DiffPane';
+import { STORAGE_NS } from '../stores/UiStore';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
 import { LinearChips } from './linear/LinearChips';
@@ -68,7 +69,7 @@ import { latinKey, useViewKeys } from './keys';
 
 type PrTab = 'diff' | 'checks' | 'commits';
 
-const lastSeenKey = (pr: PrId) => `theodore-lastseen:${pr}`;
+const lastSeenKey = (pr: PrId) => `${STORAGE_NS}theodore-lastseen:${pr}`;
 
 /** Below this width the groups pane and the aside stop being grid columns —
  *  there isn't room for three panes and a diff column no narrower than
