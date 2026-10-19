@@ -237,9 +237,17 @@ export function assignTask(
   id: string,
   assignee: { kind: 'human'; id: string } | { kind: 'agent'; id: AgentId },
 ): void {
-  void store.sync.queue.transact([
-    { op: 'update', model: 'task', id, data: { assignee, status: 'progress' } },
-  ]);
+  store.sync.undo.run(() => {
+    void store.sync.queue.transact([
+      {
+        op: 'update',
+        model: 'task',
+        id,
+        data: { assignee, status: 'progress' },
+      },
+    ]);
+  });
+  toastWithUndo(store, `Assigned to ${assignee.id}`);
 }
 
 /** Hands a task to an agent CLI, which fixes it in the PR worktree (Edit
@@ -276,18 +284,34 @@ export async function decideTask(
 
 // ── inbox triage ─────────────────────────────────────────────────────────────
 
+/** Pops up a toast whose action re-runs `store.sync.undo.undo()` — shared by
+ *  every Done/Snooze/Archive-type action below, all of which are one undo
+ *  step (wrapped in `undo.run`) by the time this fires. */
+function toastWithUndo(store: RootStore, text: string): void {
+  store.ephemeral.toast(text, 'info', {
+    label: 'Undo',
+    onAction: () => void store.sync.undo.undo(),
+  });
+}
+
 export function markDone(store: RootStore, ids: PrId[]): void {
-  for (const pr of ids) {
-    const exists = !!store.models.inboxStates.get(pr);
-    void store.sync.queue.transact([
-      {
-        op: exists ? 'update' : 'create',
-        model: 'inbox_state',
-        id: pr,
-        data: { pr, done: true, snooze: null },
-      },
-    ]);
-  }
+  store.sync.undo.run(() => {
+    for (const pr of ids) {
+      const exists = !!store.models.inboxStates.get(pr);
+      void store.sync.queue.transact([
+        {
+          op: exists ? 'update' : 'create',
+          model: 'inbox_state',
+          id: pr,
+          data: { pr, done: true, snooze: null },
+        },
+      ]);
+    }
+  });
+  toastWithUndo(
+    store,
+    ids.length === 1 ? 'Marked done' : `Marked ${ids.length} done`,
+  );
 }
 
 export function snoozePrs(
@@ -295,23 +319,32 @@ export function snoozePrs(
   ids: PrId[],
   until: SnoozeUntil,
 ): void {
-  for (const pr of ids) {
-    const exists = !!store.models.inboxStates.get(pr);
-    void store.sync.queue.transact([
-      {
-        op: exists ? 'update' : 'create',
-        model: 'inbox_state',
-        id: pr,
-        data: { pr, done: false, snooze: until },
-      },
-    ]);
-  }
+  store.sync.undo.run(() => {
+    for (const pr of ids) {
+      const exists = !!store.models.inboxStates.get(pr);
+      void store.sync.queue.transact([
+        {
+          op: exists ? 'update' : 'create',
+          model: 'inbox_state',
+          id: pr,
+          data: { pr, done: false, snooze: until },
+        },
+      ]);
+    }
+  });
+  toastWithUndo(
+    store,
+    ids.length === 1 ? 'Snoozed' : `Snoozed ${ids.length} PRs`,
+  );
 }
 
 export function unsnooze(store: RootStore, pr: PrId): void {
-  void store.sync.queue.transact([
-    { op: 'update', model: 'inbox_state', id: pr, data: { snooze: null } },
-  ]);
+  store.sync.undo.run(() => {
+    void store.sync.queue.transact([
+      { op: 'update', model: 'inbox_state', id: pr, data: { snooze: null } },
+    ]);
+  });
+  toastWithUndo(store, 'Unsnoozed');
 }
 
 // ── inbox / viewer ───────────────────────────────────────────────────────────

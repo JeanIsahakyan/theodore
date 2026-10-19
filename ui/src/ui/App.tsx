@@ -110,7 +110,12 @@ const Toasts = observer(function Toasts() {
   useEffect(() => {
     // HeroUI's imperative toast API: fire once per new entry, then drop it.
     for (const t of store.ephemeral.toasts) {
-      toast(t.text, { timeout: 3200 });
+      toast(t.text, {
+        timeout: t.action ? 5000 : 3200,
+        actionProps: t.action
+          ? { children: t.action.label, onPress: t.action.onAction }
+          : undefined,
+      });
       store.ephemeral.dismissToast(t.id);
     }
   }, [store, store.ephemeral.toasts]);

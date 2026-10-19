@@ -19,10 +19,19 @@ import type {
 
 const LOG_LIMIT = 500;
 
+export interface ToastAction {
+  label: string;
+  onAction: () => void;
+}
+
 export interface Toast {
   id: number;
   level: ToastLevel;
   text: string;
+  /** e.g. "Undo" after a Done/Snooze/Archive-type action — never set by the
+   *  `ephemeral` event from core, only by client code that pushes its own
+   *  toast (a function can't cross the wire). */
+  action?: ToastAction;
 }
 
 export interface HostStatus {
@@ -171,6 +180,17 @@ export class EphemeralStore {
           };
           return;
       }
+    });
+  }
+
+  /** Pushes a toast from client code (as opposed to `handle()`'s server
+   *  `toast` events) — the only path that can attach an `action`. */
+  toast(text: string, level: ToastLevel = 'info', action?: ToastAction): void {
+    runInAction(() => {
+      this.toasts = [
+        ...this.toasts,
+        { id: this.nextToastId++, level, text, action },
+      ];
     });
   }
 
