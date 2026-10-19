@@ -3,14 +3,7 @@
 //! runs the retention policy at startup and then hourly, and `catch_up`
 //! (in `sync/mod.rs`) consults `oldest_sync_id` to refuse a client that's
 //! fallen behind the horizon instead of serving it a silent gap.
-//!
-//! Not yet wired into `Core::start` — see this slice's final report. Call
-//! `compactor::run(inner.clone())` there alongside the outbox/poller spawns.
-//!
-//! `#[allow(dead_code)]`: nothing outside this module's own tests calls
-//! `run`/`compact_once` until that one line lands in `core.rs` (a file
-//! this slice doesn't own) — drop the allow once it's wired in.
-#![allow(dead_code)]
+//! `Core::start` spawns `run` next to the outbox and the poller.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -142,8 +135,13 @@ mod tests {
 
         compact_once(&inner).await.unwrap();
 
+        // `Core::start` also runs a startup pass; every pass uses the policy.
         let seen = spy.calls.lock().unwrap().clone();
-        assert_eq!(seen, vec![(KEEP_LAST_N, KEEP_DURATION_MS, f.clock.now())]);
+        assert!(!seen.is_empty());
+        assert!(
+            seen.iter()
+                .all(|c| *c == (KEEP_LAST_N, KEEP_DURATION_MS, f.clock.now()))
+        );
     }
 
     /// Paused Tokio time: `run`'s real-time tick (`REAL_TICK_MS`) would
@@ -161,10 +159,9 @@ mod tests {
         });
         let mut deps = f.deps();
         deps.store = spy.clone();
+        // `Core::start` spawns `run` itself.
         let (core, _recv) = Core::start(deps);
         let inner = core.0.clone();
-
-        let handle = tokio::spawn(run(inner.clone()));
         wait_for_call_count(&spy, 1).await;
 
         // Advancing by less than an hour must not trigger a second pass.
@@ -181,7 +178,6 @@ mod tests {
         wait_for_call_count(&spy, 2).await;
 
         inner.shutdown.cancel();
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 
     /// `tokio::spawn` only schedules `run`; the executor needs to actually

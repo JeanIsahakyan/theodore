@@ -96,6 +96,7 @@ impl Core {
         }
         tokio::spawn(crate::outbox::run(inner.clone()));
         tokio::spawn(crate::poller::run(inner.clone()));
+        tokio::spawn(crate::sync::compactor::run(inner.clone()));
         {
             let core = core.clone();
             tokio::spawn(async move {
