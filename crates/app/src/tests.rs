@@ -4153,3 +4153,25 @@ async fn opening_a_pr_keeps_its_inbox_reasons() {
     let row = f.store.get(models::PR, &pr.0).unwrap().unwrap();
     assert_eq!(row.data["reasons"], json!(["review_requested"]));
 }
+
+#[tokio::test]
+async fn host_status_for_reports_a_saved_gitlab_token() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let none = core
+        .host_status_for(HostKind::Gitlab)
+        .await
+        .expect("status");
+    assert!(!none.connected);
+    assert_eq!(none.source, TokenSource::None);
+
+    f.secrets
+        .set(theodore_secrets::GITLAB_TOKEN, "glpat-x")
+        .unwrap();
+    let saved = core
+        .host_status_for(HostKind::Gitlab)
+        .await
+        .expect("status");
+    assert_eq!(saved.source, TokenSource::Keychain);
+    assert_eq!(saved.host, HostKind::Gitlab);
+}
