@@ -74,6 +74,7 @@ export const commands = {
 	loginPoll: () => typedError<LoginState, CommandError>(__TAURI_INVOKE("login_poll")),
 	rerunCheck: (req: RerunCheckRequest) => typedError<null, CommandError>(__TAURI_INVOKE("rerun_check", { req })),
 	triage: (req: TriageRequest) => typedError<null, CommandError>(__TAURI_INVOKE("triage", { req })),
+	findSymbol: (req: FindSymbolRequest) => typedError<SymbolHit[], CommandError>(__TAURI_INVOKE("find_symbol", { req })),
 };
 
 /* Types */
@@ -216,6 +217,18 @@ export type FileRequest = {
 };
 
 export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied";
+
+export type FindSymbolRequest = {
+	pr: PrId,
+	name: string,
+	/**
+	 *  Narrows the search to one language's definition patterns (e.g.
+	 *  `"rust"`, `"typescript"`); `None` tries every supported language.
+	 */
+	lang: string | null,
+	/**  The file the click came from. Hits in it, or near it, rank first. */
+	from_path: string | null,
+};
 
 /**  Host connection state for onboarding and Settings → Account. */
 export type HostAuthStatus = {
@@ -522,6 +535,16 @@ export type SubmitReviewRequest = {
 	event: ReviewEvent,
 	body: string,
 };
+
+export type SymbolHit = {
+	path: string,
+	line: number,
+	kind: SymbolKind,
+	/**  The matched source line, trimmed. */
+	preview: string,
+};
+
+export type SymbolKind = "definition" | "reference";
 
 export type SyncCode = "I" | "U" | "C" | "A" | "D";
 

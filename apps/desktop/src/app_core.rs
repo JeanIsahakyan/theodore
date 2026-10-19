@@ -5,12 +5,12 @@ use theodore_app::{AppError, Core};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
-    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    FileRequest, FindSymbolRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch,
+    LoginState, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend,
+    Project, ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
     RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
-    UpdateInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -203,6 +203,9 @@ impl CoreApi for AppCore {
     }
     async fn triage(&self, req: TriageRequest) -> Result<(), CommandError> {
         self.core.triage(req).await.map_err(err)
+    }
+    async fn find_symbol(&self, req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError> {
+        self.core.find_symbol(req).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await

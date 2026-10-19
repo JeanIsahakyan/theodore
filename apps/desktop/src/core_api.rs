@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch, LoginState,
-    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project,
-    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    FileRequest, FindSymbolRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LocalBranch,
+    LoginState, MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend,
+    Project, ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
     RevisionRequest, RunSkillRequest, SaveSkillRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
-    UpdateInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -75,6 +75,9 @@ pub trait CoreApi: Send + Sync {
     async fn login_poll(&self) -> Result<LoginState, CommandError>;
     async fn rerun_check(&self, req: RerunCheckRequest) -> Result<(), CommandError>;
     async fn triage(&self, req: TriageRequest) -> Result<(), CommandError>;
+    /// Go-to-definition / find-references for a ⌘-clicked identifier
+    /// (plan "symbols").
+    async fn find_symbol(&self, req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -233,6 +236,9 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn triage(&self, _req: TriageRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn find_symbol(&self, _req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError> {
         Err(not_ready())
     }
 }
