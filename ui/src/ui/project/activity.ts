@@ -6,6 +6,7 @@
  *  host filled it (falling back to `updated_at`); merged/closed still use
  *  `updated_at` — `created_at` wouldn't make those any more accurate.
  *  Honest about what it is: a snapshot read as a feed, not history. */
+import { isBranchReview } from './sections';
 import type { InboxPr } from '../List';
 
 export type ActivityKind = 'opened' | 'merged' | 'closed';
@@ -28,11 +29,15 @@ function atOf(p: InboxPr, kind: ActivityKind): number {
 }
 
 export function projectActivity(items: InboxPr[], limit = 50): ActivityEvent[] {
-  return items
-    .map((p) => {
-      const kind = kindOf(p);
-      return { id: p.id, pr: p, kind, at: atOf(p, kind) };
-    })
-    .sort((a, b) => b.at - a.at)
-    .slice(0, limit);
+  return (
+    items
+      // Branch reviews are local, not PR events on the host.
+      .filter((p) => !isBranchReview(p))
+      .map((p) => {
+        const kind = kindOf(p);
+        return { id: p.id, pr: p, kind, at: atOf(p, kind) };
+      })
+      .sort((a, b) => b.at - a.at)
+      .slice(0, limit)
+  );
 }

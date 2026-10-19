@@ -882,7 +882,9 @@ const ProjectBranches = observer(function ProjectBranches({
               branch
             </Table.Column>
             <Table.Column>last commit</Table.Column>
-            <Table.Column width={96}>ahead / behind</Table.Column>
+            <Table.Column width={120}>
+              <span className="whitespace-nowrap">ahead / behind</span>
+            </Table.Column>
             <Table.Column width={56}>PR</Table.Column>
             <Table.Column width={132}> </Table.Column>
           </Table.Header>
@@ -913,8 +915,8 @@ const ProjectBranches = observer(function ProjectBranches({
                       {b.author || 'unknown'} · {ago(b.updated_at)}
                     </span>
                   </Table.Cell>
-                  <Table.Cell className="text-xs tabular-nums text-muted">
-                    +{b.ahead} / -{b.behind}
+                  <Table.Cell className="whitespace-nowrap text-xs tabular-nums text-muted">
+                    +{b.ahead} / −{b.behind}
                   </Table.Cell>
                   <Table.Cell className="text-xs">
                     {match ? (

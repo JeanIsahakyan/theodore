@@ -76,3 +76,11 @@ describe('projectActivity', () => {
     expect(projectActivity(items)[0]?.at).toBe(50);
   });
 });
+
+describe('projectActivity and branch reviews', () => {
+  it('leaves branch reviews out', async () => {
+    const { projectActivity: feed } = await import('./activity');
+    const branch = { ...pr({ id: 'b', state: 'open' }), url: '' };
+    expect(feed([branch]).map((e) => e.id)).toEqual([]);
+  });
+});
