@@ -23,6 +23,9 @@ jobs:
     runs-on: macos-14
     permissions:
       contents: write
+    env:
+      # `secrets` can't be read in a step `if`; expose presence as a flag.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -74,7 +77,7 @@ jobs:
       # an empty APPLE_CERTIFICATE into the build step below (which would
       # make tauri-bundler try, and fail, to import an empty certificate).
       - name: load Developer ID secrets
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: env.HAS_APPLE_CERT == 'true'
         run: |
           echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}" >> "$GITHUB_ENV"
           echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" >> "$GITHUB_ENV"
