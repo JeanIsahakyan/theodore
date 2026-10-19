@@ -593,6 +593,16 @@ impl HostAdapter for GithubAdapter {
             "this check has no re-runnable REST resource",
         ))
     }
+
+    async fn repo_info(&self, repo: &RepoRef) -> HostResult<HostRepo> {
+        let info = graphql::repo_info(&self.graphql, &repo.owner, &repo.name).await?;
+        Ok(HostRepo {
+            repo: repo.clone(),
+            description: info.description,
+            private: info.is_private,
+            pushed_at: info.pushed_at.as_deref().map(time::parse_millis),
+        })
+    }
 }
 
 /// Pulls `{run_id}` out of an Actions check-run `detailsUrl`

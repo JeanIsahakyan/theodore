@@ -288,4 +288,12 @@ pub trait HostAdapter: Send + Sync {
     async fn rerun_check(&self, _pr: &PrRef, _check: &Check) -> HostResult<()> {
         Err(HostError::Unsupported("rerun_check"))
     }
+
+    /// Cheap single-repo metadata fetch (plan "projects"): description,
+    /// visibility, last push. The per-repo counterpart to `list_repos`, used
+    /// to keep a project's header current without re-listing every repo the
+    /// token can see.
+    async fn repo_info(&self, _repo: &RepoRef) -> HostResult<HostRepo> {
+        Err(HostError::Unsupported("repo_info"))
+    }
 }

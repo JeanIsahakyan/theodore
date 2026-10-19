@@ -1277,3 +1277,45 @@ pub(crate) async fn pr_merge_status(
     data.repository
         .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}#{number}")))
 }
+
+// ── repo info ───────────────────────────────────────────────────────────
+
+const REPO_INFO_QUERY: &str = r#"
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    description
+    isPrivate
+    pushedAt
+  }
+}
+"#;
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlRepoInfo {
+    pub description: Option<String>,
+    #[serde(rename = "isPrivate")]
+    pub is_private: bool,
+    #[serde(rename = "pushedAt")]
+    pub pushed_at: Option<String>,
+}
+
+/// Cheap single-repo metadata fetch (plan "projects"): description,
+/// visibility, last push — the per-repo counterpart to `list_repos`.
+pub(crate) async fn repo_info(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+) -> HostResult<GqlRepoInfo> {
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        repository: Option<GqlRepoInfo>,
+    }
+    let data: Data = graphql(
+        http,
+        REPO_INFO_QUERY,
+        json!({ "owner": owner, "repo": repo }),
+    )
+    .await?;
+    data.repository
+        .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}")))
+}
