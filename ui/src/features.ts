@@ -22,8 +22,9 @@ export const FEATURES = {
   projects: true,
   /** No go-to-definition / find-references command (LSP was mock-only). */
   symbolPeek: false,
-  /** No Linear integration command. */
-  linear: false,
+  /** `set_linear_token` / `linear_status` / `linear_issues` land this
+   *  wave — Settings → Integrations, and issue chips in Peek/Review. */
+  linear: true,
   /** `reply_thread` / `resolve_thread` send to the host; the comment lands
    *  back in `pr_detail.threads` on the next sync frame. */
   threadWrites: true,

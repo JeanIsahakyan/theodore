@@ -47,6 +47,7 @@ import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
 import { DiffPane, lineAnchor, type ComposerState } from './DiffPane';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
+import { LinearChips } from './linear/LinearChips';
 import { MergeDialog } from './Merge';
 import {
   groupsInRevision,
@@ -93,15 +94,6 @@ const LiveDot = observer(function LiveDot() {
     </Tooltip>
   );
 });
-
-type LinearRef = { key: string; state: string; title: string };
-
-// `PrSummary` has no Linear field at all yet (`FEATURES.linear`). Behind a
-// function call so TS can't fold it to the literal `null` and narrow every
-// read of it to `never` — a plain `const x: T | null = null` would.
-function linearOf(): LinearRef | null {
-  return null;
-}
 
 type PrTab = 'diff' | 'checks' | 'commits';
 
@@ -191,16 +183,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     hunk: HunkId;
     nonce: number;
   } | null>(null);
-  // `PrSummary` has no Linear field at all yet (`FEATURES.linear`); kept as a
-  // typed placeholder so the chip's shape stays, pointed at nothing, rather
-  // than being deleted — wiring up the real field later is then a one-line
-  // change instead of new JSX.
-  const linear = linearOf();
-  // Widened to `boolean` on purpose: `FEATURES.linear` is the literal `false`,
-  // and TS narrows an always-false `&&` chain's later operands to `never` —
-  // widening keeps `linear.key` below type-checking as real, reachable code.
-  const linearEnabled: boolean = FEATURES.linear;
-
   useEffect(() => {
     void store.sync.openPr(pr);
   }, [store, pr]);
@@ -589,18 +571,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   {l}
                 </Chip>
               ))}
-              {linearEnabled && linear && (
-                <Tooltip>
-                  <Chip
-                    size="sm"
-                    variant="secondary"
-                    className="lin shrink-0 whitespace-nowrap tabular-nums"
-                  >
-                    {linear.key} · {linear.state}
-                  </Chip>
-                  <Tooltip.Content>{linear.title}</Tooltip.Content>
-                </Tooltip>
-              )}
+              {FEATURES.linear && <LinearChips pr={pr} />}
               {summary.pr.repo.host !== 'local' && <LiveDot />}
             </>
           ) : (

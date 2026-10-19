@@ -375,6 +375,37 @@ export type InterdiffWordSpan = {
 
 export type LineKind = "ctx" | "add" | "del";
 
+/**
+ *  One Linear issue linked to a PR — found by matching an issue key
+ *  (`ABC-123`) in the PR's title, head branch or body.
+ */
+export type LinearIssue = {
+	identifier: string,
+	title: string,
+	state_name: string,
+	/**
+	 *  Linear's `WorkflowState.type`: `triage`, `backlog`, `unstarted`,
+	 *  `started`, `completed` or `canceled` — kept as the raw string so an
+	 *  unrecognized future value never fails to deserialize.
+	 */
+	state_type: string,
+	assignee: string | null,
+	priority: number | null,
+	url: string,
+	team_key: string,
+};
+
+export type LinearIssuesRequest = {
+	pr: PrId,
+};
+
+/**  Connection state for Settings → Integrations → Linear. */
+export type LinearStatus = {
+	connected: boolean,
+	user: string | null,
+	workspace: string | null,
+};
+
 /**  A branch of a project, for reviewing work without a host PR. */
 export type LocalBranch = {
 	name: string,
@@ -637,6 +668,14 @@ export type SaveSkillRequest = {
 	scope: string,
 	pr: PrId | null,
 	body: string,
+};
+
+export type SetLinearTokenRequest = {
+	/**
+	 *  `None` disconnects (clears the stored token). Validated against
+	 *  Linear's `viewer` query before being stored.
+	 */
+	token: string | null,
 };
 
 export type SetTokenRequest = {

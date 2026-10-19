@@ -18,6 +18,9 @@ import type {
   InterdiffEntry,
   InterdiffRequest,
   HostRepo,
+  LinearIssue,
+  LinearIssuesRequest,
+  LinearStatus,
   LocalBranch,
   LoginState,
   MergeInfo,
@@ -38,6 +41,7 @@ import type {
   ReviewersRequest,
   RunSkillRequest,
   SaveSkillRequest,
+  SetLinearTokenRequest,
   SetTokenRequest,
   SkillBody,
   SkillInfo,
@@ -146,4 +150,9 @@ export const api = {
   loginPoll: () => call<LoginState>('login_poll'),
   rerunCheck: (req: RerunCheckRequest) => call<null>('rerun_check', { req }),
   triage: (req: TriageRequest) => call<null>('triage', { req }),
+  setLinearToken: (req: SetLinearTokenRequest) =>
+    call<LinearStatus>('set_linear_token', { req }),
+  linearStatus: () => call<LinearStatus>('linear_status'),
+  linearIssues: (req: LinearIssuesRequest) =>
+    call<LinearIssue[]>('linear_issues', { req }),
 };
