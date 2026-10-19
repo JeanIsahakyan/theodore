@@ -29,6 +29,7 @@ fn mr_json(reviewers: serde_json::Value) -> serde_json::Value {
         "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "author": { "id": 1, "username": "alice" },
         "reviewers": reviewers,
+        "created_at": "2023-12-31T00:00:00.000Z",
         "updated_at": "2024-01-01T00:00:00.000Z"
     })
 }
@@ -105,7 +106,8 @@ async fn mark_ready_strips_the_draft_prefix() {
             "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/42",
             "source_branch": "feature-x", "target_branch": "main",
             "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "author": { "id": 1, "username": "alice" }, "updated_at": "2024-01-01T00:00:00.000Z"
+            "author": { "id": 1, "username": "alice" },
+            "created_at": "2023-12-31T00:00:00.000Z", "updated_at": "2024-01-01T00:00:00.000Z"
         })))
         .mount(&s.api)
         .await;

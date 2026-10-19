@@ -78,6 +78,9 @@ async fn get_pr_probes_etag_then_builds_full_detail_from_graphql() {
         Some(theodore_domain::ReviewDecision::Approved)
     );
     assert!(!detail.summary.conflicts);
+    // Fixture's `createdAt` (2024-01-01) is before `updatedAt` (2024-01-02).
+    assert!(detail.summary.created_at.is_some());
+    assert!(detail.summary.created_at.unwrap() < detail.summary.updated_at);
     assert_eq!(
         detail.base_sha.as_str(),
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -132,6 +135,18 @@ async fn get_pr_probes_etag_then_builds_full_detail_from_graphql() {
     assert_eq!(thread.comments.len(), 1);
     assert_eq!(thread.comments[0].id.as_str(), "1002");
     assert!(thread.comments[0].edited);
+
+    // Two reaction groups with a nonzero count, mapped to the REST content
+    // naming convention; the zero-count ROCKET group is dropped.
+    let reactions = &thread.comments[0].reactions;
+    assert_eq!(reactions.len(), 2);
+    let thumbs_up = reactions.iter().find(|r| r.emoji == "+1").unwrap();
+    assert_eq!(thumbs_up.count, 2);
+    assert!(thumbs_up.viewer_reacted);
+    let heart = reactions.iter().find(|r| r.emoji == "heart").unwrap();
+    assert_eq!(heart.count, 1);
+    assert!(!heart.viewer_reacted);
+    assert!(!reactions.iter().any(|r| r.emoji == "rocket"));
 }
 
 #[tokio::test]

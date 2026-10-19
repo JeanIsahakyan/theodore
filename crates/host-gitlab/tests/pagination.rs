@@ -21,7 +21,8 @@ async fn search_follows_x_next_page_across_every_page() {
                         "iid": 1, "project_id": 7, "title": "One", "state": "opened",
                         "draft": false, "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/1",
                         "source_branch": "a", "target_branch": "main", "sha": "s1",
-                        "author": { "id": 1, "username": "alice" }, "updated_at": "2024-01-01T00:00:00.000Z"
+                        "author": { "id": 1, "username": "alice" },
+                        "created_at": "2023-12-31T00:00:00.000Z", "updated_at": "2024-01-01T00:00:00.000Z"
                     }
                 ])),
         )
@@ -35,7 +36,8 @@ async fn search_follows_x_next_page_across_every_page() {
                 "iid": 2, "project_id": 7, "title": "Two", "state": "opened",
                 "draft": false, "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/2",
                 "source_branch": "b", "target_branch": "main", "sha": "s2",
-                "author": { "id": 1, "username": "alice" }, "updated_at": "2024-01-01T00:00:00.000Z"
+                "author": { "id": 1, "username": "alice" },
+                "created_at": "2023-12-31T00:00:00.000Z", "updated_at": "2024-01-01T00:00:00.000Z"
             }
         ])))
         .mount(&s.api)
