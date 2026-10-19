@@ -154,6 +154,114 @@ export function isAgentEnabled(
   return v !== false;
 }
 
+/** Bitbucket has no device-flow login and no primary-host `host_status`
+ *  query the way GitHub does; its connection state only comes back from
+ *  whatever the last `setHostToken` call returned. */
+const BitbucketSection = observer(function BitbucketSection() {
+  const [status, setStatus] = useState<HostAuthStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [token, setToken] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const setToken_ = (value: string | null) => {
+    setError(null);
+    setBusy(true);
+    void api
+      .setHostToken({ host: 'bitbucket', token: value })
+      .then((s) => {
+        setStatus(s);
+        setEditing(false);
+        setToken('');
+      })
+      .catch((e) =>
+        setError(e instanceof CommandFailure ? e.message : String(e)),
+      )
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <section className="flex flex-col gap-2">
+      <Typography.Heading level={6}>Bitbucket</Typography.Heading>
+      <Card variant="secondary" className="gap-0 p-0">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <span className="size-7 shrink-0 rounded-full bg-default" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="text-sm font-medium">
+              {status?.login ?? 'Not connected'}{' '}
+              <span className="text-muted">· bitbucket.org</span>
+            </span>
+            <span className="text-xs text-muted">
+              {status?.connected
+                ? 'Signed in using a saved token'
+                : 'An app password (username:app_password) or an access token'}
+            </span>
+          </div>
+        </div>
+        <Separator />
+        {editing ? (
+          <div className="flex items-center gap-2 px-4 py-3">
+            <TextField
+              value={token}
+              onChange={setToken}
+              type="password"
+              className="flex-1"
+            >
+              <Label className="sr-only">
+                Bitbucket app password or access token
+              </Label>
+              <Input
+                autoFocus
+                placeholder="username:app_password"
+                className="font-mono text-sm"
+              />
+            </TextField>
+            <Button
+              size="sm"
+              isDisabled={token.trim().length < 4}
+              onPress={() => setToken_(token.trim())}
+            >
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onPress={() => {
+                setEditing(false);
+                setToken('');
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 p-1">
+            <Button
+              variant="ghost"
+              className="bb-add-token m-1 justify-start gap-2"
+              onPress={() => setEditing(true)}
+            >
+              <Lock className="size-4" />{' '}
+              {status?.connected ? 'Replace token' : 'Connect Bitbucket'}
+            </Button>
+            {status?.connected && (
+              <Button
+                variant="ghost"
+                className="m-1 justify-start gap-2 text-danger"
+                isDisabled={busy}
+                onPress={() => setToken_(null)}
+              >
+                Remove
+              </Button>
+            )}
+          </div>
+        )}
+      </Card>
+      {error && <span className="text-xs text-danger">{error}</span>}
+    </section>
+  );
+});
+
 const AccountPage = observer(function AccountPage() {
   const store = useRootStore();
   const viewer = store.ephemeral.viewer;
@@ -299,6 +407,7 @@ const AccountPage = observer(function AccountPage() {
         </Card>
         {error && <span className="text-xs text-danger">{error}</span>}
       </section>
+      <BitbucketSection />
       <section className="flex flex-col gap-2">
         <Typography.Heading level={6}>Linear</Typography.Heading>
         <Tooltip>
