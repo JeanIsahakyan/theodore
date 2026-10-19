@@ -626,14 +626,27 @@ const UpdatesPage = observer(function UpdatesPage() {
   const store = useRootStore();
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [checking, setChecking] = useState(false);
+  // What the last "Check now" found: nothing yet, up to date, or why it failed.
+  const [result, setResult] = useState<
+    { kind: 'latest'; at: number } | { kind: 'error'; message: string } | null
+  >(null);
   const channel =
     (settingValue(store, 'user', 'updates.channel') as string) ?? 'stable';
   const check = () => {
     setChecking(true);
     void api
       .checkUpdate()
-      .then(setUpdate)
-      .catch(() => setUpdate(null))
+      .then((u) => {
+        setUpdate(u);
+        setResult(u ? null : { kind: 'latest', at: Date.now() });
+      })
+      .catch((e) => {
+        setUpdate(null);
+        setResult({
+          kind: 'error',
+          message: e instanceof CommandFailure ? e.message : String(e),
+        });
+      })
       .finally(() => setChecking(false));
   };
   return (
@@ -684,6 +697,14 @@ const UpdatesPage = observer(function UpdatesPage() {
         >
           Check now
         </Btn>
+        {result?.kind === 'latest' && (
+          <span className="text-xs text-muted">
+            You're on the latest version.
+          </span>
+        )}
+        {result?.kind === 'error' && (
+          <span className="text-xs text-danger">{result.message}</span>
+        )}
         {update && (
           <Card variant="secondary" className="flex flex-col gap-2 p-4 text-sm">
             <span className="font-medium">

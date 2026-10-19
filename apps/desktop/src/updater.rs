@@ -46,37 +46,41 @@ pub async fn check_and_install<R: Runtime>(
     app: &AppHandle<R>,
     core: &Arc<dyn CoreApi>,
 ) -> Option<UpdateInfo> {
+    match check(app, core).await {
+        Ok(info) => info,
+        Err(err) => {
+            tracing::warn!(%err, "updater: keeping current version");
+            None
+        }
+    }
+}
+
+/// Like `check_and_install`, but says why a check failed (unreachable
+/// endpoint, no release yet, bad signature) instead of reading as "no
+/// update" — for the Settings "Check now" button.
+pub async fn check<R: Runtime>(
+    app: &AppHandle<R>,
+    core: &Arc<dyn CoreApi>,
+) -> Result<Option<UpdateInfo>, String> {
     let channel = core.update_channel().await;
     let endpoint = endpoint_for_channel(&channel);
-
-    let builder = match app.updater_builder().endpoints(vec![endpoint]) {
-        Ok(b) => b,
-        Err(err) => {
-            tracing::warn!(?err, "updater: bad endpoint");
-            return None;
-        }
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| format!("bad update endpoint: {e}"))?
+        .build()
+        .map_err(|e| format!("updater unavailable: {e}"))?;
+    let Some(update) = updater
+        .check()
+        .await
+        .map_err(|e| format!("couldn't check for updates: {e}"))?
+    else {
+        return Ok(None);
     };
-    let updater = match builder.build() {
-        Ok(u) => u,
-        Err(err) => {
-            tracing::warn!(?err, "updater: failed to build");
-            return None;
-        }
-    };
-
-    let update = match updater.check().await {
-        Ok(Some(update)) => update,
-        Ok(None) => return None,
-        Err(err) => {
-            tracing::warn!(?err, "updater: check failed, keeping current version");
-            return None;
-        }
-    };
-
-    if let Err(err) = update.download_and_install(|_, _| {}, || {}).await {
-        tracing::warn!(?err, "updater: download or signature verification failed");
-        return None;
-    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| format!("download or signature check failed: {e}"))?;
 
     let info = UpdateInfo {
         version: update.version.clone(),
@@ -89,7 +93,7 @@ pub async fn check_and_install<R: Runtime>(
         .expect("UpdateState lock")
         .replace(info.clone());
     events::emitter(app.clone()).update(info.clone());
-    Some(info)
+    Ok(Some(info))
 }
 
 /// Runs `check_and_install` on launch and every 6 hours for the app's lifetime.

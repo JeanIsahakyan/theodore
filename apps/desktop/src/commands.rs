@@ -486,7 +486,12 @@ pub async fn check_update(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Option<UpdateInfo>, CommandError> {
     let core: Arc<dyn CoreApi> = core.inner().clone();
-    Ok(updater::check_and_install(&app, &core).await)
+    updater::check(&app, &core)
+        .await
+        .map_err(|message| CommandError {
+            code: "update".into(),
+            message,
+        })
 }
 
 /// Restarts into the already-downloaded update, but only once the core is
