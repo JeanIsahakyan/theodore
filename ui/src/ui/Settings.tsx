@@ -8,6 +8,7 @@ import {
   Cpu,
   Folder,
   Gear,
+  Keyboard,
   Lock,
   LogoGithub,
 } from '@gravity-ui/icons';
@@ -677,6 +678,7 @@ const ProjectsPage = observer(function ProjectsPage() {
 });
 
 const AboutPage = observer(function AboutPage() {
+  const ui = useUi();
   const [info, setInfo] = useState<AppInfo | null>(null);
   useEffect(() => {
     void api
@@ -711,6 +713,35 @@ const AboutPage = observer(function AboutPage() {
             Check for updates automatically
           </Switch.Content>
         </Switch>
+      </Card>
+      <Card
+        variant="secondary"
+        className="flex flex-row items-center gap-3 p-4"
+      >
+        <Keyboard className="size-4 text-muted" />
+        <span className="flex-1 text-sm text-muted">
+          Every shortcut, in one place.
+        </span>
+        <Button size="sm" variant="ghost" onPress={() => ui.openModal('help')}>
+          Keyboard shortcuts
+        </Button>
+      </Card>
+      <Card
+        variant="secondary"
+        className="flex flex-row items-center gap-3 p-4"
+      >
+        <ArrowRotateRight className="size-4 text-muted" />
+        <span className="flex-1 text-sm text-muted">
+          Show the welcome tour again the next time this view loads.
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="reset-onboarding"
+          onPress={() => ui.resetOnboarding()}
+        >
+          Reset onboarding
+        </Button>
       </Card>
     </section>
   );

@@ -235,6 +235,15 @@ export class UiStore {
     });
   }
 
+  /** "Reset onboarding" in Settings — forgets the welcome tour was seen so
+   *  it shows again on the next launch of this view (no server state). */
+  resetOnboarding(): void {
+    localStorage.removeItem(LS_ONBOARDED);
+    runInAction(() => {
+      this.onboarded = false;
+    });
+  }
+
   openContextMenu(x: number, y: number, items: ContextMenuItem[]): void {
     runInAction(() => {
       this.contextMenu = { x, y, items };
