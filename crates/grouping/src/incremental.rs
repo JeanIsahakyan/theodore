@@ -9,10 +9,11 @@ use std::path::Path;
 
 use serde::Deserialize;
 use theodore_domain::interdiff::HunkChange;
-use theodore_domain::{Group, GroupId, GroupKind, Grouping, HunkId, Revision, Usage, grouping};
+use theodore_domain::{Group, GroupId, Grouping, HunkId, Revision, Usage, grouping};
 use theodore_ports::AgentPort;
 
 use crate::pipeline::{self, GroupingOptions, GroupingPipelineError, GroupingReport, PrMeta};
+use crate::schema::kind_from_str;
 
 #[derive(Debug, Clone, Deserialize)]
 struct RawAssignment {
@@ -41,14 +42,6 @@ struct RawIncremental {
     assignments: Vec<RawAssignment>,
     #[serde(default)]
     new_groups: Vec<RawNewGroup>,
-}
-
-fn kind_from_str(s: Option<&str>) -> GroupKind {
-    match s {
-        Some("skim") => GroupKind::Skim,
-        Some("hidden") => GroupKind::Hidden,
-        _ => GroupKind::Normal,
-    }
 }
 
 /// Regroup `new_rev` given the previous grouping and a hunk classification
@@ -283,7 +276,7 @@ fn build_repair_prompt(
 mod tests {
     use super::*;
     use crate::testing::FakeAgentPort;
-    use theodore_domain::{DiffLine, FileDiff, FileStatus, Hunk, LineKind, Sha};
+    use theodore_domain::{DiffLine, FileDiff, FileStatus, GroupKind, Hunk, LineKind, Sha};
 
     fn line(kind: LineKind, text: &str) -> DiffLine {
         DiffLine {

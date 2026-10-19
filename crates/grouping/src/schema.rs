@@ -33,7 +33,8 @@ pub struct RawGrouping {
     pub groups: Vec<RawGroup>,
 }
 
-fn kind_from_str(s: Option<&str>) -> GroupKind {
+/// Shared with `incremental` — one place to add a new `GroupKind` string.
+pub(crate) fn kind_from_str(s: Option<&str>) -> GroupKind {
     match s {
         Some("skim") => GroupKind::Skim,
         Some("hidden") => GroupKind::Hidden,
