@@ -16,6 +16,7 @@ use theodore_ports::{
 pub struct Hosts {
     primary: Arc<dyn HostAdapter>,
     gitlab: Option<Arc<dyn HostAdapter>>,
+    bitbucket: Option<Arc<dyn HostAdapter>>,
     local: Arc<dyn HostAdapter>,
 }
 
@@ -23,11 +24,13 @@ impl Hosts {
     pub fn new(
         primary: Arc<dyn HostAdapter>,
         gitlab: Option<Arc<dyn HostAdapter>>,
+        bitbucket: Option<Arc<dyn HostAdapter>>,
         local: Arc<dyn HostAdapter>,
     ) -> Self {
         Self {
             primary,
             gitlab,
+            bitbucket,
             local,
         }
     }
@@ -35,6 +38,10 @@ impl Hosts {
     fn for_pr(&self, pr: &PrRef) -> HostResult<&Arc<dyn HostAdapter>> {
         match pr.repo.host {
             HostKind::Gitlab => self.gitlab.as_ref().ok_or(HostError::Unsupported("gitlab")),
+            HostKind::Bitbucket => self
+                .bitbucket
+                .as_ref()
+                .ok_or(HostError::Unsupported("bitbucket")),
             HostKind::Local => Ok(&self.local),
             _ => Ok(&self.primary),
         }
@@ -43,6 +50,10 @@ impl Hosts {
     fn for_repo(&self, repo: &RepoRef) -> HostResult<&Arc<dyn HostAdapter>> {
         match repo.host {
             HostKind::Gitlab => self.gitlab.as_ref().ok_or(HostError::Unsupported("gitlab")),
+            HostKind::Bitbucket => self
+                .bitbucket
+                .as_ref()
+                .ok_or(HostError::Unsupported("bitbucket")),
             _ => Ok(&self.primary),
         }
     }
@@ -65,6 +76,13 @@ impl HostAdapter for Hosts {
                 self.gitlab
                     .as_ref()
                     .ok_or(HostError::Unsupported("gitlab"))?
+                    .viewer()
+                    .await
+            }
+            HostKind::Bitbucket => {
+                self.bitbucket
+                    .as_ref()
+                    .ok_or(HostError::Unsupported("bitbucket"))?
                     .viewer()
                     .await
             }
@@ -274,7 +292,7 @@ mod tests {
         let github = Arc::new(TaggedHost::new(HostKind::Github));
         let gitlab = Arc::new(TaggedHost::new(HostKind::Gitlab));
         let local = Arc::new(TaggedHost::new(HostKind::Local));
-        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), local);
+        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), None, local);
 
         hosts
             .search_repo(
@@ -302,7 +320,7 @@ mod tests {
         let github = Arc::new(TaggedHost::new(HostKind::Github));
         let gitlab = Arc::new(TaggedHost::new(HostKind::Gitlab));
         let local = Arc::new(TaggedHost::new(HostKind::Local));
-        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), local);
+        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), None, local);
         let _ = hosts.viewer_for(HostKind::Gitlab).await;
         assert!(github.1.lock().unwrap().is_empty());
         assert_eq!(gitlab.1.lock().unwrap().as_slice(), ["viewer"]);
@@ -312,11 +330,56 @@ mod tests {
     async fn search_repo_without_a_gitlab_adapter_is_unsupported_for_a_gitlab_repo() {
         let github = Arc::new(TaggedHost::new(HostKind::Github));
         let local = Arc::new(TaggedHost::new(HostKind::Local));
-        let hosts = Hosts::new(github, None, local);
+        let hosts = Hosts::new(github, None, None, local);
 
         let err = hosts
             .search_repo(
                 &repo(HostKind::Gitlab, "b"),
+                &InboxSection::Query("q".into()),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, HostError::Unsupported(_)));
+    }
+
+    #[tokio::test]
+    async fn search_repo_routes_bitbucket_repos_to_the_bitbucket_adapter() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let bitbucket = Arc::new(TaggedHost::new(HostKind::Bitbucket));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github.clone(), None, Some(bitbucket.clone()), local);
+
+        hosts
+            .search_repo(
+                &repo(HostKind::Bitbucket, "b"),
+                &InboxSection::Query("q".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bitbucket.1.lock().unwrap().len(), 1);
+        assert_eq!(github.1.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn viewer_for_bitbucket_asks_the_bitbucket_adapter() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let bitbucket = Arc::new(TaggedHost::new(HostKind::Bitbucket));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github.clone(), None, Some(bitbucket.clone()), local);
+        let _ = hosts.viewer_for(HostKind::Bitbucket).await;
+        assert!(github.1.lock().unwrap().is_empty());
+        assert_eq!(bitbucket.1.lock().unwrap().as_slice(), ["viewer"]);
+    }
+
+    #[tokio::test]
+    async fn search_repo_without_a_bitbucket_adapter_is_unsupported_for_a_bitbucket_repo() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github, None, None, local);
+
+        let err = hosts
+            .search_repo(
+                &repo(HostKind::Bitbucket, "b"),
                 &InboxSection::Query("q".into()),
             )
             .await
