@@ -229,6 +229,219 @@ async fn transact_rejects_a_hunk_read_outside_the_current_revision() {
     );
 }
 
+fn single_op_tx(id: &str, op: MutationOp) -> Transaction {
+    Transaction {
+        id: id.into(),
+        ops: vec![op],
+    }
+}
+
+fn put_model_row(f: &Fixtures, model: &str, id: &str, data: serde_json::Value) {
+    f.store
+        .apply(vec![NewAction {
+            model: model.into(),
+            model_id: id.into(),
+            action: SyncActionCode::I,
+            data: Some(data),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn transact_rejects_client_writes_to_core_owned_models() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+
+    for model in [
+        models::PR,
+        models::PR_DETAIL,
+        models::GROUPING,
+        models::PROJECT,
+        models::CHAT_MESSAGE,
+    ] {
+        let tx = single_op_tx(
+            &format!("tx-core-owned-{model}"),
+            MutationOp::Create {
+                model: model.into(),
+                id: "x".into(),
+                data: json!({}),
+            },
+        );
+        let result = core.transact(tx).await;
+        assert!(
+            matches!(result, TransactionResult::Rejected { .. }),
+            "{model} create must be rejected, got {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn transact_allows_only_the_state_field_on_finding_updates() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    put_model_row(
+        &f,
+        models::FINDING,
+        "f1",
+        json!({
+            "id": "f1", "pr": "github:acme/widgets#7", "skill": "s1",
+            "agents": [], "anchor": {"path": "src/lib.rs", "side": "right", "line": 2},
+            "severity": "warn", "title": "orig", "body": "orig",
+            "state": "open", "fix": null,
+        }),
+    );
+
+    let bad = core
+        .transact(single_op_tx(
+            "tx-finding-bad",
+            MutationOp::Update {
+                model: models::FINDING.into(),
+                id: "f1".into(),
+                data: json!({"title": "hacked"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(bad, TransactionResult::Rejected { .. }),
+        "finding title must not be client-writable, got {bad:?}"
+    );
+
+    let good = core
+        .transact(single_op_tx(
+            "tx-finding-good",
+            MutationOp::Update {
+                model: models::FINDING.into(),
+                id: "f1".into(),
+                data: json!({"state": "ignored"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(good, TransactionResult::Ok { .. }),
+        "finding state must stay client-writable, got {good:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_restricts_task_updates_to_status_and_assignee() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-allowlist", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+
+    let result = core
+        .transact(single_op_tx(
+            "tx-task-bad",
+            MutationOp::Update {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: json!({"title": "retitled"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(result, TransactionResult::Rejected { .. }),
+        "task title must not be client-writable, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_rejects_a_new_task_that_does_not_start_in_todo() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let mut task = sample_task("t-skip-todo", &pr, None, None, f.clock.now());
+    task.status = TaskStatus::Done;
+
+    let result = core
+        .transact(single_op_tx(
+            "tx-task-create-bad",
+            MutationOp::Create {
+                model: models::TASK.into(),
+                id: task.id.0.clone(),
+                data: serde_json::to_value(&task).unwrap(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(result, TransactionResult::Rejected { .. }),
+        "a client-created task must start in todo, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_allows_only_archiving_a_skill_run() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    put_model_row(
+        &f,
+        models::SKILL_RUN,
+        "r1",
+        json!({"id": "r1", "pr": "github:acme/widgets#7"}),
+    );
+
+    let update = core
+        .transact(single_op_tx(
+            "tx-skillrun-update",
+            MutationOp::Update {
+                model: models::SKILL_RUN.into(),
+                id: "r1".into(),
+                data: json!({"id": "r1"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(update, TransactionResult::Rejected { .. }),
+        "skill_run must only be archivable by the client, got {update:?}"
+    );
+
+    let archive = core
+        .transact(single_op_tx(
+            "tx-skillrun-archive",
+            MutationOp::Archive {
+                model: models::SKILL_RUN.into(),
+                id: "r1".into(),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(archive, TransactionResult::Ok { .. }),
+        "archiving a skill_run must stay client-writable, got {archive:?}"
+    );
+}
+
+#[tokio::test]
+async fn transact_validates_draft_update_anchors_like_create() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    // Planted directly (bypassing the validated `create` path) to simulate a
+    // draft whose anchor the diff has since outrun.
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d1",
+        json!({
+            "id": "d1", "pr": pr.0, "body": "orig",
+            "anchor": {"path": "no/such/file.rs", "side": "right", "line": 1},
+            "source": {"kind": "me"},
+        }),
+    );
+
+    let result = core
+        .transact(single_op_tx(
+            "tx-draft-update-stale",
+            MutationOp::Update {
+                model: models::DRAFT.into(),
+                id: "d1".into(),
+                data: json!({"body": "edited"}),
+            },
+        ))
+        .await;
+    assert!(
+        matches!(result, TransactionResult::Rejected { .. }),
+        "a draft update must re-validate the anchor like create, got {result:?}"
+    );
+}
+
 #[tokio::test]
 async fn catch_up_replays_the_requested_gap() {
     let f = fixtures();
