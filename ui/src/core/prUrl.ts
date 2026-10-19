@@ -4,6 +4,7 @@ export function looksLikePrUrl(text: string): boolean {
   return (
     /^https?:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/.test(t) ||
     /^https?:\/\/gitlab\.com\/.+\/-\/merge_requests\/\d+/.test(t) ||
+    /^https?:\/\/bitbucket\.org\/[^/\s]+\/[^/\s]+\/pull-requests\/\d+/.test(t) ||
     /^[\w.-]+\/[\w.-]+#\d+$/.test(t)
   );
 }
