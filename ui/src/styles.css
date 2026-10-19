@@ -228,6 +228,17 @@ body.cmd .lines .src span:hover {
   display: none;
 }
 
+/* Hovered tabs brighten their text instead of dimming to 70% opacity: in
+ * WebKit an opacity change moves the tab onto its own compositing layer,
+ * which re-snaps it to the pixel grid and makes the icon jump. */
+.tabs__tab:not([data-selected='true']):not([data-disabled='true']):hover,
+.tabs__tab[data-hovered='true']:not([data-selected='true']):not(
+    [data-disabled='true']
+  ) {
+  opacity: 1;
+  color: var(--foreground);
+}
+
 /* Markdown (PR descriptions, comments) */
 .md > :first-child {
   margin-top: 0;
