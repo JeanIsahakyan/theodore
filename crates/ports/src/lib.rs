@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod clock;
+pub mod device_login;
 pub mod git;
 pub mod host;
 pub mod secrets;
@@ -13,6 +14,7 @@ pub mod store;
 
 pub use agent::*;
 pub use clock::*;
+pub use device_login::*;
 pub use git::*;
 pub use host::*;
 pub use secrets::*;
