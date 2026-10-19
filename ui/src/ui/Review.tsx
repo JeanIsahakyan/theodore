@@ -469,7 +469,12 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     setJumpStart(false);
     const timers = [0, 80, 200, 400, 700].map((ms) =>
       setTimeout(
-        () => target()?.scrollIntoView({ block: 'start', behavior: 'auto' }),
+        () =>
+          // The file card, so its name is in view, not just the hunk.
+          (target()?.closest('.file') ?? target())?.scrollIntoView({
+            block: 'start',
+            behavior: 'auto',
+          }),
         ms,
       ),
     );
