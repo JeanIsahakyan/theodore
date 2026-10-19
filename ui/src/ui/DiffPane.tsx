@@ -434,7 +434,11 @@ export const DiffPane = observer(function DiffPane({
 
   // A chunked file list resets whenever the group/file/mode changes under it.
   useEffect(() => setLimit(CHUNK), [mode.mode, mode.group, mode.file]);
-  const visibleFiles = files.slice(0, limit);
+  // A jump target past the loaded chunk must still render.
+  const focusIdx = focusPath
+    ? files.findIndex((f) => f.path === focusPath)
+    : -1;
+  const visibleFiles = files.slice(0, Math.max(limit, focusIdx + 1));
   const eager = useMemo(
     () => eagerCount(files, effectiveSplit),
     [files, effectiveSplit],

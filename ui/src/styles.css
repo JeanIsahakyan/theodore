@@ -209,6 +209,11 @@ body.cmd .lines .src span:hover {
   border-radius: 4px;
 }
 
+/* A hunk scrolled to its top clears its file's sticky header */
+[id^='H-'] {
+  scroll-margin-top: 56px;
+}
+
 /* big PRs: the browser skips layout and paint for file cards off screen */
 .file {
   content-visibility: auto;

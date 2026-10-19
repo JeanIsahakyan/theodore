@@ -112,6 +112,7 @@ export const GroupsPane = observer(function GroupsPane({
   since,
   sinceOnly,
   onTourFrom,
+  onOpenFile,
 }: {
   pr: PrId;
   rev: Revision;
@@ -121,6 +122,7 @@ export const GroupsPane = observer(function GroupsPane({
   sinceOnly: boolean;
   /** Starts the tour at this group — wired from `Review.tsx`'s own tour state. */
   onTourFrom?: (groupId: string) => void;
+  onOpenFile?: (groupId: string, path: string) => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -337,6 +339,7 @@ export const GroupsPane = observer(function GroupsPane({
                         <ListBox
                           aria-label={`Files in group ${n}`}
                           selectionMode="none"
+                          onAction={(k) => onOpenFile?.(g.id, String(k))}
                           className={`p-0 pb-1.5 ${files.length > BIG ? 'h-72 overflow-auto' : ''}`}
                         >
                           {files.map((f) => {

@@ -327,6 +327,25 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         : null,
     [tour, tourGroups, tourBack, tourAdvance],
   );
+  // Clicking a file in a group's file list: open that group and jump to the
+  // file's first hunk in it (the jump target is force-mounted by DiffPane).
+  const [jumpStart, setJumpStart] = useState(false);
+  const [jumpSeq, setJumpSeq] = useState(0);
+  const onOpenFile = useCallback(
+    (groupId: string, path: string) => {
+      const g = allGroups.find((x) => x.id === groupId);
+      const file = revision?.data?.files.find((f) => f.path === path);
+      const inGroup = g ? new Set(g.hunks) : null;
+      const first = file?.hunks.find((h) => !inGroup || inGroup.has(h.id));
+      setMode({ mode: 'groups', group: groupId, file: path });
+      if (first) {
+        setJumpStart(true);
+        setJumpSeq((n) => n + 1);
+        setFocusHunk(first.id);
+      }
+    },
+    [allGroups, revision?.data],
+  );
   const onTourFrom = useCallback(
     (groupId: string) => {
       const idx = tourGroups.findIndex((g) => g.id === groupId);
@@ -483,10 +502,18 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // under (`H-<hunkId>`).
   useEffect(() => {
     if (!focusHunk) return;
-    document
-      .getElementById(`H-${focusHunk}`)
-      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [focusHunk]);
+    // Wait a frame: a jump may have just switched group, so the target's
+    // file only mounts in this commit.
+    const id = requestAnimationFrame(() => {
+      document.getElementById(`H-${focusHunk}`)?.scrollIntoView({
+        block: jumpStart ? 'start' : 'nearest',
+        behavior: 'smooth',
+      });
+      setJumpStart(false);
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusHunk, jumpSeq]);
 
   const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
   const local = summary?.pr.repo.host === 'local';
@@ -837,6 +864,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   since={since}
                   sinceOnly={sinceOnly && sinceCount > 0}
                   onTourFrom={onTourFrom}
+                  onOpenFile={onOpenFile}
                 />
               )}
               {tab === 'checks' ? (
@@ -876,6 +904,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                       since={since}
                       sinceOnly={sinceOnly && sinceCount > 0}
                       onTourFrom={onTourFrom}
+                      onOpenFile={onOpenFile}
                     />
                   </div>
                   <div
