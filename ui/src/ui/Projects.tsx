@@ -207,8 +207,8 @@ function RepoRow({
 
   const body = (
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className="flex items-center gap-2 text-sm font-medium">
-        <span className="truncate">{r.name}</span>
+      <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+        <span className="min-w-0 truncate">{r.name}</span>
         {extra.private && <Lock className="size-3.5 shrink-0 text-muted" />}
       </span>
       {sub && <span className="truncate text-xs text-muted">{sub}</span>}

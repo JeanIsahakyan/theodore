@@ -83,7 +83,9 @@ export const NewTab = observer(function NewTab({ route }: { route: Route }) {
                 <span className="shrink-0 text-xs text-muted">
                   {p.pr.repo.name} #{p.pr.number}
                 </span>
-                <span className="truncate">{p.title}</span>
+                <span className="min-w-0 flex-1 truncate" title={p.title}>
+                  {p.title}
+                </span>
               </button>
             ))}
           </div>

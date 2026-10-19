@@ -316,7 +316,9 @@ export const PrRow = observer(function PrRow({
           {p.pr.repo.name} #{p.pr.number}
         </span>
       )}
-      <span className="truncate font-medium">{p.title}</span>
+      <span className="min-w-0 truncate font-medium" title={p.title}>
+        {p.title}
+      </span>
       {on('reasons') && (
         <span
           className="flex min-w-0 gap-1 overflow-hidden"
