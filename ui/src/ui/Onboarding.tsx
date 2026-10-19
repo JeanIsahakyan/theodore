@@ -312,8 +312,8 @@ export const Onboarding = observer(function Onboarding() {
                 </Alert.Indicator>
                 <Alert.Content>
                   <Alert.Description>
-                    Skills and agent fixes run on request, never automatically,
-                    so no tokens are wasted.
+                    Grouping runs once when you open a PR. Skills, chat and
+                    fixes run only when you ask; a per-PR budget caps spend.
                   </Alert.Description>
                 </Alert.Content>
               </Alert>
