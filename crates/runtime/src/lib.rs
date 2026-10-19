@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use anyhow::Context;
 use theodore_app::{Core, Deps, Receivers};
-use theodore_ports::{AgentPort, Clock, GitPort, HostAdapter, Secrets, Store, SystemClock};
+use theodore_ports::{
+    AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, Secrets, Store, SystemClock,
+};
 
 pub use grouper::GroupingGrouper;
 pub use hosts::Hosts;
@@ -80,6 +82,7 @@ struct Adapters {
     /// `None` in fixture mode: there's no keychain/`gh`/env token story to
     /// report (plan §6.8).
     token_status: Option<Arc<dyn theodore_app::TokenStatus>>,
+    device_login: Arc<dyn DeviceLoginPort>,
 }
 
 fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
@@ -122,6 +125,7 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         fixture_clock: None,
         fixture_host: None,
         token_status: Some(token as Arc<dyn theodore_app::TokenStatus>),
+        device_login: Arc::new(theodore_host_github::GithubDeviceLogin::new()),
     })
 }
 
@@ -140,6 +144,7 @@ fn fixture_adapters(dir: &std::path::Path) -> anyhow::Result<Adapters> {
         fixture_clock: Some(clock),
         fixture_host: Some(host),
         token_status: None,
+        device_login: Arc::new(theodore_ports::NoDeviceLogin),
     })
 }
 
@@ -177,6 +182,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         clock: a.clock,
         tools: Some(mcp.clone()),
         token_status: a.token_status,
+        device_login: a.device_login,
         claude_home,
     };
     let (core, receivers) = Core::start(deps);
