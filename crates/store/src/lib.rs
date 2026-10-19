@@ -76,33 +76,6 @@ impl SqliteStore {
         .map_err(de)?;
         Ok(())
     }
-
-    /// Drop sync log entries older than `sync_id` to keep the log bounded.
-    /// Returns the number of rows removed.
-    ///
-    /// After this, `since(id, _)` can no longer serve a client whose
-    /// `lastSyncId` is below the oldest id still kept (see
-    /// `oldest_sync_id`) — that client must discard its local copy and
-    /// bootstrap again from `all`/`get` instead of trying to catch up.
-    pub fn compact_before(&self, sync_id: u64) -> StoreResult<u64> {
-        let conn = self.lock()?;
-        let changed = conn
-            .execute(
-                "DELETE FROM sync_log WHERE id < ?1",
-                params![sync_id as i64],
-            )
-            .map_err(de)?;
-        Ok(changed as u64)
-    }
-
-    /// The oldest sync log id still present, or `None` if the log is empty.
-    pub fn oldest_sync_id(&self) -> StoreResult<Option<u64>> {
-        let conn = self.lock()?;
-        let v: Option<i64> = conn
-            .query_row("SELECT MIN(id) FROM sync_log", [], |r| r.get(0))
-            .map_err(de)?;
-        Ok(v.map(|v| v as u64))
-    }
 }
 
 /// The body of `apply`, run inside a caller-supplied transaction so
@@ -436,6 +409,67 @@ impl Store for SqliteStore {
             )
             .map_err(de)?;
         Ok(n as u64)
+    }
+
+    /// The oldest sync log id still present, or `None` if the log is empty.
+    fn oldest_sync_id(&self) -> StoreResult<Option<u64>> {
+        let conn = self.lock()?;
+        let v: Option<i64> = conn
+            .query_row("SELECT MIN(id) FROM sync_log", [], |r| r.get(0))
+            .map_err(de)?;
+        Ok(v.map(|v| v as u64))
+    }
+
+    /// Drop sync log entries older than `sync_id` to keep the log bounded.
+    /// Returns the number of rows removed.
+    ///
+    /// After this, `since(id, _)` can no longer serve a client whose
+    /// `lastSyncId` is below the oldest id still kept (see
+    /// `oldest_sync_id`) — that client must discard its local copy and
+    /// bootstrap again from `all`/`get` instead of trying to catch up.
+    fn compact_before(&self, sync_id: u64) -> StoreResult<u64> {
+        let conn = self.lock()?;
+        let changed = conn
+            .execute(
+                "DELETE FROM sync_log WHERE id < ?1",
+                params![sync_id as i64],
+            )
+            .map_err(de)?;
+        Ok(changed as u64)
+    }
+
+    /// Keeps whichever of the last `keep_last_n` ids or everything within
+    /// `keep_duration_ms` of `now_ms` retains more rows: computes both
+    /// cutoffs and compacts before the smaller one (deleting less), then
+    /// delegates to `compact_before`.
+    fn compact(&self, keep_last_n: u64, keep_duration_ms: i64, now_ms: i64) -> StoreResult<u64> {
+        let conn = self.lock()?;
+        let last: i64 = conn
+            .query_row("SELECT COALESCE(MAX(id), 0) FROM sync_log", [], |r| {
+                r.get(0)
+            })
+            .map_err(de)?;
+        // Keep the last `keep_last_n` ids: delete everything below this.
+        let by_count_cutoff = (last - keep_last_n as i64 + 1).max(0);
+        // Keep everything at or after `min_at`: the smallest id still that
+        // recent is the cutoff. No row qualifies (the whole log is older
+        // than the window) means this policy alone would drop everything —
+        // `last + 1`, so `min()` below defers to the count policy instead.
+        let min_at = now_ms.saturating_sub(keep_duration_ms);
+        let by_age_cutoff: Option<i64> = conn
+            .query_row(
+                "SELECT MIN(id) FROM sync_log WHERE at >= ?1",
+                params![min_at],
+                |r| r.get(0),
+            )
+            .map_err(de)?;
+        let by_age_cutoff = by_age_cutoff.unwrap_or(last + 1);
+        let cutoff = by_count_cutoff.min(by_age_cutoff);
+        drop(conn);
+        if cutoff <= 0 {
+            return Ok(0);
+        }
+        self.compact_before(cutoff as u64)
     }
 
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>> {

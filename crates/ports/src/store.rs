@@ -118,4 +118,33 @@ pub trait Store: Send + Sync {
     fn outbox_pending_count(&self) -> StoreResult<u64> {
         Ok(0)
     }
+
+    /// The oldest sync log id still present, or `None` if the log is empty
+    /// or this implementation never compacts it. `catch_up` compares its
+    /// caller's `since` against this: a client standing further behind than
+    /// the log now goes back can't be caught up incrementally and must
+    /// re-bootstrap instead (see `compact`). `Ok(None)` by default, so a
+    /// store that never compacts never triggers that path.
+    fn oldest_sync_id(&self) -> StoreResult<Option<u64>> {
+        Ok(None)
+    }
+
+    /// Drops sync log entries older than `sync_id`, returning the number of
+    /// rows removed. A lower-level primitive `compact` is built on; `Ok(0)`
+    /// by default (nothing to drop).
+    fn compact_before(&self, sync_id: u64) -> StoreResult<u64> {
+        let _ = sync_id;
+        Ok(0)
+    }
+
+    /// Compaction policy: keeps whichever of the last `keep_last_n` sync ids
+    /// or everything within `keep_duration_ms` of `now_ms` retains more
+    /// rows, then removes everything older via `compact_before`. Returns
+    /// the number of rows removed. `Ok(0)` by default — compaction is
+    /// optional; an implementation with no sync log to bound (e.g. a test
+    /// fake) can ignore it safely.
+    fn compact(&self, keep_last_n: u64, keep_duration_ms: i64, now_ms: i64) -> StoreResult<u64> {
+        let _ = (keep_last_n, keep_duration_ms, now_ms);
+        Ok(0)
+    }
 }
