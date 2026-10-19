@@ -471,12 +471,12 @@ export function useGlobalKeys() {
   const ui = useUi();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && latinKey(e) === 'k') {
         if (ui.modal === 'cmdk') ui.closeModal();
         else ui.openModal('cmdk');
       } else if (
         (e.metaKey || e.ctrlKey) &&
-        e.key.toLowerCase() === 'z' &&
+        latinKey(e) === 'z' &&
         !(e.target as HTMLElement).closest('input,textarea')
       ) {
         if (e.shiftKey) void store.sync.undo.redo();
