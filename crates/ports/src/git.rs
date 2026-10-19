@@ -82,6 +82,15 @@ pub struct CommitLog {
     pub at: Millis,
 }
 
+/// One `git grep` match (plan "symbols": go-to-definition / find-references
+/// without a full LSP).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrepHit {
+    pub path: String,
+    pub line: u32,
+    pub text: String,
+}
+
 /// Provides an HTTPS token for a remote at call time (never written to disk).
 pub trait CredentialSource: Send + Sync {
     fn token_for(&self, repo: &RepoRef) -> Option<String>;
@@ -253,6 +262,15 @@ pub trait GitPort: Send + Sync {
             viewed: Vec::new(),
         };
         Ok((detail, revision))
+    }
+
+    /// Whole-word, extended-regex search of `worktree`'s tracked files
+    /// (plan "symbols": go-to-definition / find-references without a full
+    /// LSP). `Unsupported` by default; only a `GitPort` backed by the real
+    /// git CLI can grep a working tree.
+    async fn grep(&self, worktree: &Path, pattern: &str) -> GitResult<Vec<GrepHit>> {
+        let _ = (worktree, pattern);
+        Err(GitError::Unsupported("grep"))
     }
 }
 

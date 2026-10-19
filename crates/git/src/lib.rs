@@ -13,6 +13,7 @@ mod auth;
 mod branches;
 mod diff;
 mod generated;
+mod grep;
 mod local;
 mod meta;
 mod parse;
@@ -26,7 +27,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use theodore_domain::{PrRef, RepoRef, Revision, Sha};
 use theodore_ports::{
-    BranchInfo, CommitLog, CredentialSource, DiffOptions, GitError, GitPort, GitResult, Worktree,
+    BranchInfo, CommitLog, CredentialSource, DiffOptions, GitError, GitPort, GitResult, GrepHit,
+    Worktree,
 };
 
 use process::GitProc;
@@ -267,6 +269,10 @@ impl GitPort for GitCli {
 
     async fn list_branches(&self, repo: &Path, default_branch: &str) -> GitResult<Vec<BranchInfo>> {
         self.list_branches_op(repo, default_branch).await
+    }
+
+    async fn grep(&self, worktree: &Path, pattern: &str) -> GitResult<Vec<GrepHit>> {
+        self.grep_op(worktree, pattern).await
     }
 }
 
