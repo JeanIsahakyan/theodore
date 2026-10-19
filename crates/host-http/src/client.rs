@@ -8,11 +8,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use theodore_ports::{Clock, Fetched, HostError, HostResult};
 
-/// Unix milliseconds. `theodore_ports::HostError::RateLimited` uses the
-/// domain's `Millis` alias (`i64`); host-http avoids a domain dependency by
-/// spelling it out.
-type Millis = i64;
-
 use crate::rate::{RateState, is_rate_limited_403, reset_at_from_headers};
 use crate::redact::redact;
 use crate::token::TokenSource;
@@ -130,7 +125,11 @@ impl HttpClient {
             .map_err(|e| HostError::Protocol(format!("bad path {path:?}: {e}")))
     }
 
-    fn now(&self) -> Millis {
+    /// Exposed so a caller building its own `HostError::RateLimited` (e.g.
+    /// GraphQL's body-level `RATE_LIMITED` errors, which carry no reset
+    /// header for `reset_at_from_headers` to read) can fall back to the same
+    /// `now + 60s` this client uses for a 403/429 with no reset header.
+    pub fn now(&self) -> i64 {
         self.clock.now()
     }
 
