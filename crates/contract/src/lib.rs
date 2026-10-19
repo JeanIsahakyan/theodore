@@ -9,6 +9,8 @@ use theodore_domain::{
     SnoozeUntil, Task, TaskId, Thread, ThreadId, Usage, ViewedState,
 };
 
+mod diff_media;
+pub use diff_media::*;
 mod interdiff;
 pub use interdiff::*;
 mod login;
@@ -667,7 +669,12 @@ pub fn types() -> specta::Types {
         .register::<HostRepo>()
         .register::<RerunCheckRequest>()
         .register::<TriageRequest>()
-        .register::<TriageAction>();
+        .register::<TriageAction>()
+        .register::<DiffSide>()
+        .register::<GetBlobRequest>()
+        .register::<BlobResponse>()
+        .register::<ConflictKind>()
+        .register::<ConflictFile>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

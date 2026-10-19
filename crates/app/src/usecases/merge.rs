@@ -7,11 +7,14 @@
 //! of failing later out of the outbox.
 
 use theodore_contract::{
-    DraftStateRequest, EditCommentRequest, MergeInfo, MergeMethod as WireMergeMethod, MergeRequest,
-    MergeState as WireMergeState, ReactRequest, RerunCheckRequest, ReviewersRequest,
+    ConflictFile, ConflictKind as WireConflictKind, DraftStateRequest, EditCommentRequest,
+    MergeInfo, MergeMethod as WireMergeMethod, MergeRequest, MergeState as WireMergeState,
+    ReactRequest, RerunCheckRequest, ReviewersRequest,
 };
 use theodore_domain::{HostKind, Person, PrId, PrRef};
-use theodore_ports::{MergeMethod as PortMergeMethod, MergeState as PortMergeState};
+use theodore_ports::{
+    ConflictKind as PortConflictKind, MergeMethod as PortMergeMethod, MergeState as PortMergeState,
+};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
@@ -44,6 +47,19 @@ fn to_wire_state(s: PortMergeState) -> WireMergeState {
         PortMergeState::Dirty => WireMergeState::Dirty,
         PortMergeState::Unstable => WireMergeState::Unstable,
         PortMergeState::Unknown => WireMergeState::Unknown,
+    }
+}
+
+fn to_wire_conflict_kind(k: PortConflictKind) -> WireConflictKind {
+    match k {
+        PortConflictKind::Content => WireConflictKind::Content,
+        PortConflictKind::AddAdd => WireConflictKind::AddAdd,
+        PortConflictKind::ModifyDelete => WireConflictKind::ModifyDelete,
+        PortConflictKind::RenameDelete => WireConflictKind::RenameDelete,
+        PortConflictKind::RenameRename => WireConflictKind::RenameRename,
+        PortConflictKind::DirectoryFile => WireConflictKind::DirectoryFile,
+        PortConflictKind::Submodule => WireConflictKind::Submodule,
+        PortConflictKind::Other => WireConflictKind::Other,
     }
 }
 
@@ -199,5 +215,37 @@ impl Core {
         let data = serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.enqueue_outbox("rerun_check", data).await?;
         Ok(())
+    }
+
+    /// Conflicting paths of merging this PR's base into its head, computed
+    /// locally (`GitPort::merge_tree_conflicts`) rather than trusting only
+    /// `PrSummary.conflicts`'s bare bool (plan "conflicts"). No host call,
+    /// so it works for a `HostKind::Local` PR too. `GitError::Unsupported`
+    /// (an older local `git`) propagates as-is; the UI hides the list.
+    pub async fn conflicts(&self, pr: PrId) -> AppResult<Vec<ConflictFile>> {
+        self.ensure_open(&pr).await?;
+        let detail = self.load_pr_detail(&pr).await?;
+        let repo_path = self.0.deps.git.ensure_repo(&detail.summary.pr.repo).await?;
+        let head = self
+            .0
+            .current_head
+            .read()
+            .await
+            .get(&pr)
+            .cloned()
+            .unwrap_or_else(|| detail.summary.head_sha.clone());
+        let entries = self
+            .0
+            .deps
+            .git
+            .merge_tree_conflicts(&repo_path, &detail.base_sha, &head)
+            .await?;
+        Ok(entries
+            .into_iter()
+            .map(|e| ConflictFile {
+                path: e.path,
+                kind: to_wire_conflict_kind(e.kind),
+            })
+            .collect())
     }
 }
