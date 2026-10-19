@@ -456,6 +456,13 @@ export const DiffPane = observer(function DiffPane({
 
   // A chunked file list resets whenever the group/file/mode changes under it.
   useEffect(() => setLimit(CHUNK), [mode.mode, mode.group, mode.file]);
+  // A new group (N/P, a click in the groups pane) or file starts at its top —
+  // its summary card — not wherever the previous one was scrolled to. A file
+  // jump inside a group re-aims right after (Review's focus effect).
+  const viewKey = mode.mode === 'files' ? `f:${mode.file}` : `g:${mode.group}`;
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [viewKey]);
   // A jump target past the loaded chunk must still render.
   const focusIdx = focusPath
     ? files.findIndex((f) => f.path === focusPath)
