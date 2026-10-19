@@ -45,6 +45,10 @@ export class EphemeralStore {
   agentText = new Map<string, string>();
   /** Last lines of a skill run's log, per run id. */
   runLog = new Map<string, string[]>();
+  /** Run ids with no output for `agents.stall_after_ms` while still alive —
+   *  the UI offers Retry/Cancel instead of waiting silently. Cleared as
+   *  soon as the run produces output again, or ends. */
+  stalled = new Set<string>();
   toasts: Toast[] = [];
   hostStatus: HostStatus = {
     online: true,
@@ -72,6 +76,7 @@ export class EphemeralStore {
     makeObservable(this, {
       agentText: observableShallow,
       runLog: observableShallow,
+      stalled: observableShallow,
       toasts: observableShallow,
       hostStatus: observable,
       grouping: observableShallow,
@@ -151,6 +156,7 @@ export class EphemeralStore {
           const next = new Map(this.agentText);
           next.set(e.run, (next.get(e.run) ?? '') + e.text);
           this.agentText = next;
+          this.clearStalled(e.run);
           return;
         }
         case 'run_log': {
@@ -158,6 +164,13 @@ export class EphemeralStore {
           const lines = [...(next.get(e.run) ?? []), e.line].slice(-LOG_LIMIT);
           next.set(e.run, lines);
           this.runLog = next;
+          this.clearStalled(e.run);
+          return;
+        }
+        case 'run_stalled': {
+          const next = new Set(this.stalled);
+          next.add(e.run);
+          this.stalled = next;
           return;
         }
         case 'toast':
@@ -209,6 +222,14 @@ export class EphemeralStore {
       const log = new Map(this.runLog);
       log.delete(run);
       this.runLog = log;
+      this.clearStalled(run);
     });
+  }
+
+  private clearStalled(run: string): void {
+    if (!this.stalled.has(run)) return;
+    const next = new Set(this.stalled);
+    next.delete(run);
+    this.stalled = next;
   }
 }

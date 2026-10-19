@@ -19,6 +19,7 @@ import {
   ThumbsUp,
 } from '@gravity-ui/icons';
 import {
+  Alert,
   AvatarGroup,
   Button,
   Card,
@@ -67,6 +68,7 @@ import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
+import { isAgentEnabled } from './Settings';
 import { SkillBrowser } from './Skills';
 import { TaskRow } from './Tasks';
 
@@ -689,7 +691,7 @@ function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
 }
 
 /** Finds the user's question right before an agent's reply, for "Ask again". */
-function priorQuestion(messages: ChatMessage[], reply: ChatMessage): string {
+export function priorQuestion(messages: ChatMessage[], reply: ChatMessage): string {
   const i = messages.findIndex((m) => m.id === reply.id);
   for (let j = i - 1; j >= 0; j--) {
     const m = messages[j]!;
@@ -698,19 +700,66 @@ function priorQuestion(messages: ChatMessage[], reply: ChatMessage): string {
   return '';
 }
 
+/** An agent run that errored, crashed, hit its runtime cap, or was
+ *  cancelled (`ChatMessage.failed` set): an inline "stopped" card instead
+ *  of a normal reply, with Retry re-sending the question that led to it. */
+const AgentFailedCard = observer(function AgentFailedCard({
+  pr,
+  m,
+  messages,
+}: {
+  pr: PrId;
+  m: ChatMessage;
+  messages: ChatMessage[];
+}) {
+  const store = useRootStore();
+  const question = priorQuestion(messages, m);
+  return (
+    <Alert status="danger" className="agent-failed">
+      <Alert.Indicator />
+      <Alert.Content>
+        <Alert.Description className="text-xs">{m.failed}</Alert.Description>
+        {question && (
+          <div className="mt-2 flex gap-1.5">
+            <Button
+              size="sm"
+              variant="tertiary"
+              onPress={() => {
+                void ask(store, {
+                  pr,
+                  question,
+                  about: null,
+                  group: null,
+                  agent: m.author.kind === 'me' ? null : m.author.agent,
+                }).catch(() => {});
+              }}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+      </Alert.Content>
+    </Alert>
+  );
+});
+
 const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const [text, setText] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillAgents, setSkillAgents] = useState<AgentId[]>(AGENTS);
   const [installed, setInstalled] = useState<AgentId[] | null>(null);
-  // Default to the agents actually installed on this machine.
+  // Default to the agents actually installed on this machine, minus any the
+  // user has disabled (plan "enable/disable agents": hidden from the chat
+  // picker, skipped for skills).
   useEffect(() => {
     let live = true;
     void api
       .detectAgents()
       .then((all) => {
-        const ids = all.filter((a) => a.installed).map((a) => a.id);
+        const ids = all
+          .filter((a) => a.installed && isAgentEnabled(store, a.id))
+          .map((a) => a.id);
         if (!live) return;
         setInstalled(ids);
         if (ids.length > 0) setSkillAgents(ids);
@@ -719,11 +768,14 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     return () => {
       live = false;
     };
-  }, []);
+  }, [store]);
   const [hi, setHi] = useState(0);
   const [pending, setPending] = useState<{
     run: string;
     startedAt: number;
+    /** So a stalled run's Retry can resend the same question. */
+    question: string;
+    agent: AgentId | null;
   } | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const messages = store.models.chatMessages
@@ -792,14 +844,15 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
       void runSkill(store, pr, t.slice(1).split(' ')[0] ?? '', skillAgents);
     } else {
       const startedAt = Date.now();
+      const agent = skillAgents[0] ?? null;
       void ask(store, {
         pr,
         question: t,
         about: null,
         group: null,
-        agent: skillAgents[0] ?? null,
+        agent,
       })
-        .then((run) => setPending({ run, startedAt }))
+        .then((run) => setPending({ run, startedAt, question: t, agent }))
         .catch(() => {});
     }
     setText('');
@@ -869,69 +922,122 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 <div key={m.id} className="msg agent flex gap-3">
                   <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
                     <AgentTag id={m.author.agent} />
-                    <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                      {rich(m.text)}
-                    </div>
-                    {m.refs.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {m.refs.map((a, i) => (
-                          <Ref key={i} a={a} />
-                        ))}
-                      </div>
+                    {m.failed ? (
+                      <AgentFailedCard pr={pr} m={m} messages={messages} />
+                    ) : (
+                      <>
+                        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                          {rich(m.text)}
+                        </div>
+                        {m.refs.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {m.refs.map((a, i) => (
+                              <Ref key={i} a={a} />
+                            ))}
+                          </div>
+                        )}
+                        <MessageActions
+                          text={m.text}
+                          usage={m.usage}
+                          onRetry={() => {
+                            const q = priorQuestion(messages, m);
+                            const agent =
+                              m.author.kind === 'me' ? null : m.author.agent;
+                            if (q)
+                              void ask(store, {
+                                pr,
+                                question: q,
+                                about: null,
+                                group: null,
+                                agent,
+                              }).catch(() => {});
+                          }}
+                        />
+                      </>
                     )}
-                    <MessageActions
-                      text={m.text}
-                      usage={m.usage}
-                      onRetry={() => {
-                        const q = priorQuestion(messages, m);
-                        const agent =
-                          m.author.kind === 'me' ? null : m.author.agent;
-                        if (q)
-                          void ask(store, {
-                            pr,
-                            question: q,
-                            about: null,
-                            group: null,
-                            agent,
-                          }).catch(() => {});
-                      }}
-                    />
                   </div>
                 </div>
               ),
             )}
-            {pending && (
-              <div className="msg agent flex gap-3">
-                <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
-                  {store.ephemeral.agentText.get(pending.run) ? (
-                    <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                      {rich(store.ephemeral.agentText.get(pending.run)!)}
+            {pending &&
+              (() => {
+                const stalled = store.ephemeral.stalled.has(pending.run);
+                const stop = () => {
+                  void cancelRun(store, pending.run);
+                  setPending(null);
+                };
+                return (
+                  <div className="msg agent flex gap-3">
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+                      {stalled ? (
+                        <Alert status="warning" className="agent-stalled">
+                          <Alert.Indicator />
+                          <Alert.Content>
+                            <Alert.Description className="text-xs">
+                              No response in a while — the agent may be
+                              stuck.
+                            </Alert.Description>
+                          </Alert.Content>
+                        </Alert>
+                      ) : store.ephemeral.agentText.get(pending.run) ? (
+                        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                          {rich(store.ephemeral.agentText.get(pending.run)!)}
+                        </div>
+                      ) : (
+                        <Dots />
+                      )}
+                      {(store.ephemeral.runLog.get(pending.run)?.length ??
+                        0) > 0 && (
+                        <ToolCalls
+                          tools={store.ephemeral.runLog.get(pending.run)!}
+                          running
+                        />
+                      )}
+                      <div className="flex gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-fit px-2 text-xs"
+                          onPress={stop}
+                        >
+                          <CircleStop className="size-3.5" />
+                          Stop
+                        </Button>
+                        {stalled && (
+                          <Button
+                            size="sm"
+                            variant="tertiary"
+                            className="h-7 w-fit px-2 text-xs"
+                            onPress={() => {
+                              const { question, agent } = pending;
+                              stop();
+                              const startedAt = Date.now();
+                              void ask(store, {
+                                pr,
+                                question,
+                                about: null,
+                                group: null,
+                                agent,
+                              })
+                                .then((run) =>
+                                  setPending({
+                                    run,
+                                    startedAt,
+                                    question,
+                                    agent,
+                                  }),
+                                )
+                                .catch(() => {});
+                            }}
+                          >
+                            Retry
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  ) : (
-                    <Dots />
-                  )}
-                  {(store.ephemeral.runLog.get(pending.run)?.length ?? 0) >
-                    0 && (
-                    <ToolCalls
-                      tools={store.ephemeral.runLog.get(pending.run)!}
-                      running
-                    />
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-fit px-2 text-xs"
-                    onPress={() => {
-                      void cancelRun(store, pending.run);
-                      setPending(null);
-                    }}
-                  >
-                    <CircleStop className="size-3.5" />
-                    Stop
-                  </Button>
-                </div>
-              </div>
-            )}
+                  </div>
+                );
+              })()}
           </>
         )}
         <div ref={end} />
@@ -1065,13 +1171,16 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                       if (next.length) setSkillAgents(next);
                     }}
                   >
-                    {/* Only agents installed on this computer are offered. */}
-                    {(installed ?? AGENTS).map((a) => (
-                      <Dropdown.Item key={a} id={a} textValue={a}>
-                        <Label>{a}</Label>
-                        <Dropdown.ItemIndicator />
-                      </Dropdown.Item>
-                    ))}
+                    {/* Only agents installed on this computer and not
+                        disabled in Settings → Agents are offered. */}
+                    {(installed ?? AGENTS)
+                      .filter((a) => isAgentEnabled(store, a))
+                      .map((a) => (
+                        <Dropdown.Item key={a} id={a} textValue={a}>
+                          <Label>{a}</Label>
+                          <Dropdown.ItemIndicator />
+                        </Dropdown.Item>
+                      ))}
                   </Dropdown.Menu>
                 </Dropdown.Popover>
               </Dropdown>

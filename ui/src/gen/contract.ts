@@ -64,6 +64,13 @@ export type ChatMessage = {
 	refs: Anchor[],
 	usage: Usage | null,
 	at: number,
+	/**
+	 *  Set instead of a normal reply when the run behind this message
+	 *  errored, crashed, hit its runtime cap, or was cancelled — the error
+	 *  text (or a short cancelled/stalled note). The UI renders this as a
+	 *  "stopped" card with Retry instead of as a normal agent reply.
+	 */
+	failed?: string | null,
 };
 
 export type Check = {
@@ -148,7 +155,13 @@ export type EditCommentRequest = {
 	body: string | null,
 };
 
-export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } | { type: "toast"; level: ToastLevel; text: string } |
+export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } |
+/**
+ *  No output for `agents.stall_after_ms` while `run` is still alive.
+ *  The run keeps going (this isn't terminal) — the UI offers Retry
+ *  (cancel + resend) or Cancel instead of waiting silently.
+ */
+{ type: "run_stalled"; run: string; agent: AgentId } | { type: "toast"; level: ToastLevel; text: string } |
 /**  Grouping of a PR started or finished (no sync row until it's done). */
 { type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean };
 
