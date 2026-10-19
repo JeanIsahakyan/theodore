@@ -103,7 +103,7 @@ impl GitCli {
         default_branch: &str,
     ) -> GitResult<Vec<BranchInfo>> {
         let format = format!(
-            "%(refname:short){FS}%(objectname){FS}%(contents:subject){FS}%(committerdate:unix)"
+            "%(refname:short){FS}%(objectname){FS}%(contents:subject){FS}%(committerdate:unix){FS}%(authorname)"
         );
         let askpass = self.ensure_askpass()?;
         let out = GitProc {
@@ -118,10 +118,14 @@ impl GitCli {
 
         let mut branches = Vec::new();
         for line in out.lines().filter(|l| !l.is_empty()) {
-            let mut parts = line.splitn(4, FS);
-            let (Some(name), Some(sha), Some(subject), Some(at)) =
-                (parts.next(), parts.next(), parts.next(), parts.next())
-            else {
+            let mut parts = line.splitn(5, FS);
+            let (Some(name), Some(sha), Some(subject), Some(at), Some(author)) = (
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+            ) else {
                 continue;
             };
             let (ahead, behind) = if name == default_branch {
@@ -135,6 +139,7 @@ impl GitCli {
                 name: name.to_string(),
                 head: Sha::new(sha.to_string()),
                 subject: subject.to_string(),
+                author: author.to_string(),
                 ahead,
                 behind,
                 updated_at: at.trim().parse::<i64>().unwrap_or(0) * 1000,

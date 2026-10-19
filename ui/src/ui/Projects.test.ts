@@ -4,7 +4,7 @@ import type { InboxPr } from './List';
 import {
   boardColumns,
   filterHostRepos,
-  groupProjectPrs,
+  hostRepoUrl,
   projectLabel,
   repoKey,
   sameRepo,
@@ -107,39 +107,19 @@ describe('filterHostRepos', () => {
   });
 });
 
-describe('groupProjectPrs', () => {
-  const items = [
-    pr({ id: '1', state: 'open', updated_at: 1 }),
-    pr({ id: '2', state: 'merged', updated_at: 3 }),
-    pr({ id: '3', state: 'open', updated_at: 2 }),
-  ];
-
-  it('groups by status, in STATUS_ORDER, each sorted by activity', () => {
-    const groups = groupProjectPrs(items, {
-      groupBy: 'status',
-      sort: 'activity',
-    });
-    const nonEmpty = groups.filter((g) => g.items.length);
-    expect(nonEmpty.map((g) => g.id)).toEqual(['open', 'merged']);
-    expect(nonEmpty[0]!.items.map((p) => p.id)).toEqual(['3', '1']);
+describe('hostRepoUrl', () => {
+  it('builds the host web URL for a host project', () => {
+    expect(hostRepoUrl(repo())).toBe('https://github.com/acme/web');
+    expect(hostRepoUrl(repo({ host: 'gitlab' }))).toBe(
+      'https://gitlab.com/acme/web',
+    );
+    expect(hostRepoUrl(repo({ host: 'bitbucket' }))).toBe(
+      'https://bitbucket.org/acme/web',
+    );
   });
 
-  it('collapses to one group when groupBy is none', () => {
-    const groups = groupProjectPrs(items, {
-      groupBy: 'none',
-      sort: 'activity',
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]!.items).toHaveLength(3);
-  });
-
-  it('sorts by size (additions + deletions) when asked', () => {
-    const bySize = [
-      pr({ id: 'a', additions: 1, deletions: 0 }),
-      pr({ id: 'b', additions: 10, deletions: 0 }),
-    ];
-    const groups = groupProjectPrs(bySize, { groupBy: 'none', sort: 'size' });
-    expect(groups[0]!.items.map((p) => p.id)).toEqual(['b', 'a']);
+  it('is null for a local folder project', () => {
+    expect(hostRepoUrl(repo({ host: 'local' }))).toBeNull();
   });
 });
 

@@ -199,6 +199,7 @@ async fn list_branches_reports_ahead_and_behind_against_the_default_branch() {
     // `main`'s one extra commit (behind).
     assert_eq!((feature.ahead, feature.behind), (1, 1));
     assert_eq!(feature.subject, "feature work");
+    assert_eq!(feature.author, "test");
 }
 
 #[tokio::test]

@@ -10,9 +10,14 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowRotateLeft,
+  ArrowUpRightFromSquare,
   BranchesRight,
   Check,
+  ChartColumn,
+  Clock,
+  CodeMerge,
   CodePullRequest,
+  CodePullRequestXmark,
   FolderPlus,
   LayoutColumns,
   LayoutList,
@@ -40,6 +45,7 @@ import {
   ToggleButtonGroup,
   Toolbar,
   Tooltip,
+  Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
@@ -74,6 +80,17 @@ import {
   type RowProp,
 } from './List';
 import { RowsSkeleton } from './Loading';
+import { Peek } from './Peek';
+import { projectActivity } from './project/activity';
+import { branchPr } from './project/branches';
+import { noOpenPrsBanner, projectStats } from './project/stats';
+import {
+  failingChecksCount,
+  mergesPerWeek,
+  oldestOpenPrAge,
+  topAuthors,
+} from './project/summary';
+import { projectPrSections, type ProjectPrSort } from './project/sections';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { useViewKeys } from './keys';
 
@@ -105,8 +122,7 @@ export function filterHostRepos(repos: HostRepo[], query: string): HostRepo[] {
 
 export interface ProjectDisplay {
   layout: 'list' | 'board';
-  groupBy: 'status' | 'none';
-  sort: 'activity' | 'size';
+  sort: ProjectPrSort;
   props: RowProp[];
 }
 
@@ -114,7 +130,6 @@ export interface ProjectDisplay {
 // (through Modals), so ROW_PROPS isn't initialised yet at module load.
 export const defaultProjectDisplay = (): ProjectDisplay => ({
   layout: 'list',
-  groupBy: 'status',
   sort: 'activity',
   props: ROW_PROPS,
 });
@@ -130,21 +145,22 @@ function sortProjectPrs(
   return [...items].sort((a, b) => by(a) - by(b));
 }
 
-/** Grouping for the list layout: by status, or one flat group. */
-export function groupProjectPrs(
-  items: InboxPr[],
-  d: Pick<ProjectDisplay, 'groupBy' | 'sort'>,
-): { id: string; title: string; items: InboxPr[] }[] {
-  const sorted = sortProjectPrs(items, d.sort);
-  if (d.groupBy === 'none') return [{ id: 'all', title: 'All', items: sorted }];
-  return STATUS_ORDER.map((st) => ({
-    id: st,
-    title: prStatusLabel[st],
-    items: sorted.filter((p) => p.state === st),
-  }));
+/** The external host URL for a repo project — `null` for a local folder,
+ *  which has no host to link to. */
+export function hostRepoUrl(repo: RepoRef): string | null {
+  switch (repo.host) {
+    case 'github':
+      return `https://github.com/${repo.owner}/${repo.name}`;
+    case 'gitlab':
+      return `https://gitlab.com/${repo.owner}/${repo.name}`;
+    case 'bitbucket':
+      return `https://bitbucket.org/${repo.owner}/${repo.name}`;
+    case 'local':
+      return null;
+  }
 }
 
-/** Board columns: always by status, regardless of `groupBy`. */
+/** Board columns: always by status, regardless of the list's sections. */
 export function boardColumns(
   items: InboxPr[],
   sort: ProjectDisplay['sort'],
@@ -552,17 +568,6 @@ function ProjectDisplayButton({
           </div>
           <Separator />
           <div className="flex flex-col gap-3 px-4 py-3">
-            <DisplayRow label="Grouping">
-              <Picker
-                label="Grouping"
-                value={display.groupBy}
-                onChange={(v) => setDisplay({ groupBy: v })}
-                options={[
-                  ['status', 'By status'],
-                  ['none', 'No grouping'],
-                ]}
-              />
-            </DisplayRow>
             <DisplayRow label="Ordering">
               <Picker
                 label="Ordering"
@@ -613,28 +618,33 @@ function ProjectDisplayButton({
 }
 
 const ProjectPrs = observer(function ProjectPrs({
-  project,
+  items,
 }: {
-  project: Project;
+  items: InboxPr[];
 }) {
   const store = useRootStore();
   const ui = useUi();
+  const viewerLogin = store.ephemeral.viewer?.login ?? null;
   const [display, setDisplayState] = useState<ProjectDisplay>(
     defaultProjectDisplay(),
   );
   const setDisplay = (patch: Partial<ProjectDisplay>) =>
     setDisplayState((d) => ({ ...d, ...patch }));
 
-  const items = store.models.prSummaries.where((p) =>
-    sameRepo(p.pr.repo, project.repo),
-  );
-  const groups = groupProjectPrs(items, display).filter((g) => g.items.length);
+  const sections = projectPrSections(items, viewerLogin, display.sort);
+  const groups = sections.filter((g) => g.items.length);
+  const [closed, setClosed] = useState<Record<string, boolean>>(() => {
+    const seed: Record<string, boolean> = {};
+    for (const g of sections) if (g.collapsedByDefault) seed[g.id] = true;
+    return seed;
+  });
+  const banner = noOpenPrsBanner(items);
   const order =
     display.layout === 'board'
       ? boardColumns(items, display.sort).flatMap((c) =>
           c.items.map((p) => p.id),
         )
-      : groups.flatMap((g) => g.items.map((p) => p.id));
+      : groups.flatMap((g) => (closed[g.id] ? [] : g.items.map((p) => p.id)));
 
   useViewKeys(
     ui,
@@ -679,6 +689,12 @@ const ProjectPrs = observer(function ProjectPrs({
         <ProjectDisplayButton display={display} setDisplay={setDisplay} />
         <PeekToggle on={ui.peek} toggle={() => ui.togglePeek()} />
       </Toolbar>
+      {banner && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-separator bg-default/40 px-6 py-2 text-xs text-muted">
+          <Clock className="size-3.5" />
+          No open PRs · last merge {ago(banner.mergedAt)} ago (#{banner.number})
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         {display.layout === 'board' ? (
           <Board
@@ -692,8 +708,8 @@ const ProjectPrs = observer(function ProjectPrs({
           <RowList
             groups={groups}
             sel={ui.selected}
-            closed={{}}
-            toggle={() => {}}
+            closed={closed}
+            toggle={(id) => setClosed((c) => ({ ...c, [id]: !c[id] }))}
             onSelect={(id) => ui.select(id)}
             onOpen={(id) => ui.go({ name: 'review', pr: id })}
             row={(id) => (
@@ -713,17 +729,99 @@ const ProjectPrs = observer(function ProjectPrs({
             }
           />
         )}
+        {ui.peek &&
+          (ui.selected ? (
+            items.some((p) => p.id === ui.selected) && <Peek id={ui.selected} />
+          ) : (
+            <RepoSummaryPeek items={items} now={Date.now()} />
+          ))}
       </div>
     </div>
   );
 });
 
+/** Repo-summary peek (plan "the projects page isn't very informative"):
+ *  shown instead of the usual per-PR `Peek` when nothing is selected —
+ *  merges per week, top authors, failing checks, oldest open PR. */
+function RepoSummaryPeek({ items, now }: { items: InboxPr[]; now: number }) {
+  const weeks = mergesPerWeek(items, now);
+  const maxWeek = Math.max(1, ...weeks);
+  const authors = topAuthors(items);
+  const failing = failingChecksCount(items);
+  const oldest = oldestOpenPrAge(items, now);
+
+  return (
+    <Surface className="peek flex w-[clamp(280px,32vw,384px)] shrink-0 flex-col gap-5 overflow-auto rounded-none border-l border-separator p-6 pb-20">
+      <header className="flex flex-col gap-1">
+        <Typography.Heading level={5}>Repo summary</Typography.Heading>
+        <span className="text-xs text-muted">
+          From the pull requests loaded for this project.
+        </span>
+      </header>
+
+      <section className="flex flex-col gap-2">
+        <Label className="text-xs font-medium text-muted">
+          Merges per week
+        </Label>
+        <div className="flex h-16 items-end gap-2">
+          {weeks.map((n, i) => (
+            <div key={i} className="flex flex-1 flex-col items-center gap-1">
+              <div
+                className="w-full rounded-t bg-accent/70"
+                style={{ height: `${Math.max(4, (n / maxWeek) * 48)}px` }}
+              />
+              <span className="text-[10px] tabular-nums text-muted">{n}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <Separator />
+
+      <section className="flex flex-col gap-2">
+        <Label className="text-xs font-medium text-muted">Top authors</Label>
+        {authors.length === 0 ? (
+          <span className="text-xs text-muted">No authors yet.</span>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {authors.map((a) => (
+              <li key={a.login} className="flex items-center gap-2 text-sm">
+                <Avatar
+                  person={{ login: a.login, name: null, avatar_url: null }}
+                  size={18}
+                />
+                <span className="min-w-0 flex-1 truncate">{a.login}</span>
+                <span className="tabular-nums text-xs text-muted">
+                  {a.count}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <Separator />
+      <dl className="grid grid-cols-[1fr_auto] items-center gap-y-2 text-sm [&>dt]:text-muted">
+        <dt>Failing checks</dt>
+        <dd className={failing > 0 ? 'text-danger' : ''}>{failing}</dd>
+        <dt>Oldest open PR</dt>
+        <dd>
+          {oldest ? `#${oldest.number} · ${ago(now - oldest.ageMs)}` : '—'}
+        </dd>
+      </dl>
+    </Surface>
+  );
+}
+
 const ProjectBranches = observer(function ProjectBranches({
   project,
+  items,
 }: {
   project: Project;
+  items: InboxPr[];
 }) {
   const store = useRootStore();
+  const ui = useUi();
   const [branches, setBranches] = useState<LocalBranch[] | 'unready' | null>(
     null,
   );
@@ -771,44 +869,71 @@ const ProjectBranches = observer(function ProjectBranches({
       <Table.ScrollContainer>
         <Table.Content aria-label="Branches">
           <Table.Header>
-            <Table.Column isRowHeader width={240}>
+            <Table.Column isRowHeader width={200}>
               branch
             </Table.Column>
             <Table.Column>last commit</Table.Column>
-            <Table.Column width={110}>ahead / behind</Table.Column>
-            <Table.Column width={90}>updated</Table.Column>
+            <Table.Column width={96}>ahead / behind</Table.Column>
+            <Table.Column width={56}>PR</Table.Column>
+            <Table.Column width={132}> </Table.Column>
           </Table.Header>
           <Table.Body>
-            {branches.map((b) => (
-              <Table.Row
-                key={b.name}
-                id={b.name}
-                onAction={() => open(b)}
-                className="cursor-pointer"
-              >
-                <Table.Cell className="min-w-0 font-mono text-sm">
-                  <span
-                    className="inline-flex min-w-0 max-w-full items-center gap-1.5"
-                    title={b.name}
-                  >
-                    <BranchesRight className="size-3.5 shrink-0 text-muted" />
-                    <span className="truncate">{b.name}</span>
-                    {opening === b.name && <Spinner />}
-                  </span>
-                </Table.Cell>
-                <Table.Cell className="min-w-0 text-xs text-muted">
-                  <span className="block truncate" title={b.subject}>
-                    {b.subject}
-                  </span>
-                </Table.Cell>
-                <Table.Cell className="text-xs tabular-nums text-muted">
-                  +{b.ahead} / -{b.behind}
-                </Table.Cell>
-                <Table.Cell className="text-xs text-muted">
-                  {ago(b.updated_at)}
-                </Table.Cell>
-              </Table.Row>
-            ))}
+            {branches.map((b) => {
+              const match = branchPr(b.name, project.repo, items);
+              return (
+                <Table.Row key={b.name} id={b.name}>
+                  <Table.Cell className="min-w-0 font-mono text-sm">
+                    <span
+                      className="inline-flex min-w-0 max-w-full items-center gap-1.5"
+                      title={b.name}
+                    >
+                      <BranchesRight className="size-3.5 shrink-0 text-muted" />
+                      <span className="truncate">{b.name}</span>
+                      {b.name === project.default_branch && (
+                        <Chip size="sm" variant="soft" className="shrink-0">
+                          default
+                        </Chip>
+                      )}
+                    </span>
+                  </Table.Cell>
+                  <Table.Cell className="min-w-0">
+                    <span className="block truncate text-sm" title={b.subject}>
+                      {b.subject}
+                    </span>
+                    <span className="block truncate text-xs text-muted">
+                      {b.author || 'unknown'} · {ago(b.updated_at)}
+                    </span>
+                  </Table.Cell>
+                  <Table.Cell className="text-xs tabular-nums text-muted">
+                    +{b.ahead} / -{b.behind}
+                  </Table.Cell>
+                  <Table.Cell className="text-xs">
+                    {match ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-1.5 font-mono text-xs"
+                        onPress={() => ui.go({ name: 'review', pr: match.id })}
+                      >
+                        #{match.pr.number}
+                      </Button>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      isPending={opening === b.name}
+                      onPress={() => open(b)}
+                    >
+                      Review branch
+                    </Button>
+                  </Table.Cell>
+                </Table.Row>
+              );
+            })}
           </Table.Body>
         </Table.Content>
       </Table.ScrollContainer>
@@ -816,7 +941,7 @@ const ProjectBranches = observer(function ProjectBranches({
   );
 });
 
-type ProjectTab = 'prs' | 'branches';
+type ProjectTab = 'prs' | 'branches' | 'activity';
 
 export const ProjectView = observer(function ProjectView({
   id,
@@ -827,6 +952,9 @@ export const ProjectView = observer(function ProjectView({
   const [tab, setTab] = useState<ProjectTab>('prs');
   const [refreshing, setRefreshing] = useState(false);
   const project = store.models.projects.get(id);
+  const items = project
+    ? store.models.prSummaries.where((p) => sameRepo(p.pr.repo, project.repo))
+    : [];
 
   const refresh = () => {
     setRefreshing(true);
@@ -842,29 +970,93 @@ export const ProjectView = observer(function ProjectView({
     );
   }
 
+  const ghUrl = hostRepoUrl(project.repo);
+  const viewerLogin = store.ephemeral.viewer?.login ?? null;
+  const stats = projectStats(items, viewerLogin, Date.now());
+  const meta = [
+    project.default_branch,
+    project.last_fetched_at != null
+      ? `fetched ${ago(project.last_fetched_at)} ago`
+      : null,
+  ].filter((s): s is string => !!s);
+
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
-      <ViewHeader title={projectLabel(project)}>
-        <ProjectStatusDot p={project} />
-        {project.status === 'error' && (
-          <span className="text-xs text-danger">
-            {project.error ?? 'Failed to clone'}
-          </span>
-        )}
-        <Tooltip>
-          <Button
-            isIconOnly
-            size="sm"
-            variant="ghost"
-            aria-label="Refresh"
-            isPending={refreshing}
-            onPress={refresh}
+      <div className="flex h-14 w-full min-w-0 shrink-0 items-center gap-3 border-b border-separator px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          <Typography.Heading
+            level={6}
+            className="shrink-0 truncate"
+            title={projectLabel(project)}
           >
-            <ArrowRotateLeft className="size-4" />
-          </Button>
-          <Tooltip.Content>Refresh project</Tooltip.Content>
-        </Tooltip>
-      </ViewHeader>
+            {projectLabel(project)}
+          </Typography.Heading>
+          <ProjectStatusDot p={project} />
+          {project.private && (
+            <Tooltip>
+              <Tooltip.Trigger>
+                <Lock className="size-3.5 shrink-0 text-muted" />
+              </Tooltip.Trigger>
+              <Tooltip.Content>Private repository</Tooltip.Content>
+            </Tooltip>
+          )}
+          {meta.length > 0 && (
+            <span className="min-w-0 truncate text-xs text-muted">
+              {meta.join(' · ')}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {project.status === 'error' && (
+            <span className="text-xs text-danger">
+              {project.error ?? 'Failed to clone'}
+            </span>
+          )}
+          {ghUrl && (
+            <Button
+              size="sm"
+              variant="tertiary"
+              className="gap-1.5"
+              onPress={() => window.open(ghUrl, '_blank')}
+            >
+              <ArrowUpRightFromSquare className="size-4" />
+              GitHub
+            </Button>
+          )}
+          <Tooltip>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              aria-label="Refresh"
+              isPending={refreshing}
+              onPress={refresh}
+            >
+              <ArrowRotateLeft className="size-4" />
+            </Button>
+            <Tooltip.Content>Refresh project</Tooltip.Content>
+          </Tooltip>
+        </div>
+      </div>
+      {project.description && (
+        <p
+          className="truncate border-b border-separator px-6 py-2 text-xs text-muted"
+          title={project.description}
+        >
+          {project.description}
+        </p>
+      )}
+      <div className="flex shrink-0 gap-2 border-b border-separator px-6 py-3">
+        <StatCard label="Open" value={stats.open} />
+        <StatCard label="Needs your review" value={stats.needsReview} />
+        <StatCard label="Yours" value={stats.yours} />
+        <StatCard
+          label="Failing checks"
+          value={stats.failingChecks}
+          danger={stats.failingChecks > 0}
+        />
+        <StatCard label="Merged 7d" value={stats.merged7d} />
+      </div>
       <Tabs
         selectedKey={tab}
         onSelectionChange={(k) => setTab(k as ProjectTab)}
@@ -882,14 +1074,21 @@ export const ProjectView = observer(function ProjectView({
               Branches
               <Tabs.Indicator />
             </Tabs.Tab>
+            <Tabs.Tab id="activity" className="gap-1.5">
+              <ChartColumn className="size-4" />
+              Activity
+              <Tabs.Indicator />
+            </Tabs.Tab>
           </Tabs.List>
         </Tabs.ListContainer>
       </Tabs>
       <div className="flex min-h-0 flex-1">
         {tab === 'prs' ? (
-          <ProjectPrs project={project} />
+          <ProjectPrs items={items} />
+        ) : tab === 'branches' ? (
+          <ProjectBranches project={project} items={items} />
         ) : (
-          <ProjectBranches project={project} />
+          <ActivityTab items={items} />
         )}
       </div>
       <Hints>
@@ -899,3 +1098,78 @@ export const ProjectView = observer(function ProjectView({
     </div>
   );
 });
+
+/** One stat card under the project header. */
+function StatCard({
+  label,
+  value,
+  danger,
+}: {
+  label: string;
+  value: number;
+  danger?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-2xl border border-separator px-3 py-2">
+      <span className="truncate text-xs text-muted">{label}</span>
+      <span
+        className={`text-lg font-semibold tabular-nums ${danger ? 'text-danger' : ''}`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+const ACTIVITY_LABEL: Record<'opened' | 'merged' | 'closed', string> = {
+  opened: 'opened',
+  merged: 'merged',
+  closed: 'closed',
+};
+
+function ActivityIcon({ kind }: { kind: 'opened' | 'merged' | 'closed' }) {
+  if (kind === 'merged') return <CodeMerge className="size-4 text-accent" />;
+  if (kind === 'closed') {
+    return <CodePullRequestXmark className="size-4 text-muted" />;
+  }
+  return <CodePullRequest className="size-4 text-success" />;
+}
+
+/** Activity tab: a reverse-chronological feed derived from the PR rows this
+ *  project has loaded — see `project/activity.ts` for exactly what that
+ *  does and doesn't mean. */
+function ActivityTab({ items }: { items: InboxPr[] }) {
+  const ui = useUi();
+  const events = projectActivity(items);
+  if (!events.length) {
+    return (
+      <Empty
+        icon={<ChartColumn />}
+        title="No activity yet"
+        text="PR activity for this project shows up here."
+      />
+    );
+  }
+  return (
+    <ul className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-auto p-3">
+      {events.map((e) => (
+        <li key={e.id}>
+          <button
+            type="button"
+            className="flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-default/50"
+            onClick={() => ui.go({ name: 'review', pr: e.id })}
+          >
+            <ActivityIcon kind={e.kind} />
+            <Avatar person={e.pr.author} size={18} />
+            <span className="min-w-0 flex-1 truncate text-sm">
+              <b className="font-medium">{e.pr.author.login}</b>{' '}
+              {ACTIVITY_LABEL[e.kind]}{' '}
+              <span className="text-muted">#{e.pr.pr.number}</span> {e.pr.title}
+            </span>
+            <span className="shrink-0 text-xs text-muted">{ago(e.at)}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
