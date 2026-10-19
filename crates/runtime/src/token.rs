@@ -49,7 +49,11 @@ impl HostToken {
 /// `Command::output()` off the current worker thread's task queue instead
 /// of stalling it for however long `gh` takes to spawn and answer.
 fn gh_token() -> Option<String> {
-    tokio::task::block_in_place(|| {
+    // `block_in_place` panics on a current-thread runtime; there (and outside
+    // any runtime) the blocking call just runs inline.
+    let multi_thread = tokio::runtime::Handle::try_current()
+        .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+    let lookup = || {
         std::process::Command::new("gh")
             .args(["auth", "token"])
             .stderr(std::process::Stdio::null())
@@ -59,7 +63,12 @@ fn gh_token() -> Option<String> {
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-    })
+    };
+    if multi_thread {
+        tokio::task::block_in_place(lookup)
+    } else {
+        lookup()
+    }
 }
 
 fn env_token() -> Option<String> {
@@ -150,6 +159,11 @@ mod tests {
     /// flavor here rather than `#[tokio::test]`'s current-thread default.
     #[tokio::test(flavor = "multi_thread")]
     async fn gh_token_lookup_does_not_panic_on_a_multi_thread_runtime() {
+        let _ = gh_token();
+    }
+
+    #[tokio::test]
+    async fn gh_token_lookup_does_not_panic_on_a_current_thread_runtime() {
         let _ = gh_token();
     }
 }
