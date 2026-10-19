@@ -14,6 +14,7 @@ pub mod error;
 pub mod git;
 pub mod host;
 mod state;
+pub mod synth;
 pub mod triggers;
 
 pub use agent::ReplayAgents;
@@ -21,6 +22,7 @@ pub use clock::ManualClock;
 pub use error::FixtureError;
 pub use git::FixtureGit;
 pub use host::FixtureHost;
+pub use synth::SynthAgents;
 pub use triggers::Triggers;
 
 use std::path::Path;

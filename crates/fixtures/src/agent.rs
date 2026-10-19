@@ -29,7 +29,9 @@ use crate::state::SharedState;
 
 /// Connects to a `review-tools` MCP endpoint registered for this run
 /// (plan §8.3). Mirrors `theodore_mcp::bridge::connect_upstream`.
-async fn connect_mcp(endpoint: &McpEndpoint) -> Result<RunningService<RoleClient, ()>, String> {
+pub(crate) async fn connect_mcp(
+    endpoint: &McpEndpoint,
+) -> Result<RunningService<RoleClient, ()>, String> {
     let config = StreamableHttpClientTransportConfig::with_uri(endpoint.url.clone())
         .auth_header(endpoint.token.clone());
     let transport = StreamableHttpClientTransport::from_config(config);
@@ -41,7 +43,7 @@ async fn connect_mcp(endpoint: &McpEndpoint) -> Result<RunningService<RoleClient
 /// Calls MCP tool `name` with `input` (a JSON object becomes the tool's
 /// arguments) and returns `(ok, output)`, the shape a recorded `ToolResult`
 /// carries.
-async fn call_tool(
+pub(crate) async fn call_tool(
     client: &RunningService<RoleClient, ()>,
     name: &str,
     input: &serde_json::Value,

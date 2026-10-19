@@ -4981,6 +4981,8 @@ dependencies = [
  "tempfile",
  "theodore-contract",
  "theodore-domain",
+ "theodore-grouping",
+ "theodore-mcp",
  "theodore-ports",
  "thiserror 2.0.21",
  "tokio",

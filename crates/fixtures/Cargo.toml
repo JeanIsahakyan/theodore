@@ -28,3 +28,8 @@ rmcp = { workspace = true, features = [
     "client",
     "transport-streamable-http-client-reqwest",
 ] }
+
+[dev-dependencies]
+theodore-grouping.workspace = true
+theodore-mcp.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
