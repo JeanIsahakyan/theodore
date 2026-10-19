@@ -690,7 +690,7 @@ const ProjectPrs = observer(function ProjectPrs({
         <PeekToggle on={ui.peek} toggle={() => ui.togglePeek()} />
       </Toolbar>
       {banner && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-separator bg-default/40 px-6 py-2 text-xs text-muted">
+        <div className="mx-6 my-2 flex shrink-0 items-center gap-2 rounded-xl bg-default/60 px-3 py-2 text-xs text-muted">
           <Clock className="size-3.5" />
           No open PRs · last merge {ago(banner.mergedAt)} ago (#{banner.number})
         </div>
@@ -982,7 +982,7 @@ export const ProjectView = observer(function ProjectView({
 
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
-      <div className="flex h-14 w-full min-w-0 shrink-0 items-center gap-3 border-b border-separator px-6">
+      <div className="flex h-14 w-full min-w-0 shrink-0 items-center gap-3 px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Typography.Heading
             level={6}
@@ -1040,13 +1040,13 @@ export const ProjectView = observer(function ProjectView({
       </div>
       {project.description && (
         <p
-          className="truncate border-b border-separator px-6 py-2 text-xs text-muted"
+          className="truncate px-6 pb-1 text-xs text-muted"
           title={project.description}
         >
           {project.description}
         </p>
       )}
-      <div className="flex shrink-0 gap-2 border-b border-separator px-6 py-3">
+      <div className="flex shrink-0 gap-2 px-6 py-3">
         <StatCard label="Open" value={stats.open} />
         <StatCard label="Needs your review" value={stats.needsReview} />
         <StatCard label="Yours" value={stats.yours} />
@@ -1060,7 +1060,7 @@ export const ProjectView = observer(function ProjectView({
       <Tabs
         selectedKey={tab}
         onSelectionChange={(k) => setTab(k as ProjectTab)}
-        className="border-b border-separator px-6"
+        className="px-6 pb-3"
       >
         <Tabs.ListContainer>
           <Tabs.List aria-label="Project sections">
@@ -1110,7 +1110,7 @@ function StatCard({
   danger?: boolean;
 }) {
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-2xl border border-separator px-3 py-2">
+    <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-2xl bg-default/60 px-3 py-2">
       <span className="truncate text-xs text-muted">{label}</span>
       <span
         className={`text-lg font-semibold tabular-nums ${danger ? 'text-danger' : ''}`}
