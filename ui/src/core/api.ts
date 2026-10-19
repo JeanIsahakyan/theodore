@@ -14,6 +14,8 @@ import type {
   EditCommentRequest,
   FileRequest,
   HostAuthStatus,
+  InterdiffEntry,
+  InterdiffRequest,
   LocalBranch,
   MergeInfo,
   MergeRequest,
@@ -134,4 +136,6 @@ export const api = {
   saveSkill: (req: SaveSkillRequest) => call<SkillInfo>('save_skill', { req }),
   prSpend: (pr: PrId) => call<PrSpend>('pr_spend', { pr }),
   pickFolder: () => call<string | null>('pick_folder'),
+  interdiff: (req: InterdiffRequest) =>
+    call<InterdiffEntry[]>('interdiff', { req }),
 };

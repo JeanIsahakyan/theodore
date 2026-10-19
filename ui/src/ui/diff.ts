@@ -4,7 +4,13 @@
  * expansion), and a hunk-level "what changed since an earlier revision"
  * comparison. No React, no store — easy to unit test on its own.
  */
-import type { DiffLine, FileDiff, Hunk, HunkId } from '../gen/contract';
+import type {
+  DiffLine,
+  FileDiff,
+  Hunk,
+  HunkId,
+  InterdiffWordSpan,
+} from '../gen/contract';
 
 export interface SinceCounts {
   new: number;
@@ -191,6 +197,48 @@ export function sinceHunks(
     }
   }
   return out;
+}
+
+export interface MarkedLine {
+  text: string;
+  marks: Mark[];
+}
+
+/** One side ("previously" or "now") of a hunk's word-diff, from the core's
+ *  `interdiff` command: the surviving text re-assembled line by line, with
+ *  the changed words marked. `side`'s own kind (`del` for "previously",
+ *  `add` for "now") is marked; context carries over unmarked; the other
+ *  side's kind is dropped entirely. */
+function interdiffSide(
+  spans: InterdiffWordSpan[],
+  side: 'del' | 'add',
+): MarkedLine[] {
+  const lines: MarkedLine[] = [{ text: '', marks: [] }];
+  for (const span of spans) {
+    if (span.kind !== 'ctx' && span.kind !== side) continue;
+    const parts = span.text.split('\n');
+    parts.forEach((part, i) => {
+      if (i > 0) lines.push({ text: '', marks: [] });
+      const cur = lines[lines.length - 1]!;
+      if (span.kind === side && part.length) {
+        cur.marks.push([cur.text.length, cur.text.length + part.length]);
+      }
+      cur.text += part;
+    });
+  }
+  return lines;
+}
+
+/** "Previously" (context + deletions) and "now" (context + additions) as
+ *  marked lines, from one hunk's `InterdiffEntry.words`. */
+export function interdiffLines(spans: InterdiffWordSpan[]): {
+  previous: MarkedLine[];
+  now: MarkedLine[];
+} {
+  return {
+    previous: interdiffSide(spans, 'del'),
+    now: interdiffSide(spans, 'add'),
+  };
 }
 
 /** New vs. changed counts for a set of hunks, from a `sinceHunks` map — used

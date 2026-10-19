@@ -285,6 +285,48 @@ export type InboxState = {
 	snooze: SnoozeUntil | null,
 };
 
+export type InterdiffClass = "new" | "changed" | "unchanged" |
+/**
+ *  Present at the baseline, no counterpart now — reverted, or no
+ *  longer differs from base.
+ */
+"vanished";
+
+/**
+ *  One hunk's state since `base_sha`. `hunk` identifies the *current*
+ *  revision's hunk for `new` / `changed` / `unchanged`, and the
+ *  *baseline* revision's hunk for `vanished`, which has no current-side
+ *  hunk to use instead.
+ */
+export type InterdiffEntry = {
+	hunk: HunkId,
+	path: string,
+	class: InterdiffClass,
+	/**
+	 *  Set when `class` is `Changed`: the baseline hunk's id, to label
+	 *  the "previously" side.
+	 */
+	previous: HunkId | null,
+	/**
+	 *  Word-level diff between the baseline hunk and this one ("previously"
+	 *  vs. "now"); empty outside `Changed`.
+	 */
+	words: InterdiffWordSpan[],
+};
+
+export type InterdiffRequest = {
+	pr: PrId,
+	/**  The head you last reviewed/visited — the comparison baseline. */
+	base_sha: Sha,
+	/**  Limit to one file; omitted compares every file in the revision. */
+	file: string | null,
+};
+
+export type InterdiffWordSpan = {
+	kind: LineKind,
+	text: string,
+};
+
 export type LineKind = "ctx" | "add" | "del";
 
 /**  A branch of a project, for reviewing work without a host PR. */

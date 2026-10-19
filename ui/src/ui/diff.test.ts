@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { DiffLine, FileDiff, Hunk } from '../gen/contract';
+import type {
+  DiffLine,
+  FileDiff,
+  Hunk,
+  InterdiffWordSpan,
+} from '../gen/contract';
 import {
   gapTail,
   gapsAbove,
+  interdiffLines,
   sinceCountsFor,
   sinceHunks,
   splitRows,
@@ -208,5 +214,62 @@ describe('sinceCountsFor', () => {
       new: 0,
       changed: 0,
     });
+  });
+});
+
+const span = (
+  kind: InterdiffWordSpan['kind'],
+  text: string,
+): InterdiffWordSpan => ({
+  kind,
+  text,
+});
+
+describe('interdiffLines', () => {
+  it('marks only the deleted word on the "previously" side', () => {
+    const { previous } = interdiffLines([
+      span('ctx', 'let x = '),
+      span('del', '1'),
+      span('add', '2'),
+      span('ctx', ';'),
+    ]);
+    expect(previous).toEqual([{ text: 'let x = 1;', marks: [[8, 9]] }]);
+  });
+
+  it('marks only the added word on the "now" side', () => {
+    const { now } = interdiffLines([
+      span('ctx', 'let x = '),
+      span('del', '1'),
+      span('add', '2'),
+      span('ctx', ';'),
+    ]);
+    expect(now).toEqual([{ text: 'let x = 2;', marks: [[8, 9]] }]);
+  });
+
+  it('splits multi-line spans into separate marked lines', () => {
+    const { previous, now } = interdiffLines([
+      span('ctx', 'a\nb\n'),
+      span('del', 'old'),
+      span('add', 'new'),
+      span('ctx', '\nc'),
+    ]);
+    expect(previous).toEqual([
+      { text: 'a', marks: [] },
+      { text: 'b', marks: [] },
+      { text: 'old', marks: [[0, 3]] },
+      { text: 'c', marks: [] },
+    ]);
+    expect(now).toEqual([
+      { text: 'a', marks: [] },
+      { text: 'b', marks: [] },
+      { text: 'new', marks: [[0, 3]] },
+      { text: 'c', marks: [] },
+    ]);
+  });
+
+  it('is unmarked context on both sides when nothing changed', () => {
+    const { previous, now } = interdiffLines([span('ctx', 'same')]);
+    expect(previous).toEqual([{ text: 'same', marks: [] }]);
+    expect(now).toEqual([{ text: 'same', marks: [] }]);
   });
 });

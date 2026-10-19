@@ -34,6 +34,7 @@ import type {
   Group,
   Hunk,
   HunkId,
+  InterdiffEntry,
   PrId,
   Revision,
   Severity,
@@ -55,6 +56,8 @@ import {
 } from './diff';
 import { groupsForRevision, type ReviewMode } from './GroupsPane';
 import { nextReviewableGroup } from './review/groups';
+import { InterdiffPanel } from './review/InterdiffPanel';
+import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { TourBar } from './review/TourBar';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 
@@ -216,6 +219,30 @@ export const DiffPane = observer(function DiffPane({
   const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
+  const [interdiffEntries, setInterdiffEntries] = useState<
+    InterdiffEntry[] | null
+  >(null);
+
+  // Re-review: once there's a baseline to compare against, ask the core for
+  // the word-level diff of every hunk that changed since then (plan §4).
+  useEffect(() => {
+    if (!baselineSha) {
+      setInterdiffEntries(null);
+      return;
+    }
+    let live = true;
+    api
+      .interdiff({ pr, base_sha: baselineSha, file: null })
+      .then((entries) => live && setInterdiffEntries(entries))
+      .catch(() => live && setInterdiffEntries(null));
+    return () => {
+      live = false;
+    };
+  }, [pr, baselineSha]);
+  const interdiffMap = useMemo(
+    () => interdiffByHunk(interdiffEntries ?? []),
+    [interdiffEntries],
+  );
 
   // Holding ⌘/Ctrl turns identifiers in the diff into links (styles.css: body.cmd).
   useEffect(() => {
@@ -385,6 +412,7 @@ export const DiffPane = observer(function DiffPane({
               allFiles={rev.files}
               file={f}
               since={since}
+              interdiff={interdiffMap}
               groupHunkIds={mode.mode === 'groups' ? groupHunkIds : null}
               mode={mode}
               setMode={setMode}
@@ -764,6 +792,7 @@ function FileBlockInner({
   allFiles,
   file,
   since,
+  interdiff,
   groupHunkIds,
   mode,
   setMode,
@@ -784,6 +813,9 @@ function FileBlockInner({
   allFiles: FileDiff[];
   file: FileDiff;
   since?: Map<HunkId, SinceKind> | null;
+  /** The re-review word-diff, by the hunk id it's keyed on (plan §4) —
+   *  `null`/absent outside "since last visit". */
+  interdiff?: Map<HunkId, InterdiffEntry> | null;
   groupHunkIds: Set<HunkId> | null;
   mode: ReviewMode;
   setMode: (m: ReviewMode) => void;
@@ -1043,6 +1075,7 @@ function FileBlockInner({
                 lang={lang}
                 split={split}
                 since={since?.get(h.id)}
+                interdiff={interdiff?.get(h.id)}
                 focusHunk={focusHunk}
                 setFocusHunk={setFocusHunk}
                 composer={composer}
@@ -1075,6 +1108,7 @@ function HunkOrSplitInner(
     lang: ReturnType<typeof langOf>;
     split: boolean;
     since?: SinceKind;
+    interdiff?: InterdiffEntry;
     focusHunk: HunkId | null;
     setFocusHunk: (h: HunkId | null) => void;
   } & LineProps,
@@ -1090,6 +1124,7 @@ function HunkViewInner({
   h,
   lang,
   since,
+  interdiff,
   focusHunk,
   setFocusHunk,
   composer,
@@ -1102,6 +1137,7 @@ function HunkViewInner({
   h: Hunk;
   lang: ReturnType<typeof langOf>;
   since?: SinceKind;
+  interdiff?: InterdiffEntry;
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
 } & LineProps) {
@@ -1110,6 +1146,8 @@ function HunkViewInner({
     store.models.hunkReads.where((r) => r.pr === pr && r.hunk === h.id).length >
     0;
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
+  const view = useMemo(() => interdiffView(interdiff), [interdiff]);
+  const [showInterdiff, setShowInterdiff] = useState(false);
   const focused = focusHunk === h.id;
   const hunkMenu = useContextMenu((): ContextMenuItem[] => [
     {
@@ -1159,6 +1197,16 @@ function HunkViewInner({
           </span>
         )}
         <SinceBadge kind={since} />
+        {view && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="what-changed h-6 gap-1 px-1.5 text-xs text-accent"
+            onPress={() => setShowInterdiff((v) => !v)}
+          >
+            {showInterdiff ? 'Hide what changed' : 'What changed'}
+          </Button>
+        )}
         <span className="flex-1" />
         {read && (
           <span className="inline-flex items-center gap-1 text-success">
@@ -1166,6 +1214,9 @@ function HunkViewInner({
           </span>
         )}
       </div>
+      {view && showInterdiff && (
+        <InterdiffPanel previous={view.previous} now={view.now} />
+      )}
       <div className="lines">
         {h.lines.map((l, i) => (
           <Line
@@ -1197,6 +1248,7 @@ function SplitHunkViewInner({
   h,
   lang,
   since,
+  interdiff,
   focusHunk,
   setFocusHunk,
   composer,
@@ -1209,6 +1261,7 @@ function SplitHunkViewInner({
   h: Hunk;
   lang: ReturnType<typeof langOf>;
   since?: SinceKind;
+  interdiff?: InterdiffEntry;
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
 } & LineProps) {
@@ -1218,6 +1271,8 @@ function SplitHunkViewInner({
     0;
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const rows = useMemo(() => splitRows(h.lines), [h.lines]);
+  const view = useMemo(() => interdiffView(interdiff), [interdiff]);
+  const [showInterdiff, setShowInterdiff] = useState(false);
   const focused = focusHunk === h.id;
   return (
     <div
@@ -1235,6 +1290,16 @@ function SplitHunkViewInner({
           </span>
         )}
         <SinceBadge kind={since} />
+        {view && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="what-changed h-6 gap-1 px-1.5 text-xs text-accent"
+            onPress={() => setShowInterdiff((v) => !v)}
+          >
+            {showInterdiff ? 'Hide what changed' : 'What changed'}
+          </Button>
+        )}
         <span className="flex-1" />
         {read && (
           <span className="inline-flex items-center gap-1 text-success">
@@ -1242,6 +1307,9 @@ function SplitHunkViewInner({
           </span>
         )}
       </div>
+      {view && showInterdiff && (
+        <InterdiffPanel previous={view.previous} now={view.now} />
+      )}
       <div className="lines split-lines">
         {rows.map((row, i) => (
           <div key={i} className="split-row grid grid-cols-2">
