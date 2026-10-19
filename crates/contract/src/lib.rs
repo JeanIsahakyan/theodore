@@ -17,6 +17,8 @@ mod login;
 pub use login::*;
 mod pr_state;
 pub use pr_state::*;
+mod symbols;
+pub use symbols::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -673,7 +675,9 @@ pub fn types() -> specta::Types {
         .register::<SetLinearTokenRequest>()
         .register::<LinearStatus>()
         .register::<LinearIssuesRequest>()
-        .register::<LinearIssue>();
+        .register::<LinearIssue>()
+        .register::<FindSymbolRequest>()
+        .register::<SymbolHit>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

@@ -8,13 +8,13 @@ use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    FileRequest, FindSymbolRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
     LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
     OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
     RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
     SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
-    UpdateInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -424,6 +424,15 @@ pub async fn linear_issues(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Vec<LinearIssue>, CommandError> {
     core.linear_issues(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn find_symbol(
+    req: FindSymbolRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<SymbolHit>, CommandError> {
+    core.find_symbol(req).await
 }
 
 /// Native folder picker for the Add project dialog. Runs on a background

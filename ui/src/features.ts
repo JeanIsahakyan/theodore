@@ -20,10 +20,11 @@ export const FEATURES = {
   /** `list_host_repos` / `add_project` / `remove_project` / `refresh_project`
    *  land this wave — projects can be added, browsed and removed. */
   projects: true,
-  /** No go-to-definition / find-references command (LSP was mock-only). */
-  symbolPeek: false,
-  /** `set_linear_token` / `linear_status` / `linear_issues` land this
-   *  wave — Settings → Integrations, and issue chips in Peek/Review. */
+  /** `find_symbol`: go-to-definition / find-references via `git grep`,
+   *  not a real language server. */
+  symbolPeek: true,
+  /** `set_linear_token` / `linear_status` / `linear_issues` — Settings →
+   *  Integrations, and issue chips in Peek/Review. */
   linear: true,
   /** `reply_thread` / `resolve_thread` send to the host; the comment lands
    *  back in `pr_detail.threads` on the next sync frame. */

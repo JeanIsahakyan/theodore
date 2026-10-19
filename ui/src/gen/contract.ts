@@ -219,6 +219,18 @@ export type FileViewedRow = {
 	state: ViewedState,
 };
 
+export type FindSymbolRequest = {
+	pr: PrId,
+	name: string,
+	/**
+	 *  Narrows the search to one language's definition patterns (e.g.
+	 *  `"rust"`, `"typescript"`); `None` tries every supported language.
+	 */
+	lang: string | null,
+	/**  The file the click came from. Hits in it, or near it, rank first. */
+	from_path: string | null,
+};
+
 export type Finding = {
 	id: FindingId,
 	pr: PrId,
@@ -733,6 +745,16 @@ export type SubmitReviewRequest = {
 	event: ReviewEvent,
 	body: string,
 };
+
+export type SymbolHit = {
+	path: string,
+	line: number,
+	kind: SymbolKind,
+	/**  The matched source line, trimmed. */
+	preview: string,
+};
+
+export type SymbolKind = "definition" | "reference";
 
 export type SyncCode = "I" | "U" | "C" | "A" | "D";
 

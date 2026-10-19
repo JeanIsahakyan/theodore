@@ -6,13 +6,13 @@ use async_trait::async_trait;
 use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, Bootstrap, BootstrapScope, CommandError,
     CommitSuggestionsRequest, DelegateRequest, DeviceLogin, DraftStateRequest, EditCommentRequest,
-    FileRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    FileRequest, FindSymbolRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
     LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
     OpenBranchRequest, OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest,
     RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
     SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest,
-    UpdateInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostRepo, Person, PrId, Revision};
 
@@ -88,6 +88,9 @@ pub trait CoreApi: Send + Sync {
         &self,
         req: LinearIssuesRequest,
     ) -> Result<Vec<LinearIssue>, CommandError>;
+    /// Go-to-definition / find-references for a ⌘-clicked identifier
+    /// (plan "symbols").
+    async fn find_symbol(&self, req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -261,6 +264,9 @@ impl CoreApi for NotReadyCoreApi {
         &self,
         _req: LinearIssuesRequest,
     ) -> Result<Vec<LinearIssue>, CommandError> {
+        Err(not_ready())
+    }
+    async fn find_symbol(&self, _req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError> {
         Err(not_ready())
     }
 }

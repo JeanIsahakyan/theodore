@@ -14,6 +14,7 @@ import type {
   DraftStateRequest,
   EditCommentRequest,
   FileRequest,
+  FindSymbolRequest,
   HostAuthStatus,
   InterdiffEntry,
   InterdiffRequest,
@@ -46,6 +47,7 @@ import type {
   SkillBody,
   SkillInfo,
   SubmitReviewRequest,
+  SymbolHit,
   SyncFrame,
   TaskDecision,
   Transaction,
@@ -155,4 +157,6 @@ export const api = {
   linearStatus: () => call<LinearStatus>('linear_status'),
   linearIssues: (req: LinearIssuesRequest) =>
     call<LinearIssue[]>('linear_issues', { req }),
+  findSymbol: (req: FindSymbolRequest) =>
+    call<SymbolHit[]>('find_symbol', { req }),
 };
