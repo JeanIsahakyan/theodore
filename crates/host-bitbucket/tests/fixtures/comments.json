@@ -1,0 +1,53 @@
+{
+  "values": [
+    {
+      "id": 5001,
+      "content": { "raw": "Why not use a HashMap here?" },
+      "user": {
+        "type": "user",
+        "uuid": "{33333333-3333-3333-3333-333333333333}",
+        "nickname": "carol",
+        "display_name": "Carol Reviewer"
+      },
+      "created_on": "2024-01-15T09:00:00.000000+00:00",
+      "updated_on": "2024-01-15T09:05:00.000000+00:00",
+      "deleted": false,
+      "inline": { "path": "src/lib.rs", "to": 20 },
+      "resolution": {
+        "type": "resolution",
+        "name": "Carol Reviewer"
+      }
+    },
+    {
+      "id": 5002,
+      "content": { "raw": "Good point, fixed." },
+      "user": {
+        "type": "user",
+        "uuid": "{22222222-2222-2222-2222-222222222222}",
+        "nickname": "alice",
+        "display_name": "Alice Author"
+      },
+      "created_on": "2024-01-15T09:10:00.000000+00:00",
+      "updated_on": "2024-01-15T09:10:00.000000+00:00",
+      "deleted": false,
+      "parent": { "id": 5001 },
+      "inline": { "path": "src/lib.rs", "to": 20 }
+    },
+    {
+      "id": 5003,
+      "content": { "raw": "Looks good overall." },
+      "user": {
+        "type": "user",
+        "uuid": "{33333333-3333-3333-3333-333333333333}",
+        "nickname": "carol",
+        "display_name": "Carol Reviewer"
+      },
+      "created_on": "2024-01-15T09:20:00.000000+00:00",
+      "updated_on": "2024-01-15T09:20:00.000000+00:00",
+      "deleted": false
+    }
+  ],
+  "page": 1,
+  "pagelen": 100,
+  "next": null
+}

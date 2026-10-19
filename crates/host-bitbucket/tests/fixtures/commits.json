@@ -1,0 +1,21 @@
+{
+  "values": [
+    {
+      "hash": "bbbbbbbbbbbb",
+      "message": "feat: add feature X\n\nLonger body.",
+      "date": "2024-01-14T08:30:00.000000+00:00",
+      "author": {
+        "raw": "Alice Author <alice@example.com>",
+        "user": {
+          "type": "user",
+          "uuid": "{22222222-2222-2222-2222-222222222222}",
+          "nickname": "alice",
+          "display_name": "Alice Author"
+        }
+      }
+    }
+  ],
+  "page": 1,
+  "pagelen": 50,
+  "next": null
+}
