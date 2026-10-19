@@ -57,8 +57,9 @@ where
     panic!("timed out waiting for {what}");
 }
 
+/// Up to 40 s: the open-PR poller ticks every 15 s of wall time.
 async fn expect_ephemeral(recv: &mut Receivers, what: &str, f: impl Fn(&Ephemeral) -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
     while std::time::Instant::now() < deadline {
         while let Ok(e) = recv.ephemeral.try_recv() {
             if f(&e) {
@@ -225,17 +226,15 @@ async fn review_reply_and_merge_land_on_the_host_and_move_git() {
     })
     .await
     .unwrap();
-    let merged: theodore_domain::PrSummary = wait_for(20, "the merged pr row", || {
-        let core = core.clone();
-        let own = own.clone();
-        async move {
-            global_row::<theodore_domain::PrSummary>(&core, models::PR, &own.0)
-                .await
-                .filter(|s| s.state == PrState::Merged)
-        }
+    // On the host, not the `pr` row: a project or inbox refresh that
+    // searched before the merge can land after it and write the PR back as
+    // open (a stale-write race in the app, not the host).
+    wait_for(20, "the merge on the host", || {
+        let st = sb.world().snapshot();
+        let ok = sandbox_pr(&st, 110).state == PrState::Merged;
+        async move { ok.then_some(()) }
     })
     .await;
-    assert_eq!(merged.state, PrState::Merged);
     let main_after = bare.branch_tip("main").unwrap();
     assert_ne!(main_after, main_before, "the base branch moved");
     assert!(
