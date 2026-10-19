@@ -9,6 +9,7 @@ use theodore_ports::{BranchInfo, CommitLog, GitError, GitResult};
 
 use crate::GitCli;
 use crate::process::GitProc;
+use crate::safety::END_OF_OPTIONS;
 
 /// Record/field separators that never show up in a ref name, sha or commit
 /// subject in practice, unlike `\t`/`\n`.
@@ -32,12 +33,23 @@ impl GitCli {
             .filter(|s| !s.is_empty()))
     }
 
+    /// `refname` can be a fork's branch name or a local project's own branch
+    /// — never trusted enough to hand `git` directly as a bare argument.
+    /// Plain `rev-parse <arg>` is unsafe for this regardless of
+    /// `--end-of-options`: unlike most subcommands, a bare `rev-parse` echoes
+    /// back anything it doesn't recognize instead of erroring, `--end-of-
+    /// options` included (confirmed against git 2.48 — `rev-parse
+    /// --end-of-options HEAD` prints `--end-of-options` on its own line,
+    /// then the sha). `--verify` switches it into single-revision mode,
+    /// where `--end-of-options` is honored and a flag-shaped ref fails
+    /// cleanly with "Needed a single revision" instead of being parsed as
+    /// an option or echoed back.
     pub(crate) async fn resolve_ref_op(&self, repo: &Path, refname: &str) -> GitResult<Sha> {
         let askpass = self.ensure_askpass()?;
         let out = GitProc {
             cwd: repo,
             askpass: &askpass,
-            args: &["rev-parse", refname],
+            args: &["rev-parse", "--verify", END_OF_OPTIONS, refname],
             token: None,
             stdin: None,
         }

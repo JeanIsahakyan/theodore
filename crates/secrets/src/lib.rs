@@ -140,8 +140,16 @@ fn shell_quote(s: &str) -> String {
 }
 
 /// Keychain-backed secrets (macOS production implementation).
+///
+/// `cache` and `write_lock` are two separate mutexes on purpose: `write_lock`
+/// is held for the *entire* read-modify-write of `set`/`delete` (one lock
+/// covering load, mutate and save), so two concurrent calls can never
+/// interleave their load and save and silently drop each other's write.
+/// `cache` is the inner, short-lived lock `load_vault`/`save_vault` use to
+/// touch the cached snapshot; `get` only needs that one.
 pub struct KeychainSecrets {
     cache: Mutex<Option<HashMap<String, String>>>,
+    write_lock: Mutex<()>,
     runner: Box<dyn CommandRunner>,
 }
 
@@ -150,6 +158,7 @@ impl KeychainSecrets {
     pub fn new() -> Self {
         Self {
             cache: Mutex::new(None),
+            write_lock: Mutex::new(()),
             runner: Box::new(RealCommandRunner),
         }
     }
@@ -159,6 +168,7 @@ impl KeychainSecrets {
     fn with_runner(runner: Box<dyn CommandRunner>) -> Self {
         Self {
             cache: Mutex::new(None),
+            write_lock: Mutex::new(()),
             runner,
         }
     }
@@ -208,6 +218,22 @@ impl KeychainSecrets {
 
         Ok(())
     }
+
+    /// Load, apply `mutate`, save — all under `write_lock`, so a concurrent
+    /// `set`/`delete` can't read the vault before this one's save lands and
+    /// overwrite it with a stale copy (lost update).
+    fn mutate_vault(
+        &self,
+        mutate: impl FnOnce(&mut HashMap<String, String>),
+    ) -> Result<(), SecretsError> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| SecretsError::Keychain("mutex poisoned".to_string()))?;
+        let mut vault = self.load_vault()?;
+        mutate(&mut vault);
+        self.save_vault(&vault)
+    }
 }
 
 impl Secrets for KeychainSecrets {
@@ -217,15 +243,15 @@ impl Secrets for KeychainSecrets {
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), SecretsError> {
-        let mut vault = self.load_vault()?;
-        vault.insert(key.to_string(), value.to_string());
-        self.save_vault(&vault)
+        self.mutate_vault(|vault| {
+            vault.insert(key.to_string(), value.to_string());
+        })
     }
 
     fn delete(&self, key: &str) -> Result<(), SecretsError> {
-        let mut vault = self.load_vault()?;
-        vault.remove(key);
-        self.save_vault(&vault)
+        self.mutate_vault(|vault| {
+            vault.remove(key);
+        })
     }
 }
 
@@ -563,5 +589,80 @@ mod tests {
         // 4. Verify the test passes and the entry is created in Keychain.app.
         //
         // The test would set/get/delete with the real keychain and verify round-trip.
+    }
+
+    /// Regression guard for the `set`/`delete` race: two concurrent `set`
+    /// calls on different keys must never lose one another's write. A
+    /// `write_keychain` that takes a moment (standing in for the real
+    /// `security` CLI's I/O) widens the window; a `Barrier` lines both
+    /// threads up to start their `set` at the same instant, so the race
+    /// reproduces every run under the old load→mutate→save-under-separate-
+    /// locks code instead of only occasionally.
+    struct SlowCommandRunner {
+        vault: Mutex<Option<String>>,
+        write_delay: std::time::Duration,
+    }
+
+    impl CommandRunner for SlowCommandRunner {
+        fn read_keychain(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<String>, SecretsError> {
+            Ok(self.vault.lock().unwrap().clone())
+        }
+
+        fn write_keychain(
+            &self,
+            _service: &str,
+            _account: &str,
+            value: &str,
+        ) -> Result<(), SecretsError> {
+            std::thread::sleep(self.write_delay);
+            *self.vault.lock().unwrap() = Some(value.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn concurrent_set_calls_do_not_lose_each_others_writes() {
+        use std::sync::{Arc, Barrier};
+        use std::time::Duration;
+
+        let secrets = Arc::new(KeychainSecrets::with_runner(Box::new(SlowCommandRunner {
+            vault: Mutex::new(None),
+            write_delay: Duration::from_millis(50),
+        })));
+        // Warm the cache so both threads' first `load_vault` is a cheap
+        // cache hit, not a call into `read_keychain` — otherwise the two
+        // reads would themselves serialize on the cache lock and the test
+        // would prove nothing about `set`/`delete`'s own race.
+        secrets.set("seed", "0").unwrap();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let run = |key: &'static str, value: &'static str| {
+            let secrets = secrets.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                secrets.set(key, value).unwrap();
+            })
+        };
+        let a = run("key.a", "a");
+        let b = run("key.b", "b");
+        a.join().unwrap();
+        b.join().unwrap();
+
+        assert_eq!(secrets.get("seed").unwrap(), Some("0".to_string()));
+        assert_eq!(
+            secrets.get("key.a").unwrap(),
+            Some("a".to_string()),
+            "key.a must survive a concurrent set of key.b"
+        );
+        assert_eq!(
+            secrets.get("key.b").unwrap(),
+            Some("b".to_string()),
+            "key.b must survive a concurrent set of key.a"
+        );
     }
 }

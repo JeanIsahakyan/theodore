@@ -17,6 +17,7 @@ mod local;
 mod meta;
 mod parse;
 mod process;
+mod safety;
 mod worktree;
 
 use std::path::{Path, PathBuf};
@@ -66,31 +67,38 @@ impl GitCli {
         self.wt_root().join(".meta")
     }
 
-    pub(crate) fn repo_dir(&self, repo: &RepoRef) -> PathBuf {
-        self.repos_root()
+    /// `owner`/`name` become path components here, so both are validated
+    /// first (`safety::validate_repo_ref`): a malicious owner/name (e.g.
+    /// `..` or a leading `-`) must never reach the filesystem or a `git`
+    /// argv unchecked.
+    pub(crate) fn repo_dir(&self, repo: &RepoRef) -> GitResult<PathBuf> {
+        safety::validate_repo_ref(repo)?;
+        Ok(self
+            .repos_root()
             .join(auth::host_dir(repo.host))
             .join(&repo.owner)
-            .join(format!("{}.git", repo.name))
+            .join(format!("{}.git", repo.name)))
     }
 
-    pub(crate) fn wt_dirname(repo: &RepoRef, number: u64) -> String {
-        format!(
+    pub(crate) fn wt_dirname(repo: &RepoRef, number: u64) -> GitResult<String> {
+        safety::validate_repo_ref(repo)?;
+        Ok(format!(
             "{}-{}-{}-{}",
             auth::host_dir(repo.host),
             repo.owner,
             repo.name,
             number
-        )
+        ))
     }
 
-    pub(crate) fn wt_path(&self, pr: &PrRef) -> PathBuf {
-        self.wt_root().join(Self::wt_dirname(&pr.repo, pr.number))
+    pub(crate) fn wt_path(&self, pr: &PrRef) -> GitResult<PathBuf> {
+        Ok(self.wt_root().join(Self::wt_dirname(&pr.repo, pr.number)?))
     }
 
     /// Bare clone under `repos/...`, or an in-place ref refresh if present.
     pub(crate) async fn ensure_repo_op(&self, repo: &RepoRef) -> GitResult<PathBuf> {
         let askpass = self.ensure_askpass()?;
-        let dir = self.repo_dir(repo);
+        let dir = self.repo_dir(repo)?;
         let token = self.token_for(repo);
 
         if dir.join("HEAD").exists() {

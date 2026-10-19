@@ -47,7 +47,7 @@ pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
 
     if let Some(errors) = &errors {
         if data.is_none() {
-            return Err(classify_graphql_errors(errors));
+            return Err(classify_graphql_errors(errors, http.now()));
         }
         tracing::warn!(?errors, "graphql returned partial errors alongside data");
     }
@@ -55,7 +55,11 @@ pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
     data.ok_or_else(|| HostError::Protocol("graphql response had neither data nor errors".into()))
 }
 
-fn classify_graphql_errors(errors: &[GqlError]) -> HostError {
+/// `now_ms` backs `RATE_LIMITED`'s `reset_at`: GraphQL's body-level error
+/// carries no reset header the way a REST 403/429 does, so this falls back
+/// to `now + 60s`, same as `host_http::rate::reset_at_from_headers` does
+/// when a transport-level rate limit arrives with no reset header either.
+fn classify_graphql_errors(errors: &[GqlError], now_ms: i64) -> HostError {
     let message = errors
         .iter()
         .map(|e| e.message.as_str())
@@ -68,7 +72,9 @@ fn classify_graphql_errors(errors: &[GqlError]) -> HostError {
     match kind {
         "NOT_FOUND" => HostError::NotFound(message),
         "FORBIDDEN" | "INSUFFICIENT_SCOPES" => HostError::Auth,
-        "RATE_LIMITED" => HostError::RateLimited { reset_at: 0 },
+        "RATE_LIMITED" => HostError::RateLimited {
+            reset_at: now_ms + 60_000,
+        },
         _ => HostError::Validation(message),
     }
 }

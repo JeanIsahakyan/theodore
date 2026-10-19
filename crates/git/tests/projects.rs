@@ -218,6 +218,26 @@ async fn resolve_ref_and_commit_read_real_git_metadata() {
     assert_eq!(commit.author_email, "a@b.com");
 }
 
+/// Regression guard: a ref name shaped like a `git` option (e.g. a fork's
+/// branch literally named `--upload-pack=...`) must be rejected as "not a
+/// revision", never parsed as a flag or (`rev-parse`'s own quirk) echoed
+/// back as output.
+#[tokio::test]
+async fn resolve_ref_rejects_a_flag_shaped_ref_instead_of_parsing_it_as_an_option() {
+    let fx = setup();
+    let cli = fx.cli();
+    let mirror = cli.ensure_local_mirror(&fx.source, &fx.repo).await.unwrap();
+
+    let err = cli
+        .resolve_ref(&mirror, "--upload-pack=touch /tmp/pwned")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, theodore_ports::GitError::Command { .. }),
+        "expected a plain git-command failure, got {err:?}"
+    );
+}
+
 #[tokio::test]
 async fn commit_log_lists_commits_reachable_from_head_but_not_base() {
     let fx = setup();

@@ -41,12 +41,17 @@ impl AgentCli {
     }
 
     /// Record running agents' pids under `dir` and kill any left behind by a
-    /// previous run (see `process::reap_orphans`).
+    /// previous run (see `process::reap_orphans`). The reap itself runs in a
+    /// spawned task — `ps`/`kill` are still a process spawn + wait each, and
+    /// this must not block whatever runtime is starting Theodore up.
     pub fn with_pid_dir(mut self, dir: std::path::PathBuf) -> Self {
-        let n = process::reap_orphans(&dir);
-        if n > 0 {
-            tracing::warn!(n, "killed agent processes left over from a previous run");
-        }
+        let reap_dir = dir.clone();
+        tokio::spawn(async move {
+            let n = process::reap_orphans(&reap_dir).await;
+            if n > 0 {
+                tracing::warn!(n, "killed agent processes left over from a previous run");
+            }
+        });
         self.pid_dir = Some(dir);
         self
     }
@@ -76,7 +81,18 @@ impl AgentPort for AgentCli {
         let mut guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
 
         let args = match req.agent {
-            AgentId::Claude => claude::build_args(&req, &cfg),
+            AgentId::Claude => {
+                // Written to a 0600 temp file, not argv: `--mcp-config`'s
+                // JSON carries the review-tools bearer token, and argv is
+                // visible to any process on the host via `ps`/`/proc`.
+                let mcp_guard =
+                    claude::write_mcp_config(&req).map_err(|e| AgentError::Spawn(e.to_string()))?;
+                let mcp_path = mcp_guard.as_ref().map(|f| f.path().to_path_buf());
+                if let Some(g) = mcp_guard {
+                    guards.push(Box::new(g));
+                }
+                claude::build_args(&req, &cfg, mcp_path.as_deref())
+            }
             AgentId::Codex => {
                 if let Some(mcp) = &req.mcp {
                     child_env.push((codex::MCP_TOKEN_ENV_VAR.to_string(), mcp.token.clone()));
@@ -104,6 +120,7 @@ impl AgentPort for AgentCli {
             cwd: req.cwd.clone(),
             env: child_env,
             stall_after_ms: req.stall_after_ms,
+            max_runtime_ms: process::DEFAULT_MAX_RUNTIME_MS,
             guards,
             pid_dir: self.pid_dir.clone(),
         };

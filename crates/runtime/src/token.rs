@@ -42,16 +42,24 @@ impl HostToken {
     }
 }
 
+/// `TokenSource::token`/`TokenStatus::source` are synchronous trait methods
+/// (implemented across crates this slice doesn't own, so their signatures
+/// aren't ours to change), but this still runs from inside an async
+/// context on every call. `block_in_place` moves the actual blocking
+/// `Command::output()` off the current worker thread's task queue instead
+/// of stalling it for however long `gh` takes to spawn and answer.
 fn gh_token() -> Option<String> {
-    std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    tokio::task::block_in_place(|| {
+        std::process::Command::new("gh")
+            .args(["auth", "token"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    })
 }
 
 fn env_token() -> Option<String> {
@@ -130,5 +138,18 @@ impl theodore_app::TokenStatus for HostToken {
 
     fn invalidate(&self) {
         self.invalidate_fallback();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `block_in_place` panics outside a multi-threaded runtime; every real
+    /// caller (desktop, cli) runs one, so exercise `gh_token` under the same
+    /// flavor here rather than `#[tokio::test]`'s current-thread default.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gh_token_lookup_does_not_panic_on_a_multi_thread_runtime() {
+        let _ = gh_token();
     }
 }

@@ -61,6 +61,31 @@ async fn retries_a_flaky_graphql_5xx_then_succeeds() {
 }
 
 #[tokio::test]
+async fn graphql_rate_limited_error_gets_a_future_reset_at_not_zero() {
+    let s = support::servers().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "errors": [{ "message": "API rate limit exceeded", "type": "RATE_LIMITED" }]
+        })))
+        .mount(&s.graphql)
+        .await;
+
+    let err = s.adapter.list_repos().await.unwrap_err();
+    match err {
+        HostError::RateLimited { reset_at } => {
+            // The fixed clock in `support::servers()` starts at
+            // 1_700_000_000_000; a body-level `RATE_LIMITED` carries no
+            // reset header, so this must fall back to `now + 60s`, never
+            // the epoch (`0`), which would cause a tight retry loop.
+            assert_eq!(reset_at, 1_700_000_000_000 + 60_000);
+        }
+        other => panic!("expected RateLimited, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn a_403_without_rate_limit_headers_is_auth_not_rate_limited() {
     let s = support::servers().await;
 

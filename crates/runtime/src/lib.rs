@@ -6,9 +6,11 @@ mod hosts;
 mod local_host;
 mod token;
 mod tools;
+mod worktree_gc;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use theodore_app::{Core, Deps, Receivers};
@@ -19,6 +21,13 @@ pub use hosts::Hosts;
 pub use local_host::LocalHostAdapter;
 pub use token::HostToken;
 pub use tools::{CoreTools, McpRunTools};
+pub use worktree_gc::{WorktreeGuard, WorktreeLocks};
+
+/// How often the worktree GC sweep runs (`worktree_gc::spawn_periodic`).
+/// Worktrees are cheap to keep around for a while and expensive to GC too
+/// eagerly (a PR that flips closed→reopened would otherwise reclone), so
+/// this errs slow.
+const WORKTREE_GC_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -52,6 +61,10 @@ pub struct Runtime {
     /// The fixture host adapter in fixture mode, so tests can assert on the
     /// calls it received (`None` on the real host).
     pub fixture_host: Option<Arc<theodore_fixtures::FixtureHost>>,
+    /// Holds a worktree open against the periodic GC sweep
+    /// (`worktree_gc::spawn_periodic`, started here) for as long as an
+    /// agent run or similar needs it alive, even past its PR closing.
+    pub worktree_locks: Arc<WorktreeLocks>,
 }
 
 struct Adapters {
@@ -141,6 +154,19 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
     let claude_home = dirs::home_dir()
         .map(|h| h.join(".claude/skills"))
         .unwrap_or_else(|| PathBuf::from(".claude/skills"));
+
+    let worktree_locks = WorktreeLocks::new();
+    // Detached on purpose: there's no runtime-wide shutdown signal to tie
+    // this to yet (the mcp server above is the same), and a 30-minute
+    // interval harmlessly outlives a short-lived process (tests, `theodore
+    // group`) before ever firing.
+    worktree_gc::spawn_periodic(
+        a.git.clone(),
+        a.store.clone(),
+        worktree_locks.clone(),
+        WORKTREE_GC_INTERVAL,
+    );
+
     let deps = Deps {
         host: a.host,
         git: a.git,
@@ -163,5 +189,6 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         triggers: a.triggers,
         fixture_clock: a.fixture_clock,
         fixture_host: a.fixture_host,
+        worktree_locks,
     })
 }

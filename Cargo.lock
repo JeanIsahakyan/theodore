@@ -4997,6 +4997,7 @@ dependencies = [
  "theodore-domain",
  "theodore-ports",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
