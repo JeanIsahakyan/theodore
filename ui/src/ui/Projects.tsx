@@ -1,7 +1,8 @@
 /**
  * Projects: connected repositories (GitHub/GitLab/local folders).
- * `ProjectPicker` is the "From GitHub" / "Local folder" tab pair, shared by
- * the sidebar's Add project dialog and onboarding's Projects step.
+ * `ProjectPicker` is the search + multi-select repo list (grouped by
+ * owner/org) plus a one-shot local folder add, shared by the sidebar's Add
+ * project dialog and onboarding's Projects step.
  * `ProjectView` is the repo view opened from the sidebar: header, Pull
  * requests (list ↔ board, Display popover — ported from the prototype's
  * `PRView`) and Branches.
@@ -10,18 +11,21 @@ import { useEffect, useState } from 'react';
 import {
   ArrowRotateLeft,
   BranchesRight,
+  Check,
   CodePullRequest,
   FolderPlus,
   LayoutColumns,
   LayoutList,
-  Plus,
+  Lock,
+  Magnifier,
   Sliders,
 } from '@gravity-ui/icons';
 import {
   Button,
   Card,
+  Checkbox,
+  CheckboxGroup,
   Chip,
-  Input,
   Label,
   Popover,
   ScrollShadow,
@@ -32,12 +36,10 @@ import {
   Tabs,
   Tag,
   TagGroup,
-  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Toolbar,
   Tooltip,
-  Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { LocalBranch, PrState, Project, RepoRef } from '../gen/contract';
@@ -147,18 +149,120 @@ export function boardColumns(
   }));
 }
 
-// ── Add project: "From GitHub" / "Local folder" ────────────────────────
+// ── Add project: search + multi-select repos, grouped by owner ─────────
 
-function GitHubRepoTab({
-  addedKeys,
-  onAdd,
+/** Repos grouped by owner/org, in first-seen order — the picker's section
+ *  headers. */
+export function groupByOwner(
+  repos: RepoRef[],
+): { owner: string; repos: RepoRef[] }[] {
+  const order: string[] = [];
+  const byOwner = new Map<string, RepoRef[]>();
+  for (const r of repos) {
+    if (!byOwner.has(r.owner)) {
+      order.push(r.owner);
+      byOwner.set(r.owner, []);
+    }
+    byOwner.get(r.owner)!.push(r);
+  }
+  return order.map((owner) => ({ owner, repos: byOwner.get(owner)! }));
+}
+
+/** PRs the signed-in user is already involved in, in this repo — the
+ *  "N PRs with you" chip. */
+export function prsWithYou(items: InboxPr[], repo: RepoRef): number {
+  return items.filter((p) => sameRepo(p.pr.repo, repo)).length;
+}
+
+/** GitHub serves an owner/org's avatar at this fixed URL — no such
+ *  convention for other hosts. */
+function ownerAvatarUrl(host: string, owner: string): string | null {
+  return host === 'github' ? `https://github.com/${owner}.png` : null;
+}
+
+/** One repo row in the picker: a disabled "Added" row for repos that are
+ *  already a project, otherwise a checkbox — `RepoRef` doesn't carry
+ *  `description` / `private` / `pushed_at` yet, so those render only when
+ *  a future contract change adds them. */
+function RepoRow({
+  r,
+  already,
+  prCount,
 }: {
-  addedKeys: Set<string>;
-  onAdd: (repo: RepoRef) => Promise<void>;
+  r: RepoRef;
+  already: boolean;
+  prCount: number;
 }) {
-  const [q, setQ] = useState('');
+  const extra = r as Partial<{
+    description: string;
+    private: boolean;
+    pushed_at: number;
+  }>;
+  const sub = [
+    extra.description,
+    extra.pushed_at != null ? `pushed ${ago(extra.pushed_at)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const body = (
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="flex items-center gap-2 text-sm font-medium">
+        <span className="truncate">{r.name}</span>
+        {extra.private && <Lock className="size-3.5 shrink-0 text-muted" />}
+      </span>
+      {sub && <span className="truncate text-xs text-muted">{sub}</span>}
+    </span>
+  );
+
+  if (already) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl px-3 py-2 opacity-70">
+        <span className="grid size-[18px] shrink-0 place-items-center rounded-md border border-separator text-muted">
+          <Check className="size-3" />
+        </span>
+        {body}
+        <Chip size="sm" variant="soft" className="shrink-0">
+          Added
+        </Chip>
+      </div>
+    );
+  }
+
+  return (
+    <Checkbox
+      value={repoKey(r)}
+      className="rounded-2xl px-3 py-2 hover:bg-default/50"
+    >
+      <Checkbox.Content className="w-full">
+        <Checkbox.Control>
+          <Checkbox.Indicator />
+        </Checkbox.Control>
+        {body}
+        {prCount > 0 && (
+          <Chip size="sm" variant="soft" color="accent" className="shrink-0">
+            {prCount} PRs with you
+          </Chip>
+        )}
+      </Checkbox.Content>
+    </Checkbox>
+  );
+}
+
+/** Add project: search + multi-select GitHub repos (grouped by owner, with
+ *  a bulk "Add N projects"), plus a one-shot local folder add. Shared by
+ *  the sidebar's Add project dialog and onboarding's Projects step. */
+export const ProjectPicker = observer(function ProjectPicker({
+  onAdded,
+}: {
+  onAdded?: (p: Project) => void;
+}) {
+  const store = useRootStore();
   const [repos, setRepos] = useState<RepoRef[] | 'unready' | null>(null);
-  const [adding, setAdding] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [addingFolder, setAddingFolder] = useState(false);
+  const [addingPicked, setAddingPicked] = useState(false);
 
   useEffect(() => {
     void api
@@ -167,23 +271,34 @@ function GitHubRepoTab({
       .catch(() => setRepos('unready'));
   }, []);
 
-  if (repos === null) {
-    return (
-      <div className="flex items-center gap-2 py-6 text-sm text-muted">
-        <Spinner /> Loading your repositories…
-      </div>
-    );
-  }
-  if (repos === 'unready') {
-    return (
-      <Empty
-        icon={<CodePullRequest />}
-        title="Can't list repositories yet"
-        text="Connect GitHub in Settings → Account, then try again."
-      />
-    );
-  }
-  const shown = filterHostRepos(repos, q);
+  const addedKeys = new Set(
+    store.models.projects.all().map((p) => repoKey(p.repo)),
+  );
+  const prItems = store.models.prSummaries.all();
+  const shown =
+    repos === null || repos === 'unready' ? [] : filterHostRepos(repos, q);
+  const groups = groupByOwner(shown);
+
+  const addLocalFolder = () => {
+    setAddingFolder(true);
+    void pickFolder(store)
+      .then((path) =>
+        path ? addProject(store, { repo: null, path }) : null,
+      )
+      .then((p) => p && onAdded?.(p))
+      .finally(() => setAddingFolder(false));
+  };
+
+  const addPicked = async () => {
+    setAddingPicked(true);
+    for (const r of shown.filter((r) => picked.includes(repoKey(r)))) {
+      const p = await addProject(store, { repo: r, path: null });
+      if (p) onAdded?.(p);
+    }
+    setPicked([]);
+    setAddingPicked(false);
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <SearchField
@@ -193,166 +308,84 @@ function GitHubRepoTab({
         fullWidth
       >
         <SearchField.Group>
+          <SearchField.SearchIcon>
+            <Magnifier />
+          </SearchField.SearchIcon>
           <SearchField.Input placeholder="owner/repo" />
           <SearchField.ClearButton />
         </SearchField.Group>
       </SearchField>
-      <ScrollShadow className="-mx-3 max-h-[320px] px-3" hideScrollBar>
-        <div className="flex flex-col gap-1">
-          {shown.map((r) => {
-            const key = repoKey(r);
-            const already = addedKeys.has(key);
-            return (
-              <div
-                key={key}
-                className="flex items-center gap-3 rounded-2xl px-3 py-2 hover:bg-default/50"
-              >
-                {/* `RepoRef` carries no `private` flag yet — the badge lights
-                    up the moment `list_host_repos` grows one. */}
-                <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium">
-                  {r.owner}/{r.name}
-                </span>
-                {already ? (
-                  <Chip size="sm" variant="soft">
-                    Added
-                  </Chip>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="tertiary"
-                    isPending={adding === key}
-                    onPress={() => {
-                      setAdding(key);
-                      void onAdd(r).finally(() => setAdding(null));
-                    }}
-                  >
-                    <Plus className="size-4" />
-                    Add
-                  </Button>
-                )}
-              </div>
-            );
-          })}
-          {shown.length === 0 && (
+
+      {repos === null ? (
+        <div className="flex flex-col gap-1 py-1">
+          <RowsSkeleton rows={5} />
+        </div>
+      ) : repos === 'unready' ? (
+        <Empty
+          icon={<CodePullRequest />}
+          title="Can't list repositories yet"
+          text="Connect GitHub in Settings → Account, then try again."
+        />
+      ) : (
+        <ScrollShadow className="-mx-3 max-h-[360px] px-3" hideScrollBar>
+          {groups.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted">
               No repositories match "{q}".
             </p>
+          ) : (
+            <CheckboxGroup
+              aria-label="Repositories"
+              value={picked}
+              onChange={setPicked}
+              className="repo-list flex flex-col gap-1"
+            >
+              {groups.map(({ owner, repos: group }) => (
+                <div key={owner} className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2 px-3 pb-1 pt-3 text-xs font-medium text-muted first:pt-1">
+                    <Avatar
+                      person={{
+                        login: owner,
+                        name: null,
+                        avatar_url: ownerAvatarUrl(group[0]!.host, owner),
+                      }}
+                      size={16}
+                    />
+                    {owner}
+                  </div>
+                  {group.map((r) => (
+                    <RepoRow
+                      key={repoKey(r)}
+                      r={r}
+                      already={addedKeys.has(repoKey(r))}
+                      prCount={prsWithYou(prItems, r)}
+                    />
+                  ))}
+                </div>
+              ))}
+            </CheckboxGroup>
           )}
-        </div>
-      </ScrollShadow>
-    </div>
-  );
-}
-
-function LocalFolderTab({ onAdd }: { onAdd: (path: string) => Promise<void> }) {
-  const store = useRootStore();
-  const [path, setPath] = useState('');
-  const [picking, setPicking] = useState(false);
-  const [pickFailed, setPickFailed] = useState(false);
-  const [adding, setAdding] = useState(false);
-
-  const choose = () => {
-    setPicking(true);
-    void pickFolder(store)
-      .then((p) => {
-        if (p) {
-          setPath(p);
-          setPickFailed(false);
-        } else {
-          setPickFailed(true);
-        }
-      })
-      .finally(() => setPicking(false));
-  };
-
-  return (
-    <div className="flex flex-col gap-3">
-      <Typography.Paragraph size="sm" color="muted">
-        An absolute path to a local git repository. It's mirrored into
-        Theodore's cache — your folder is never written to.
-      </Typography.Paragraph>
-      <TextField value={path} onChange={setPath} aria-label="Folder path">
-        <Label>Folder</Label>
-        <div className="flex gap-2">
-          <Input placeholder="/Users/me/code/my-repo" className="font-mono" />
-          <Button
-            variant="tertiary"
-            className="choose-folder"
-            isPending={picking}
-            onPress={choose}
-          >
-            Choose folder…
-          </Button>
-        </div>
-      </TextField>
-      {pickFailed && (
-        <p className="text-xs text-muted">
-          No folder selected — paste the path by hand instead.
-        </p>
+        </ScrollShadow>
       )}
-      <Button
-        className="self-start"
-        isDisabled={!path.trim()}
-        isPending={adding}
-        onPress={() => {
-          setAdding(true);
-          void onAdd(path.trim()).finally(() => {
-            setAdding(false);
-            setPath('');
-          });
-        }}
-      >
-        <FolderPlus className="size-4" />
-        Add folder
-      </Button>
+
+      <Separator />
+      <div className="flex items-center justify-between gap-3">
+        <Button
+          variant="tertiary"
+          isPending={addingFolder}
+          onPress={addLocalFolder}
+        >
+          <FolderPlus className="size-4" />
+          Add local folder…
+        </Button>
+        <Button
+          isDisabled={picked.length === 0}
+          isPending={addingPicked}
+          onPress={() => void addPicked()}
+        >
+          Add {picked.length} project{picked.length === 1 ? '' : 's'}
+        </Button>
+      </div>
     </div>
-  );
-}
-
-/** Shared "From GitHub" / "Local folder" picker — the Add project dialog and
- *  onboarding's Projects step both render this. */
-export const ProjectPicker = observer(function ProjectPicker({
-  onAdded,
-}: {
-  onAdded?: (p: Project) => void;
-}) {
-  const store = useRootStore();
-  const addedKeys = new Set(
-    store.models.projects.all().map((p) => repoKey(p.repo)),
-  );
-
-  const add = async (req: {
-    repo: RepoRef | null;
-    path: string | null;
-  }): Promise<void> => {
-    const p = await addProject(store, req);
-    if (p) onAdded?.(p);
-  };
-
-  return (
-    <Tabs className="project-picker">
-      <Tabs.ListContainer>
-        <Tabs.List aria-label="Add project">
-          <Tabs.Tab id="github">
-            From GitHub
-            <Tabs.Indicator />
-          </Tabs.Tab>
-          <Tabs.Tab id="local">
-            Local folder
-            <Tabs.Indicator />
-          </Tabs.Tab>
-        </Tabs.List>
-      </Tabs.ListContainer>
-      <Tabs.Panel id="github" className="pt-3">
-        <GitHubRepoTab
-          addedKeys={addedKeys}
-          onAdd={(repo) => add({ repo, path: null })}
-        />
-      </Tabs.Panel>
-      <Tabs.Panel id="local" className="pt-3">
-        <LocalFolderTab onAdd={(path) => add({ repo: null, path })} />
-      </Tabs.Panel>
-    </Tabs>
   );
 });
 
@@ -360,7 +393,7 @@ export const AddProjectModal = observer(function AddProjectModal() {
   const ui = useUi();
   return (
     <Shell title="Add project" size="lg" onClose={() => ui.closeModal()}>
-      <ProjectPicker />
+      <ProjectPicker onAdded={() => ui.closeModal()} />
     </Shell>
   );
 });
