@@ -8,9 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use theodore_contract::{Ephemeral, HunkRead, InboxState, ToastLevel, models};
+use theodore_domain::anchors::Remapped;
 use theodore_domain::snooze::PrEvent;
 use theodore_domain::{
-    AgentId, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
+    AgentId, Anchor, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
 };
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
@@ -156,6 +157,10 @@ async fn handle_push(
         dismiss_files(core, pr, &new_rev, &changed_new_ids).await;
     }
 
+    if let Some(old_head) = &old_head {
+        remap_anchors_after_push(core, pr, &repo_path, old_head, &new_head).await;
+    }
+
     regroup_after_push(core, pr, &new_rev, &detail, &worktree.path).await;
     wake_next_push(core, pr).await;
 
@@ -201,6 +206,88 @@ async fn handle_push(
         level: ToastLevel::Info,
         text: format!("{} pushed {new_head}", pr_ref.repo.slug()),
     });
+}
+
+/// Moves (or outdates) every open `draft`/`finding`/`task` anchor of `pr`
+/// across the push (plan §4): diffs `old_head..new_head` and runs
+/// `domain::anchors::remap` over each anchor still on file. A draft whose
+/// anchor comes back `Outdated` is marked so (never anchor-less: an
+/// outdated draft is still shown, just not submittable — `submit_review`
+/// skips it).
+async fn remap_anchors_after_push(
+    core: &Core,
+    pr: &PrId,
+    repo_path: &Path,
+    old_head: &Sha,
+    new_head: &Sha,
+) {
+    let between = match core
+        .0
+        .deps
+        .git
+        .diff(repo_path, old_head, new_head, &DiffOptions::default())
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for model in [models::DRAFT, models::FINDING, models::TASK] {
+        remap_model_anchors(core, pr, model, &between, new_head).await;
+    }
+}
+
+async fn remap_model_anchors(
+    core: &Core,
+    pr: &PrId,
+    model: &str,
+    between: &Revision,
+    new_head: &Sha,
+) {
+    let store = core.0.deps.store.clone();
+    let pr_s = pr.0.clone();
+    let model_owned = model.to_string();
+    let rows =
+        match tokio::task::spawn_blocking(move || store.query(&model_owned, "pr", &pr_s)).await {
+            Ok(Ok(r)) => r,
+            _ => return,
+        };
+    let mut actions = Vec::new();
+    for row in rows {
+        if row
+            .data
+            .get("outdated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue; // already outdated; nothing more to remap
+        }
+        let Some(anchor_val) = row.data.get("anchor").filter(|v| !v.is_null()) else {
+            continue; // task with no anchor
+        };
+        let Ok(anchor) = serde_json::from_value::<Anchor>(anchor_val.clone()) else {
+            continue;
+        };
+        match theodore_domain::anchors::remap(&anchor, between, new_head) {
+            Remapped::Moved(new_anchor) if new_anchor != anchor => {
+                actions.push(NewAction {
+                    model: model.into(),
+                    model_id: row.id,
+                    action: SyncActionCode::C,
+                    data: Some(serde_json::json!({ "anchor": new_anchor })),
+                });
+            }
+            Remapped::Moved(_) => {}
+            Remapped::Outdated => {
+                actions.push(NewAction {
+                    model: model.into(),
+                    model_id: row.id,
+                    action: SyncActionCode::C,
+                    data: Some(serde_json::json!({ "outdated": true })),
+                });
+            }
+        }
+    }
+    let _ = core.apply(actions).await;
 }
 
 async fn clear_reads(core: &Core, pr: &PrId, changed: &BTreeSet<HunkId>) {

@@ -11,13 +11,13 @@ use theodore_contract::{
     DraftStateRequest, EditCommentRequest, Ephemeral, FileViewedRow, HostAuthStatus, HunkRead,
     MergeMethod as WireMergeMethod, MergeRequest, MutationOp, OpenBranchRequest, OpenPrRequest,
     ProjectStatus, ReactRequest, ReplyRequest, ResolveRequest, ReviewersRequest, RevisionRequest,
-    RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting, TaskDecision, ToastLevel,
-    TokenSource, Transaction, TransactionResult, models,
+    RunSkillRequest, SaveSkillRequest, SetTokenRequest, Setting, SubmitReviewRequest, TaskDecision,
+    ToastLevel, TokenSource, Transaction, TransactionResult, models,
 };
 use theodore_domain::{
-    AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, Fix, FixStatus, HostKind, HunkId,
-    Patch, PrId, PrRef, RepoRef, Revision, Sha, Side, Task, TaskId, TaskStatus, Thread, ThreadId,
-    Usage, ViewedState,
+    AgentId, Anchor, Assignee, Comment, CommentId, FileDiff, FileStatus, Fix, FixStatus, HostKind,
+    HunkId, Patch, PrId, PrRef, RepoRef, ReviewEvent, Revision, Sha, Side, Task, TaskId,
+    TaskStatus, Thread, ThreadId, Usage, ViewedState,
 };
 use theodore_ports::{
     AgentEvent, BranchInfo, Clock, CommitLog, Fetched, HostError, MergeMethod as PortMergeMethod,
@@ -125,6 +125,7 @@ fn sample_task(
         assignee: Assignee::Human("author".into()),
         fix: None,
         created_at: now,
+        outdated: false,
     }
 }
 
@@ -725,6 +726,121 @@ async fn a_push_clears_reads_of_changed_hunks_and_dismisses_their_file() {
     );
 }
 
+#[tokio::test]
+async fn a_push_remaps_moved_anchors_and_marks_rewritten_ones_outdated() {
+    let f = fixtures();
+    let (_core, _recv, pr, head) = open_fixture_pr(&f).await;
+
+    // Anchored well after the push's insertion point: must only shift.
+    let moving_anchor = Anchor {
+        rev: head.clone(),
+        path: "src/lib.rs".into(),
+        side: Side::New,
+        line: 20,
+        start_line: None,
+        start_side: None,
+    };
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-move",
+        json!({
+            "id": "d-move", "pr": pr.0, "anchor": moving_anchor, "body": "x",
+            "source": {"kind": "me"}, "outdated": false,
+        }),
+    );
+
+    // Anchored exactly on the line the push rewrites: must come back
+    // outdated, not moved.
+    let doomed_anchor = Anchor {
+        rev: head.clone(),
+        path: "src/lib.rs".into(),
+        side: Side::New,
+        line: 50,
+        start_line: None,
+        start_side: None,
+    };
+    put_model_row(
+        &f,
+        models::FINDING,
+        "f-outdated",
+        json!({
+            "id": "f-outdated", "pr": pr.0, "skill": "s1", "agents": [],
+            "anchor": doomed_anchor, "severity": "warn", "title": "t", "body": "b",
+            "state": "open", "fix": null, "outdated": false,
+        }),
+    );
+
+    // The push, described as the diff *between the two heads* (old_head ->
+    // new_head): 3 lines inserted at the top shift everything after them by
+    // +3; the line at old line 50 is rewritten in place.
+    let new_head = Sha::new("head222");
+    let insert = testkit::make_hunk(
+        "src/lib.rs",
+        1,
+        0,
+        1,
+        3,
+        vec![
+            testkit::line_add(1, "x"),
+            testkit::line_add(2, "y"),
+            testkit::line_add(3, "z"),
+        ],
+    );
+    let rewrite = testkit::make_hunk(
+        "src/lib.rs",
+        50,
+        1,
+        50,
+        1,
+        vec![testkit::line_add(50, "rewritten")],
+    );
+    let between = Revision {
+        base: Sha::new("base000"),
+        head: new_head.clone(),
+        files: vec![FileDiff {
+            path: "src/lib.rs".into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            similarity: None,
+            old_mode: None,
+            new_mode: None,
+            flags: vec![],
+            additions: 4,
+            deletions: 1,
+            hunks: vec![insert, rewrite],
+        }],
+    };
+    f.git.set_head(new_head.clone());
+    f.git.set_revision(between);
+
+    let detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), &new_head);
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-anchor-remap".into()),
+        value: detail,
+    }));
+    f.clock.advance(15_000);
+
+    wait_until(|| {
+        f.store
+            .get(models::DRAFT, "d-move")
+            .unwrap()
+            .is_some_and(|r| r.data["anchor"]["line"] == json!(23))
+    })
+    .await;
+    let moved = f.store.get(models::DRAFT, "d-move").unwrap().unwrap();
+    assert_eq!(moved.data["anchor"]["rev"], json!(new_head.0));
+    assert_eq!(moved.data["outdated"], json!(false));
+
+    wait_until(|| {
+        f.store
+            .get(models::FINDING, "f-outdated")
+            .unwrap()
+            .is_some_and(|r| r.data["outdated"] == json!(true))
+    })
+    .await;
+}
+
 // ── run cancel ────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -904,6 +1020,68 @@ async fn set_host_token_validates_before_storing_and_rolls_back_on_failure() {
     .await
     .expect("remove token");
     assert_eq!(f.secrets.get(theodore_secrets::GITHUB_TOKEN).unwrap(), None);
+}
+
+// ── submit_review ────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn submit_review_skips_outdated_drafts_with_a_toast() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-ok",
+        json!({
+            "id": "d-ok", "pr": pr.0, "anchor": testkit::sample_anchor("src/lib.rs", 2),
+            "body": "fine", "source": {"kind": "me"}, "outdated": false,
+        }),
+    );
+    put_model_row(
+        &f,
+        models::DRAFT,
+        "d-stale",
+        json!({
+            "id": "d-stale", "pr": pr.0, "anchor": testkit::sample_anchor("src/lib.rs", 2),
+            "body": "stale", "source": {"kind": "me"}, "outdated": true,
+        }),
+    );
+
+    core.submit_review(SubmitReviewRequest {
+        pr: pr.clone(),
+        event: ReviewEvent::Comment,
+        body: "lgtm".into(),
+    })
+    .await
+    .expect("submit_review");
+
+    expect_ephemeral(
+        &mut recv,
+        |e| matches!(e, Ephemeral::Toast { text, .. } if text.contains("skipped")),
+    )
+    .await;
+
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "submit_review")
+    })
+    .await;
+    let item = f
+        .store
+        .outbox_snapshot()
+        .into_iter()
+        .find(|i| i.op == "submit_review")
+        .unwrap();
+    let comments = item.payload["comments"].as_array().unwrap();
+    assert_eq!(
+        comments.len(),
+        1,
+        "the outdated draft must not reach the host write"
+    );
+    assert_eq!(comments[0]["draft_id"], json!("d-ok"));
 }
 
 // ── reply_thread / resolve_thread ────────────────────────────────────────────

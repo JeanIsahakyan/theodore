@@ -100,6 +100,7 @@ mod tests {
             body: String::new(),
             state: FindingState::Open,
             fix: None,
+            outdated: false,
         }
     }
 

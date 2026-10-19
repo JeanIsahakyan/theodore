@@ -136,6 +136,7 @@ impl ReviewToolsBackend for CoreTools {
             body: f.body,
             state: FindingState::Open,
             fix: None,
+            outdated: false,
         };
         core.add_finding(run.pr.clone(), finding)
             .await

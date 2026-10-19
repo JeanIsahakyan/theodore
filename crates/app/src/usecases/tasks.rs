@@ -175,6 +175,7 @@ impl Core {
                 anchor,
                 body,
                 source: Author::Agent(patch.by),
+                outdated: false,
             };
             let data =
                 serde_json::to_value(&draft).map_err(|e| AppError::Invalid(e.to_string()))?;

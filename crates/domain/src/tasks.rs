@@ -61,6 +61,7 @@ mod tests {
             assignee,
             fix: None,
             created_at: 0,
+            outdated: false,
         }
     }
 

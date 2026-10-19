@@ -398,6 +398,11 @@ pub struct Draft {
     pub anchor: Anchor,
     pub body: String,
     pub source: Author,
+    /// A push moved the diff out from under this anchor (plan §4):
+    /// `domain::anchors::remap` returned `Outdated`. An outdated draft must
+    /// not be submitted — the caller has to re-anchor or drop it.
+    #[serde(default)]
+    pub outdated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -509,6 +514,9 @@ pub struct Finding {
     pub body: String,
     pub state: FindingState,
     pub fix: Option<Fix>,
+    /// A push moved the diff out from under this anchor (plan §4).
+    #[serde(default)]
+    pub outdated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -543,6 +551,10 @@ pub struct Task {
     pub assignee: Assignee,
     pub fix: Option<Fix>,
     pub created_at: Millis,
+    /// A push moved the diff out from under this task's anchor (plan §4);
+    /// `None` anchor tasks are never affected.
+    #[serde(default)]
+    pub outdated: bool,
 }
 
 // ── reading, snooze, usage ──────────────────────────────────────────────────
