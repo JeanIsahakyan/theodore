@@ -81,9 +81,9 @@ impl GitCli {
 impl GitCli {
     pub(crate) async fn worktree_op(&self, pr: &PrRef, head: &Sha) -> GitResult<Worktree> {
         let askpass = self.ensure_askpass()?;
-        let repo_dir = self.repo_dir(&pr.repo);
-        let wt_path = self.wt_path(pr);
-        let dirname = Self::wt_dirname(&pr.repo, pr.number);
+        let repo_dir = self.repo_dir(&pr.repo)?;
+        let wt_path = self.wt_path(pr)?;
+        let dirname = Self::wt_dirname(&pr.repo, pr.number)?;
         let head_str = head.as_str().to_string();
 
         if wt_path.join(".git").exists() {
@@ -182,9 +182,9 @@ impl GitCli {
 
     pub(crate) async fn remove_worktree_op(&self, pr: &PrRef) -> GitResult<()> {
         let askpass = self.ensure_askpass()?;
-        let dirname = Self::wt_dirname(&pr.repo, pr.number);
-        self.drop_worktree_dir(&askpass, &self.repo_dir(&pr.repo), &dirname)
-            .await;
+        let dirname = Self::wt_dirname(&pr.repo, pr.number)?;
+        let repo_dir = self.repo_dir(&pr.repo)?;
+        self.drop_worktree_dir(&askpass, &repo_dir, &dirname).await;
         meta::remove(&self.meta_root(), &dirname);
         Ok(())
     }
@@ -192,9 +192,12 @@ impl GitCli {
     pub(crate) async fn gc_worktrees_op(&self, keep: &[PrRef]) -> GitResult<u32> {
         let askpass = self.ensure_askpass()?;
         let meta_root = self.meta_root();
+        // A `keep` entry whose `RepoRef` fails validation can't have a real
+        // worktree dirname either; dropping it from the set only risks an
+        // over-eager sweep of a worktree that could never have existed.
         let keep_names: HashSet<String> = keep
             .iter()
-            .map(|pr| Self::wt_dirname(&pr.repo, pr.number))
+            .filter_map(|pr| Self::wt_dirname(&pr.repo, pr.number).ok())
             .collect();
         let mut removed = 0u32;
         let mut handled: HashSet<String> = HashSet::new();
@@ -204,8 +207,14 @@ impl GitCli {
             if keep_names.contains(&dirname) {
                 continue;
             }
-            self.drop_worktree_dir(&askpass, &self.repo_dir(&wt_meta.repo), &dirname)
-                .await;
+            // Theodore only ever wrote this sidecar after a successful
+            // `repo_dir` validation; a failure here means the data is
+            // foreign or stale — skip it rather than abort the whole sweep.
+            let Ok(repo_dir) = self.repo_dir(&wt_meta.repo) else {
+                tracing::warn!(%dirname, "skipping gc: sidecar has an unsafe RepoRef");
+                continue;
+            };
+            self.drop_worktree_dir(&askpass, &repo_dir, &dirname).await;
             meta::remove(&meta_root, &dirname);
             removed += 1;
         }

@@ -19,7 +19,7 @@ impl GitCli {
         repo: &RepoRef,
     ) -> GitResult<PathBuf> {
         let askpass = self.ensure_askpass()?;
-        let dir = self.repo_dir(repo);
+        let dir = self.repo_dir(repo)?;
         let source_str = source
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 source path".to_string()))?;
@@ -73,7 +73,7 @@ impl GitCli {
 
     pub(crate) async fn remove_repo_op(&self, repo: &RepoRef) -> GitResult<()> {
         let askpass = self.ensure_askpass()?;
-        let repo_dir = self.repo_dir(repo);
+        let repo_dir = self.repo_dir(repo)?;
         for (dirname, meta) in crate::meta::list(&self.meta_root()) {
             if meta.repo == *repo {
                 self.drop_worktree_dir(&askpass, &repo_dir, &dirname).await;
