@@ -278,8 +278,8 @@ export const Onboarding = observer(function Onboarding() {
               <Typography.Heading level={4}>Projects</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
                 Connect a GitHub repository, or point Theodore at a local
-                folder. Optional — you can also paste a pull request link into a
-                new tab (⌘T) from the Inbox and skip this.
+                folder. Optional — skip it and paste a pull request link into a
+                new tab (⌘T) instead.
               </Typography.Paragraph>
               <ProjectPicker />
             </>
