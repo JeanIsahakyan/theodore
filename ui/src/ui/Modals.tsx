@@ -14,7 +14,7 @@ import { submitReview } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { AgentTag, K, Shell } from './bits';
-import { CommandMenu, SnoozeMenu } from './Palette';
+import { AssignMenu, CommandMenu, SnoozeMenu } from './Palette';
 import { AddProjectModal } from './Projects';
 
 const EVENT_OPTS: [ReviewEvent, string, string][] = [
@@ -180,6 +180,7 @@ const KEYS: [string, string][] = [
   ['H', 'snooze: an hour, until next push, until checks pass'],
   ['Tasks', ''],
   ['Y', 'accept fix'],
+  ['A', 'assign to a person or agent'],
   ['Review', ''],
   ['J / K', 'next / previous hunk'],
   ['N', 'next group'],
@@ -239,6 +240,8 @@ export const Modals = observer(function Modals() {
       return <CommandMenu />;
     case 'snooze':
       return <SnoozeMenu />;
+    case 'assign':
+      return <AssignMenu />;
     case 'submit':
       return <SubmitReviewModal />;
     case 'help':

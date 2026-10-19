@@ -102,6 +102,11 @@ export const TaskRow = observer(function TaskRow({
 
   const rowMenu = useContextMenu((): ContextMenuItem[] => [
     {
+      id: 'assign',
+      label: 'Assign…',
+      onAction: () => ui.openModal('assign', [t.id]),
+    },
+    {
       id: 'delegate',
       label: 'Delegate',
       items: [
@@ -287,6 +292,7 @@ function useTaskKeys(order: string[]) {
       else if (e.key === 'Enter' && t) ui.go({ name: 'review', pr: t.pr });
       else if (e.key === 'y' && t?.status === 'review')
         void decideTask(store, t.id, true);
+      else if (e.key === 'a' && t) ui.openModal('assign', [t.id]);
       else return false;
     },
     [order.join()],
@@ -398,8 +404,8 @@ export const Tasks = observer(function Tasks() {
       </ListBox>
       <Hints>
         <K>J</K>
-        <K>K</K> navigate <K>⏎</K> open PR <K>Y</K> accept fix <K>⌘K</K>{' '}
-        everything
+        <K>K</K> navigate <K>⏎</K> open PR <K>Y</K> accept fix <K>A</K> assign{' '}
+        <K>⌘K</K> everything
       </Hints>
     </div>
   );

@@ -38,7 +38,8 @@ export type Route =
   /** A blank tab: paste a PR link to turn it into a review. */
   | { name: 'new'; id: string };
 
-export type ModalName = 'help' | 'submit' | 'snooze' | 'cmdk' | 'add-project';
+export type ModalName =
+  'help' | 'submit' | 'snooze' | 'assign' | 'cmdk' | 'add-project';
 
 export const sameRoute = (a: Route, b: Route): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -76,7 +77,8 @@ export class UiStore {
   diffView: 'unified' | 'split' =
     localStorage.getItem(LS_DIFF_VIEW) === 'split' ? 'split' : 'unified';
   modal: ModalName | null = null;
-  snoozeTargets: PrId[] = [];
+  /** ids the open modal acts on — PRs for `snooze`, a task id for `assign`. */
+  modalTargets: string[] = [];
   /** The one custom context menu, open at a pointer point — see `ContextMenu.tsx`. */
   contextMenu: ContextMenuState | null = null;
 
@@ -93,7 +95,7 @@ export class UiStore {
       aside: observable,
       diffView: observable,
       modal: observableRef,
-      snoozeTargets: observableShallow,
+      modalTargets: observableShallow,
       contextMenu: observableRef,
     });
     reaction(
@@ -222,10 +224,10 @@ export class UiStore {
     });
   }
 
-  openModal(m: ModalName, targets: PrId[] = []): void {
+  openModal(m: ModalName, targets: string[] = []): void {
     runInAction(() => {
       this.modal = m;
-      this.snoozeTargets = targets;
+      this.modalTargets = targets;
     });
   }
 

@@ -23,13 +23,15 @@ import {
   Tray,
 } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
-import type { SnoozeUntil } from '../gen/contract';
-import { refreshInbox, setDraft, snoozePrs } from '../actions';
+import type { AgentId, Person, SnoozeUntil } from '../gen/contract';
+import { assignTask, refreshInbox, setDraft, snoozePrs } from '../actions';
+import { api } from '../core/api';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { toggleTheme } from '../stores/UiStore';
-import { K } from './bits';
+import { Avatar, K } from './bits';
 import { projectLabel } from './Projects';
+import { Sparkles } from '@gravity-ui/icons';
 
 export interface Item {
   group?: string;
@@ -182,10 +184,12 @@ const SNOOZE_LABEL: Record<SnoozeUntil['kind'], string> = {
   checks_green: 'until checks pass',
 };
 
+const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
+
 export const SnoozeMenu = observer(function SnoozeMenu() {
   const store = useRootStore();
   const ui = useUi();
-  const targets = ui.snoozeTargets;
+  const targets = ui.modalTargets;
   const opts: SnoozeUntil[] = [
     { kind: 'time', at: Date.now() + 3600_000 },
     { kind: 'next_push' },
@@ -203,6 +207,70 @@ export const SnoozeMenu = observer(function SnoozeMenu() {
         sub: o.kind !== 'time' ? 'wakes on a GitHub event' : undefined,
         run: () => snoozePrs(store, targets, o),
       }))}
+    />
+  );
+});
+
+/** Assign a task to a person (its PR's author, the viewer, or anyone
+ *  assignable on that PR) or an agent — `A` on a task row, or its context
+ *  menu's "Delegate". Mirrors the prototype's assign menu; unlike it, the
+ *  people list comes from `assignable_users`, not a hardcoded team. */
+export const AssignMenu = observer(function AssignMenu() {
+  const store = useRootStore();
+  const ui = useUi();
+  const taskId = ui.modalTargets[0];
+  const task = taskId ? store.models.tasks.get(taskId) : undefined;
+  const pr = task ? store.models.prSummaries.get(task.pr) : undefined;
+  const [people, setPeople] = useState<Person[]>([]);
+
+  useEffect(() => {
+    if (!task) return;
+    let live = true;
+    void api
+      .assignableUsers(task.pr)
+      .then((p) => {
+        if (live) setPeople(p);
+      })
+      .catch(() => {
+        // falls back to just the viewer + PR author below
+      });
+    return () => {
+      live = false;
+    };
+  }, [task]);
+
+  if (!task) return null;
+  const viewer = store.ephemeral.viewer;
+  const author = pr?.author;
+  const pool = [viewer, author, ...people].filter((p): p is Person => !!p);
+  const seen = new Set<string>();
+  const dedup = pool.filter((p) => {
+    if (seen.has(p.login)) return false;
+    seen.add(p.login);
+    return true;
+  });
+
+  return (
+    <Palette
+      title={`Assign · ${task.title}`}
+      placeholder="Person or agent…"
+      digits
+      onClose={() => ui.closeModal()}
+      items={[
+        ...AGENTS.map((a) => ({
+          group: 'Agents — fix it in a worktree',
+          label: a,
+          icon: <Sparkles className="size-4" />,
+          run: () => assignTask(store, task.id, { kind: 'agent', id: a }),
+        })),
+        ...dedup.map((p) => ({
+          group: 'People',
+          label: viewer && p.login === viewer.login ? 'you' : p.login,
+          icon: <Avatar person={p} size={16} />,
+          sub: author && p.login === author.login ? 'PR author' : undefined,
+          run: () => assignTask(store, task.id, { kind: 'human', id: p.login }),
+        })),
+      ]}
     />
   );
 });
