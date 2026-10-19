@@ -110,18 +110,25 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
             >
               {drafts.map((d) => (
                 <Table.Row key={d.id} id={d.id}>
-                  <Table.Cell className="font-mono text-xs">
-                    {d.anchor.path}:{d.anchor.line}
+                  <Table.Cell className="max-w-[200px] font-mono text-xs">
+                    <span
+                      className="block truncate"
+                      title={`${d.anchor.path}:${d.anchor.line}`}
+                    >
+                      {d.anchor.path}:{d.anchor.line}
+                    </span>
                   </Table.Cell>
-                  <Table.Cell>
+                  <Table.Cell className="shrink-0">
                     {d.source.kind === 'agent' ? (
                       <AgentTag id={d.source.agent} />
                     ) : (
                       <span className="text-xs text-muted">you</span>
                     )}
                   </Table.Cell>
-                  <Table.Cell className="text-xs">
-                    {d.body.slice(0, 110)}
+                  <Table.Cell className="max-w-[320px] text-xs">
+                    <span className="line-clamp-2">
+                      {d.body.slice(0, 110)}
+                    </span>
                   </Table.Cell>
                 </Table.Row>
               ))}
