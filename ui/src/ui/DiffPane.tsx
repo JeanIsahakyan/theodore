@@ -1,6 +1,6 @@
 import { MarkdownDiff } from './MarkdownDiff';
 import { isMarkdown } from './mdDiff';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   Check,
@@ -43,9 +43,10 @@ import type {
 } from '../gen/contract';
 import { ask, markGroupRead, markHunkRead, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
+import type { ModelRows } from '../sync/types';
 import { Btn } from './bits';
 import { Composer, DraftView, plural, ThreadView } from './Comments';
-import { useContextMenu, type ContextMenuItem } from './ContextMenu';
+import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import {
   gapsAbove,
   gapTail,
@@ -99,9 +100,6 @@ export function lineAnchor(
     start_side: startLine != null ? 'new' : null,
   };
 }
-
-const sameAnchor = (a: Anchor, path: string, side: Side, line: number) =>
-  a.path === path && a.side === side && a.line === line;
 
 /** Lines `lines X–Y`, from the hunk's new-side range (deletions-only hunks
  *  have no new lines to anchor on). */
@@ -211,15 +209,26 @@ export const DiffPane = observer(function DiffPane({
   const splitRequested = ui.diffView === 'split';
   const effectiveSplit = splitRequested && diffWidth >= SPLIT_MIN_WIDTH;
   const splitDowngraded = splitRequested && !effectiveSplit;
-  const [rangeStart, setRangeStart] = useState<{
-    path: string;
-    side: Side;
-    line: number;
-  } | null>(null);
+  // Only read when a line's comment button is shift-clicked — nothing
+  // renders from it, so it lives in a ref instead of re-rendering the diff.
+  const rangeStart = useRef<RangeStart | null>(null);
   const [outliersOpen, setOutliersOpen] = useState<Record<string, boolean>>({});
   const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
+  // One stable object for every line, so a memoized line skips re-rendering
+  // when only someone else's composer, peek or range changed.
+  const actions = useMemo<LineActions>(
+    () => ({
+      setComposer,
+      setPeek,
+      rangeStart: () => rangeStart.current,
+      setRangeStart: (r) => {
+        rangeStart.current = r;
+      },
+    }),
+    [setComposer],
+  );
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
   >(null);
@@ -265,44 +274,79 @@ export const DiffPane = observer(function DiffPane({
     mode.mode === 'groups' && mode.group
       ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
       : null;
-  const groupHunkIds = group ? new Set(group.hunks) : null;
+  // Memoized on the group object, which stays the same until the grouping
+  // row changes — so the filtered file list below keeps its identity too.
+  const groupHunkIds = useMemo(
+    () => (group ? new Set(group.hunks) : null),
+    [group],
+  );
   const showOnlyOutliers =
     !!group &&
     group.kind === 'skim' &&
     group.outliers.length > 0 &&
     !outliersOpen[group.id];
-  const outlierSet = group ? new Set(group.outliers) : null;
   // Lockfiles and generated code: collapsed by default, same as the
   // prototype — "show anyway" reveals this group's diff like any other.
   const groupCollapsed =
     !!group && group.kind === 'hidden' && !hiddenOpen[group.id];
 
-  let files: FileDiff[] =
-    mode.mode === 'files'
-      ? rev.files.filter((f) => f.path === mode.file)
-      : groupHunkIds
-        ? rev.files
-            .map((f) => ({
-              ...f,
-              hunks: f.hunks.filter((h) => groupHunkIds.has(h.id)),
-            }))
-            .filter((f) => f.hunks.length)
-        : rev.files;
+  const files = useMemo(() => {
+    let out: FileDiff[] =
+      mode.mode === 'files'
+        ? rev.files.filter((f) => f.path === mode.file)
+        : groupHunkIds
+          ? rev.files
+              .map((f) => ({
+                ...f,
+                hunks: f.hunks.filter((h) => groupHunkIds.has(h.id)),
+              }))
+              .filter((f) => f.hunks.length)
+          : rev.files;
 
-  if (showOnlyOutliers && outlierSet) {
-    files = files
-      .map((f) => ({
-        ...f,
-        hunks: f.hunks.filter((h) => outlierSet.has(h.id)),
-      }))
-      .filter((f) => f.hunks.length);
-  }
+    if (showOnlyOutliers && group) {
+      const outlierSet = new Set(group.outliers);
+      out = out
+        .map((f) => ({
+          ...f,
+          hunks: f.hunks.filter((h) => outlierSet.has(h.id)),
+        }))
+        .filter((f) => f.hunks.length);
+    }
 
-  if (sinceOnly && since) {
-    files = files
-      .map((f) => ({ ...f, hunks: f.hunks.filter((h) => since.has(h.id)) }))
-      .filter((f) => f.hunks.length);
-  }
+    if (sinceOnly && since) {
+      out = out
+        .map((f) => ({ ...f, hunks: f.hunks.filter((h) => since.has(h.id)) }))
+        .filter((f) => f.hunks.length);
+    }
+    return out;
+  }, [
+    rev,
+    mode.mode,
+    mode.file,
+    group,
+    groupHunkIds,
+    showOnlyOutliers,
+    sinceOnly,
+    since,
+  ]);
+
+  // Hunks of each file outside the open group ("also in …" in its header).
+  const othersByPath = useMemo(() => {
+    const m = new Map<string, Hunk[]>();
+    if (mode.mode !== 'groups' || !groupHunkIds) return m;
+    for (const f of rev.files) {
+      const others = f.hunks.filter((h) => !groupHunkIds.has(h.id));
+      if (others.length) m.set(f.path, others);
+    }
+    return m;
+  }, [rev, mode.mode, groupHunkIds]);
+  const pathOfHunk = useMemo(() => {
+    const m = new Map<HunkId, string>();
+    for (const f of rev.files) for (const h of f.hunks) m.set(h.id, f.path);
+    return m;
+  }, [rev]);
+  const focusPath = focusHunk ? pathOfHunk.get(focusHunk) : undefined;
+  const expandPath = expandHunk ? pathOfHunk.get(expandHunk.hunk) : undefined;
 
   // A chunked file list resets whenever the group/file/mode changes under it.
   useEffect(() => setLimit(CHUNK), [mode.mode, mode.group, mode.file]);
@@ -405,28 +449,25 @@ export const DiffPane = observer(function DiffPane({
       ) : (
         <>
           {visibleFiles.map((f) => (
+            // Per-file slices only: a file whose composer, peek, focus and
+            // expand are all `null` stays memo-equal when another file's change.
             <FileBlock
               key={f.path}
               pr={pr}
               rev={rev.head}
               base={rev.base}
-              allFiles={rev.files}
               file={f}
               since={since}
               interdiff={interdiffMap}
-              groupHunkIds={mode.mode === 'groups' ? groupHunkIds : null}
-              mode={mode}
+              others={othersByPath.get(f.path) ?? NO_HUNKS}
               setMode={setMode}
               split={effectiveSplit}
-              composer={composer}
-              setComposer={setComposer}
-              rangeStart={rangeStart}
-              setRangeStart={setRangeStart}
-              focusHunk={focusHunk}
+              focusHunk={focusPath === f.path ? focusHunk : null}
               setFocusHunk={setFocusHunk}
-              expandHunk={expandHunk}
-              peek={peek}
-              setPeek={setPeek}
+              expandHunk={expandPath === f.path ? expandHunk : null}
+              composer={composer?.path === f.path ? composer : null}
+              peek={peek?.path === f.path ? peek : null}
+              actions={actions}
             />
           ))}
           {files.length > visibleFiles.length && (
@@ -771,57 +812,102 @@ function SinceBadge({ kind }: { kind?: SinceKind }) {
   );
 }
 
-interface LineProps {
-  pr: PrId;
-  rev: Revision['head'];
-  path: string;
-  composer: ComposerState | null;
+type RangeStart = { path: string; side: Side; line: number };
+
+/** Everything a line does to state outside itself — one stable object for
+ *  the whole diff (see `DiffPane`), so it never breaks a line's memo. */
+interface LineActions {
   setComposer: (c: ComposerState | null) => void;
-  rangeStart: { path: string; side: Side; line: number } | null;
-  setRangeStart: (r: { path: string; side: Side; line: number } | null) => void;
-  peek: SymbolPeekTarget | null;
   setPeek: (p: SymbolPeekTarget | null) => void;
+  /** Read at click time only; nothing renders from it. */
+  rangeStart: () => RangeStart | null;
+  setRangeStart: (r: RangeStart | null) => void;
+}
+
+type DraftRow = ModelRows['draft'];
+type FindingRow = ModelRows['finding'];
+
+const NO_HUNKS: Hunk[] = [];
+const NO_IDS: readonly string[] = [];
+const NO_DRAFTS: readonly DraftRow[] = [];
+const NO_FINDINGS: readonly FindingRow[] = [];
+
+/** The side and number a comment on this line anchors to — `lineAnchor`'s
+ *  rule, without building the whole anchor. */
+function anchorSide(l: DiffLine): { side: Side; line: number } | null {
+  if (l.kind === 'del')
+    return l.old_no == null ? null : { side: 'old', line: l.old_no };
+  return l.new_no == null ? null : { side: 'new', line: l.new_no };
+}
+
+/** The line number a symbol peek is pinned to (see `Line`'s ⌘-click). */
+const peekLineNo = (l: DiffLine) => l.new_no ?? l.old_no ?? 0;
+
+const hunkHasAnchor = (h: Hunk, side: Side, line: number) =>
+  h.lines.some((l) => {
+    const a = anchorSide(l);
+    return !!a && a.side === side && a.line === line;
+  });
+
+const hunkHasPeek = (h: Hunk, line: number) =>
+  h.lines.some((l) => peekLineNo(l) === line);
+
+/** One hunk's slices of the file-level props: `null` for every hunk the
+ *  composer / peek isn't in, so those hunks stay memo-equal. */
+function hunkSlices(
+  h: Hunk,
+  composer: ComposerState | null,
+  peek: SymbolPeekTarget | null,
+) {
+  return {
+    composer:
+      composer && hunkHasAnchor(h, composer.side, composer.line)
+        ? composer
+        : null,
+    peek: peek && hunkHasPeek(h, peek.line) ? peek : null,
+  };
 }
 
 function FileBlockInner({
   pr,
   rev,
   base,
-  allFiles,
   file,
   since,
   interdiff,
-  groupHunkIds,
-  mode,
+  others,
   setMode,
   split,
-  composer,
-  setComposer,
-  rangeStart,
-  setRangeStart,
   focusHunk,
   setFocusHunk,
   expandHunk,
+  composer,
   peek,
-  setPeek,
+  actions,
 }: {
   pr: PrId;
   rev: Revision['head'];
   base: Revision['base'];
-  allFiles: FileDiff[];
   file: FileDiff;
   since?: Map<HunkId, SinceKind> | null;
   /** The re-review word-diff, by the hunk id it's keyed on (plan §4) —
    *  `null`/absent outside "since last visit". */
   interdiff?: Map<HunkId, InterdiffEntry> | null;
-  groupHunkIds: Set<HunkId> | null;
-  mode: ReviewMode;
+  /** This file's hunks outside the open group (grouped mode only). */
+  others: Hunk[];
   setMode: (m: ReviewMode) => void;
   split: boolean;
+  /** Only set when the focused hunk is in this file. */
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
+  /** Only set when the hunk to expand is in this file. */
   expandHunk?: { hunk: HunkId; nonce: number } | null;
-} & Omit<LineProps, 'path'>) {
+  /** Only set when the composer is on this file. */
+  composer: ComposerState | null;
+  /** Only set when the symbol peek is on this file. */
+  peek: SymbolPeekTarget | null;
+  actions: LineActions;
+}) {
   countRender('FileBlock');
   const store = useRootStore();
   const lang = langOf(file.path);
@@ -834,38 +920,38 @@ function FileBlockInner({
   const md = isMarkdown(file.path) && file.status !== 'deleted';
   const [preview, setPreview] = useState(false);
   const generatedFlag = file.flags.find((f) => f.kind === 'generated');
-  const summaryForMenu = store.models.prSummaries.get(pr);
-  // Hooks must run unconditionally, so this is built before the early
-  // return below (the file header — and its menu — still renders either way).
-  const fileMenu = useContextMenu((): ContextMenuItem[] => {
-    const items: ContextMenuItem[] = [
-      {
-        id: 'mark-viewed',
-        label: isViewed ? 'Mark not viewed' : 'Mark viewed',
-        onAction: () => setFileViewed(store, pr, file.path, !isViewed),
-      },
-      {
-        id: 'copy-path',
-        label: 'Copy path',
-        onAction: () => void navigator.clipboard.writeText(file.path),
-      },
-    ];
-    if (summaryForMenu) {
-      items.push({
-        id: 'open-github',
-        label: 'Open on GitHub',
-        onAction: () => window.open(`${summaryForMenu.url}/files`, '_blank'),
-      });
-    }
-    if (generatedFlag || file.status === 'deleted') {
-      items.push({
-        id: 'collapse',
-        label: shown ? 'Collapse' : 'Expand',
-        onAction: () => setShown((v) => !v),
-      });
-    }
-    return items;
-  });
+  // Built when the menu opens, not on every render.
+  const fileMenu = (e: React.MouseEvent) =>
+    contextMenuHandler(store.ui, (): ContextMenuItem[] => {
+      const summaryForMenu = store.models.prSummaries.get(pr);
+      const items: ContextMenuItem[] = [
+        {
+          id: 'mark-viewed',
+          label: isViewed ? 'Mark not viewed' : 'Mark viewed',
+          onAction: () => setFileViewed(store, pr, file.path, !isViewed),
+        },
+        {
+          id: 'copy-path',
+          label: 'Copy path',
+          onAction: () => void navigator.clipboard.writeText(file.path),
+        },
+      ];
+      if (summaryForMenu) {
+        items.push({
+          id: 'open-github',
+          label: 'Open on GitHub',
+          onAction: () => window.open(`${summaryForMenu.url}/files`, '_blank'),
+        });
+      }
+      if (generatedFlag || file.status === 'deleted') {
+        items.push({
+          id: 'collapse',
+          label: shown ? 'Collapse' : 'Expand',
+          onAction: () => setShown((v) => !v),
+        });
+      }
+      return items;
+    })(e);
 
   const flag = file.flags.find(
     (f) => f.kind === 'oversize' || f.kind === 'binary',
@@ -884,12 +970,6 @@ function FileBlockInner({
 
   const collapsedFile =
     (!!generatedFlag || file.status === 'deleted') && !shown;
-  const others =
-    groupHunkIds && mode.mode === 'groups'
-      ? (allFiles.find((f) => f.path === file.path)?.hunks ?? []).filter(
-          (h) => !groupHunkIds.has(h.id),
-        )
-      : [];
   const gaps = gapsAbove(file.hunks);
   const last = file.hunks[file.hunks.length - 1];
 
@@ -1052,38 +1132,38 @@ function FileBlockInner({
         </div>
       ) : (
         <>
-          {file.hunks.map((h) => (
-            <div key={h.id}>
-              {gaps.has(h.id) && (
-                <ContextGap
+          {file.hunks.map((h) => {
+            const HunkComponent = split ? SplitHunkView : HunkView;
+            const slices = hunkSlices(h, composer, peek);
+            return (
+              <div key={h.id}>
+                {gaps.has(h.id) && (
+                  <ContextGap
+                    pr={pr}
+                    rev={rev}
+                    path={file.path}
+                    gap={gaps.get(h.id)!}
+                    lang={lang}
+                    expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
+                  />
+                )}
+                <HunkComponent
                   pr={pr}
                   rev={rev}
                   path={file.path}
-                  gap={gaps.get(h.id)!}
+                  h={h}
                   lang={lang}
-                  expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
+                  since={since?.get(h.id)}
+                  interdiff={interdiff?.get(h.id)}
+                  focused={focusHunk === h.id}
+                  setFocusHunk={setFocusHunk}
+                  composer={slices.composer}
+                  peek={slices.peek}
+                  actions={actions}
                 />
-              )}
-              <HunkOrSplit
-                pr={pr}
-                rev={rev}
-                path={file.path}
-                h={h}
-                lang={lang}
-                split={split}
-                since={since?.get(h.id)}
-                interdiff={interdiff?.get(h.id)}
-                focusHunk={focusHunk}
-                setFocusHunk={setFocusHunk}
-                composer={composer}
-                setComposer={setComposer}
-                rangeStart={rangeStart}
-                setRangeStart={setRangeStart}
-                peek={peek}
-                setPeek={setPeek}
-              />
-            </div>
-          ))}
+              </div>
+            );
+          })}
           {last && (
             <FileTail
               pr={pr}
@@ -1099,57 +1179,61 @@ function FileBlockInner({
   );
 }
 
-function HunkOrSplitInner(
-  props: {
-    h: Hunk;
-    lang: ReturnType<typeof langOf>;
-    split: boolean;
-    since?: SinceKind;
-    interdiff?: InterdiffEntry;
-    focusHunk: HunkId | null;
-    setFocusHunk: (h: HunkId | null) => void;
-  } & LineProps,
-) {
-  const { split, ...rest } = props;
-  return split ? <SplitHunkView {...rest} /> : <HunkView {...rest} />;
-}
-
-function HunkViewInner({
-  pr,
-  rev,
-  path,
-  h,
-  lang,
-  since,
-  interdiff,
-  focusHunk,
-  setFocusHunk,
-  composer,
-  setComposer,
-  rangeStart,
-  setRangeStart,
-  peek,
-  setPeek,
-}: {
+interface HunkProps {
+  pr: PrId;
+  rev: Revision['head'];
+  path: string;
   h: Hunk;
   lang: ReturnType<typeof langOf>;
   since?: SinceKind;
   interdiff?: InterdiffEntry;
-  focusHunk: HunkId | null;
+  focused: boolean;
   setFocusHunk: (h: HunkId | null) => void;
-} & LineProps) {
-  countRender('Hunk');
-  const store = useRootStore();
-  const read = store.models.hunkReads.isRead(pr, h.id);
-  const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
-  const view = useMemo(() => interdiffView(interdiff), [interdiff]);
-  const [showInterdiff, setShowInterdiff] = useState(false);
-  const focused = focusHunk === h.id;
-  const hunkMenu = useContextMenu((): ContextMenuItem[] => [
+  /** Only set when the composer is on one of this hunk's lines. */
+  composer: ComposerState | null;
+  /** Only set when the symbol peek is on one of this hunk's lines. */
+  peek: SymbolPeekTarget | null;
+  actions: LineActions;
+}
+
+/** A line's annotations and per-line slices of the hunk's props, read from
+ *  the per-line indexes — the hunk observes them, the line just renders. */
+function lineSlice(
+  store: ReturnType<typeof useRootStore>,
+  { pr, path, composer, peek }: HunkProps,
+  l: DiffLine,
+) {
+  const a = anchorSide(l);
+  return {
+    threads: a ? store.models.threadIdsAt(pr, path, a.side, a.line) : NO_IDS,
+    drafts: a ? store.models.drafts.at(pr, path, a.side, a.line) : NO_DRAFTS,
+    findings: a
+      ? store.models.findings.shownAt(pr, path, a.side, a.line)
+      : NO_FINDINGS,
+    composer:
+      a &&
+      composer &&
+      composer.path === path &&
+      composer.side === a.side &&
+      composer.line === a.line
+        ? composer
+        : null,
+    peek:
+      peek && peek.path === path && peek.line === peekLineNo(l) ? peek : null,
+  };
+}
+
+/** The hunk header's menu, built when it opens. */
+function openHunkMenu(
+  e: React.MouseEvent,
+  store: ReturnType<typeof useRootStore>,
+  { pr, path, h }: HunkProps,
+) {
+  contextMenuHandler(store.ui, (): ContextMenuItem[] => [
     {
       id: 'mark-read',
       label: 'Mark read',
-      isDisabled: read,
+      isDisabled: store.models.hunkReads.isRead(pr, h.id),
       disabledReason: 'Already read',
       onAction: () => markHunkRead(store, pr, h.id),
     },
@@ -1175,7 +1259,18 @@ function HunkViewInner({
           h.lines.map((l) => l.text).join('\n'),
         ),
     },
-  ]);
+  ])(e);
+}
+
+function HunkViewInner(props: HunkProps) {
+  countRender('Hunk');
+  const { pr, rev, path, h, lang, since, interdiff, focused, setFocusHunk } =
+    props;
+  const store = useRootStore();
+  const read = store.models.hunkReads.isRead(pr, h.id);
+  const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
+  const view = useMemo(() => interdiffView(interdiff), [interdiff]);
+  const [showInterdiff, setShowInterdiff] = useState(false);
   return (
     <div
       id={`H-${h.id}`}
@@ -1184,7 +1279,7 @@ function HunkViewInner({
     >
       <div
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
-        onContextMenu={hunkMenu}
+        onContextMenu={(e) => openHunkMenu(e, store, props)}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
         {h.header && (
@@ -1223,12 +1318,8 @@ function HunkViewInner({
             l={l}
             lang={lang}
             marks={marks.get(i)}
-            composer={composer}
-            setComposer={setComposer}
-            rangeStart={rangeStart}
-            setRangeStart={setRangeStart}
-            peek={peek}
-            setPeek={setPeek}
+            actions={props.actions}
+            {...lineSlice(store, props, l)}
           />
         ))}
       </div>
@@ -1237,37 +1328,32 @@ function HunkViewInner({
 }
 
 /** Side-by-side rendering of one hunk, using `splitRows` to pair del/add lines. */
-function SplitHunkViewInner({
-  pr,
-  rev,
-  path,
-  h,
-  lang,
-  since,
-  interdiff,
-  focusHunk,
-  setFocusHunk,
-  composer,
-  setComposer,
-  rangeStart,
-  setRangeStart,
-  peek,
-  setPeek,
-}: {
-  h: Hunk;
-  lang: ReturnType<typeof langOf>;
-  since?: SinceKind;
-  interdiff?: InterdiffEntry;
-  focusHunk: HunkId | null;
-  setFocusHunk: (h: HunkId | null) => void;
-} & LineProps) {
+function SplitHunkViewInner(props: HunkProps) {
+  countRender('Hunk');
+  const { pr, rev, path, h, lang, since, interdiff, focused, setFocusHunk } =
+    props;
   const store = useRootStore();
   const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const rows = useMemo(() => splitRows(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
-  const focused = focusHunk === h.id;
+  const cell = (i: number | null | undefined) => {
+    if (i == null) return null;
+    const l = h.lines[i]!;
+    return (
+      <Line
+        pr={pr}
+        rev={rev}
+        path={path}
+        l={l}
+        lang={lang}
+        marks={marks.get(i)}
+        actions={props.actions}
+        {...lineSlice(store, props, l)}
+      />
+    );
+  };
   return (
     <div
       id={`H-${h.id}`}
@@ -1307,42 +1393,8 @@ function SplitHunkViewInner({
       <div className="lines split-lines">
         {rows.map((row, i) => (
           <div key={i} className="split-row grid grid-cols-2">
-            <div className="split-col">
-              {row.l != null && (
-                <Line
-                  pr={pr}
-                  rev={rev}
-                  path={path}
-                  l={h.lines[row.l]!}
-                  lang={lang}
-                  marks={marks.get(row.l)}
-                  composer={composer}
-                  setComposer={setComposer}
-                  rangeStart={rangeStart}
-                  setRangeStart={setRangeStart}
-                  peek={peek}
-                  setPeek={setPeek}
-                />
-              )}
-            </div>
-            <div className="split-col">
-              {row.r != null && (
-                <Line
-                  pr={pr}
-                  rev={rev}
-                  path={path}
-                  l={h.lines[row.r]!}
-                  lang={lang}
-                  marks={marks.get(row.r)}
-                  composer={composer}
-                  setComposer={setComposer}
-                  rangeStart={rangeStart}
-                  setRangeStart={setRangeStart}
-                  peek={peek}
-                  setPeek={setPeek}
-                />
-              )}
-            </div>
+            <div className="split-col">{cell(row.l)}</div>
+            <div className="split-col">{cell(row.r)}</div>
           </div>
         ))}
       </div>
@@ -1350,60 +1402,29 @@ function SplitHunkViewInner({
   );
 }
 
-const Line = observer(function Line({
-  pr,
-  rev,
-  path,
-  l,
-  lang,
-  marks,
-  composer,
-  setComposer,
-  rangeStart,
-  setRangeStart,
-  peek,
-  setPeek,
-}: {
-  l: DiffLine;
-  lang: ReturnType<typeof langOf>;
-  marks?: [number, number][];
-} & LineProps) {
-  countRender('Line');
-  const store = useRootStore();
-  const ui = useUi();
-  const anchor = lineAnchor(rev, path, l);
-  const threads = anchor
-    ? store.models.threadIdsAt(pr, path, anchor.side, anchor.line)
-    : [];
-  const drafts = anchor
-    ? store.models.drafts.at(pr, path, anchor.side, anchor.line)
-    : [];
-  const findings = anchor
-    ? store.models.findings.shownAt(pr, path, anchor.side, anchor.line)
-    : [];
-  const composing =
-    anchor &&
-    composer &&
-    sameAnchor(anchor, path, composer.side, composer.line);
-  const composerAnchor =
-    composing && anchor ? lineAnchor(rev, path, l, composer!.startLine) : null;
-  const lineNo = l.new_no ?? l.old_no ?? 0;
-  const peekHere = !!peek && peek.path === path && peek.line === lineNo;
-  const summary = store.models.prSummaries.get(pr);
-  const lineMenu = useContextMenu((): ContextMenuItem[] => {
+/** The line's menu, built when it opens — not a hook per line. */
+function openLineMenu(
+  e: React.MouseEvent,
+  store: ReturnType<typeof useRootStore>,
+  { pr, path, l, actions }: LineProps,
+  anchor: Anchor | null,
+) {
+  contextMenuHandler(store.ui, (): ContextMenuItem[] => {
     if (!anchor) return [];
+    const lineNo = peekLineNo(l);
+    const summary = store.models.prSummaries.get(pr);
     const items: ContextMenuItem[] = [
       {
         id: 'comment',
         label: 'Comment',
         onAction: () =>
-          setComposer({ path, side: anchor.side, line: anchor.line }),
+          actions.setComposer({ path, side: anchor.side, line: anchor.line }),
       },
       {
         id: 'comment-range',
         label: 'Start a comment range here',
         onAction: () =>
-          setRangeStart({ path, side: anchor.side, line: anchor.line }),
+          actions.setRangeStart({ path, side: anchor.side, line: anchor.line }),
       },
       {
         id: 'ask-agent',
@@ -1436,7 +1457,49 @@ const Line = observer(function Line({
       });
     }
     return items;
-  });
+  })(e);
+}
+
+interface LineProps {
+  pr: PrId;
+  rev: Revision['head'];
+  path: string;
+  l: DiffLine;
+  lang: ReturnType<typeof langOf>;
+  marks?: [number, number][];
+  threads: readonly string[];
+  drafts: readonly DraftRow[];
+  findings: readonly FindingRow[];
+  /** Only set when the composer is open on this very line. */
+  composer: ComposerState | null;
+  /** Only set when the symbol peek is pinned to this very line. */
+  peek: SymbolPeekTarget | null;
+  actions: LineActions;
+}
+
+/** Plain `memo`: reads no observables itself — the hunk hands it its
+ *  annotations — so it re-renders only when its own props change. */
+const Line = memo(function Line(props: LineProps) {
+  countRender('Line');
+  const {
+    pr,
+    rev,
+    path,
+    l,
+    lang,
+    marks,
+    threads,
+    drafts,
+    findings,
+    composer,
+    peek,
+    actions,
+  } = props;
+  const store = useRootStore();
+  const anchor = lineAnchor(rev, path, l);
+  const composerAnchor =
+    composer && anchor ? lineAnchor(rev, path, l, composer.startLine) : null;
+  const lineNo = peekLineNo(l);
   return (
     <>
       <div
@@ -1446,9 +1509,9 @@ const Line = observer(function Line({
           const name = symbolAt(e);
           if (!name) return;
           e.preventDefault();
-          setPeek({ name, path, line: lineNo });
+          actions.setPeek({ name, path, line: lineNo });
         }}
-        onContextMenu={lineMenu}
+        onContextMenu={(e) => openLineMenu(e, store, props, anchor)}
       >
         <span className="no">{l.old_no ?? ''}</span>
         <span className="no">{l.new_no ?? ''}</span>
@@ -1457,7 +1520,7 @@ const Line = observer(function Line({
             <span
               className={`inline-block size-[9px] cursor-pointer rounded-full ${sevBg[findings[0]!.severity]}`}
               title={findings.map((f) => f.title).join('\n')}
-              onClick={() => ui.toggleAside(true)}
+              onClick={() => store.ui.toggleAside(true)}
             />
           ) : (
             <span>{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</span>
@@ -1474,6 +1537,7 @@ const Line = observer(function Line({
                   aria-label="comment"
                   className="h-5 min-w-5 w-5 rounded-xl text-xs"
                   onPress={(e) => {
+                    const rangeStart = actions.rangeStart();
                     if (
                       e.shiftKey &&
                       rangeStart &&
@@ -1482,7 +1546,7 @@ const Line = observer(function Line({
                     ) {
                       const startLine = Math.min(rangeStart.line, anchor.line);
                       const endLine = Math.max(rangeStart.line, anchor.line);
-                      setComposer({
+                      actions.setComposer({
                         path,
                         side: anchor.side,
                         line: endLine,
@@ -1490,12 +1554,12 @@ const Line = observer(function Line({
                           startLine !== endLine ? startLine : undefined,
                       });
                     } else {
-                      setRangeStart({
+                      actions.setRangeStart({
                         path,
                         side: anchor.side,
                         line: anchor.line,
                       });
-                      setComposer({
+                      actions.setComposer({
                         path,
                         side: anchor.side,
                         line: anchor.line,
@@ -1530,10 +1594,10 @@ const Line = observer(function Line({
           )}
         </span>
       </div>
-      {(threads.length > 0 || drafts.length > 0 || composing || peekHere) && (
+      {(threads.length > 0 || drafts.length > 0 || composer || peek) && (
         <div className="flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
-          {peekHere && peek && (
-            <SymbolPeek target={peek} onClose={() => setPeek(null)} />
+          {peek && (
+            <SymbolPeek target={peek} onClose={() => actions.setPeek(null)} />
           )}
           {threads.map((id) => (
             <ThreadView key={id} pr={pr} id={id} />
@@ -1541,13 +1605,13 @@ const Line = observer(function Line({
           {drafts.map((d) => (
             <DraftView key={d.id} d={d} />
           ))}
-          {composing && composerAnchor && (
+          {composerAnchor && (
             <Composer
               key={`${composerAnchor.path}:${composerAnchor.start_line}:${composerAnchor.line}`}
               pr={pr}
               anchor={composerAnchor}
               lineText={l.kind !== 'del' ? l.text : ''}
-              onClose={() => setComposer(null)}
+              onClose={() => actions.setComposer(null)}
             />
           )}
         </div>
@@ -1558,6 +1622,5 @@ const Line = observer(function Line({
 
 const NextGroup = observer(NextGroupInner);
 const FileBlock = observer(FileBlockInner);
-const HunkOrSplit = observer(HunkOrSplitInner);
 const HunkView = observer(HunkViewInner);
 const SplitHunkView = observer(SplitHunkViewInner);
