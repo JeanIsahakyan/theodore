@@ -34,16 +34,20 @@ impl Core {
     }
 
     /// Names of teams with an open review request on the PR (plan "take":
-    /// the viewer stepping in replaces the team's standing request).
+    /// the viewer stepping in replaces the team's standing request). Asks
+    /// the host: a PR taken straight from the inbox was usually never
+    /// opened, so there is no stored `pr_detail` to read them from.
     pub(crate) async fn pr_requested_teams(&self, pr: &PrId) -> Vec<String> {
-        let Some(detail) = self.stored_pr_detail(pr).await else {
-            return Vec::new();
+        let detail = match self.pr_ref(pr).await {
+            Some(pr_ref) => match self.0.deps.host.get_pr(&pr_ref, None).await {
+                Ok(theodore_ports::Fetched::Modified { value, .. }) => Some(value),
+                _ => self.stored_pr_detail(pr).await,
+            },
+            None => self.stored_pr_detail(pr).await,
         };
         detail
-            .reviewers
-            .into_iter()
-            .filter_map(|r| r.team)
-            .collect()
+            .map(|d| d.reviewers.into_iter().filter_map(|r| r.team).collect())
+            .unwrap_or_default()
     }
 
     async fn stored_pr_detail(&self, pr: &PrId) -> Option<PrDetail> {

@@ -4342,3 +4342,48 @@ async fn a_failed_inbox_section_keeps_reasons() {
     let stored = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
     assert_eq!(stored.data["reasons"], json!(["review_requested"]));
 }
+
+#[tokio::test]
+async fn triage_take_drops_team_requests_on_a_pr_never_opened() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let pr_ref = fixture_pr_ref();
+    // Only the inbox row exists: no stored pr_detail to read teams from.
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr_ref.id().0,
+            action: SyncActionCode::U,
+            data: Some(
+                serde_json::to_value(testkit::sample_pr_summary(&pr_ref, &Sha::new("h"))).unwrap(),
+            ),
+        }])
+        .unwrap();
+    let mut detail = testkit::sample_pr_detail(&pr_ref, &Sha::new("base000"), &Sha::new("h"));
+    detail.reviewers = vec![theodore_domain::Reviewer {
+        person: testkit::sample_person("web-core"),
+        state: theodore_domain::ReviewerState::Requested,
+        team: Some("web-core".into()),
+    }];
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e".into()),
+        value: detail,
+    }));
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+
+    core.triage(TriageRequest {
+        pr: pr_ref.id(),
+        action: TriageAction::Take,
+    })
+    .await
+    .expect("triage take");
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "triage" && i.status == OutboxStatus::Done)
+    })
+    .await;
+    assert_eq!(f.host.remove_reviewer_calls(), vec!["web-core".to_string()]);
+}
