@@ -478,7 +478,10 @@ async fn poll_inbox(inner: Arc<Inner>) {
                     if !changes.prs.is_empty() {
                         core.emit(Ephemeral::Toast {
                             level: ToastLevel::Info,
-                            text: format!("{} PR(s) updated", changes.prs.len()),
+                            text: match changes.prs.len() {
+                                1 => "1 PR updated".to_string(),
+                                n => format!("{n} PRs updated"),
+                            },
                         });
                         let _ = core.refresh_inbox().await;
                     }

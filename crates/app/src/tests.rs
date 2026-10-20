@@ -4286,3 +4286,54 @@ async fn an_older_search_result_does_not_roll_back_a_merged_pr() {
     assert_eq!(row.data["state"], json!("merged"));
     assert_eq!(row.data["reasons"], json!(["review_requested"]));
 }
+
+#[tokio::test]
+async fn refresh_inbox_clears_reasons_of_prs_no_search_returns() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let pr_ref = fixture_pr_ref();
+    let mut row =
+        serde_json::to_value(testkit::sample_pr_summary(&pr_ref, &Sha::new("h"))).unwrap();
+    row["reasons"] = json!(["review_requested"]);
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr_ref.id().0,
+            action: SyncActionCode::U,
+            data: Some(row),
+        }])
+        .unwrap();
+    // Every section answers, none with this PR (you reviewed it).
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    let stored = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
+    assert_eq!(stored.data["reasons"], json!([]));
+}
+
+#[tokio::test]
+async fn a_failed_inbox_section_keeps_reasons() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let pr_ref = fixture_pr_ref();
+    let mut row =
+        serde_json::to_value(testkit::sample_pr_summary(&pr_ref, &Sha::new("h"))).unwrap();
+    row["reasons"] = json!(["review_requested"]);
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr_ref.id().0,
+            action: SyncActionCode::U,
+            data: Some(row),
+        }])
+        .unwrap();
+    f.host
+        .push_search(Err(theodore_ports::HostError::Network("down".into())));
+    for _ in 0..3 {
+        f.host.push_search(Ok(vec![]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    let stored = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
+    assert_eq!(stored.data["reasons"], json!(["review_requested"]));
+}

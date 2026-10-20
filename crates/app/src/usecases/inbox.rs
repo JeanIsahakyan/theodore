@@ -23,11 +23,13 @@ impl Core {
     pub async fn refresh_inbox(&self) -> AppResult<()> {
         let mut actions = Vec::new();
         let mut seen = BTreeSet::new();
+        let mut complete = true;
 
         for section in &SECTIONS {
             let summaries = match self.0.deps.host.search(section).await {
                 Ok(s) => s,
                 Err(e) => {
+                    complete = false;
                     self.emit(Ephemeral::Toast {
                         level: ToastLevel::Warn,
                         text: format!("inbox refresh failed ({section:?}): {e}"),
@@ -79,6 +81,32 @@ impl Core {
                         model_id: pr_id.0.clone(),
                         action: SyncActionCode::I,
                         data: Some(data),
+                    });
+                }
+            }
+        }
+
+        // A PR no search returned any more (you reviewed it, it was
+        // reassigned, …) has no reason to be in the inbox: clear its stored
+        // reasons. Only after a complete pass — a failed section would
+        // otherwise empty the inbox.
+        if complete {
+            let store = self.0.deps.store.clone();
+            let rows = tokio::task::spawn_blocking(move || store.all(models::PR))
+                .await
+                .map_err(AppError::join)??;
+            for row in rows {
+                let had_reasons = row
+                    .data
+                    .get("reasons")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                if had_reasons && !seen.contains(&theodore_domain::PrId(row.id.clone())) {
+                    actions.push(NewAction {
+                        model: models::PR.into(),
+                        model_id: row.id,
+                        action: SyncActionCode::C,
+                        data: Some(serde_json::json!({ "reasons": [] })),
                     });
                 }
             }
