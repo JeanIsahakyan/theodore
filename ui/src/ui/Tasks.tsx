@@ -145,6 +145,51 @@ export const TaskRow = observer(function TaskRow({
     },
   ]);
 
+  // The fix to review and the reject form: inside the title column in the
+  // full list, on their own full-width row in the narrow side panel (where
+  // sharing a row with the buttons squeezed the patch to a sliver).
+  const details = (
+    <>
+      {t.fix?.patch && t.status === 'review' && (
+        <div
+          className="task-patch mt-1.5 max-w-[720px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <PatchView patch={t.fix.patch} status={t.fix.status} />
+        </div>
+      )}
+      {rejecting && (
+        <div
+          className="mt-1.5 flex items-center gap-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <TextField
+            aria-label="Why is this rejected"
+            value={reason}
+            onChange={setReason}
+            className="max-w-[320px] flex-1"
+            autoFocus
+          >
+            <input
+              className="w-full rounded-xl border border-separator bg-background px-2.5 py-1 text-xs outline-none"
+              placeholder="Why (goes back to the agent)…"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') sendReject();
+                if (e.key === 'Escape') setRejecting(false);
+              }}
+            />
+          </TextField>
+          <Btn tone="danger-soft" isPending={busy} onPress={sendReject}>
+            Send back
+          </Btn>
+          <Btn tone="ghost" onPress={() => setRejecting(false)}>
+            Cancel
+          </Btn>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div
       id={`T-${t.id}`}
@@ -154,7 +199,7 @@ export const TaskRow = observer(function TaskRow({
       <TaskIcon status={t.status} />
       <div className="min-w-0 flex-1">
         <div
-          className={`truncate font-medium ${t.status === 'done' ? 'text-muted' : ''}`}
+          className={`${compact ? 'line-clamp-2 break-words' : 'truncate'} font-medium ${t.status === 'done' ? 'text-muted' : ''}`}
           title={t.title}
         >
           {t.title}
@@ -173,43 +218,7 @@ export const TaskRow = observer(function TaskRow({
             </span>
           </div>
         )}
-        {t.fix?.patch && t.status === 'review' && (
-          <div
-            className="task-patch mt-1.5 max-w-[720px]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <PatchView patch={t.fix.patch} status={t.fix.status} />
-          </div>
-        )}
-        {rejecting && (
-          <div
-            className="mt-1.5 flex items-center gap-1.5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <TextField
-              aria-label="Why is this rejected"
-              value={reason}
-              onChange={setReason}
-              className="max-w-[320px] flex-1"
-              autoFocus
-            >
-              <input
-                className="w-full rounded-xl border border-separator bg-background px-2.5 py-1 text-xs outline-none"
-                placeholder="Why (goes back to the agent)…"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') sendReject();
-                  if (e.key === 'Escape') setRejecting(false);
-                }}
-              />
-            </TextField>
-            <Btn tone="danger-soft" isPending={busy} onPress={sendReject}>
-              Send back
-            </Btn>
-            <Btn tone="ghost" onPress={() => setRejecting(false)}>
-              Cancel
-            </Btn>
-          </div>
-        )}
+        {!compact && details}
       </div>
       <span
         className={`task-act flex shrink-0 gap-1 ${t.status === 'review' || sel ? '' : 'opacity-0 group-hover:opacity-100'}`}
@@ -271,6 +280,7 @@ export const TaskRow = observer(function TaskRow({
           </span>
         )}
       </span>
+      {compact && <div className="w-full min-w-0 basis-full">{details}</div>}
     </div>
   );
 });
