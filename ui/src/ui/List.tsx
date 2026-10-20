@@ -353,15 +353,23 @@ export const PrRow = observer(function PrRow({
       </span>
       {on('id') && (
         <span
-          className="max-w-36 truncate whitespace-nowrap text-xs tabular-nums text-muted"
+          className="flex min-w-0 max-w-36 whitespace-nowrap text-xs tabular-nums text-muted"
           title={
             p.url
               ? `${p.pr.repo.owner}/${p.pr.repo.name} #${p.pr.number}`
               : `${p.pr.repo.owner}/${p.pr.repo.name} · branch ${p.head_ref}`
           }
         >
-          {/* A branch review has no PR number, only a hash of its branch. */}
-          {p.url ? `${p.pr.repo.name} #${p.pr.number}` : p.head_ref}
+          {/* The repo name gives way first; the number always shows. A
+           *  branch review has no number, only its branch. */}
+          {p.url ? (
+            <>
+              <span className="min-w-0 truncate">{p.pr.repo.name}</span>
+              <span className="shrink-0">&nbsp;#{p.pr.number}</span>
+            </>
+          ) : (
+            <span className="min-w-0 truncate">{p.head_ref}</span>
+          )}
         </span>
       )}
       <span className="flex min-w-0 items-center gap-1.5">
@@ -375,14 +383,17 @@ export const PrRow = observer(function PrRow({
           className="flex min-w-0 gap-1 overflow-hidden"
           title={p.reasons.map((r) => REASON_LABEL[r]).join(', ')}
         >
-          {p.reasons.slice(0, 2).map((r) => (
-            <span
-              key={r}
-              className="chip min-w-0 shrink truncate rounded-full bg-default px-2 py-0.5 text-xs"
-            >
-              {REASON_LABEL[r]}
+          {/* One full chip and a count: two half-clipped chips read as noise. */}
+          {p.reasons[0] && (
+            <span className="chip min-w-0 shrink truncate rounded-full bg-default px-2 py-0.5 text-xs">
+              {REASON_LABEL[p.reasons[0]]}
             </span>
-          ))}
+          )}
+          {p.reasons.length > 1 && (
+            <span className="chip shrink-0 rounded-full bg-default px-1.5 py-0.5 text-xs text-muted">
+              +{p.reasons.length - 1}
+            </span>
+          )}
         </span>
       )}
       {on('checks') && <CheckIcon s={p.checks} />}
