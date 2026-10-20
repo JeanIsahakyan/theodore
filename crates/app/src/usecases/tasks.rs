@@ -161,6 +161,9 @@ impl Core {
                 .await
                 .map(|d| d.summary.head_ref)
                 .unwrap_or_else(|| "HEAD".into());
+            // The agent's edit may be gone from the worktree (an app restart
+            // checks the PR out afresh); the stored patch is the fix.
+            ensure_patch_applied(&worktree, &patch).await?;
             let message = format!("fix: {} ({})", task.title, patch.by.as_str());
             let sha = self
                 .0
@@ -378,6 +381,45 @@ async fn drive_fix_run(
         .await;
 }
 
+/// Makes `worktree` hold `patch.after` for `patch.path`: already there →
+/// nothing to do; still `patch.before` → write it; anything else → the
+/// file moved on since the fix was made, and committing would clobber that.
+pub(crate) async fn ensure_patch_applied(worktree: &Path, patch: &Patch) -> AppResult<()> {
+    let rel = Path::new(&patch.path);
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(AppError::Invalid(format!("unsafe fix path {}", patch.path)));
+    }
+    let file = worktree.join(rel);
+    let current = tokio::fs::read(&file).await.unwrap_or_default();
+    let text = String::from_utf8_lossy(&current);
+    let lines: Vec<&str> = text.lines().collect();
+    if lines == patch.after.iter().map(String::as_str).collect::<Vec<_>>() {
+        return Ok(());
+    }
+    if lines != patch.before.iter().map(String::as_str).collect::<Vec<_>>() {
+        return Err(AppError::Invalid(format!(
+            "{} changed since the fix was made; re-run the task",
+            patch.path
+        )));
+    }
+    let mut out = patch.after.join("\n");
+    if text.is_empty() || text.ends_with('\n') {
+        out.push('\n');
+    }
+    if let Some(dir) = file.parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
+    }
+    tokio::fs::write(&file, out)
+        .await
+        .map_err(|e| AppError::Invalid(e.to_string()))
+}
+
 /// Reads the task's anchor file before (from the cached revision's base
 /// repo at the current head) and after (straight off disk in the
 /// worktree, where the agent just edited it) and turns the difference
@@ -420,4 +462,48 @@ async fn capture_patch(
         note: format!("agent fix: {}", task.title),
         by: agent,
     })
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    fn patch(before: &[&str], after: &[&str]) -> Patch {
+        Patch {
+            path: "src/a.ts".into(),
+            before: before.iter().map(|s| s.to_string()).collect(),
+            after: after.iter().map(|s| s.to_string()).collect(),
+            note: String::new(),
+            by: theodore_domain::AgentId::Claude,
+        }
+    }
+
+    #[tokio::test]
+    async fn reapplies_a_lost_edit_and_leaves_an_applied_one_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        let f = dir.path().join("src/a.ts");
+        std::fs::write(&f, "a\nb\n").unwrap();
+        let p = patch(&["a", "b"], &["a", "B"]);
+        ensure_patch_applied(dir.path(), &p).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "a\nB\n");
+        // Already applied: untouched.
+        ensure_patch_applied(dir.path(), &p).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "a\nB\n");
+    }
+
+    #[tokio::test]
+    async fn refuses_a_file_that_moved_on_and_unsafe_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.ts"), "x\n").unwrap();
+        assert!(
+            ensure_patch_applied(dir.path(), &patch(&["a"], &["b"]))
+                .await
+                .is_err()
+        );
+        let mut bad = patch(&[], &["b"]);
+        bad.path = "../escape".into();
+        assert!(ensure_patch_applied(dir.path(), &bad).await.is_err());
+    }
 }
