@@ -60,8 +60,13 @@ export function runMenu(store: RootStore, id: string): void {
         'https://github.com/JeanIsahakyan/theodore/issues/new',
         '_blank',
       );
-    case 'submit-review':
-      return ui.route.name === 'review' ? ui.openModal('submit') : undefined;
+    case 'submit-review': {
+      if (ui.route.name !== 'review') return;
+      const state = store.models.prSummaries.get(ui.route.pr)?.state;
+      // A merged or closed PR takes no more reviews.
+      if (state === 'merged' || state === 'closed') return;
+      return ui.openModal('submit');
+    }
     default:
       // view-*, tour, mark-group-read, ask-agent, open-on-host
       review();

@@ -296,6 +296,8 @@ export const CommandMenu = observer(function CommandMenu() {
   const prSummary =
     r.name === 'review' ? store.models.prSummaries.get(r.pr) : null;
   const prLocal = prSummary?.pr.repo.host === 'local';
+  const prFinished =
+    prSummary?.state === 'merged' || prSummary?.state === 'closed';
   const prMine =
     !!prSummary && store.ephemeral.viewer?.login === prSummary.author.login;
   const draftItems: Item[] =
@@ -319,13 +321,17 @@ export const CommandMenu = observer(function CommandMenu() {
   const prItems: Item[] =
     r.name === 'review'
       ? [
-          {
-            group: 'This PR',
-            label: 'Submit review…',
-            icon: <Check />,
-            run: () => ui.openModal('submit'),
-          },
-          ...draftItems,
+          ...(prFinished
+            ? []
+            : [
+                {
+                  group: 'This PR',
+                  label: 'Submit review…',
+                  icon: <Check />,
+                  run: () => ui.openModal('submit'),
+                },
+                ...draftItems,
+              ]),
           {
             group: 'This PR',
             label: 'Start / stop tour',

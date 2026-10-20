@@ -491,6 +491,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
 
   const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
   const local = summary?.pr.repo.host === 'local';
+  const finished = summary?.state === 'merged' || summary?.state === 'closed';
   const mine =
     !!summary && store.ephemeral.viewer?.login === summary.author.login;
   const mergeBlock = !summary
@@ -583,7 +584,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           Tour
           <K>T</K>
         </ToggleButton>
-        {!local && mine && summary && (
+        {!local && mine && summary && !finished && (
           <Btn
             tone="tertiary"
             icon={summary.state === 'draft' ? <Eye /> : <FileText />}
@@ -601,11 +602,16 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               : 'Convert to draft'}
           </Btn>
         )}
-        <Btn tone="primary" onPress={() => ui.openModal('submit')}>
-          Submit review
-        </Btn>
-        {!local && FEATURES.hostWrites && <ReviewerPicker pr={pr} />}
-        {!local && (
+        {/* A merged or closed PR takes no more reviews, reviewers or merges. */}
+        {!finished && (
+          <Btn tone="primary" onPress={() => ui.openModal('submit')}>
+            Submit review
+          </Btn>
+        )}
+        {!local && !finished && FEATURES.hostWrites && (
+          <ReviewerPicker pr={pr} />
+        )}
+        {!local && !finished && (
           <Tooltip>
             <Btn
               tone={mergeBlock ? 'tertiary' : 'success'}
