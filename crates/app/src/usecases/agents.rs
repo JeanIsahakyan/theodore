@@ -244,10 +244,27 @@ impl Core {
             .filter_map(|r| serde_json::from_value(r.data.clone()).ok())
             .collect();
 
-        let (action, merged) = match theodore_domain::findings::merge(&existing, finding) {
+        let (action, mut merged) = match theodore_domain::findings::merge(&existing, finding) {
             theodore_domain::findings::MergeOutcome::New(f) => (SyncActionCode::I, f),
             theodore_domain::findings::MergeOutcome::MergedInto(f) => (SyncActionCode::U, f),
         };
+        // A finding stored before skills were resolved names its run; fix
+        // it up when a new report merges into it.
+        let stored_skill = merged.skill.0.clone();
+        let store = self.0.deps.store.clone();
+        if let Some(skill) =
+            tokio::task::spawn_blocking(move || store.get(models::SKILL_RUN, &stored_skill))
+                .await
+                .map_err(AppError::join)??
+                .and_then(|r| {
+                    r.data
+                        .get("skill")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+        {
+            merged.skill = theodore_domain::SkillId(skill);
+        }
         let data = serde_json::to_value(&merged).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
             model: models::FINDING.into(),
