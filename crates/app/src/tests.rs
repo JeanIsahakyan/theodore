@@ -4417,3 +4417,41 @@ async fn a_rejected_token_on_a_read_raises_the_auth_banner_and_clears_after() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_finding_reported_from_a_skill_run_belongs_to_its_skill() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    f.store
+        .apply(vec![NewAction {
+            model: models::SKILL_RUN.into(),
+            model_id: "run-1".into(),
+            action: SyncActionCode::I,
+            data: Some(json!({ "id": "run-1", "pr": pr.0, "skill": "bugs" })),
+        }])
+        .unwrap();
+    let finding = theodore_domain::Finding {
+        id: theodore_domain::FindingId("f-1".into()),
+        pr: pr.clone(),
+        // What the MCP tools know: the run, not the skill.
+        skill: theodore_domain::SkillId("run-1".into()),
+        agents: vec![AgentId::Claude],
+        anchor: theodore_domain::Anchor {
+            rev: head,
+            path: "src/a.ts".into(),
+            side: theodore_domain::Side::New,
+            line: 1,
+            start_line: None,
+            start_side: None,
+        },
+        severity: theodore_domain::Severity::Warn,
+        title: "t".into(),
+        body: "b".into(),
+        state: theodore_domain::FindingState::Open,
+        fix: None,
+        outdated: false,
+    };
+    let id = core.add_finding(pr, finding).await.expect("add_finding");
+    let row = f.store.get(models::FINDING, &id.0).unwrap().unwrap();
+    assert_eq!(row.data["skill"], json!("bugs"));
+}

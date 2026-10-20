@@ -215,6 +215,25 @@ impl Core {
     /// Returns the id of the stored finding (an existing one when merged).
     pub async fn add_finding(&self, pr: PrId, mut finding: Finding) -> AppResult<FindingId> {
         finding.pr = pr.clone();
+        // The MCP tools only know the run they serve: a finding reported
+        // from a skill run names that run, and belongs to its skill (the
+        // panel lists a run's findings by skill, and merges duplicates
+        // across agents by skill).
+        let run_id = finding.skill.0.clone();
+        let store = self.0.deps.store.clone();
+        if let Some(skill) =
+            tokio::task::spawn_blocking(move || store.get(models::SKILL_RUN, &run_id))
+                .await
+                .map_err(AppError::join)??
+                .and_then(|r| {
+                    r.data
+                        .get("skill")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+        {
+            finding.skill = theodore_domain::SkillId(skill);
+        }
         let pr_s = pr.0.clone();
         let store = self.0.deps.store.clone();
         let rows = tokio::task::spawn_blocking(move || store.query(models::FINDING, "pr", &pr_s))
