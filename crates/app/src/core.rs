@@ -174,6 +174,16 @@ impl Core {
             .collect()
     }
 
+    /// Whether `err` is about the connection itself (shown by a banner),
+    /// rather than about one request.
+    pub(crate) fn is_connection_error(err: &theodore_ports::HostError) -> bool {
+        use theodore_ports::HostError;
+        matches!(
+            err,
+            HostError::Auth | HostError::RateLimited { .. } | HostError::Network(_)
+        )
+    }
+
     /// Reports a host read's outcome as host health, so the UI's offline,
     /// token and rate-limit banners reflect reads (inbox, polling, opening
     /// a PR) and not only outbox writes. Emits only when health changes.
@@ -193,7 +203,9 @@ impl Core {
             *health = next;
             changed
         };
-        if changed {
+        // Every failure is re-sent (a window that opened after the first one
+        // must still learn of it); recovery only once.
+        if changed || result.is_err() {
             self.emit(Ephemeral::HostStatus {
                 online: next.0,
                 rate_limited_until: next.1,

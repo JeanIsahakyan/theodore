@@ -32,6 +32,11 @@ impl Core {
                 Ok(s) => s,
                 Err(e) => {
                     complete = false;
+                    // The banner already says the host is offline, the token
+                    // was rejected or the rate limit hit — no toast per section.
+                    if Self::is_connection_error(&e) {
+                        continue;
+                    }
                     self.emit(Ephemeral::Toast {
                         level: ToastLevel::Warn,
                         text: format!("inbox refresh failed ({section:?}): {e}"),
