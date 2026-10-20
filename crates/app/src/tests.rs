@@ -4387,3 +4387,33 @@ async fn triage_take_drops_team_requests_on_a_pr_never_opened() {
     .await;
     assert_eq!(f.host.remove_reviewer_calls(), vec!["web-core".to_string()]);
 }
+
+#[tokio::test]
+async fn a_rejected_token_on_a_read_raises_the_auth_banner_and_clears_after() {
+    let f = fixtures();
+    let (core, mut recv) = started_core(&f).await;
+    for _ in 0..4 {
+        f.host.push_search(Err(theodore_ports::HostError::Auth));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    expect_ephemeral(&mut recv, |e| {
+        matches!(e, Ephemeral::HostStatus { auth_ok: false, .. })
+    })
+    .await;
+
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    expect_ephemeral(&mut recv, |e| {
+        matches!(
+            e,
+            Ephemeral::HostStatus {
+                auth_ok: true,
+                online: true,
+                rate_limited_until: None
+            }
+        )
+    })
+    .await;
+}

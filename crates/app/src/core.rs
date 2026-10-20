@@ -49,6 +49,9 @@ pub(crate) struct Inner {
     pub open_lock: tokio::sync::Mutex<()>,
     /// PRs whose grouping is running, so a PR is never grouped twice at once.
     pub grouping_inflight: std::sync::Mutex<std::collections::HashSet<PrId>>,
+    /// Last host health the UI was told about (`Ephemeral::HostStatus`):
+    /// online, rate-limit reset, token accepted.
+    pub host_health: std::sync::Mutex<(bool, Option<i64>, bool)>,
     /// The device flow's `device_code` + poll interval between `login_start`
     /// and the login finishing (plan "login"): kept in memory only, never
     /// persisted — a restart just means starting over.
@@ -90,6 +93,7 @@ impl Core {
             shutdown: CancellationToken::new(),
             open_lock: tokio::sync::Mutex::new(()),
             grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            host_health: std::sync::Mutex::new((true, None, true)),
             login: Mutex::new(None),
             linear_cache: std::sync::Mutex::new(HashMap::new()),
         });
@@ -168,6 +172,34 @@ impl Core {
             .filter_map(|(pr, head)| revisions.get(&(pr.clone(), head.clone())))
             .map(|e| e.pr_ref.clone())
             .collect()
+    }
+
+    /// Reports a host read's outcome as host health, so the UI's offline,
+    /// token and rate-limit banners reflect reads (inbox, polling, opening
+    /// a PR) and not only outbox writes. Emits only when health changes.
+    pub(crate) fn note_host<T>(&self, result: &theodore_ports::HostResult<T>) {
+        use theodore_ports::HostError;
+        let next = match result {
+            Ok(_) => (true, None, true),
+            Err(HostError::Auth) => (true, None, false),
+            Err(HostError::RateLimited { reset_at }) => (true, Some(*reset_at), true),
+            Err(HostError::Network(_)) => (false, None, true),
+            // A 404, a validation error, … says nothing about the connection.
+            Err(_) => return,
+        };
+        let changed = {
+            let mut health = self.0.host_health.lock().unwrap_or_else(|p| p.into_inner());
+            let changed = *health != next;
+            *health = next;
+            changed
+        };
+        if changed {
+            self.emit(Ephemeral::HostStatus {
+                online: next.0,
+                rate_limited_until: next.1,
+                auth_ok: next.2,
+            });
+        }
     }
 
     pub fn emit(&self, event: Ephemeral) {

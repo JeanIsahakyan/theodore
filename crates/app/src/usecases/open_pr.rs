@@ -62,7 +62,9 @@ impl Core {
     }
 
     async fn open_ref(&self, pr_ref: PrRef) -> AppResult<OpenPrResponse> {
-        let fetched = self.0.deps.host.get_pr(&pr_ref, None).await?;
+        let fetched = self.0.deps.host.get_pr(&pr_ref, None).await;
+        self.note_host(&fetched);
+        let fetched = fetched?;
         let detail = match fetched {
             Fetched::Modified { value, .. } => value,
             Fetched::NotModified => {

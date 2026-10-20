@@ -467,7 +467,9 @@ async fn poll_inbox(inner: Arc<Inner>) {
             return;
         }
         if inner.deps.clock.now() >= next_due {
-            match inner.deps.host.changed_since(cursor.as_deref()).await {
+            let result = inner.deps.host.changed_since(cursor.as_deref()).await;
+            core.note_host(&result);
+            match result {
                 Ok(changes) => {
                     cursor = Some(changes.cursor.clone());
                     let store = inner.deps.store.clone();

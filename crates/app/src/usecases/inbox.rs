@@ -26,7 +26,9 @@ impl Core {
         let mut complete = true;
 
         for section in &SECTIONS {
-            let summaries = match self.0.deps.host.search(section).await {
+            let result = self.0.deps.host.search(section).await;
+            self.note_host(&result);
+            let summaries = match result {
                 Ok(s) => s,
                 Err(e) => {
                     complete = false;
