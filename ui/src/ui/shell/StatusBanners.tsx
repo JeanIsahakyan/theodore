@@ -11,6 +11,7 @@ import type { HostStatus } from '../../stores/EphemeralStore';
 import type { SyncStatus } from '../../sync/SyncClient';
 import { useRootStore, useUi } from '../../stores/context';
 import { Spinner } from '../bits';
+import { refreshInbox } from '../../actions';
 
 export type StatusKind = 'offline' | 'auth' | 'rate' | null;
 
@@ -80,7 +81,12 @@ export const StatusBanners = observer(function StatusBanners() {
           isPending={retrying}
           onPress={() => {
             setRetrying(true);
-            void store.sync.retry().finally(() => setRetrying(false));
+            // Reconnect to the local core, then ask the host again: a read
+            // that gets through is what clears an offline host.
+            void store.sync
+              .retry()
+              .then(() => refreshInbox(store))
+              .finally(() => setRetrying(false));
           }}
         >
           {retrying && <Spinner />}
