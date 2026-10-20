@@ -179,6 +179,10 @@ async fn process_item(core: &Core, item: OutboxItem) {
         Ok(()) => {
             let id = item.id;
             let _ = tokio::task::spawn_blocking(move || store.outbox_done(id)).await;
+            // A write got through: the host is reachable and the token
+            // good — clear an offline / auth / rate-limit banner now rather
+            // than at the next poll.
+            core.note_host::<()>(&Ok(()));
         }
         Err(Outcome::RetryAt(not_before)) => {
             let id = item.id;

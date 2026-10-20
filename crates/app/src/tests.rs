@@ -4455,3 +4455,46 @@ async fn a_finding_reported_from_a_skill_run_belongs_to_its_skill() {
     let row = f.store.get(models::FINDING, &id.0).unwrap().unwrap();
     assert_eq!(row.data["skill"], json!("bugs"));
 }
+
+#[tokio::test]
+async fn a_write_that_gets_through_clears_the_offline_banner() {
+    let f = fixtures();
+    let (core, mut recv) = started_core(&f).await;
+    for _ in 0..4 {
+        f.host
+            .push_search(Err(theodore_ports::HostError::Network("down".into())));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    expect_ephemeral(&mut recv, |e| {
+        matches!(e, Ephemeral::HostStatus { online: false, .. })
+    })
+    .await;
+
+    // Back online: a queued write succeeds before any read does.
+    let pr = fixture_pr_ref().id();
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR.into(),
+            model_id: pr.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(
+                serde_json::to_value(testkit::sample_pr_summary(
+                    &fixture_pr_ref(),
+                    &Sha::new("h"),
+                ))
+                .unwrap(),
+            ),
+        }])
+        .unwrap();
+    f.host.push_viewer(Ok(testkit::sample_person("me")));
+    core.triage(TriageRequest {
+        pr,
+        action: TriageAction::Decline,
+    })
+    .await
+    .expect("triage");
+    expect_ephemeral(&mut recv, |e| {
+        matches!(e, Ephemeral::HostStatus { online: true, .. })
+    })
+    .await;
+}
