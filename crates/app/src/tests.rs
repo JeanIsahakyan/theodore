@@ -4181,6 +4181,11 @@ async fn opening_a_pr_keeps_its_inbox_reasons() {
             data: Some(summary),
         }])
         .unwrap();
+    // The startup inbox refresh still finds it (otherwise it would rightly
+    // clear the reasons of a PR no search returns).
+    let mut found = testkit::sample_pr_summary(&fixture_pr_ref(), &Sha::new("head111"));
+    found.reasons = vec![theodore_domain::InboxReason::ReviewRequested];
+    f.host.push_search(Ok(vec![found]));
 
     let (_core, _recv, pr, _head) = open_fixture_pr(&f).await;
     let row = f.store.get(models::PR, &pr.0).unwrap().unwrap();
