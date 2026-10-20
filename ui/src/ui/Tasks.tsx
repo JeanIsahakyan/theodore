@@ -199,7 +199,7 @@ export const TaskRow = observer(function TaskRow({
       <TaskIcon status={t.status} />
       <div className="min-w-0 flex-1">
         <div
-          className={`${compact ? 'line-clamp-2 break-words' : 'truncate'} font-medium ${t.status === 'done' ? 'text-muted' : ''}`}
+          className={`${compact ? 'line-clamp-2' : 'truncate'} font-medium ${t.status === 'done' ? 'text-muted' : ''}`}
           title={t.title}
         >
           {t.title}

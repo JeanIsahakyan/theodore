@@ -64,6 +64,9 @@ pub(crate) fn adapters(data_dir: &Path, scenario: &Path) -> anyhow::Result<(Adap
         .with_context(|| format!("creating {}", data_dir.display()))?;
     let sandbox = Sandbox::open(scenario, data_dir)
         .with_context(|| format!("opening the sandbox scenario {}", scenario.display()))?;
+    // The sandbox's repos are synthetic: the user's own commit hooks,
+    // signing and aliases (~/.gitconfig) must not run against them.
+    theodore_git::isolate_from_user_config();
     let git: Arc<dyn GitPort> = Arc::new(
         theodore_git::GitCli::new(data_dir.to_path_buf(), Arc::new(NoCredentials))
             .with_remote_urls(sandbox.remote_urls()),

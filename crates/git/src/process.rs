@@ -8,6 +8,17 @@ use tokio::io::AsyncWriteExt;
 
 use theodore_ports::{GitError, GitResult};
 
+/// When set, every `git` child ignores the user's global config
+/// (`~/.gitconfig`: hooks paths, signing, aliases). The sandbox sets it: its
+/// repos are synthetic, so a personal commit hook or signing key must not
+/// apply there. Process-wide, because a process is either the sandbox or not.
+static ISOLATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ignore the user's global git config from now on (sandbox mode).
+pub fn isolate_from_user_config() {
+    ISOLATED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// One invocation of `git`. `token`, if present, is set only on this child
 /// process's env and read back by the askpass helper (`auth.rs`); it is
 /// never part of `args`.
@@ -31,6 +42,11 @@ impl GitProc<'_> {
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_ASKPASS", self.askpass)
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .envs(
+                ISOLATED
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    .then_some(("GIT_CONFIG_GLOBAL", "/dev/null")),
+            )
             .env("GIT_PAGER", "cat")
             .env("LC_ALL", "C")
             .stdin(if self.stdin.is_some() {
@@ -185,5 +201,32 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dest);
+    }
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+
+    #[test]
+    fn isolation_points_git_away_from_the_global_config() {
+        let askpass = std::path::PathBuf::from("/bin/true");
+        let cwd = std::env::temp_dir();
+        let p = GitProc {
+            cwd: &cwd,
+            askpass: &askpass,
+            args: &["--version"],
+            token: None,
+            stdin: None,
+        };
+        isolate_from_user_config();
+        let cmd = p.command();
+        let set: Vec<_> = cmd
+            .as_std()
+            .get_envs()
+            .filter(|(k, _)| *k == "GIT_CONFIG_GLOBAL")
+            .map(|(_, v)| v.map(|v| v.to_owned()))
+            .collect();
+        assert_eq!(set, vec![Some(std::ffi::OsString::from("/dev/null"))]);
     }
 }

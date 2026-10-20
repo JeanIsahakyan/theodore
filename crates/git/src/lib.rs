@@ -19,6 +19,7 @@ mod local;
 mod meta;
 mod parse;
 mod process;
+pub use process::isolate_from_user_config;
 mod safety;
 mod worktree;
 
