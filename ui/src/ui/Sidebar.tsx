@@ -286,7 +286,7 @@ export const Sidebar = observer(function Sidebar() {
           </>
         ) : (
           <span className="ms-1.5 min-w-0 flex-1 truncate text-sm text-muted">
-            local core
+            Not signed in
           </span>
         )}
         <IconBtn

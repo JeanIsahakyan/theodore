@@ -22,6 +22,7 @@ export class RootStore {
 
   private unlistenEphemeral: (() => void) | undefined;
   private disposeTitle: (() => void) | undefined;
+  private disposeViewerRetry: (() => void) | undefined;
 
   async start(): Promise<void> {
     setCommandFailureHandler((f) =>
@@ -42,11 +43,20 @@ export class RootStore {
     void loadAppInfo(this);
     await this.sync.start();
     void loadViewer(this);
+    // The viewer fetch fails while the host rejects the token or is
+    // offline; once it's healthy again, fetch it then.
+    this.disposeViewerRetry = reaction(
+      () => this.ephemeral.hostStatus.authOk && this.ephemeral.hostStatus.online,
+      (healthy) => {
+        if (healthy && !this.ephemeral.viewer) void loadViewer(this);
+      },
+    );
   }
 
   dispose(): void {
     this.sync.dispose();
     this.unlistenEphemeral?.();
     this.disposeTitle?.();
+    this.disposeViewerRetry?.();
   }
 }
