@@ -26,7 +26,9 @@ export type SettingsPage =
   | 'updates'
   | 'about'
   /** Listed only in sandbox mode (`AppInfo.sandbox`). */
-  | 'sandbox';
+  | 'sandbox'
+  /** Hidden experiments; listed only once `labs.build_mode` exists. */
+  | 'labs';
 
 export interface ContextMenuState {
   x: number;
@@ -47,10 +49,20 @@ export type Route =
   /** A connected repository: header, Pull requests and Branches tabs. */
   | { name: 'project'; id: string }
   /** A blank tab: paste a PR link to turn it into a review. */
-  | { name: 'new'; id: string };
+  | { name: 'new'; id: string }
+  /** A space (docs/spaces.md): chat with the agent + the live diff. Only
+   *  reachable with build mode on. */
+  | { name: 'space'; id: string };
 
 export type ModalName =
-  'help' | 'submit' | 'snooze' | 'assign' | 'cmdk' | 'add-project';
+  | 'help'
+  | 'submit'
+  | 'snooze'
+  | 'assign'
+  | 'cmdk'
+  | 'add-project'
+  /** Build mode only. */
+  | 'new-space';
 
 export const sameRoute = (a: Route, b: Route): boolean =>
   JSON.stringify(a) === JSON.stringify(b);

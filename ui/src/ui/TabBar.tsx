@@ -5,6 +5,7 @@ import {
   LayoutSideContentLeft,
   ListCheck,
   Link,
+  Pencil,
   Plus,
   Sparkles,
   Tray,
@@ -47,6 +48,10 @@ function useLabel(r: Route): {
     case 'project': {
       const p = store.models.projects.get(r.id);
       return { icon: <Folder />, title: p ? projectLabel(p) : r.id };
+    }
+    case 'space': {
+      const s = store.models.spaces.get(r.id);
+      return { icon: <Pencil />, title: s?.name ?? 'Space' };
     }
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);

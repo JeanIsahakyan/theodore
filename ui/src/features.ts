@@ -33,4 +33,9 @@ export const FEATURES = {
    *  sync like any other model — Checks/Commits tabs, the reviewer strip and
    *  the description disclosure in Review read them. */
   prDetail: true,
+  /** Spaces (docs/spaces.md): an agent writes a change in its own worktree
+   *  before it becomes a PR. Hidden: off here, turned on per machine by the
+   *  `labs.build_mode` setting (Settings → Labs). With both off there is no
+   *  route, sidebar section, modal or key for it. */
+  buildMode: false,
 } as const;

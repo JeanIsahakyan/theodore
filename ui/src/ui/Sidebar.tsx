@@ -1,5 +1,6 @@
 import {
   BranchesRight,
+  CircleXmark,
   CodePullRequest,
   Gear,
   Keyboard,
@@ -8,6 +9,8 @@ import {
   ListCheck,
   Magnifier,
   Moon,
+  Pencil,
+  Plus,
   Sparkles,
   Tray,
   Xmark,
@@ -25,7 +28,7 @@ import type { ReactNode } from 'react';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
-import { Avatar, K } from './bits';
+import { Avatar, K, Spinner } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { inInbox } from './List';
 import { branchReviewMenu, closeBranchReview } from './project/closeReview';
@@ -33,6 +36,14 @@ import { isBranchReview } from './project/sections';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SyncStatus } from './shell/SyncStatus';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { spaceSeen } from './space/seen';
+import { isBuildMode } from './space/mode';
+import {
+  isSpaceReview,
+  spaceGlyph,
+  spacesIn,
+  type SpaceGlyph,
+} from './space/spaces';
 
 interface NavItem {
   key: string;
@@ -54,6 +65,25 @@ interface NavGroup {
 }
 
 const routeKey = (r: Route) => JSON.stringify(r);
+
+/** A space's run state at a glance (docs/spaces.md §3). */
+function SpaceGlyphIcon({ g }: { g: SpaceGlyph }) {
+  switch (g) {
+    case 'running':
+      return <Spinner />;
+    case 'unseen':
+      return (
+        <span
+          className="size-2 rounded-full bg-accent"
+          aria-label="Turn finished"
+        />
+      );
+    case 'failed':
+      return <CircleXmark className="text-danger" aria-label="Failed" />;
+    case 'idle':
+      return <Pencil />;
+  }
+}
 
 function IconBtn({
   label,
@@ -112,9 +142,15 @@ export const Sidebar = observer(function Sidebar() {
 
   // Branch reviews (no host PR behind them) of the active workspace — this
   // is the only place they're listed, and where they're closed from.
-  const localBranches = prs.filter(isBranchReview);
+  const localBranches = prs.filter(
+    (p) => isBranchReview(p) && !isSpaceReview(p),
+  );
   const active = ws.active;
   const hostWorkspace = ws.kind !== 'local';
+  // Spaces (docs/spaces.md): only with build mode on.
+  const spaces = isBuildMode(store)
+    ? spacesIn(ui.workspace, store.models.spaces.all())
+    : null;
 
   const groups: NavGroup[] = [
     {
@@ -167,6 +203,28 @@ export const Sidebar = observer(function Sidebar() {
         },
       ],
     },
+    ...(spaces
+      ? [
+          {
+            id: 'spaces',
+            title: 'Spaces',
+            items: [
+              ...spaces.map((s): NavItem => ({
+                key: routeKey({ name: 'space', id: s.id }),
+                icon: <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />,
+                label: s.name,
+                route: { name: 'space', id: s.id },
+              })),
+              {
+                key: 'new-space',
+                icon: <Plus />,
+                label: 'New space',
+                onPress: () => ui.openModal('new-space'),
+              },
+            ],
+          },
+        ]
+      : []),
     ...(localBranches.length
       ? [
           {

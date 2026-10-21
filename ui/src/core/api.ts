@@ -48,6 +48,10 @@ import type {
   RunSkillRequest,
   SandboxFaultRequest,
   SandboxStatus,
+  CreateSpaceRequest,
+  Space,
+  SpaceReviewRequest,
+  SpaceSendRequest,
   SaveSkillRequest,
   SetLinearTokenRequest,
   SetTokenRequest,
@@ -183,6 +187,16 @@ export const api = {
     call<SandboxStatus>('sandbox_set_fault', { req }),
   sandboxFireEvent: (id: string) =>
     call<SandboxStatus>('sandbox_fire_event', { id }),
+  // ── spaces (docs/spaces.md; hidden behind build mode) ──
+  createSpace: (req: CreateSpaceRequest) =>
+    call<Space>('create_space', { req }),
+  listSpaces: (project: string | null) =>
+    call<Space[]>('list_spaces', { project }),
+  spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),
+  spaceStop: (space: string) => call<null>('space_stop', { space }),
+  spaceReview: (req: SpaceReviewRequest) =>
+    call<OpenPrResponse>('space_review', { req }),
+  archiveSpace: (space: string) => call<null>('archive_space', { space }),
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */
