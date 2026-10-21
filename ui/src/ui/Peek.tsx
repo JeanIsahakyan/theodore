@@ -47,7 +47,7 @@ import { ReviewerPicker } from './Checks';
 import { LinearChips } from './linear/LinearChips';
 import { prIdFor } from './List';
 import { MergeDialog } from './Merge';
-import { gatesFor as mergeGatesFor } from './Mine';
+import { gatesFor as mergeGatesFor } from './prs/mine';
 import { isBranchReview } from './project/sections';
 import {
   ConflictsIcon,

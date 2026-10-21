@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { CodePullRequest } from '@gravity-ui/icons';
 import { Chip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { PrId, PrSummary } from '../gen/contract';
+import type { PrId } from '../gen/contract';
 import { loadViewer } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, CheckIcon, Empty, Hints, K } from './bits';
@@ -17,64 +17,7 @@ import { RowsSkeleton } from './Loading';
 import { RowList, ViewHeader, ago } from './List';
 import { PRIcon, ReviewDecisionIcon } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
-
-export type Step =
-  'merge' | 'yours' | 'waiting' | 'draft' | 'merged' | 'closed';
-
-const STEPS: { id: Step; title: string }[] = [
-  { id: 'merge', title: 'Ready to merge' },
-  { id: 'yours', title: 'Your move' },
-  { id: 'waiting', title: 'Waiting on reviewers' },
-  { id: 'draft', title: 'Drafts' },
-  { id: 'merged', title: 'Merged' },
-  { id: 'closed', title: 'Closed' },
-];
-
-export interface Gate {
-  ok: boolean;
-  label: string;
-}
-
-/** The merge gates a PR summary alone can answer, without `merge_info`. */
-export function gatesFor(p: PrSummary): Gate[] {
-  const gates: Gate[] = [
-    {
-      ok: p.checks !== 'fail',
-      label:
-        p.checks === 'fail'
-          ? 'checks failing'
-          : p.checks === 'pending'
-            ? 'checks running'
-            : 'checks passing',
-    },
-  ];
-  if (p.required_approvals != null) {
-    gates.push({
-      ok: p.approvals >= p.required_approvals,
-      label: `${p.approvals}/${p.required_approvals} approvals`,
-    });
-  }
-  if (p.review_decision === 'changes_requested') {
-    gates.push({ ok: false, label: 'changes requested' });
-  }
-  if (p.conflicts) {
-    gates.push({ ok: false, label: 'conflicts with base' });
-  }
-  return gates;
-}
-
-export function nextStep(p: PrSummary): Step {
-  if (p.state === 'merged') return 'merged';
-  if (p.state === 'closed') return 'closed';
-  if (p.state === 'draft') return 'draft';
-  const blocked = gatesFor(p).some((g) => !g.ok);
-  if (!blocked) return 'merge';
-  const yours =
-    p.checks === 'fail' ||
-    p.conflicts ||
-    p.review_decision === 'changes_requested';
-  return yours ? 'yours' : 'waiting';
-}
+import { STEPS, gatesFor, nextStep } from './prs/mine';
 
 function MineRow({ id, sel }: { id: PrId; sel: boolean }) {
   const store = useRootStore();
