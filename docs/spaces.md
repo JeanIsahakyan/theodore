@@ -59,8 +59,9 @@ merged                 ──▶  space stage = done ─▶ archive after 7 days
 
 ## 3. Where spaces live in the UI
 
-**Decision: a "Spaces" section in every workspace's sidebar, under My PRs,
-plus a "Drafting" group at the top of My PRs.** Two views over one object, not
+**Decision: a "Spaces" section in every workspace's sidebar, below its
+sections (Overview · Inbox · My PRs · Tasks · Skills), plus a "Drafting"
+group at the top of My PRs.** Two views over one object, not
 a separate feature island.
 
 - The sidebar is "what needs you now". Agents run in parallel and finish at
@@ -348,8 +349,15 @@ Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 | Settings → Labs | absent unless a `labs.build_mode` setting row exists | present |
 | Core commands | registered, unused | used |
 
-On = `FEATURES.buildMode || setting labs.build_mode = true`. To turn it on:
-create the setting once (Settings → Labs appears), then flip the toggle.
+On = `FEATURES.buildMode || setting labs.build_mode = true` (user scope).
+To turn it on without a rebuild, create the row once with Theodore closed,
+then use Settings → Labs:
+
+```sh
+sqlite3 ~/.theodore/theodore.db "INSERT INTO models (model, id, data) VALUES
+  ('setting', 'user:labs.build_mode',
+   '{\"key\":\"labs.build_mode\",\"scope\":\"user\",\"value\":false}')"
+```
 
 ---
 
