@@ -141,13 +141,13 @@ export const COL: Record<RowProp, string> = {
   age: '40px',
 };
 
-interface Display {
+export interface Display {
   groupBy: 'section' | 'status' | 'repo' | 'none';
   sort: 'activity' | 'size';
   props: RowProp[];
 }
 
-const DEFAULT_DISPLAY: Display = {
+export const DEFAULT_DISPLAY: Display = {
   groupBy: 'section',
   sort: 'activity',
   props: ROW_PROPS,

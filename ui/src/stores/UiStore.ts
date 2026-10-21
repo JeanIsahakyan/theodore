@@ -1,7 +1,8 @@
 /**
  * Local-only UI state: navigation and tabs, selection, panel visibility.
- * Never synced, never persisted beyond a couple of `localStorage` prefs — a
- * desktop app has no address bar, so this plays the role a router would.
+ * Never synced. A desktop app has no address bar, so this plays the role a
+ * router would. Each workspace keeps its own copy of the navigation and
+ * view state (`UiSnapshot`) in `localStorage`; switching swaps it.
  */
 import {
   computed,
@@ -13,7 +14,9 @@ import {
   reaction,
 } from 'mobx';
 import type { PrId } from '../gen/contract';
+import { ALL, homeRoute, type WorkspaceId } from '../core/workspaces';
 import type { ContextMenuItem } from '../ui/ContextMenu';
+import type { Display } from '../ui/List';
 
 export type SettingsPage =
   | 'account'
@@ -60,37 +63,132 @@ export const STORAGE_NS: string =
     .__THEODORE_STORAGE_NS__ ?? '';
 const LS_ONBOARDED = `${STORAGE_NS}theodore-onboarded`;
 const LS_DIFF_VIEW = `${STORAGE_NS}theodore-diff-view`;
-const LS_ASIDE = `${STORAGE_NS}theodore-aside`;
 const LS_THEME = `${STORAGE_NS}theodore-theme`;
-const LS_TABS = `${STORAGE_NS}theodore-tabs`;
+/** The active workspace id. */
+const LS_WORKSPACE = `${STORAGE_NS}theodore-workspace`;
+/** Before workspaces: the one tab set and the aside column state. */
+const LS_LEGACY_TABS = `${STORAGE_NS}theodore-tabs`;
+const LS_LEGACY_ASIDE = `${STORAGE_NS}theodore-aside`;
 
-/** Open tabs and the active one, restored on the next launch. */
-function loadTabs(): { tabs: Route[]; route: Route } {
+/** `localStorage` key of one workspace's saved `UiSnapshot`. */
+export const wsKey = (ws: WorkspaceId): string =>
+  `${STORAGE_NS}theodore-ws:${ws}`;
+
+/** Where you were in one PR: grouped or by file, which group or file, and
+ *  how far down the diff. */
+export interface ReviewPos {
+  mode: 'groups' | 'files';
+  group: string | null;
+  file: string | null;
+  /** `scrollTop` of the diff, for this `mode` + `group`/`file`. */
+  scroll?: number;
+}
+
+/** Everything a workspace restores when you switch back to it. */
+export interface UiSnapshot {
+  tabs: Route[];
+  route: Route;
+  back: Route;
+  selected: PrId | null;
+  peek: boolean;
+  aside: boolean;
+  sidebar: boolean;
+  /** Inbox Display options; `null` = the defaults. */
+  inboxDisplay: Display | null;
+  inboxShowDone: boolean;
+  /** Tasks filter tab; `null` = the default one. */
+  tasksTab: string | null;
+  reviewPos: Record<PrId, ReviewPos>;
+}
+
+export function defaultSnapshot(ws: WorkspaceId): UiSnapshot {
+  const home = homeRoute(ws);
+  return {
+    tabs: [home],
+    route: home,
+    back: home,
+    selected: null,
+    peek: true,
+    aside: true,
+    sidebar: true,
+    inboxDisplay: null,
+    inboxShowDone: false,
+    tasksTab: null,
+    reviewPos: {},
+  };
+}
+
+/** A workspace's saved snapshot over the defaults; `null` if none is saved
+ *  or it can't be read. */
+export function loadSnapshot(ws: WorkspaceId): UiSnapshot | null {
   try {
-    const v = JSON.parse(localStorage.getItem(LS_TABS) ?? 'null') as {
-      tabs: Route[];
-      route: Route;
-    } | null;
-    if (v && Array.isArray(v.tabs) && v.tabs.length && v.route) return v;
+    const v = JSON.parse(
+      localStorage.getItem(wsKey(ws)) ?? 'null',
+    ) as Partial<UiSnapshot> | null;
+    if (!v || !Array.isArray(v.tabs) || !v.tabs.length || !v.route) return null;
+    return { ...defaultSnapshot(ws), ...v } as UiSnapshot;
   } catch {
-    // corrupt value: start fresh
+    return null;
   }
-  return { tabs: [{ name: 'inbox' }], route: { name: 'inbox' } };
+}
+
+export function saveSnapshot(ws: WorkspaceId, s: UiSnapshot): void {
+  localStorage.setItem(wsKey(ws), JSON.stringify(s));
+}
+
+/** Once: the tab set saved before workspaces existed becomes All's. */
+export function migrateLegacyTabs(): void {
+  const raw = localStorage.getItem(LS_LEGACY_TABS);
+  if (raw === null) return;
+  if (localStorage.getItem(wsKey(ALL)) === null) {
+    try {
+      const v = JSON.parse(raw) as { tabs?: Route[]; route?: Route } | null;
+      if (v && Array.isArray(v.tabs) && v.route) {
+        // A project page is now that project's own workspace, not All's.
+        const tabs = v.tabs.filter((t) => t.name !== 'project');
+        const route = v.route.name === 'project' ? tabs[0] : v.route;
+        if (tabs.length && route) {
+          saveSnapshot(ALL, {
+            ...defaultSnapshot(ALL),
+            tabs,
+            route,
+            aside: localStorage.getItem(LS_LEGACY_ASIDE) !== '0',
+          });
+        }
+      }
+    } catch {
+      // corrupt value: All starts fresh
+    }
+  }
+  localStorage.removeItem(LS_LEGACY_TABS);
+  localStorage.removeItem(LS_LEGACY_ASIDE);
 }
 
 /** Length of the tab collapse animation (`.tab-closing` in styles.css). */
 export const TAB_CLOSE_MS = 180;
 
+/** Where a navigation lands: which workspace, showing which route. Set by
+ *  `WorkspaceStore`, which knows the projects. */
+export type Placer = (route: Route) => { ws: WorkspaceId; route: Route };
+
 export class UiStore {
   onboarded = localStorage.getItem(LS_ONBOARDED) === '1';
-  route: Route = loadTabs().route;
+  /** The active workspace: `ALL` or a project id. */
+  workspace: WorkspaceId = ALL;
+  route: Route = { name: 'inbox' };
   back: Route = { name: 'inbox' };
-  tabs: Route[] = loadTabs().tabs;
+  tabs: Route[] = [{ name: 'inbox' }];
   selected: PrId | null = null;
   picked: PrId[] = [];
   peek = true;
   sidebar = true;
-  aside = localStorage.getItem(LS_ASIDE) !== '0';
+  aside = true;
+  inboxDisplay: Display | null = null;
+  inboxShowDone = false;
+  tasksTab: string | null = null;
+  /** Per PR, read once when its review opens — not observable, so saving
+   *  the scroll position doesn't re-render anything. */
+  reviewPos: Record<PrId, ReviewPos> = {};
   diffView: 'unified' | 'split' =
     localStorage.getItem(LS_DIFF_VIEW) === 'split' ? 'split' : 'unified';
   modal: ModalName | null = null;
@@ -100,10 +198,17 @@ export class UiStore {
   contextMenu: ContextMenuState | null = null;
   /** Tabs mid close animation (`JSON.stringify(route)`); removed after it. */
   closingTabs: string[] = [];
+  place: Placer | null = null;
+
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
+    migrateLegacyTabs();
+    this.workspace = localStorage.getItem(LS_WORKSPACE) ?? ALL;
+    this.apply(loadSnapshot(this.workspace) ?? defaultSnapshot(this.workspace));
     makeObservable(this, {
       onboarded: observable,
+      workspace: observable,
       route: observableRef,
       back: observableRef,
       tabs: observableShallow,
@@ -112,6 +217,9 @@ export class UiStore {
       peek: observable,
       sidebar: observable,
       aside: observable,
+      inboxDisplay: observableRef,
+      inboxShowDone: observable,
+      tasksTab: observable,
       asideIsDrawer: observable,
       asideDrawerOpen: observable,
       asideShown: computed,
@@ -122,9 +230,108 @@ export class UiStore {
       closingTabs: observableShallow,
     });
     reaction(
-      () => ({ tabs: this.tabs, route: this.route }),
-      (v) => localStorage.setItem(LS_TABS, JSON.stringify(v)),
+      () => this.snapshot(),
+      (v) => saveSnapshot(this.workspace, v),
     );
+  }
+
+  /** This workspace's state, as saved and restored on a switch. */
+  snapshot(): UiSnapshot {
+    return {
+      tabs: this.tabs,
+      route: this.route,
+      back: this.back,
+      selected: this.selected,
+      peek: this.peek,
+      aside: this.aside,
+      sidebar: this.sidebar,
+      inboxDisplay: this.inboxDisplay,
+      inboxShowDone: this.inboxShowDone,
+      tasksTab: this.tasksTab,
+      reviewPos: this.reviewPos,
+    };
+  }
+
+  private apply(s: UiSnapshot): void {
+    this.tabs = s.tabs;
+    this.route = s.route;
+    this.back = s.back;
+    this.selected = s.selected;
+    this.peek = s.peek;
+    this.aside = s.aside;
+    this.sidebar = s.sidebar;
+    this.inboxDisplay = s.inboxDisplay;
+    this.inboxShowDone = s.inboxShowDone;
+    this.tasksTab = s.tasksTab;
+    this.reviewPos = s.reviewPos;
+  }
+
+  /** Saved tabs of a workspace — live ones for the active workspace. */
+  tabsOf(ws: WorkspaceId): Route[] | null {
+    return ws === this.workspace ? this.tabs : (loadSnapshot(ws)?.tabs ?? null);
+  }
+
+  /** Saves this workspace's state and restores `ws`'s — its own tabs,
+   *  selection, filters and panels, or a fresh set on its first visit. */
+  switchWorkspace(ws: WorkspaceId, opts: { save?: boolean } = {}): void {
+    if (ws === this.workspace) return;
+    runInAction(() => {
+      if (opts.save !== false) saveSnapshot(this.workspace, this.snapshot());
+      this.workspace = ws;
+      this.apply(loadSnapshot(ws) ?? defaultSnapshot(ws));
+      this.modal = null;
+      this.picked = [];
+      this.contextMenu = null;
+      this.closingTabs = [];
+      this.asideDrawerOpen = false;
+    });
+    localStorage.setItem(LS_WORKSPACE, ws);
+  }
+
+  /** A removed project: drop its saved state; leave it for All if active. */
+  forgetWorkspace(ws: WorkspaceId): void {
+    if (ws === ALL) return;
+    if (ws === this.workspace) this.switchWorkspace(ALL, { save: false });
+    localStorage.removeItem(wsKey(ws));
+  }
+
+  setReviewPos(pr: PrId, pos: ReviewPos): void {
+    const prev = this.reviewPos[pr];
+    const same =
+      prev?.mode === pos.mode &&
+      prev.group === pos.group &&
+      prev.file === pos.file;
+    this.reviewPos = {
+      ...this.reviewPos,
+      [pr]: { ...pos, scroll: pos.scroll ?? (same ? prev.scroll : undefined) },
+    };
+    this.persistSoon();
+  }
+
+  private persistSoon(): void {
+    clearTimeout(this.persistTimer);
+    const ws = this.workspace;
+    this.persistTimer = setTimeout(() => {
+      if (ws === this.workspace) saveSnapshot(ws, this.snapshot());
+    }, 300);
+  }
+
+  setInboxDisplay(d: Display | null): void {
+    runInAction(() => {
+      this.inboxDisplay = d;
+    });
+  }
+
+  setInboxShowDone(v: boolean): void {
+    runInAction(() => {
+      this.inboxShowDone = v;
+    });
+  }
+
+  setTasksTab(t: string): void {
+    runInAction(() => {
+      this.tasksTab = t;
+    });
   }
 
   finishOnboarding(): void {
@@ -137,7 +344,10 @@ export class UiStore {
 
   /** Linear-style tabs: `review` always gets its own tab; other views replace
    *  the current tab unless `newTab` is asked for. */
-  go(route: Route, opts: { newTab?: boolean } = {}): void {
+  go(to: Route, opts: { newTab?: boolean } = {}): void {
+    const placed = this.place?.(to);
+    if (placed) this.switchWorkspace(placed.ws);
+    const route = placed?.route ?? to;
     runInAction(() => {
       let tabs = this.tabs;
       if (!tabs.some((t) => sameRoute(t, route))) {
@@ -172,6 +382,13 @@ export class UiStore {
 
   /** Swap `from` (e.g. a blank tab) for `to` in place. */
   replaceTab(from: Route, to: Route): void {
+    // Opens in another workspace: the blank tab here goes away.
+    const placed = this.place?.(to);
+    if (placed && placed.ws !== this.workspace) {
+      this.closeTab(from);
+      this.go(to);
+      return;
+    }
     runInAction(() => {
       const exists = this.tabs.some((t) => sameRoute(t, to));
       this.tabs = exists
@@ -211,7 +428,7 @@ export class UiStore {
       const i = this.tabs.findIndex((t) => sameRoute(t, route));
       if (i < 0) return;
       const tabs = this.tabs.filter((_, j) => j !== i);
-      if (!tabs.length) tabs.push({ name: 'inbox' });
+      if (!tabs.length) tabs.push(homeRoute(this.workspace));
       const active = sameRoute(this.route, route)
         ? tabs[Math.min(i, tabs.length - 1)]!
         : this.route;
@@ -283,7 +500,6 @@ export class UiStore {
       });
       return;
     }
-    localStorage.setItem(LS_ASIDE, open ? '1' : '0');
     runInAction(() => {
       this.aside = open;
     });

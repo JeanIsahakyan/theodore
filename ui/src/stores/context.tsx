@@ -27,3 +27,4 @@ export const useUi = () => useRootStore().ui;
 export const useModels = () => useRootStore().models;
 export const useEphemeral = () => useRootStore().ephemeral;
 export const useSync = () => useRootStore().sync;
+export const useWorkspaces = () => useRootStore().workspaces;

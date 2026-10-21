@@ -425,11 +425,12 @@ export async function addProject(
 }
 
 export async function removeProject(
-  _store: RootStore,
+  store: RootStore,
   id: string,
 ): Promise<void> {
   try {
     await api.removeProject(id);
+    store.workspaces.forget(id);
   } catch {
     // toasted by api.ts
   }
