@@ -277,6 +277,9 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::ProjectWorkingState, CommandError> {
         self.core.project_working_state(&project).await.map_err(err)
     }
+    async fn close_branch_review(&self, pr: PrId) -> Result<(), CommandError> {
+        self.core.close_branch_review(&pr).await.map_err(err)
+    }
     async fn update_channel(&self) -> String {
         self.core.setting_string("updates.channel", "stable").await
     }

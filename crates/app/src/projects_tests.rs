@@ -1,14 +1,16 @@
 //! Projects page behaviour against `Core` + `testkit` fakes: a local
-//! folder's working state, and the poller's background project refresh.
+//! folder's working state, the poller's background project refresh, and
+//! closing a branch review.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::json;
-use theodore_contract::{AddProjectRequest, Project, ProjectStatus, models};
-use theodore_ports::{Clock, HostError, NewAction, Store, SyncActionCode, WorkingState};
+use theodore_contract::{AddProjectRequest, OpenBranchRequest, Project, ProjectStatus, models};
+use theodore_domain::{PrId, PrRef, Sha};
+use theodore_ports::{Clock, CommitLog, HostError, NewAction, Store, SyncActionCode, WorkingState};
 
-use crate::testkit::{Fixtures, fixtures};
+use crate::testkit::{self, Fixtures, fixtures};
 use crate::{AppError, Core, Receivers};
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
@@ -205,4 +207,105 @@ async fn poller_skips_project_refresh_while_offline() {
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     assert_eq!(last_fetched(&f, &stale), Some(start - TEN_MINUTES - 1));
+}
+
+// ── close_branch_review ───────────────────────────────────────────────────
+
+async fn open_feature_review(core: &Core, f: &Fixtures) -> PrId {
+    let project = local_project(core, f, "/tmp/my-folder").await;
+    let commit = CommitLog {
+        sha: Sha::new("feat-head"),
+        title: "feature work".into(),
+        author_name: "Ada".into(),
+        author_email: "ada@example.com".into(),
+        at: 42_000,
+    };
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git.set_commit(Sha::new("feat-head"), commit.clone());
+    f.git.set_commit_log(vec![commit]);
+    core.open_branch(OpenBranchRequest {
+        project: project.id,
+        branch: "feature".into(),
+        base: None,
+    })
+    .await
+    .expect("open_branch")
+    .pr
+}
+
+fn has_row(f: &Fixtures, model: &str, id: &PrId) -> bool {
+    f.store.get(model, &id.0).unwrap().is_some()
+}
+
+#[tokio::test]
+async fn close_branch_review_drops_its_rows_and_worktree() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let pr = open_feature_review(&core, &f).await;
+    wait_until(|| has_row(&f, models::GROUPING, &pr)).await;
+    assert!(has_row(&f, models::PR, &pr) && has_row(&f, models::PR_DETAIL, &pr));
+
+    core.close_branch_review(&pr)
+        .await
+        .expect("close_branch_review");
+
+    for model in [models::PR, models::PR_DETAIL, models::GROUPING] {
+        assert!(!has_row(&f, model, &pr), "{model} row left behind");
+    }
+    let removed = f.git.removed_worktrees();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].id(), pr);
+    // Nothing left for the poller to keep polling.
+    assert!(!core.0.current_head.read().await.contains_key(&pr));
+    assert!(
+        core.0
+            .revisions
+            .read()
+            .await
+            .keys()
+            .all(|(id, _)| id != &pr)
+    );
+}
+
+#[tokio::test]
+async fn close_branch_review_rejects_a_host_pr() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let pr_ref = PrRef {
+        repo: theodore_domain::RepoRef {
+            host: theodore_domain::HostKind::Github,
+            owner: "acme".into(),
+            name: "widgets".into(),
+        },
+        number: 7,
+        host_id: Some("node-7".into()),
+    };
+    let summary = testkit::sample_pr_summary(&pr_ref, &Sha::new("h7"));
+    assert!(!summary.url.is_empty());
+    core.apply(vec![NewAction {
+        model: models::PR.into(),
+        model_id: pr_ref.id().0,
+        action: SyncActionCode::I,
+        data: Some(serde_json::to_value(&summary).unwrap()),
+    }])
+    .await
+    .unwrap();
+
+    let err = core.close_branch_review(&pr_ref.id()).await.unwrap_err();
+
+    assert!(matches!(err, AppError::Invalid(_)), "{err:?}");
+    assert!(has_row(&f, models::PR, &pr_ref.id()));
+    assert!(f.git.removed_worktrees().is_empty());
+}
+
+#[tokio::test]
+async fn close_branch_review_of_an_unknown_id_is_not_found() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let err = core
+        .close_branch_review(&PrId("local:local/x#1".into()))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
 }

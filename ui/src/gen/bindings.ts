@@ -95,6 +95,7 @@ export const commands = {
 	sandboxSetFault: (req: SandboxFaultRequest) => typedError<SandboxStatus, CommandError>(__TAURI_INVOKE("sandbox_set_fault", { req })),
 	sandboxFireEvent: (id: string) => typedError<SandboxStatus, CommandError>(__TAURI_INVOKE("sandbox_fire_event", { id })),
 	projectWorkingState: (project: string) => typedError<ProjectWorkingState, CommandError>(__TAURI_INVOKE("project_working_state", { project })),
+	closeBranchReview: (pr: PrId) => typedError<null, CommandError>(__TAURI_INVOKE("close_branch_review", { pr })),
 };
 
 /* Types */

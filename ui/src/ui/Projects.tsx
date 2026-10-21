@@ -24,6 +24,7 @@ import {
   Lock,
   Magnifier,
   Sliders,
+  Xmark,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -63,7 +64,7 @@ import {
 import { api } from '../core/api';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, CheckIcon, Empty, Hints, K, Shell, Spinner } from './bits';
-import type { ContextMenuItem } from './ContextMenu';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import {
   DisplayRow,
   PeekToggle,
@@ -82,6 +83,7 @@ import { RowsSkeleton } from './Loading';
 import { Peek } from './Peek';
 import { projectActivity } from './project/activity';
 import { branchPr } from './project/branches';
+import { branchReviewMenu, closeBranchReview } from './project/closeReview';
 import {
   needsAutoRefresh,
   refreshProjectTracked,
@@ -102,7 +104,11 @@ import {
   oldestOpenPrAge,
   topAuthors,
 } from './project/summary';
-import { projectPrSections, type ProjectPrSort } from './project/sections';
+import {
+  isBranchReview,
+  projectPrSections,
+  type ProjectPrSort,
+} from './project/sections';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
@@ -671,6 +677,9 @@ const ProjectPrs = observer(function ProjectPrs({
     return seed;
   });
   const banner = noOpenPrsBanner(items);
+  const branchReviewIds = new Set(
+    items.filter(isBranchReview).map((p) => p.id),
+  );
   const order =
     display.layout === 'board'
       ? boardColumns(items, display.sort).flatMap((c) =>
@@ -744,14 +753,18 @@ const ProjectPrs = observer(function ProjectPrs({
             toggle={(id) => setClosed((c) => ({ ...c, [id]: !c[id] }))}
             onSelect={(id) => ui.select(id)}
             onOpen={(id) => ui.go({ name: 'review', pr: id })}
-            row={(id) => (
-              <PrRow
-                id={id}
-                sel={ui.selected === id}
-                picked={false}
-                props={display.props}
-              />
-            )}
+            row={(id) =>
+              branchReviewIds.has(id) ? (
+                <BranchReviewRow id={id} sel={ui.selected === id} />
+              ) : (
+                <PrRow
+                  id={id}
+                  sel={ui.selected === id}
+                  picked={false}
+                  props={display.props}
+                />
+              )
+            }
             empty={
               <Empty
                 icon={<CodePullRequest />}
@@ -771,6 +784,56 @@ const ProjectPrs = observer(function ProjectPrs({
                 <RepoSummaryPeek items={items} now={Date.now()} />
               ))}
       </div>
+    </div>
+  );
+});
+
+/** A branch review in the project list: not a host PR, so none of
+ *  `PrRow`'s inbox actions (done, snooze, copy URL) — just the branch, its
+ *  last commit, and a Close review × on hover / in the context menu. */
+const BranchReviewRow = observer(function BranchReviewRow({
+  id,
+  sel,
+}: {
+  id: string;
+  sel: boolean;
+}) {
+  const store = useRootStore();
+  const p = store.models.prSummaries.get(id);
+  const menu = useContextMenu(() => branchReviewMenu(store, id));
+  if (!p) return null;
+  return (
+    <div
+      id={`R-${id}`}
+      className={`prrow group flex h-11 w-full min-w-0 items-center gap-3 ${sel ? 'sel' : ''}`}
+      onContextMenu={menu}
+    >
+      <BranchesRight className="size-4 shrink-0 text-muted" />
+      <span
+        className="min-w-0 max-w-[45%] truncate font-mono text-sm"
+        title={p.head_ref}
+      >
+        {p.head_ref}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm text-muted">
+        {p.title}
+      </span>
+      <span className="shrink-0 text-xs text-muted">
+        vs {p.base_ref} · {ago(p.updated_at)}
+      </span>
+      <Tooltip>
+        <Button
+          isIconOnly
+          size="sm"
+          variant="ghost"
+          aria-label="Close review"
+          className="size-6 min-w-6 shrink-0 rounded-xl text-muted opacity-0 group-hover:opacity-100"
+          onPress={() => void closeBranchReview(store, id)}
+        >
+          <Xmark className="size-3.5" />
+        </Button>
+        <Tooltip.Content>Close review</Tooltip.Content>
+      </Tooltip>
     </div>
   );
 });

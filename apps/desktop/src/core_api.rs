@@ -103,6 +103,8 @@ pub trait CoreApi: Send + Sync {
         &self,
         project: String,
     ) -> Result<theodore_contract::ProjectWorkingState, CommandError>;
+    /// Closes a branch review: its local rows and worktree. Rejects a host PR.
+    async fn close_branch_review(&self, pr: PrId) -> Result<(), CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -322,6 +324,9 @@ impl CoreApi for NotReadyCoreApi {
         &self,
         _project: String,
     ) -> Result<theodore_contract::ProjectWorkingState, CommandError> {
+        Err(not_ready())
+    }
+    async fn close_branch_review(&self, _pr: PrId) -> Result<(), CommandError> {
         Err(not_ready())
     }
 }

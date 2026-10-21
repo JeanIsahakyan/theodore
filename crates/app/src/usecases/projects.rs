@@ -312,6 +312,47 @@ impl Core {
         self.open_local(&project, pr_ref, &base).await
     }
 
+    /// Closes a branch review (`open_branch`): drops its `pr`, `pr_detail`
+    /// and `grouping` rows, its in-memory head/revision and its worktree.
+    /// Only ever a branch review — a stored row with a host `url` is a real
+    /// PR, which this never touches, locally or on the host.
+    pub async fn close_branch_review(&self, pr: &PrId) -> AppResult<()> {
+        let row = self
+            .get_row(models::PR, &pr.0)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("pr {pr}")))?;
+        let summary: PrSummary =
+            serde_json::from_value(row).map_err(|e| AppError::Invalid(e.to_string()))?;
+        if !summary.url.is_empty() {
+            return Err(AppError::Invalid(format!(
+                "{pr} is a host pull request, not a branch review"
+            )));
+        }
+
+        // Same lock `open_branch` takes, so a re-open can't interleave.
+        let _guard = self.0.open_lock.lock().await;
+        self.0.current_head.write().await.remove(pr);
+        self.0.revisions.write().await.retain(|(id, _), _| id != pr);
+        self.0.etags.write().await.remove(pr);
+        // Best-effort: the review is closed even if its worktree was
+        // already gone (or never made it to disk).
+        let _ = self.0.deps.git.remove_worktree(&summary.pr).await;
+
+        let mut actions = Vec::new();
+        for model in [models::PR, models::PR_DETAIL, models::GROUPING] {
+            if model == models::PR || self.get_row(model, &pr.0).await?.is_some() {
+                actions.push(NewAction {
+                    model: model.into(),
+                    model_id: pr.0.clone(),
+                    action: SyncActionCode::D,
+                    data: None,
+                });
+            }
+        }
+        self.apply(actions).await?;
+        Ok(())
+    }
+
     /// Recovers a `local:` PR's `PrRef` (branch, base) from its stored `pr`
     /// row and runs the same flow `open_branch` would.
     pub(crate) async fn ensure_open_local(&self, pr: &PrId) -> AppResult<()> {

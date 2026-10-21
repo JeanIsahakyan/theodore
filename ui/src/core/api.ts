@@ -143,6 +143,7 @@ export const api = {
   /** `null` when the folder can't be read (moved, not a repo anymore, a
    *  core without git): the header just leaves the working state out, no
    *  toast for a passive read. */
+  closeBranchReview: (pr: PrId) => call<null>('close_branch_review', { pr }),
   projectWorkingState: (project: string): Promise<ProjectWorkingState | null> =>
     getTransport()
       .invoke<ProjectWorkingState>('project_working_state', { project })
