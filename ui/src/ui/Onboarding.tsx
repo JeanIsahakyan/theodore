@@ -1,3 +1,4 @@
+import { Logo } from './Logo';
 import { useEffect, useState } from 'react';
 import {
   CircleCheckFill,
@@ -89,9 +90,7 @@ export const Onboarding = observer(function Onboarding() {
       <Card className="w-full max-w-[600px] gap-0 p-0">
         <div className="flex flex-col gap-4 px-8 pb-6 pt-8">
           <div className="flex items-center gap-2.5">
-            <span className="grid size-7 place-items-center rounded-xl bg-foreground text-sm font-semibold text-background">
-              T
-            </span>
+            <Logo size={28} />
             <span className="font-semibold">Theodore</span>
             <span className="flex-1" />
             <span className="text-xs text-muted">
