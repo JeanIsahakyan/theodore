@@ -27,9 +27,10 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D15 | Agent per task is a setting (grouping, chat, skills, fixes), default Claude | decided |
 | D16 | Auto-update from this repo's GitHub Releases, built in from the first version | decided |
 | D17 | Data lives in `~/.theodore` | decided |
-| D18 | Later, not v1: accounts and billing, telemetry, Linux and Windows | decided |
+| D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in itself is D21), telemetry, Linux and Windows | decided |
 | D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
 | D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
+| D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE + loopback redirect, device code as fallback; no secret in the app, no server yet (§6.12) | decided |
 
 ---
 
@@ -96,6 +97,7 @@ crates/
   mcp/           review-tools server (rmcp), stdio bridge
   store/         SQLite schema, migrations, sync log
   secrets/       keychain
+  account-workos/ Theodore account over WorkOS AuthKit (§6.12)
 apps/
   desktop/       Tauri app
   cli/           `theodore …` headless commands (grouping eval, debugging)
@@ -450,6 +452,171 @@ gap. `merge_status`, reviewer management and draft-state toggling stay
 `Unsupported` for now; `viewer`, `search`/`search_repo`, `get_pr`,
 `submit_review`, the thread operations, `list_repos` and `merge` are real.
 
+### 6.12 Theodore account
+
+A second, optional identity: who you are to Theodore itself, for the cloud
+features to come (sync, teams, licensing, enterprise SSO). It is not a code
+host and never touches the host tokens of §6.8; signing in or out of one
+leaves the other alone. Identity provider: WorkOS AuthKit, used as a
+**public client** — no client secret or API key ships in the app, and there
+is no Theodore server yet.
+
+#### What a public client can do today
+
+| Flow | Without a secret | Notes |
+| --- | --- | --- |
+| Hosted AuthKit page + PKCE, code exchange with `code_verifier` | yes | the secret is required only when no verifier is sent |
+| Device authorization (RFC 8628) | yes | `POST /user_management/authorize/device` with `client_id` only |
+| Refresh token grant | yes | `client_id` + `refresh_token`; the refresh token rotates and is single-use |
+| JWKS (`/sso/jwks/<client_id>`), logout redirect | yes | public endpoints |
+| Magic Auth API (send a code, then verify it) | **no** | needs the API key |
+| Email + password grant | **no** | needs the API key |
+
+So "type your email in the app, get a code, type the code in the app" can't
+be done client-only. The code is emailed and entered on the hosted AuthKit
+page, and that page then hands the sign-in back to the app.
+
+#### Chosen flow
+
+```
+Settings → Account / Onboarding
+  email ──▶ account_sign_in_start{browser, email}
+              core: bind 127.0.0.1:<port>, PKCE S256 + state
+              UI:   open /user_management/authorize?…&login_hint=<email>
+                         │
+  browser: AuthKit ─▶ "we emailed you a code" ─▶ code ─▶ 302
+                         │
+  127.0.0.1:<port>/callback?code&state ──▶ state matches? ──no──▶ ignored, keep waiting
+                         │ yes
+  POST /user_management/authenticate  code + code_verifier + client_id
+                         │
+  verify JWT (JWKS, RS256, iss, exp, sub) ─▶ keychain ─▶ event account_status
+  tab: "You're signed in"                   UI: card flips, window comes forward
+```
+
+- **Primary: the browser flow above.** It's the shortest path to "email → code
+  → in" client-only. With Magic Auth as the only method enabled, the email the
+  user typed (sent as `login_hint`) takes them straight to the code screen.
+  The other methods enabled in the dashboard (Google, SSO, passkeys) show up
+  on the same page through "Other sign-in options".
+- **Secondary: device code ("Sign in on another device").** The app shows a
+  code and a link, and the user signs in on any browser or device. This is the
+  "sign in on the web, the app picks it up" path. It needs no redirect at
+  all, so it still works when the loopback port is blocked.
+- **Loopback, not a custom URL scheme.**
+  - AuthKit allows `http://127.0.0.1` redirects in production specifically for
+    native clients.
+  - A loopback redirect works in `cargo tauri dev`. A macOS URL scheme only
+    resolves for an installed bundle.
+  - No other app can claim the redirect, which a scheme allows.
+  - Nothing has to be routed into an already-running instance: the running
+    app is the listener.
+  - `theodore://` stays reserved for "open PR in Theodore" (§11).
+- **CSRF.** Each attempt has a fresh 256-bit `state`. A redirect with a
+  missing or different `state` has no effect: the browser gets an "out of
+  date" page and the sign-in keeps waiting for the real one. The listener
+  binds only `127.0.0.1` and answers only `GET <path>`. It stops after 10
+  minutes, on cancel, or once the sign-in completes.
+- **Session.**
+  - The session lives in one keychain entry, `theodore.account`: a JSON object
+    with the access token, refresh token, `exp`, `sid` and profile.
+  - A refresher wakes 60 s before `exp`, which defaults to 5 minutes, and
+    rotates the tokens. On a network error it retries every ~30 s.
+  - A rejected refresh means the session ended (revoked, or the maximum
+    session length was reached): Theodore signs out and emits `account_status`.
+  - Sign-out deletes the keychain entry, then calls
+    `/user_management/sessions/logout?session_id=<sid>` in the background,
+    best effort.
+- **Validation.**
+  - The access token's signature is checked against the JWKS. The JWKS is
+    cached and refetched when the token names an unknown `kid`.
+  - Claims checked: `iss` (`https://api.workos.com`, or a custom auth domain),
+    `exp` with 60 s leeway, `client_id` when present, and `sub` against the
+    returned user.
+  - If the JWKS can't be reached at all, the claims are still checked. The
+    token came straight from the provider over TLS, so the signature is
+    defense in depth there.
+
+#### Where it lives
+
+```
+ui  AccountCard (Settings → Account, top) · AccountStep (Onboarding, optional)
+     └─ useAccountSignIn ─▶ reduceFlow (pure, vitest)
+commands  account_status · account_sign_in_start · account_sign_in_poll ·
+          account_sign_in_cancel · account_sign_out · focus_window (shell)
+app  usecases/account.rs   config, state check, keychain, refresher, events
+ports  AccountPort          LocalAccount = no provider (fixtures, sandbox, CLI)
+account-workos  WorkosAccount   PKCE, loopback listener, device code, refresh, JWKS
+```
+
+The browser method's outcome is held in core memory. `account_sign_in_poll`
+reads it, polled once a second, with no network call. For the device
+method, each poll is one token request at the server's interval, and
+`slow_down` adds 5 s. Every change of state is also pushed as the
+`account_status` ephemeral event.
+
+#### Configuration
+
+Checked in this order; with no client id the whole feature is hidden (no
+card, no onboarding step). Fixture and sandbox modes always hide it.
+
+| What | Env | Setting (scope `user`) | Default |
+| --- | --- | --- | --- |
+| Client id | `THEODORE_WORKOS_CLIENT_ID` | `account.workos.client_id` | none: feature hidden |
+| Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | `http://127.0.0.1:47823/callback` |
+| API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
+| Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
+
+The redirect URI must be `http` on `127.0.0.1`, `[::1]` or `localhost`, with
+an explicit port. Port `0` binds any free port. Use it only with a
+wildcard-port redirect registered (`http://127.0.0.1:*/callback`); WorkOS
+documents wildcard ports for loopback, but not yet for `127.0.0.1` in
+production.
+
+#### WorkOS dashboard setup (owner)
+
+1. **Create the application.** Create or pick the environment (staging first,
+   then production). Under Applications, use the AuthKit application and copy
+   its **Client ID** (`client_…`). The API key is never needed by the app.
+2. **Redirects**:
+   - add `http://127.0.0.1:47823/callback`;
+   - optional: also add `http://127.0.0.1:*/callback`, if you later want
+     port `0`;
+   - leave the default redirect as-is: a wildcard can't be the default.
+3. **Authentication methods**:
+   - enable **Magic Auth** (email code); it gives the "email → code → in"
+     experience;
+   - optional: Google / Microsoft OAuth, passkeys, SSO for enterprise
+     connections;
+   - email + password is fine too, but can't be entered in-app until the
+     server exists.
+4. **CLI Auth / device authorization.** Enable it if the environment shows a
+   toggle; it backs "Sign in on another device". Nothing else needs
+   configuring, since the code page is on the AuthKit domain.
+5. **Sessions.** Keep the access token duration at 5 min. Pick the maximum
+   session length and the inactivity timeout: they decide how long Theodore
+   stays signed in without a fresh sign-in.
+6. **Sign-out redirect.** Set any page, e.g. the marketing site. The
+   background logout call never follows it.
+7. **CORS / allowed origins.** Not needed: every call comes from the Rust
+   core, never from the webview.
+8. **Configure the app.** Set `THEODORE_WORKOS_CLIENT_ID=client_…` for the
+   app, or write the `account.workos.client_id` setting. A packaged build
+   reads the env from its launch environment, so a setting is the durable
+   choice there.
+
+#### Needs the future server
+
+- In-app email + code entry, with no browser at all. The server calls the
+  Magic Auth API with the secret: it sends the code, then verifies the code
+  the app forwards. Email + password works the same way. The port doesn't
+  change: a server-backed adapter adds `send_code` / `verify_code` next to
+  `start_browser`, and the UI's email field already exists.
+- Anything that needs the API key: user and org management, revoking
+  sessions by user, webhooks for "signed out elsewhere".
+- Licensing and entitlements: the access token's `entitlements` /
+  `feature_flags` claims are read by the server, not trusted from the client.
+
 ---
 
 ## 7. Git
@@ -577,7 +744,8 @@ Every component subscribes to the objects it reads, not to the whole state.
 - Tauri 2, one main window, `titleBarStyle: Overlay`.
 - Strict CSP (no remote scripts; Shiki and fonts bundled). Capabilities scoped
   to the commands the UI needs.
-- Deep link `theodore://` for OAuth callbacks and "open PR in Theodore".
+- Deep link `theodore://` for "open PR in Theodore". OAuth sign-ins come back
+  through a loopback redirect instead (§6.12).
 
 ### 11.1 Updates (from the first version)
 
