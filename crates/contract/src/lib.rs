@@ -25,6 +25,8 @@ mod symbols;
 pub use symbols::*;
 mod sandbox;
 pub use sandbox::*;
+mod project_state;
+pub use project_state::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -702,7 +704,8 @@ pub fn types() -> specta::Types {
         .register::<ConflictFile>()
         .register::<SandboxInfo>()
         .register::<SandboxStatus>()
-        .register::<SandboxFaultRequest>();
+        .register::<SandboxFaultRequest>()
+        .register::<ProjectWorkingState>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

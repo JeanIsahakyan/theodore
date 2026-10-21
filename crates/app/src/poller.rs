@@ -26,9 +26,53 @@ const DEFAULT_INBOX_POLL_MS: i64 = 15_000;
 /// unlike a freshly armed `Clock::sleep`, a recurring real timer doesn't
 /// need to be re-armed exactly before the jump lands.
 const REAL_TICK_MS: u64 = 20;
+/// A host project's page data is refreshed in the background once it's
+/// this old.
+const PROJECT_REFRESH_AFTER_MS: i64 = 10 * 60_000;
+/// At most one background project refresh per this interval: projects
+/// that all went stale together are spread out, not fetched in a burst.
+const PROJECT_STAGGER_MS: i64 = 30_000;
 
 pub(crate) async fn run(inner: Arc<Inner>) {
-    tokio::join!(poll_open_prs(inner.clone()), poll_inbox(inner));
+    tokio::join!(
+        poll_open_prs(inner.clone()),
+        poll_inbox(inner.clone()),
+        poll_projects(inner)
+    );
+}
+
+/// Keeps host projects' PR lists fresh without the page open: every
+/// `PROJECT_STAGGER_MS`, the stalest project older than
+/// `PROJECT_REFRESH_AFTER_MS` gets one quiet refresh. Skipped while
+/// offline — the banner already says so, and it would only fail.
+async fn poll_projects(inner: Arc<Inner>) {
+    let core = Core(inner.clone());
+    let mut next_due = inner.deps.clock.now() + PROJECT_STAGGER_MS;
+    loop {
+        if inner.shutdown.is_cancelled() {
+            return;
+        }
+        let now = inner.deps.clock.now();
+        if now >= next_due {
+            next_due = now + PROJECT_STAGGER_MS;
+            let online = inner
+                .host_health
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+            if online
+                && let Some(id) = core
+                    .next_stale_host_project(now - PROJECT_REFRESH_AFTER_MS)
+                    .await
+            {
+                let _ = core.refresh_project_quietly(&id).await;
+            }
+        }
+        tokio::select! {
+            _ = inner.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(REAL_TICK_MS)) => {},
+        }
+    }
 }
 
 async fn poll_open_prs(inner: Arc<Inner>) {

@@ -10,6 +10,7 @@ import {
   Plus,
   Sparkles,
   Tray,
+  Xmark,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -21,7 +22,7 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
-import { refreshProject, removeProject } from '../actions';
+import { removeProject } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
@@ -29,6 +30,9 @@ import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { inInbox } from './List';
 import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
+import { branchReviewMenu, closeBranchReview } from './project/closeReview';
+import { refreshProjectTracked } from './project/freshness';
+import { isBranchReview } from './project/sections';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SyncStatus } from './shell/SyncStatus';
 
@@ -41,6 +45,8 @@ interface NavItem {
   isDisabled?: boolean;
   onPress?: () => void;
   contextMenu?: ContextMenuItem[];
+  /** An × on hover, e.g. "Close review" on a branch review. */
+  close?: { label: string; onPress: () => void };
 }
 
 interface NavGroup {
@@ -99,7 +105,9 @@ export const Sidebar = observer(function Sidebar() {
     (p) => viewer && p.author.login === viewer.login && p.state !== 'merged',
   ).length;
 
-  const localBranches = prs.filter((p) => p.pr.repo.host === 'local');
+  // Branch reviews of any project (a local folder's or a host repo's): no
+  // host PR behind them, so this is the only place they're listed.
+  const localBranches = prs.filter(isBranchReview);
   const projects = store.models.projects.all();
 
   const groups: NavGroup[] = [
@@ -149,7 +157,7 @@ export const Sidebar = observer(function Sidebar() {
           label: projectLabel(p),
           route: { name: 'project', id: p.id },
           contextMenu: projectContextMenu({
-            onRefresh: () => void refreshProject(store, p.id),
+            onRefresh: () => void refreshProjectTracked(store, p.id),
             onRemove: () => {
               if (
                 window.confirm(
@@ -175,11 +183,16 @@ export const Sidebar = observer(function Sidebar() {
           {
             id: 'local',
             title: 'Local branches',
-            items: localBranches.map((p) => ({
+            items: localBranches.map((p): NavItem => ({
               key: routeKey({ name: 'review', pr: p.id }),
               icon: <BranchesRight />,
               label: p.head_ref,
-              route: { name: 'review', pr: p.id } as Route,
+              route: { name: 'review', pr: p.id },
+              contextMenu: branchReviewMenu(store, p.id),
+              close: {
+                label: 'Close review',
+                onPress: () => void closeBranchReview(store, p.id),
+              },
             })),
           },
         ]
@@ -242,7 +255,7 @@ export const Sidebar = observer(function Sidebar() {
                 onContextMenu={
                   i.contextMenu && contextMenuHandler(ui, i.contextMenu)
                 }
-                className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
+                className="nav group gap-3 px-3 text-sm data-[selected=true]:font-medium"
               >
                 <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
                   {i.icon}
@@ -254,6 +267,21 @@ export const Sidebar = observer(function Sidebar() {
                   <span className="shrink-0 text-xs tabular-nums text-muted">
                     {i.n}
                   </span>
+                )}
+                {i.close && (
+                  <Tooltip>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      aria-label={i.close.label}
+                      className="-me-1 size-5 min-w-5 shrink-0 rounded-xl text-muted opacity-0 group-hover:opacity-100"
+                      onPress={i.close.onPress}
+                    >
+                      <Xmark className="size-3.5" />
+                    </Button>
+                    <Tooltip.Content>{i.close.label}</Tooltip.Content>
+                  </Tooltip>
                 )}
               </ListBox.Item>
             ))}

@@ -12,6 +12,7 @@ import {
   LayoutSplitColumns,
   Play,
   Stop,
+  Xmark,
 } from '@gravity-ui/icons';
 import {
   CircleCheck,
@@ -55,6 +56,8 @@ import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
 import { LinearChips } from './linear/LinearChips';
 import { MergeDialog } from './Merge';
+import { closeBranchReview } from './project/closeReview';
+import { isBranchReview } from './project/sections';
 import {
   groupsInRevision,
   nextReviewableGroup,
@@ -630,6 +633,16 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   : 'Merge'}
             </Tooltip.Content>
           </Tooltip>
+        )}
+        {summary && isBranchReview(summary) && (
+          <Btn
+            tone="tertiary"
+            icon={<Xmark />}
+            className="close-review"
+            onPress={() => void closeBranchReview(store, pr)}
+          >
+            Close review
+          </Btn>
         )}
         <Tooltip>
           <ToggleButton

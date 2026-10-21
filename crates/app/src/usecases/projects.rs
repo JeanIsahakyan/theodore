@@ -7,7 +7,7 @@ use std::path::Path;
 
 use theodore_contract::{
     AddProjectRequest, Ephemeral, LocalBranch, OpenBranchRequest, Project, ProjectStatus,
-    ToastLevel, models,
+    ProjectWorkingState, ToastLevel, models,
 };
 use theodore_domain::{HostKind, HostRepo, PrDetail, PrId, PrRef, PrSummary, RepoRef};
 use theodore_ports::{InboxSection, NewAction, SyncActionCode};
@@ -102,6 +102,41 @@ impl Core {
     /// `last_fetched_at` unconditionally (local projects included), for the
     /// header's "fetched Nm ago".
     pub async fn refresh_project(&self, id: &str) -> AppResult<()> {
+        self.refresh_project_with(id, false).await
+    }
+
+    /// The poller's background refresh: same work, no toasts — a failed
+    /// refresh nobody asked for shouldn't interrupt anyone every 10 minutes.
+    pub(crate) async fn refresh_project_quietly(&self, id: &str) -> AppResult<()> {
+        self.refresh_project_with(id, true).await
+    }
+
+    /// The host project the poller should refresh next: ready, and last
+    /// fetched before `cutoff` (never-fetched first, then the oldest).
+    /// Local folders aren't polled — opening their page refreshes them.
+    pub(crate) async fn next_stale_host_project(&self, cutoff: i64) -> Option<String> {
+        let store = self.0.deps.store.clone();
+        let rows = tokio::task::spawn_blocking(move || store.all(models::PROJECT))
+            .await
+            .ok()?
+            .ok()?;
+        rows.into_iter()
+            .filter_map(|r| serde_json::from_value::<Project>(r.data).ok())
+            .filter(|p| p.repo.host != HostKind::Local && p.status == ProjectStatus::Ready)
+            .filter(|p| p.last_fetched_at.is_none_or(|at| at < cutoff))
+            .min_by_key(|p| p.last_fetched_at.unwrap_or(i64::MIN))
+            .map(|p| p.id)
+    }
+
+    async fn refresh_project_with(&self, id: &str, quiet: bool) -> AppResult<()> {
+        let warn = |text: String| {
+            if !quiet {
+                self.emit(Ephemeral::Toast {
+                    level: ToastLevel::Warn,
+                    text,
+                });
+            }
+        };
         let project = self
             .project_row(id)
             .await?
@@ -130,12 +165,7 @@ impl Core {
                 // No per-repo metadata endpoint on this host — the header
                 // just keeps whatever it already had.
                 Err(theodore_ports::HostError::Unsupported(_)) => {}
-                Err(e) => {
-                    self.emit(Ephemeral::Toast {
-                        level: ToastLevel::Warn,
-                        text: format!("project refresh failed: {e}"),
-                    });
-                }
+                Err(e) => warn(format!("project refresh failed: {e}")),
             }
 
             let slug = project.repo.slug();
@@ -174,12 +204,7 @@ impl Core {
                             by_id.entry(summary.pr.id().0).or_insert(summary);
                         }
                     }
-                    Err(e) => {
-                        self.emit(Ephemeral::Toast {
-                            level: ToastLevel::Warn,
-                            text: format!("project refresh failed: {e}"),
-                        });
-                    }
+                    Err(e) => warn(format!("project refresh failed: {e}")),
                 }
             }
             let mut actions = Vec::with_capacity(by_id.len());
@@ -238,6 +263,25 @@ impl Core {
             .collect())
     }
 
+    /// A local folder project's own checkout (current branch, uncommitted
+    /// paths), read straight from the folder — never from the mirror, which
+    /// has no working tree. Read-only: the folder is never written to.
+    pub async fn project_working_state(&self, project: &str) -> AppResult<ProjectWorkingState> {
+        let project = self
+            .project_row(project)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("project {project}")))?;
+        let path = project.path.ok_or_else(|| {
+            AppError::Invalid(format!("project {} is not a local folder", project.id))
+        })?;
+        let state = self.0.deps.git.working_state(Path::new(&path)).await?;
+        Ok(ProjectWorkingState {
+            path,
+            current_branch: state.current_branch,
+            dirty_files: state.dirty_files,
+        })
+    }
+
     pub async fn open_branch(
         &self,
         req: OpenBranchRequest,
@@ -266,6 +310,47 @@ impl Core {
             return Ok(theodore_contract::OpenPrResponse { pr: id, head });
         }
         self.open_local(&project, pr_ref, &base).await
+    }
+
+    /// Closes a branch review (`open_branch`): drops its `pr`, `pr_detail`
+    /// and `grouping` rows, its in-memory head/revision and its worktree.
+    /// Only ever a branch review — a stored row with a host `url` is a real
+    /// PR, which this never touches, locally or on the host.
+    pub async fn close_branch_review(&self, pr: &PrId) -> AppResult<()> {
+        let row = self
+            .get_row(models::PR, &pr.0)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("pr {pr}")))?;
+        let summary: PrSummary =
+            serde_json::from_value(row).map_err(|e| AppError::Invalid(e.to_string()))?;
+        if !summary.url.is_empty() {
+            return Err(AppError::Invalid(format!(
+                "{pr} is a host pull request, not a branch review"
+            )));
+        }
+
+        // Same lock `open_branch` takes, so a re-open can't interleave.
+        let _guard = self.0.open_lock.lock().await;
+        self.0.current_head.write().await.remove(pr);
+        self.0.revisions.write().await.retain(|(id, _), _| id != pr);
+        self.0.etags.write().await.remove(pr);
+        // Best-effort: the review is closed even if its worktree was
+        // already gone (or never made it to disk).
+        let _ = self.0.deps.git.remove_worktree(&summary.pr).await;
+
+        let mut actions = Vec::new();
+        for model in [models::PR, models::PR_DETAIL, models::GROUPING] {
+            if model == models::PR || self.get_row(model, &pr.0).await?.is_some() {
+                actions.push(NewAction {
+                    model: model.into(),
+                    model_id: pr.0.clone(),
+                    action: SyncActionCode::D,
+                    data: None,
+                });
+            }
+        }
+        self.apply(actions).await?;
+        Ok(())
     }
 
     /// Recovers a `local:` PR's `PrRef` (branch, base) from its stored `pr`

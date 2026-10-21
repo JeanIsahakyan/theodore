@@ -30,6 +30,8 @@ mod diff_media_integration_tests;
 mod interdiff_tests;
 #[cfg(test)]
 mod linear_tests;
+#[cfg(test)]
+mod projects_tests;
 
 pub use core::{Core, Receivers};
 pub use deps::{Deps, Grouper, RunTools, TokenStatus};

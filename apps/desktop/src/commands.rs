@@ -552,3 +552,21 @@ pub async fn sandbox_fire_event(
 ) -> Result<theodore_contract::SandboxStatus, CommandError> {
     core.sandbox_fire_event(id).await
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_working_state(
+    project: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ProjectWorkingState, CommandError> {
+    core.project_working_state(project).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn close_branch_review(
+    pr: PrId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.close_branch_review(pr).await
+}

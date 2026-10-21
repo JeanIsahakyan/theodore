@@ -98,6 +98,13 @@ pub trait CoreApi: Send + Sync {
     /// Locally-detected conflicting paths (plan "conflicts"); `Unsupported`
     /// on a `git` older than 2.38 — the UI hides the list on that code.
     async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError>;
+    /// A local folder project's checkout: current branch, uncommitted paths.
+    async fn project_working_state(
+        &self,
+        project: String,
+    ) -> Result<theodore_contract::ProjectWorkingState, CommandError>;
+    /// Closes a branch review: its local rows and worktree. Rejects a host PR.
+    async fn close_branch_review(&self, pr: PrId) -> Result<(), CommandError>;
 
     /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
     /// updater endpoint. Not a wire command; the shell calls it directly.
@@ -311,6 +318,15 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn conflicts(&self, _pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {
+        Err(not_ready())
+    }
+    async fn project_working_state(
+        &self,
+        _project: String,
+    ) -> Result<theodore_contract::ProjectWorkingState, CommandError> {
+        Err(not_ready())
+    }
+    async fn close_branch_review(&self, _pr: PrId) -> Result<(), CommandError> {
         Err(not_ready())
     }
 }

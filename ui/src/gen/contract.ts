@@ -651,6 +651,19 @@ export type Project = {
 
 export type ProjectStatus = "cloning" | "ready" | "error";
 
+/**
+ *  `project_working_state`: the folder's checkout, next to the project's
+ *  `default_branch` in the header.
+ */
+export type ProjectWorkingState = {
+	/**  Absolute path of the folder. */
+	path: string,
+	/**  The branch checked out in the folder; `None` on a detached HEAD. */
+	current_branch: string | null,
+	/**  Uncommitted paths: staged, unstaged and untracked. */
+	dirty_files: number,
+};
+
 export type ReactRequest = {
 	pr: PrId,
 	comment: CommentId,

@@ -94,6 +94,8 @@ export const commands = {
 } | null, CommandError>(__TAURI_INVOKE("sandbox_status")),
 	sandboxSetFault: (req: SandboxFaultRequest) => typedError<SandboxStatus, CommandError>(__TAURI_INVOKE("sandbox_set_fault", { req })),
 	sandboxFireEvent: (id: string) => typedError<SandboxStatus, CommandError>(__TAURI_INVOKE("sandbox_fire_event", { id })),
+	projectWorkingState: (project: string) => typedError<ProjectWorkingState, CommandError>(__TAURI_INVOKE("project_working_state", { project })),
+	closeBranchReview: (pr: PrId) => typedError<null, CommandError>(__TAURI_INVOKE("close_branch_review", { pr })),
 };
 
 /* Types */
@@ -524,6 +526,19 @@ export type Project = {
 };
 
 export type ProjectStatus = "cloning" | "ready" | "error";
+
+/**
+ *  `project_working_state`: the folder's checkout, next to the project's
+ *  `default_branch` in the header.
+ */
+export type ProjectWorkingState = {
+	/**  Absolute path of the folder. */
+	path: string,
+	/**  The branch checked out in the folder; `None` on a detached HEAD. */
+	current_branch: string | null,
+	/**  Uncommitted paths: staged, unstaged and untracked. */
+	dirty_files: number,
+};
 
 export type ReactRequest = {
 	pr: PrId,

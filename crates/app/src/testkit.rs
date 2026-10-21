@@ -360,6 +360,10 @@ pub struct FakeGit {
     commit_log_value: Mutex<Vec<CommitLog>>,
     removed_repos: Mutex<Vec<RepoRef>>,
     conflicts_value: Mutex<GitResult<Vec<ConflictEntry>>>,
+    /// `None`: `working_state` is `Unsupported`, like the trait default.
+    working_state_value: Mutex<Option<theodore_ports::WorkingState>>,
+    working_state_calls: Mutex<Vec<PathBuf>>,
+    removed_worktrees: Mutex<Vec<PrRef>>,
 }
 
 /// `GitResult` isn't `Clone` (`GitError` holds a `std::io::Error`); a fake
@@ -397,7 +401,24 @@ impl FakeGit {
             commit_log_value: Mutex::new(Vec::new()),
             removed_repos: Mutex::new(Vec::new()),
             conflicts_value: Mutex::new(Ok(Vec::new())),
+            working_state_value: Mutex::new(None),
+            working_state_calls: Mutex::new(Vec::new()),
+            removed_worktrees: Mutex::new(Vec::new()),
         })
+    }
+
+    pub fn set_working_state(&self, value: theodore_ports::WorkingState) {
+        *self.working_state_value.lock().unwrap() = Some(value);
+    }
+
+    /// Every folder `working_state` was read from.
+    pub fn working_state_calls(&self) -> Vec<PathBuf> {
+        self.working_state_calls.lock().unwrap().clone()
+    }
+
+    /// Every PR `remove_worktree` was called for.
+    pub fn removed_worktrees(&self) -> Vec<PrRef> {
+        self.removed_worktrees.lock().unwrap().clone()
     }
 
     /// Makes `merge_tree_conflicts` return `value` (`Ok(vec![...])`,
@@ -478,7 +499,8 @@ impl GitPort for FakeGit {
             head: head.clone(),
         })
     }
-    async fn remove_worktree(&self, _pr: &PrRef) -> GitResult<()> {
+    async fn remove_worktree(&self, pr: &PrRef) -> GitResult<()> {
+        self.removed_worktrees.lock().unwrap().push(pr.clone());
         Ok(())
     }
     async fn gc_worktrees(&self, _keep: &[PrRef]) -> GitResult<u32> {
@@ -581,6 +603,18 @@ impl GitPort for FakeGit {
         _head: &Sha,
     ) -> GitResult<Vec<ConflictEntry>> {
         clone_git_result(&self.conflicts_value.lock().unwrap())
+    }
+
+    async fn working_state(&self, folder: &Path) -> GitResult<theodore_ports::WorkingState> {
+        self.working_state_calls
+            .lock()
+            .unwrap()
+            .push(folder.to_path_buf());
+        self.working_state_value
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(GitError::Unsupported("working_state"))
     }
 }
 

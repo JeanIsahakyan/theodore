@@ -24,6 +24,7 @@ import {
   Lock,
   Magnifier,
   Sliders,
+  Xmark,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -52,18 +53,18 @@ import type {
   LocalBranch,
   PrState,
   Project,
+  ProjectWorkingState,
   RepoRef,
 } from '../gen/contract';
 import {
   addProject,
   openBranch as openBranchAction,
   pickFolder,
-  refreshProject,
 } from '../actions';
 import { api } from '../core/api';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, CheckIcon, Empty, Hints, K, Shell, Spinner } from './bits';
-import type { ContextMenuItem } from './ContextMenu';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import {
   DisplayRow,
   PeekToggle,
@@ -82,6 +83,21 @@ import { RowsSkeleton } from './Loading';
 import { Peek } from './Peek';
 import { projectActivity } from './project/activity';
 import { branchPr } from './project/branches';
+import { branchReviewMenu, closeBranchReview } from './project/closeReview';
+import {
+  needsAutoRefresh,
+  refreshProjectTracked,
+  refreshingProjects,
+  staleFetchedLabel,
+} from './project/freshness';
+import {
+  hasPullRequests,
+  isLocalFolder,
+  projectTabs,
+  showStatCards,
+  workingStateParts,
+  type ProjectTab,
+} from './project/layout';
 import { noOpenPrsBanner, projectStats } from './project/stats';
 import {
   failingChecksCount,
@@ -89,7 +105,11 @@ import {
   oldestOpenPrAge,
   topAuthors,
 } from './project/summary';
-import { projectPrSections, type ProjectPrSort } from './project/sections';
+import {
+  isBranchReview,
+  projectPrSections,
+  type ProjectPrSort,
+} from './project/sections';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
@@ -658,6 +678,9 @@ const ProjectPrs = observer(function ProjectPrs({
     return seed;
   });
   const banner = noOpenPrsBanner(items);
+  const branchReviewIds = new Set(
+    items.filter(isBranchReview).map((p) => p.id),
+  );
   const order =
     display.layout === 'board'
       ? boardColumns(items, display.sort).flatMap((c) =>
@@ -731,14 +754,18 @@ const ProjectPrs = observer(function ProjectPrs({
             toggle={(id) => setClosed((c) => ({ ...c, [id]: !c[id] }))}
             onSelect={(id) => ui.select(id)}
             onOpen={(id) => ui.go({ name: 'review', pr: id })}
-            row={(id) => (
-              <PrRow
-                id={id}
-                sel={ui.selected === id}
-                picked={false}
-                props={display.props}
-              />
-            )}
+            row={(id) =>
+              branchReviewIds.has(id) ? (
+                <BranchReviewRow id={id} sel={ui.selected === id} />
+              ) : (
+                <PrRow
+                  id={id}
+                  sel={ui.selected === id}
+                  picked={false}
+                  props={display.props}
+                />
+              )
+            }
             empty={
               <Empty
                 icon={<CodePullRequest />}
@@ -749,12 +776,65 @@ const ProjectPrs = observer(function ProjectPrs({
           />
         )}
         {ui.peek &&
-          (ui.selected ? (
-            items.some((p) => p.id === ui.selected) && <Peek id={ui.selected} />
-          ) : (
-            <RepoSummaryPeek items={items} now={Date.now()} />
-          ))}
+          (ui.selected
+            ? items.some((p) => p.id === ui.selected) && (
+                <Peek id={ui.selected} context="project" />
+              )
+            : // Merges, authors, checks: all zero without host PRs.
+              hasPullRequests(items) && (
+                <RepoSummaryPeek items={items} now={Date.now()} />
+              ))}
       </div>
+    </div>
+  );
+});
+
+/** A branch review in the project list: not a host PR, so none of
+ *  `PrRow`'s inbox actions (done, snooze, copy URL) — just the branch, its
+ *  last commit, and a Close review × on hover / in the context menu. */
+const BranchReviewRow = observer(function BranchReviewRow({
+  id,
+  sel,
+}: {
+  id: string;
+  sel: boolean;
+}) {
+  const store = useRootStore();
+  const p = store.models.prSummaries.get(id);
+  const menu = useContextMenu(() => branchReviewMenu(store, id));
+  if (!p) return null;
+  return (
+    <div
+      id={`R-${id}`}
+      className={`prrow group flex h-11 w-full min-w-0 items-center gap-3 ${sel ? 'sel' : ''}`}
+      onContextMenu={menu}
+    >
+      <BranchesRight className="size-4 shrink-0 text-muted" />
+      <span
+        className="min-w-0 max-w-[45%] truncate font-mono text-sm"
+        title={p.head_ref}
+      >
+        {p.head_ref}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm text-muted">
+        {p.title}
+      </span>
+      <span className="shrink-0 text-xs text-muted">
+        vs {p.base_ref} · {ago(p.updated_at)}
+      </span>
+      <Tooltip>
+        <Button
+          isIconOnly
+          size="sm"
+          variant="ghost"
+          aria-label="Close review"
+          className="size-6 min-w-6 shrink-0 rounded-xl text-muted opacity-0 group-hover:opacity-100"
+          onPress={() => void closeBranchReview(store, id)}
+        >
+          <Xmark className="size-3.5" />
+        </Button>
+        <Tooltip.Content>Close review</Tooltip.Content>
+      </Tooltip>
     </div>
   );
 });
@@ -835,9 +915,12 @@ function RepoSummaryPeek({ items, now }: { items: InboxPr[]; now: number }) {
 const ProjectBranches = observer(function ProjectBranches({
   project,
   items,
+  checkedOut,
 }: {
   project: Project;
   items: InboxPr[];
+  /** A local folder's checked-out branch. */
+  checkedOut: string | null;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -886,7 +969,7 @@ const ProjectBranches = observer(function ProjectBranches({
   // A fixed grid, not a table: columns keep their width at any window size
   // and the commit column takes what's left (and truncates).
   const cols =
-    'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_56px_124px] items-center gap-3';
+    'grid grid-cols-[minmax(200px,2fr)_minmax(0,3fr)_88px_56px_124px] items-center gap-3';
   return (
     <div className="branches flex min-h-0 min-w-0 flex-1 flex-col overflow-auto px-6 pb-20">
       <div
@@ -911,6 +994,16 @@ const ProjectBranches = observer(function ProjectBranches({
             >
               <BranchesRight className="size-3.5 shrink-0 text-muted" />
               <span className="truncate">{b.name}</span>
+              {b.name === checkedOut && (
+                <Chip
+                  size="sm"
+                  variant="soft"
+                  color="accent"
+                  className="shrink-0"
+                >
+                  checked out
+                </Chip>
+              )}
               {b.name === project.default_branch && (
                 <Chip size="sm" variant="soft" className="shrink-0">
                   default
@@ -959,25 +1052,45 @@ const ProjectBranches = observer(function ProjectBranches({
   );
 });
 
-type ProjectTab = 'prs' | 'branches' | 'activity';
-
 export const ProjectView = observer(function ProjectView({
   id,
 }: {
   id: string;
 }) {
   const store = useRootStore();
-  const [tab, setTab] = useState<ProjectTab>('prs');
-  const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<ProjectTab | null>(null);
+  const [working, setWorking] = useState<ProjectWorkingState | null>(null);
+  const refreshing = refreshingProjects.has(id);
   const project = store.models.projects.get(id);
   const items = project
     ? store.models.prSummaries.where((p) => sameRepo(p.pr.repo, project.repo))
     : [];
+  const local = !!project && isLocalFolder(project);
+  const ready = project?.status === 'ready';
 
-  const refresh = () => {
-    setRefreshing(true);
-    void refreshProject(store, id).finally(() => setRefreshing(false));
-  };
+  // Re-read after every refresh too: a refresh is when the user expects
+  // the folder's state to be current.
+  useEffect(() => {
+    if (!local || !ready) return;
+    let live = true;
+    void api.projectWorkingState(id).then((s) => live && setWorking(s));
+    return () => {
+      live = false;
+    };
+  }, [id, local, ready, project?.last_fetched_at]);
+
+  const refresh = () => void refreshProjectTracked(store, id);
+
+  // Opening a page that's more than a few minutes old refreshes it.
+  useEffect(() => {
+    if (ready && needsAutoRefresh(project?.last_fetched_at, Date.now())) {
+      refresh();
+    }
+    // Once per page open, not on every `last_fetched_at` change the refresh
+    // itself causes. A page opened mid-clone is left alone: the core
+    // refreshes a project itself as soon as its clone is ready.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (!project) {
     return (
@@ -991,12 +1104,16 @@ export const ProjectView = observer(function ProjectView({
   const ghUrl = hostRepoUrl(project.repo);
   const viewerLogin = store.ephemeral.viewer?.login ?? null;
   const stats = projectStats(items, viewerLogin, Date.now());
+  const tabs = projectTabs(local, items);
+  const shown = tab && tabs.includes(tab) ? tab : tabs[0]!;
   const meta = [
-    project.default_branch,
-    project.last_fetched_at != null
-      ? `fetched ${ago(project.last_fetched_at)} ago`
-      : null,
+    // A local folder's branches go on the working-state line below.
+    local ? null : project.default_branch,
+    staleFetchedLabel(project.last_fetched_at, Date.now()),
   ].filter((s): s is string => !!s);
+  const workingLine = local
+    ? workingStateParts(working, project.default_branch)
+    : [];
 
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
@@ -1004,7 +1121,7 @@ export const ProjectView = observer(function ProjectView({
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Typography.Heading
             level={6}
-            className="shrink-0 truncate"
+            className="min-w-0 truncate"
             title={projectLabel(project)}
           >
             {projectLabel(project)}
@@ -1019,14 +1136,18 @@ export const ProjectView = observer(function ProjectView({
             </Tooltip>
           )}
           {meta.length > 0 && (
-            <span className="min-w-0 truncate text-xs text-muted">
+            // Gives way before the title does.
+            <span className="min-w-0 shrink-[4] truncate text-xs text-muted">
               {meta.join(' · ')}
             </span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {project.status === 'error' && (
-            <span className="text-xs text-danger">
+            <span
+              className="max-w-[220px] truncate text-xs text-danger"
+              title={project.error ?? undefined}
+            >
               {project.error ?? 'Failed to clone'}
             </span>
           )}
@@ -1050,7 +1171,11 @@ export const ProjectView = observer(function ProjectView({
               isPending={refreshing}
               onPress={refresh}
             >
-              <ArrowRotateLeft className="size-4" />
+              {refreshing ? (
+                <Spinner />
+              ) : (
+                <ArrowRotateLeft className="size-4" />
+              )}
             </Button>
             <Tooltip.Content>Refresh project</Tooltip.Content>
           </Tooltip>
@@ -1064,47 +1189,83 @@ export const ProjectView = observer(function ProjectView({
           {project.description}
         </p>
       )}
-      <div className="flex shrink-0 gap-2 px-6 py-3">
-        <StatCard label="Open" value={stats.open} />
-        <StatCard label="Needs your review" value={stats.needsReview} />
-        <StatCard label="Yours" value={stats.yours} />
-        <StatCard
-          label="Failing checks"
-          value={stats.failingChecks}
-          danger={stats.failingChecks > 0}
-        />
-        <StatCard label="Merged 7d" value={stats.merged7d} />
-      </div>
+      {local && (
+        // Every part may shrink (with an ellipsis) so a long path or branch
+        // name never pushes the line past the window.
+        <p className="flex min-w-0 items-center gap-1.5 overflow-hidden px-6 pb-1 text-xs text-muted">
+          <span
+            className="min-w-0 truncate font-mono"
+            title={project.path ?? undefined}
+          >
+            {project.path}
+          </span>
+          {workingLine.map((part) => (
+            <span
+              key={part}
+              className="min-w-0 truncate whitespace-nowrap"
+              title={part}
+            >
+              · {part}
+            </span>
+          ))}
+        </p>
+      )}
       <Tabs
-        selectedKey={tab}
+        selectedKey={shown}
         onSelectionChange={(k) => setTab(k as ProjectTab)}
-        className="px-6 pb-3"
+        className="w-fit max-w-full px-6 pb-2 pt-1.5"
       >
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="Project sections">
-            <Tabs.Tab id="prs" className="gap-1.5">
-              <CodePullRequest className="size-4" />
-              Pull requests
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="branches" className="gap-1.5">
-              <BranchesRight className="size-4" />
-              Branches
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="activity" className="gap-1.5">
-              <ChartColumn className="size-4" />
-              Activity
-              <Tabs.Indicator />
-            </Tabs.Tab>
+        <Tabs.ListContainer className="w-fit max-w-full">
+          <Tabs.List aria-label="Project sections" className="p-0.5">
+            {tabs.map((t) => (
+              <Tabs.Tab
+                key={t}
+                id={t}
+                className="h-7 w-auto gap-1.5 whitespace-nowrap px-3 text-xs"
+              >
+                {t === 'prs' ? (
+                  <CodePullRequest className="size-3.5" />
+                ) : t === 'branches' ? (
+                  <BranchesRight className="size-3.5" />
+                ) : (
+                  <ChartColumn className="size-3.5" />
+                )}
+                {t === 'prs'
+                  ? local
+                    ? 'Branch reviews'
+                    : 'Pull requests'
+                  : t === 'branches'
+                    ? 'Branches'
+                    : 'Activity'}
+                <Tabs.Indicator />
+              </Tabs.Tab>
+            ))}
           </Tabs.List>
         </Tabs.ListContainer>
       </Tabs>
+      {showStatCards(items) && (
+        // Wraps rather than squeezing labels to nothing in a narrow window.
+        <div className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(108px,1fr))] gap-2 px-6 pb-3 pt-1">
+          <StatCard label="Open" value={stats.open} />
+          <StatCard label="Needs your review" value={stats.needsReview} />
+          <StatCard label="Yours" value={stats.yours} />
+          <StatCard
+            label="Failing checks"
+            value={stats.failingChecks}
+            danger={stats.failingChecks > 0}
+          />
+          <StatCard label="Merged 7d" value={stats.merged7d} />
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
-        {tab === 'prs' ? (
+        {shown === 'prs' ? (
           <ProjectPrs items={items} />
-        ) : tab === 'branches' ? (
-          <ProjectBranches project={project} items={items} />
+        ) : shown === 'branches' ? (
+          <ProjectBranches
+            project={project}
+            items={items}
+            checkedOut={working?.current_branch ?? null}
+          />
         ) : (
           <ActivityTab items={items} />
         )}
@@ -1129,7 +1290,9 @@ function StatCard({
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-2xl bg-default/60 px-3 py-2">
-      <span className="truncate text-xs text-muted">{label}</span>
+      <span className="truncate text-xs text-muted" title={label}>
+        {label}
+      </span>
       <span
         className={`text-lg font-semibold tabular-nums ${danger ? 'text-danger' : ''}`}
       >
