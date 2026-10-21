@@ -85,7 +85,12 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let go = SubmenuBuilder::new(app, "Go")
         .item(&i("go-inbox", "Inbox", Some("CmdOrCtrl+Shift+I"))?)
-        .item(&i("go-mine", "My PRs", Some("CmdOrCtrl+Shift+M"))?)
+        .item(&i("go-prs", "Pull Requests", Some("CmdOrCtrl+Shift+P"))?)
+        .item(&i(
+            "go-mine",
+            "My Pull Requests",
+            Some("CmdOrCtrl+Shift+M"),
+        )?)
         .item(&i("go-tasks", "Tasks", Some("CmdOrCtrl+Shift+T"))?)
         .separator()
         .item(&i("next-tab", "Next Tab", Some("Ctrl+Tab"))?)

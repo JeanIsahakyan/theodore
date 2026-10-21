@@ -35,7 +35,7 @@ describe('workspace snapshots', () => {
 
     ui.switchWorkspace(WEB);
     expect(ui.workspace).toBe(WEB);
-    expect(ui.tabs).toEqual([{ name: 'project', id: WEB }]);
+    expect(ui.tabs).toEqual([{ name: 'prs' }]);
     expect(ui.selected).toBeNull();
     expect(ui.peek).toBe(true);
     expect(ui.inboxDisplay).toBeNull();
@@ -53,10 +53,7 @@ describe('workspace snapshots', () => {
     ui.go({ name: 'inbox' }, { newTab: true });
     const next = new UiStore();
     expect(next.workspace).toBe(WEB);
-    expect(next.tabs).toEqual([
-      { name: 'project', id: WEB },
-      { name: 'inbox' },
-    ]);
+    expect(next.tabs).toEqual([{ name: 'prs' }, { name: 'inbox' }]);
     expect(next.route).toEqual({ name: 'inbox' });
   });
 
@@ -106,11 +103,11 @@ describe('workspace snapshots', () => {
     expect(s.reviewPos).toEqual({});
   });
 
-  it('closing the last tab of a project lands on its Overview', () => {
+  it('closing the last tab of a project lands on its Pull requests', () => {
     const ui = new UiStore();
     ui.switchWorkspace(WEB);
-    ui.closeTab({ name: 'project', id: WEB });
-    expect(ui.tabs).toEqual([{ name: 'project', id: WEB }]);
+    ui.closeTab({ name: 'prs' });
+    expect(ui.tabs).toEqual([{ name: 'prs' }]);
   });
 
   it('forgets a removed project and leaves it for All', () => {
@@ -133,7 +130,7 @@ describe('placement on navigation', () => {
         : { ws: ui.workspace, route };
     ui.go(review(`${API}#2`));
     expect(ui.workspace).toBe(API);
-    expect(ui.tabs).toEqual([{ name: 'project', id: API }, review(`${API}#2`)]);
+    expect(ui.tabs).toEqual([{ name: 'prs' }, review(`${API}#2`)]);
     expect(loadSnapshot(ALL)?.tabs).toEqual([{ name: 'inbox' }]);
   });
 

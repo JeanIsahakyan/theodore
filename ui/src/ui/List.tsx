@@ -246,11 +246,14 @@ export const PrRow = observer(function PrRow({
   sel,
   picked,
   props = ROW_PROPS,
+  repo = true,
 }: {
   id: PrId;
   sel: boolean;
   picked: boolean;
   props?: RowProp[];
+  /** The repo name before the number; off where every row is one repo's. */
+  repo?: boolean;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -364,8 +367,10 @@ export const PrRow = observer(function PrRow({
            *  branch review has no number, only its branch. */}
           {p.url ? (
             <>
-              <span className="min-w-0 truncate">{p.pr.repo.name}</span>
-              <span className="shrink-0">&nbsp;#{p.pr.number}</span>
+              {repo && (
+                <span className="min-w-0 truncate">{p.pr.repo.name}&nbsp;</span>
+              )}
+              <span className="shrink-0">#{p.pr.number}</span>
             </>
           ) : (
             <span className="min-w-0 truncate">{p.head_ref}</span>

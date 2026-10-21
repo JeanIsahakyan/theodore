@@ -27,8 +27,9 @@ a review.
 - Triage a review request: take, decline or reassign it.
 - Keyboard-first: full list navigation, ⌘K command palette, `?` for shortcuts.
 
-### My PRs
-- A view of PRs you authored, filtered by the signed-in host account.
+### Pull requests and branches
+- One list of the workspace's PRs, filtered to All (open), Mine (grouped by what each needs to merge), Drafts or Merged.
+- A Branches page per project: ahead/behind, the PR a branch belongs to, and a local folder's checked-out branch and uncommitted files.
 
 ### Projects and branch reviews
 - Add, browse and remove projects from any configured host.

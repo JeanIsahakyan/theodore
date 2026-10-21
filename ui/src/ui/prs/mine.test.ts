@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PrSummary } from '../gen/contract';
-import { gatesFor, nextStep } from './Mine';
+import type { PrSummary } from '../../gen/contract';
+import { gatesFor, nextStep } from './mine';
 
 const summary = (over: Partial<PrSummary> = {}): PrSummary => ({
   pr: {

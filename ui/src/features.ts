@@ -15,7 +15,7 @@ export const FEATURES = {
   /** `triage` (take / decline / reassign a review request) and
    *  `rerun_check` land this wave. */
   triage: true,
-  /** `viewer` returns the authenticated host user — My PRs filters on it. */
+  /** `viewer` returns the authenticated host user — the Mine filter uses it. */
   currentUser: true,
   /** `list_host_repos` / `add_project` / `remove_project` / `refresh_project`
    *  land this wave — projects can be added, browsed and removed. */

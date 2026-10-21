@@ -14,9 +14,15 @@ import {
   reaction,
 } from 'mobx';
 import type { PrId } from '../gen/contract';
-import { ALL, homeRoute, type WorkspaceId } from '../core/workspaces';
+import {
+  ALL,
+  homeRoute,
+  migrateRoute,
+  type WorkspaceId,
+} from '../core/workspaces';
 import type { ContextMenuItem } from '../ui/ContextMenu';
 import type { Display } from '../ui/List';
+import { isPrFilter, type PrFilter } from '../ui/prs/filters';
 
 export type SettingsPage =
   | 'account'
@@ -36,7 +42,11 @@ export interface ContextMenuState {
 
 export type Route =
   | { name: 'inbox' }
-  | { name: 'mine' }
+  /** One list of the workspace's PRs; the filter (All / Mine / Drafts /
+   *  Merged) is `UiStore.prsFilter`, saved per workspace. */
+  | { name: 'prs' }
+  /** The active project's branches; only under a single project. */
+  | { name: 'branches' }
   | { name: 'tasks' }
   /** The standalone skills library: every source, filterable, with the
    *  SKILL.md editor — unlike the in-review `SkillBrowser` popover, this
@@ -44,8 +54,6 @@ export type Route =
   | { name: 'skills' }
   | { name: 'settings'; page: SettingsPage }
   | { name: 'review'; pr: PrId }
-  /** A connected repository: header, Pull requests and Branches tabs. */
-  | { name: 'project'; id: string }
   /** A blank tab: paste a PR link to turn it into a review. */
   | { name: 'new'; id: string };
 
@@ -101,6 +109,8 @@ export interface UiSnapshot {
   inboxShowDone: boolean;
   /** Tasks filter tab; `null` = the default one. */
   tasksTab: string | null;
+  /** The Pull requests page's filter. */
+  prsFilter: PrFilter;
   reviewPos: Record<PrId, ReviewPos>;
 }
 
@@ -117,7 +127,47 @@ export function defaultSnapshot(ws: WorkspaceId): UiSnapshot {
     inboxDisplay: null,
     inboxShowDone: false,
     tasksTab: null,
+    prsFilter: 'all',
     reviewPos: {},
+  };
+}
+
+const uniqueRoutes = (routes: Route[]): Route[] =>
+  routes.filter((r, i) => routes.findIndex((x) => sameRoute(x, r)) === i);
+
+/** A saved snapshot, from any version, over the defaults: routes that no
+ *  longer exist become their replacements (`migrateRoute`), unknown ones
+ *  are dropped, and a saved My PRs tab turns the filter to Mine. `null`
+ *  when nothing usable is left. */
+export function migrateSnapshot(
+  raw: unknown,
+  ws: WorkspaceId,
+): UiSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const v = raw as Partial<Record<keyof UiSnapshot, unknown>>;
+  if (!Array.isArray(v.tabs) || !v.tabs.length || !v.route) return null;
+  const base = defaultSnapshot(ws);
+  const tabs = uniqueRoutes(
+    v.tabs.flatMap((t: unknown) => migrateRoute(t, ws) ?? []),
+  );
+  if (!tabs.length) return null;
+  const route = migrateRoute(v.route, ws) ?? tabs[0]!;
+  const back = migrateRoute(v.back, ws) ?? base.back;
+  const hadMine = [...v.tabs, v.route].some(
+    (t) => (t as { name?: unknown } | null)?.name === 'mine',
+  );
+  const prsFilter = isPrFilter(v.prsFilter)
+    ? v.prsFilter
+    : hadMine
+      ? 'mine'
+      : base.prsFilter;
+  return {
+    ...base,
+    ...(v as Partial<UiSnapshot>),
+    tabs: tabs.some((t) => sameRoute(t, route)) ? tabs : [...tabs, route],
+    route,
+    back,
+    prsFilter,
   };
 }
 
@@ -125,11 +175,10 @@ export function defaultSnapshot(ws: WorkspaceId): UiSnapshot {
  *  or it can't be read. */
 export function loadSnapshot(ws: WorkspaceId): UiSnapshot | null {
   try {
-    const v = JSON.parse(
-      localStorage.getItem(wsKey(ws)) ?? 'null',
-    ) as Partial<UiSnapshot> | null;
-    if (!v || !Array.isArray(v.tabs) || !v.tabs.length || !v.route) return null;
-    return { ...defaultSnapshot(ws), ...v } as UiSnapshot;
+    return migrateSnapshot(
+      JSON.parse(localStorage.getItem(wsKey(ws)) ?? 'null'),
+      ws,
+    );
   } catch {
     return null;
   }
@@ -145,16 +194,18 @@ export function migrateLegacyTabs(): void {
   if (raw === null) return;
   if (localStorage.getItem(wsKey(ALL)) === null) {
     try {
-      const v = JSON.parse(raw) as { tabs?: Route[]; route?: Route } | null;
+      const v = JSON.parse(raw) as {
+        tabs?: { name?: string }[];
+        route?: { name?: string };
+      } | null;
       if (v && Array.isArray(v.tabs) && v.route) {
-        // A project page is now that project's own workspace, not All's.
-        const tabs = v.tabs.filter((t) => t.name !== 'project');
+        // A project page belongs to that project's own workspace, not All's.
+        const tabs = v.tabs.filter((t) => t?.name !== 'project');
         const route = v.route.name === 'project' ? tabs[0] : v.route;
-        if (tabs.length && route) {
+        const s = route && migrateSnapshot({ tabs, route }, ALL);
+        if (s) {
           saveSnapshot(ALL, {
-            ...defaultSnapshot(ALL),
-            tabs,
-            route,
+            ...s,
             aside: localStorage.getItem(LS_LEGACY_ASIDE) !== '0',
           });
         }
@@ -189,6 +240,7 @@ export class UiStore {
   inboxDisplay: Display | null = null;
   inboxShowDone = false;
   tasksTab: string | null = null;
+  prsFilter: PrFilter = 'all';
   /** Per PR, read once when its review opens — not observable, so saving
    *  the scroll position doesn't re-render anything. */
   reviewPos: Record<PrId, ReviewPos> = {};
@@ -223,6 +275,7 @@ export class UiStore {
       inboxDisplay: observableRef,
       inboxShowDone: observable,
       tasksTab: observable,
+      prsFilter: observable,
       asideIsDrawer: observable,
       asideDrawerOpen: observable,
       asideShown: computed,
@@ -251,6 +304,7 @@ export class UiStore {
       inboxDisplay: this.inboxDisplay,
       inboxShowDone: this.inboxShowDone,
       tasksTab: this.tasksTab,
+      prsFilter: this.prsFilter,
       reviewPos: this.reviewPos,
     };
   }
@@ -266,6 +320,7 @@ export class UiStore {
     this.inboxDisplay = s.inboxDisplay;
     this.inboxShowDone = s.inboxShowDone;
     this.tasksTab = s.tasksTab;
+    this.prsFilter = s.prsFilter;
     this.reviewPos = s.reviewPos;
   }
 
@@ -346,6 +401,19 @@ export class UiStore {
     runInAction(() => {
       this.tasksTab = t;
     });
+  }
+
+  setPrsFilter(f: PrFilter): void {
+    runInAction(() => {
+      this.prsFilter = f;
+    });
+  }
+
+  /** Pull requests, optionally with a filter — set in the workspace the
+   *  page lands in (a local folder has none: it lands on Branches). */
+  goPrs(filter?: PrFilter): void {
+    this.go({ name: 'prs' });
+    if (filter && this.route.name === 'prs') this.setPrsFilter(filter);
   }
 
   finishOnboarding(): void {

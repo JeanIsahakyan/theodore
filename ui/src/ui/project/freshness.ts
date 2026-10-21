@@ -2,9 +2,12 @@
  *  old. The core's poller refreshes host projects every ~10 minutes in the
  *  background, so a "fetched … ago" only shows once that has fallen behind
  *  (offline, a failed fetch) — not as a permanent timestamp. */
+import { useEffect } from 'react';
 import { observable, runInAction } from 'mobx';
 import { refreshProject } from '../../actions';
+import type { Project } from '../../gen/contract';
 import type { RootStore } from '../../stores/RootStore';
+import { useRootStore } from '../../stores/context';
 import { ago } from '../List';
 
 const MINUTE = 60_000;
@@ -48,4 +51,22 @@ export async function refreshProjectTracked(
   } finally {
     runInAction(() => refreshingProjects.delete(id));
   }
+}
+
+/** Opening a project's page when its data is a few minutes old refreshes
+ *  it — once per open, not on every `last_fetched_at` change the refresh
+ *  itself causes. A project mid-clone is left alone: the core refreshes it
+ *  itself as soon as its clone is ready. */
+export function useProjectAutoRefresh(project: Project | null): void {
+  const store = useRootStore();
+  const id = project?.id;
+  useEffect(() => {
+    if (
+      project?.status === 'ready' &&
+      needsAutoRefresh(project.last_fetched_at, Date.now())
+    ) {
+      void refreshProjectTracked(store, project.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 }

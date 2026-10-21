@@ -4,18 +4,35 @@
  * one workspace at a time, the way a team switcher works. ⌃0 / ⌃1…9 switch
  * without opening it; the menu shows each workspace's waiting-PR count.
  */
-import { ChevronDown, Gear, House, Plus } from '@gravity-ui/icons';
+import {
+  ArrowRotateLeft,
+  ArrowUpRightFromSquare,
+  ChevronDown,
+  Gear,
+  House,
+  Plus,
+} from '@gravity-ui/icons';
 import { Button, Dropdown, Label } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
 import { ALL } from '../core/workspaces';
 import { FEATURES } from '../features';
-import { useUi, useWorkspaces } from '../stores/context';
+import { useRootStore, useUi, useWorkspaces } from '../stores/context';
+import { Spinner } from './bits';
 import { Logo } from './Logo';
-import { ProjectStatusDot, projectLabel } from './Projects';
+import { refreshProjectTracked, refreshingProjects } from './project/freshness';
+import { ProjectStatusDot, hostRepoUrl, projectLabel } from './Projects';
 
 const ADD = 'add-project';
 const SETTINGS = 'project-settings';
+const REFRESH = 'refresh-project';
+const OPEN_HOST = 'open-on-host';
+
+const HOST_NAME = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  bitbucket: 'Bitbucket',
+};
 
 function Item({
   id,
@@ -65,6 +82,7 @@ function Item({
 }
 
 export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
+  const store = useRootStore();
   const ui = useUi();
   const ws = useWorkspaces();
   const active = ws.active;
@@ -73,6 +91,8 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
   const full = active ? projectLabel(active) : 'All projects';
   const name = active ? (full.split('/').pop() ?? full) : full;
   const badges = ws.badges;
+  const hostUrl = active ? hostRepoUrl(active.repo) : null;
+  const refreshing = !!active && refreshingProjects.has(active.id);
 
   return (
     <Dropdown>
@@ -95,6 +115,10 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
             if (key === ADD) ui.openModal('add-project');
             else if (key === SETTINGS)
               ui.go({ name: 'settings', page: 'projects' });
+            else if (key === REFRESH && active)
+              void refreshProjectTracked(store, active.id);
+            else if (key === OPEN_HOST && hostUrl)
+              window.open(hostUrl, '_blank');
             else ws.switchTo(key);
           }}
         >
@@ -118,6 +142,34 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
               />
             ))}
           </Dropdown.Section>
+          {active ? (
+            <Dropdown.Section
+              aria-label="This project"
+              className="mt-1 border-t border-separator pt-1"
+            >
+              <Item
+                id={REFRESH}
+                icon={refreshing ? <Spinner /> : <ArrowRotateLeft />}
+                label={refreshing ? 'Refreshing…' : 'Refresh project'}
+                isDisabled={refreshing}
+                check={false}
+              />
+              {hostUrl && active.repo.host !== 'local' ? (
+                <Item
+                  id={OPEN_HOST}
+                  icon={<ArrowUpRightFromSquare />}
+                  label={`Open on ${HOST_NAME[active.repo.host]}`}
+                  check={false}
+                />
+              ) : null}
+              <Item
+                id={SETTINGS}
+                icon={<Gear />}
+                label="Project settings"
+                check={false}
+              />
+            </Dropdown.Section>
+          ) : null}
           <Dropdown.Section
             aria-label="Projects"
             className="mt-1 border-t border-separator pt-1"
@@ -129,12 +181,14 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
               isDisabled={!FEATURES.projects}
               check={false}
             />
-            <Item
-              id={SETTINGS}
-              icon={<Gear />}
-              label="Project settings"
-              check={false}
-            />
+            {!active && (
+              <Item
+                id={SETTINGS}
+                icon={<Gear />}
+                label="Project settings"
+                check={false}
+              />
+            )}
           </Dropdown.Section>
         </Dropdown.Menu>
       </Dropdown.Popover>
