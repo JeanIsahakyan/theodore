@@ -1,41 +1,10 @@
-/** What a project page shows, from what the project has: a local folder
- *  opens on Branches and drops the PR-only parts that would sit empty; a
- *  host repo keeps all three tabs. */
+/** What the Branches page needs to know about a project: whether it's a
+ *  local folder, and its working-state line. */
 import type { Project, ProjectWorkingState } from '../../gen/contract';
-import type { InboxPr } from '../List';
-import { projectActivity } from './activity';
-import { isBranchReview } from './sections';
-
-export type ProjectTab = 'prs' | 'branches' | 'activity';
 
 /** A folder on this machine, not a host repo. */
 export function isLocalFolder(p: Pick<Project, 'repo' | 'path'>): boolean {
   return p.repo.host === 'local' && !!p.path;
-}
-
-/** Real host pull requests, not branch reviews. */
-export function hasPullRequests(items: InboxPr[]): boolean {
-  return items.some((p) => !isBranchReview(p));
-}
-
-/** The Open / Needs review / … stat cards: only while host PRs are open.
- *  With none, a row of zeros says nothing the "No open PRs · last merge"
- *  banner (or an empty list) doesn't already. */
-export function showStatCards(items: InboxPr[]): boolean {
-  return items.some(
-    (p) => (p.state === 'open' || p.state === 'draft') && !isBranchReview(p),
-  );
-}
-
-/** Tabs in display order; the first is where the page opens. A local
- *  folder has no host PRs: its list tab only appears once a branch review
- *  exists, and Activity (host PR events) only if there are any. */
-export function projectTabs(local: boolean, items: InboxPr[]): ProjectTab[] {
-  if (!local) return ['prs', 'branches', 'activity'];
-  const tabs: ProjectTab[] = ['branches'];
-  if (items.length) tabs.push('prs');
-  if (projectActivity(items).length) tabs.push('activity');
-  return tabs;
 }
 
 /** The header's working-state line for a local folder: the checked-out

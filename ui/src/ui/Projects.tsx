@@ -28,7 +28,6 @@ import { addProject, pickFolder } from '../actions';
 import { api } from '../core/api';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Empty, Shell, Spinner } from './bits';
-import type { ContextMenuItem } from './ContextMenu';
 import { ago, type InboxPr } from './List';
 import { RowsSkeleton } from './Loading';
 
@@ -349,19 +348,4 @@ export function ProjectStatusDot({ p }: { p: Project }) {
     );
   }
   return <span className="size-2 rounded-full bg-success" />;
-}
-
-export function projectContextMenu(opts: {
-  onRefresh: () => void;
-  onRemove: () => void;
-}): ContextMenuItem[] {
-  return [
-    { id: 'refresh', label: 'Refresh', onAction: opts.onRefresh },
-    {
-      id: 'remove',
-      label: 'Remove project',
-      danger: true,
-      onAction: opts.onRemove,
-    },
-  ];
 }
