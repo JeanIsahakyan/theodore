@@ -96,6 +96,12 @@ export const commands = {
 	sandboxFireEvent: (id: string) => typedError<SandboxStatus, CommandError>(__TAURI_INVOKE("sandbox_fire_event", { id })),
 	projectWorkingState: (project: string) => typedError<ProjectWorkingState, CommandError>(__TAURI_INVOKE("project_working_state", { project })),
 	closeBranchReview: (pr: PrId) => typedError<null, CommandError>(__TAURI_INVOKE("close_branch_review", { pr })),
+	createSpace: (req: CreateSpaceRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("create_space", { req })),
+	listSpaces: (project: string | null) => typedError<Space[], CommandError>(__TAURI_INVOKE("list_spaces", { project })),
+	spaceSend: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send", { req })),
+	spaceStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("space_stop", { space })),
+	spaceReview: (req: SpaceReviewRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("space_review", { req })),
+	archiveSpace: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("archive_space", { space })),
 };
 
 /* Types */
@@ -193,6 +199,21 @@ export type ConflictFile = {
  *  (plan "conflicts"); `other` covers any future kind `git` adds.
  */
 export type ConflictKind = "content" | "add_add" | "modify_delete" | "rename_delete" | "rename_rename" | "directory_file" | "submodule" | "other";
+
+export type CreateSpaceRequest = {
+	project: string,
+	/**  What should change. Sent as the first turn unless empty. */
+	goal: string,
+	/**  Defaults to a slug of the goal. */
+	name?: string | null,
+	/**  Defaults to `theo/<name>`. */
+	branch?: string | null,
+	/**  Defaults to the project's default branch. */
+	base?: string | null,
+	/**  Defaults to the `agents.chat` setting. */
+	agent?: AgentId | null,
+	model?: string | null,
+};
 
 export type DelegateRequest = {
 	task: TaskId,
@@ -691,6 +712,75 @@ export type SkillInfo = {
 	/**  `built-in`, `~/.claude/skills` or `<owner>/<repo> · .claude/skills` */
 	source: string,
 };
+
+/**
+ *  Synced row `space`, id = `Space::id`. Core-owned: written only by the
+ *  space commands, never by a client transaction.
+ */
+export type Space = {
+	id: string,
+	/**  `Project::id` the space belongs to. */
+	project: string,
+	name: string,
+	/**  What the space is for; sent as the first turn. */
+	goal: string,
+	/**  Branch name the work is pushed to once shipped (`theo/<slug>`). */
+	branch: string,
+	/**  Base branch name, and the commit the space forked from. */
+	base: string,
+	base_sha: Sha,
+	/**  Last checkpoint (`refs/theodore/spaces/<id>`). */
+	head_sha: Sha,
+	/**  Absolute path of the space's worktree. */
+	worktree: string,
+	status: SpaceStatus,
+	agent: AgentId,
+	model?: string | null,
+	mode: SpaceMode,
+	/**  The branch review (`open_branch` plumbing) the live diff and Review use. */
+	review_pr?: PrId | null,
+	/**  The host PR, once opened: the link from drafting to review. */
+	pr?: PrId | null,
+	/**  Sum of every finished turn's usage (the per-space budget reads it). */
+	usage: Usage,
+	turns: number,
+	/**
+	 *  Run id of the turn in flight (`space:<id>:<message>`); its streaming
+	 *  text arrives as `Ephemeral::AgentDelta` under this id.
+	 */
+	run?: string | null,
+	error?: string | null,
+	created_at: number,
+	updated_at: number,
+};
+
+/**  What the agent may do in a turn (docs/spaces.md §5). */
+export type SpaceMode =
+/**  Read, grep, MCP; no writes. */
+"ask" |
+/**  Edit files inside the space. */
+"edit";
+
+export type SpaceReviewRequest = {
+	space: string,
+	/**  Also group the diff by meaning (Review); `false` for the live diff. */
+	group: boolean,
+};
+
+export type SpaceSendRequest = {
+	space: string,
+	text: string,
+	/**  Switches the space's agent from this turn on. */
+	agent?: AgentId | null,
+	model?: string | null,
+	mode?: SpaceMode | null,
+};
+
+export type SpaceStatus =
+/**  No turn running. */
+"idle" | "running" |
+/**  The last turn errored, was interrupted, or the worktree is gone. */
+"failed" | "archived";
 
 export type SubmitReviewRequest = {
 	pr: PrId,

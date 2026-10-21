@@ -137,6 +137,43 @@ pub trait CoreApi: Send + Sync {
     async fn sandbox_fire_event(&self, _id: String) -> Result<SandboxStatus, CommandError> {
         Err(not_sandbox())
     }
+
+    // ── spaces (docs/spaces.md) ──────────────────────────────────────────
+
+    /// Worktree + checkpoint ref at the base; sends `goal` as turn 1.
+    async fn create_space(
+        &self,
+        _req: theodore_contract::CreateSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Spaces of one project, or all.
+    async fn list_spaces(
+        &self,
+        _project: Option<String>,
+    ) -> Result<Vec<theodore_contract::Space>, CommandError> {
+        Err(not_ready())
+    }
+    /// Starts one agent turn; returns the stored message id.
+    async fn space_send(
+        &self,
+        _req: theodore_contract::SpaceSendRequest,
+    ) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    async fn space_stop(&self, _space: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Opens (or refreshes) the space's branch review.
+    async fn space_review(
+        &self,
+        _req: theodore_contract::SpaceReviewRequest,
+    ) -> Result<OpenPrResponse, CommandError> {
+        Err(not_ready())
+    }
+    async fn archive_space(&self, _space: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
 }
 
 fn not_sandbox() -> CommandError {
