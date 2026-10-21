@@ -141,13 +141,13 @@ export const COL: Record<RowProp, string> = {
   age: '40px',
 };
 
-interface Display {
+export interface Display {
   groupBy: 'section' | 'status' | 'repo' | 'none';
   sort: 'activity' | 'size';
   props: RowProp[];
 }
 
-const DEFAULT_DISPLAY: Display = {
+export const DEFAULT_DISPLAY: Display = {
   groupBy: 'section',
   sort: 'activity',
   props: ROW_PROPS,
@@ -970,10 +970,12 @@ export const Inbox = observer(function Inbox() {
   const store = useRootStore();
   const ui = useUi();
   const [refreshing, setRefreshing] = useState(false);
-  const [showDone, setShowDone] = useState(false);
-  const [display, setDisplayState] = useState<Display>(DEFAULT_DISPLAY);
+  // Per workspace, in its UI snapshot.
+  const showDone = ui.inboxShowDone;
+  const setShowDone = (v: boolean) => ui.setInboxShowDone(v);
+  const display = ui.inboxDisplay ?? DEFAULT_DISPLAY;
   const setDisplay = (patch: Partial<Display>) =>
-    setDisplayState((d) => ({ ...d, ...patch }));
+    ui.setInboxDisplay({ ...display, ...patch });
 
   useEffect(() => {
     void refreshInbox(store);
@@ -985,7 +987,9 @@ export const Inbox = observer(function Inbox() {
     void refreshInbox(store).finally(() => setRefreshing(false));
   };
 
-  const prs = store.models.prSummaries.all().filter(inInbox);
+  const prs = store.workspaces
+    .scopePrs(store.models.prSummaries.all())
+    .filter(inInbox);
   const inboxStates = store.models.inboxStates.all();
   // First state per PR, as `find` would pick — one pass, not one per row.
   const stateByPr = new Map<string, (typeof inboxStates)[number]>();

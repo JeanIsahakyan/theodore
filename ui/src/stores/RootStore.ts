@@ -8,12 +8,15 @@ import { windowTitle } from '../ui/sandbox/sandbox';
 import { setCommandFailureHandler } from '../core/api';
 import { EphemeralStore } from './EphemeralStore';
 import { UiStore } from './UiStore';
+import { WorkspaceStore } from './WorkspaceStore';
+import { ALL } from '../core/workspaces';
 
 export class RootStore {
   readonly sync = new SyncClient();
   readonly models: ModelAccessors = modelAccessors(this.sync.pool);
   readonly ephemeral = new EphemeralStore();
   readonly ui = new UiStore();
+  readonly workspaces = new WorkspaceStore(this.models, this.ui);
 
   /** Revision at `<pr>@<head>`; immutable once fetched. */
   readonly revisions: ResourceCache<Revision> = resourceCache({ limit: 50 });
@@ -23,6 +26,7 @@ export class RootStore {
   private unlistenEphemeral: (() => void) | undefined;
   private disposeTitle: (() => void) | undefined;
   private disposeViewerRetry: (() => void) | undefined;
+  private disposeGoneWorkspace: (() => void) | undefined;
 
   async start(): Promise<void> {
     setCommandFailureHandler((f) =>
@@ -43,10 +47,23 @@ export class RootStore {
     void loadAppInfo(this);
     await this.sync.start();
     void loadViewer(this);
+    // The active project is gone (removed here or on another device) once
+    // the pool is loaded: fall back to All.
+    this.disposeGoneWorkspace = reaction(
+      () =>
+        this.sync.status === 'online' &&
+        this.ui.workspace !== ALL &&
+        !this.models.projects.get(this.ui.workspace),
+      (gone) => {
+        if (gone) this.workspaces.forget(this.ui.workspace);
+      },
+      { fireImmediately: true },
+    );
     // The viewer fetch fails while the host rejects the token or is
     // offline; once it's healthy again, fetch it then.
     this.disposeViewerRetry = reaction(
-      () => this.ephemeral.hostStatus.authOk && this.ephemeral.hostStatus.online,
+      () =>
+        this.ephemeral.hostStatus.authOk && this.ephemeral.hostStatus.online,
       (healthy) => {
         if (healthy && !this.ephemeral.viewer) void loadViewer(this);
       },
@@ -58,5 +75,6 @@ export class RootStore {
     this.unlistenEphemeral?.();
     this.disposeTitle?.();
     this.disposeViewerRetry?.();
+    this.disposeGoneWorkspace?.();
   }
 }
