@@ -14,12 +14,14 @@ use theodore_domain::{
     Revision, Sha, Side,
 };
 use theodore_ports::{
-    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo, Capabilities,
-    Changes, Clock, CommitLog, ConflictEntry, DeviceCodeStart, DeviceLoginPort, DevicePoll,
-    DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter, HostError, HostResult,
-    InboxSection, MergeMethod, MergeStatus, ModelRow, NewAction, OutboxItem, OutboxStatus,
-    ReviewSubmission, Secrets, SecretsError, Store, StoreError, StoreResult, SubmittedReview,
-    SyncAction, SyncActionCode, Worktree,
+    AccountConfig, AccountError, AccountPort, AccountProfile, AccountResult, AccountSession,
+    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo,
+    BrowserSignIn, CallbackListener, CallbackPage, CallbackParams, Capabilities, Changes, Clock,
+    CommitLog, ConflictEntry, DeviceCodeStart, DeviceLoginPort, DevicePoll, DeviceSignIn,
+    DeviceSignInPoll, DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter, HostError,
+    HostResult, InboxSection, IncomingCallback, MergeMethod, MergeStatus, ModelRow, NewAction,
+    OutboxItem, OutboxStatus, ReviewSubmission, Secrets, SecretsError, Store, StoreError,
+    StoreResult, SubmittedReview, SyncAction, SyncActionCode, Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -1315,6 +1317,204 @@ impl DeviceLoginPort for FakeDeviceLogin {
     }
 }
 
+// ── account ───────────────────────────────────────────────────────────────
+
+/// A scripted `AccountPort`: queued results for exchange/refresh/device
+/// polls, and a channel standing in for the loopback redirect.
+pub struct FakeAccount {
+    enabled: Mutex<bool>,
+    exchanges: Mutex<VecDeque<AccountResult<AccountSession>>>,
+    refreshes: Mutex<VecDeque<AccountResult<AccountSession>>>,
+    device_polls: Mutex<VecDeque<AccountResult<DeviceSignInPoll>>>,
+    callbacks: Mutex<Option<tokio::sync::mpsc::Sender<IncomingCallback>>>,
+    calls: Mutex<Vec<String>>,
+}
+
+pub const FAKE_ACCOUNT_STATE: &str = "state-1";
+
+struct FakeCallbacks(tokio::sync::mpsc::Receiver<IncomingCallback>);
+
+#[async_trait]
+impl CallbackListener for FakeCallbacks {
+    async fn next(&mut self) -> AccountResult<IncomingCallback> {
+        self.0
+            .recv()
+            .await
+            .ok_or_else(|| AccountError::Protocol("closed".into()))
+    }
+}
+
+pub fn sample_account_session(refresh: &str, expires_at: Millis) -> AccountSession {
+    AccountSession {
+        user: AccountProfile {
+            id: "user_01".into(),
+            email: "ada@example.com".into(),
+            first_name: Some("Ada".into()),
+            last_name: Some("Lovelace".into()),
+            avatar_url: Some("https://img.example/ada.png".into()),
+        },
+        access_token: format!("at-{refresh}"),
+        refresh_token: refresh.into(),
+        expires_at,
+        session_id: Some("session_01".into()),
+        organization_id: None,
+    }
+}
+
+impl FakeAccount {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            enabled: Mutex::new(true),
+            exchanges: Mutex::new(VecDeque::new()),
+            refreshes: Mutex::new(VecDeque::new()),
+            device_polls: Mutex::new(VecDeque::new()),
+            callbacks: Mutex::new(None),
+            calls: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub fn set_enabled(&self, on: bool) {
+        *self.enabled.lock().unwrap() = on;
+    }
+
+    pub fn push_exchange(&self, r: AccountResult<AccountSession>) {
+        self.exchanges.lock().unwrap().push_back(r);
+    }
+
+    pub fn push_refresh(&self, r: AccountResult<AccountSession>) {
+        self.refreshes.lock().unwrap().push_back(r);
+    }
+
+    pub fn push_device_poll(&self, r: AccountResult<DeviceSignInPoll>) {
+        self.device_polls.lock().unwrap().push_back(r);
+    }
+
+    /// The browser landing on the loopback redirect with `params`; resolves
+    /// to the page the app picked for the tab.
+    pub async fn callback(
+        &self,
+        params: CallbackParams,
+    ) -> tokio::sync::oneshot::Receiver<CallbackPage> {
+        let tx = self
+            .callbacks
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("no browser sign-in started");
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        tx.send(IncomingCallback { params, reply })
+            .await
+            .expect("listener dropped");
+        rx
+    }
+
+    /// Whether the last browser sign-in's listener is still alive.
+    pub fn listening(&self) -> bool {
+        self.callbacks
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|tx| !tx.is_closed())
+    }
+
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn call(&self, c: impl Into<String>) {
+        self.calls.lock().unwrap().push(c.into());
+    }
+}
+
+#[async_trait]
+impl AccountPort for FakeAccount {
+    fn enabled(&self) -> bool {
+        *self.enabled.lock().unwrap()
+    }
+
+    async fn start_browser(
+        &self,
+        cfg: &AccountConfig,
+        login_hint: Option<&str>,
+    ) -> AccountResult<BrowserSignIn> {
+        self.call(format!("start_browser:{}", login_hint.unwrap_or("")));
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        *self.callbacks.lock().unwrap() = Some(tx);
+        Ok(BrowserSignIn {
+            url: format!(
+                "https://auth.example/authorize?client_id={}&redirect_uri={}",
+                cfg.client_id, cfg.redirect_uri
+            ),
+            state: FAKE_ACCOUNT_STATE.into(),
+            code_verifier: "verifier-1".into(),
+            callbacks: Box::new(FakeCallbacks(rx)),
+        })
+    }
+
+    async fn exchange_code(
+        &self,
+        _cfg: &AccountConfig,
+        code: &str,
+        code_verifier: &str,
+    ) -> AccountResult<AccountSession> {
+        self.call(format!("exchange:{code}:{code_verifier}"));
+        self.exchanges
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(AccountError::Rejected("no exchange scripted".into())))
+    }
+
+    async fn start_device(&self, _cfg: &AccountConfig) -> AccountResult<DeviceSignIn> {
+        self.call("start_device");
+        Ok(DeviceSignIn {
+            device_code: "dc-1".into(),
+            user_code: "BCDF-GHJK".into(),
+            verification_uri: "https://auth.example/device".into(),
+            verification_uri_complete: Some(
+                "https://auth.example/device?user_code=BCDF-GHJK".into(),
+            ),
+            expires_in: 300,
+            interval: 5,
+        })
+    }
+
+    async fn poll_device(
+        &self,
+        _cfg: &AccountConfig,
+        device_code: &str,
+        current_interval: u32,
+    ) -> AccountResult<DeviceSignInPoll> {
+        self.call(format!("poll:{device_code}:{current_interval}"));
+        self.device_polls
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(DeviceSignInPoll::Pending))
+    }
+
+    async fn refresh(
+        &self,
+        _cfg: &AccountConfig,
+        refresh_token: &str,
+    ) -> AccountResult<AccountSession> {
+        self.call(format!("refresh:{refresh_token}"));
+        self.refreshes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(AccountError::Network("no refresh scripted".into())))
+    }
+
+    async fn sign_out(&self, _cfg: &AccountConfig, session: &AccountSession) -> AccountResult<()> {
+        self.call(format!(
+            "sign_out:{}",
+            session.session_id.as_deref().unwrap_or("")
+        ));
+        Ok(())
+    }
+}
+
 // ── fixtures ──────────────────────────────────────────────────────────────
 
 pub struct Fixtures {
@@ -1328,6 +1528,7 @@ pub struct Fixtures {
     pub token_status: Arc<FakeTokenStatus>,
     pub device_login: Arc<FakeDeviceLogin>,
     pub worktree_lease: Arc<FakeWorktreeLease>,
+    pub account: Arc<FakeAccount>,
     /// A throwaway `~/.claude/skills` stand-in (plan §8.4): kept alive for
     /// the fixture's lifetime, deleted on drop. Never the real home dir.
     pub claude_home: Arc<tempfile::TempDir>,
@@ -1348,6 +1549,7 @@ impl Fixtures {
             token_status: Some(self.token_status.clone()),
             device_login: self.device_login.clone(),
             worktree_lease: self.worktree_lease.clone(),
+            account: self.account.clone(),
         }
     }
 }
@@ -1372,6 +1574,7 @@ pub fn fixtures() -> Fixtures {
         token_status: FakeTokenStatus::new(TokenSource::Keychain),
         device_login: FakeDeviceLogin::new(),
         worktree_lease: FakeWorktreeLease::new(),
+        account: FakeAccount::new(),
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
     }
 }

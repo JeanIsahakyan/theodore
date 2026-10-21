@@ -60,6 +60,8 @@ pub(crate) struct Inner {
     /// Peek and the Review header both ask on every render, and Linear's
     /// API has no conditional-GET story to make repeat lookups free.
     pub linear_cache: std::sync::Mutex<HashMap<PrId, (i64, Vec<theodore_contract::LinearIssue>)>>,
+    /// The Theodore account: session, sign-in in progress, refresher.
+    pub account: crate::usecases::account::AccountState,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -96,6 +98,7 @@ impl Core {
             host_health: std::sync::Mutex::new((true, None, true)),
             login: Mutex::new(None),
             linear_cache: std::sync::Mutex::new(HashMap::new()),
+            account: Default::default(),
         });
 
         let core = Core(inner.clone());
@@ -117,6 +120,10 @@ impl Core {
             tokio::spawn(async move {
                 let _ = core.resume_cloning_projects().await;
             });
+        }
+        {
+            let core = core.clone();
+            tokio::spawn(async move { core.account_resume().await });
         }
 
         (

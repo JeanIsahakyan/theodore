@@ -1,5 +1,6 @@
 //! Use cases (plan §2.1): each is `impl Core` in its own file.
 
+pub mod account;
 pub mod agents;
 pub mod budget;
 pub mod grouping;
