@@ -27,6 +27,8 @@ mod sandbox;
 pub use sandbox::*;
 mod project_state;
 pub use project_state::*;
+mod spaces;
+pub use spaces::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -44,6 +46,9 @@ pub mod models {
     pub const INBOX_STATE: &str = "inbox_state";
     pub const SETTING: &str = "setting";
     pub const PROJECT: &str = "project";
+    /// Spaces (docs/spaces.md); their chat lives in `chat_message` rows
+    /// keyed `pr = "space:<id>"`.
+    pub const SPACE: &str = "space";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -59,6 +64,7 @@ pub mod models {
         INBOX_STATE,
         SETTING,
         PROJECT,
+        SPACE,
     ];
 }
 
@@ -705,7 +711,13 @@ pub fn types() -> specta::Types {
         .register::<SandboxInfo>()
         .register::<SandboxStatus>()
         .register::<SandboxFaultRequest>()
-        .register::<ProjectWorkingState>();
+        .register::<ProjectWorkingState>()
+        .register::<Space>()
+        .register::<SpaceStatus>()
+        .register::<SpaceMode>()
+        .register::<CreateSpaceRequest>()
+        .register::<SpaceSendRequest>()
+        .register::<SpaceReviewRequest>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

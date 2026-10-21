@@ -5,6 +5,7 @@
 //! repos/<host>/<owner>/<repo>.git   bare clone
 //! wt/<host>-<owner>-<repo>-<n>/     one worktree per PR, at its head
 //! wt/.meta/<dirname>.json           sidecar: which RepoRef/PR a worktree is
+//! spaces/<id>/                      one detached worktree per space
 //! .askpass.sh                       GIT_ASKPASS helper (holds no secret)
 //! ```
 //! Auth never touches argv, a clone URL, or `.git/config` (see `auth.rs`).
@@ -21,6 +22,7 @@ mod parse;
 mod process;
 pub use process::isolate_from_user_config;
 mod safety;
+mod spaces;
 mod worktree;
 
 use std::path::{Path, PathBuf};
@@ -324,6 +326,23 @@ impl GitPort for GitCli {
 
     async fn working_state(&self, folder: &Path) -> GitResult<WorkingState> {
         self.working_state_op(folder).await
+    }
+
+    async fn space_worktree(&self, repo: &Path, space: &str, base: &Sha) -> GitResult<Worktree> {
+        self.space_worktree_op(repo, space, base).await
+    }
+
+    async fn space_checkpoint(
+        &self,
+        worktree: &Path,
+        space: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        self.space_checkpoint_op(worktree, space, message).await
+    }
+
+    async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {
+        self.remove_space_worktree_op(repo, space).await
     }
 }
 
