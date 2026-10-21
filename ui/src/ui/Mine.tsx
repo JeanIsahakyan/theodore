@@ -182,8 +182,8 @@ export const Mine = observer(function Mine() {
 
   const viewer = store.ephemeral.viewer;
   const mine = viewer
-    ? store.models.prSummaries
-        .all()
+    ? store.workspaces
+        .scopePrs(store.models.prSummaries.all())
         .filter((p) => p.author.login === viewer.login)
     : [];
   const groups = STEPS.map((s) => ({

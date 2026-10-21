@@ -137,11 +137,14 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   }, [ui, layout.aside]);
   useEffect(() => () => ui.setAsideIsDrawer(false), [ui]);
   // Grouped by default — the point of the product; Files is the fallback view.
-  const [mode, setMode] = useState<ReviewMode>({
-    mode: 'groups',
-    group: null,
-    file: null,
+  // Reopening a PR (or switching back to its workspace) resumes where it was.
+  const [mode, setMode] = useState<ReviewMode>(() => {
+    const at = ui.reviewPos[pr];
+    return at
+      ? { mode: at.mode, group: at.group, file: at.file }
+      : { mode: 'groups', group: null, file: null };
   });
+  useEffect(() => ui.setReviewPos(pr, mode), [ui, pr, mode]);
   const [tab, setTab] = useState<PrTab>('diff');
   // Tour's cursor indexes into `tourGroups` below (reviewable groups only —
   // hidden/mechanical ones are skipped, same as `N`/`P`).
@@ -238,7 +241,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // preferring a reviewable one so a lockfile group is never the default.
   useEffect(() => {
     const first = tourGroups[0] ?? allGroups[0];
-    if (mode.mode === 'groups' && !mode.group && first) {
+    // A resumed group id the PR no longer has counts as none.
+    const known = !!mode.group && allGroups.some((g) => g.id === mode.group);
+    if (mode.mode === 'groups' && !known && first) {
       setMode((m) => ({ ...m, group: first.id }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

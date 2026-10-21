@@ -84,6 +84,9 @@ export interface ReviewPos {
   scroll?: number;
 }
 
+/** PRs a workspace remembers a review position for. */
+const REVIEW_POS_LIMIT = 50;
+
 /** Everything a workspace restores when you switch back to it. */
 export interface UiSnapshot {
   tabs: Route[];
@@ -301,10 +304,21 @@ export class UiStore {
       prev?.mode === pos.mode &&
       prev.group === pos.group &&
       prev.file === pos.file;
+    const { [pr]: _old, ...rest } = this.reviewPos;
+    // Most recent last; only the last REVIEW_POS_LIMIT PRs are kept.
+    const kept = Object.entries(rest).slice(-(REVIEW_POS_LIMIT - 1));
     this.reviewPos = {
-      ...this.reviewPos,
+      ...Object.fromEntries(kept),
       [pr]: { ...pos, scroll: pos.scroll ?? (same ? prev.scroll : undefined) },
     };
+    this.persistSoon();
+  }
+
+  /** The diff's scroll in the PR's current view — saved, never rendered. */
+  setReviewScroll(pr: PrId, scroll: number): void {
+    const at = this.reviewPos[pr];
+    if (!at || at.scroll === scroll) return;
+    this.reviewPos = { ...this.reviewPos, [pr]: { ...at, scroll } };
     this.persistSoon();
   }
 

@@ -472,7 +472,18 @@ export const DiffPane = observer(function DiffPane({
   // its summary card — not wherever the previous one was scrolled to. A file
   // jump inside a group re-aims right after (Review's focus effect).
   const viewKey = mode.mode === 'files' ? `f:${mode.file}` : `g:${mode.group}`;
+  // The first view of a resumed PR goes back to its saved scroll, once.
+  const resumeScroll = useRef(ui.reviewPos[pr]?.scroll);
   useEffect(() => {
+    const top = resumeScroll.current;
+    resumeScroll.current = undefined;
+    if (top != null && mainRef.current) {
+      const el = mainRef.current;
+      requestAnimationFrame(() => {
+        el.scrollTop = top;
+      });
+      return;
+    }
     // A file jump lands in another group and scrolls itself (Review's focus
     // effect, which runs after this one); resetting to the top here would
     // undo it. `pendingJump` is set by that jump, read and cleared once.
@@ -507,6 +518,7 @@ export const DiffPane = observer(function DiffPane({
     <ScrollRoot.Provider value={mainRef}>
       <main
         ref={mainRef}
+        onScroll={(e) => ui.setReviewScroll(pr, e.currentTarget.scrollTop)}
         className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
       >
         {tour && (

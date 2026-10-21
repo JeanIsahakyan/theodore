@@ -327,9 +327,11 @@ export const Tasks = observer(function Tasks() {
   const ui = useUi();
   const me = store.ephemeral.viewer?.login ?? null;
   const tabs = taskTabs(me);
-  const [taskTab, setTaskTab] = useState<TaskTab>('mine');
-  const tab = tabs.find((x) => x.id === taskTab)!;
-  const all = store.models.tasks.all();
+  // Per workspace, in its UI snapshot.
+  const taskTab = (ui.tasksTab ?? 'mine') as TaskTab;
+  const setTaskTab = (t: TaskTab) => ui.setTasksTab(t);
+  const tab = tabs.find((x) => x.id === taskTab) ?? tabs[0]!;
+  const all = store.workspaces.scopeTasks(store.models.tasks.all());
   const items = all.filter(tab.match);
   const order = ORDER.flatMap((st) =>
     items.filter((t) => t.status === st).map((t) => t.id),

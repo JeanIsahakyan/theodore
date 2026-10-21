@@ -171,6 +171,7 @@ const KEYS: [string, string][] = [
   ],
   ['[', 'collapse sidebar'],
   ['⌥1…9 / ⌥W', 'switch / close tab'],
+  ['⌃1…9 / ⌃0', 'switch project / All projects'],
   ['⌘Z / ⌘⇧Z', 'undo / redo'],
   ['PR lists', ''],
   ['J / K', 'move through list'],

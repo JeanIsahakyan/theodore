@@ -30,6 +30,7 @@ import { api } from '../core/api';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { toggleTheme } from '../stores/UiStore';
+import { ALL } from '../core/workspaces';
 import { Avatar, K } from './bits';
 import { projectLabel } from './Projects';
 import { Sparkles } from '@gravity-ui/icons';
@@ -364,15 +365,37 @@ export const CommandMenu = observer(function CommandMenu() {
           },
         ]
       : [];
-  const projectItems: Item[] = store.models.projects.all().map((p) => ({
-    group: 'Go to',
-    label: `Go to project ▸ ${projectLabel(p)}`,
-    icon: <Folder />,
-    run: () => ui.go({ name: 'project', id: p.id }),
-  }));
-  // Every PR Theodore knows about, by repo, number, title and author.
-  const pullRequests: Item[] = store.models.prSummaries
-    .all()
+  const ws = store.workspaces;
+  const workspaceItems: Item[] = [
+    ...(ui.workspace === ALL
+      ? []
+      : [
+          {
+            group: 'Workspaces',
+            label: 'Switch to All projects',
+            icon: <Tray />,
+            keys: '⌃0',
+            run: () => ws.switchTo(ALL),
+          },
+        ]),
+    ...ws.projects.flatMap((p, i) =>
+      p.id === ui.workspace
+        ? []
+        : [
+            {
+              group: 'Workspaces',
+              label: `Switch to ${projectLabel(p)}`,
+              icon: <Folder />,
+              keys: i < 9 ? `⌃${i + 1}` : undefined,
+              run: () => ws.switchTo(p.id),
+            },
+          ],
+    ),
+  ];
+  const repoWorkspace = ws.kind !== 'local';
+  // Every PR the active workspace shows, by repo, number, title and author.
+  const pullRequests: Item[] = ws
+    .scopePrs(store.models.prSummaries.all())
     .filter((p) => !!p.url)
     .sort((a, b) => b.updated_at - a.updated_at)
     .map((p) => ({
@@ -392,14 +415,28 @@ export const CommandMenu = observer(function CommandMenu() {
       keys: '⌘T',
       run: () => ui.newTab(),
     },
-    {
-      group: 'Go to',
-      label: 'Inbox',
-      icon: <Tray />,
-      keys: 'G I',
-      run: () => ui.go({ name: 'inbox' }),
-    },
-    ...(FEATURES.currentUser
+    ...(repoWorkspace
+      ? [
+          {
+            group: 'Go to',
+            label: 'Inbox',
+            icon: <Tray />,
+            keys: 'G I',
+            run: () => ui.go({ name: 'inbox' }),
+          },
+        ]
+      : []),
+    ...(ws.active
+      ? [
+          {
+            group: 'Go to',
+            label: 'Overview',
+            icon: <Folder />,
+            run: () => ui.go({ name: 'project', id: ws.active!.id }),
+          },
+        ]
+      : []),
+    ...(FEATURES.currentUser && repoWorkspace
       ? [
           {
             group: 'Go to',
@@ -437,7 +474,7 @@ export const CommandMenu = observer(function CommandMenu() {
       icon: <Gear />,
       run: () => ui.go({ name: 'settings', page: 'account' }),
     },
-    ...projectItems,
+    ...workspaceItems,
     {
       group: 'General',
       label: 'Add project…',
@@ -508,6 +545,8 @@ export function useGlobalKeys() {
       ) {
         if (e.shiftKey) void store.sync.undo.redo();
         else void store.sync.undo.undo();
+      } else if (!ui.modal && store.workspaces.switchForKey(e)) {
+        // ⌃1…9 / ⌃0: switch workspace, sidebar shown or not.
       } else if (e.altKey && e.code === 'KeyW' && !ui.modal) {
         ui.requestCloseTab(ui.route);
       } else if (e.altKey && /^Digit[1-9]$/.test(e.code) && !ui.modal) {
