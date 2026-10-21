@@ -102,6 +102,21 @@ impl Core {
         repo_path: PathBuf,
         worktree_path: PathBuf,
     ) -> AppResult<OpenPrResponse> {
+        self.finish_open_with(pr_ref, detail, revision, repo_path, worktree_path, true)
+            .await
+    }
+
+    /// `finish_open`, with grouping optional: a space's live diff refreshes
+    /// after every agent turn and is only grouped when it's reviewed.
+    pub(crate) async fn finish_open_with(
+        &self,
+        pr_ref: PrRef,
+        detail: PrDetail,
+        revision: Revision,
+        repo_path: PathBuf,
+        worktree_path: PathBuf,
+        group: bool,
+    ) -> AppResult<OpenPrResponse> {
         let pr_id = pr_ref.id();
         let head = detail.summary.head_sha.clone();
 
@@ -130,7 +145,9 @@ impl Core {
         self.refresh_stacks().await?;
 
         // Group in the background; the UI gets it as a `grouping` sync row.
-        self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
+        if group {
+            self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
+        }
 
         Ok(OpenPrResponse { pr: pr_id, head })
     }

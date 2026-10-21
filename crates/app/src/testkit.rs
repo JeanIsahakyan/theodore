@@ -364,6 +364,13 @@ pub struct FakeGit {
     working_state_value: Mutex<Option<theodore_ports::WorkingState>>,
     working_state_calls: Mutex<Vec<PathBuf>>,
     removed_worktrees: Mutex<Vec<PrRef>>,
+    // ── spaces (docs/spaces.md) ────────────────────────────────────────
+    /// Heads the next `space_checkpoint` calls return, in order; when empty
+    /// a checkpoint leaves the space where it was (nothing changed).
+    checkpoint_heads: Mutex<VecDeque<Sha>>,
+    /// `(space, message)` of every `space_checkpoint`.
+    pub checkpoints: Mutex<Vec<(String, String)>>,
+    removed_spaces: Mutex<Vec<String>>,
 }
 
 /// `GitResult` isn't `Clone` (`GitError` holds a `std::io::Error`); a fake
@@ -404,6 +411,9 @@ impl FakeGit {
             working_state_value: Mutex::new(None),
             working_state_calls: Mutex::new(Vec::new()),
             removed_worktrees: Mutex::new(Vec::new()),
+            checkpoint_heads: Mutex::new(VecDeque::new()),
+            checkpoints: Mutex::new(Vec::new()),
+            removed_spaces: Mutex::new(Vec::new()),
         })
     }
 
@@ -482,6 +492,31 @@ impl FakeGit {
 
     pub fn removed_repos(&self) -> Vec<RepoRef> {
         self.removed_repos.lock().unwrap().clone()
+    }
+
+    /// The next `space_checkpoint` moves the space to `head`.
+    pub fn push_checkpoint(&self, head: Sha) {
+        self.checkpoint_heads.lock().unwrap().push_back(head);
+    }
+
+    pub fn removed_spaces(&self) -> Vec<String> {
+        self.removed_spaces.lock().unwrap().clone()
+    }
+
+    /// A commit fixture for `sha` unless one is set, so `describe_branch`
+    /// works on space checkpoints without per-test setup.
+    fn ensure_commit(&self, sha: &Sha, title: &str) {
+        self.commits
+            .lock()
+            .unwrap()
+            .entry(sha.0.clone())
+            .or_insert_with(|| CommitLog {
+                sha: sha.clone(),
+                title: title.to_string(),
+                author_name: "Theodore".into(),
+                author_email: "theodore@localhost".into(),
+                at: 0,
+            });
     }
 }
 
@@ -615,6 +650,50 @@ impl GitPort for FakeGit {
             .unwrap()
             .clone()
             .ok_or(GitError::Unsupported("working_state"))
+    }
+
+    async fn space_worktree(&self, _repo: &Path, space: &str, base: &Sha) -> GitResult<Worktree> {
+        let refname = theodore_ports::space_ref(space);
+        let head = {
+            let mut refs = self.resolve_refs.lock().unwrap();
+            refs.entry(base.0.clone()).or_insert_with(|| base.clone());
+            refs.entry(refname).or_insert_with(|| base.clone()).clone()
+        };
+        self.ensure_commit(base, "base");
+        Ok(Worktree {
+            path: PathBuf::from(format!("/tmp/theodore-fake-space-{space}")),
+            head,
+        })
+    }
+
+    async fn space_checkpoint(
+        &self,
+        _worktree: &Path,
+        space: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        self.checkpoints
+            .lock()
+            .unwrap()
+            .push((space.to_string(), message.to_string()));
+        let refname = theodore_ports::space_ref(space);
+        let next = self.checkpoint_heads.lock().unwrap().pop_front();
+        let mut refs = self.resolve_refs.lock().unwrap();
+        if let Some(head) = next {
+            refs.insert(refname.clone(), head);
+        }
+        let head = refs
+            .get(&refname)
+            .cloned()
+            .ok_or_else(|| GitError::Parse(format!("no space {space}")))?;
+        drop(refs);
+        self.ensure_commit(&head, message);
+        Ok(head)
+    }
+
+    async fn remove_space_worktree(&self, _repo: &Path, space: &str) -> GitResult<()> {
+        self.removed_spaces.lock().unwrap().push(space.to_string());
+        Ok(())
     }
 }
 

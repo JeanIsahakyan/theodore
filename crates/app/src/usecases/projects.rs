@@ -363,6 +363,14 @@ impl Core {
         let summary: PrSummary =
             serde_json::from_value(row).map_err(|e| AppError::Invalid(e.to_string()))?;
         let pr_ref = summary.pr;
+        // A space's review forks at a fixed commit, not at its base branch.
+        if pr_ref
+            .host_id
+            .as_deref()
+            .is_some_and(crate::usecases::spaces::is_space_ref)
+        {
+            return self.reopen_space_review(pr).await;
+        }
         let project_id = project_id_for_repo(&pr_ref.repo);
         let project = self
             .project_row(&project_id)
@@ -490,7 +498,10 @@ impl Core {
             .map_err(|e| theodore_ports::GitError::Parse(e.to_string()))
     }
 
-    async fn ensure_project_cache(&self, project: &Project) -> AppResult<std::path::PathBuf> {
+    pub(crate) async fn ensure_project_cache(
+        &self,
+        project: &Project,
+    ) -> AppResult<std::path::PathBuf> {
         Ok(match &project.path {
             Some(path) => {
                 self.0
@@ -580,7 +591,7 @@ fn recent(
 
 /// Deterministic across restarts (unlike `DefaultHasher`, whose seed is
 /// randomized per process) — FNV-1a over the branch name.
-fn stable_hash_u32(s: &str) -> u32 {
+pub(crate) fn stable_hash_u32(s: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
     for b in s.as_bytes() {
         hash ^= *b as u32;

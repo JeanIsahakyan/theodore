@@ -30,6 +30,7 @@ impl Core {
                     models::TASK,
                     models::SETTING,
                     models::PROJECT,
+                    models::SPACE,
                 ] {
                     out.extend(store.all(m)?);
                 }
@@ -37,6 +38,14 @@ impl Core {
             })
             .await
             .map_err(AppError::join)??,
+            // A space's transcript (docs/spaces.md §7): chat rows only, and
+            // nothing to open — the space is not a PR.
+            BootstrapScope::Pr(pr) if pr.0.starts_with("space:") => {
+                let key = pr.0.clone();
+                tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
+                    .await
+                    .map_err(AppError::join)??
+            }
             BootstrapScope::Pr(pr) => {
                 if !self.0.current_head.read().await.contains_key(&pr) {
                     let core = self.clone();
