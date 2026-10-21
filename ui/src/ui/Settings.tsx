@@ -46,6 +46,7 @@ import { useDeviceLogin } from '../core/deviceLogin';
 import { useRootStore, useUi } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
+import { AccountCard } from './AccountCard';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
 import { projectLabel } from './Projects';
@@ -75,7 +76,8 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
 ];
 
 const SUB: Record<Page, string> = {
-  account: 'GitHub sign-in. Tokens live in the system keychain.',
+  account:
+    'Your Theodore account and code host sign-ins. Tokens live in the system keychain.',
   agents: 'Agent CLIs on this computer, and which one handles each task.',
   integrations: 'Other tools Theodore can link PRs to.',
   projects: 'Connected repositories and the settings effective in each.',
@@ -346,6 +348,7 @@ const AccountPage = observer(function AccountPage() {
 
   return (
     <>
+      <AccountCard />
       <section className="flex flex-col gap-2">
         <Typography.Heading level={6}>GitHub</Typography.Heading>
         <Card variant="secondary" className="gap-0 p-0">

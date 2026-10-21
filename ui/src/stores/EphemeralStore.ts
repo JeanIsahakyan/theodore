@@ -11,6 +11,7 @@ import {
   runInAction,
 } from 'mobx';
 import type {
+  AccountStatus,
   AppInfo,
   CommentId,
   Ephemeral,
@@ -68,6 +69,9 @@ export class EphemeralStore {
   viewerLoading = false;
   /** `app_info`, fetched once at startup; `null` until it arrives. */
   appInfo: AppInfo | null = null;
+  /** The Theodore account, from `account_status` and its `account_status`
+   *  event; `null` until first fetched. */
+  account: AccountStatus | null = null;
   /** Optimistic overlay on `Comment.reactions`, `"<comment>:<emoji>"` ->
    *  the viewer-reacted state we just set. Wins over the server's
    *  `viewer_reacted`/`count` until the next sync brings a `Comment` whose
@@ -92,6 +96,7 @@ export class EphemeralStore {
       viewer: observableRef,
       viewerLoading: observable,
       appInfo: observableRef,
+      account: observableRef,
       sandbox: computed,
       reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
@@ -175,6 +180,12 @@ export class EphemeralStore {
     return this.appInfo?.sandbox ?? null;
   }
 
+  setAccount(s: AccountStatus): void {
+    runInAction(() => {
+      this.account = s;
+    });
+  }
+
   setViewer(p: Person): void {
     runInAction(() => {
       this.viewer = p;
@@ -223,6 +234,9 @@ export class EphemeralStore {
             rateLimitedUntil: e.rate_limited_until,
             authOk: e.auth_ok,
           };
+          return;
+        case 'account_status':
+          this.account = e.status;
           return;
       }
     });

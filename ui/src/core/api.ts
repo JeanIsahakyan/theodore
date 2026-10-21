@@ -1,6 +1,10 @@
 /** Typed wrappers for every command in `.context/commands.md`, over `Transport`. */
 import { getTransport } from './transport';
 import type {
+  AccountSignInRequest,
+  AccountSignInStart,
+  AccountSignInState,
+  AccountStatus,
   AddProjectRequest,
   AgentStatus,
   AppInfo,
@@ -183,6 +187,19 @@ export const api = {
     call<SandboxStatus>('sandbox_set_fault', { req }),
   sandboxFireEvent: (id: string) =>
     call<SandboxStatus>('sandbox_fire_event', { id }),
+  /** Theodore account (Settings → Account, Onboarding). */
+  accountStatus: () => call<AccountStatus>('account_status'),
+  accountSignInStart: (req: AccountSignInRequest) =>
+    call<AccountSignInStart>('account_sign_in_start', { req }),
+  accountSignInPoll: () => call<AccountSignInState>('account_sign_in_poll'),
+  accountSignInCancel: () => call<null>('account_sign_in_cancel'),
+  accountSignOut: () => call<AccountStatus>('account_sign_out'),
+  /** Brings the window forward after the browser hands the sign-in back.
+   *  Cosmetic: a failure is ignored, never toasted. */
+  focusWindow: (): Promise<null> =>
+    getTransport()
+      .invoke<null>('focus_window')
+      .catch(() => null),
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */
