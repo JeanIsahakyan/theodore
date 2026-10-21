@@ -94,6 +94,7 @@ import {
   hasPullRequests,
   isLocalFolder,
   projectTabs,
+  showStatCards,
   workingStateParts,
   type ProjectTab,
 } from './project/layout';
@@ -1120,7 +1121,7 @@ export const ProjectView = observer(function ProjectView({
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Typography.Heading
             level={6}
-            className="shrink-0 truncate"
+            className="min-w-0 truncate"
             title={projectLabel(project)}
           >
             {projectLabel(project)}
@@ -1135,14 +1136,18 @@ export const ProjectView = observer(function ProjectView({
             </Tooltip>
           )}
           {meta.length > 0 && (
-            <span className="min-w-0 truncate text-xs text-muted">
+            // Gives way before the title does.
+            <span className="min-w-0 shrink-[4] truncate text-xs text-muted">
               {meta.join(' · ')}
             </span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {project.status === 'error' && (
-            <span className="text-xs text-danger">
+            <span
+              className="max-w-[220px] truncate text-xs text-danger"
+              title={project.error ?? undefined}
+            >
               {project.error ?? 'Failed to clone'}
             </span>
           )}
@@ -1185,48 +1190,45 @@ export const ProjectView = observer(function ProjectView({
         </p>
       )}
       {local && (
-        <p className="flex min-w-0 items-center gap-1.5 px-6 pb-1 text-xs text-muted">
+        // Every part may shrink (with an ellipsis) so a long path or branch
+        // name never pushes the line past the window.
+        <p className="flex min-w-0 items-center gap-1.5 overflow-hidden px-6 pb-1 text-xs text-muted">
           <span
-            className="min-w-0 shrink truncate font-mono"
+            className="min-w-0 truncate font-mono"
             title={project.path ?? undefined}
           >
             {project.path}
           </span>
           {workingLine.map((part) => (
-            <span key={part} className="shrink-0 whitespace-nowrap">
+            <span
+              key={part}
+              className="min-w-0 truncate whitespace-nowrap"
+              title={part}
+            >
               · {part}
             </span>
           ))}
         </p>
       )}
-      {!local && (
-        <div className="flex shrink-0 gap-2 px-6 py-3">
-          <StatCard label="Open" value={stats.open} />
-          <StatCard label="Needs your review" value={stats.needsReview} />
-          <StatCard label="Yours" value={stats.yours} />
-          <StatCard
-            label="Failing checks"
-            value={stats.failingChecks}
-            danger={stats.failingChecks > 0}
-          />
-          <StatCard label="Merged 7d" value={stats.merged7d} />
-        </div>
-      )}
       <Tabs
         selectedKey={shown}
         onSelectionChange={(k) => setTab(k as ProjectTab)}
-        className="px-6 pb-3 pt-2"
+        className="w-fit max-w-full px-6 pb-2 pt-1.5"
       >
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="Project sections">
+        <Tabs.ListContainer className="w-fit max-w-full">
+          <Tabs.List aria-label="Project sections" className="p-0.5">
             {tabs.map((t) => (
-              <Tabs.Tab key={t} id={t} className="gap-1.5">
+              <Tabs.Tab
+                key={t}
+                id={t}
+                className="h-7 w-auto gap-1.5 whitespace-nowrap px-3 text-xs"
+              >
                 {t === 'prs' ? (
-                  <CodePullRequest className="size-4" />
+                  <CodePullRequest className="size-3.5" />
                 ) : t === 'branches' ? (
-                  <BranchesRight className="size-4" />
+                  <BranchesRight className="size-3.5" />
                 ) : (
-                  <ChartColumn className="size-4" />
+                  <ChartColumn className="size-3.5" />
                 )}
                 {t === 'prs'
                   ? local
@@ -1241,6 +1243,20 @@ export const ProjectView = observer(function ProjectView({
           </Tabs.List>
         </Tabs.ListContainer>
       </Tabs>
+      {showStatCards(items) && (
+        // Wraps rather than squeezing labels to nothing in a narrow window.
+        <div className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(108px,1fr))] gap-2 px-6 pb-3 pt-1">
+          <StatCard label="Open" value={stats.open} />
+          <StatCard label="Needs your review" value={stats.needsReview} />
+          <StatCard label="Yours" value={stats.yours} />
+          <StatCard
+            label="Failing checks"
+            value={stats.failingChecks}
+            danger={stats.failingChecks > 0}
+          />
+          <StatCard label="Merged 7d" value={stats.merged7d} />
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         {shown === 'prs' ? (
           <ProjectPrs items={items} />
@@ -1274,7 +1290,9 @@ function StatCard({
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-2xl bg-default/60 px-3 py-2">
-      <span className="truncate text-xs text-muted">{label}</span>
+      <span className="truncate text-xs text-muted" title={label}>
+        {label}
+      </span>
       <span
         className={`text-lg font-semibold tabular-nums ${danger ? 'text-danger' : ''}`}
       >

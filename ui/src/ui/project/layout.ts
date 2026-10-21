@@ -18,6 +18,15 @@ export function hasPullRequests(items: InboxPr[]): boolean {
   return items.some((p) => !isBranchReview(p));
 }
 
+/** The Open / Needs review / … stat cards: only while host PRs are open.
+ *  With none, a row of zeros says nothing the "No open PRs · last merge"
+ *  banner (or an empty list) doesn't already. */
+export function showStatCards(items: InboxPr[]): boolean {
+  return items.some(
+    (p) => (p.state === 'open' || p.state === 'draft') && !isBranchReview(p),
+  );
+}
+
 /** Tabs in display order; the first is where the page opens. A local
  *  folder has no host PRs: its list tab only appears once a branch review
  *  exists, and Activity (host PR events) only if there are any. */

@@ -5,6 +5,7 @@ import {
   hasPullRequests,
   isLocalFolder,
   projectTabs,
+  showStatCards,
   workingStateParts,
 } from './layout';
 
@@ -47,6 +48,17 @@ describe('hasPullRequests', () => {
     expect(hasPullRequests([])).toBe(false);
     expect(hasPullRequests([branchReview('b')])).toBe(false);
     expect(hasPullRequests([branchReview('b'), pr({ id: '1' })])).toBe(true);
+  });
+});
+
+describe('showStatCards', () => {
+  it('shows the cards only while host PRs are open', () => {
+    expect(showStatCards([])).toBe(false);
+    expect(showStatCards([branchReview('b')])).toBe(false);
+    // Only merged: the "No open PRs · last merge" banner says it instead.
+    expect(showStatCards([pr({ id: 'm', state: 'merged' })])).toBe(false);
+    expect(showStatCards([pr({ id: 'd', state: 'draft' })])).toBe(true);
+    expect(showStatCards([pr({ id: 'o' })])).toBe(true);
   });
 });
 
