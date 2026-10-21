@@ -237,7 +237,11 @@ impl Core {
                 .grouper
                 .group(&revision, &detail, &worktree, agent)
                 .await;
+            // The PR may have been closed while the agent worked (a branch
+            // review's "Close review"): don't write an orphaned grouping back.
+            let still_open = core.0.current_head.read().await.contains_key(&pr);
             let error = match result {
+                Ok(_) if !still_open => None,
                 Ok(grouping) => match theodore_domain::grouping::to_row(&grouping) {
                     Ok(data) => core
                         .apply(vec![NewAction {

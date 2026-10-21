@@ -1100,6 +1100,8 @@ impl AgentPort for FakeAgent {
 pub struct FakeGrouper {
     grouping: Mutex<Grouping>,
     last_agent: Mutex<Option<AgentId>>,
+    /// How long `group` takes, so a test can act while it runs.
+    delay_ms: std::sync::atomic::AtomicU64,
 }
 
 impl FakeGrouper {
@@ -1107,7 +1109,11 @@ impl FakeGrouper {
         Arc::new(Self {
             grouping: Mutex::new(grouping),
             last_agent: Mutex::new(None),
+            delay_ms: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+    pub fn set_delay_ms(&self, ms: u64) {
+        self.delay_ms.store(ms, std::sync::atomic::Ordering::SeqCst);
     }
     pub fn set(&self, grouping: Grouping) {
         *self.grouping.lock().unwrap() = grouping;
@@ -1129,6 +1135,10 @@ impl Grouper for FakeGrouper {
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
         *self.last_agent.lock().unwrap() = Some(agent);
+        let delay = self.delay_ms.load(std::sync::atomic::Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        }
         Ok(self.grouping.lock().unwrap().clone())
     }
     async fn regroup(

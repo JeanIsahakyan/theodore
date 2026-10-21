@@ -309,3 +309,16 @@ async fn close_branch_review_of_an_unknown_id_is_not_found() {
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
 }
+
+#[tokio::test]
+async fn closing_a_review_while_it_groups_leaves_no_grouping_row() {
+    let f = fixtures();
+    f.grouper.set_delay_ms(300);
+    let (core, _recv) = started_core(&f).await;
+    let pr = open_feature_review(&core, &f).await;
+    core.close_branch_review(&pr)
+        .await
+        .expect("close_branch_review");
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    assert!(!has_row(&f, models::GROUPING, &pr));
+}
