@@ -3,11 +3,11 @@ import {
   CodePullRequest,
   Gear,
   Keyboard,
+  LayoutCells,
   LayoutSideContentLeft,
   ListCheck,
   Magnifier,
   Moon,
-  Plus,
   Sparkles,
   Tray,
 } from '@gravity-ui/icons';
@@ -21,16 +21,15 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
-import { refreshProject, removeProject } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
 import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { inInbox } from './List';
-import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SyncStatus } from './shell/SyncStatus';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 interface NavItem {
   key: string;
@@ -81,7 +80,12 @@ function IconBtn({
 export const Sidebar = observer(function Sidebar() {
   const store = useRootStore();
   const ui = useUi();
-  const prs = store.models.prSummaries.all();
+  // ── workspaces: sections of the selected workspace ──────────────────
+  // Everything below the switcher is scoped to the active workspace; a
+  // local folder has no Inbox or My PRs. The switcher itself (All projects
+  // + every project) is `WorkspaceSwitcher`, rendered above this list.
+  const ws = store.workspaces;
+  const prs = ws.scopePrs(store.models.prSummaries.all());
   const inboxStates = store.models.inboxStates.all();
   // First state per PR, as `find` would pick — one pass, not one per row.
   const stateByPr = new Map<string, (typeof inboxStates)[number]>();
@@ -92,7 +96,9 @@ export const Sidebar = observer(function Sidebar() {
     const s = stateOf(p.id);
     return !s?.done && !s?.snooze;
   }).length;
-  const tasksOpen = store.models.tasks.where((t) => t.status !== 'done').length;
+  const tasksOpen = ws.scopeTasks(
+    store.models.tasks.where((t) => t.status !== 'done'),
+  ).length;
 
   const viewer = store.ephemeral.viewer;
   const mineOpen = prs.filter(
@@ -100,20 +106,35 @@ export const Sidebar = observer(function Sidebar() {
   ).length;
 
   const localBranches = prs.filter((p) => p.pr.repo.host === 'local');
-  const projects = store.models.projects.all();
+  const active = ws.active;
+  const hostWorkspace = ws.kind !== 'local';
 
   const groups: NavGroup[] = [
     {
       id: 'main',
       items: [
-        {
-          key: routeKey({ name: 'inbox' }),
-          icon: <Tray />,
-          label: 'Inbox',
-          n: inboxCount,
-          route: { name: 'inbox' },
-        },
-        ...(FEATURES.currentUser
+        ...(active
+          ? [
+              {
+                key: routeKey({ name: 'project', id: active.id }),
+                icon: <LayoutCells />,
+                label: 'Overview',
+                route: { name: 'project', id: active.id } as Route,
+              },
+            ]
+          : []),
+        ...(hostWorkspace
+          ? [
+              {
+                key: routeKey({ name: 'inbox' }),
+                icon: <Tray />,
+                label: 'Inbox',
+                n: inboxCount,
+                route: { name: 'inbox' } as Route,
+              },
+            ]
+          : []),
+        ...(FEATURES.currentUser && hostWorkspace
           ? [
               {
                 key: routeKey({ name: 'mine' }),
@@ -139,37 +160,6 @@ export const Sidebar = observer(function Sidebar() {
         },
       ],
     },
-    {
-      id: 'projects',
-      title: 'Projects',
-      items: [
-        ...projects.map((p): NavItem => ({
-          key: routeKey({ name: 'project', id: p.id }),
-          icon: <ProjectStatusDot p={p} />,
-          label: projectLabel(p),
-          route: { name: 'project', id: p.id },
-          contextMenu: projectContextMenu({
-            onRefresh: () => void refreshProject(store, p.id),
-            onRemove: () => {
-              if (
-                window.confirm(
-                  `Remove ${projectLabel(p)}? Its local clone is deleted; your own folder (if local) is untouched.`,
-                )
-              ) {
-                void removeProject(store, p.id);
-              }
-            },
-          }),
-        })),
-        {
-          key: 'add-project',
-          icon: <Plus />,
-          label: 'Add project',
-          isDisabled: !FEATURES.projects,
-          onPress: () => ui.openModal('add-project'),
-        },
-      ],
-    },
     ...(localBranches.length
       ? [
           {
@@ -185,6 +175,7 @@ export const Sidebar = observer(function Sidebar() {
         ]
       : []),
   ];
+  // ── /workspaces ─────────────────────────────────────────────────────────
   const allItems = groups.flatMap((g) => g.items);
   const current = allItems.find((i) => i.route && sameRoute(i.route, ui.route));
 
@@ -213,6 +204,9 @@ export const Sidebar = observer(function Sidebar() {
           <Tooltip.Content>Find a command</Tooltip.Content>
         </Tooltip>
       </Toolbar>
+
+      <WorkspaceSwitcher />
+      <Separator className="mx-4 w-auto" />
 
       <ListBox
         aria-label="Navigation"
