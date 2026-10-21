@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use theodore_domain::{PrRef, RepoRef, Revision, Sha};
 use theodore_ports::{
     BranchInfo, CommitLog, ConflictEntry, CredentialSource, DiffOptions, GitError, GitPort,
-    GitResult, GrepHit, Worktree,
+    GitResult, GrepHit, WorkingState, Worktree,
 };
 
 use process::GitProc;
@@ -320,6 +320,10 @@ impl GitPort for GitCli {
         head: &Sha,
     ) -> GitResult<Vec<ConflictEntry>> {
         self.merge_tree_conflicts_op(repo, base, head).await
+    }
+
+    async fn working_state(&self, folder: &Path) -> GitResult<WorkingState> {
+        self.working_state_op(folder).await
     }
 }
 

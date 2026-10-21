@@ -80,6 +80,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::sandbox_status,
             commands::sandbox_set_fault,
             commands::sandbox_fire_event,
+            commands::project_working_state,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()

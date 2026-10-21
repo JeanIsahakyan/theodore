@@ -285,3 +285,38 @@ async fn remove_repo_deletes_the_mirror_but_never_the_source() {
     assert!(!mirror.exists());
     assert!(fx.source.join(".git").exists(), "the source is untouched");
 }
+
+#[tokio::test]
+async fn working_state_reads_branch_and_dirty_files_without_touching_the_folder() {
+    let fx = setup();
+    let cli = fx.cli();
+    git(&fx.source, &["checkout", "-q", "feature"]);
+    // A new mtime on a tracked file leaves the index's stat cache stale,
+    // which a plain `git status` would "fix" by rewriting `.git/index`.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(fx.source.join("a.txt"), "line1\nline2\nedited\n").unwrap();
+    std::fs::write(fx.source.join("untracked.txt"), "new\n").unwrap();
+    let before = snapshot(&fx.source);
+
+    let state = cli.working_state(&fx.source).await.unwrap();
+    assert_eq!(state.current_branch.as_deref(), Some("feature"));
+    assert_eq!(state.dirty_files, 2, "one modified, one untracked");
+
+    assert_eq!(
+        before,
+        snapshot(&fx.source),
+        "reading the working state must not write to the folder"
+    );
+}
+
+#[tokio::test]
+async fn working_state_on_a_detached_head_has_no_branch() {
+    let fx = setup();
+    let cli = fx.cli();
+    let head = git_out(&fx.source, &["rev-parse", "HEAD"]);
+    git(&fx.source, &["checkout", "-q", "--detach", &head]);
+
+    let state = cli.working_state(&fx.source).await.unwrap();
+    assert_eq!(state.current_branch, None);
+    assert_eq!(state.dirty_files, 0);
+}

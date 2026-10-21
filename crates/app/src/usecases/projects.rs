@@ -7,7 +7,7 @@ use std::path::Path;
 
 use theodore_contract::{
     AddProjectRequest, Ephemeral, LocalBranch, OpenBranchRequest, Project, ProjectStatus,
-    ToastLevel, models,
+    ProjectWorkingState, ToastLevel, models,
 };
 use theodore_domain::{HostKind, HostRepo, PrDetail, PrId, PrRef, PrSummary, RepoRef};
 use theodore_ports::{InboxSection, NewAction, SyncActionCode};
@@ -236,6 +236,25 @@ impl Core {
                 updated_at: b.updated_at,
             })
             .collect())
+    }
+
+    /// A local folder project's own checkout (current branch, uncommitted
+    /// paths), read straight from the folder — never from the mirror, which
+    /// has no working tree. Read-only: the folder is never written to.
+    pub async fn project_working_state(&self, project: &str) -> AppResult<ProjectWorkingState> {
+        let project = self
+            .project_row(project)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("project {project}")))?;
+        let path = project.path.ok_or_else(|| {
+            AppError::Invalid(format!("project {} is not a local folder", project.id))
+        })?;
+        let state = self.0.deps.git.working_state(Path::new(&path)).await?;
+        Ok(ProjectWorkingState {
+            path,
+            current_branch: state.current_branch,
+            dirty_files: state.dirty_files,
+        })
     }
 
     pub async fn open_branch(

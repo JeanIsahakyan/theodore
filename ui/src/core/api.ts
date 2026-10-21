@@ -37,6 +37,7 @@ import type {
   PrId,
   PrSpend,
   Project,
+  ProjectWorkingState,
   ReactRequest,
   ReplyRequest,
   RerunCheckRequest,
@@ -139,6 +140,13 @@ export const api = {
     call<LocalBranch[]>('list_branches', { project }),
   openBranch: (req: OpenBranchRequest) =>
     call<OpenPrResponse>('open_branch', { req }),
+  /** `null` when the folder can't be read (moved, not a repo anymore, a
+   *  core without git): the header just leaves the working state out, no
+   *  toast for a passive read. */
+  projectWorkingState: (project: string): Promise<ProjectWorkingState | null> =>
+    getTransport()
+      .invoke<ProjectWorkingState>('project_working_state', { project })
+      .catch(() => null),
   mergeInfo: (pr: PrId) => call<MergeInfo>('merge_info', { pr }),
   mergePr: (req: MergeRequest) => call<null>('merge_pr', { req }),
   assignableUsers: (pr: PrId) => call<Person[]>('assignable_users', { pr }),

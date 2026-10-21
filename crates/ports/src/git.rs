@@ -287,6 +287,25 @@ pub trait GitPort: Send + Sync {
         let _ = (repo, base, head);
         Err(GitError::Unsupported("merge_tree_conflicts"))
     }
+
+    /// A local folder project's own checkout: its checked-out branch and how
+    /// many paths are uncommitted. Read-only: never takes the index lock or
+    /// refreshes the index (`--no-optional-locks`). `Unsupported` by
+    /// default; only a `GitPort` backed by the real git CLI can read a
+    /// working copy.
+    async fn working_state(&self, folder: &Path) -> GitResult<WorkingState> {
+        let _ = folder;
+        Err(GitError::Unsupported("working_state"))
+    }
+}
+
+/// A local folder's checkout, from `GitPort::working_state`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkingState {
+    /// The checked-out branch; `None` on a detached HEAD.
+    pub current_branch: Option<String>,
+    /// Paths `git status` reports: staged, unstaged and untracked.
+    pub dirty_files: u32,
 }
 
 /// One locally-detected conflicting path, from `merge_tree_conflicts`.

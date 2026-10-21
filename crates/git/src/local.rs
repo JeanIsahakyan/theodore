@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use theodore_domain::RepoRef;
-use theodore_ports::{GitError, GitResult};
+use theodore_ports::{GitError, GitResult, WorkingState};
 
 use crate::GitCli;
 use crate::process::GitProc;
@@ -84,5 +84,68 @@ impl GitCli {
             std::fs::remove_dir_all(&repo_dir)?;
         }
         Ok(())
+    }
+
+    /// Reads the folder's own checkout. Both commands are read-only:
+    /// `symbolic-ref` with no new value only prints, and
+    /// `--no-optional-locks` keeps `status` from refreshing (rewriting) the
+    /// index the way a plain `git status` would.
+    pub(crate) async fn working_state_op(&self, folder: &Path) -> GitResult<WorkingState> {
+        let askpass = self.ensure_askpass()?;
+        let head = GitProc {
+            cwd: folder,
+            askpass: &askpass,
+            args: &["symbolic-ref", "--quiet", "--short", "HEAD"],
+            token: None,
+            stdin: None,
+        }
+        .run_raw()
+        .await?;
+        let current_branch = match head.status {
+            0 => Some(String::from_utf8_lossy(&head.stdout).trim().to_string())
+                .filter(|s| !s.is_empty()),
+            // 1: HEAD isn't a symbolic ref (detached).
+            1 => None,
+            code => {
+                return Err(GitError::Command {
+                    args: "symbolic-ref --quiet --short HEAD".into(),
+                    code,
+                    stderr: String::from_utf8_lossy(&head.stderr).into_owned(),
+                });
+            }
+        };
+        let status = GitProc {
+            cwd: folder,
+            askpass: &askpass,
+            args: &["--no-optional-locks", "status", "--porcelain=v1"],
+            token: None,
+            stdin: None,
+        }
+        .run_text()
+        .await?;
+        Ok(WorkingState {
+            current_branch,
+            dirty_files: count_status_entries(&status),
+        })
+    }
+}
+
+/// `status --porcelain=v1` prints one line per path (a rename is one
+/// `old -> new` line; odd names are quoted, never split across lines).
+fn count_status_entries(porcelain: &str) -> u32 {
+    porcelain.lines().filter(|l| !l.trim().is_empty()).count() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_status_entries;
+
+    #[test]
+    fn counts_one_entry_per_porcelain_line() {
+        assert_eq!(count_status_entries(""), 0);
+        assert_eq!(
+            count_status_entries(" M src/a.rs\nR  old.rs -> new.rs\n?? \"we\\nird\"\n"),
+            3
+        );
     }
 }

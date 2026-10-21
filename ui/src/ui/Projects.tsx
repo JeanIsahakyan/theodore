@@ -52,6 +52,7 @@ import type {
   LocalBranch,
   PrState,
   Project,
+  ProjectWorkingState,
   RepoRef,
 } from '../gen/contract';
 import {
@@ -82,6 +83,13 @@ import { RowsSkeleton } from './Loading';
 import { Peek } from './Peek';
 import { projectActivity } from './project/activity';
 import { branchPr } from './project/branches';
+import {
+  hasPullRequests,
+  isLocalFolder,
+  projectTabs,
+  workingStateParts,
+  type ProjectTab,
+} from './project/layout';
 import { noOpenPrsBanner, projectStats } from './project/stats';
 import {
   failingChecksCount,
@@ -749,11 +757,14 @@ const ProjectPrs = observer(function ProjectPrs({
           />
         )}
         {ui.peek &&
-          (ui.selected ? (
-            items.some((p) => p.id === ui.selected) && <Peek id={ui.selected} />
-          ) : (
-            <RepoSummaryPeek items={items} now={Date.now()} />
-          ))}
+          (ui.selected
+            ? items.some((p) => p.id === ui.selected) && (
+                <Peek id={ui.selected} />
+              )
+            : // Merges, authors, checks: all zero without host PRs.
+              hasPullRequests(items) && (
+                <RepoSummaryPeek items={items} now={Date.now()} />
+              ))}
       </div>
     </div>
   );
@@ -835,9 +846,12 @@ function RepoSummaryPeek({ items, now }: { items: InboxPr[]; now: number }) {
 const ProjectBranches = observer(function ProjectBranches({
   project,
   items,
+  checkedOut,
 }: {
   project: Project;
   items: InboxPr[];
+  /** A local folder's checked-out branch. */
+  checkedOut: string | null;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -886,7 +900,7 @@ const ProjectBranches = observer(function ProjectBranches({
   // A fixed grid, not a table: columns keep their width at any window size
   // and the commit column takes what's left (and truncates).
   const cols =
-    'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_56px_124px] items-center gap-3';
+    'grid grid-cols-[minmax(200px,2fr)_minmax(0,3fr)_88px_56px_124px] items-center gap-3';
   return (
     <div className="branches flex min-h-0 min-w-0 flex-1 flex-col overflow-auto px-6 pb-20">
       <div
@@ -911,6 +925,16 @@ const ProjectBranches = observer(function ProjectBranches({
             >
               <BranchesRight className="size-3.5 shrink-0 text-muted" />
               <span className="truncate">{b.name}</span>
+              {b.name === checkedOut && (
+                <Chip
+                  size="sm"
+                  variant="soft"
+                  color="accent"
+                  className="shrink-0"
+                >
+                  checked out
+                </Chip>
+              )}
               {b.name === project.default_branch && (
                 <Chip size="sm" variant="soft" className="shrink-0">
                   default
@@ -959,20 +983,32 @@ const ProjectBranches = observer(function ProjectBranches({
   );
 });
 
-type ProjectTab = 'prs' | 'branches' | 'activity';
-
 export const ProjectView = observer(function ProjectView({
   id,
 }: {
   id: string;
 }) {
   const store = useRootStore();
-  const [tab, setTab] = useState<ProjectTab>('prs');
+  const [tab, setTab] = useState<ProjectTab | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [working, setWorking] = useState<ProjectWorkingState | null>(null);
   const project = store.models.projects.get(id);
   const items = project
     ? store.models.prSummaries.where((p) => sameRepo(p.pr.repo, project.repo))
     : [];
+  const local = !!project && isLocalFolder(project);
+  const ready = project?.status === 'ready';
+
+  // Re-read after every refresh too: a refresh is when the user expects
+  // the folder's state to be current.
+  useEffect(() => {
+    if (!local || !ready) return;
+    let live = true;
+    void api.projectWorkingState(id).then((s) => live && setWorking(s));
+    return () => {
+      live = false;
+    };
+  }, [id, local, ready, project?.last_fetched_at]);
 
   const refresh = () => {
     setRefreshing(true);
@@ -991,12 +1027,18 @@ export const ProjectView = observer(function ProjectView({
   const ghUrl = hostRepoUrl(project.repo);
   const viewerLogin = store.ephemeral.viewer?.login ?? null;
   const stats = projectStats(items, viewerLogin, Date.now());
+  const tabs = projectTabs(local, items);
+  const shown = tab && tabs.includes(tab) ? tab : tabs[0]!;
   const meta = [
-    project.default_branch,
+    // A local folder's branches go on the working-state line below.
+    local ? null : project.default_branch,
     project.last_fetched_at != null
       ? `fetched ${ago(project.last_fetched_at)} ago`
       : null,
   ].filter((s): s is string => !!s);
+  const workingLine = local
+    ? workingStateParts(working, project.default_branch)
+    : [];
 
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
@@ -1064,47 +1106,72 @@ export const ProjectView = observer(function ProjectView({
           {project.description}
         </p>
       )}
-      <div className="flex shrink-0 gap-2 px-6 py-3">
-        <StatCard label="Open" value={stats.open} />
-        <StatCard label="Needs your review" value={stats.needsReview} />
-        <StatCard label="Yours" value={stats.yours} />
-        <StatCard
-          label="Failing checks"
-          value={stats.failingChecks}
-          danger={stats.failingChecks > 0}
-        />
-        <StatCard label="Merged 7d" value={stats.merged7d} />
-      </div>
+      {local && (
+        <p className="flex min-w-0 items-center gap-1.5 px-6 pb-1 text-xs text-muted">
+          <span
+            className="min-w-0 shrink truncate font-mono"
+            title={project.path ?? undefined}
+          >
+            {project.path}
+          </span>
+          {workingLine.map((part) => (
+            <span key={part} className="shrink-0 whitespace-nowrap">
+              · {part}
+            </span>
+          ))}
+        </p>
+      )}
+      {!local && (
+        <div className="flex shrink-0 gap-2 px-6 py-3">
+          <StatCard label="Open" value={stats.open} />
+          <StatCard label="Needs your review" value={stats.needsReview} />
+          <StatCard label="Yours" value={stats.yours} />
+          <StatCard
+            label="Failing checks"
+            value={stats.failingChecks}
+            danger={stats.failingChecks > 0}
+          />
+          <StatCard label="Merged 7d" value={stats.merged7d} />
+        </div>
+      )}
       <Tabs
-        selectedKey={tab}
+        selectedKey={shown}
         onSelectionChange={(k) => setTab(k as ProjectTab)}
-        className="px-6 pb-3"
+        className="px-6 pb-3 pt-2"
       >
         <Tabs.ListContainer>
           <Tabs.List aria-label="Project sections">
-            <Tabs.Tab id="prs" className="gap-1.5">
-              <CodePullRequest className="size-4" />
-              Pull requests
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="branches" className="gap-1.5">
-              <BranchesRight className="size-4" />
-              Branches
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="activity" className="gap-1.5">
-              <ChartColumn className="size-4" />
-              Activity
-              <Tabs.Indicator />
-            </Tabs.Tab>
+            {tabs.map((t) => (
+              <Tabs.Tab key={t} id={t} className="gap-1.5">
+                {t === 'prs' ? (
+                  <CodePullRequest className="size-4" />
+                ) : t === 'branches' ? (
+                  <BranchesRight className="size-4" />
+                ) : (
+                  <ChartColumn className="size-4" />
+                )}
+                {t === 'prs'
+                  ? local
+                    ? 'Branch reviews'
+                    : 'Pull requests'
+                  : t === 'branches'
+                    ? 'Branches'
+                    : 'Activity'}
+                <Tabs.Indicator />
+              </Tabs.Tab>
+            ))}
           </Tabs.List>
         </Tabs.ListContainer>
       </Tabs>
       <div className="flex min-h-0 flex-1">
-        {tab === 'prs' ? (
+        {shown === 'prs' ? (
           <ProjectPrs items={items} />
-        ) : tab === 'branches' ? (
-          <ProjectBranches project={project} items={items} />
+        ) : shown === 'branches' ? (
+          <ProjectBranches
+            project={project}
+            items={items}
+            checkedOut={working?.current_branch ?? null}
+          />
         ) : (
           <ActivityTab items={items} />
         )}
