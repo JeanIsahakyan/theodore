@@ -82,6 +82,15 @@ DMG, the `.app.tar.gz` + `.sig`, and `latest.json`.
   exactly `channel-beta` and overwrite its `latest.json` on each beta build.
 - **Never re-tag a published release.** Ship a new patch instead.
 
+## Local nightly builds
+
+`scripts/nightly-build.sh` builds a DMG from the current commit, numbered by
+it: `<version>-nightly.<commits on HEAD>` (e.g. `0.0.1-nightly.340`), file
+`target/release/bundle/dmg/Theodore_<version>_<sha>_aarch64.dmg`. The number
+only grows, one per commit. Nothing is tagged or published, and the version
+files keep the release version; a dirty tree is refused, so every nightly
+maps to exactly one commit.
+
 ## First launch on a clean Mac (ad-hoc signed builds)
 
 Without a Developer ID, Gatekeeper blocks the first launch of a downloaded
