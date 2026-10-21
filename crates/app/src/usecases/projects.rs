@@ -102,6 +102,41 @@ impl Core {
     /// `last_fetched_at` unconditionally (local projects included), for the
     /// header's "fetched Nm ago".
     pub async fn refresh_project(&self, id: &str) -> AppResult<()> {
+        self.refresh_project_with(id, false).await
+    }
+
+    /// The poller's background refresh: same work, no toasts — a failed
+    /// refresh nobody asked for shouldn't interrupt anyone every 10 minutes.
+    pub(crate) async fn refresh_project_quietly(&self, id: &str) -> AppResult<()> {
+        self.refresh_project_with(id, true).await
+    }
+
+    /// The host project the poller should refresh next: ready, and last
+    /// fetched before `cutoff` (never-fetched first, then the oldest).
+    /// Local folders aren't polled — opening their page refreshes them.
+    pub(crate) async fn next_stale_host_project(&self, cutoff: i64) -> Option<String> {
+        let store = self.0.deps.store.clone();
+        let rows = tokio::task::spawn_blocking(move || store.all(models::PROJECT))
+            .await
+            .ok()?
+            .ok()?;
+        rows.into_iter()
+            .filter_map(|r| serde_json::from_value::<Project>(r.data).ok())
+            .filter(|p| p.repo.host != HostKind::Local && p.status == ProjectStatus::Ready)
+            .filter(|p| p.last_fetched_at.is_none_or(|at| at < cutoff))
+            .min_by_key(|p| p.last_fetched_at.unwrap_or(i64::MIN))
+            .map(|p| p.id)
+    }
+
+    async fn refresh_project_with(&self, id: &str, quiet: bool) -> AppResult<()> {
+        let warn = |text: String| {
+            if !quiet {
+                self.emit(Ephemeral::Toast {
+                    level: ToastLevel::Warn,
+                    text,
+                });
+            }
+        };
         let project = self
             .project_row(id)
             .await?
@@ -130,12 +165,7 @@ impl Core {
                 // No per-repo metadata endpoint on this host — the header
                 // just keeps whatever it already had.
                 Err(theodore_ports::HostError::Unsupported(_)) => {}
-                Err(e) => {
-                    self.emit(Ephemeral::Toast {
-                        level: ToastLevel::Warn,
-                        text: format!("project refresh failed: {e}"),
-                    });
-                }
+                Err(e) => warn(format!("project refresh failed: {e}")),
             }
 
             let slug = project.repo.slug();
@@ -174,12 +204,7 @@ impl Core {
                             by_id.entry(summary.pr.id().0).or_insert(summary);
                         }
                     }
-                    Err(e) => {
-                        self.emit(Ephemeral::Toast {
-                            level: ToastLevel::Warn,
-                            text: format!("project refresh failed: {e}"),
-                        });
-                    }
+                    Err(e) => warn(format!("project refresh failed: {e}")),
                 }
             }
             let mut actions = Vec::with_capacity(by_id.len());

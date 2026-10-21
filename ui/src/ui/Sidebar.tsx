@@ -21,7 +21,7 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
-import { refreshProject, removeProject } from '../actions';
+import { removeProject } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
@@ -29,6 +29,7 @@ import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { inInbox } from './List';
 import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
+import { refreshProjectTracked } from './project/freshness';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SyncStatus } from './shell/SyncStatus';
 
@@ -149,7 +150,7 @@ export const Sidebar = observer(function Sidebar() {
           label: projectLabel(p),
           route: { name: 'project', id: p.id },
           contextMenu: projectContextMenu({
-            onRefresh: () => void refreshProject(store, p.id),
+            onRefresh: () => void refreshProjectTracked(store, p.id),
             onRemove: () => {
               if (
                 window.confirm(

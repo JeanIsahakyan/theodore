@@ -59,7 +59,6 @@ import {
   addProject,
   openBranch as openBranchAction,
   pickFolder,
-  refreshProject,
 } from '../actions';
 import { api } from '../core/api';
 import { useRootStore, useUi } from '../stores/context';
@@ -83,6 +82,12 @@ import { RowsSkeleton } from './Loading';
 import { Peek } from './Peek';
 import { projectActivity } from './project/activity';
 import { branchPr } from './project/branches';
+import {
+  needsAutoRefresh,
+  refreshProjectTracked,
+  refreshingProjects,
+  staleFetchedLabel,
+} from './project/freshness';
 import {
   hasPullRequests,
   isLocalFolder,
@@ -990,8 +995,8 @@ export const ProjectView = observer(function ProjectView({
 }) {
   const store = useRootStore();
   const [tab, setTab] = useState<ProjectTab | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [working, setWorking] = useState<ProjectWorkingState | null>(null);
+  const refreshing = refreshingProjects.has(id);
   const project = store.models.projects.get(id);
   const items = project
     ? store.models.prSummaries.where((p) => sameRepo(p.pr.repo, project.repo))
@@ -1010,10 +1015,18 @@ export const ProjectView = observer(function ProjectView({
     };
   }, [id, local, ready, project?.last_fetched_at]);
 
-  const refresh = () => {
-    setRefreshing(true);
-    void refreshProject(store, id).finally(() => setRefreshing(false));
-  };
+  const refresh = () => void refreshProjectTracked(store, id);
+
+  // Opening a page that's more than a few minutes old refreshes it.
+  useEffect(() => {
+    if (ready && needsAutoRefresh(project?.last_fetched_at, Date.now())) {
+      refresh();
+    }
+    // Once per page open, not on every `last_fetched_at` change the refresh
+    // itself causes. A page opened mid-clone is left alone: the core
+    // refreshes a project itself as soon as its clone is ready.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (!project) {
     return (
@@ -1032,9 +1045,7 @@ export const ProjectView = observer(function ProjectView({
   const meta = [
     // A local folder's branches go on the working-state line below.
     local ? null : project.default_branch,
-    project.last_fetched_at != null
-      ? `fetched ${ago(project.last_fetched_at)} ago`
-      : null,
+    staleFetchedLabel(project.last_fetched_at, Date.now()),
   ].filter((s): s is string => !!s);
   const workingLine = local
     ? workingStateParts(working, project.default_branch)
@@ -1092,7 +1103,11 @@ export const ProjectView = observer(function ProjectView({
               isPending={refreshing}
               onPress={refresh}
             >
-              <ArrowRotateLeft className="size-4" />
+              {refreshing ? (
+                <Spinner />
+              ) : (
+                <ArrowRotateLeft className="size-4" />
+              )}
             </Button>
             <Tooltip.Content>Refresh project</Tooltip.Content>
           </Tooltip>
