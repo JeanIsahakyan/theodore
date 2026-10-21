@@ -10,6 +10,7 @@ import {
 import {
   ArrowRotateLeft,
   ArrowUturnCcwLeft,
+  BranchesRight,
   Check,
   Clock,
   CodePullRequest,
@@ -33,6 +34,7 @@ import { toggleTheme } from '../stores/UiStore';
 import { ALL } from '../core/workspaces';
 import { Avatar, K } from './bits';
 import { projectLabel } from './Projects';
+import { refreshProjectTracked } from './project/freshness';
 import { Sparkles } from '@gravity-ui/icons';
 
 export interface Item {
@@ -426,24 +428,34 @@ export const CommandMenu = observer(function CommandMenu() {
           },
         ]
       : []),
+    ...(repoWorkspace
+      ? [
+          {
+            group: 'Go to',
+            label: 'Pull requests',
+            icon: <CodePullRequest />,
+            run: () => ui.goPrs(),
+          },
+          ...(FEATURES.currentUser
+            ? [
+                {
+                  group: 'Go to',
+                  label: 'My pull requests',
+                  icon: <CodePullRequest />,
+                  keys: 'G M',
+                  run: () => ui.goPrs('mine'),
+                },
+              ]
+            : []),
+        ]
+      : []),
     ...(ws.active
       ? [
           {
             group: 'Go to',
-            label: 'Overview',
-            icon: <Folder />,
-            run: () => ui.go({ name: 'project', id: ws.active!.id }),
-          },
-        ]
-      : []),
-    ...(FEATURES.currentUser && repoWorkspace
-      ? [
-          {
-            group: 'Go to',
-            label: 'My PRs',
-            icon: <CodePullRequest />,
-            keys: 'G M',
-            run: () => ui.go({ name: 'mine' }),
+            label: 'Branches',
+            icon: <BranchesRight />,
+            run: () => ui.go({ name: 'branches' }),
           },
         ]
       : []),
@@ -487,6 +499,16 @@ export const CommandMenu = observer(function CommandMenu() {
       icon: <ArrowRotateLeft />,
       run: () => void refreshInbox(store),
     },
+    ...(ws.active
+      ? [
+          {
+            group: 'General',
+            label: `Refresh ${projectLabel(ws.active)}`,
+            icon: <ArrowRotateLeft />,
+            run: () => void refreshProjectTracked(store, ws.active!.id),
+          },
+        ]
+      : []),
     {
       group: 'General',
       label: 'Keyboard shortcuts',
@@ -563,8 +585,7 @@ export function useGlobalKeys() {
         if (latinKey(e) === 'i') ui.go({ name: 'inbox' });
         if (latinKey(e) === 't') ui.go({ name: 'tasks' });
         if (latinKey(e) === 's') ui.go({ name: 'settings', page: 'agents' });
-        if (latinKey(e) === 'm' && FEATURES.currentUser)
-          ui.go({ name: 'mine' });
+        if (latinKey(e) === 'm' && FEATURES.currentUser) ui.goPrs('mine');
         if (latinKey(e) === 'k') ui.go({ name: 'skills' });
       } else if (latinKey(e) === 'g') {
         gAt = Date.now();

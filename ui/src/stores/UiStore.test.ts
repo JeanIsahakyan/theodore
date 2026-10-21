@@ -109,11 +109,11 @@ describe('UiStore back', () => {
   it('leaves Settings in one step after moving between its pages', () => {
     localStorage.clear();
     const ui = new UiStore();
-    ui.go({ name: 'mine' });
+    ui.go({ name: 'prs' });
     ui.go({ name: 'settings', page: 'agents' });
     ui.go({ name: 'settings', page: 'account' });
     ui.go({ name: 'settings', page: 'updates' });
     ui.goBack();
-    expect(ui.route).toEqual({ name: 'mine' });
+    expect(ui.route).toEqual({ name: 'prs' });
   });
 });

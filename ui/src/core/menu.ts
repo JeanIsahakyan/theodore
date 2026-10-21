@@ -41,8 +41,10 @@ export function runMenu(store: RootStore, id: string): void {
       return ui.openModal('cmdk');
     case 'go-inbox':
       return ui.go({ name: 'inbox' });
+    case 'go-prs':
+      return ui.goPrs();
     case 'go-mine':
-      return ui.go({ name: 'mine' });
+      return ui.goPrs('mine');
     case 'go-tasks':
       return ui.go({ name: 'tasks' });
     case 'next-tab':

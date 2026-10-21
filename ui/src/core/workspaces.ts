@@ -44,10 +44,14 @@ export function ownerOf(
   return repo ? projects.find((p) => sameRepo(p.repo, repo)) : undefined;
 }
 
+/** A local folder's project id is `local:<name>` — known before the
+ *  projects load. */
+export const isLocalId = (ws: WorkspaceId): boolean => ws.startsWith('local:');
+
 export function kindOf(ws: WorkspaceId, projects: Project[]): WorkspaceKind {
   if (ws === ALL) return 'all';
   const p = projects.find((x) => x.id === ws);
-  return p?.repo.host === 'local' ? 'local' : 'repo';
+  return p?.repo.host === 'local' || isLocalId(ws) ? 'local' : 'repo';
 }
 
 /** Whether a row of `repo` shows in `ws`. All shows everything; a project
@@ -142,10 +146,58 @@ export function waitingCounts(
   return out;
 }
 
+export type Section = 'inbox' | 'prs' | 'branches' | 'tasks' | 'skills';
+
+/** The sidebar sections a workspace has, in order: All has no Branches
+ *  (no single repo), a local folder has no Inbox or Pull requests (no
+ *  host PRs). */
+export function sectionsOf(kind: WorkspaceKind): Section[] {
+  if (kind === 'all') return ['inbox', 'prs', 'tasks', 'skills'];
+  if (kind === 'local') return ['branches', 'tasks', 'skills'];
+  return ['inbox', 'prs', 'branches', 'tasks', 'skills'];
+}
+
 /** Where a workspace starts, and where it falls back to once its last tab
- *  closes: the Inbox for All, Overview for a project. */
+ *  closes: the Inbox for All, Pull requests for a host project, Branches
+ *  for a local folder (it has no PRs). */
 export function homeRoute(ws: WorkspaceId): Route {
-  return ws === ALL ? { name: 'inbox' } : { name: 'project', id: ws };
+  if (ws === ALL) return { name: 'inbox' };
+  return isLocalId(ws) ? { name: 'branches' } : { name: 'prs' };
+}
+
+/** Pages a workspace of this kind has no room for, and where they go. */
+function fitRoute(route: Route, ws: WorkspaceId, kind: WorkspaceKind): Route {
+  const name = route.name as Section;
+  const sectioned = ['inbox', 'prs', 'branches'].includes(name);
+  return sectioned && !sectionsOf(kind).includes(name) ? homeRoute(ws) : route;
+}
+
+const ROUTE_NAMES = new Set([
+  'inbox',
+  'prs',
+  'branches',
+  'tasks',
+  'skills',
+  'settings',
+  'review',
+  'new',
+]);
+
+/** A route saved by any version, as a route of `ws` today: My PRs
+ *  (`mine`) is Pull requests, a project page (`project`) is the
+ *  workspace's own home — Pull requests, or Branches for a local folder.
+ *  `null` for anything unreadable. */
+export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as { name?: unknown; pr?: unknown; id?: unknown };
+  const kind: WorkspaceKind =
+    ws === ALL ? 'all' : isLocalId(ws) ? 'local' : 'repo';
+  if (r.name === 'mine') return fitRoute({ name: 'prs' }, ws, kind);
+  if (r.name === 'project') return ws === ALL ? { name: 'prs' } : homeRoute(ws);
+  if (typeof r.name !== 'string' || !ROUTE_NAMES.has(r.name)) return null;
+  if (r.name === 'review' && typeof r.pr !== 'string') return null;
+  if (r.name === 'new' && typeof r.id !== 'string') return null;
+  return fitRoute(raw as Route, ws, kind);
 }
 
 const sameRoute = (a: Route, b: Route) =>
@@ -165,8 +217,8 @@ export interface PlaceContext {
  * - review: stays if already a tab here; else goes to the workspace that
  *   already has it open (never two tabs of one PR); else stays in All; else
  *   the project owning its repo, or All when none does.
- * - project: that project's own workspace (its Overview).
- * - Inbox / My PRs in a local-folder workspace: its Overview instead.
+ * - Inbox / Pull requests in a local-folder workspace: its Branches.
+ * - Branches under All projects (it has no single repo): the Inbox.
  */
 export function placeRoute(
   route: Route,
@@ -187,15 +239,8 @@ export function placeRoute(
     if (!repo) return { ws: current, route };
     return { ws: ownerOf(projects, repo)?.id ?? ALL, route };
   }
-  if (route.name === 'project') {
-    const known = projects.some((p) => p.id === route.id);
-    return { ws: known ? route.id : current, route };
-  }
-  if (
-    (route.name === 'inbox' || route.name === 'mine') &&
-    kindOf(current, projects) === 'local'
-  ) {
-    return { ws: current, route: homeRoute(current) };
-  }
-  return { ws: current, route };
+  return {
+    ws: current,
+    route: fitRoute(route, current, kindOf(current, projects)),
+  };
 }

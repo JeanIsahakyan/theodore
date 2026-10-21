@@ -9,10 +9,10 @@ import { useRootStore, useUi } from '../stores/context';
 import { ask } from '../actions';
 import { ContextMenuHost, useContextMenu } from './ContextMenu';
 import { Inbox } from './List';
-import { Mine } from './Mine';
 import { Modals } from './Modals';
 import { useGlobalKeys } from './Palette';
-import { ProjectView } from './Projects';
+import { Branches } from './Branches';
+import { PullRequests } from './PullRequests';
 import { Review } from './Review';
 import { Sidebar } from './Sidebar';
 import { SettingsNav, SettingsPage } from './Settings';
@@ -153,8 +153,10 @@ export const App = observer(function App() {
           <div className="flex min-h-0 flex-1">
             {r.name === 'inbox' ? (
               <Inbox />
-            ) : r.name === 'mine' ? (
-              <Mine />
+            ) : r.name === 'prs' ? (
+              <PullRequests />
+            ) : r.name === 'branches' ? (
+              <Branches key={ui.workspace} />
             ) : r.name === 'tasks' ? (
               <Tasks />
             ) : r.name === 'skills' ? (
@@ -163,8 +165,6 @@ export const App = observer(function App() {
               <SettingsPage page={r.page} />
             ) : r.name === 'new' ? (
               <NewTab key={r.id} route={r} />
-            ) : r.name === 'project' ? (
-              <ProjectView key={r.id} id={r.id} />
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}

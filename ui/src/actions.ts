@@ -364,14 +364,14 @@ export async function refreshInbox(store: RootStore): Promise<void> {
   }
 }
 
-/** Fetches and caches the authenticated host user, for "My PRs" and "you" labels. */
+/** Fetches and caches the authenticated host user, for the Mine filter and "you" labels. */
 export async function loadViewer(store: RootStore): Promise<void> {
   if (store.ephemeral.viewer || store.ephemeral.viewerLoading) return;
   store.ephemeral.setViewerLoading(true);
   try {
     store.ephemeral.setViewer(await api.viewer());
   } catch {
-    // No host connected yet (onboarding not finished) — My PRs stays empty.
+    // No host connected yet (onboarding not finished) — Mine stays empty.
   } finally {
     store.ephemeral.setViewerLoading(false);
   }

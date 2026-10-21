@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { HostRepo, PrState, Project, RepoRef } from '../gen/contract';
-import type { InboxPr } from './List';
+import type { HostRepo, Project, RepoRef } from '../gen/contract';
 import {
-  boardColumns,
   filterHostRepos,
   hostRepoUrl,
   projectLabel,
@@ -32,26 +30,6 @@ const project = (over: Partial<Project> = {}): Project => ({
   error: null,
   default_branch: 'main',
   added_at: 0,
-  ...over,
-});
-
-const pr = (over: Partial<InboxPr> & { id: string }): InboxPr => ({
-  pr: { repo: repo(), number: 1, host_id: null },
-  title: 'a change',
-  author: { login: 'me', name: null, avatar_url: null },
-  state: 'open',
-  base_ref: 'main',
-  head_ref: 'feature',
-  head_sha: 'abc',
-  additions: 1,
-  deletions: 1,
-  changed_files: 1,
-  reasons: [],
-  checks: 'none',
-  approvals: 0,
-  required_approvals: null,
-  updated_at: 0,
-  url: 'https://github.com/acme/web/pull/1',
   ...over,
 });
 
@@ -120,29 +98,5 @@ describe('hostRepoUrl', () => {
 
   it('is null for a local folder project', () => {
     expect(hostRepoUrl(repo({ host: 'local' }))).toBeNull();
-  });
-});
-
-describe('boardColumns', () => {
-  const states: PrState[] = ['draft', 'open', 'merged', 'closed'];
-
-  it('always has one column per PrState, in order', () => {
-    const cols = boardColumns([], 'activity');
-    expect(cols.map((c) => c.status)).toEqual(states);
-  });
-
-  it('buckets items by their own status, not groupBy', () => {
-    const items = [
-      pr({ id: '1', state: 'draft' }),
-      pr({ id: '2', state: 'closed' }),
-    ];
-    const cols = boardColumns(items, 'activity');
-    expect(
-      cols.find((c) => c.status === 'draft')?.items.map((p) => p.id),
-    ).toEqual(['1']);
-    expect(
-      cols.find((c) => c.status === 'closed')?.items.map((p) => p.id),
-    ).toEqual(['2']);
-    expect(cols.find((c) => c.status === 'open')?.items).toEqual([]);
   });
 });

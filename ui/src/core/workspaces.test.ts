@@ -8,7 +8,9 @@ import {
   inWorkspace,
   isWaiting,
   kindOf,
+  migrateRoute,
   orderProjects,
+  sectionsOf,
   placeRoute,
   reorderIds,
   repoOfPrId,
@@ -305,18 +307,11 @@ describe('placeRoute', () => {
     expect(placeRoute(review('pr'), ctx({ current: web.id })).ws).toBe(web.id);
   });
 
-  it('opens a project page in its own workspace', () => {
-    expect(placeRoute({ name: 'project', id: api.id }, ctx()).ws).toBe(api.id);
-    expect(
-      placeRoute({ name: 'project', id: 'github:acme/gone' }, ctx()).ws,
-    ).toBe(ALL);
-  });
-
-  it('sends Inbox and My PRs to Overview in a local folder', () => {
-    for (const name of ['inbox', 'mine'] as const) {
+  it('sends Inbox and Pull requests to Branches in a local folder', () => {
+    for (const name of ['inbox', 'prs'] as const) {
       expect(placeRoute({ name }, ctx({ current: local.id }))).toEqual({
         ws: local.id,
-        route: { name: 'project', id: local.id },
+        route: { name: 'branches' },
       });
       expect(placeRoute({ name }, ctx({ current: web.id })).route).toEqual({
         name,
@@ -324,8 +319,86 @@ describe('placeRoute', () => {
     }
   });
 
-  it('starts All on the Inbox and a project on its Overview', () => {
+  it('keeps Branches to a single project', () => {
+    expect(placeRoute({ name: 'branches' }, ctx()).route).toEqual({
+      name: 'inbox',
+    });
+    expect(
+      placeRoute({ name: 'branches' }, ctx({ current: web.id })).route,
+    ).toEqual({ name: 'branches' });
+  });
+
+  it('starts All on the Inbox, a project on Pull requests, a folder on Branches', () => {
     expect(homeRoute(ALL)).toEqual({ name: 'inbox' });
-    expect(homeRoute(web.id)).toEqual({ name: 'project', id: web.id });
+    expect(homeRoute(web.id)).toEqual({ name: 'prs' });
+    expect(homeRoute(local.id)).toEqual({ name: 'branches' });
+  });
+});
+
+describe('sectionsOf', () => {
+  it('gives a local folder Branches and no PR sections', () => {
+    expect(sectionsOf('local')).toEqual(['branches', 'tasks', 'skills']);
+  });
+
+  it('gives Branches only to a single project', () => {
+    expect(sectionsOf('all')).toEqual(['inbox', 'prs', 'tasks', 'skills']);
+    expect(sectionsOf('repo')).toEqual([
+      'inbox',
+      'prs',
+      'branches',
+      'tasks',
+      'skills',
+    ]);
+  });
+
+  it('agrees with where a local folder opens', () => {
+    expect(sectionsOf(kindOf(local.id, []))).toContain(
+      homeRoute(local.id).name,
+    );
+  });
+});
+
+describe('migrateRoute', () => {
+  it('turns My PRs into Pull requests', () => {
+    expect(migrateRoute({ name: 'mine' }, ALL)).toEqual({ name: 'prs' });
+    expect(migrateRoute({ name: 'mine' }, web.id)).toEqual({ name: 'prs' });
+  });
+
+  it('turns a project page into the workspace home', () => {
+    const page = { name: 'project', id: web.id };
+    expect(migrateRoute(page, web.id)).toEqual({ name: 'prs' });
+    expect(migrateRoute(page, ALL)).toEqual({ name: 'prs' });
+    expect(migrateRoute({ name: 'project', id: local.id }, local.id)).toEqual({
+      name: 'branches',
+    });
+  });
+
+  it('gives a local folder Branches for any PR page', () => {
+    for (const name of ['mine', 'inbox', 'prs'])
+      expect(migrateRoute({ name }, local.id)).toEqual({ name: 'branches' });
+  });
+
+  it('keeps routes that still exist as they are', () => {
+    const kept: Route[] = [
+      { name: 'inbox' },
+      { name: 'tasks' },
+      { name: 'skills' },
+      { name: 'settings', page: 'agents' },
+      { name: 'review', pr: 'github:acme/web#1' },
+      { name: 'new', id: 'x' },
+    ];
+    for (const r of kept) expect(migrateRoute(r, ALL)).toEqual(r);
+  });
+
+  it('drops anything it cannot read', () => {
+    for (const raw of [
+      null,
+      'inbox',
+      7,
+      {},
+      { name: 'gone' },
+      { name: 'review' },
+    ])
+      expect(migrateRoute(raw, ALL)).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import {
+  BranchesRight,
   CodePullRequest,
-  Folder,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -22,7 +22,6 @@ import {
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
-import { projectLabel } from './Projects';
 import { PRIcon } from './StatusIcon';
 
 function useLabel(r: Route): {
@@ -34,8 +33,10 @@ function useLabel(r: Route): {
   switch (r.name) {
     case 'inbox':
       return { icon: <Tray />, title: 'Inbox' };
-    case 'mine':
-      return { icon: <CodePullRequest />, title: 'My PRs' };
+    case 'prs':
+      return { icon: <CodePullRequest />, title: 'Pull requests' };
+    case 'branches':
+      return { icon: <BranchesRight />, title: 'Branches' };
     case 'tasks':
       return { icon: <ListCheck />, title: 'Tasks' };
     case 'skills':
@@ -44,10 +45,6 @@ function useLabel(r: Route): {
       return { icon: <Gear />, title: 'Settings' };
     case 'new':
       return { icon: <Link />, title: 'New tab' };
-    case 'project': {
-      const p = store.models.projects.get(r.id);
-      return { icon: <Folder />, title: p ? projectLabel(p) : r.id };
-    }
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);
       const drafts = store.models.drafts.byPr(r.pr).length;
