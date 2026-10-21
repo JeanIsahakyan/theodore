@@ -182,12 +182,17 @@ export function Shell({
       >
         <Modal.Dialog
           aria-label={title}
-          className={`modal flex flex-col gap-3 p-4 ${size === 'lg' ? 'w-[760px] max-w-[92vw]' : 'w-[520px] max-w-[92vw]'}`}
+          className={`modal flex max-h-[84vh] flex-col gap-3 p-4 ${size === 'lg' ? 'w-[760px] max-w-[92vw]' : 'w-[520px] max-w-[92vw]'}`}
         >
           <Modal.CloseTrigger aria-label="Close" />
-          <Modal.Heading className="pe-8">{title}</Modal.Heading>
-          {children}
-          {footer && <div className="flex justify-end gap-2">{footer}</div>}
+          <Modal.Heading className="shrink-0 pe-8">{title}</Modal.Heading>
+          {/* The body scrolls; the title and footer stay put. */}
+          <div className="-mx-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4">
+            {children}
+          </div>
+          {footer && (
+            <div className="flex shrink-0 justify-end gap-2">{footer}</div>
+          )}
         </Modal.Dialog>
       </Modal.Container>
     </Modal.Backdrop>
