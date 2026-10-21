@@ -33,6 +33,9 @@ tokio.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 regex.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

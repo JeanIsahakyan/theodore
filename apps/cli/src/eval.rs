@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use theodore_domain::{AgentId, Revision, grouping};
-use theodore_grouping::{GroupingOptions, PrMeta, group_revision};
+use theodore_grouping::{GroupingOptions, PrMeta, group_revision, prepass, prompt};
 use theodore_ports::AgentPort;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -46,6 +46,27 @@ pub struct EvalArgs {
     /// Omit to use the agent's own default.
     #[arg(long)]
     pub model: Option<String>,
+    /// Call an OpenAI-compatible `/v1/chat/completions` server at this base
+    /// url (e.g. a local `llama-server`) instead of the agent CLI. `--model`
+    /// is sent as the request's model name.
+    #[arg(long)]
+    pub endpoint: Option<String>,
+    /// `max_tokens` per `--endpoint` request.
+    #[arg(long, default_value_t = 8192)]
+    pub max_tokens: u32,
+    /// With `--endpoint`: restrict hunk and group ids in the response schema
+    /// to the ids listed in the prompt.
+    #[arg(long)]
+    pub constrain_ids: bool,
+    /// Prompt size (chars) above which a PR is split into chunks.
+    #[arg(long)]
+    pub max_chars: Option<usize>,
+    /// Max chunk prompts in flight at once.
+    #[arg(long)]
+    pub concurrency: Option<usize>,
+    /// Write each fixture's grouping and run stats to `<dir>/<fixture>.json`.
+    #[arg(long)]
+    pub save: Option<PathBuf>,
 }
 
 /// Load every `*.json` fixture in `dir`, sorted by file name.
@@ -106,17 +127,41 @@ pub async fn run_eval_with_model(
     fixtures: &[(String, Fixture)],
     cwd: &Path,
 ) -> Vec<EvalRow> {
+    let opts = GroupingOptions {
+        agent: agent_id,
+        model,
+        ..Default::default()
+    };
+    run_eval_with_options(agent, &opts, fixtures, cwd, None).await
+}
+
+/// Same as `run_eval`, with full `GroupingOptions`; when `save` is set, each
+/// fixture's grouping and run stats go to `<save>/<fixture>.json`.
+pub async fn run_eval_with_options(
+    agent: &dyn AgentPort,
+    opts: &GroupingOptions,
+    fixtures: &[(String, Fixture)],
+    cwd: &Path,
+    save: Option<&Path>,
+) -> Vec<EvalRow> {
     let mut rows = Vec::with_capacity(fixtures.len());
     for (name, fx) in fixtures {
         let pr: PrMeta = fx.pr.clone().into();
-        let opts = GroupingOptions {
-            agent: agent_id,
-            model: model.clone(),
-            ..Default::default()
-        };
-        match group_revision(agent, &pr, &fx.revision, cwd, &opts).await {
+        match group_revision(agent, &pr, &fx.revision, cwd, opts).await {
             Ok(report) => {
                 let valid_after_repair = grouping::validate(&fx.revision, &report.grouping).is_ok();
+                let chunks = prompt::build_prompts(
+                    &pr,
+                    &fx.revision,
+                    &prepass::run(&fx.revision),
+                    &opts.budget,
+                )
+                .len();
+                if let Some(dir) = save
+                    && let Err(e) = save_report(dir, name, &report, chunks, valid_after_repair)
+                {
+                    eprintln!("could not save {name}: {e}");
+                }
                 rows.push(EvalRow {
                     name: name.clone(),
                     valid_first_try: report.valid_first_try,
@@ -139,6 +184,29 @@ pub async fn run_eval_with_model(
         }
     }
     rows
+}
+
+fn save_report(
+    dir: &Path,
+    name: &str,
+    report: &theodore_grouping::GroupingReport,
+    chunks: usize,
+    valid_after_repair: bool,
+) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let value = serde_json::json!({
+        "fixture": name,
+        "chunks": chunks,
+        "attempts": report.attempts,
+        "valid_first_try": report.valid_first_try,
+        "valid_after_repair": valid_after_repair,
+        "duration_ms": report.duration_ms,
+        "usage": report.usage,
+        "grouping": report.grouping,
+    });
+    let path = dir.join(format!("{name}.json"));
+    std::fs::write(&path, serde_json::to_vec_pretty(&value)?)
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 /// M1 exit targets (docs/plan.md §5.4): at least 90% valid on the first
