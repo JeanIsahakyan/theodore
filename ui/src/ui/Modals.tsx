@@ -192,12 +192,15 @@ const KEYS: [string, string][] = [
   ['T', 'toggle tour'],
   ['S', 'unified / side by side'],
   [']', 'hide / show AI panel'],
-  ['⇧ + click +', 'comment on a line range'],
   [
-    '⌘ + click symbol',
+    '⇧\u00a0click',
+    'comment on a line range: click the first line, ⇧ click the last',
+  ],
+  [
+    '⌘\u00a0click',
     FEATURES.symbolPeek
-      ? 'definition and usages'
-      : 'definition and usages (not available yet)',
+      ? 'definition and usages of a symbol'
+      : 'definition and usages of a symbol (not available yet)',
   ],
   ['/', 'ask AI'],
   ['Esc', 'close / back'],
