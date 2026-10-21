@@ -4,6 +4,9 @@
 
 use async_trait::async_trait;
 use theodore_contract::{
+    AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus,
+};
+use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
     CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
     DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
@@ -137,6 +140,20 @@ pub trait CoreApi: Send + Sync {
     async fn sandbox_fire_event(&self, _id: String) -> Result<SandboxStatus, CommandError> {
         Err(not_sandbox())
     }
+
+    /// Theodore account (plan "Theodore account"): signed in or out, and
+    /// whether the feature is configured at all.
+    async fn account_status(&self) -> Result<AccountStatus, CommandError>;
+    /// Starts a browser (PKCE + loopback) or device-code sign-in.
+    async fn account_sign_in_start(
+        &self,
+        req: AccountSignInRequest,
+    ) -> Result<AccountSignInStart, CommandError>;
+    /// The outcome of the sign-in in progress (one device-code poll).
+    async fn account_sign_in_poll(&self) -> Result<AccountSignInState, CommandError>;
+    /// Drops the sign-in in progress (frees the loopback port).
+    async fn account_sign_in_cancel(&self) -> Result<(), CommandError>;
+    async fn account_sign_out(&self) -> Result<AccountStatus, CommandError>;
 }
 
 fn not_sandbox() -> CommandError {
@@ -327,6 +344,24 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn close_branch_review(&self, _pr: PrId) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn account_status(&self) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn account_sign_in_start(
+        &self,
+        _req: AccountSignInRequest,
+    ) -> Result<AccountSignInStart, CommandError> {
+        Err(not_ready())
+    }
+    async fn account_sign_in_poll(&self) -> Result<AccountSignInState, CommandError> {
+        Err(not_ready())
+    }
+    async fn account_sign_in_cancel(&self) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn account_sign_out(&self) -> Result<AccountStatus, CommandError> {
         Err(not_ready())
     }
 }

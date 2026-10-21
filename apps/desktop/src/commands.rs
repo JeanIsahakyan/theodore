@@ -570,3 +570,58 @@ pub async fn close_branch_review(
 ) -> Result<(), CommandError> {
     core.close_branch_review(pr).await
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_status(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    core.account_status().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_start(
+    req: theodore_contract::AccountSignInRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountSignInStart, CommandError> {
+    core.account_sign_in_start(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_poll(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountSignInState, CommandError> {
+    core.account_sign_in_poll().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_cancel(core: State<'_, Arc<dyn CoreApi>>) -> Result<(), CommandError> {
+    core.account_sign_in_cancel().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_out(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    core.account_sign_out().await
+}
+
+/// Brings the main window forward: the browser sign-in finishes in another
+/// app, and the user should land back in Theodore without hunting for it.
+#[tauri::command]
+#[specta::specta]
+pub async fn focus_window(app: AppHandle) -> Result<(), CommandError> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        w.set_focus().map_err(|e| CommandError {
+            code: "internal".into(),
+            message: e.to_string(),
+        })?;
+    }
+    Ok(())
+}

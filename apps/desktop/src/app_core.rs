@@ -3,6 +3,9 @@
 use async_trait::async_trait;
 use theodore_app::{AppError, Core};
 use theodore_contract::{
+    AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus,
+};
+use theodore_contract::{
     AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
     CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
     DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
@@ -75,6 +78,7 @@ fn err(e: AppError) -> CommandError {
         AppError::NotFound(_) => "not_found",
         AppError::Invalid(_) => "invalid",
         AppError::Join(_) => "internal",
+        AppError::Account(_) => "account",
     };
     CommandError {
         code: code.into(),
@@ -315,5 +319,24 @@ impl CoreApi for AppCore {
             Ok(s.status())
         })
         .await
+    }
+    async fn account_status(&self) -> Result<AccountStatus, CommandError> {
+        self.core.account_status().await.map_err(err)
+    }
+    async fn account_sign_in_start(
+        &self,
+        req: AccountSignInRequest,
+    ) -> Result<AccountSignInStart, CommandError> {
+        self.core.account_sign_in_start(req).await.map_err(err)
+    }
+    async fn account_sign_in_poll(&self) -> Result<AccountSignInState, CommandError> {
+        self.core.account_sign_in_poll().await.map_err(err)
+    }
+    async fn account_sign_in_cancel(&self) -> Result<(), CommandError> {
+        self.core.account_sign_in_cancel();
+        Ok(())
+    }
+    async fn account_sign_out(&self) -> Result<AccountStatus, CommandError> {
+        self.core.account_sign_out().await.map_err(err)
     }
 }
