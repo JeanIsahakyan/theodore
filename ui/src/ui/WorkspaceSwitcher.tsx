@@ -1,161 +1,143 @@
 /**
- * The workspace switcher at the top of the sidebar: "All projects" and
- * every project, always expanded, one selected. Click switches; drag
- * reorders (the order ⌃1…9 follow); right-click for refresh, settings
- * and remove.
+ * The workspace switcher: the sidebar's top-left corner shows the active
+ * workspace ("All projects" or one project) and opens a menu to switch —
+ * one workspace at a time, the way a team switcher works. ⌃0 / ⌃1…9 switch
+ * without opening it; the menu shows each workspace's waiting-PR count.
  */
-import { House, Plus } from '@gravity-ui/icons';
-import { ListBox } from '@heroui/react';
+import { ChevronDown, Gear, House, Plus } from '@gravity-ui/icons';
+import { Button, Dropdown, Label } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
-import { useDragAndDrop } from 'react-aria-components';
-import { removeProject } from '../actions';
-import { refreshProjectTracked } from './project/freshness';
 import { ALL } from '../core/workspaces';
 import { FEATURES } from '../features';
-import { useRootStore, useUi, useWorkspaces } from '../stores/context';
-import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
-import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
+import { useUi, useWorkspaces } from '../stores/context';
+import { Logo } from './Logo';
+import { ProjectStatusDot, projectLabel } from './Projects';
 
 const ADD = 'add-project';
-/** The active workspace is highlighted, not just bold. */
-const ITEM =
-  'nav gap-3 px-3 text-sm data-[selected=true]:bg-default data-[selected=true]:font-medium';
+const SETTINGS = 'project-settings';
 
-function Row({
+function Item({
+  id,
   icon,
   label,
   sub,
   n,
   keys,
+  isDisabled,
+  check = true,
 }: {
+  id: string;
   icon: ReactNode;
   label: string;
   sub?: string;
   n?: number;
   keys?: string;
+  isDisabled?: boolean;
+  check?: boolean;
 }) {
   return (
-    <>
+    <Dropdown.Item
+      id={id}
+      textValue={label}
+      isDisabled={isDisabled}
+      className="gap-2.5"
+    >
       <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
         {icon}
       </span>
-      <span
-        className="min-w-0 flex-1 truncate"
-        title={keys ? `${label}  ${keys}` : label}
-      >
+      <Label className="min-w-0 flex-1 truncate" title={label}>
         {label}
         {sub && <span className="ms-1.5 text-xs text-muted">{sub}</span>}
-      </span>
+      </Label>
       {!!n && (
         <span
-          className="shrink-0 text-xs tabular-nums text-muted"
+          className="shrink-0 rounded-full bg-default px-1.5 text-xs tabular-nums text-muted"
           aria-label={`${n} waiting`}
         >
           {n}
         </span>
       )}
-    </>
+      {keys && <span className="shrink-0 text-xs text-muted">{keys}</span>}
+      {check && <Dropdown.ItemIndicator />}
+    </Dropdown.Item>
   );
 }
 
 export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
-  const store = useRootStore();
   const ui = useUi();
   const ws = useWorkspaces();
-  const projects = ws.projects;
+  const active = ws.active;
+  // The trigger is narrow: just the repo (or folder) name; the menu and the
+  // tooltip carry the full owner/repo.
+  const full = active ? projectLabel(active) : 'All projects';
+  const name = active ? (full.split('/').pop() ?? full) : full;
   const badges = ws.badges;
 
-  const { dragAndDropHooks } = useDragAndDrop({
-    getItems: (keys) =>
-      [...keys]
-        .filter((k) => k !== ALL && k !== ADD)
-        .map((k) => ({ 'text/plain': String(k) })),
-    onReorder: (e) => {
-      const ids = ws.projects.map((p) => p.id);
-      let target: string | undefined = String(e.target.key);
-      let pos: 'before' | 'after' =
-        e.target.dropPosition === 'before' ? 'before' : 'after';
-      // All and Add project stay put: a drop on them means first / last.
-      if (target === ALL) [target, pos] = [ids[0], 'before'];
-      else if (target === ADD) [target, pos] = [ids.at(-1), 'after'];
-      if (target) ws.reorder([...e.keys].map(String), target, pos);
-    },
-  });
-
-  const menuFor = (id: string): ContextMenuItem[] => {
-    const p = store.models.projects.get(id);
-    if (!p) return [];
-    const [refresh, remove] = projectContextMenu({
-      onRefresh: () => void refreshProjectTracked(store, id),
-      onRemove: () => {
-        if (
-          window.confirm(
-            `Remove ${projectLabel(p)}? Its local clone is deleted; your own folder (if local) is untouched.`,
-          )
-        ) {
-          void removeProject(store, id);
-        }
-      },
-    });
-    return [
-      refresh!,
-      {
-        id: 'settings',
-        label: 'Project settings',
-        onAction: () => ui.go({ name: 'settings', page: 'projects' }),
-      },
-      remove!,
-    ];
-  };
-
   return (
-    <ListBox
-      aria-label="Workspaces"
-      selectionMode="single"
-      disallowEmptySelection
-      selectedKeys={[ui.workspace]}
-      onSelectionChange={(keys) => {
-        const k = keys === 'all' ? undefined : [...keys][0];
-        if (k === ADD) ui.openModal('add-project');
-        else if (k !== undefined) ws.switchTo(String(k));
-      }}
-      dragAndDropHooks={dragAndDropHooks}
-      className="nav-list max-h-[40vh] shrink-0 overflow-auto px-2 pb-2"
-    >
-      <ListBox.Item id={ALL} textValue="All projects" className={ITEM}>
-        <Row
-          icon={<House />}
-          label="All projects"
-          n={badges.get(ALL)}
-          keys="⌃0"
-        />
-      </ListBox.Item>
-      {projects.map((p, i) => (
-        <ListBox.Item
-          key={p.id}
-          id={p.id}
-          textValue={projectLabel(p)}
-          onContextMenu={contextMenuHandler(ui, menuFor(p.id))}
-          className={ITEM}
-        >
-          <Row
-            icon={<ProjectStatusDot p={p} />}
-            label={projectLabel(p)}
-            sub={p.repo.host === 'local' ? 'local' : undefined}
-            n={badges.get(p.id)}
-            keys={i < 9 ? `⌃${i + 1}` : undefined}
-          />
-        </ListBox.Item>
-      ))}
-      <ListBox.Item
-        id={ADD}
-        textValue="Add project"
-        isDisabled={!FEATURES.projects}
-        className="nav gap-3 px-3 text-sm text-muted"
+    <Dropdown>
+      <Button
+        variant="ghost"
+        aria-label={`Workspace: ${full}`}
+        className="workspace-switcher h-8 min-w-0 flex-1 justify-start gap-2 px-1.5"
       >
-        <Row icon={<Plus />} label="Add project" />
-      </ListBox.Item>
-    </ListBox>
+        <Logo size={22} />
+        <span className="min-w-0 truncate font-semibold">{name}</span>
+        <ChevronDown className="size-3.5 shrink-0 text-muted" />
+      </Button>
+      <Dropdown.Popover placement="bottom start" className="min-w-64">
+        <Dropdown.Menu
+          aria-label="Workspaces"
+          selectionMode="single"
+          selectedKeys={new Set([ui.workspace])}
+          onAction={(k) => {
+            const key = String(k);
+            if (key === ADD) ui.openModal('add-project');
+            else if (key === SETTINGS)
+              ui.go({ name: 'settings', page: 'projects' });
+            else ws.switchTo(key);
+          }}
+        >
+          <Dropdown.Section aria-label="Switch workspace">
+            <Item
+              id={ALL}
+              icon={<House />}
+              label="All projects"
+              n={badges.get(ALL)}
+              keys="⌃0"
+            />
+            {ws.projects.map((p, i) => (
+              <Item
+                key={p.id}
+                id={p.id}
+                icon={<ProjectStatusDot p={p} />}
+                label={projectLabel(p)}
+                sub={p.repo.host === 'local' ? 'local' : undefined}
+                n={badges.get(p.id)}
+                keys={i < 9 ? `⌃${i + 1}` : undefined}
+              />
+            ))}
+          </Dropdown.Section>
+          <Dropdown.Section
+            aria-label="Projects"
+            className="mt-1 border-t border-separator pt-1"
+          >
+            <Item
+              id={ADD}
+              icon={<Plus />}
+              label="Add project…"
+              isDisabled={!FEATURES.projects}
+              check={false}
+            />
+            <Item
+              id={SETTINGS}
+              icon={<Gear />}
+              label="Project settings"
+              check={false}
+            />
+          </Dropdown.Section>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
   );
 });

@@ -28,7 +28,6 @@ import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
 import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { inInbox } from './List';
-import { Logo } from './Logo';
 import { branchReviewMenu, closeBranchReview } from './project/closeReview';
 import { isBranchReview } from './project/sections';
 import { SandboxBadge } from './sandbox/SandboxBadge';
@@ -197,10 +196,9 @@ export const Sidebar = observer(function Sidebar() {
       <Toolbar
         aria-label="Workspace"
         data-tauri-drag-region
-        className="flex w-full items-center gap-2.5 pb-3 pe-5 ps-5 pt-11"
+        className="flex w-full items-center gap-1.5 pb-3 pe-4 ps-3.5 pt-11"
       >
-        <Logo size={24} />
-        <span className="flex-1 font-semibold">Theodore</span>
+        <WorkspaceSwitcher />
         <Tooltip>
           <Button
             size="sm"
@@ -215,9 +213,6 @@ export const Sidebar = observer(function Sidebar() {
           <Tooltip.Content>Find a command</Tooltip.Content>
         </Tooltip>
       </Toolbar>
-
-      <WorkspaceSwitcher />
-      <Separator className="mx-4 w-auto" />
 
       <ListBox
         aria-label="Navigation"
