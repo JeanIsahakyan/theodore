@@ -17,6 +17,9 @@ import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ProjectStatusDot, projectContextMenu, projectLabel } from './Projects';
 
 const ADD = 'add-project';
+/** The active workspace is highlighted, not just bold. */
+const ITEM =
+  'nav gap-3 px-3 text-sm data-[selected=true]:bg-default data-[selected=true]:font-medium';
 
 function Row({
   icon,
@@ -119,11 +122,7 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
       dragAndDropHooks={dragAndDropHooks}
       className="nav-list max-h-[40vh] shrink-0 overflow-auto px-2 pb-2"
     >
-      <ListBox.Item
-        id={ALL}
-        textValue="All projects"
-        className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
-      >
+      <ListBox.Item id={ALL} textValue="All projects" className={ITEM}>
         <Row
           icon={<House />}
           label="All projects"
@@ -137,7 +136,7 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
           id={p.id}
           textValue={projectLabel(p)}
           onContextMenu={contextMenuHandler(ui, menuFor(p.id))}
-          className="nav gap-3 px-3 text-sm data-[selected=true]:font-medium"
+          className={ITEM}
         >
           <Row
             icon={<ProjectStatusDot p={p} />}
