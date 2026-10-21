@@ -764,7 +764,7 @@ const ProjectPrs = observer(function ProjectPrs({
         {ui.peek &&
           (ui.selected
             ? items.some((p) => p.id === ui.selected) && (
-                <Peek id={ui.selected} />
+                <Peek id={ui.selected} context="project" />
               )
             : // Merges, authors, checks: all zero without host PRs.
               hasPullRequests(items) && (
