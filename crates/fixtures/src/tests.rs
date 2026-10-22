@@ -174,6 +174,63 @@ async fn host_write_methods_round_trip() {
     host.delete_comment(&pr, &comment_id).await.unwrap();
 }
 
+#[tokio::test]
+async fn create_pr_is_found_by_head_and_served_by_search_and_get_pr() {
+    let (host, _git, _agents, _clock, _triggers) = FixtureSet::load(demo_dir()).unwrap();
+    let repo = RepoRef {
+        host: theodore_domain::HostKind::Github,
+        owner: "octo".into(),
+        name: "webhooks".into(),
+    };
+    assert_eq!(
+        host.find_open_pr(&repo, "demo/space-1").await.unwrap(),
+        None
+    );
+
+    let new_pr = theodore_ports::NewPr {
+        head: "demo/space-1".into(),
+        base: "main".into(),
+        title: "Space one".into(),
+        body: "Opened from a space.".into(),
+        draft: true,
+    };
+    let created = host.create_pr(&repo, &new_pr).await.unwrap();
+    assert_eq!(created.repo, repo);
+    assert_eq!(created.number, 102, "next number after the demo's #101");
+
+    assert_eq!(
+        host.find_open_pr(&repo, "demo/space-1").await.unwrap(),
+        Some(created.clone())
+    );
+
+    let listed = host
+        .search(&theodore_ports::InboxSection::Authored)
+        .await
+        .unwrap();
+    let row = listed
+        .iter()
+        .find(|s| s.pr == created)
+        .expect("created PR is searchable");
+    assert_eq!(row.state, PrState::Draft);
+    assert_eq!(row.head_ref, "demo/space-1");
+    assert_eq!(row.base_ref, "main");
+    assert_eq!(row.author.login, "demo");
+
+    let detail = match host.get_pr(&created, None).await.unwrap() {
+        theodore_ports::Fetched::Modified { value, .. } => value,
+        theodore_ports::Fetched::NotModified => unreachable!(),
+    };
+    assert_eq!(detail.summary.title, "Space one");
+    assert_eq!(detail.body, "Opened from a space.");
+    assert_eq!(detail.summary.pr, created);
+
+    let again = host.create_pr(&repo, &new_pr).await.unwrap_err();
+    assert!(
+        matches!(again, theodore_ports::HostError::Conflict(_)),
+        "got {again:?}"
+    );
+}
+
 // ── git ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]

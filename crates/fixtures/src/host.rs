@@ -11,12 +11,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use theodore_domain::{
-    Comment, CommentId, FileViewed, HostRepo, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef,
-    Reviewer, ReviewerState, Sha, ThreadId, ViewedState,
+    CheckRollup, Comment, CommentId, FileViewed, HostRepo, InboxReason, Person, PrDetail, PrRef,
+    PrState, PrSummary, RepoRef, Reviewer, ReviewerState, Sha, ThreadId, ViewedState,
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
-    MergeState, MergeStatus, ReviewSubmission, SubmittedReview,
+    MergeState, MergeStatus, NewPr, ReviewSubmission, SubmittedReview,
 };
 
 use crate::state::SharedState;
@@ -35,6 +35,29 @@ fn fixture_author() -> Person {
         name: None,
         avatar_url: None,
     }
+}
+
+/// The account `viewer()` reports; PRs opened through `create_pr` are
+/// authored by it.
+fn fixture_viewer() -> Person {
+    Person {
+        login: "demo".into(),
+        name: Some("Demo Reviewer".into()),
+        avatar_url: None,
+    }
+}
+
+/// The open (or draft) PR in `repo` whose source branch is `head`.
+fn open_pr_for_head<'a>(
+    state: &'a SharedState,
+    repo: &RepoRef,
+    head: &str,
+) -> Option<&'a PrDetail> {
+    state.prs.values().find(|d| {
+        &d.summary.pr.repo == repo
+            && d.summary.head_ref == head
+            && matches!(d.summary.state, PrState::Open | PrState::Draft)
+    })
 }
 
 /// Fixture host: PR records come from the shared state, mutated only
@@ -73,11 +96,7 @@ impl HostAdapter for FixtureHost {
     }
 
     async fn viewer(&self) -> HostResult<theodore_domain::Person> {
-        Ok(theodore_domain::Person {
-            login: "demo".into(),
-            name: Some("Demo Reviewer".into()),
-            avatar_url: None,
-        })
+        Ok(fixture_viewer())
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -175,6 +194,102 @@ impl HostAdapter for FixtureHost {
             etag: Some(current),
             value: detail,
         })
+    }
+
+    async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "find_open_pr".to_string(),
+            pr_id: None,
+            details: format!("repo={}, head={head}", repo.slug()),
+        });
+        Ok(open_pr_for_head(&state, repo, head).map(|d| d.summary.pr.clone()))
+    }
+
+    async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "create_pr".to_string(),
+            pr_id: None,
+            details: format!(
+                "repo={}, head={}, base={}, draft={}",
+                repo.slug(),
+                pr.head,
+                pr.base,
+                pr.draft
+            ),
+        });
+        if let Some(existing) = open_pr_for_head(&state, repo, &pr.head) {
+            return Err(HostError::Conflict(format!(
+                "a pull request already exists for {}:{} ({})",
+                repo.owner,
+                pr.head,
+                existing.summary.pr.id()
+            )));
+        }
+
+        // Numbered per repo, like GitHub; `gh_<n>` host ids like the demo set.
+        let number = state
+            .prs
+            .values()
+            .filter(|d| &d.summary.pr.repo == repo)
+            .map(|d| d.summary.pr.number)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let pr_ref = PrRef {
+            repo: repo.clone(),
+            number,
+            host_id: Some(format!("gh_{number}")),
+        };
+        // The fixture set has no real branches: the head is a placeholder
+        // sha with no recorded revision behind it.
+        let head_sha = Sha::new(format!("fixture-head-{}", pr.head));
+        let detail = PrDetail {
+            summary: PrSummary {
+                pr: pr_ref.clone(),
+                title: pr.title.clone(),
+                author: fixture_viewer(),
+                state: if pr.draft {
+                    PrState::Draft
+                } else {
+                    PrState::Open
+                },
+                base_ref: pr.base.clone(),
+                head_ref: pr.head.clone(),
+                head_sha: head_sha.clone(),
+                additions: 0,
+                deletions: 0,
+                changed_files: 0,
+                reasons: vec![InboxReason::Authored],
+                checks: CheckRollup::None,
+                approvals: 0,
+                required_approvals: None,
+                updated_at: 0,
+                url: format!(
+                    "https://example.com/{}/{}/pull/{number}",
+                    repo.owner, repo.name
+                ),
+                review_decision: None,
+                conflicts: false,
+                created_at: Some(0),
+                stack: None,
+            },
+            body: pr.body.clone(),
+            base_sha: Sha::new(format!("fixture-base-{}", pr.base)),
+            commits: Vec::new(),
+            checks: Vec::new(),
+            reviewers: Vec::new(),
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            threads: Vec::new(),
+            viewed: Vec::new(),
+        };
+        let pr_id = pr_ref.id();
+        state.heads.insert(pr_id.clone(), head_sha);
+        state.prs.insert(pr_id, detail);
+        state.change_log.push(pr_ref.clone());
+        Ok(pr_ref)
     }
 
     async fn set_viewed(&self, pr: &PrRef, path: &str, viewed: bool) -> HostResult<()> {

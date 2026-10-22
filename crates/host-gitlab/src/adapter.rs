@@ -9,11 +9,13 @@ use theodore_domain::{
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    MergeMethod, MergeState, MergeStatus, ReviewSubmission, SubmittedReview,
+    MergeMethod, MergeState, MergeStatus, NewPr, ReviewSubmission, SubmittedReview,
 };
 
 use crate::anchor::{self, DiffRefs};
-use crate::model::{GlDiscussion, GlMergeRequest, GlNote, GlUser, MergeBody, UpdateMrBody};
+use crate::model::{
+    CreateMrBody, GlDiscussion, GlMergeRequest, GlMrRef, GlNote, GlUser, MergeBody, UpdateMrBody,
+};
 use crate::{pagination, rest, time};
 
 /// `HostAdapter` for gitlab.com and self-managed GitLab.
@@ -271,6 +273,32 @@ impl HostAdapter for GitlabAdapter {
                 })
             }
         }
+    }
+
+    async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        let mrs =
+            rest::open_merge_requests_for_source(&self.http, &project_path(repo), head).await?;
+        Ok(mrs.into_iter().next().map(|mr| mr_ref_to_pr_ref(repo, &mr)))
+    }
+
+    async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
+        let title = if pr.draft {
+            add_draft_prefix(&pr.title)
+        } else {
+            pr.title.clone()
+        };
+        let mr = rest::create_merge_request(
+            &self.http,
+            &project_path(repo),
+            &CreateMrBody {
+                source_branch: &pr.head,
+                target_branch: &pr.base,
+                title: &title,
+                description: &pr.body,
+            },
+        )
+        .await?;
+        Ok(mr_ref_to_pr_ref(repo, &mr))
     }
 
     async fn set_viewed(&self, _pr: &PrRef, _path: &str, _viewed: bool) -> HostResult<()> {
@@ -846,6 +874,16 @@ fn map_comment(n: &GlNote) -> Comment {
 fn split_namespace(path_with_namespace: &str) -> Option<(String, String)> {
     let (owner, name) = path_with_namespace.rsplit_once('/')?;
     Some((owner.to_string(), name.to_string()))
+}
+
+/// The `PrRef` `get_pr`/`search` use: iid as the number, the numeric
+/// project id as `host_id`.
+fn mr_ref_to_pr_ref(repo: &RepoRef, mr: &GlMrRef) -> PrRef {
+    PrRef {
+        repo: repo.clone(),
+        number: mr.iid,
+        host_id: Some(mr.project_id.to_string()),
+    }
 }
 
 fn mr_to_pr_ref(mr: &GlMergeRequest) -> Option<PrRef> {

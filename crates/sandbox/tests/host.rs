@@ -10,7 +10,7 @@ use theodore_domain::{
     ReviewEvent, Side,
 };
 use theodore_ports::{
-    Fetched, HostAdapter, HostError, InboxSection, MergeMethod, MergeState, ReviewComment,
+    Fetched, HostAdapter, HostError, InboxSection, MergeMethod, MergeState, NewPr, ReviewComment,
     ReviewSubmission,
 };
 use theodore_sandbox::{Action, PrSel, Sandbox, control, default_scenario};
@@ -413,4 +413,136 @@ fn control_spool_round_trips_through_a_ticking_sandbox() {
     assert!(r.ok, "{}", r.message);
     assert_eq!(r.status.unwrap().info.scenario, "default");
     ticker.join().unwrap();
+}
+
+/// Clones `acme/storefront`, branches `branch` off `main` (with one new
+/// commit when `commit`) and pushes it, like the app does before opening a
+/// PR from a space.
+fn push_branch(sb: &Sandbox, tmp: &Path, branch: &str, commit: bool) {
+    let bare = sb.world().bare("acme", "storefront");
+    let work = tmp.join(format!("work-{}", branch.replace('/', "-")));
+    git(tmp, &["clone", "-q", &bare.url(), work.to_str().unwrap()]);
+    git(&work, &["checkout", "-q", "-b", branch, "origin/main"]);
+    if commit {
+        std::fs::write(work.join("SPACE.md"), "from a space\n").unwrap();
+        git(&work, &["add", "-A"]);
+        git(
+            &work,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "space work",
+            ],
+        );
+    }
+    git(&work, &["push", "-q", "origin", branch]);
+}
+
+fn storefront() -> RepoRef {
+    RepoRef {
+        host: HostKind::Github,
+        owner: "acme".into(),
+        name: "storefront".into(),
+    }
+}
+
+#[tokio::test]
+async fn create_pr_opens_a_pr_from_a_pushed_branch() {
+    let (sb, tmp) = open();
+    let host = sb.host();
+    let repo = storefront();
+    push_branch(&sb, tmp.path(), "space/checkout-copy", true);
+
+    assert_eq!(
+        host.find_open_pr(&repo, "space/checkout-copy")
+            .await
+            .unwrap(),
+        None
+    );
+    let highest = sb
+        .world()
+        .snapshot()
+        .prs
+        .iter()
+        .filter(|p| p.repo == "storefront")
+        .map(|p| p.number)
+        .max()
+        .unwrap();
+    let cursor = host.changed_since(None).await.unwrap().cursor;
+
+    let new_pr = NewPr {
+        head: "space/checkout-copy".into(),
+        base: "main".into(),
+        title: "Tighten checkout copy".into(),
+        body: "Opened from a space.".into(),
+        draft: true,
+    };
+    let created = host.create_pr(&repo, &new_pr).await.unwrap();
+    assert_eq!(created.repo, repo);
+    assert_eq!(created.number, highest + 1);
+    assert_eq!(
+        host.find_open_pr(&repo, "space/checkout-copy")
+            .await
+            .unwrap(),
+        Some(created.clone())
+    );
+
+    let changed = host.changed_since(Some(&cursor)).await.unwrap();
+    assert!(changed.prs.contains(&created));
+
+    let authored = host.search(&InboxSection::Authored).await.unwrap();
+    let row = authored
+        .iter()
+        .find(|s| s.pr == created)
+        .expect("created PR shows under Authored");
+    assert_eq!(row.state, PrState::Draft);
+    assert_eq!(row.head_ref, "space/checkout-copy");
+    assert_eq!(row.base_ref, "main");
+    assert_eq!(row.title, "Tighten checkout copy");
+    assert_eq!(row.author.login, sb.status().viewer);
+    assert!(row.reasons.contains(&InboxReason::Authored));
+
+    // By number alone (no host_id), the way the app polls it.
+    let d = detail(&*host, &pr("storefront", created.number)).await;
+    assert_eq!(d.summary.pr, created);
+    assert_eq!(d.body, "Opened from a space.");
+    assert_eq!(d.commits.len(), 1);
+    assert_eq!(d.summary.changed_files, 1);
+    let bare = sb.world().bare("acme", "storefront");
+    assert_eq!(
+        bare.rev_parse(&format!("refs/pull/{}/head", created.number))
+            .unwrap(),
+        d.summary.head_sha.0
+    );
+
+    let err = host.create_pr(&repo, &new_pr).await.unwrap_err();
+    assert!(matches!(err, HostError::Conflict(_)), "{err}");
+}
+
+#[tokio::test]
+async fn create_pr_refuses_a_branch_that_is_missing_or_has_no_commits() {
+    let (sb, tmp) = open();
+    let host = sb.host();
+    let repo = storefront();
+    let mut new_pr = NewPr {
+        head: "space/nothing-yet".into(),
+        base: "main".into(),
+        title: "Nothing".into(),
+        body: String::new(),
+        draft: false,
+    };
+    let err = host.create_pr(&repo, &new_pr).await.unwrap_err();
+    assert!(matches!(err, HostError::Validation(_)), "{err}");
+
+    push_branch(&sb, tmp.path(), "space/nothing-yet", false);
+    let err = host.create_pr(&repo, &new_pr).await.unwrap_err();
+    assert!(matches!(err, HostError::Validation(_)), "{err}");
+
+    new_pr.base = "no-such-base".into();
+    let err = host.create_pr(&repo, &new_pr).await.unwrap_err();
+    assert!(matches!(err, HostError::Validation(_)), "{err}");
 }

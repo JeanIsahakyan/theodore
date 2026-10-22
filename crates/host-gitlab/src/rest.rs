@@ -7,9 +7,9 @@ use theodore_ports::{Fetched, HostError, HostResult};
 
 use crate::anchor::GitlabPosition;
 use crate::model::{
-    AwardEmojiBody, CreateDraftNote, GlApprovals, GlAwardEmoji, GlChanges, GlCommit, GlDiscussion,
-    GlMergeRequest, GlNote, GlPipeline, GlProject, GlProjectSettings, GlTodo, GlUser, MergeBody,
-    NoteBody, UpdateMrBody,
+    AwardEmojiBody, CreateDraftNote, CreateMrBody, GlApprovals, GlAwardEmoji, GlChanges, GlCommit,
+    GlDiscussion, GlMergeRequest, GlMrRef, GlNote, GlPipeline, GlProject, GlProjectSettings,
+    GlTodo, GlUser, MergeBody, NoteBody, UpdateMrBody,
 };
 
 pub(crate) async fn viewer(http: &HttpClient) -> HostResult<GlUser> {
@@ -251,6 +251,32 @@ pub(crate) async fn project_settings(
 ) -> HostResult<GlProjectSettings> {
     let path = format!("projects/{project}");
     Ok(http.get::<GlProjectSettings>(&path).await?.value)
+}
+
+// ── create ──────────────────────────────────────────────────────────────
+
+pub(crate) async fn open_merge_requests_for_source(
+    http: &HttpClient,
+    project: &str,
+    source_branch: &str,
+) -> HostResult<Vec<GlMrRef>> {
+    let path = format!(
+        "projects/{project}/merge_requests?state=opened&source_branch={}&per_page=10",
+        urlencode(source_branch)
+    );
+    Ok(http.get::<Vec<GlMrRef>>(&path).await?.value)
+}
+
+/// GitLab answers 409 ("Another open merge request already exists for this
+/// source branch") when `source_branch` already has an open MR; the shared
+/// client already maps that to `HostError::Conflict`.
+pub(crate) async fn create_merge_request(
+    http: &HttpClient,
+    project: &str,
+    body: &CreateMrBody<'_>,
+) -> HostResult<GlMrRef> {
+    let path = format!("projects/{project}/merge_requests");
+    Ok(http.post_json(&path, body).await?.value)
 }
 
 // ── reviewers ───────────────────────────────────────────────────────────
