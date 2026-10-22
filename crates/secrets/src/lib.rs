@@ -25,6 +25,8 @@ pub const GITHUB_TOKEN: &str = "github.token";
 pub const GITLAB_TOKEN: &str = "gitlab.token";
 pub const BITBUCKET_TOKEN: &str = "bitbucket.token";
 pub const LINEAR_TOKEN: &str = "linear.token";
+/// The Theodore account session (JSON: tokens + profile).
+pub const THEODORE_ACCOUNT: &str = "theodore.account";
 
 /// Trait to abstract command invocation for testability.
 trait CommandRunner: Send + Sync {

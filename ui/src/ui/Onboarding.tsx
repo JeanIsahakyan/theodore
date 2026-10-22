@@ -25,10 +25,26 @@ import { api, CommandFailure } from '../core/api';
 import { useDeviceLogin } from '../core/deviceLogin';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, Spinner } from './bits';
+import { AccountStep, useAccountStatus } from './AccountCard';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { ProjectPicker } from './Projects';
 
-const STEPS = ['GitHub', 'Agents', 'Projects', 'Done'];
+type StepId = 'github' | 'account' | 'agents' | 'projects' | 'done';
+const STEP_TITLE: Record<StepId, string> = {
+  github: 'GitHub',
+  account: 'Account',
+  agents: 'Agents',
+  projects: 'Projects',
+  done: 'Done',
+};
+
+/** The optional Theodore account step appears only when the feature is
+ *  configured (a WorkOS client id). */
+export function onboardingSteps(accountAvailable: boolean): StepId[] {
+  return accountAvailable
+    ? ['github', 'account', 'agents', 'projects', 'done']
+    : ['github', 'agents', 'projects', 'done'];
+}
 
 const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
   keychain: 'a saved token',
@@ -39,8 +55,9 @@ const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
 };
 
 /** First launch: connect GitHub (reusing `gh` if it's already logged in, or a
- *  pasted token), detect agent CLIs, then straight to the Inbox — projects
- *  arrive by opening a PR by URL, so that step is a no-op you can skip. */
+ *  pasted token), optionally sign in to a Theodore account, detect agent
+ *  CLIs, then straight to the Inbox — projects arrive by opening a PR by
+ *  URL, so that step is a no-op you can skip. */
 export const Onboarding = observer(function Onboarding() {
   const store = useRootStore();
   const ui = useUi();
@@ -51,6 +68,9 @@ export const Onboarding = observer(function Onboarding() {
   const [token, setToken] = useState('');
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentStatus[] | null>(null);
+  const account = useAccountStatus();
+  const steps = onboardingSteps(account?.available ?? false);
+  const id: StepId = steps[Math.min(step, steps.length - 1)] ?? 'done';
 
   const checkHost = () => {
     setChecking(true);
@@ -81,9 +101,13 @@ export const Onboarding = observer(function Onboarding() {
   };
 
   const connected = host !== null && host !== 'unready' && host.connected;
-  const canNext = [connected || host === 'unready', agents != null, true, true][
-    step
-  ];
+  const canNext: Record<StepId, boolean> = {
+    github: connected || host === 'unready',
+    account: true,
+    agents: agents != null,
+    projects: true,
+    done: true,
+  };
 
   return (
     <div className="onboarding flex h-full items-center-safe justify-center-safe overflow-auto bg-background p-6">
@@ -94,13 +118,13 @@ export const Onboarding = observer(function Onboarding() {
             <span className="font-semibold">Theodore</span>
             <span className="flex-1" />
             <span className="text-xs text-muted">
-              Step {step + 1} of {STEPS.length}
+              Step {step + 1} of {steps.length}
             </span>
           </div>
           <ProgressBar
             aria-label="Setup progress"
             value={step + 1}
-            maxValue={STEPS.length}
+            maxValue={steps.length}
             size="sm"
           >
             <ProgressBar.Track>
@@ -108,7 +132,7 @@ export const Onboarding = observer(function Onboarding() {
             </ProgressBar.Track>
           </ProgressBar>
           <div className="flex gap-4 text-xs">
-            {STEPS.map((s, i) => (
+            {steps.map((s, i) => (
               <span
                 key={s}
                 className={
@@ -120,7 +144,7 @@ export const Onboarding = observer(function Onboarding() {
                 }
               >
                 {i < step ? '✓ ' : ''}
-                {s}
+                {STEP_TITLE[s]}
               </span>
             ))}
           </div>
@@ -128,7 +152,7 @@ export const Onboarding = observer(function Onboarding() {
         <Separator />
 
         <div className="flex min-h-[300px] flex-col gap-4 px-8 py-6">
-          {step === 0 && (
+          {id === 'github' && (
             <>
               <Typography.Heading level={4}>Connect GitHub</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
@@ -233,7 +257,9 @@ export const Onboarding = observer(function Onboarding() {
             </>
           )}
 
-          {step === 1 && (
+          {id === 'account' && <AccountStep />}
+
+          {id === 'agents' && (
             <>
               <Typography.Heading level={4}>Agent CLIs</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
@@ -273,7 +299,7 @@ export const Onboarding = observer(function Onboarding() {
             </>
           )}
 
-          {step === 2 && (
+          {id === 'projects' && (
             <>
               <Typography.Heading level={4}>Projects</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
@@ -285,7 +311,7 @@ export const Onboarding = observer(function Onboarding() {
             </>
           )}
 
-          {step === 3 && (
+          {id === 'done' && (
             <>
               <Typography.Heading level={4}>Done</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
@@ -329,13 +355,15 @@ export const Onboarding = observer(function Onboarding() {
             </Button>
           )}
           <span className="flex-1" />
-          {step < STEPS.length - 1 ? (
+          {step < steps.length - 1 ? (
             <Button
               className="onb-next"
-              isDisabled={!canNext}
+              isDisabled={!canNext[id]}
               onPress={() => setStep(step + 1)}
             >
-              {step === 2 && store.models.projects.all().length === 0
+              {(id === 'projects' &&
+                store.models.projects.all().length === 0) ||
+              (id === 'account' && !account?.user)
                 ? 'Skip'
                 : 'Next'}
             </Button>

@@ -4,6 +4,7 @@
 //! Changing a trait here is a cross-slice change: adapters, `app` and the
 //! fixture adapters all follow.
 
+pub mod account;
 pub mod agent;
 pub mod clock;
 pub mod device_login;
@@ -13,6 +14,7 @@ pub mod secrets;
 pub mod store;
 pub mod worktree_lease;
 
+pub use account::*;
 pub use agent::*;
 pub use clock::*;
 pub use device_login::*;

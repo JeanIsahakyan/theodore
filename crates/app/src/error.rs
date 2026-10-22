@@ -1,7 +1,7 @@
 //! App-level errors. Command handlers (shell side) turn these into
 //! `contract::CommandError`.
 
-use theodore_ports::{GitError, HostError, StoreError};
+use theodore_ports::{AccountError, GitError, HostError, StoreError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -19,6 +19,8 @@ pub enum AppError {
     Invalid(String),
     #[error("background task failed: {0}")]
     Join(String),
+    #[error("account: {0}")]
+    Account(#[from] AccountError),
 }
 
 impl AppError {

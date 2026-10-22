@@ -38,3 +38,34 @@ describe('EphemeralStore stalled tracking', () => {
     expect(e.stalled.has('r1')).toBe(false);
   });
 });
+
+describe('EphemeralStore account', () => {
+  it('starts unknown and follows account_status events', () => {
+    const e = new EphemeralStore();
+    expect(e.account).toBeNull();
+    e.handle({
+      type: 'account_status',
+      status: {
+        available: true,
+        user: {
+          id: 'u',
+          email: 'ada@example.com',
+          name: null,
+          avatar_url: null,
+        },
+      },
+    });
+    expect(e.account?.user?.email).toBe('ada@example.com');
+    e.handle({
+      type: 'account_status',
+      status: { available: true, user: null },
+    });
+    expect(e.account?.user).toBeNull();
+  });
+
+  it('setAccount stores a fetched status', () => {
+    const e = new EphemeralStore();
+    e.setAccount({ available: false, user: null });
+    expect(e.account?.available).toBe(false);
+  });
+});

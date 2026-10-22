@@ -4848,6 +4848,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "theodore-account-workos"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "pretty_assertions",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "theodore-ports",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "theodore-agents"
 version = "0.0.1"
 dependencies = [
@@ -5159,6 +5178,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "theodore-account-workos",
  "theodore-agents",
  "theodore-app",
  "theodore-contract",
@@ -5177,6 +5197,7 @@ dependencies = [
  "theodore-store",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

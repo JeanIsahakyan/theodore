@@ -22,6 +22,9 @@ pub mod testkit;
 mod tests;
 
 #[cfg(test)]
+mod account_tests;
+
+#[cfg(test)]
 mod git_integration_tests;
 
 #[cfg(test)]

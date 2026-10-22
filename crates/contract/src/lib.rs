@@ -29,6 +29,8 @@ mod project_state;
 pub use project_state::*;
 mod spaces;
 pub use spaces::*;
+mod account;
+pub use account::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -549,6 +551,10 @@ pub enum Ephemeral {
         rate_limited_until: Option<Millis>,
         auth_ok: bool,
     },
+    /// The Theodore account signed in, signed out, or its session ended.
+    AccountStatus {
+        status: AccountStatus,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -717,7 +723,13 @@ pub fn types() -> specta::Types {
         .register::<SpaceMode>()
         .register::<CreateSpaceRequest>()
         .register::<SpaceSendRequest>()
-        .register::<SpaceReviewRequest>();
+        .register::<SpaceReviewRequest>()
+        .register::<AccountUser>()
+        .register::<AccountStatus>()
+        .register::<AccountSignInMethod>()
+        .register::<AccountSignInRequest>()
+        .register::<AccountSignInStart>()
+        .register::<AccountSignInState>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

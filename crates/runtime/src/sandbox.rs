@@ -98,6 +98,8 @@ pub(crate) fn adapters(data_dir: &Path, scenario: &Path) -> anyhow::Result<(Adap
         fixture_host: None,
         token_status: Some(Arc::new(SandboxToken)),
         device_login: Arc::new(theodore_ports::NoDeviceLogin),
+        // Sandbox mode never talks to a real identity provider.
+        account: Arc::new(theodore_ports::LocalAccount),
     };
     Ok((adapters, sandbox))
 }

@@ -112,6 +112,7 @@ struct Adapters {
     /// report (plan §6.8).
     token_status: Option<Arc<dyn theodore_app::TokenStatus>>,
     device_login: Arc<dyn DeviceLoginPort>,
+    account: Arc<dyn theodore_ports::AccountPort>,
 }
 
 fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
@@ -159,6 +160,7 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         fixture_host: None,
         token_status: Some(token as Arc<dyn theodore_app::TokenStatus>),
         device_login: Arc::new(theodore_host_github::GithubDeviceLogin::new()),
+        account: workos_account(),
     })
 }
 
@@ -178,7 +180,32 @@ fn fixture_adapters(dir: &std::path::Path) -> anyhow::Result<Adapters> {
         fixture_host: Some(host),
         token_status: None,
         device_login: Arc::new(theodore_ports::NoDeviceLogin),
+        account: Arc::new(theodore_ports::LocalAccount),
     })
+}
+
+/// The Theodore account over WorkOS (plan "Theodore account"). Without a
+/// client id configured the app hides the feature, so this is always
+/// wired. `THEODORE_WORKOS_API_BASE` points it elsewhere (a staging proxy,
+/// a mock); `THEODORE_WORKOS_ISSUER` accepts a custom auth domain's `iss`.
+fn workos_account() -> Arc<dyn theodore_ports::AccountPort> {
+    let base = std::env::var("THEODORE_WORKOS_API_BASE")
+        .ok()
+        .filter(|b| !b.trim().is_empty())
+        .and_then(|b| {
+            let b = if b.ends_with('/') { b } else { format!("{b}/") };
+            url::Url::parse(&b).ok()
+        });
+    let mut account = match base {
+        Some(b) => theodore_account_workos::WorkosAccount::with_api_base(b),
+        None => theodore_account_workos::WorkosAccount::new(),
+    };
+    if let Ok(iss) = std::env::var("THEODORE_WORKOS_ISSUER")
+        && !iss.trim().is_empty()
+    {
+        account = account.with_issuer(iss.trim());
+    }
+    Arc::new(account)
 }
 
 /// Build every adapter, start the MCP server and the core.
@@ -212,6 +239,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         tools: Some(mcp.clone()),
         token_status: a.token_status,
         device_login: a.device_login,
+        account: a.account,
         claude_home,
         worktree_lease: Arc::new(worktree_gc::WorktreeLeaseAdapter::new(
             worktree_locks.clone(),
