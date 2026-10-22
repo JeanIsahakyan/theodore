@@ -26,6 +26,11 @@ pub enum GitError {
     Io(#[from] std::io::Error),
     #[error("not supported: {0}")]
     Unsupported(&'static str),
+    /// A safety check said no before anything was written: a dirty
+    /// working tree, a merge that would conflict, a branch that moved.
+    /// The message is meant for the user as is.
+    #[error("{0}")]
+    Refused(String),
 }
 
 pub type GitResult<T> = Result<T, GitError>;
@@ -329,6 +334,108 @@ pub trait GitPort: Send + Sync {
         let _ = (repo, space);
         Err(GitError::Unsupported("remove_space_worktree"))
     }
+
+    // ── shipping a space (docs/spaces.md §6) ─────────────────────────────
+
+    /// The user's own git identity (`user.name` / `user.email` as `git`
+    /// resolves them for `repo`), `None` when either is unset.
+    async fn user_identity(&self, repo: &Path) -> GitResult<Option<Identity>> {
+        let _ = repo;
+        Ok(None)
+    }
+
+    /// Writes one commit with `c.head`'s tree on top of `c.parent`, authored
+    /// and committed by `c.author`, and points `refs/theodore/shipped/<space>`
+    /// at it. With `c.replay_from`, the tree is instead `c.parent` plus the
+    /// change `replay_from..head` (a three-way merge, no worktree);
+    /// `Refused` when that conflicts. Never touches a worktree or a branch.
+    async fn space_commit(&self, repo: &Path, space: &str, c: &SpaceCommit) -> GitResult<Sha> {
+        let _ = (repo, space, c);
+        Err(GitError::Unsupported("space_commit"))
+    }
+
+    /// Fetches `branch` from `repo_ref`'s remote into the cache and returns
+    /// its tip, `None` when the remote has no such branch.
+    async fn remote_branch(
+        &self,
+        repo: &Path,
+        repo_ref: &RepoRef,
+        branch: &str,
+    ) -> GitResult<Option<Sha>> {
+        let _ = (repo, repo_ref, branch);
+        Err(GitError::Unsupported("remote_branch"))
+    }
+
+    /// Pushes `sha` to `refs/heads/<branch>` on `repo_ref`'s remote. Never
+    /// forced: a branch that moved elsewhere is rejected by the remote.
+    async fn push_branch(
+        &self,
+        repo: &Path,
+        repo_ref: &RepoRef,
+        sha: &Sha,
+        branch: &str,
+    ) -> GitResult<()> {
+        let _ = (repo, repo_ref, sha, branch);
+        Err(GitError::Unsupported("push_branch"))
+    }
+
+    /// Merges the space's shipped commit (`refs/theodore/shipped/<space>` in
+    /// the cache `repo`) into the branch checked out in the local `folder`,
+    /// with a normal `git merge`. `Refused`, with the folder untouched, on
+    /// a dirty working tree, a detached `HEAD` or a conflicting merge.
+    /// Returns the folder's new `HEAD`.
+    async fn merge_into_folder(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        let _ = (folder, repo, space, message);
+        Err(GitError::Unsupported("merge_into_folder"))
+    }
+
+    /// Creates `refs/heads/<branch>` in the local `folder` at the space's
+    /// shipped commit. Only a ref is written; `Refused` when the branch
+    /// already exists.
+    async fn write_folder_branch(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        branch: &str,
+    ) -> GitResult<()> {
+        let _ = (folder, repo, space, branch);
+        Err(GitError::Unsupported("write_folder_branch"))
+    }
+}
+
+/// An author for a commit Theodore writes on the user's behalf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub name: String,
+    pub email: String,
+}
+
+/// One squashed commit of a space, for `GitPort::space_commit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceCommit {
+    /// The checkpoint whose tree is shipped.
+    pub head: Sha,
+    /// The new commit's parent: the base on the first ship, the shipped
+    /// branch's tip after that.
+    pub parent: Sha,
+    /// The checkpoint `parent`'s content was last shipped from, when
+    /// `parent` has moved on since (someone else pushed to the branch):
+    /// only `replay_from..head` is applied on top of `parent`.
+    pub replay_from: Option<Sha>,
+    pub message: String,
+    pub author: Identity,
+}
+
+/// Where a space's last shipped (squashed) commit is kept in the cache.
+pub fn shipped_ref(space: &str) -> String {
+    format!("refs/theodore/shipped/{space}")
 }
 
 /// The ref a space's checkpoints live on (docs/spaces.md §6): outside
