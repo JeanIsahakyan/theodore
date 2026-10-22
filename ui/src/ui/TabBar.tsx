@@ -23,6 +23,7 @@ import {
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
+import { isBranchReview } from './project/sections';
 import { PRIcon } from './StatusIcon';
 
 function useLabel(r: Route): {
@@ -55,7 +56,11 @@ function useLabel(r: Route): {
       const drafts = store.models.drafts.byPr(r.pr).length;
       return {
         icon: <PRIcon status={p?.state ?? 'open'} />,
-        title: p ? `#${p.pr.number} ${p.title}` : r.pr,
+        title: !p
+          ? r.pr
+          : isBranchReview(p)
+            ? p.title
+            : `#${p.pr.number} ${p.title}`,
         drafts,
       };
     }

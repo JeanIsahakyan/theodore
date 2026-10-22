@@ -498,7 +498,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   }, [focusHunk, jumpSeq]);
 
   const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
-  const local = summary?.pr.repo.host === 'local';
+  // A branch review (no PR on the host) takes no host actions either.
+  const branchReview = !!summary && isBranchReview(summary);
+  const local = summary?.pr.repo.host === 'local' || branchReview;
   const finished = summary?.state === 'merged' || summary?.state === 'closed';
   const mine =
     !!summary && store.ephemeral.viewer?.login === summary.author.login;
@@ -555,7 +557,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 <Breadcrumbs.Item onPress={() => ui.goBack()}>
                   {summary.pr.repo.owner}/{summary.pr.repo.name}
                 </Breadcrumbs.Item>
-                <Breadcrumbs.Item>#{summary.pr.number}</Breadcrumbs.Item>
+                <Breadcrumbs.Item>
+                  {branchReview ? summary.head_ref : `#${summary.pr.number}`}
+                </Breadcrumbs.Item>
               </Breadcrumbs>
               <Typography.Heading level={6} className="min-w-0 flex-1 truncate">
                 {summary.title}
@@ -611,7 +615,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </Btn>
         )}
         {/* A merged or closed PR takes no more reviews, reviewers or merges. */}
-        {!finished && (
+        {!finished && !branchReview && (
           <Btn tone="primary" onPress={() => ui.openModal('submit')}>
             Submit review
           </Btn>
@@ -639,7 +643,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             </Tooltip.Content>
           </Tooltip>
         )}
-        {summary && isBranchReview(summary) && (
+        {branchReview && (
           <Btn
             tone="tertiary"
             icon={<Xmark />}

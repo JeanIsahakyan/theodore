@@ -1,3 +1,4 @@
+import { isBranchReview } from './project/sections';
 import { AgentWorking, GroupsSkeleton } from './Loading';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -129,7 +130,9 @@ export const GroupsPane = observer(function GroupsPane({
   const store = useRootStore();
   const ui = useUi();
   const summary = store.models.prSummaries.get(pr);
-  const local = summary?.pr.repo.host === 'local';
+  // A branch review has no PR on the host to mark files viewed on.
+  const local =
+    summary?.pr.repo.host === 'local' || (!!summary && isBranchReview(summary));
   const groups = groupsForRevision(store, pr, rev);
   const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
   const hunkReads = store.models.hunkReads.byPr(pr);
