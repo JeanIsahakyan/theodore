@@ -36,6 +36,14 @@ impl PairScore {
     }
 }
 
+impl std::ops::AddAssign for PairScore {
+    fn add_assign(&mut self, o: Self) {
+        self.both += o.both;
+        self.predicted += o.predicted;
+        self.reference += o.reference;
+    }
+}
+
 fn ratio(a: u64, b: u64) -> f64 {
     if b == 0 { 1.0 } else { a as f64 / b as f64 }
 }
@@ -99,6 +107,8 @@ pub fn run(
         "dir xP/R",
         "chunk R",
     );
+    let mut totals = [PairScore::default(); 4];
+    let mut compared = 0;
     for (name, fx) in fixtures {
         let rev = &fx.revision;
         let pre = prepass::run(rev);
@@ -153,13 +163,21 @@ pub fn run(
                     chunk_items.push((new_chunk.get(&h.id).copied().unwrap_or(0), g, file));
                 }
             }
-            cols = vec![
-                fmt(&pair_score(&graph_items, false)),
-                fmt(&pair_score(&graph_items, true)),
-                fmt(&pair_score(&dir_items, false)),
-                fmt(&pair_score(&dir_items, true)),
-                format!("{:>4.0}%", 100.0 * pair_score(&chunk_items, false).recall()),
+            let scores = [
+                pair_score(&graph_items, false),
+                pair_score(&graph_items, true),
+                pair_score(&dir_items, false),
+                pair_score(&dir_items, true),
             ];
+            for (t, s) in totals.iter_mut().zip(&scores) {
+                *t += *s;
+            }
+            compared += 1;
+            cols = scores.iter().map(fmt).collect();
+            cols.push(format!(
+                "{:>4.0}%",
+                100.0 * pair_score(&chunk_items, false).recall()
+            ));
         }
         println!(
             "{:<20} {:>5} {:>5} {:>4} {:>5} {:>6} {:>13} | {:<11} {:<11} {:<11} {:<11} {:<11}",
@@ -179,6 +197,22 @@ pub fn run(
         if show {
             print_detail(&graph, &new_chunks);
         }
+    }
+    if compared > 1 {
+        println!(
+            "{:<20} {:>5} {:>5} {:>4} {:>5} {:>6} {:>13} | {:<11} {:<11} {:<11} {:<11}",
+            "(all pairs)",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            fmt(&totals[0]),
+            fmt(&totals[1]),
+            fmt(&totals[2]),
+            fmt(&totals[3]),
+        );
     }
     println!(
         "\nP/R: pairwise precision/recall of \"same group\" over hunks against the compared run; \
