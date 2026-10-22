@@ -45,7 +45,7 @@ impl Core {
     /// (`github:owner/repo#<branch hash>`) but has no PR on the host: its
     /// stored row carries the branch and no host URL. Reopening it must go
     /// through the local path, not the host (which answers 404).
-    async fn is_branch_review(&self, pr: &PrId) -> bool {
+    pub(crate) async fn is_branch_review(&self, pr: &PrId) -> bool {
         let Ok(Some(row)) = self.get_row(models::PR, &pr.0).await else {
             return false;
         };

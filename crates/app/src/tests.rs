@@ -4163,6 +4163,72 @@ async fn ensure_open_recovers_a_branch_review_of_a_host_project_after_a_restart(
 }
 
 #[tokio::test]
+async fn reading_a_branch_review_marks_files_viewed_without_telling_the_host() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let repo = RepoRef {
+        host: HostKind::Github,
+        owner: "acme".into(),
+        name: "widgets".into(),
+    };
+    core.add_project(AddProjectRequest {
+        repo: Some(repo),
+        path: None,
+    })
+    .await
+    .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, "github:acme/widgets")
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+    let resp = core
+        .open_branch(OpenBranchRequest {
+            project: "github:acme/widgets".into(),
+            branch: "feature".into(),
+            base: Some("main".into()),
+        })
+        .await
+        .expect("open_branch");
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: resp.pr.clone(),
+            head: resp.head,
+        })
+        .await
+        .unwrap();
+    let hunks = testkit::hunk_ids(&revision);
+    assert!(!hunks.is_empty());
+
+    for (i, h) in hunks.iter().enumerate() {
+        let r = core
+            .transact(hunk_read_tx(&format!("read-{i}"), &resp.pr, h))
+            .await;
+        assert!(matches!(r, TransactionResult::Ok { .. }));
+    }
+    wait_until(|| {
+        f.store
+            .query(models::FILE_VIEWED, "pr", &resp.pr.0)
+            .is_ok_and(|rows| !rows.is_empty())
+    })
+    .await;
+    assert!(
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .all(|i| i.op != "set_viewed"),
+        "a branch review has no host PR to mark viewed on"
+    );
+}
+
+#[tokio::test]
 async fn opening_a_pr_keeps_its_inbox_reasons() {
     let f = fixtures();
     // As if an inbox refresh had stored it with a reason.

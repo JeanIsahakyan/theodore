@@ -1,6 +1,6 @@
 //! Side effect of reads (plan §3): once every hunk of a file is read, the
 //! file becomes locally Viewed and a `set_viewed` outbox item tells the
-//! host.
+//! host — unless it is a branch review, which has no PR on the host.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -60,6 +60,9 @@ async fn handle_pr_reads(core: &Core, pr: &PrId, new_hunks: Vec<HunkId>) {
         use theodore_domain::reading::{ReadSet, newly_viewed};
         newly_viewed(&revision, &ReadSet(before), &ReadSet(after))
     };
+    // A branch review's number is a hash, not a host PR: telling the host
+    // would fail and roll the local Viewed back.
+    let tell_host = !core.is_branch_review(pr).await;
     for path in paths {
         let row_id = format!("{}:{}", pr.0, path);
         let payload = FileViewedRow {
@@ -76,7 +79,9 @@ async fn handle_pr_reads(core: &Core, pr: &PrId, new_hunks: Vec<HunkId>) {
         };
         let _ = core.apply(vec![action]).await;
 
-        let outbox_payload = serde_json::json!({ "pr": pr.0, "path": path });
-        let _ = core.enqueue_outbox("set_viewed", outbox_payload).await;
+        if tell_host {
+            let outbox_payload = serde_json::json!({ "pr": pr.0, "path": path });
+            let _ = core.enqueue_outbox("set_viewed", outbox_payload).await;
+        }
     }
 }
