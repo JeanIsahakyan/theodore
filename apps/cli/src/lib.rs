@@ -4,6 +4,7 @@
 
 pub mod deps;
 pub mod difffile;
+pub mod endpoint;
 pub mod eval;
 pub mod group;
 pub mod mcp_bridge;

@@ -4915,8 +4915,10 @@ name = "theodore-cli"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -4934,6 +4936,7 @@ dependencies = [
  "theodore-secrets",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -1,8 +1,12 @@
 //! `theodore` CLI: grouping eval and debugging (docs/plan.md §5.4).
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
-use theodore_cli::{deps, eval, group, mcp_bridge, sandbox};
+use theodore_cli::{deps, endpoint, eval, group, mcp_bridge, sandbox};
 use theodore_domain::AgentId;
+use theodore_grouping::GroupingOptions;
+use theodore_ports::AgentPort;
 
 #[derive(Parser)]
 #[command(name = "theodore", version, about = "Theodore: AI-grouped PR review")]
@@ -66,16 +70,30 @@ async fn run_group(args: group::GroupArgs) -> anyhow::Result<()> {
 async fn run_eval(args: eval::EvalArgs) -> anyhow::Result<()> {
     let fixtures = eval::load_fixtures(&args.fixtures_dir)?;
     let agent_id: AgentId = args.agent.into();
-    let deps = deps::real_deps();
     let cwd = std::env::current_dir()?;
-    let rows = eval::run_eval_with_model(
-        deps.agent.as_ref(),
-        agent_id,
-        args.model.clone(),
-        &fixtures,
-        &cwd,
-    )
-    .await;
+    let agent: Arc<dyn AgentPort> = match &args.endpoint {
+        Some(url) => Arc::new(endpoint::EndpointAgent::new(endpoint::EndpointConfig {
+            base_url: url.clone(),
+            model: args.model.clone().unwrap_or_else(|| "local".into()),
+            max_tokens: args.max_tokens,
+            constrain_ids: args.constrain_ids,
+        })?),
+        None => deps::real_deps().agent,
+    };
+    let mut opts = GroupingOptions {
+        agent: agent_id,
+        model: args.model.clone(),
+        ..Default::default()
+    };
+    if let Some(max_chars) = args.max_chars {
+        opts.budget.max_chars = max_chars;
+    }
+    if let Some(n) = args.concurrency {
+        opts.chunk_concurrency = n;
+    }
+    let rows =
+        eval::run_eval_with_options(agent.as_ref(), &opts, &fixtures, &cwd, args.save.as_deref())
+            .await;
     let summary = eval::print_table(&rows);
     if !summary.meets_targets() {
         anyhow::bail!(
