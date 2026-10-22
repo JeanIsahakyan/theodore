@@ -187,7 +187,7 @@ export function Shell({
           <Modal.CloseTrigger aria-label="Close" />
           <Modal.Heading className="shrink-0 pe-8">{title}</Modal.Heading>
           {/* The body scrolls; the title and footer stay put. */}
-          <div className="-mx-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4">
+          <div className="-mx-4 -my-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-1">
             {children}
           </div>
           {footer && (

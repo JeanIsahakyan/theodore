@@ -229,7 +229,9 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
                 : ''}
             </span>
             {m.failed ? (
-              <span className="text-sm text-danger">{m.failed}</span>
+              <span className="text-sm text-danger [overflow-wrap:anywhere]">
+                {m.failed}
+              </span>
             ) : (
               <div className="whitespace-pre-wrap text-sm leading-relaxed">
                 {m.text}
