@@ -22,7 +22,7 @@ import { AgentTag, Btn, Empty, Hints, K, Spinner } from './bits';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { PatchView } from './Patch';
 import { ViewHeader } from './List';
-import { useViewKeys } from './keys';
+import { latinKey, useViewKeys } from './keys';
 import { TaskIcon } from './StatusIcon';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
@@ -297,12 +297,13 @@ function useTaskKeys(order: string[]) {
         const next = order[Math.max(0, Math.min(order.length - 1, i + d))];
         if (next) ui.select(next);
       };
-      if (e.key === 'j' || e.key === 'ArrowDown') move(1);
-      else if (e.key === 'k' || e.key === 'ArrowUp') move(-1);
+      const k = latinKey(e);
+      if (k === 'j' || e.key === 'ArrowDown') move(1);
+      else if (k === 'k' || e.key === 'ArrowUp') move(-1);
       else if (e.key === 'Enter' && t) ui.go({ name: 'review', pr: t.pr });
-      else if (e.key === 'y' && t?.status === 'review')
+      else if (k === 'y' && t?.status === 'review')
         void decideTask(store, t.id, true);
-      else if (e.key === 'a' && t) ui.openModal('assign', [t.id]);
+      else if (k === 'a' && t) ui.openModal('assign', [t.id]);
       else return false;
     },
     [order.join()],
