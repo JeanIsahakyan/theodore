@@ -218,6 +218,16 @@ fn print_detail(graph: &RelGraph, chunks: &[theodore_grouping::prompt::PromptChu
             c.hunk_ids.len(),
             c.prompt.user.len()
         );
+        let files: std::collections::BTreeSet<&str> = c
+            .hunk_ids
+            .iter()
+            .filter_map(|h| graph.file_of(h))
+            .map(|f| graph.files[f].as_str())
+            .collect();
+        println!(
+            "      files: {}",
+            files.into_iter().collect::<Vec<_>>().join(", ")
+        );
         let user = &c.prompt.user;
         if let Some(start) = user.find("# Related changes") {
             let end = user[start..]
