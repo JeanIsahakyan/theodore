@@ -20,7 +20,11 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { AccountStatus, AccountUser } from '../gen/contract';
 import { api } from '../core/api';
-import { accountLabel, looksLikeEmail } from '../core/accountFlow';
+import {
+  accountLabel,
+  looksLikeEmail,
+  signInErrorText,
+} from '../core/accountFlow';
 import { useAccountSignIn, type AccountSignIn } from '../core/accountSignIn';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Spinner } from './bits';
@@ -73,12 +77,14 @@ function Stage({
   children?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center gap-5 text-center">
+    <div className="stage flex w-full flex-col items-center gap-5 text-center [&_button]:w-full">
       <div className="grid size-12 place-items-center">{mark}</div>
-      <div className="flex flex-col gap-1.5">
-        <Typography.Heading level={4}>{title}</Typography.Heading>
+      <div className="flex w-full flex-col items-center gap-1.5">
+        <Typography.Heading level={4} className="text-center">
+          {title}
+        </Typography.Heading>
         {text && (
-          <Typography.Paragraph size="sm" color="muted">
+          <Typography.Paragraph size="sm" color="muted" className="text-center">
             {text}
           </Typography.Paragraph>
         )}
@@ -245,7 +251,7 @@ export function SignInView({
         ? 'The request was declined on the sign-in page.'
         : flow.phase === 'expired'
           ? 'That sign-in waited too long.'
-          : flow.error;
+          : signInErrorText(flow.error ?? '');
     return (
       <Stage
         mark={roundMark(<Person />, 'text-danger')}
@@ -271,10 +277,10 @@ export function SignInView({
     <Stage
       mark={<Logo size={44} />}
       title="Sign in to Theodore"
-      text="Optional. Your code hosts stay connected either way."
+      text="Optional — your code hosts stay connected."
     >
       <form
-        className="flex flex-col gap-2"
+        className="flex w-full flex-col gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (valid) start('browser', email);

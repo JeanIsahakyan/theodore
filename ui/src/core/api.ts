@@ -96,13 +96,15 @@ export function setCommandFailureHandler(
 async function call<T>(
   cmd: string,
   args?: Record<string, unknown>,
+  /** The caller shows the failure itself (the sign-in dialog): no toast. */
+  quiet = false,
 ): Promise<T> {
   try {
     return await getTransport().invoke<T>(cmd, args);
   } catch (e) {
     if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
       const failure = new CommandFailure(e as CommandError);
-      onFailure?.(failure);
+      if (!quiet) onFailure?.(failure);
       throw failure;
     }
     throw e;
@@ -201,11 +203,13 @@ export const api = {
   spaceReview: (req: SpaceReviewRequest) =>
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),
-  /** Theodore account (Settings → Account, Onboarding). */
+  /** Theodore account (Settings → Account, Onboarding). The sign-in
+   *  dialog shows its own failures, so starting and polling don't toast. */
   accountStatus: () => call<AccountStatus>('account_status'),
   accountSignInStart: (req: AccountSignInRequest) =>
-    call<AccountSignInStart>('account_sign_in_start', { req }),
-  accountSignInPoll: () => call<AccountSignInState>('account_sign_in_poll'),
+    call<AccountSignInStart>('account_sign_in_start', { req }, true),
+  accountSignInPoll: () =>
+    call<AccountSignInState>('account_sign_in_poll', undefined, true),
   accountSignInCancel: () => call<null>('account_sign_in_cancel'),
   accountSignOut: () => call<AccountStatus>('account_sign_out'),
   /** Brings the window forward after the browser hands the sign-in back.

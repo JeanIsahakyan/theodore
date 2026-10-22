@@ -156,3 +156,18 @@ export function accountLabel(user: AccountUser): string {
 export function looksLikeEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
+
+/** A sign-in failure in words for the dialog, not the core's error chain
+ *  (`account: rejected: invalid_client: …`). */
+export function signInErrorText(raw: string): string {
+  const m = raw.replace(/^account:\s*/, '');
+  if (/invalid_client/.test(m))
+    return "Sign-in isn't set up right: the sign-in service doesn't know this app's client id.";
+  if (/^network:/.test(m))
+    return "Couldn't reach the sign-in service. Check your connection and try again.";
+  if (/not available here/.test(m))
+    return 'Sign-in is not available in this build.';
+  if (/^(rejected|protocol|invalid token):/.test(m))
+    return 'The sign-in service turned this sign-in down. Try again.';
+  return m;
+}

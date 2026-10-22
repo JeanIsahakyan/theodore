@@ -7,6 +7,7 @@ import {
   looksLikeEmail,
   nextPollDelay,
   reduceFlow,
+  signInErrorText,
   type AccountFlow,
   type AccountFlowEvent,
 } from './accountFlow';
@@ -213,5 +214,18 @@ describe('helpers', () => {
     expect(looksLikeEmail('ada@')).toBe(false);
     expect(looksLikeEmail('ada example.com')).toBe(false);
     expect(looksLikeEmail('')).toBe(false);
+  });
+
+  it('signInErrorText puts core errors in words', () => {
+    expect(
+      signInErrorText('account: rejected: invalid_client: Unknown client.'),
+    ).toMatch(/client id/);
+    expect(signInErrorText('account: network: timed out')).toMatch(
+      /connection/,
+    );
+    expect(signInErrorText('account: rejected: access_denied')).toMatch(
+      /turned this sign-in down/,
+    );
+    expect(signInErrorText('something else')).toBe('something else');
   });
 });
