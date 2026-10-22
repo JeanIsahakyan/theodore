@@ -495,6 +495,16 @@ async fn fail_run(core: &Core, run_id: &str, pr: &PrId, agent: AgentId, message:
     core.0.runs.write().await.remove(run_id);
 }
 
+/// Chat questions get the same footing as skills: the worktree holds only
+/// the head, so without this the agent can't tell what the PR changed and
+/// says so instead of answering.
+const ASK_SYSTEM: &str = "You are answering a question about the pull request checked out \
+     in the current directory. The directory has only the PR's head; what the PR changes \
+     comes from the review-tools MCP server: `get_pr_context` (title, body, commits, \
+     files, groups), `get_group` (a group's hunks as a unified diff) and `get_base_file` \
+     (a file before the change). Look at the change through those tools before \
+     answering. Do not edit files. Answer briefly and point at file:line where it helps.";
+
 async fn drive_ask(
     core: &Core,
     run_id: String,
@@ -513,7 +523,7 @@ async fn drive_ask(
     let req = AgentRequest {
         agent,
         prompt: question,
-        system: None,
+        system: Some(ASK_SYSTEM.into()),
         cwd,
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),

@@ -3883,6 +3883,30 @@ async fn ask_holds_the_prs_worktree_lease_for_the_run() {
 }
 
 #[tokio::test]
+async fn ask_points_the_agent_at_the_review_tools_for_the_diff() {
+    // The worktree has only the head: without being told where the change
+    // is, the agent answers "I couldn't diff against the parent".
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    core.ask(theodore_contract::AskRequest {
+        pr: pr.clone(),
+        question: "why?".into(),
+        about: None,
+        group: None,
+        agent: Some(AgentId::Claude),
+    })
+    .await
+    .expect("ask");
+
+    wait_until(|| f.agents.last_request().is_some()).await;
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(req.prompt, "why?");
+    let system = req.system.expect("a system prompt");
+    assert!(system.contains("get_pr_context"));
+    assert!(system.contains("get_base_file"));
+}
+
+#[tokio::test]
 async fn regroup_falls_back_to_an_enabled_installed_agent_when_configured_one_is_disabled() {
     let f = fixtures();
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
