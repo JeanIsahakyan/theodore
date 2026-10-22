@@ -305,7 +305,7 @@ export const PullRequests = observer(function PullRequests() {
           }
         />
         {ui.peek && ui.selected && order.includes(ui.selected) && (
-          <Peek id={ui.selected} context={ws.active ? 'project' : 'inbox'} />
+          <Peek id={ui.selected} />
         )}
       </div>
       <Hints>

@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import {
   Archive,
@@ -20,7 +20,6 @@ import {
   Separator,
   Surface,
   Toolbar,
-  Tooltip,
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
@@ -81,22 +80,6 @@ function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
   if (!hunks.length) return 0;
   const readSet = new Set(reads.map((r) => r.hunk));
   return hunks.filter((h) => readSet.has(h)).length / hunks.length;
-}
-
-/** Wraps a `Btn` whose action has no backing command at all — adding a
- *  reviewer (no picker fits this compact panel; use the PR page) isn't in
- *  `.context/commands.md`: shown disabled, with a tooltip explaining why,
- *  never deleted. */
-function GatedBtn({ children, ...rest }: ComponentProps<typeof Btn>) {
-  const { kbd: _kbd, ...disabledRest } = rest;
-  return (
-    <Tooltip>
-      <Btn {...disabledRest} isDisabled>
-        {children}
-      </Btn>
-      <Tooltip.Content>Not available yet</Tooltip.Content>
-    </Tooltip>
-  );
 }
 
 /** "stacked on #n" / "n stacked" chips (plan "Stack"): same relation List's
@@ -210,21 +193,18 @@ function ReassignMenu({ pr }: { pr: PrId }) {
   );
 }
 
-export type PeekContext = 'inbox' | 'project';
+export type PeekHostAction = 'merge' | 'reviewers';
 
-export type ProjectPeekAction = 'open' | 'merge' | 'reviewers';
-
-/** A project page's Peek actions. Snooze and Done are inbox triage, so
- *  they're not here; Merge only when the PR is open and the gates a
- *  summary can answer (checks, approvals, changes requested, conflicts)
- *  all pass; Reviewers on any unfinished host PR. A branch review has no
- *  host PR: Open is all it gets. */
-export function projectPeekActions(
+/** Peek's host actions, the same on every page: Merge only when the PR is
+ *  open and the gates a summary can answer (checks, approvals, changes
+ *  requested, conflicts) all pass; Reviewers on any unfinished host PR. A
+ *  local or branch review has no host PR, so it gets neither. */
+export function peekHostActions(
   p: PrSummary,
   hostWrites: boolean,
-): ProjectPeekAction[] {
+): PeekHostAction[] {
   const hostPr = p.pr.repo.host !== 'local' && !isBranchReview(p);
-  const actions: ProjectPeekAction[] = ['open'];
+  const actions: PeekHostAction[] = [];
   if (hostPr && p.state === 'open' && !mergeGatesFor(p).some((g) => !g.ok)) {
     actions.push('merge');
   }
@@ -238,16 +218,8 @@ export function projectPeekActions(
  *  `ui.peek` / Space, shown next to `Inbox`'s list. Ported from the
  *  prototype's `Peek`: sections that had no backing data at all (Linear,
  *  stack, precomputed pre-review groups/risks, merge gates, activity feed)
- *  are dropped rather than faked; see the file's final report.
- *  `context="project"` swaps the inbox's triage actions for the project
- *  page's own (`projectPeekActions`). */
-export const Peek = observer(function Peek({
-  id,
-  context = 'inbox',
-}: {
-  id: PrId;
-  context?: PeekContext;
-}) {
+ *  are dropped rather than faked; see the file's final report. */
+export const Peek = observer(function Peek({ id }: { id: PrId }) {
   const store = useRootStore();
   const ui = store.ui;
   const p = store.models.prSummaries.get(id);
@@ -261,7 +233,9 @@ export const Peek = observer(function Peek({
   const inboxState = store.models.inboxStates.get(id);
   const viewer = store.ephemeral.viewer;
   const mine = !!viewer && viewer.login === p.author.login;
-  const local = p.pr.repo.host === 'local';
+  // No PR on the host behind it: a local folder's or a branch review.
+  const local = p.pr.repo.host === 'local' || isBranchReview(p);
+  const host = peekHostActions(p, FEATURES.hostWrites);
   const requested =
     p.reasons.includes('review_requested') ||
     p.reasons.includes('team_review_requested');
@@ -323,163 +297,129 @@ export const Peek = observer(function Peek({
         {p.stack && <StackChips repo={p.pr.repo} stack={p.stack} />}
       </header>
 
-      {context === 'project' ? (
-        <Toolbar
-          aria-label="Actions"
-          className="peek-actions flex flex-wrap items-center gap-2"
+      <Toolbar
+        aria-label="Actions"
+        className="peek-actions flex flex-wrap items-center gap-2"
+      >
+        <Btn
+          tone="primary"
+          kbd="⏎"
+          icon={<ArrowUpRightFromSquare />}
+          onPress={() => ui.go({ name: 'review', pr: id })}
         >
-          {projectPeekActions(p, FEATURES.hostWrites).map((a) =>
-            a === 'open' ? (
-              <Btn
-                key={a}
-                tone="primary"
-                kbd="⏎"
-                icon={<ArrowUpRightFromSquare />}
-                onPress={() => ui.go({ name: 'review', pr: id })}
-              >
-                Open
-              </Btn>
-            ) : a === 'merge' ? (
-              <Btn
-                key={a}
-                tone="success"
-                icon={<CodeMerge />}
-                onPress={() => setMerging(true)}
-              >
-                Merge
-              </Btn>
-            ) : (
-              <ReviewerPicker key={a} pr={id} />
-            ),
-          )}
-          {merging && <MergeDialog pr={id} onClose={() => setMerging(false)} />}
-        </Toolbar>
-      ) : (
-        <Toolbar
-          aria-label="Actions"
-          className="peek-actions flex flex-wrap items-center gap-2"
-        >
+          Open
+        </Btn>
+        {host.includes('merge') && (
           <Btn
-            tone="primary"
-            kbd="⏎"
-            icon={<ArrowUpRightFromSquare />}
-            onPress={() => ui.go({ name: 'review', pr: id })}
+            tone="success"
+            icon={<CodeMerge />}
+            onPress={() => setMerging(true)}
           >
-            Open
+            Merge
           </Btn>
-          {!local && p.state === 'open' && (
+        )}
+        {requested && (
+          <>
             <Btn
-              tone="success"
-              icon={<CodeMerge />}
-              onPress={() => ui.go({ name: 'review', pr: id })}
-            >
-              Merge
-            </Btn>
-          )}
-          {requested && (
-            <>
-              <Btn
-                icon={<PersonPlus />}
-                isPending={busy === 'take'}
-                onPress={() => {
-                  setBusy('take');
-                  void triage(store, id, { action: 'take' }).finally(() =>
-                    setBusy(null),
-                  );
-                }}
-              >
-                Take
-              </Btn>
-              <ReassignMenu pr={id} />
-              <Btn
-                tone="tertiary"
-                icon={<PersonXmark />}
-                isPending={busy === 'decline'}
-                onPress={() => {
-                  setBusy('decline');
-                  void triage(store, id, { action: 'decline' }).finally(() =>
-                    setBusy(null),
-                  );
-                }}
-              >
-                Decline
-              </Btn>
-            </>
-          )}
-          {!local && mine && p.state === 'draft' && (
-            <Btn
-              icon={<Eye />}
-              isPending={busy === 'ready'}
+              icon={<PersonPlus />}
+              isPending={busy === 'take'}
               onPress={() => {
-                setBusy('ready');
-                void setDraft(store, { pr: id, draft: false }).finally(() =>
+                setBusy('take');
+                void triage(store, id, { action: 'take' }).finally(() =>
                   setBusy(null),
                 );
               }}
             >
-              Ready for review
+              Take
             </Btn>
-          )}
-          {!local && mine && changesRequestedBy.length > 0 && (
+            <ReassignMenu pr={id} />
             <Btn
-              icon={<ArrowRotateRight />}
-              isPending={busy === 'rerequest'}
+              tone="tertiary"
+              icon={<PersonXmark />}
+              isPending={busy === 'decline'}
               onPress={() => {
-                setBusy('rerequest');
-                void setReviewers(store, {
-                  pr: id,
-                  add: changesRequestedBy,
-                  add_teams: [],
-                  remove: [],
-                }).finally(() => setBusy(null));
+                setBusy('decline');
+                void triage(store, id, { action: 'decline' }).finally(() =>
+                  setBusy(null),
+                );
               }}
             >
-              Re-request review
+              Decline
             </Btn>
-          )}
-          {!local && mine && p.state !== 'merged' && (
-            <GatedBtn icon={<PersonPlus />}>Reviewer</GatedBtn>
-          )}
-          {mine && openMine.length > 0 && (
-            <Btn
-              icon={<Sparkles />}
-              onPress={() =>
-                openMine.forEach((t) => void delegateTask(store, t.id, 'codex'))
-              }
-            >
-              Tasks ({openMine.length}) → codex
-            </Btn>
-          )}
-          {inboxState?.snooze ? (
-            <Btn
-              tone="tertiary"
-              icon={<Clock />}
-              onPress={() => unsnooze(store, id)}
-            >
-              Snoozed · wake up
-            </Btn>
-          ) : (
-            <Btn
-              tone="tertiary"
-              kbd="H"
-              icon={<Clock />}
-              onPress={() => ui.openModal('snooze', [id])}
-            >
-              Snooze
-            </Btn>
-          )}
-          {!inboxState?.done && (
-            <Btn
-              tone="tertiary"
-              kbd="E"
-              icon={<Archive />}
-              onPress={() => markDone(store, [id])}
-            >
-              Done
-            </Btn>
-          )}
-        </Toolbar>
-      )}
+          </>
+        )}
+        {!local && mine && p.state === 'draft' && (
+          <Btn
+            icon={<Eye />}
+            isPending={busy === 'ready'}
+            onPress={() => {
+              setBusy('ready');
+              void setDraft(store, { pr: id, draft: false }).finally(() =>
+                setBusy(null),
+              );
+            }}
+          >
+            Ready for review
+          </Btn>
+        )}
+        {!local && mine && changesRequestedBy.length > 0 && (
+          <Btn
+            icon={<ArrowRotateRight />}
+            isPending={busy === 'rerequest'}
+            onPress={() => {
+              setBusy('rerequest');
+              void setReviewers(store, {
+                pr: id,
+                add: changesRequestedBy,
+                add_teams: [],
+                remove: [],
+              }).finally(() => setBusy(null));
+            }}
+          >
+            Re-request review
+          </Btn>
+        )}
+        {host.includes('reviewers') && <ReviewerPicker pr={id} />}
+        {mine && openMine.length > 0 && (
+          <Btn
+            icon={<Sparkles />}
+            onPress={() =>
+              openMine.forEach((t) => void delegateTask(store, t.id, 'codex'))
+            }
+          >
+            Tasks ({openMine.length}) → codex
+          </Btn>
+        )}
+        {inboxState?.snooze ? (
+          <Btn
+            tone="tertiary"
+            icon={<Clock />}
+            onPress={() => unsnooze(store, id)}
+          >
+            Snoozed · wake up
+          </Btn>
+        ) : (
+          <Btn
+            tone="tertiary"
+            kbd="H"
+            icon={<Clock />}
+            onPress={() => ui.openModal('snooze', [id])}
+          >
+            Snooze
+          </Btn>
+        )}
+        {!inboxState?.done && (
+          <Btn
+            tone="tertiary"
+            kbd="E"
+            icon={<Archive />}
+            onPress={() => markDone(store, [id])}
+          >
+            Done
+          </Btn>
+        )}
+        {merging && <MergeDialog pr={id} onClose={() => setMerging(false)} />}
+      </Toolbar>
 
       <Separator />
       <dl className="props grid grid-cols-[96px_1fr] items-center gap-x-3 gap-y-3 text-sm [&>dt]:text-muted">

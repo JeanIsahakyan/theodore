@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PrSummary, RepoRef } from '../gen/contract';
-import { projectPeekActions } from './Peek';
+import { peekHostActions } from './Peek';
 
 const github: RepoRef = { host: 'github', owner: 'acme', name: 'web' };
 
@@ -24,44 +24,32 @@ const pr = (over: Partial<PrSummary> = {}): PrSummary => ({
   ...over,
 });
 
-describe('projectPeekActions', () => {
-  it('offers Open, Merge and Reviewers on a mergeable open PR, no triage', () => {
-    // A review request would put Take/Snooze/Done in the inbox; a project
-    // page shows its own actions only.
-    expect(projectPeekActions(pr(), true)).toEqual([
-      'open',
-      'merge',
-      'reviewers',
-    ]);
+describe('peekHostActions', () => {
+  it('offers Merge and Reviewers on a mergeable open PR', () => {
+    expect(peekHostActions(pr(), true)).toEqual(['merge', 'reviewers']);
   });
 
   it('drops Merge while a gate is red', () => {
-    expect(projectPeekActions(pr({ checks: 'fail' }), true)).toEqual([
-      'open',
+    expect(peekHostActions(pr({ checks: 'fail' }), true)).toEqual([
       'reviewers',
     ]);
-    expect(projectPeekActions(pr({ approvals: 0 }), true)).toEqual([
-      'open',
-      'reviewers',
-    ]);
-    expect(projectPeekActions(pr({ conflicts: true }), true)).toEqual([
-      'open',
+    expect(peekHostActions(pr({ approvals: 0 }), true)).toEqual(['reviewers']);
+    expect(peekHostActions(pr({ conflicts: true }), true)).toEqual([
       'reviewers',
     ]);
   });
 
   it('keeps Reviewers on a draft but never offers Merge on one', () => {
-    expect(projectPeekActions(pr({ state: 'draft' }), true)).toEqual([
-      'open',
+    expect(peekHostActions(pr({ state: 'draft' }), true)).toEqual([
       'reviewers',
     ]);
   });
 
-  it('only opens a merged PR or a branch review', () => {
-    expect(projectPeekActions(pr({ state: 'merged' }), true)).toEqual(['open']);
-    expect(projectPeekActions(pr({ url: '' }), true)).toEqual(['open']);
+  it('offers nothing on a merged PR or a branch review', () => {
+    expect(peekHostActions(pr({ state: 'merged' }), true)).toEqual([]);
+    expect(peekHostActions(pr({ url: '' }), true)).toEqual([]);
     expect(
-      projectPeekActions(
+      peekHostActions(
         pr({
           url: '',
           pr: {
@@ -72,10 +60,10 @@ describe('projectPeekActions', () => {
         }),
         true,
       ),
-    ).toEqual(['open']);
+    ).toEqual([]);
   });
 
   it('hides Reviewers when host writes are off', () => {
-    expect(projectPeekActions(pr(), false)).toEqual(['open', 'merge']);
+    expect(peekHostActions(pr(), false)).toEqual(['merge']);
   });
 });
