@@ -369,12 +369,14 @@ sqlite3 ~/.theodore/theodore.db "INSERT INTO models (model, id, data) VALUES
 | **v2** | Open PR (`HostAdapter::create_pr` + outbox, idempotent by head branch) and Push; Keep as branch for local folders; My PRs "Drafting" group; drafts/findings/threads → "Send to agent"; `space_run` rows, per-turn diffs, undo turn; modes Ask/Run; `budget.per_space_usd` enforced; setup/check scripts; notifications + dock badge; unarchive; queue + `max_parallel` |
 | **Later** | native session resume per CLI; OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); squash on ship; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
-## 12. Open questions for the owner
+## 12. Decisions (owner, 2026-10-21)
 
-1. **Branch prefix.** `theo/<slug>`, or configurable per repo (default `<login>/<slug>`)?
-2. **Checkpoint commits on ship.** Push them as is (honest history, noisy), or squash into one commit authored by you?
-3. **Open PR as draft?** Default draft, so CI runs before reviewers are pinged?
-4. **Shell access.** Ship Run mode only behind an OS sandbox, or trust the CLI's own sandboxing (Codex has one, Claude does not)?
-5. **Local folder end state.** "Keep as branch" writes a ref into your repo (never the working tree). Is "Merge locally" into your checked-out branch wanted at all, given the rule never to touch your checkout?
-6. **Budget.** Separate `budget.per_space_usd`, or one budget shared by the space and its PR's review runs?
-7. **Auto-archive.** 7 days after merge — or immediately, with the transcript still reachable from the PR?
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Branch name on ship | `<login>/<slug>` (the host login; `space/<slug>` when there is none) |
+| 2 | Checkpoint commits on ship | squashed into one commit, authored by you, message from the goal |
+| 3 | Draft or ready | **Open PR** opens a ready PR; its dropdown offers *Open as draft* (and any other modes) |
+| 4 | Run mode safety | no extra sandbox: Run mode trusts the agent CLI as configured |
+| 5 | Local folder end state | **Merge locally**: a normal merge of the squashed commit into the folder's checked-out branch, instead of a PR; *Keep as branch* stays as the alternative |
+| 6 | Budget | its own `budget.per_space_usd`, separate from the PR's review runs |
+| 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time |
