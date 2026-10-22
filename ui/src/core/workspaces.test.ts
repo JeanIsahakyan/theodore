@@ -364,6 +364,12 @@ describe('migrateRoute', () => {
     expect(migrateRoute({ name: 'mine' }, web.id)).toEqual({ name: 'prs' });
   });
 
+  it('keeps a space tab', () => {
+    const space = { name: 'space', id: 'abc' };
+    expect(migrateRoute(space, web.id)).toEqual(space);
+    expect(migrateRoute({ name: 'space' }, web.id)).toBeNull();
+  });
+
   it('turns a project page into the workspace home', () => {
     const page = { name: 'project', id: web.id };
     expect(migrateRoute(page, web.id)).toEqual({ name: 'prs' });

@@ -181,6 +181,7 @@ const ROUTE_NAMES = new Set([
   'settings',
   'review',
   'new',
+  'space',
 ]);
 
 /** A route saved by any version, as a route of `ws` today: My PRs
@@ -196,7 +197,8 @@ export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
   if (r.name === 'project') return ws === ALL ? { name: 'prs' } : homeRoute(ws);
   if (typeof r.name !== 'string' || !ROUTE_NAMES.has(r.name)) return null;
   if (r.name === 'review' && typeof r.pr !== 'string') return null;
-  if (r.name === 'new' && typeof r.id !== 'string') return null;
+  if ((r.name === 'new' || r.name === 'space') && typeof r.id !== 'string')
+    return null;
   return fitRoute(raw as Route, ws, kind);
 }
 
