@@ -99,7 +99,9 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
       <Button
         variant="ghost"
         aria-label={`Workspace: ${full}`}
-        className="workspace-switcher h-8 min-w-0 flex-1 justify-start gap-2 px-1.5"
+        // No focus ring after the menu closes: focus returns here on every
+        // pick, and a ring around the corner of the window reads as a bug.
+        className="workspace-switcher h-8 min-w-0 flex-1 justify-start gap-2 px-1.5 data-[focus-visible=true]:bg-default data-[focus-visible=true]:ring-0 data-[focus-visible=true]:outline-none"
       >
         <Logo size={22} />
         <span className="min-w-0 truncate font-semibold">{name}</span>
