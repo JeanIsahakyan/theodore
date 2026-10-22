@@ -147,11 +147,13 @@ export function K({ children }: { children: ReactNode }) {
   return <Kbd className="text-xs">{children}</Kbd>;
 }
 
+/** The shortcut strip under a page: one line; on a narrow window the
+ *  hints that don't fit fade out at the edge instead of wrapping. */
 export function Hints({ children }: { children: ReactNode }) {
   return (
     <Toolbar
       aria-label="Shortcuts"
-      className="hints flex w-full shrink-0 flex-wrap items-center gap-1 border-t border-separator bg-background px-6 py-2 text-xs text-muted"
+      className="hints flex w-full shrink-0 flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap border-t border-separator bg-background px-6 py-2 text-xs text-muted [mask-image:linear-gradient(to_right,black_calc(100%-40px),transparent)]"
     >
       {children}
     </Toolbar>
