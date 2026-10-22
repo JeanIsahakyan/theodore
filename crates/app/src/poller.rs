@@ -455,19 +455,20 @@ async fn regroup_after_push(
     let agent = core
         .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
         .await;
+    let ctx = core.grouping_context(worktree, new_rev).await;
     let result = match &prev {
         Some(p) => {
             core.0
                 .deps
                 .grouper
-                .regroup(p, new_rev, detail, worktree, agent)
+                .regroup(p, new_rev, detail, &ctx, worktree, agent)
                 .await
         }
         None => {
             core.0
                 .deps
                 .grouper
-                .group(new_rev, detail, worktree, agent)
+                .group(new_rev, detail, &ctx, worktree, agent)
                 .await
         }
     };

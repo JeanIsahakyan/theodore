@@ -67,6 +67,17 @@ pub struct EvalArgs {
     /// Write each fixture's grouping and run stats to `<dir>/<fixture>.json`.
     #[arg(long)]
     pub save: Option<PathBuf>,
+    /// No agent calls: report the relatedness graph and the chunks it
+    /// yields for each fixture (offline check, docs/eval/graph-grouping.md).
+    #[arg(long)]
+    pub graph_only: bool,
+    /// With `--graph-only`: a saved run directory (`--save` output) whose
+    /// groupings the graph is scored against.
+    #[arg(long, requires = "graph_only")]
+    pub compare: Option<PathBuf>,
+    /// With `--graph-only`: also print every community, rollout and chunk.
+    #[arg(long, requires = "graph_only")]
+    pub show: bool,
 }
 
 /// Load every `*.json` fixture in `dir`, sorted by file name.

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_app::{Grouper, GrouperError};
+use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, Revision};
 use theodore_grouping::{GroupingOptions, PrMeta};
 use theodore_ports::AgentPort;
@@ -46,12 +47,13 @@ impl Grouper for GroupingGrouper {
         &self,
         rev: &Revision,
         pr: &PrDetail,
+        ctx: &RepoContext,
         worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
         let mut opts = self.opts.clone();
         opts.agent = agent;
-        theodore_grouping::group_revision(&*self.agents, &meta(pr), rev, worktree, &opts)
+        theodore_grouping::group_revision_with(&*self.agents, &meta(pr), rev, ctx, worktree, &opts)
             .await
             .map(|r| r.grouping)
             .map_err(err)
@@ -62,6 +64,9 @@ impl Grouper for GroupingGrouper {
         prev: &Grouping,
         rev: &Revision,
         pr: &PrDetail,
+        // Incremental regroup only places new hunks into existing groups;
+        // the relatedness graph is for whole-PR grouping.
+        _ctx: &RepoContext,
         worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {

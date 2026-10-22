@@ -360,6 +360,9 @@ pub struct FakeGit {
     resolve_refs: Mutex<HashMap<String, Sha>>,
     commits: Mutex<HashMap<String, CommitLog>>,
     commit_log_value: Mutex<Vec<CommitLog>>,
+    /// Full file lists of past commits, newest first, for
+    /// `co_change_commits` (which filters them like the real one).
+    history: Mutex<Vec<Vec<String>>>,
     removed_repos: Mutex<Vec<RepoRef>>,
     conflicts_value: Mutex<GitResult<Vec<ConflictEntry>>>,
     /// `None`: `working_state` is `Unsupported`, like the trait default.
@@ -433,6 +436,7 @@ impl FakeGit {
             resolve_refs: Mutex::new(HashMap::new()),
             commits: Mutex::new(HashMap::new()),
             commit_log_value: Mutex::new(Vec::new()),
+            history: Mutex::new(Vec::new()),
             removed_repos: Mutex::new(Vec::new()),
             conflicts_value: Mutex::new(Ok(Vec::new())),
             working_state_value: Mutex::new(None),
@@ -518,6 +522,12 @@ impl FakeGit {
 
     pub fn set_commit_log(&self, commits: Vec<CommitLog>) {
         *self.commit_log_value.lock().unwrap() = commits;
+    }
+
+    /// Past commits (each a list of touched paths, newest first) that
+    /// `co_change_commits` reports from.
+    pub fn set_history(&self, commits: Vec<Vec<String>>) {
+        *self.history.lock().unwrap() = commits;
     }
 
     pub fn mirror_calls(&self) -> Vec<(PathBuf, RepoRef)> {
@@ -659,6 +669,31 @@ impl GitPort for FakeGit {
         _head: &Sha,
     ) -> GitResult<Vec<CommitLog>> {
         Ok(self.commit_log_value.lock().unwrap().clone())
+    }
+
+    async fn co_change_commits(
+        &self,
+        _repo: &Path,
+        _rev: &Sha,
+        paths: &[String],
+        max_commits: usize,
+        max_files: usize,
+    ) -> GitResult<Vec<Vec<String>>> {
+        Ok(self
+            .history
+            .lock()
+            .unwrap()
+            .iter()
+            .take(max_commits)
+            .filter(|c| c.len() <= max_files)
+            .map(|c| {
+                c.iter()
+                    .filter(|p| paths.contains(p))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|c| !c.is_empty())
+            .collect())
     }
 
     async fn remove_repo(&self, repo: &RepoRef) -> GitResult<()> {
@@ -1326,6 +1361,7 @@ impl AgentPort for FakeAgent {
 pub struct FakeGrouper {
     grouping: Mutex<Grouping>,
     last_agent: Mutex<Option<AgentId>>,
+    last_ctx: Mutex<Option<theodore_domain::grouping::RepoContext>>,
     /// How long `group` takes, so a test can act while it runs.
     delay_ms: std::sync::atomic::AtomicU64,
 }
@@ -1335,6 +1371,7 @@ impl FakeGrouper {
         Arc::new(Self {
             grouping: Mutex::new(grouping),
             last_agent: Mutex::new(None),
+            last_ctx: Mutex::new(None),
             delay_ms: std::sync::atomic::AtomicU64::new(0),
         })
     }
@@ -1349,6 +1386,10 @@ impl FakeGrouper {
     pub fn last_agent(&self) -> Option<AgentId> {
         *self.last_agent.lock().unwrap()
     }
+    /// The repository context the last `group`/`regroup` call received.
+    pub fn last_ctx(&self) -> Option<theodore_domain::grouping::RepoContext> {
+        self.last_ctx.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -1357,10 +1398,12 @@ impl Grouper for FakeGrouper {
         &self,
         _rev: &Revision,
         _pr: &PrDetail,
+        ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
         *self.last_agent.lock().unwrap() = Some(agent);
+        *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         let delay = self.delay_ms.load(std::sync::atomic::Ordering::SeqCst);
         if delay > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
@@ -1372,11 +1415,13 @@ impl Grouper for FakeGrouper {
         prev: &Grouping,
         _rev: &Revision,
         _pr: &PrDetail,
+        ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
         let _ = prev;
         *self.last_agent.lock().unwrap() = Some(agent);
+        *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         Ok(self.grouping.lock().unwrap().clone())
     }
 }

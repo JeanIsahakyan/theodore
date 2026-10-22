@@ -3,6 +3,7 @@
 
 mod area;
 mod coarsen;
+pub mod graph;
 pub mod incremental;
 mod parse;
 pub mod pipeline;
@@ -16,5 +17,6 @@ pub mod testing;
 pub use incremental::regroup;
 pub use pipeline::{
     GroupingOptions, GroupingPipelineError, GroupingReport, PrMeta, group_revision,
+    group_revision_with,
 };
 pub use prompt::PromptBudget;

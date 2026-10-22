@@ -9,7 +9,29 @@ use crate::model::{Group, GroupId, GroupKind, Grouping, HunkId, Revision};
 /// (`"algo"`). A stored grouping from an older version is recomputed the
 /// next time its PR is opened. Bump it when grouping output changes in a
 /// way worth redoing old PRs for.
-pub const ALGO_VERSION: u64 = 2;
+pub const ALGO_VERSION: u64 = 3;
+
+/// Repository facts beyond the diff that help tell which changed files
+/// belong together (relatedness graph in `theodore-grouping`). Everything
+/// is optional: grouping works from the diff alone, this only sharpens it
+/// when a worktree is at hand.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepoContext {
+    /// Head contents of changed text files, by repo-relative path, so
+    /// imports outside the diff's hunks are seen too.
+    pub head_files: BTreeMap<String, String>,
+    /// Recent history before the PR: for each commit, the PR's changed paths
+    /// it touched. Commits that touched more than
+    /// [`CO_CHANGE_MAX_FILES`] files in total are already left out (bulk
+    /// reformatting or vendoring says nothing about relatedness).
+    pub co_change_commits: Vec<Vec<String>>,
+}
+
+/// Commits touching more files than this are ignored for co-change.
+pub const CO_CHANGE_MAX_FILES: usize = 12;
+
+/// How many commits of history to scan for co-change.
+pub const CO_CHANGE_MAX_COMMITS: usize = 1000;
 
 /// Grouping row data: the grouping plus the algorithm version that made it.
 pub fn to_row(grouping: &Grouping) -> serde_json::Result<serde_json::Value> {

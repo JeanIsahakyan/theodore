@@ -248,11 +248,12 @@ impl Core {
                 .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
                 .await;
             let agent = core.effective_agent(configured).await;
+            let ctx = core.grouping_context(&worktree, &revision).await;
             let result = core
                 .0
                 .deps
                 .grouper
-                .group(&revision, &detail, &worktree, agent)
+                .group(&revision, &detail, &ctx, &worktree, agent)
                 .await;
             // The PR may have been closed while the agent worked (a branch
             // review's "Close review"): don't write an orphaned grouping back.

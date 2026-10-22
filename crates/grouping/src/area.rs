@@ -1,8 +1,9 @@
-//! Shared "top-level area" helper: the first path segment of a file, used
-//! both to split a large PR's prompt by directory (`prompt::build_prompts`)
-//! and to decide which neighbouring group a tiny group's lone hunk belongs
-//! with (`coarsen::merge_tiny_groups`). Kept in one place so both agree on
-//! what "same area" means.
+//! Shared "top-level area" helper: the first path segment of a file, the
+//! fallback for files the relatedness graph links to nothing — both when
+//! splitting a large PR's prompt (`prompt::build_prompts_with`) and when
+//! deciding which neighbouring group a tiny group's lone hunk belongs with
+//! (`coarsen::merge_tiny_groups`). Kept in one place so both agree on what
+//! "same area" means.
 
 /// Files in the repository root share one area, `""`: treating each root
 /// file as its own "directory" split a PR with 33 root-level entry points
