@@ -271,6 +271,9 @@ export const DiffPane = observer(function DiffPane({
   /** Bumping `nonce` for a hunk's id fully reveals the context gap directly
    *  above it — `Review`'s `E` shortcut. */
   expandHunk = null,
+  /** The "Next: <group>" button under the diff; off where the diff isn't
+   *  read group by group (a space's live diff). */
+  nextGroup = true,
 }: {
   pr: PrId;
   rev: Revision;
@@ -292,6 +295,7 @@ export const DiffPane = observer(function DiffPane({
   composer: ComposerState | null;
   setComposer: (c: ComposerState | null) => void;
   expandHunk?: { hunk: HunkId; nonce: number } | null;
+  nextGroup?: boolean;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -640,7 +644,7 @@ export const DiffPane = observer(function DiffPane({
           </>
         )}
         <div className="flex justify-center py-4">
-          {mode.mode === 'groups' && !tour && (
+          {nextGroup && mode.mode === 'groups' && !tour && (
             <NextGroup pr={pr} rev={rev} mode={mode} setMode={setMode} />
           )}
         </div>

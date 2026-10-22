@@ -367,6 +367,7 @@ const SpaceChanges = observer(function SpaceChanges({
           setFocusHunk={setFocusHunk}
           composer={composer}
           setComposer={setComposer}
+          nextGroup={false}
         />
       )}
     </>
