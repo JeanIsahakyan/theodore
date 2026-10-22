@@ -101,7 +101,10 @@ impl Core {
         let core = Core(inner.clone());
         {
             let core = core.clone();
-            tokio::spawn(async move { core.fail_interrupted_runs().await });
+            tokio::spawn(async move {
+                core.fail_interrupted_runs().await;
+                core.fail_interrupted_spaces().await;
+            });
         }
         tokio::spawn(crate::outbox::run(inner.clone()));
         tokio::spawn(crate::poller::run(inner.clone()));

@@ -79,7 +79,10 @@ describe('priorQuestion', () => {
   it('finds the user message immediately before an agent reply', () => {
     const messages = [
       msg('m1', { author: { kind: 'me' }, text: 'why?' }),
-      msg('m2', { author: { kind: 'agent', agent: 'claude' }, text: 'because' }),
+      msg('m2', {
+        author: { kind: 'agent', agent: 'claude' },
+        text: 'because',
+      }),
     ];
     expect(priorQuestion(messages, messages[1]!)).toBe('why?');
   });
@@ -87,7 +90,10 @@ describe('priorQuestion', () => {
   it('skips past other agent replies to find the nearest question', () => {
     const messages = [
       msg('m1', { author: { kind: 'me' }, text: 'why?' }),
-      msg('m2', { author: { kind: 'agent', agent: 'claude' }, text: 'because' }),
+      msg('m2', {
+        author: { kind: 'agent', agent: 'claude' },
+        text: 'because',
+      }),
       msg('m3', { author: { kind: 'agent', agent: 'codex' }, failed: 'boom' }),
     ];
     expect(priorQuestion(messages, messages[2]!)).toBe('why?');

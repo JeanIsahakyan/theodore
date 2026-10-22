@@ -1,5 +1,6 @@
 import {
   BranchesRight,
+  CircleXmark,
   CodePullRequest,
   Gear,
   Keyboard,
@@ -7,31 +8,70 @@ import {
   ListCheck,
   Magnifier,
   Moon,
+  Pencil,
+  Plus,
   Sparkles,
   Tray,
 } from '@gravity-ui/icons';
-import { Button, ListBox, Separator, Toolbar, Tooltip } from '@heroui/react';
+import {
+  Button,
+  Header,
+  ListBox,
+  Separator,
+  Toolbar,
+  Tooltip,
+} from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
-import { Avatar, K } from './bits';
+import { Avatar, K, Spinner } from './bits';
 import { inInbox } from './List';
 import { openPrCount } from './prs/filters';
 import { sectionsOf, type Section } from '../core/workspaces';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SyncStatus } from './shell/SyncStatus';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { spaceSeen } from './space/seen';
+import { isBuildMode } from './space/mode';
+import { spaceGlyph, spacesIn, type SpaceGlyph } from './space/spaces';
 
 interface NavItem {
   key: string;
   icon: ReactNode;
   label: string;
   n?: number;
-  route: Route;
+  route?: Route;
+  /** An action instead of a route, e.g. "New space". */
+  onPress?: () => void;
+}
+
+interface NavGroup {
+  id: string;
+  title?: string;
+  items: NavItem[];
 }
 
 const routeKey = (r: Route) => JSON.stringify(r);
+
+/** A space's run state at a glance (docs/spaces.md §3). */
+function SpaceGlyphIcon({ g }: { g: SpaceGlyph }) {
+  switch (g) {
+    case 'running':
+      return <Spinner />;
+    case 'unseen':
+      return (
+        <span
+          className="size-2 rounded-full bg-accent"
+          aria-label="Turn finished"
+        />
+      );
+    case 'failed':
+      return <CircleXmark className="text-danger" aria-label="Failed" />;
+    case 'idle':
+      return <Pencil />;
+  }
+}
 
 function IconBtn({
   label,
@@ -120,9 +160,38 @@ export const Sidebar = observer(function Sidebar() {
       route: { name: 'skills' },
     },
   };
-  const items = sectionsOf(ws.kind).map((k) => all[k]);
+  // Spaces (docs/spaces.md): only with build mode on.
+  const spaces = isBuildMode(store)
+    ? spacesIn(ui.workspace, store.models.spaces.all())
+    : null;
+  const groups: NavGroup[] = [
+    { id: 'main', items: sectionsOf(ws.kind).map((k) => all[k]) },
+    ...(spaces
+      ? [
+          {
+            id: 'spaces',
+            title: 'Spaces',
+            items: [
+              ...spaces.map((s): NavItem => ({
+                key: routeKey({ name: 'space', id: s.id }),
+                icon: <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />,
+                label: s.name,
+                route: { name: 'space', id: s.id },
+              })),
+              {
+                key: 'new-space',
+                icon: <Plus />,
+                label: 'New space',
+                onPress: () => ui.openModal('new-space'),
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
+  const items = groups.flatMap((g) => g.items);
   // ── /workspaces ─────────────────────────────────────────────────────────
-  const current = items.find((i) => sameRoute(i.route, ui.route));
+  const current = items.find((i) => i.route && sameRoute(i.route, ui.route));
 
   return (
     <aside className="sidebar flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
@@ -154,29 +223,39 @@ export const Sidebar = observer(function Sidebar() {
         onSelectionChange={(keys) => {
           const k = keys === 'all' ? undefined : [...keys][0];
           const it = items.find((i) => i.key === k);
-          if (it) ui.go(it.route);
+          if (it?.route) ui.go(it.route);
+          else it?.onPress?.();
         }}
         className="nav-list min-h-0 flex-1 overflow-auto px-2 pb-3"
       >
-        {items.map((i) => (
-          <ListBox.Item
-            key={i.key}
-            id={i.key}
-            textValue={i.label}
-            className="nav group gap-3 px-3 text-sm data-[selected=true]:font-medium"
-          >
-            <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
-              {i.icon}
-            </span>
-            <span className="min-w-0 flex-1 truncate" title={i.label}>
-              {i.label}
-            </span>
-            {i.n !== undefined && i.n !== 0 && (
-              <span className="shrink-0 text-xs tabular-nums text-muted">
-                {i.n}
-              </span>
+        {groups.map((g) => (
+          <ListBox.Section key={g.id} id={g.id}>
+            {g.title && (
+              <Header className="px-3 pb-1.5 pt-6 text-xs text-muted">
+                {g.title}
+              </Header>
             )}
-          </ListBox.Item>
+            {g.items.map((i) => (
+              <ListBox.Item
+                key={i.key}
+                id={i.key}
+                textValue={i.label}
+                className="nav group gap-3 px-3 text-sm data-[selected=true]:font-medium"
+              >
+                <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
+                  {i.icon}
+                </span>
+                <span className="min-w-0 flex-1 truncate" title={i.label}>
+                  {i.label}
+                </span>
+                {i.n !== undefined && i.n !== 0 && (
+                  <span className="shrink-0 text-xs tabular-nums text-muted">
+                    {i.n}
+                  </span>
+                )}
+              </ListBox.Item>
+            ))}
+          </ListBox.Section>
         ))}
       </ListBox>
 

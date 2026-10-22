@@ -17,6 +17,7 @@ import type {
   PrDetail,
   PrSummary,
   Project,
+  Space,
   Setting,
   SkillRun,
   Task,
@@ -36,6 +37,7 @@ export const MODEL_NAMES = [
   'chat_message',
   'setting',
   'project',
+  'space',
 ] as const;
 
 export type ModelName = (typeof MODEL_NAMES)[number];
@@ -60,6 +62,7 @@ export interface ModelRows {
   chat_message: WithId<ChatMessage>;
   setting: WithId<Setting>;
   project: WithId<Project>;
+  space: WithId<Space>;
 }
 
 /**

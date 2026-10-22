@@ -570,3 +570,59 @@ pub async fn close_branch_review(
 ) -> Result<(), CommandError> {
     core.close_branch_review(pr).await
 }
+
+// ── spaces (docs/spaces.md) ─────────────────────────────────────────────────
+
+#[tauri::command]
+#[specta::specta]
+pub async fn create_space(
+    req: theodore_contract::CreateSpaceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.create_space(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_spaces(
+    project: Option<String>,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::Space>, CommandError> {
+    core.list_spaces(project).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_send(
+    req: theodore_contract::SpaceSendRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    core.space_send(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_stop(
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.space_stop(space).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_review(
+    req: theodore_contract::SpaceReviewRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<OpenPrResponse, CommandError> {
+    core.space_review(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn archive_space(
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    core.archive_space(space).await
+}

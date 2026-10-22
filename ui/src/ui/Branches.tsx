@@ -25,6 +25,7 @@ import { isLocalFolder, workingStateParts } from './project/layout';
 import { isBranchReview } from './project/sections';
 import { sameRepo } from './Projects';
 import { BranchReviewRow } from './PullRequests';
+import { isSpaceReview } from './space/spaces';
 
 // A fixed grid, not a table: columns keep their width at any window size
 // and the commit column takes what's left (and truncates).
@@ -47,8 +48,9 @@ const BranchList = observer(function BranchList({
   const items = store.models.prSummaries.where((p) =>
     sameRepo(p.pr.repo, project.repo),
   );
+  // A space's review lives on its space page, not here.
   const reviews = items
-    .filter(isBranchReview)
+    .filter((p) => isBranchReview(p) && !isSpaceReview(p))
     .sort((a, b) => b.updated_at - a.updated_at);
   const checkedOut = working?.current_branch ?? null;
   const dirty = working?.dirty_files ?? 0;

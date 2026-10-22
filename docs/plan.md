@@ -687,6 +687,10 @@ Total: ~11–14 sessions to v1 on GitHub, +1 for GitLab, +1 for Bitbucket.
 Later: LSP go-to-definition, Linear integration, merge queue UI, org settings
 via repo file, Windows/Linux, accounts and billing, telemetry.
 
+Spaces — the stage before a pull request, where an agent writes the change in
+its own worktree and you review it by meaning before it becomes a PR — are
+designed in `docs/spaces.md` and ship hidden behind `FEATURES.buildMode`.
+
 ---
 
 ## 14. Risks

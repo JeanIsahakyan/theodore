@@ -10,6 +10,7 @@ import { EphemeralStore } from './EphemeralStore';
 import { UiStore } from './UiStore';
 import { WorkspaceStore } from './WorkspaceStore';
 import { ALL } from '../core/workspaces';
+import { watchSpaceTurns } from '../ui/space/mode';
 
 export class RootStore {
   readonly sync = new SyncClient();
@@ -27,6 +28,7 @@ export class RootStore {
   private disposeTitle: (() => void) | undefined;
   private disposeViewerRetry: (() => void) | undefined;
   private disposeGoneWorkspace: (() => void) | undefined;
+  private disposeSpaceTurns: (() => void) | undefined;
 
   async start(): Promise<void> {
     setCommandFailureHandler((f) =>
@@ -46,6 +48,8 @@ export class RootStore {
     );
     void loadAppInfo(this);
     await this.sync.start();
+    // Spaces (docs/spaces.md): a no-op with build mode off.
+    this.disposeSpaceTurns = watchSpaceTurns(this);
     void loadViewer(this);
     // The active project is gone (removed here or on another device) once
     // the pool is loaded: fall back to All.
@@ -76,5 +80,6 @@ export class RootStore {
     this.disposeTitle?.();
     this.disposeViewerRetry?.();
     this.disposeGoneWorkspace?.();
+    this.disposeSpaceTurns?.();
   }
 }

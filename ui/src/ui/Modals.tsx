@@ -16,6 +16,8 @@ import { useRootStore, useUi } from '../stores/context';
 import { AgentTag, K, Shell } from './bits';
 import { AssignMenu, CommandMenu, SnoozeMenu } from './Palette';
 import { AddProjectModal } from './Projects';
+import { isBuildMode } from './space/mode';
+import { NewSpaceModal } from './space/SpacePage';
 
 const EVENT_OPTS: [ReviewEvent, string, string][] = [
   ['COMMENT', 'Comment', 'no verdict'],
@@ -255,6 +257,7 @@ function prLabel(
 
 export const Modals = observer(function Modals() {
   const ui = useUi();
+  const store = useRootStore();
   switch (ui.modal) {
     case 'cmdk':
       return <CommandMenu />;
@@ -268,6 +271,8 @@ export const Modals = observer(function Modals() {
       return <HelpModal />;
     case 'add-project':
       return <AddProjectModal />;
+    case 'new-space':
+      return isBuildMode(store) ? <NewSpaceModal /> : null;
     default:
       return null;
   }

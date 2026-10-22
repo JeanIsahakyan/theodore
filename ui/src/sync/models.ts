@@ -124,6 +124,7 @@ export function modelAccessors(pool: ObjectPool) {
     chatMessages: scoped('chat_message'),
     settings: of('setting'),
     projects: of('project'),
+    spaces: of('space'),
   };
 }
 

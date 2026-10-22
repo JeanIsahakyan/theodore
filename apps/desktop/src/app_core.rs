@@ -316,4 +316,35 @@ impl CoreApi for AppCore {
         })
         .await
     }
+
+    async fn create_space(
+        &self,
+        req: theodore_contract::CreateSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.create_space(req).await.map_err(err)
+    }
+    async fn list_spaces(
+        &self,
+        project: Option<String>,
+    ) -> Result<Vec<theodore_contract::Space>, CommandError> {
+        self.core.list_spaces(project).await.map_err(err)
+    }
+    async fn space_send(
+        &self,
+        req: theodore_contract::SpaceSendRequest,
+    ) -> Result<String, CommandError> {
+        self.core.space_send(req).await.map_err(err)
+    }
+    async fn space_stop(&self, space: String) -> Result<(), CommandError> {
+        self.core.space_stop(&space).await.map_err(err)
+    }
+    async fn space_review(
+        &self,
+        req: theodore_contract::SpaceReviewRequest,
+    ) -> Result<OpenPrResponse, CommandError> {
+        self.core.space_review(req).await.map_err(err)
+    }
+    async fn archive_space(&self, space: String) -> Result<(), CommandError> {
+        self.core.archive_space(&space).await.map_err(err)
+    }
 }

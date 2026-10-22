@@ -13,6 +13,7 @@ pub mod projects;
 pub mod review;
 pub mod revision;
 pub mod skills;
+pub mod spaces;
 pub mod suggestions;
 pub mod symbols;
 pub mod tasks;

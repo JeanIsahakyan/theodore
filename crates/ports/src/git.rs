@@ -297,7 +297,47 @@ pub trait GitPort: Send + Sync {
         let _ = folder;
         Err(GitError::Unsupported("working_state"))
     }
+
+    // ── spaces (docs/spaces.md) ──────────────────────────────────────────
+
+    /// The detached worktree of space `space` (`<root>/spaces/<space>`),
+    /// created at the space's checkpoint ref (`refs/theodore/spaces/<space>`)
+    /// if one exists, else at `base` — which then becomes the ref. An
+    /// existing worktree is returned as is: it may hold the agent's
+    /// uncommitted edits, so it is never reset. `repo` is the bare cache.
+    async fn space_worktree(&self, repo: &Path, space: &str, base: &Sha) -> GitResult<Worktree> {
+        let _ = (repo, space, base);
+        Err(GitError::Unsupported("space_worktree"))
+    }
+
+    /// Commits everything in a space's worktree (if anything changed) as a
+    /// checkpoint and points `refs/theodore/spaces/<space>` at `HEAD` —
+    /// including commits the agent made itself. Returns `HEAD`.
+    async fn space_checkpoint(
+        &self,
+        worktree: &Path,
+        space: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        let _ = (worktree, space, message);
+        Err(GitError::Unsupported("space_checkpoint"))
+    }
+
+    /// Removes a space's worktree directory. The checkpoint ref stays, so
+    /// `space_worktree` can bring the space back.
+    async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {
+        let _ = (repo, space);
+        Err(GitError::Unsupported("remove_space_worktree"))
+    }
 }
+
+/// The ref a space's checkpoints live on (docs/spaces.md §6): outside
+/// `refs/heads/*`, which the cache force-fetches and prunes.
+pub fn space_ref(space: &str) -> String {
+    format!("{SPACE_REF_PREFIX}{space}")
+}
+
+pub const SPACE_REF_PREFIX: &str = "refs/theodore/spaces/";
 
 /// A local folder's checkout, from `GitPort::working_state`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

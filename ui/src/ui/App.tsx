@@ -21,6 +21,8 @@ import { TabBar } from './TabBar';
 import { Tasks } from './Tasks';
 import { Onboarding } from './Onboarding';
 import { StatusBanners } from './shell/StatusBanners';
+import { isBuildMode } from './space/mode';
+import { SpacePage } from './space/SpacePage';
 
 /** Fallback for any surface with no menu of its own: inputs get Cut/Copy/
  *  Paste/Select all, a text selection gets Copy + "Ask agent about
@@ -126,6 +128,8 @@ const Toasts = observer(function Toasts() {
 
 export const App = observer(function App() {
   const ui = useUi();
+  const store = useRootStore();
+  const buildMode = isBuildMode(store);
   useGlobalKeys();
   const onContextMenu = useRootContextMenu();
 
@@ -165,6 +169,11 @@ export const App = observer(function App() {
               <SettingsPage page={r.page} />
             ) : r.name === 'new' ? (
               <NewTab key={r.id} route={r} />
+            ) : r.name === 'space' ? (
+              // A tab left over from when build mode was on shows nothing.
+              buildMode ? (
+                <SpacePage key={r.id} id={r.id} />
+              ) : null
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}
