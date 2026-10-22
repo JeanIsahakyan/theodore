@@ -1,3 +1,4 @@
+import { SignInModal } from './AccountCard';
 import { useState } from 'react';
 import {
   Alert,
@@ -273,6 +274,8 @@ export const Modals = observer(function Modals() {
       return <AddProjectModal />;
     case 'new-space':
       return isBuildMode(store) ? <NewSpaceModal /> : null;
+    case 'sign-in':
+      return <SignInModal />;
     default:
       return null;
   }

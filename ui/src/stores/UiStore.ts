@@ -69,6 +69,8 @@ export type ModalName =
   | 'assign'
   | 'cmdk'
   | 'add-project'
+  /** Theodore account sign-in (only when it's configured). */
+  | 'sign-in'
   /** Build mode only. */
   | 'new-space';
 
