@@ -19,7 +19,7 @@ use crate::error::SandboxError;
 use crate::gitops::{self, Bare, Change, Ident, MergeTree};
 use crate::materialize::{self, remote_dir};
 use crate::scenario::{CiConfig, Scenario, UserSpec, parse_duration};
-use crate::state::{CheckRec, CommentRec, ReviewRec, ReviewState, State, ThreadRec};
+use crate::state::{CheckRec, CommentRec, PrRec, ReviewRec, ReviewState, State, ThreadRec};
 
 pub const URL_BASE: &str = "https://sandbox.theodore.invalid";
 
@@ -892,6 +892,127 @@ impl Locked<'_> {
     }
 
     // ── content writes ───────────────────────────────────────────────────
+
+    /// The open (or draft) PR in `owner/repo` whose head branch is `head`.
+    pub fn find_open_by_head(&self, owner: &str, repo: &str, head: &str) -> Option<usize> {
+        self.st
+            .prs
+            .iter()
+            .position(|p| p.owner == owner && p.repo == repo && p.head_ref == head && p.is_open())
+    }
+
+    /// Opens a PR from `head` (a branch already pushed to the bare repo)
+    /// into `base`, authored by the viewer — GitHub's `POST /pulls` rules:
+    /// both branches must exist, `head` must have commits `base` lacks, and
+    /// a second open PR for the same `head` is a conflict. CI starts on it
+    /// with the check names the repo's other PRs run.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_pr(
+        &mut self,
+        owner: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+        now: Millis,
+    ) -> WorldResult<usize> {
+        if !self.world.hosted_repo(owner, repo) {
+            return Err(Refusal::NotFound(format!("{owner}/{repo}")));
+        }
+        if title.trim().is_empty() {
+            return Err(Refusal::Validation("Title can't be blank.".into()));
+        }
+        if let Some(i) = self.find_open_by_head(owner, repo, head) {
+            return Err(Refusal::Conflict(format!(
+                "A pull request already exists for {owner}:{head} ({}).",
+                self.st.prs[i].key()
+            )));
+        }
+        let bare = self.world.bare(owner, repo);
+        let head_sha = bare
+            .branch_tip(head)
+            .ok_or_else(|| Refusal::Validation(format!("head: no branch {head}")))?;
+        let base_sha = bare
+            .branch_tip(base)
+            .ok_or_else(|| Refusal::Validation(format!("base: no branch {base}")))?;
+        if head == base || bare.is_ancestor(&head_sha, &base_sha) {
+            return Err(Refusal::Validation(format!(
+                "No commits between {base} and {head}."
+            )));
+        }
+
+        let number = self
+            .st
+            .prs
+            .iter()
+            .filter(|p| p.owner == owner && p.repo == repo)
+            .map(|p| p.number)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        bare.update_ref(&format!("refs/pull/{number}/head"), &head_sha)?;
+        self.forget_refs();
+
+        // The repo's CI: the check names of its most recent PR that has any.
+        let names: Vec<String> = self
+            .st
+            .prs
+            .iter()
+            .filter(|p| p.owner == owner && p.repo == repo && !p.checks.is_empty())
+            .max_by_key(|p| p.created_at)
+            .map(|p| p.checks.iter().map(|c| c.name.clone()).collect())
+            .unwrap_or_default();
+        let after = self.world.ci_delay(&self.world.ci().push_after.clone());
+        let result = self.world.ci().push_result;
+        let mut checks = Vec::with_capacity(names.len());
+        for name in names {
+            let id = self.st.next_id("");
+            checks.push(CheckRec {
+                url: Some(format!("{URL_BASE}/{owner}/{repo}/checks/{id}")),
+                id,
+                name,
+                status: CheckStatus::Pending,
+                duration_ms: None,
+                transition: Some((now + after, result)),
+            });
+        }
+
+        self.st.prs.push(PrRec {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            number,
+            node_id: format!("SBX_PR_{repo}_{number}"),
+            title: title.to_string(),
+            body: body.to_string(),
+            author: self.world.viewer().to_string(),
+            head_ref: head.to_string(),
+            base_ref: base.to_string(),
+            state: if draft { PrState::Draft } else { PrState::Open },
+            created_at: now,
+            updated_at: now,
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            requested_users: Vec::new(),
+            requested_teams: Vec::new(),
+            reviews: Vec::new(),
+            checks,
+            threads: Vec::new(),
+            viewed: Default::default(),
+            head_sha,
+            frozen: None,
+            merged_by: None,
+            merge_commit: None,
+            auto_merge: None,
+            queued_at: None,
+            required_approvals: None,
+            version: 0,
+        });
+        let idx = self.st.prs.len() - 1;
+        self.st.touch(idx, now);
+        Ok(idx)
+    }
 
     /// A new commit on the PR's head branch; picked up as a push.
     pub fn push(

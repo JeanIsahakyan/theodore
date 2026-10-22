@@ -13,7 +13,7 @@ use theodore_domain::{
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
-    MergeStatus, ReviewSubmission, SubmittedReview,
+    MergeStatus, NewPr, ReviewSubmission, SubmittedReview,
 };
 
 use crate::state::ReviewState;
@@ -303,6 +303,35 @@ impl HostAdapter for SandboxHost {
                 etag: Some(tag),
                 value: l.detail(idx),
             })
+        })
+        .await
+    }
+
+    async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        self.gate("find_open_pr", None).await?;
+        let (repo, head) = (repo.clone(), head.to_string());
+        self.with(move |l| {
+            Ok(l.find_open_by_head(&repo.owner, &repo.name, &head)
+                .map(|i| l.pr_ref(i)))
+        })
+        .await
+    }
+
+    async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
+        self.gate("create_pr", None).await?;
+        let (repo, pr) = (repo.clone(), pr.clone());
+        self.with(move |l| {
+            let idx = l.open_pr(
+                &repo.owner,
+                &repo.name,
+                &pr.head,
+                &pr.base,
+                &pr.title,
+                &pr.body,
+                pr.draft,
+                now_ms(),
+            )?;
+            Ok(l.pr_ref(idx))
         })
         .await
     }
