@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { onboardingSteps } from './Onboarding';
 
 describe('onboardingSteps', () => {
-  it('adds the optional account step right after GitHub when configured', () => {
+  it('starts with the optional sign-in when it is configured', () => {
     expect(onboardingSteps(true)).toEqual([
-      'github',
       'account',
+      'github',
       'agents',
       'projects',
       'done',

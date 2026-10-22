@@ -78,7 +78,7 @@ function Stage({
 }) {
   return (
     <div className="stage flex w-full flex-col items-center gap-5 text-center [&_button]:w-full">
-      <div className="grid size-12 place-items-center">{mark}</div>
+      {mark && <div className="grid size-12 place-items-center">{mark}</div>}
       <div className="flex w-full flex-col items-center gap-1.5">
         <Typography.Heading level={4} className="text-center">
           {title}
@@ -112,9 +112,12 @@ const roundMark = (icon: ReactNode, tone = 'text-muted') => (
 export function SignInView({
   signIn,
   user,
+  logo = true,
 }: {
   signIn: AccountSignIn;
   user: AccountUser | null;
+  /** Off where the logo is already on screen (Onboarding's header). */
+  logo?: boolean;
 }) {
   const { flow, start, cancel, reopen } = signIn;
   const [email, setEmail] = useState('');
@@ -275,7 +278,7 @@ export function SignInView({
   const valid = looksLikeEmail(email);
   return (
     <Stage
-      mark={<Logo size={44} />}
+      mark={logo ? <Logo size={44} /> : null}
       title="Sign in to Theodore"
       text="Optional — your code hosts stay connected."
     >
@@ -447,7 +450,7 @@ export const AccountStep = observer(function AccountStep() {
   const signIn = useAccountSignIn((s) => store.ephemeral.setAccount(s));
   return (
     <div className="mx-auto w-full max-w-[340px] py-4">
-      <SignInView signIn={signIn} user={status?.user ?? null} />
+      <SignInView signIn={signIn} user={status?.user ?? null} logo={false} />
     </div>
   );
 });

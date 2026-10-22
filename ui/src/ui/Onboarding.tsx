@@ -38,11 +38,11 @@ const STEP_TITLE: Record<StepId, string> = {
   done: 'Done',
 };
 
-/** The optional Theodore account step appears only when the feature is
- *  configured (a WorkOS client id). */
+/** Signing in to Theodore comes first when the feature is configured (a
+ *  WorkOS client id); it stays optional. */
 export function onboardingSteps(accountAvailable: boolean): StepId[] {
   return accountAvailable
-    ? ['github', 'account', 'agents', 'projects', 'done']
+    ? ['account', 'github', 'agents', 'projects', 'done']
     : ['github', 'agents', 'projects', 'done'];
 }
 
@@ -54,8 +54,8 @@ const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
   sandbox: 'the sandbox (simulated host)',
 };
 
-/** First launch: connect GitHub (reusing `gh` if it's already logged in, or a
- *  pasted token), optionally sign in to a Theodore account, detect agent
+/** First launch: optionally sign in to a Theodore account, connect GitHub
+ *  (reusing `gh` if it's already logged in, or a pasted token), detect agent
  *  CLIs, then straight to the Inbox — projects arrive by opening a PR by
  *  URL, so that step is a no-op you can skip. */
 export const Onboarding = observer(function Onboarding() {
@@ -69,6 +69,14 @@ export const Onboarding = observer(function Onboarding() {
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentStatus[] | null>(null);
   const account = useAccountStatus();
+  // The steps depend on whether sign-in is configured: wait for that
+  // answer (briefly) so step 1 doesn't flip from GitHub to the sign-in.
+  const [accountSlow, setAccountSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setAccountSlow(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
+  const stepsKnown = account !== null || accountSlow;
   const steps = onboardingSteps(account?.available ?? false);
   const id: StepId = steps[Math.min(step, steps.length - 1)] ?? 'done';
 
@@ -101,6 +109,11 @@ export const Onboarding = observer(function Onboarding() {
   };
 
   const connected = host !== null && host !== 'unready' && host.connected;
+  // Optional steps say Skip until they've been done.
+  const skipped = (s: StepId) =>
+    (s === 'projects' && store.models.projects.all().length === 0) ||
+    (s === 'account' && !account?.user);
+  const skip = skipped(id);
   const canNext: Record<StepId, boolean> = {
     github: connected || host === 'unready',
     account: true,
@@ -132,27 +145,36 @@ export const Onboarding = observer(function Onboarding() {
             </ProgressBar.Track>
           </ProgressBar>
           <div className="flex gap-4 text-xs">
-            {steps.map((s, i) => (
-              <span
-                key={s}
-                className={
-                  i === step
-                    ? 'font-medium text-foreground'
-                    : i < step
-                      ? 'text-success'
-                      : 'text-muted'
-                }
-              >
-                {i < step ? '✓ ' : ''}
-                {STEP_TITLE[s]}
-              </span>
-            ))}
+            {steps.map((s, i) => {
+              // A skipped optional step isn't ticked off as done.
+              const done = i < step && !skipped(s);
+              return (
+                <span
+                  key={s}
+                  className={
+                    i === step
+                      ? 'font-medium text-foreground'
+                      : done
+                        ? 'text-success'
+                        : 'text-muted'
+                  }
+                >
+                  {done ? '✓ ' : ''}
+                  {STEP_TITLE[s]}
+                </span>
+              );
+            })}
           </div>
         </div>
         <Separator />
 
         <div className="flex min-h-[300px] flex-col gap-4 px-8 py-6">
-          {id === 'github' && (
+          {!stepsKnown && (
+            <div className="grid flex-1 place-items-center">
+              <Spinner />
+            </div>
+          )}
+          {stepsKnown && id === 'github' && (
             <>
               <Typography.Heading level={4}>Connect GitHub</Typography.Heading>
               <Typography.Paragraph size="sm" color="muted">
@@ -257,7 +279,7 @@ export const Onboarding = observer(function Onboarding() {
             </>
           )}
 
-          {id === 'account' && <AccountStep />}
+          {stepsKnown && id === 'account' && <AccountStep />}
 
           {id === 'agents' && (
             <>
@@ -358,14 +380,13 @@ export const Onboarding = observer(function Onboarding() {
           {step < steps.length - 1 ? (
             <Button
               className="onb-next"
+              // Skipping an optional step is quiet: the step's own
+              // buttons are the call to action.
+              variant={skip ? 'tertiary' : 'primary'}
               isDisabled={!canNext[id]}
               onPress={() => setStep(step + 1)}
             >
-              {(id === 'projects' &&
-                store.models.projects.all().length === 0) ||
-              (id === 'account' && !account?.user)
-                ? 'Skip'
-                : 'Next'}
+              {skip ? (id === 'account' ? 'Skip for now' : 'Skip') : 'Next'}
             </Button>
           ) : (
             <Btn tone="primary" onPress={() => ui.finishOnboarding()}>
