@@ -133,6 +133,22 @@ pub struct MergeStatus {
     pub merge_queue: bool,
 }
 
+// ── create ───────────────────────────────────────────────────────────────
+
+/// A pull request to open from a branch already pushed to the same
+/// repository (docs/spaces.md "Open PR"). No forks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewPr {
+    /// Source branch name (no `refs/heads/` prefix).
+    pub head: String,
+    /// Target branch name.
+    pub base: String,
+    pub title: String,
+    pub body: String,
+    /// Open as a draft (GitHub/Bitbucket draft flag, GitLab `Draft:` title).
+    pub draft: bool,
+}
+
 #[async_trait]
 pub trait HostAdapter: Send + Sync {
     fn kind(&self) -> theodore_domain::HostKind;
@@ -179,6 +195,22 @@ pub trait HostAdapter: Send + Sync {
 
     // pulls
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>>;
+
+    // create
+    /// The open PR whose source branch is `head` in `repo` (same-repo PRs
+    /// only), if any. With `create_pr` this makes opening a PR idempotent
+    /// by head branch: a retried outbox item finds the PR the first
+    /// attempt opened instead of opening a second one.
+    async fn find_open_pr(&self, _repo: &RepoRef, _head: &str) -> HostResult<Option<PrRef>> {
+        Err(HostError::Unsupported("find_open_pr"))
+    }
+    /// Opens a PR from `pr.head` into `pr.base`. Returns the same `PrRef`
+    /// the adapter's `search`/`get_pr` use for that PR. A host that refuses
+    /// because a PR for `head` already exists answers `HostError::Conflict`
+    /// (callers then look it up with `find_open_pr`).
+    async fn create_pr(&self, _repo: &RepoRef, _pr: &NewPr) -> HostResult<PrRef> {
+        Err(HostError::Unsupported("create_pr"))
+    }
 
     // reviews
     async fn set_viewed(&self, pr: &PrRef, path: &str, viewed: bool) -> HostResult<()>;
