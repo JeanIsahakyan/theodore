@@ -9,6 +9,7 @@ import {
   Flask,
   Folder,
   Gear,
+  Grip,
   Keyboard,
   Lock,
   LogoGithub,
@@ -32,6 +33,7 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
+import { useDragAndDrop, type Key } from 'react-aria-components';
 import type {
   AgentId,
   AgentStatus,
@@ -43,7 +45,7 @@ import { api, CommandFailure } from '../core/api';
 import { useViewKeys } from './keys';
 import { setSetting } from '../actions';
 import { useDeviceLogin } from '../core/deviceLogin';
-import { useRootStore, useUi } from '../stores/context';
+import { useRootStore, useUi, useWorkspaces } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
 import { AccountCard } from './AccountCard';
@@ -838,9 +840,18 @@ const RepoSettingsPage = observer(function RepoSettingsPage({
 
 const ProjectsPage = observer(function ProjectsPage() {
   const store = useRootStore();
-  const projects = store.models.projects.all();
+  const ws = useWorkspaces();
+  const projects = ws.projects; // switcher order, not add order
   const [sel, setSel] = useState<string | null>(null);
   const project = sel ? store.models.projects.get(sel) : undefined;
+  const { dragAndDropHooks } = useDragAndDrop({
+    getItems: (keys) => [...keys].map((key) => ({ 'text/plain': String(key) })),
+    onReorder(e) {
+      const { dropPosition } = e.target;
+      if (dropPosition !== 'before' && dropPosition !== 'after') return;
+      ws.reorder([...e.keys].map(String), String(e.target.key), dropPosition);
+    },
+  });
   if (project) {
     return <RepoSettingsPage project={project} onBack={() => setSel(null)} />;
   }
@@ -852,22 +863,39 @@ const ProjectsPage = observer(function ProjectsPage() {
           No projects yet — add one from the sidebar.
         </span>
       ) : (
-        <Card variant="secondary" className="gap-0 p-0">
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="repo-row flex w-full items-center gap-3 border-b border-separator px-4 py-3 text-left last:border-b-0 hover:bg-default/50"
-              onClick={() => setSel(p.id)}
+        <>
+          <Card variant="secondary" className="gap-0 p-0">
+            <ListBox
+              aria-label="Projects"
+              selectionMode="none"
+              dragAndDropHooks={dragAndDropHooks}
+              onAction={(k: Key) => setSel(String(k))}
+              className="p-0 [&>*+*]:mt-0"
             >
-              <Folder className="size-4 text-muted" />
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {projectLabel(p)}
-              </span>
-              <ChevronRight className="size-4 text-muted" />
-            </button>
-          ))}
-        </Card>
+              {projects.map((p) => (
+                <ListBox.Item
+                  key={p.id}
+                  id={p.id}
+                  textValue={projectLabel(p)}
+                  className="repo-row flex w-full items-center gap-3 rounded-none border-b border-separator px-4 py-3 last:border-b-0 hover:bg-default/50 data-[dragging]:opacity-50"
+                >
+                  <Grip
+                    aria-hidden
+                    className="size-4 shrink-0 cursor-grab text-muted"
+                  />
+                  <Folder className="size-4 text-muted" />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {projectLabel(p)}
+                  </span>
+                  <ChevronRight className="size-4 text-muted" />
+                </ListBox.Item>
+              ))}
+            </ListBox>
+          </Card>
+          <span className="text-xs text-muted">
+            Drag to reorder — the switcher and ⌃1…9 follow this order.
+          </span>
+        </>
       )}
     </section>
   );
