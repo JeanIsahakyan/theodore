@@ -152,7 +152,8 @@ struct FileFacts {
     /// name → (defined on an added line, defined on a deleted line)
     defs: BTreeMap<String, (bool, bool)>,
     changed_idents: BTreeSet<String>,
-    deleted_idents: BTreeSet<String>,
+    /// Identifiers on deleted or context lines: names that existed before.
+    old_idents: BTreeSet<String>,
     compound: BTreeSet<String>,
     shapes: BTreeSet<String>,
     /// Every non-skim hunk of the file has an edit shape: the file's whole
@@ -177,14 +178,19 @@ fn facts(file: &FileDiff, prepass: &PrePass) -> FileFacts {
     let defines = !is_prose(&file.path);
     for h in &file.hunks {
         for l in &h.lines {
-            let added = match l.kind {
-                LineKind::Add => true,
-                LineKind::Del => false,
-                LineKind::Ctx => continue,
-            };
             if l.text.len() > 400 {
                 continue;
             }
+            let added = match l.kind {
+                LineKind::Add => true,
+                LineKind::Del => false,
+                LineKind::Ctx => {
+                    // Unchanged lines show what already existed.
+                    f.old_idents
+                        .extend(symbols::identifiers(&l.text).map(str::to_string));
+                    continue;
+                }
+            };
             if defines {
                 for d in symbols::definitions(&l.text) {
                     let e = f.defs.entry(d).or_default();
@@ -203,7 +209,7 @@ fn facts(file: &FileDiff, prepass: &PrePass) -> FileFacts {
                     f.compound.insert(t.to_string());
                 }
                 if !added {
-                    f.deleted_idents.insert(t.to_string());
+                    f.old_idents.insert(t.to_string());
                 }
                 f.changed_idents.insert(t.to_string());
             }
@@ -378,7 +384,7 @@ impl RelGraph {
                 }
             }
             // A distinctive name this PR introduces (defined only on added
-            // lines, never seen on a deleted one) and adopts across many
+            // lines, never seen on a deleted or unchanged one) and adopts across many
             // files: the adopting files are one rollout, whatever their
             // folders.
             let new_name = distinctive
@@ -386,7 +392,7 @@ impl RelGraph {
                     let (added, deleted) = facts[d].defs[name];
                     added && !deleted
                 })
-                && !facts.iter().any(|f| f.deleted_idents.contains(name));
+                && !facts.iter().any(|f| f.old_idents.contains(name));
             if new_name && users.len() >= 3 {
                 let mut members = defs.clone();
                 members.extend(&users);

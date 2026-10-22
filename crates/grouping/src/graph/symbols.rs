@@ -432,10 +432,11 @@ fn is_comment(line: &str) -> bool {
 }
 
 /// A defined name distinctive enough to link many files: compound
-/// (`HonkKit`, `al_dispatch`) or long. `State`, `Color`, `Pick` are also
-/// framework vocabulary and only count when few files share them.
+/// (`HonkKit`, `al_dispatch`). Plain words — `State`, `Color`,
+/// `validation` — are also framework or prose vocabulary and only count
+/// when few files share them.
 pub(crate) fn is_distinctive(name: &str) -> bool {
-    is_compound(name) || name.len() >= 10
+    is_compound(name)
 }
 
 /// Names a changed line defines: `function foo`, `class Foo`, `const FOO`,
