@@ -248,7 +248,7 @@ fn write_related(out: &mut String, files: &[&theodore_domain::FileDiff], graph: 
         lines.push(format!(
             "- {} files {}: {shown}{more}",
             members.len(),
-            r.label
+            r.describe()
         ));
     }
     for (a, b, e) in graph.strongest_edges(&within, RELATED_MAX_EDGES) {
@@ -855,5 +855,145 @@ mod tests {
         assert!(system.contains(&format!("{lo}-{hi} groups")));
         assert!(system.contains("logical step"));
         assert!(system.contains("config, env, CI and docs"));
+    }
+
+    fn file_with_lines(path: &str, id: &str, lines: &[&str], pad: usize) -> FileDiff {
+        let mut h = mk_hunk(id, 0);
+        h.lines = lines
+            .iter()
+            .map(|t| line(LineKind::Add, t))
+            .chain((0..pad).map(|i| line(LineKind::Add, &format!("let filler_{id}_{i} = {i};"))))
+            .collect();
+        mk_file(path, vec![h])
+    }
+
+    /// Chunking follows relatedness, not directories: a route and the
+    /// service it imports share a chunk even though they sit in different
+    /// top-level trees, while an unrelated file in the route's own tree
+    /// goes elsewhere.
+    #[test]
+    fn over_budget_prs_chunk_related_files_together_across_directories() {
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![
+                file_with_lines(
+                    "api/routes/invoice.ts",
+                    "r1",
+                    &["import { billInvoice } from '../../core/billing/invoice-service';"],
+                    30,
+                ),
+                file_with_lines(
+                    "api/routes/health.ts",
+                    "r2",
+                    &["export const healthPath = '/health';"],
+                    30,
+                ),
+                file_with_lines(
+                    "core/billing/invoice-service.ts",
+                    "s1",
+                    &["export function billInvoice(id: string) {"],
+                    30,
+                ),
+                file_with_lines(
+                    "core/search/rank.ts",
+                    "s2",
+                    &["export const rankBoost = 2;"],
+                    30,
+                ),
+            ],
+        };
+        let prepass = crate::prepass::run(&rev);
+        let whole = build_prompts(&PrMeta::default(), &rev, &prepass, &PromptBudget::default());
+        let budget = PromptBudget {
+            max_chars: whole[0].prompt.user.len() * 8 / 10,
+            ..PromptBudget::default()
+        };
+        let chunks = build_prompts(&PrMeta::default(), &rev, &prepass, &budget);
+        assert!(chunks.len() >= 2, "over budget: {}", chunks.len());
+        let chunk_of = |id: &str| {
+            chunks
+                .iter()
+                .position(|c| c.hunk_ids.contains(&HunkId::new(id)))
+                .unwrap()
+        };
+        assert_eq!(
+            chunk_of("r1"),
+            chunk_of("s1"),
+            "route + its service share a chunk: {:?} budget {}",
+            chunks
+                .iter()
+                .map(|c| (c.prompt.user.len(), &c.hunk_ids))
+                .collect::<Vec<_>>(),
+            budget.max_chars
+        );
+        let total: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
+        assert_eq!(total, 4, "every hunk in exactly one chunk");
+        let invoice_chunk = &chunks[chunk_of("r1")];
+        assert!(invoice_chunk.prompt.user.contains("# Related changes"));
+        assert!(
+            invoice_chunk
+                .prompt
+                .user
+                .contains("api/routes/invoice.ts → core/billing/invoice-service.ts (imports")
+        );
+    }
+
+    #[test]
+    fn related_section_is_absent_when_nothing_is_related() {
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![
+                file_with_lines("a/one.ts", "h1", &["export const alpha = 1;"], 0),
+                file_with_lines("b/two.ts", "h2", &["export const beta = 2;"], 0),
+            ],
+        };
+        let chunks = build_prompts(
+            &PrMeta::default(),
+            &rev,
+            &crate::prepass::run(&rev),
+            &PromptBudget::default(),
+        );
+        assert!(!chunks[0].prompt.user.contains("# Related changes"));
+    }
+
+    #[test]
+    fn rollouts_are_listed_once_not_pair_by_pair() {
+        let files: Vec<FileDiff> = ["audio", "fans", "fave", "feed"]
+            .iter()
+            .map(|n| {
+                let mut h = mk_hunk(&format!("h-{n}"), 0);
+                h.lines = vec![
+                    line(
+                        LineKind::Del,
+                        &format!("$controller = new {n}Controller();"),
+                    ),
+                    line(LineKind::Del, "$controller->handle();"),
+                    line(
+                        LineKind::Add,
+                        &format!("al_dispatch(\\VK\\Controllers\\{n}Controller::class);"),
+                    ),
+                ];
+                mk_file(&format!("al_{n}.php"), vec![h])
+            })
+            .collect();
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files,
+        };
+        let chunks = build_prompts(
+            &PrMeta::default(),
+            &rev,
+            &crate::prepass::run(&rev),
+            &PromptBudget::default(),
+        );
+        let user = &chunks[0].prompt.user;
+        assert!(
+            user.contains("- 4 files make the same edit: al_audio.php, al_fans.php"),
+            "{user}"
+        );
+        assert!(!user.contains("al_audio.php ~ al_fans.php"), "{user}");
     }
 }

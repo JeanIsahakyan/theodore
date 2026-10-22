@@ -1,17 +1,19 @@
-//! Orchestration (plan §5.1): pre-pass → prompt → agent → validate → one
-//! repair call → `repair_with_other` fallback. Large PRs run one chunk per
-//! top-level directory, then a merge pass over the group summaries.
+//! Orchestration (plan §5.1): pre-pass → relatedness graph → prompt →
+//! agent → validate → one repair call → `repair_with_other` fallback.
+//! Large PRs run one chunk per group of related files, then a merge pass
+//! over the group summaries.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
 use futures::stream::{self, StreamExt, TryStreamExt};
-use theodore_domain::grouping::{self, GroupingError};
+use theodore_domain::grouping::{self, GroupingError, RepoContext};
 use theodore_domain::{AgentId, Group, GroupId, Grouping, Hunk, HunkId, Revision, Usage};
 use theodore_ports::{AgentEvent, AgentMode, AgentPort, AgentRequest};
 
 use crate::coarsen;
+use crate::graph::RelGraph;
 use crate::prepass::{self, HiddenReason, PrePass};
 use crate::prompt::{self, PromptBudget, PromptPart};
 use crate::schema;
@@ -123,11 +125,25 @@ fn duplicate_hunk_ids(rev: &Revision) -> Vec<HunkId> {
         .collect()
 }
 
-/// Run the full grouping pipeline against one revision.
+/// Run the full grouping pipeline against one revision, from the diff alone.
 pub async fn group_revision(
     agent: &dyn AgentPort,
     pr: &PrMeta,
     rev: &Revision,
+    cwd: &Path,
+    opts: &GroupingOptions,
+) -> Result<GroupingReport, GroupingPipelineError> {
+    group_revision_with(agent, pr, rev, &RepoContext::default(), cwd, opts).await
+}
+
+/// Run the full grouping pipeline against one revision, with whatever
+/// repository context the caller has (head file contents, co-change
+/// history) to sharpen the relatedness graph.
+pub async fn group_revision_with(
+    agent: &dyn AgentPort,
+    pr: &PrMeta,
+    rev: &Revision,
+    ctx: &RepoContext,
     cwd: &Path,
     opts: &GroupingOptions,
 ) -> Result<GroupingReport, GroupingPipelineError> {
@@ -137,7 +153,8 @@ pub async fn group_revision(
         return Err(GroupingPipelineError::DuplicateHunkIds(dupes));
     }
     let prepass = prepass::run(rev);
-    let chunks = prompt::build_prompts(pr, rev, &prepass, &opts.budget);
+    let graph = RelGraph::build(rev, &prepass, ctx);
+    let chunks = prompt::build_prompts_with(pr, rev, &prepass, &graph, &opts.budget);
     let total_visible_hunks: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
 
     // Run every chunk's agent call concurrently, capped at
@@ -200,14 +217,14 @@ pub async fn group_revision(
 
     // Coarser-groups goal: if the model (across however many chunks) still
     // produced more groups than this PR's size warrants, deterministically
-    // merge the tiniest ones into a same-area, same-kind neighbour. Free
+    // merge the tiniest ones into their most related same-kind group. Free
     // (no agent call) and exact — it only moves hunks between groups that
     // already exist, so it can't break the partition invariant checked
     // just below.
     let (_, target_hi) = target::target_group_count(total_visible_hunks);
     let target_max = target_hi + usize::from(has_hidden_group);
     if groups.len() > target_max {
-        groups = coarsen::merge_tiny_groups(rev, groups, target_max);
+        groups = coarsen::merge_tiny_groups(rev, groups, target_max, &graph);
     }
 
     let grouping = Grouping {

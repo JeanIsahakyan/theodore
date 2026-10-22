@@ -45,6 +45,9 @@ const W_CO_CHANGE: f64 = 1.5;
 /// A compound identifier shared by more files than this is vocabulary,
 /// not a link.
 const TOKEN_MAX_FILES: usize = 6;
+/// A plain (non-compound, short) defined name links at most this many
+/// using files: `State` or `Color` in thirty views is vocabulary.
+const PLAIN_NAME_MAX_USERS: usize = 3;
 /// Name-root groups larger than this are a naming convention, not a feature.
 const NAME_MAX_FILES: usize = 8;
 /// Rollouts (same edit / same new symbol) larger than this only get a
@@ -69,6 +72,7 @@ pub struct Edge {
     token: f64,
     pub token_name: Option<String>,
     shape: f64,
+    co_use: f64,
     name: f64,
     pub name_root: Option<String>,
     pub test_pair: bool,
@@ -80,18 +84,20 @@ impl Edge {
         self.import.min(2.0)
             + self.symbol.min(2.0)
             + self.token.min(1.0)
-            + self.shape
+            + self.shape.min(1.5)
+            + self.co_use.min(1.0)
             + self.name
             + if self.test_pair { W_TEST } else { 0.0 }
             + self.co_change
     }
 
     /// Whether the edge is only "part of a larger rollout" — those are
-    /// listed once per rollout in prompts, not pair by pair.
+    /// listed once per rollout in prompts, not pair by pair. A shared
+    /// identifier on top of the same edit is part of that edit.
     fn rollout_only(&self) -> bool {
         self.import == 0.0
             && self.symbol_name.is_none()
-            && self.token == 0.0
+            && (self.token == 0.0 || self.shape + self.co_use > 0.0)
             && self.name == 0.0
             && self.co_change == 0.0
     }
@@ -103,6 +109,19 @@ impl Edge {
 pub struct Rollout {
     pub label: String,
     pub files: Vec<usize>,
+    /// More names / edits shared by exactly the same files.
+    pub extra: usize,
+}
+
+impl Rollout {
+    /// "use the new `ApiMember` (+12 more)".
+    pub fn describe(&self) -> String {
+        if self.extra == 0 {
+            self.label.clone()
+        } else {
+            format!("{} (+{} more)", self.label, self.extra)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -127,6 +146,7 @@ struct FileFacts {
     /// name → (defined on an added line, defined on a deleted line)
     defs: BTreeMap<String, (bool, bool)>,
     changed_idents: BTreeSet<String>,
+    deleted_idents: BTreeSet<String>,
     compound: BTreeSet<String>,
     shapes: BTreeSet<String>,
     /// Every non-skim hunk of the file has an edit shape: the file's whole
@@ -134,11 +154,21 @@ struct FileFacts {
     only_shaped: bool,
 }
 
+fn is_prose(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [".md", ".mdx", ".rst", ".txt", ".adoc"]
+        .iter()
+        .any(|e| lower.ends_with(e))
+}
+
 fn facts(file: &FileDiff, prepass: &PrePass) -> FileFacts {
     let mut f = FileFacts {
         only_shaped: !file.hunks.is_empty(),
         ..Default::default()
     };
+    // Prose mentions names (and links docs to the code they describe) but
+    // never defines them.
+    let defines = !is_prose(&file.path);
     for h in &file.hunks {
         for l in &h.lines {
             let added = match l.kind {
@@ -149,12 +179,14 @@ fn facts(file: &FileDiff, prepass: &PrePass) -> FileFacts {
             if l.text.len() > 400 {
                 continue;
             }
-            for d in symbols::definitions(&l.text) {
-                let e = f.defs.entry(d).or_default();
-                if added {
-                    e.0 = true;
-                } else {
-                    e.1 = true;
+            if defines {
+                for d in symbols::definitions(&l.text) {
+                    let e = f.defs.entry(d).or_default();
+                    if added {
+                        e.0 = true;
+                    } else {
+                        e.1 = true;
+                    }
                 }
             }
             for t in symbols::identifiers(&l.text) {
@@ -163,6 +195,9 @@ fn facts(file: &FileDiff, prepass: &PrePass) -> FileFacts {
                 }
                 if symbols::is_compound(t) {
                     f.compound.insert(t.to_string());
+                }
+                if !added {
+                    f.deleted_idents.insert(t.to_string());
                 }
                 f.changed_idents.insert(t.to_string());
             }
@@ -276,7 +311,11 @@ impl RelGraph {
                 .filter(|i| !defs.contains(i) && facts[*i].changed_idents.contains(name))
                 .collect();
             let reach = defs.len() + users.len();
-            if reach < 2 || (n >= 10 && reach as f64 > 0.6 * n as f64) {
+            let distinctive = symbols::is_distinctive(name);
+            if reach < 2
+                || (n >= 10 && reach as f64 > 0.6 * n as f64)
+                || (!distinctive && users.len() > PLAIN_NAME_MAX_USERS)
+            {
                 continue;
             }
             if !users.is_empty() {
@@ -304,23 +343,48 @@ impl RelGraph {
                     }
                 }
             }
-            // A name this PR introduces and then adopts across many files:
-            // the adopting files are one rollout, whatever their folders.
-            let new_name = defs.iter().all(|&d| {
-                let (added, deleted) = facts[d].defs[name];
-                added && !deleted
-            });
+            // A distinctive name this PR introduces (defined only on added
+            // lines, never seen on a deleted one) and adopts across many
+            // files: the adopting files are one rollout, whatever their
+            // folders.
+            let new_name = distinctive
+                && defs.iter().all(|&d| {
+                    let (added, deleted) = facts[d].defs[name];
+                    added && !deleted
+                })
+                && !facts.iter().any(|f| f.deleted_idents.contains(name));
             if new_name && users.len() >= 3 {
                 let mut members = defs.clone();
                 members.extend(&users);
                 members.sort_unstable();
-                self.add_clique(&users, W_CO_USE, |e| &mut e.shape);
-                self.rollouts.push(Rollout {
-                    label: format!("use the new `{name}`"),
-                    files: members,
-                });
+                self.add_clique(&users, W_CO_USE, |e| &mut e.co_use);
+                self.push_rollout(format!("`{name}`"), members, "use the new");
             }
         }
+    }
+
+    /// Record a rollout; one with exactly the same files as an earlier one
+    /// (forty protocol constants shared by the same eight files) is merged
+    /// into it instead of listed again.
+    fn push_rollout(&mut self, what: String, files: Vec<usize>, verb: &str) {
+        if let Some(r) = self
+            .rollouts
+            .iter_mut()
+            .find(|r| r.files == files && r.label.starts_with(verb))
+        {
+            r.extra += 1;
+            return;
+        }
+        let label = if what.is_empty() {
+            verb.to_string()
+        } else {
+            format!("{verb} {what}")
+        };
+        self.rollouts.push(Rollout {
+            label,
+            files,
+            extra: 0,
+        });
     }
 
     fn add_token_edges(&mut self, facts: &[FileFacts]) {
@@ -376,10 +440,7 @@ impl RelGraph {
                 self.bundles.push(bundle);
             }
             if holders.len() >= 3 {
-                self.rollouts.push(Rollout {
-                    label: "make the same edit".into(),
-                    files: holders,
-                });
+                self.push_rollout(String::new(), holders, "make the same edit");
             }
         }
     }
@@ -619,6 +680,9 @@ impl Edge {
                 self.name + if self.test_pair { W_TEST } else { 0.0 },
                 label.into(),
             ));
+        }
+        if self.co_use > 0.0 {
+            r.push((self.co_use.min(1.0), "same new name".into()));
         }
         if self.shape > 0.0 {
             r.push((self.shape, "same edit".into()));

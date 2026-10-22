@@ -26,7 +26,6 @@ const DEF_KEYWORDS: &[&str] = &[
     "val",
     "static",
     "protocol",
-    "extension",
     "object",
     "record",
     "module",
@@ -418,15 +417,47 @@ const CONTROL: &[&str] = &[
     "until",
 ];
 
+/// Definition keywords that also declare function-local variables.
+const LOCAL_KEYWORDS: &[&str] = &["let", "var", "val", "const"];
+
+fn is_comment(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("//")
+        || t.starts_with("/*")
+        || t.starts_with("* ")
+        || t == "*"
+        || t.starts_with("<!--")
+        || t.starts_with("--")
+        || (t.starts_with('#') && !t.starts_with("#define") && !t.starts_with("# define"))
+}
+
+/// A defined name distinctive enough to link many files: compound
+/// (`HonkKit`, `al_dispatch`) or long. `State`, `Color`, `Pick` are also
+/// framework vocabulary and only count when few files share them.
+pub(crate) fn is_distinctive(name: &str) -> bool {
+    is_compound(name) || name.len() >= 10
+}
+
 /// Names a changed line defines: `function foo`, `class Foo`, `const FOO`,
 /// `fn foo`, `def foo`, `func (r *T) Foo`, a method header `foo(a, b) {`,
-/// or a config/env key `FOO_BAR=`.
+/// or a config/env key `FOO_BAR=`. Comments define nothing ("a first-class
+/// SECURE type" is prose, not `class SECURE`).
 pub(crate) fn definitions(line: &str) -> Vec<String> {
     let mut out = Vec::new();
+    if is_comment(line) {
+        return out;
+    }
     let toks: Vec<&str> = identifiers(line).collect();
+    // `let x = …` inside a function body is a local, not something other
+    // files can use: variable keywords only define at the top level
+    // (unindented) or when exported.
+    let top_level = !line.starts_with([' ', '\t'])
+        || toks
+            .iter()
+            .any(|t| matches!(*t, "export" | "pub" | "public" | "static"));
     let mut i = 0;
     while i < toks.len() {
-        if DEF_KEYWORDS.contains(&toks[i]) {
+        if DEF_KEYWORDS.contains(&toks[i]) && (top_level || !LOCAL_KEYWORDS.contains(&toks[i])) {
             let mut j = i + 1;
             while j < toks.len() && MODIFIERS.contains(&toks[j]) {
                 j += 1;

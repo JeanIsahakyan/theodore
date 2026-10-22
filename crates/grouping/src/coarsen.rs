@@ -1,8 +1,10 @@
 //! Deterministic post-pass: once a grouping has more groups than the PR's
 //! size-scaled target (`target::target_group_count`) allows, merge groups
-//! with exactly one hunk into a neighbour that shares a merge-area (see
-//! `merge_area` below) and `GroupKind`, until the target is met or no more
-//! such merges exist.
+//! with exactly one hunk into the same-kind group it is most related to
+//! (relatedness graph: imports, shared names, same edit, same file), or —
+//! when it is related to none — the nearest one sharing its merge-area
+//! (see `merge_area` below), until the target is met or no more such
+//! merges exist.
 //!
 //! No agent call involved, so it is both free and exact: it only ever moves
 //! a hunk from one group to another, never drops, duplicates or invents
@@ -17,14 +19,20 @@ use std::collections::BTreeMap;
 use theodore_domain::{Group, GroupKind, HunkId, Revision};
 
 use crate::area::top_level_dir;
+use crate::graph::RelGraph;
 
-/// Merge tiny (<= 1 hunk) groups into a same-kind, same-area neighbour until
+/// A group touching the tiny group's own file is related at least this much.
+const SAME_FILE: f64 = 2.0;
+
+/// Merge tiny (<= 1 hunk) groups into their most related same-kind group
+/// (falling back to the nearest same-area one) until
 /// `groups.len() <= target_max` or no further merge is possible. Order of
 /// the surviving groups is otherwise preserved.
 pub(crate) fn merge_tiny_groups(
     rev: &Revision,
     mut groups: Vec<Group>,
     target_max: usize,
+    graph: &RelGraph,
 ) -> Vec<Group> {
     if groups.len() <= target_max {
         return groups;
@@ -37,7 +45,7 @@ pub(crate) fn merge_tiny_groups(
         }
         let Some((victim, target)) = tiny_group_indices(&groups)
             .into_iter()
-            .find_map(|v| pick_merge_target(&groups, &area, v).map(|t| (v, t)))
+            .find_map(|v| pick_merge_target(&groups, &area, graph, v).map(|t| (v, t)))
         else {
             break; // no remaining tiny group has anywhere compatible to go.
         };
@@ -110,14 +118,54 @@ fn tiny_group_indices(groups: &[Group]) -> Vec<usize> {
     idx
 }
 
-/// The nearest (by reading-order distance) group that shares `victim`'s
-/// kind and touches the same top-level area, or `None` if there isn't one.
+/// How related group `g` is to the files of `victim`'s hunks: summed graph
+/// weight to each distinct file `g` touches (`SAME_FILE` for a shared one),
+/// so a big group isn't preferred just for having many hunks of one file.
+fn relatedness(graph: &RelGraph, victim: &Group, g: &Group) -> f64 {
+    let files = |grp: &Group| -> std::collections::BTreeSet<usize> {
+        grp.hunks.iter().filter_map(|h| graph.file_of(h)).collect()
+    };
+    let theirs = files(g);
+    files(victim)
+        .iter()
+        .flat_map(|&v| {
+            theirs.iter().map(move |&f| {
+                if v == f {
+                    SAME_FILE
+                } else {
+                    graph.connection(v, f)
+                }
+            })
+        })
+        .sum()
+}
+
+/// The same-kind group most related to `victim` in the graph (ties: the
+/// nearest in reading order); if none is related at all, the nearest one
+/// touching the same top-level area; `None` if there is neither.
 fn pick_merge_target(
     groups: &[Group],
     area: &BTreeMap<HunkId, String>,
+    graph: &RelGraph,
     victim: usize,
 ) -> Option<usize> {
     let kind = groups[victim].kind;
+    let compatible =
+        |(i, g): &(usize, &Group)| *i != victim && g.kind == kind && g.kind != GroupKind::Hidden;
+    let related = groups
+        .iter()
+        .enumerate()
+        .filter(compatible)
+        .map(|(i, g)| (i, relatedness(graph, &groups[victim], g)))
+        .filter(|(_, w)| *w > 0.0)
+        .max_by(|a, b| {
+            a.1.total_cmp(&b.1)
+                .then_with(|| b.0.abs_diff(victim).cmp(&a.0.abs_diff(victim)))
+        })
+        .map(|(i, _)| i);
+    if related.is_some() {
+        return related;
+    }
     let victim_area = groups[victim]
         .hunks
         .first()
@@ -126,12 +174,8 @@ fn pick_merge_target(
     groups
         .iter()
         .enumerate()
-        .filter(|(i, g)| {
-            *i != victim
-                && g.kind == kind
-                && g.kind != GroupKind::Hidden
-                && g.hunks.iter().any(|h| area.get(h) == Some(&victim_area))
-        })
+        .filter(compatible)
+        .filter(|(_, g)| g.hunks.iter().any(|h| area.get(h) == Some(&victim_area)))
         .min_by_key(|(i, _)| i.abs_diff(victim))
         .map(|(i, _)| i)
 }
@@ -234,7 +278,7 @@ mod tests {
             mk_group("a-env", GroupKind::Normal, &["a3"]),
         ];
         let before = groups.clone();
-        let after = merge_tiny_groups(&r, groups, 5);
+        let after = merge_tiny_groups(&r, groups, 5, &RelGraph::default());
         assert_eq!(after, before);
     }
 
@@ -248,7 +292,7 @@ mod tests {
             mk_group("b-core", GroupKind::Normal, &["b1", "b2"]),
             mk_group("b-docs", GroupKind::Normal, &["b3"]),
         ];
-        let after = merge_tiny_groups(&r, groups, 2);
+        let after = merge_tiny_groups(&r, groups, 2, &RelGraph::default());
         assert_eq!(after.len(), 2, "should coarsen down to the target");
         // every hunk still placed in exactly one group, nothing lost.
         let g = groups_for(&r, after.clone());
@@ -281,7 +325,7 @@ mod tests {
         // target_max 1 would normally force a merge, but there is no
         // same-kind neighbour for either group (hidden is excluded, and
         // "solo" has no other candidate), so nothing should change.
-        let after = merge_tiny_groups(&r, groups, 1);
+        let after = merge_tiny_groups(&r, groups, 1, &RelGraph::default());
         assert_eq!(after, before);
     }
 
@@ -297,7 +341,7 @@ mod tests {
             mk_group("skim", GroupKind::Skim, &["h3"]),
         ];
         let before = groups.clone();
-        let after = merge_tiny_groups(&r, groups, 1);
+        let after = merge_tiny_groups(&r, groups, 1, &RelGraph::default());
         // "skim" is tiny and same-area, but not same-kind as "normal", so
         // there is no compatible target; the pass must leave it alone
         // rather than force an incorrect merge.
@@ -329,7 +373,7 @@ mod tests {
             mk_group("docker", GroupKind::Normal, &["d1"]),
             mk_group("readme", GroupKind::Normal, &["r1"]),
         ];
-        let after = merge_tiny_groups(&r, groups, 2);
+        let after = merge_tiny_groups(&r, groups, 2, &RelGraph::default());
         assert_eq!(
             after.len(),
             2,
@@ -362,6 +406,70 @@ mod tests {
         assert!(!is_infra_file("src/dockerfile_parser.rs"));
     }
 
+    fn file_with(path: &str, id: &str, text: &str) -> FileDiff {
+        let mut f = mk_file(path, &[id]);
+        f.hunks[0].lines = vec![DiffLine {
+            kind: LineKind::Add,
+            text: text.into(),
+            old_no: None,
+            new_no: None,
+        }];
+        f
+    }
+
+    /// The graph beats directory proximity: a one-hunk change to a service
+    /// joins the group of the controller that imports it, in another tree,
+    /// not the nearer group that merely shares its top-level directory.
+    #[test]
+    fn prefers_the_most_related_group_over_the_nearest_same_area_one() {
+        let r = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![
+                file_with(
+                    "api/billing/route.ts",
+                    "r1",
+                    "import { charge } from '../../core/billing/charge';",
+                ),
+                file_with(
+                    "core/billing/charge.ts",
+                    "c1",
+                    "export const chargeRetries = 3;",
+                ),
+                file_with(
+                    "core/search/index.ts",
+                    "s1",
+                    "export const searchLimit = 10;",
+                ),
+                file_with("core/search/rank.ts", "s2", "export const rankBoost = 2;"),
+            ],
+        };
+        let graph = RelGraph::build(&r, &crate::prepass::run(&r), &Default::default());
+        let groups = vec![
+            mk_group("billing-route", GroupKind::Normal, &["r1"]),
+            mk_group("search", GroupKind::Normal, &["s1", "s2"]),
+            mk_group("charge", GroupKind::Normal, &["c1"]),
+        ];
+        let after = merge_tiny_groups(&r, groups.clone(), 2, &graph);
+        assert_eq!(after.len(), 2);
+        let search = after
+            .iter()
+            .find(|g| g.id == GroupId::new("search"))
+            .unwrap();
+        assert_eq!(
+            search.hunks.len(),
+            2,
+            "search group must not absorb anything"
+        );
+        // Without the graph the nearest same-area group would have won.
+        let plain = merge_tiny_groups(&r, groups, 2, &RelGraph::default());
+        let search = plain
+            .iter()
+            .find(|g| g.id == GroupId::new("search"))
+            .unwrap();
+        assert_eq!(search.hunks.len(), 3);
+    }
+
     #[test]
     fn preserves_the_partition_invariant_on_a_larger_mixed_input() {
         let r = rev();
@@ -372,7 +480,7 @@ mod tests {
             mk_group("b-core", GroupKind::Normal, &["b1", "b2"]),
             mk_group("b-docs", GroupKind::Skim, &["b3"]),
         ];
-        let after = merge_tiny_groups(&r, groups, 1);
+        let after = merge_tiny_groups(&r, groups, 1, &RelGraph::default());
         let g = groups_for(&r, after);
         assert!(grouping::validate(&r, &g).is_ok());
     }
