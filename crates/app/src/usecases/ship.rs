@@ -326,7 +326,9 @@ impl Core {
     /// The user's git identity; for GitHub, failing that, the signed-in
     /// account with its noreply address.
     async fn ship_author(&self, repo_path: &Path, project: &Project) -> AppResult<Identity> {
-        if let Some(id) = self.0.deps.git.user_identity(repo_path).await? {
+        // A local folder's own config (a per-repo identity) counts first.
+        let config_from = project.path.as_deref().map_or(repo_path, Path::new);
+        if let Some(id) = self.0.deps.git.user_identity(config_from).await? {
             return Ok(id);
         }
         if project.repo.host == HostKind::Github
