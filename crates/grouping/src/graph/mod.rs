@@ -33,6 +33,7 @@ use crate::prepass::PrePass;
 // Edge weights. Import edges are the backbone; the rest add evidence on
 // top. Tuned on the eval fixtures (docs/eval/graph-grouping.md).
 const W_IMPORT: f64 = 1.0;
+const W_MENTION: f64 = 0.8;
 const W_SYMBOL: f64 = 1.0;
 const W_DEF_DEF: f64 = 0.5;
 const W_CO_USE: f64 = 0.3;
@@ -65,6 +66,8 @@ pub struct Edge {
     pub a_imports_b: bool,
     pub b_imports_a: bool,
     import: f64,
+    /// One file names the other (`CMakeLists.txt` → `parser.c`).
+    mention: f64,
     symbol: f64,
     /// The strongest defined name linking the two files.
     pub symbol_name: Option<String>,
@@ -82,6 +85,7 @@ pub struct Edge {
 impl Edge {
     pub fn weight(&self) -> f64 {
         self.import.min(2.0)
+            + self.mention.min(1.0)
             + self.symbol.min(2.0)
             + self.token.min(1.0)
             + self.shape.min(1.5)
@@ -96,6 +100,7 @@ impl Edge {
     /// identifier on top of the same edit is part of that edit.
     fn rollout_only(&self) -> bool {
         self.import == 0.0
+            && self.mention == 0.0
             && self.symbol_name.is_none()
             && (self.token == 0.0 || self.shape + self.co_use > 0.0)
             && self.name == 0.0
@@ -129,6 +134,7 @@ pub struct RelGraph {
     /// Visible changed files, in revision order.
     pub files: Vec<String>,
     hunk_file: BTreeMap<HunkId, usize>,
+    by_path: BTreeMap<String, usize>,
     edges: BTreeMap<(usize, usize), Edge>,
     hubs: BTreeSet<usize>,
     /// Community id per file (singletons included).
@@ -233,6 +239,11 @@ impl RelGraph {
         let n = files.len();
         let mut g = RelGraph {
             files: files.clone(),
+            by_path: files
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (p.clone(), i))
+                .collect(),
             hunk_file: visible
                 .iter()
                 .enumerate()
@@ -264,6 +275,7 @@ impl RelGraph {
     fn add_import_edges(&mut self, visible: &[&FileDiff], ctx: &RepoContext) {
         let idx = imports::PathIndex::new(&self.files);
         let mut refs: Vec<BTreeSet<usize>> = Vec::with_capacity(visible.len());
+        let mut mentions: Vec<BTreeSet<usize>> = Vec::with_capacity(visible.len());
         for (i, f) in visible.iter().enumerate() {
             let hunk_lines = f
                 .hunks
@@ -277,6 +289,14 @@ impl RelGraph {
                 .into_iter()
                 .flatten();
             refs.push(imports::references(&idx, i, hunk_lines.chain(head)));
+            let changed = f.hunks.iter().flat_map(|h| {
+                h.lines
+                    .iter()
+                    .filter(|l| l.kind != LineKind::Ctx)
+                    .map(|l| l.text.as_str())
+            });
+            let named = imports::mentions(&idx, i, changed);
+            mentions.push(named);
         }
         let mut indeg = vec![0usize; visible.len()];
         for r in &refs {
@@ -293,6 +313,20 @@ impl RelGraph {
                     e.a_imports_b = true;
                 } else {
                     e.b_imports_a = true;
+                }
+            }
+        }
+        let mut named_by = vec![0usize; visible.len()];
+        for m in &mentions {
+            for &t in m {
+                named_by[t] += 1;
+            }
+        }
+        for (from, targets) in mentions.iter().enumerate() {
+            for &to in targets {
+                let w = W_MENTION / (named_by[to] as f64).sqrt();
+                if let Some(e) = self.edge(from, to) {
+                    e.mention += w;
                 }
             }
         }
@@ -536,7 +570,7 @@ impl RelGraph {
         let threshold = 10usize.max((2.0 * (n as f64).sqrt()).ceil() as usize);
         let mut degree = vec![0usize; n];
         for (&(a, b), e) in &self.edges {
-            if e.import > 0.0 || e.symbol > 0.0 {
+            if e.import > 0.0 || e.mention > 0.0 || e.symbol > 0.0 {
                 degree[a] += 1;
                 degree[b] += 1;
             }
@@ -605,7 +639,7 @@ impl RelGraph {
     }
 
     pub fn index_of(&self, path: &str) -> Option<usize> {
-        self.files.iter().position(|p| p == path)
+        self.by_path.get(path).copied()
     }
 
     pub fn community_of(&self, file: usize) -> usize {
@@ -663,6 +697,9 @@ impl Edge {
         let mut r: Vec<(f64, String)> = Vec::new();
         if self.import > 0.0 {
             r.push((self.import.min(2.0), "imports".into()));
+        }
+        if self.mention > 0.0 {
+            r.push((self.mention.min(1.0), "names the file".into()));
         }
         if let Some(s) = &self.symbol_name {
             r.push((self.symbol.min(2.0), format!("`{s}`")));

@@ -15,6 +15,7 @@ pub(crate) struct PathIndex<'a> {
     exact: BTreeMap<&'a str, usize>,
     by_suffix: BTreeMap<String, Vec<usize>>,
     by_dir_suffix: BTreeMap<String, Vec<usize>>,
+    by_name: BTreeMap<&'a str, Vec<usize>>,
 }
 
 fn strip_ext(path: &str) -> &str {
@@ -43,8 +44,10 @@ impl<'a> PathIndex<'a> {
         let mut exact = BTreeMap::new();
         let mut by_suffix: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut by_dir_suffix: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for (i, f) in files.iter().enumerate() {
             exact.insert(f.as_str(), i);
+            by_name.entry(file_name(f)).or_default().push(i);
             for s in suffixes(strip_ext(f)) {
                 by_suffix.entry(s).or_default().push(i);
             }
@@ -57,6 +60,7 @@ impl<'a> PathIndex<'a> {
             exact,
             by_suffix,
             by_dir_suffix,
+            by_name,
         }
     }
 
@@ -480,9 +484,78 @@ pub(crate) fn references<'l>(
     out.into_iter().filter(|&i| i != from).collect()
 }
 
+/// File names too common to say which file a mention means.
+const GENERIC_NAMES: &[&str] = &[
+    "README.md",
+    "package.json",
+    "Cargo.toml",
+    "CMakeLists.txt",
+    "Makefile",
+    "Dockerfile",
+    "go.mod",
+    "pyproject.toml",
+    "tsconfig.json",
+    "__init__.py",
+];
+
+/// Changed files whose file name appears verbatim on `lines` of
+/// `files[from]`, in any language: a CMakeLists listing a source, a script
+/// running a script, docs pointing at the file they describe. Only names
+/// unique among the changed files, with an extension, at least 6 chars.
+pub(crate) fn mentions<'l>(
+    idx: &PathIndex,
+    from: usize,
+    lines: impl Iterator<Item = &'l str>,
+) -> BTreeSet<usize> {
+    let mut out = BTreeSet::new();
+    for line in lines {
+        if line.len() > 400 {
+            continue;
+        }
+        for tok in line.split(|c: char| !(c.is_ascii_alphanumeric() || "._-/".contains(c))) {
+            let name = tok.rsplit('/').next().unwrap_or(tok).trim_matches('.');
+            if name.len() < 6 || !name.contains('.') || GENERIC_NAMES.contains(&name) {
+                continue;
+            }
+            if let Some(hits) = idx.by_name.get(name)
+                && hits.len() == 1
+                && hits[0] != from
+            {
+                out.insert(hits[0]);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_names_mentioned_on_changed_lines() {
+        let files: Vec<String> = [
+            "cmake/tl-pipeline.cmake",
+            "engines/api/api-sharding-gen.h",
+            "docs/engines/api.md",
+            "a/index.ts",
+            "b/index.ts",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let idx = PathIndex::new(&files);
+        let got = mentions(
+            &idx,
+            0,
+            [
+                "  ${CMAKE_SOURCE_DIR}/engines/api/api-sharding-gen.h",
+                "see docs/engines/api.md and index.ts",
+            ]
+            .into_iter(),
+        );
+        assert_eq!(got.into_iter().collect::<Vec<_>>(), vec![1, 2]);
+    }
 
     fn refs(files: &[&str], from: &str, lines: &[&str]) -> Vec<String> {
         let files: Vec<String> = files.iter().map(|s| s.to_string()).collect();

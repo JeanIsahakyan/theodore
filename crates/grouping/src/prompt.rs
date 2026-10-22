@@ -29,6 +29,9 @@ const RELATED_MAX_EDGES: usize = 24;
 const RELATED_MAX_CHARS: usize = 2_400;
 const RELATED_MIN_WEIGHT: f64 = 0.3;
 const ROLLOUT_SHOWN_FILES: usize = 6;
+/// Pull of one same-directory file pair when choosing a chunk for a unit;
+/// small next to any real graph link.
+const DIR_AFFINITY: f64 = 0.05;
 
 #[derive(Debug, Clone)]
 pub struct PromptBudget {
@@ -333,10 +336,17 @@ fn by_dir(files: &[usize], visible: &[&theodore_domain::FileDiff]) -> Vec<Vec<us
     groups.into_values().collect()
 }
 
-/// Pack units into as few chunks as fit `max` (first-fit decreasing, ties
-/// by first file so the result is stable). A unit over `max` on its own
+/// Pack units into as few chunks as fit `max`: largest unit first (ties by
+/// first file, so the result is stable), each into the chunk with room it
+/// is most related to by `affinity` — the first one with room when it is
+/// related to none (first-fit decreasing). A unit over `max` on its own
 /// still gets a chunk of its own. Chunks come out in file order.
-fn pack(mut units: Vec<Unit>, overhead: usize, max: usize) -> Vec<Vec<usize>> {
+fn pack(
+    mut units: Vec<Unit>,
+    overhead: usize,
+    max: usize,
+    affinity: &dyn Fn(&[usize], &[usize]) -> f64,
+) -> Vec<Vec<usize>> {
     let room = max.saturating_sub(overhead);
     units.sort_by(|a, b| {
         b.size
@@ -345,8 +355,19 @@ fn pack(mut units: Vec<Unit>, overhead: usize, max: usize) -> Vec<Vec<usize>> {
     });
     let mut bins: Vec<(usize, Vec<usize>)> = Vec::new();
     for u in units {
-        match bins.iter_mut().find(|(used, _)| used + u.size <= room) {
-            Some((used, files)) => {
+        let mut best: Option<(usize, f64)> = None;
+        for (i, (used, files)) in bins.iter().enumerate() {
+            if used + u.size > room {
+                continue;
+            }
+            let a = affinity(&u.files, files);
+            if best.is_none_or(|(_, b)| a > b) {
+                best = Some((i, a));
+            }
+        }
+        match best {
+            Some((i, _)) => {
+                let (used, files) = &mut bins[i];
                 *used += u.size;
                 files.extend(u.files);
             }
@@ -502,8 +523,29 @@ pub fn build_prompts_with(
     };
     let room = budget.max_chars.saturating_sub(overhead);
     let units = chunk_units(&visible_files, graph, &body, room);
+    // Which chunk a unit joins: graph links first, then a small pull
+    // towards chunks holding files of the same top-level directory (so
+    // unconnected files still keep their directory's company).
+    let graph_idx: Vec<Option<usize>> = visible_files
+        .iter()
+        .map(|f| graph.index_of(&f.path))
+        .collect();
+    let affinity = |unit: &[usize], chunk: &[usize]| -> f64 {
+        let mut a = 0.0;
+        for &u in unit {
+            for &c in chunk {
+                if let (Some(gu), Some(gc)) = (graph_idx[u], graph_idx[c]) {
+                    a += graph.connection(gu, gc);
+                }
+                if top_level_dir(&visible_files[u].path) == top_level_dir(&visible_files[c].path) {
+                    a += DIR_AFFINITY;
+                }
+            }
+        }
+        a
+    };
 
-    pack(units, overhead, budget.max_chars)
+    pack(units, overhead, budget.max_chars, &affinity)
         .into_iter()
         .map(|idx| {
             let files: Vec<&theodore_domain::FileDiff> =
