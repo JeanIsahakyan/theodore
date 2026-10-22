@@ -117,3 +117,18 @@ describe('UiStore back', () => {
     expect(ui.route).toEqual({ name: 'prs' });
   });
 });
+
+describe('UiStore settings tab', () => {
+  it('keeps one Settings tab, whichever page and tab you open it from', () => {
+    localStorage.clear();
+    const ui = new UiStore();
+    ui.go({ name: 'prs' });
+    ui.go({ name: 'settings', page: 'agents' });
+    ui.go({ name: 'review', pr: 'github:o/r#1' });
+    ui.go({ name: 'settings', page: 'projects' });
+    expect(ui.tabs.filter((t) => t.name === 'settings')).toEqual([
+      { name: 'settings', page: 'projects' },
+    ]);
+    expect(ui.route).toEqual({ name: 'settings', page: 'projects' });
+  });
+});

@@ -446,6 +446,12 @@ export class UiStore {
     const route = placed?.route ?? to;
     runInAction(() => {
       let tabs = this.tabs;
+      // Settings is one place: going to any of its pages reuses an open
+      // Settings tab (moving it to that page) instead of opening another.
+      if (route.name === 'settings') {
+        const at = tabs.findIndex((t) => t.name === 'settings');
+        if (at >= 0) tabs = tabs.map((t, i) => (i === at ? route : t));
+      }
       if (!tabs.some((t) => sameRoute(t, route))) {
         const cur = tabs.findIndex((t) => sameRoute(t, this.route));
         const push =
