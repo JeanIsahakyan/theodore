@@ -1,8 +1,11 @@
 //! `regroup` (plan §5.3): re-run the grouper against the cached revision,
 //! continuing from the previous grouping when there is one.
 
+use std::path::{Component, Path};
+
 use theodore_contract::{Ephemeral, models};
-use theodore_domain::{AgentId, Grouping, PrId};
+use theodore_domain::grouping::{CO_CHANGE_MAX_COMMITS, CO_CHANGE_MAX_FILES, RepoContext};
+use theodore_domain::{AgentId, FileFlag, FileStatus, Grouping, PrId, Revision};
 use theodore_ports::{NewAction, SyncActionCode};
 
 use crate::core::Core;
@@ -98,22 +101,97 @@ impl Core {
         detail: &theodore_domain::PrDetail,
         agent: AgentId,
     ) -> AppResult<Grouping> {
+        let ctx = self
+            .grouping_context(&entry.worktree_path, &entry.revision)
+            .await;
         let grouping = match prev {
             Some(p) => {
                 self.0
                     .deps
                     .grouper
-                    .regroup(p, &entry.revision, detail, &entry.worktree_path, agent)
+                    .regroup(
+                        p,
+                        &entry.revision,
+                        detail,
+                        &ctx,
+                        &entry.worktree_path,
+                        agent,
+                    )
                     .await?
             }
             None => {
                 self.0
                     .deps
                     .grouper
-                    .group(&entry.revision, detail, &entry.worktree_path, agent)
+                    .group(&entry.revision, detail, &ctx, &entry.worktree_path, agent)
                     .await?
             }
         };
         Ok(grouping)
     }
+
+    /// What the grouper can use beyond the diff: head contents of the
+    /// changed text files (imports outside the hunks) and which of them
+    /// changed together before this PR (`GitPort::co_change_commits` from
+    /// the base). Best-effort: anything unreadable is simply left out.
+    pub(crate) async fn grouping_context(&self, worktree: &Path, rev: &Revision) -> RepoContext {
+        let mut ctx = RepoContext::default();
+        let mut budget = HEAD_FILES_MAX_TOTAL_BYTES;
+        for f in rev.files.iter().take(HEAD_FILES_MAX_COUNT) {
+            let readable = f.status != FileStatus::Deleted
+                && !f.hunks.is_empty()
+                && !f.flags.iter().any(|fl| {
+                    matches!(
+                        fl,
+                        FileFlag::Binary { .. }
+                            | FileFlag::Generated { .. }
+                            | FileFlag::Lfs
+                            | FileFlag::Submodule
+                    )
+                })
+                && is_plain_relative(&f.path);
+            if !readable {
+                continue;
+            }
+            let path = worktree.join(&f.path);
+            let Ok(meta) = tokio::fs::metadata(&path).await else {
+                continue;
+            };
+            let size = meta.len() as usize;
+            if !meta.is_file() || size > HEAD_FILE_MAX_BYTES || size > budget {
+                continue;
+            }
+            if let Ok(text) = tokio::fs::read_to_string(&path).await {
+                budget -= size;
+                ctx.head_files.insert(f.path.clone(), text);
+            }
+        }
+        let paths: Vec<String> = rev.files.iter().map(|f| f.path.clone()).collect();
+        ctx.co_change_commits = self
+            .0
+            .deps
+            .git
+            .co_change_commits(
+                worktree,
+                &rev.base,
+                &paths,
+                CO_CHANGE_MAX_COMMITS,
+                CO_CHANGE_MAX_FILES,
+            )
+            .await
+            .unwrap_or_default();
+        ctx
+    }
+}
+
+/// Caps on how much of the worktree `grouping_context` reads.
+const HEAD_FILE_MAX_BYTES: usize = 512 * 1024;
+const HEAD_FILES_MAX_TOTAL_BYTES: usize = 24 * 1024 * 1024;
+const HEAD_FILES_MAX_COUNT: usize = 3000;
+
+/// A diff path that stays inside the worktree (no `..`, not absolute).
+fn is_plain_relative(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)))
 }

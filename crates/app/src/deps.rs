@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use theodore_contract::TokenSource;
+use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{
     AccountPort, AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, McpEndpoint, Secrets,
@@ -18,13 +19,16 @@ use crate::error::GrouperError;
 /// Groups a revision by meaning (plan §5). Implemented by the `grouping`
 /// crate at integration time; `app` only needs the trait. `agent` is the
 /// `agents.grouping` setting, read by the caller and passed in here so the
-/// grouper never has to know about settings (plan §8.5).
+/// grouper never has to know about settings (plan §8.5). `ctx` is what the
+/// app could read from the worktree and history (`Core::grouping_context`)
+/// to help tell related files apart; possibly empty.
 #[async_trait]
 pub trait Grouper: Send + Sync {
     async fn group(
         &self,
         rev: &Revision,
         pr: &PrDetail,
+        ctx: &RepoContext,
         worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError>;
@@ -35,6 +39,7 @@ pub trait Grouper: Send + Sync {
         prev: &Grouping,
         rev: &Revision,
         pr: &PrDetail,
+        ctx: &RepoContext,
         worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError>;

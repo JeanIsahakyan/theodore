@@ -2217,6 +2217,46 @@ async fn regroup_honours_the_agents_grouping_setting() {
     assert_eq!(f.grouper.last_agent(), Some(AgentId::Codex));
 }
 
+// ── grouping context (relatedness graph inputs) ──────────────────────────
+
+/// The grouper gets what the app can read beyond the diff: the head file
+/// contents of the changed files (from the worktree) and the co-change
+/// history from git, restricted to the PR's paths with bulk commits gone.
+#[tokio::test]
+async fn grouping_context_reads_head_files_and_co_change_history() {
+    let f = fixtures();
+    let many: Vec<String> = (0..20).map(|i| format!("gen/{i}.rs")).collect();
+    f.git.set_history(vec![
+        vec!["src/lib.rs".into(), "src/other.rs".into()],
+        many,
+        vec!["README.md".into()],
+    ]);
+    let (core, _recv, _pr, head) = open_fixture_pr(&f).await;
+    let wt = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(wt.path().join("src")).unwrap();
+    std::fs::write(wt.path().join("src/lib.rs"), "mod other;\n").unwrap();
+    let rev = testkit::two_hunk_revision(&Sha::new("base000"), &head, "src/lib.rs");
+
+    let ctx = core.grouping_context(wt.path(), &rev).await;
+    assert_eq!(
+        ctx.head_files.get("src/lib.rs").map(String::as_str),
+        Some("mod other;\n")
+    );
+    assert_eq!(ctx.co_change_commits, vec![vec!["src/lib.rs".to_string()]]);
+}
+
+#[tokio::test]
+async fn regroup_hands_the_grouping_context_to_the_grouper() {
+    let f = fixtures();
+    f.git
+        .set_history(vec![vec!["src/lib.rs".into(), "docs/x.md".into()]]);
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+    core.regroup(pr).await.expect("regroup");
+    let ctx = f.grouper.last_ctx().expect("grouper called");
+    assert_eq!(ctx.co_change_commits, vec![vec!["src/lib.rs".to_string()]]);
+}
+
 // ── is_idle ───────────────────────────────────────────────────────────────
 
 #[tokio::test]
