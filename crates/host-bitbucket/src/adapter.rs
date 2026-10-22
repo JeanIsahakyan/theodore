@@ -9,7 +9,7 @@ use theodore_domain::{
 use theodore_host_http::TokenSource;
 use theodore_ports::{
     Capabilities, Changes, Clock, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    MergeMethod, ReviewSubmission, SubmittedReview,
+    MergeMethod, NewPr, ReviewSubmission, SubmittedReview,
 };
 
 use crate::anchor;
@@ -17,7 +17,7 @@ use crate::auth::Credentials;
 use crate::http::BbHttp;
 use crate::model::{
     BbComment, BbCommit, BbContent, BbDiffStatEntry, BbPullRequest, BbStatus, BbUser,
-    CreateCommentBody, MergeBody, ParentIdBody,
+    BranchEndpoint, BranchName, CreateCommentBody, CreatePrBody, MergeBody, ParentIdBody,
 };
 use crate::rest;
 use crate::time;
@@ -294,6 +294,60 @@ impl HostAdapter for BitbucketAdapter {
         })
     }
 
+    async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        let q = format!(
+            "state=OPEN&{}",
+            q_param(&format!(
+                "source.branch.name=\"{}\" AND state=\"OPEN\"",
+                bbql_escape(head)
+            ))
+        );
+        let prs = rest::repo_pull_requests(&self.http, &repo.owner, &repo.name, &q).await?;
+        let full_name = repo.slug();
+        Ok(prs
+            .iter()
+            // Same-repo PRs only: a fork's PR from a same-named branch
+            // isn't ours to reuse.
+            .find(|p| {
+                p.source.branch.name == head
+                    && p.source
+                        .repository
+                        .as_ref()
+                        .is_none_or(|r| r.full_name.eq_ignore_ascii_case(&full_name))
+            })
+            .map(|p| PrRef {
+                repo: repo.clone(),
+                number: p.id,
+                host_id: None,
+            }))
+    }
+
+    async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
+        let created = rest::create_pull_request(
+            &self.http,
+            &repo.owner,
+            &repo.name,
+            &CreatePrBody {
+                title: &pr.title,
+                description: &pr.body,
+                source: BranchEndpoint {
+                    branch: BranchName { name: &pr.head },
+                },
+                destination: BranchEndpoint {
+                    branch: BranchName { name: &pr.base },
+                },
+                draft: pr.draft,
+            },
+        )
+        .await?;
+        // Same shape as `get_pr`/`search`: Bitbucket's PR id, no host_id.
+        Ok(PrRef {
+            repo: repo.clone(),
+            number: created.id,
+            host_id: None,
+        })
+    }
+
     async fn set_viewed(&self, _pr: &PrRef, _path: &str, _viewed: bool) -> HostResult<()> {
         Err(HostError::Unsupported("set_viewed"))
     }
@@ -480,6 +534,11 @@ fn q_param(q: &str) -> String {
         "q={}",
         url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>()
     )
+}
+
+/// BBQL string literal escaping: `\` and `"` are the only specials.
+fn bbql_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn is_reviewer(pr: &BbPullRequest, uuid: &str) -> bool {
