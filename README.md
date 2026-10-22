@@ -31,9 +31,13 @@ a review.
 - One list of the workspace's PRs, filtered to All (open), Mine (grouped by what each needs to merge), Drafts or Merged.
 - A Branches page per project: ahead/behind, the PR a branch belongs to, and a local folder's checked-out branch and uncommitted files.
 
-### Projects and branch reviews
-- Add, browse and remove projects from any configured host.
-- Open a local review of a branch against its project's base, with no hosted PR; stays out of PR counts.
+### Projects and workspaces
+- Add, browse and remove projects from any configured host, or a local folder.
+- A switcher in the sidebar's corner scopes the whole app to *All projects* or one project; each keeps
+  its own tabs, filters and position, restored on switch. ⌃0 / ⌃1…9 switch without the menu; drag
+  projects in Settings → Projects to set that order.
+- Open a local review of a branch against its project's base, with no hosted PR; it takes no host
+  actions and stays out of PR counts.
 
 ### The review screen
 - Diff grouped by meaning into titled groups, each with a *why*, a checklist and a risk; a tour bar steps through them.
@@ -42,6 +46,7 @@ a review.
 - Interdiff: after a push, only new/changed hunks are flagged, with a "what changed" view.
 - Markdown diffs have a rendered Preview next to the code; image diffs show side by side, swipe or onion skin.
 - ⌘-click an identifier for definitions and references across the worktree, found with `git grep` and per-language patterns — not a language server.
+- Narrow windows: Peek hides itself beside lists, and the review header goes icon-only.
 
 ### Comments, suggestions and reactions
 - Threads: reply, resolve — written back to the host.
@@ -50,7 +55,8 @@ a review.
 - Reactions.
 
 ### The AI panel
-- Chat scoped to a PR, a group, or a single line.
+- Chat scoped to a PR, a group, or a single line. The agent reads what the PR changed through the
+  review tools (the worktree holds only the head), so answers are about the diff.
 - Skills: `SKILL.md` files — three built in (`bugs`, `security`, `tests`), plus `~/.claude/skills`
   and the repo's own `.claude/skills`. Several configured agents run in sequence; findings merge.
 - Findings turn into draft comments, tasks, or get a proposed fix attached.
@@ -87,6 +93,20 @@ implementations too, not stubs — just narrower, matching each host's API.
 - Per-host sign-in, agent selection split by task (grouping, chat, skills,
   fix — default Claude for each), live AI spend per PR against a configured
   limit.
+
+### Theodore account (optional, hidden until configured)
+- Sign in from a dialog — the first, skippable onboarding step, or Settings → Account: your
+  email opens the hosted sign-in page on its code step and Theodore picks the sign-in up when you
+  finish; a device code covers signing in from another machine. Client-only (PKCE + loopback,
+  no secret in the app), session in the keychain. Shown only once a client id is set
+  (`THEODORE_WORKOS_CLIENT_ID`); setup in `docs/plan.md` §6.12.
+
+### Labs: spaces (hidden)
+- A *space* is a change before it is a PR: an agent writes it in its own worktree while you
+  chat, watch the diff and review it grouped, then ship it — **Open PR** (one squashed commit on
+  `<login>/<slug>`, ready or draft), **Push** further turns, or for a local folder **Merge
+  locally** / **Keep as branch**. Own budget, auto-archive. Off by default; design and switch in
+  `docs/spaces.md`.
 
 ### Updates
 - Checks for a new build on launch and every 6 hours, on a stable or beta
@@ -178,7 +198,14 @@ the "Sign in with GitHub" OAuth device flow once `THEODORE_GITHUB_CLIENT_ID` (or
 (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`) — no device flow for those yet.
 
 Data lives in `~/.theodore`: a bare clone per repo under `repos/`, one git
-worktree per PR under `wt/`, and `theodore.db` (SQLite).
+worktree per PR under `wt/`, one per space under `spaces/`, and `theodore.db` (SQLite).
+
+Sandbox: `theodore sandbox init <dir>` then `THEODORE_SANDBOX=<dir>` runs the app against a
+simulated host with its own data in `~/.theodore-sandbox` — faults, offline, scripted agents
+(`docs/sandbox.md`).
+
+Local nightly: `scripts/nightly-build.sh` builds a DMG numbered by commit count
+(`docs/releasing.md`).
 
 CLI:
 
@@ -253,4 +280,6 @@ Git hooks (`lefthook install` once per clone):
 - Skills running on several agents at once in parallel (they run in
   sequence; findings still merge).
 - Cost tracking for Codex and Gemini runs (tokens are recorded, USD is not).
-- Accounts, billing, telemetry.
+- A Theodore server: the account sign-in is client-only; billing, sync and telemetry need it.
+- Spaces beyond shipping: "Send to agent" from review threads, undo a turn, setup/check scripts,
+  notifications.
