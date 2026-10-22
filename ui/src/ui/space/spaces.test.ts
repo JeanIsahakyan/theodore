@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { RepoRef, Space } from '../../gen/contract';
 import { ALL } from '../../core/workspaces';
 import {
+  AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
+  SPACE_BUDGET_KEY,
+  autoArchiveDays,
   buildModeOn,
+  defaultTitle,
+  fmtSpend,
+  spaceBudget,
+  spaceStage,
+  unshipped,
   diffStat,
   isSpaceReview,
   labsVisible,
@@ -135,5 +143,87 @@ describe('spaces', () => {
       ]),
     ).toBe('2 files  +42 −7');
     expect(diffStat([{ additions: 1, deletions: 0 }])).toBe('1 file  +1 −0');
+  });
+});
+
+describe('shipping', () => {
+  const shipped = (how: 'pr' | 'merged_locally' | 'branch', head = 'h') => ({
+    how,
+    branch: 'me/x',
+    sha: 's1',
+    head,
+    pushes: 1,
+    at: 1,
+  });
+
+  it('moves through its stages', () => {
+    expect(spaceStage(space({ id: 'a' }))).toBe('drafting');
+    expect(spaceStage(space({ id: 'a', shipped: shipped('pr') }))).toBe(
+      'opening',
+    );
+    const pr = 'github:o/r#1';
+    expect(
+      spaceStage(space({ id: 'a', shipped: shipped('pr'), pr }), 'open'),
+    ).toBe('in_review');
+    expect(
+      spaceStage(space({ id: 'a', shipped: shipped('pr'), pr }), 'merged'),
+    ).toBe('done');
+    expect(
+      spaceStage(space({ id: 'a', shipped: shipped('merged_locally') })),
+    ).toBe('merged_locally');
+    expect(spaceStage(space({ id: 'a', shipped: shipped('branch') }))).toBe(
+      'branch',
+    );
+  });
+
+  it('knows when there are turns to push', () => {
+    expect(unshipped(space({ id: 'a' }))).toBe(false);
+    expect(unshipped(space({ id: 'a', shipped: shipped('pr', 'h') }))).toBe(
+      false,
+    );
+    expect(unshipped(space({ id: 'a', shipped: shipped('pr', 'old') }))).toBe(
+      true,
+    );
+  });
+
+  it('proposes the goal as the title', () => {
+    expect(defaultTitle({ goal: '\n  Retry on 429s \nmore', name: 'n' })).toBe(
+      'Retry on 429s',
+    );
+    expect(defaultTitle({ goal: '', name: 'tidy' })).toBe('tidy');
+  });
+});
+
+describe('space budget and archive settings', () => {
+  const row = (key: string, value: unknown, scope = 'user') => ({
+    key,
+    scope,
+    value,
+  });
+
+  it('reads the space budget, the repo row first', () => {
+    expect(spaceBudget([], 'o/r')).toBe(null);
+    expect(spaceBudget([row('budget.per_pr_usd', 5)], 'o/r')).toBe(null);
+    expect(spaceBudget([row(SPACE_BUDGET_KEY, 5)], 'o/r')).toBe(5);
+    expect(
+      spaceBudget(
+        [row(SPACE_BUDGET_KEY, 5), row(SPACE_BUDGET_KEY, 2, 'repo:o/r')],
+        'o/r',
+      ),
+    ).toBe(2);
+    expect(spaceBudget([row(SPACE_BUDGET_KEY, 0)], 'o/r')).toBe(null);
+  });
+
+  it('formats spend against the budget', () => {
+    expect(fmtSpend(0.4217, 5)).toBe('$0.42 / $5.00');
+    expect(fmtSpend(0.4, null)).toBe('$0.40');
+  });
+
+  it('defaults auto-archive to 7 days, 0 meaning never', () => {
+    expect(autoArchiveDays([])).toBe(7);
+    expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 0)])).toBe(0);
+    expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 3)])).toBe(3);
+    expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, -1)])).toBe(7);
+    expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 'x')])).toBe(7);
   });
 });

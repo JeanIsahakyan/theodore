@@ -7,7 +7,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   Archive,
+  ArrowUpFromLine,
+  ChevronDown,
   CircleStop,
+  CodeMerge,
   CodePullRequest,
   PaperPlane,
 } from '@gravity-ui/icons';
@@ -15,9 +18,12 @@ import {
   Alert,
   Button,
   Card,
+  Dropdown,
   Input,
+  InputGroup,
   Label,
   ListBox,
+  Popover,
   Select,
   Switch,
   TextArea,
@@ -26,7 +32,7 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { HunkId, Space } from '../../gen/contract';
+import type { HunkId, ShipAction, Space, SpaceMode } from '../../gen/contract';
 import { api } from '../../core/api';
 import { ALL } from '../../core/workspaces';
 import { FEATURES } from '../../features';
@@ -36,10 +42,30 @@ import { useRootStore, useUi } from '../../stores/context';
 import { AgentTag, Shell, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
-import { fmtUsage } from '../SidePanel';
+import { budgetStatus, fmtUsage } from '../SidePanel';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
-import { BUILD_MODE_KEY, diffStat, spaceChatKey } from './spaces';
+import {
+  AUTO_ARCHIVE_KEY,
+  BUILD_MODE_KEY,
+  SPACE_BUDGET_KEY,
+  STAGE_LABEL,
+  autoArchiveDays,
+  defaultTitle,
+  diffStat,
+  fmtSpend,
+  spaceBudget,
+  spaceChatKey,
+  spaceStage,
+  unshipped,
+} from './spaces';
+
+/** What the agent may do in a turn (docs/spaces.md §5). */
+const MODES: { id: SpaceMode; label: string; hint: string }[] = [
+  { id: 'ask', label: 'Ask', hint: 'Read only, no edits' },
+  { id: 'edit', label: 'Edit', hint: 'Edit files in the space' },
+  { id: 'run', label: 'Run', hint: 'Edit and run any command' },
+];
 
 /** The whole branch diff, ungrouped — every file of the revision. */
 const WHOLE_DIFF: ReviewMode = { mode: 'groups', group: null, file: null };
@@ -114,6 +140,19 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
   const ui = useUi();
   const [busy, setBusy] = useState(false);
   const running = space.status === 'running';
+  const archived = space.status === 'archived';
+  const project = store.models.projects.get(space.project);
+  const pr = space.pr ? store.models.prSummaries.get(space.pr) : undefined;
+  const stage = spaceStage(space, pr?.state);
+  const budget = project
+    ? spaceBudget(
+        store.models.settings.all(),
+        `${project.repo.owner}/${project.repo.name}`,
+      )
+    : null;
+  const spent = space.usage.usd ?? 0;
+  const tone = budgetStatus(spent, budget).tone;
+  const days = autoArchiveDays(store.models.settings.all());
   return (
     <header className="flex flex-wrap items-center gap-2 border-b border-separator px-5 py-3">
       <Typography.Heading level={6} className="min-w-0 truncate">
@@ -122,18 +161,39 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
       <span className="truncate font-mono text-xs text-muted">
         {space.branch} ← {space.base}
       </span>
-      <span className="rounded-full bg-default px-2 py-0.5 text-xs">
-        Drafting
+      <span
+        className="space-stage rounded-full bg-default px-2 py-0.5 text-xs"
+        title={
+          space.done_at && days > 0
+            ? `Archives itself ${days} day${days === 1 ? '' : 's'} after it was done`
+            : undefined
+        }
+      >
+        {STAGE_LABEL[stage]}
+        {pr ? ` · #${pr.pr.number}` : ''}
       </span>
       <AgentTag id={space.agent} />
-      <span className="text-xs tabular-nums text-muted">
-        {fmtUsage(space.usage)}
+      <span
+        className={`space-spend text-xs tabular-nums ${
+          tone === 'danger'
+            ? 'text-danger'
+            : tone === 'warning'
+              ? 'text-warning'
+              : 'text-muted'
+        }`}
+        title={
+          budget == null
+            ? 'No budget for this space (Settings → Labs)'
+            : 'Spend / budget for this space'
+        }
+      >
+        {fmtSpend(spent, budget)}
       </span>
       <span className="flex-1" />
       <Button
         size="sm"
         variant="secondary"
-        isDisabled={busy || space.status === 'archived'}
+        isDisabled={busy || archived}
         onPress={async () => {
           setBusy(true);
           try {
@@ -149,22 +209,31 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
       >
         Review
       </Button>
-      <Tooltip>
-        <Button size="sm" variant="secondary" isDisabled aria-label="Open PR">
+      {!archived && project && (
+        <ShipControls space={space} local={project.path != null} />
+      )}
+      {space.pr && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onPress={() => {
+            const id = space.pr!;
+            void store.sync
+              .openPr(id)
+              .then(() => ui.go({ name: 'review', pr: id }));
+          }}
+        >
           <CodePullRequest className="size-3.5" />
-          Open PR
+          PR
         </Button>
-        <Tooltip.Content>
-          Not in this build yet (docs/spaces.md §11)
-        </Tooltip.Content>
-      </Tooltip>
+      )}
       <Tooltip>
         <Button
-          isIconOnly
           size="sm"
           variant="ghost"
           aria-label="Archive space"
-          isDisabled={running || space.status === 'archived'}
+          className="space-archive"
+          isDisabled={running || archived}
           onPress={() => {
             void api
               .archiveSpace(space.id)
@@ -172,13 +241,195 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
               .catch(() => {});
           }}
         >
-          <Archive className="size-4" />
+          <Archive className="size-3.5" />
+          Archive
         </Button>
         <Tooltip.Content>
-          Archive (keeps the transcript and checkpoints)
+          Removes the worktree; the transcript and checkpoints are kept
         </Tooltip.Content>
       </Tooltip>
     </header>
+  );
+});
+
+interface ShipChoice {
+  action: ShipAction;
+  label: string;
+  /** One line under the title field: what happens on confirm. */
+  hint: string;
+}
+
+/** Open PR (▾ Open as draft) / Push on a host project; Merge locally
+ *  (▾ Keep as branch) on a local folder. Confirming lets you edit the
+ *  commit / PR title first. */
+const ShipControls = observer(function ShipControls({
+  space,
+  local,
+}: {
+  space: Space;
+  local: boolean;
+}) {
+  const store = useRootStore();
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState<ShipChoice | null>(null);
+  const [title, setTitle] = useState('');
+  const [busy, setBusy] = useState(false);
+  const running = space.status === 'running';
+  const changed = space.head_sha !== space.base_sha;
+
+  const ship = async (action: ShipAction, t: string | null) => {
+    setBusy(true);
+    try {
+      const s = await api.shipSpace({ space: space.id, action, title: t });
+      setOpen(false);
+      const where = s.shipped?.branch ?? s.branch;
+      store.ephemeral.toast(
+        action === 'merge_locally'
+          ? `Merged into ${where}`
+          : action === 'keep_branch'
+            ? `Wrote branch ${where}`
+            : action === 'push'
+              ? `Pushed to ${where}`
+              : `Pushed ${where}; opening the PR…`,
+        'info',
+      );
+    } catch {
+      // toasted by api.ts; the popover stays open to retry
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (space.pr) {
+    const pending = unshipped(space);
+    return (
+      <Tooltip>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="space-push"
+          isDisabled={running || busy || !pending}
+          isPending={busy}
+          onPress={() => void ship('push', null)}
+        >
+          <ArrowUpFromLine className="size-3.5" />
+          Push
+        </Button>
+        <Tooltip.Content>
+          {pending
+            ? 'One new commit on the PR branch with the turns since the last push'
+            : 'Nothing new since the last push'}
+        </Tooltip.Content>
+      </Tooltip>
+    );
+  }
+
+  const primary: ShipChoice = local
+    ? {
+        action: 'merge_locally',
+        label: 'Merge locally',
+        hint: "One commit by you, merged into the folder's checked-out branch. Refused if the folder has uncommitted changes or the merge conflicts.",
+      }
+    : {
+        action: 'open_pr',
+        label: 'Open PR',
+        hint: `One commit by you, pushed to ${space.branch}, opened as a PR into ${space.base}.`,
+      };
+  const alternate: ShipChoice = local
+    ? {
+        action: 'keep_branch',
+        label: 'Keep as branch',
+        hint: `One commit by you, written as branch ${space.branch} in the folder. Nothing is checked out or merged.`,
+      }
+    : {
+        action: 'open_draft_pr',
+        label: 'Open as draft',
+        hint: `One commit by you, pushed to ${space.branch}, opened as a draft PR into ${space.base}.`,
+      };
+  const shippedLocally =
+    space.shipped != null && space.shipped.how !== 'pr' && !unshipped(space);
+  const disabled = running || busy || !changed || shippedLocally;
+  const start = (c: ShipChoice) => {
+    setChoice(c);
+    setTitle(defaultTitle(space));
+    setOpen(true);
+  };
+  const current = choice ?? primary;
+
+  return (
+    <div className="space-ship flex items-center">
+      <Popover isOpen={open} onOpenChange={setOpen}>
+        <Button
+          size="sm"
+          variant="primary"
+          className="rounded-r-none"
+          isDisabled={disabled}
+          onPress={() => start(primary)}
+        >
+          {local ? (
+            <CodeMerge className="size-3.5" />
+          ) : (
+            <CodePullRequest className="size-3.5" />
+          )}
+          {space.shipped?.how === 'pr' ? 'Open PR again' : primary.label}
+        </Button>
+        <Popover.Content
+          placement="bottom end"
+          offset={8}
+          className="w-[380px]"
+        >
+          <Popover.Dialog className="flex flex-col gap-3 p-4">
+            <Popover.Heading className="text-sm font-semibold">
+              {current.label}
+            </Popover.Heading>
+            <TextField value={title} onChange={setTitle} autoFocus>
+              <Label>Title</Label>
+              <Input
+                className="text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && title.trim()) {
+                    void ship(current.action, title.trim());
+                  }
+                }}
+              />
+            </TextField>
+            <span className="text-xs text-muted">{current.hint}</span>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onPress={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                isPending={busy}
+                isDisabled={!title.trim()}
+                onPress={() => void ship(current.action, title.trim())}
+              >
+                {current.label}
+              </Button>
+            </div>
+          </Popover.Dialog>
+        </Popover.Content>
+      </Popover>
+      <Dropdown>
+        <Button
+          size="sm"
+          variant="primary"
+          isIconOnly
+          className="rounded-l-none border-l border-separator"
+          aria-label="More ways to ship"
+          isDisabled={disabled}
+        >
+          <ChevronDown className="size-3.5" />
+        </Button>
+        <Dropdown.Popover placement="bottom end">
+          <Dropdown.Menu aria-label="Ship" onAction={() => start(alternate)}>
+            <Dropdown.Item id={alternate.action} textValue={alternate.label}>
+              {alternate.label}…
+            </Dropdown.Item>
+          </Dropdown.Menu>
+        </Dropdown.Popover>
+      </Dropdown>
+    </div>
   );
 });
 
@@ -196,6 +447,10 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
     end.current?.scrollIntoView?.({ block: 'end' });
   }, [messages.length, streaming]);
 
+  // Sticky per space: the next turn starts in the space's last mode.
+  const [mode, setMode] = useState<SpaceMode>(space.mode);
+  useEffect(() => setMode(space.mode), [space.mode]);
+
   const send = () => {
     const t = text.trim();
     if (!t || run || space.status === 'archived') return;
@@ -206,7 +461,7 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
         text: t,
         agent: null,
         model: null,
-        mode: null,
+        mode: mode === space.mode ? null : mode,
       })
       .catch(() => setText(t));
   };
@@ -284,6 +539,31 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
             </span>
           )}
           <span className="flex-1" />
+          <Select
+            aria-label="Mode"
+            className="space-mode w-28"
+            value={mode}
+            isDisabled={!!run || space.status === 'archived'}
+            onChange={(v) => v && setMode(v as SpaceMode)}
+          >
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox selectionMode="single">
+                {MODES.map((m) => (
+                  <ListBox.Item key={m.id} id={m.id} textValue={m.label}>
+                    <span className="flex flex-col">
+                      <span>{m.label}</span>
+                      <span className="text-xs text-muted">{m.hint}</span>
+                    </span>
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
           {run ? (
             <Button
               size="sm"
@@ -466,7 +746,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   );
 });
 
-/** Settings → Labs: the build mode switch. */
+/** Settings → Labs: the build mode switch, and the spaces' own settings. */
 export const LabsPage = observer(function LabsPage() {
   const store = useRootStore();
   const on = isBuildMode(store);
@@ -492,6 +772,89 @@ export const LabsPage = observer(function LabsPage() {
           becomes a pull request. Experimental.
         </span>
       </Card>
+      {on && (
+        <Card variant="secondary" className="gap-0 p-0">
+          <NumberSettingRow
+            settingKey={SPACE_BUDGET_KEY}
+            label="Budget per space (USD)"
+            hint="A space's agent stops once its spend reaches this. Separate from the PR review budget. Empty = no limit."
+            prefix="$"
+            placeholder="No limit"
+            accept={(n) => n > 0}
+          />
+          <NumberSettingRow
+            settingKey={AUTO_ARCHIVE_KEY}
+            label="Auto-archive after (days)"
+            hint="Days after a space's PR merges, or it is merged locally or kept as a branch, before it archives itself. 0 = never."
+            placeholder={String(autoArchiveDays([]))}
+            accept={(n) => n >= 0 && Number.isInteger(n)}
+          />
+        </Card>
+      )}
     </section>
+  );
+});
+
+/** One numeric user setting; empty clears it (the default applies). */
+const NumberSettingRow = observer(function NumberSettingRow({
+  settingKey,
+  label,
+  hint,
+  prefix,
+  placeholder,
+  accept,
+}: {
+  settingKey: string;
+  label: string;
+  hint: string;
+  prefix?: string;
+  placeholder: string;
+  accept: (n: number) => boolean;
+}) {
+  const store = useRootStore();
+  const raw = store.models.settings.get(`user:${settingKey}`)?.value;
+  const [text, setText] = useState(typeof raw === 'number' ? String(raw) : '');
+  useEffect(() => {
+    setText(typeof raw === 'number' ? String(raw) : '');
+  }, [raw]);
+  const save = () => {
+    const t = text.trim();
+    if (!t) {
+      if (raw !== undefined) setSetting(store, 'user', settingKey, null);
+      return;
+    }
+    const n = Number(t);
+    if (Number.isFinite(n) && accept(n)) {
+      setSetting(store, 'user', settingKey, n);
+    }
+  };
+  return (
+    <div className="set-row flex items-center gap-4 px-4 py-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-xs text-muted">{hint}</span>
+      </div>
+      <TextField
+        value={text}
+        onChange={setText}
+        aria-label={label}
+        className="w-32 shrink-0"
+      >
+        <InputGroup className="w-full rounded-xl">
+          {prefix && (
+            <InputGroup.Prefix className="text-xs text-muted">
+              {prefix}
+            </InputGroup.Prefix>
+          )}
+          <InputGroup.Input
+            placeholder={placeholder}
+            inputMode="decimal"
+            className="w-full min-w-0 text-right text-sm"
+            onBlur={save}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+          />
+        </InputGroup>
+      </TextField>
+    </div>
   );
 });
