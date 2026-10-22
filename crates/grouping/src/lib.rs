@@ -3,6 +3,7 @@
 
 mod area;
 mod coarsen;
+pub mod graph;
 pub mod incremental;
 mod parse;
 pub mod pipeline;

@@ -1,16 +1,34 @@
 //! Prompt builder (plan §5.1–§5.2): PR title/body/commits, file list, and
 //! every hunk as id + path + header + a compact excerpt, within a token
-//! budget. Large PRs split by top-level directory with a merge pass over
-//! group summaries.
+//! budget, plus a short "related changes" list from the relatedness graph.
+//! Large PRs split into chunks of related files (graph communities) with a
+//! merge pass over group summaries.
+//!
+//! ```text
+//! whole PR fits ─▶ one prompt
+//! too big ─▶ units: each graph community (2+ files)
+//!                   + unconnected files by top-level dir
+//!           unit over budget ─▶ split it by top-level dir
+//!           first-fit-decreasing pack units into chunks ≤ budget
+//! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use serde::Deserialize;
+use theodore_domain::grouping::RepoContext;
 use theodore_domain::{Group, GroupId, Hunk, HunkId, LineKind, Revision};
 
 use crate::PrMeta;
+use crate::graph::RelGraph;
 use crate::prepass::PrePass;
+
+/// Caps on the "Related changes" section, so it stays a hint and never
+/// crowds out the hunks themselves.
+const RELATED_MAX_EDGES: usize = 24;
+const RELATED_MAX_CHARS: usize = 2_400;
+const RELATED_MIN_WEIGHT: f64 = 0.3;
+const ROLLOUT_SHOWN_FILES: usize = 6;
 
 #[derive(Debug, Clone)]
 pub struct PromptBudget {
@@ -71,7 +89,7 @@ can approve as a unit."
             let _ = write!(
                 out,
                 "You are reviewing one part (`{dir}`) of a larger pull request, \
-split by directory for size; this part has {total_hunks} changed hunk(s). \
+split into parts of related files for size; this part has {total_hunks} changed hunk(s). \
 Aim for about {lo}-{hi} groups in THIS part — a later pass orders and merges \
 every part's groups together, so do not worry about the rest of the PR."
             );
@@ -201,31 +219,247 @@ fn write_files_and_hunks(
     }
 }
 
+/// Strongest links among `files`, one line each: rollouts first
+/// (`33 files make the same edit: …`), then pairwise edges. Nothing when no
+/// two files in this prompt are related.
+fn write_related(out: &mut String, files: &[&theodore_domain::FileDiff], graph: &RelGraph) {
+    let within: BTreeSet<usize> = files
+        .iter()
+        .filter_map(|f| graph.index_of(&f.path))
+        .collect();
+    let mut lines: Vec<String> = Vec::new();
+    for r in &graph.rollouts {
+        let members: Vec<&str> = r
+            .files
+            .iter()
+            .filter(|i| within.contains(i))
+            .map(|&i| graph.files[i].as_str())
+            .collect();
+        if members.len() < 3 {
+            continue;
+        }
+        let shown = members[..members.len().min(ROLLOUT_SHOWN_FILES)].join(", ");
+        let more = members.len().saturating_sub(ROLLOUT_SHOWN_FILES);
+        let more = if more > 0 {
+            format!(", … (+{more} more)")
+        } else {
+            String::new()
+        };
+        lines.push(format!(
+            "- {} files {}: {shown}{more}",
+            members.len(),
+            r.label
+        ));
+    }
+    for (a, b, e) in graph.strongest_edges(&within, RELATED_MAX_EDGES) {
+        if e.weight() < RELATED_MIN_WEIGHT {
+            break;
+        }
+        let (fa, fb) = (&graph.files[a], &graph.files[b]);
+        let link = match (e.a_imports_b, e.b_imports_a) {
+            (true, false) => format!("{fa} → {fb}"),
+            (false, true) => format!("{fb} → {fa}"),
+            _ => format!("{fa} ~ {fb}"),
+        };
+        let reasons = e.reasons();
+        lines.push(format!(
+            "- {link} ({})",
+            reasons[..reasons.len().min(2)].join(", ")
+        ));
+    }
+    if lines.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "\n# Related changes\nFiles linked by imports, shared names or the same edit, \
+strongest first. Keep linked hunks in one group unless they are clearly separate steps."
+    );
+    let mut used = 0;
+    for l in lines {
+        used += l.len() + 1;
+        if used > RELATED_MAX_CHARS {
+            break;
+        }
+        let _ = writeln!(out, "{l}");
+    }
+}
+
 fn user_prompt(
     pr: &PrMeta,
     files: &[&theodore_domain::FileDiff],
     prepass: &PrePass,
+    graph: &RelGraph,
     budget: &PromptBudget,
 ) -> String {
     let mut out = String::new();
     write_pr_meta(&mut out, pr);
     write_hidden_summary(&mut out, prepass);
+    write_related(&mut out, files, graph);
     write_files_and_hunks(&mut out, files, prepass, budget);
     out
+}
+
+/// Prompt size for `files` without the related-changes hint.
+fn graph_free_size(
+    pr: &PrMeta,
+    files: &[&theodore_domain::FileDiff],
+    prepass: &PrePass,
+    budget: &PromptBudget,
+) -> usize {
+    user_prompt(pr, files, prepass, &RelGraph::default(), budget).len()
 }
 
 fn top_level_dir(path: &str) -> String {
     crate::area::top_level_dir(path).to_string()
 }
 
-/// Build one prompt per chunk. A single chunk covers the whole PR unless the
-/// estimated prompt size is over budget, in which case files are split by
-/// top-level directory (plan §5.2). Each prompt tells the model the
-/// PR-size-scaled group count it should aim for (`target::target_group_count`).
+/// Files that should share a chunk, with their estimated prompt size.
+struct Unit {
+    /// Indices into the visible-file list, ascending.
+    files: Vec<usize>,
+    size: usize,
+}
+
+/// Split `files` by top-level directory (the pre-graph chunking rule).
+fn by_dir(files: &[usize], visible: &[&theodore_domain::FileDiff]) -> Vec<Vec<usize>> {
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for &i in files {
+        groups
+            .entry(top_level_dir(&visible[i].path))
+            .or_default()
+            .push(i);
+    }
+    groups.into_values().collect()
+}
+
+/// Pack units into as few chunks as fit `max` (first-fit decreasing, ties
+/// by first file so the result is stable). A unit over `max` on its own
+/// still gets a chunk of its own. Chunks come out in file order.
+fn pack(mut units: Vec<Unit>, overhead: usize, max: usize) -> Vec<Vec<usize>> {
+    let room = max.saturating_sub(overhead);
+    units.sort_by(|a, b| {
+        b.size
+            .cmp(&a.size)
+            .then_with(|| a.files[0].cmp(&b.files[0]))
+    });
+    let mut bins: Vec<(usize, Vec<usize>)> = Vec::new();
+    for u in units {
+        match bins.iter_mut().find(|(used, _)| used + u.size <= room) {
+            Some((used, files)) => {
+                *used += u.size;
+                files.extend(u.files);
+            }
+            None => bins.push((u.size, u.files)),
+        }
+    }
+    let mut out: Vec<Vec<usize>> = bins
+        .into_iter()
+        .map(|(_, mut f)| {
+            f.sort_unstable();
+            f
+        })
+        .collect();
+    out.sort_by_key(|f| f[0]);
+    out
+}
+
+/// The units a too-big PR is packed from: each graph community with 2+
+/// files (split by directory if it alone is over budget), then the
+/// unconnected files grouped by top-level directory.
+fn chunk_units(
+    visible: &[&theodore_domain::FileDiff],
+    graph: &RelGraph,
+    body: &dyn Fn(&[usize]) -> usize,
+    room: usize,
+) -> Vec<Unit> {
+    let visible_index: BTreeMap<&str, usize> = visible
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.path.as_str(), i))
+        .collect();
+    let mut units: Vec<Unit> = Vec::new();
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    let mut loose: Vec<usize> = Vec::new();
+    for community in graph.communities() {
+        let mut files: Vec<usize> = community
+            .iter()
+            .filter_map(|&g| visible_index.get(graph.files[g].as_str()).copied())
+            .collect();
+        files.sort_unstable();
+        seen.extend(files.iter().copied());
+        if files.len() < 2 {
+            loose.extend(files);
+            continue;
+        }
+        let size = body(&files);
+        if size <= room {
+            units.push(Unit { files, size });
+        } else {
+            for part in by_dir(&files, visible) {
+                let size = body(&part);
+                units.push(Unit { files: part, size });
+            }
+        }
+    }
+    loose.extend((0..visible.len()).filter(|i| !seen.contains(i)));
+    loose.sort_unstable();
+    for part in by_dir(&loose, visible) {
+        let size = body(&part);
+        units.push(Unit { files: part, size });
+    }
+    units
+}
+
+fn chunk_label(files: &[&theodore_domain::FileDiff]) -> String {
+    let mut dirs: Vec<String> = Vec::new();
+    for f in files {
+        let d = top_level_dir(&f.path);
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    let extra = dirs.len().saturating_sub(4);
+    let mut label = dirs
+        .iter()
+        .take(4)
+        .map(|d| {
+            if d.is_empty() {
+                "(repository root)"
+            } else {
+                d.as_str()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if extra > 0 {
+        let _ = write!(label, " +{extra} more");
+    }
+    label
+}
+
+/// Build one prompt per chunk, from the diff alone (no repository context).
 pub fn build_prompts(
     pr: &PrMeta,
     rev: &Revision,
     prepass: &PrePass,
+    budget: &PromptBudget,
+) -> Vec<PromptChunk> {
+    let graph = RelGraph::build(rev, prepass, &RepoContext::default());
+    build_prompts_with(pr, rev, prepass, &graph, budget)
+}
+
+/// Build one prompt per chunk. A single chunk covers the whole PR unless the
+/// estimated prompt size is over budget, in which case files are split into
+/// chunks of related files (graph communities), falling back to top-level
+/// directories for unrelated files (plan §5.2). Each prompt tells the model
+/// the PR-size-scaled group count it should aim for
+/// (`target::target_group_count`).
+pub fn build_prompts_with(
+    pr: &PrMeta,
+    rev: &Revision,
+    prepass: &PrePass,
+    graph: &RelGraph,
     budget: &PromptBudget,
 ) -> Vec<PromptChunk> {
     let visible_files: Vec<&theodore_domain::FileDiff> = rev
@@ -236,7 +470,7 @@ pub fn build_prompts(
     let total_hunks: usize = visible_files.iter().map(|f| f.hunks.len()).sum();
     let whole_target = crate::target::target_group_count(total_hunks);
 
-    let whole = user_prompt(pr, &visible_files, prepass, budget);
+    let whole = user_prompt(pr, &visible_files, prepass, graph, budget);
     if whole.len() <= budget.max_chars || visible_files.len() <= 1 {
         let hunk_ids = visible_files
             .iter()
@@ -252,47 +486,33 @@ pub fn build_prompts(
         }];
     }
 
-    let mut by_dir: BTreeMap<String, Vec<&theodore_domain::FileDiff>> = BTreeMap::new();
-    for f in &visible_files {
-        by_dir.entry(top_level_dir(&f.path)).or_default().push(f);
-    }
+    // A chunk's size = shared header (PR meta, hidden list) + its hint
+    // section + its files' bodies; units are sized by body only. A chunk's
+    // hints are a subset of the whole PR's, so the whole PR's (capped)
+    // hint size is a fair reserve.
+    let empty = graph_free_size(pr, &[], prepass, budget);
+    let whole_hints =
+        whole
+            .len()
+            .saturating_sub(graph_free_size(pr, &visible_files, prepass, budget));
+    let overhead = empty + whole_hints.min(RELATED_MAX_CHARS);
+    let body = |files: &[usize]| {
+        let fs: Vec<&theodore_domain::FileDiff> = files.iter().map(|&i| visible_files[i]).collect();
+        graph_free_size(pr, &fs, prepass, budget).saturating_sub(empty)
+    };
+    let room = budget.max_chars.saturating_sub(overhead);
+    let units = chunk_units(&visible_files, graph, &body, room);
 
-    // Pack whole directories into as few chunks as the budget allows: one
-    // agent call per directory fragmented a PR with many small areas into
-    // as many calls (and at least as many groups). A directory over budget
-    // on its own still gets its own chunk.
-    let mut packs: Vec<(Vec<String>, Vec<&theodore_domain::FileDiff>)> = Vec::new();
-    for (dir, files) in by_dir {
-        if let Some((dirs, packed)) = packs.last_mut() {
-            let mut candidate = packed.clone();
-            candidate.extend(files.iter().copied());
-            if user_prompt(pr, &candidate, prepass, budget).len() <= budget.max_chars {
-                dirs.push(dir);
-                *packed = candidate;
-                continue;
-            }
-        }
-        packs.push((vec![dir], files));
-    }
-
-    packs
+    pack(units, overhead, budget.max_chars)
         .into_iter()
-        .map(|(dirs, files)| {
-            let label = dirs
-                .iter()
-                .map(|d| {
-                    if d.is_empty() {
-                        "(repository root)"
-                    } else {
-                        d.as_str()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+        .map(|idx| {
+            let files: Vec<&theodore_domain::FileDiff> =
+                idx.iter().map(|&i| visible_files[i]).collect();
+            let label = chunk_label(&files);
             let chunk_hunks: usize = files.iter().map(|f| f.hunks.len()).sum();
             let chunk_target =
                 crate::target::scaled_for_chunk(whole_target, chunk_hunks, total_hunks);
-            let user = user_prompt(pr, &files, prepass, budget);
+            let user = user_prompt(pr, &files, prepass, graph, budget);
             let hunk_ids = files
                 .iter()
                 .flat_map(|f| f.hunks.iter().map(|h| h.id.clone()))
