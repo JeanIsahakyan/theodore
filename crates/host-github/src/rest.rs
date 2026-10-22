@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 use theodore_host_http::HttpClient;
-use theodore_ports::HostResult;
+use theodore_ports::{HostError, HostResult, NewPr};
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GhNotification {
@@ -248,4 +248,68 @@ pub(crate) async fn rerun_workflow_failed_jobs(
     let _: theodore_host_http::HttpResponse<serde_json::Value> =
         http.post_json(&path, &serde_json::json!({})).await?;
     Ok(())
+}
+
+/// The bits of a REST pull-request object `create_pr`/`find_open_pr` read.
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhPull {
+    pub number: u64,
+    /// GraphQL node id — the same `PrRef::host_id` `get_pr` fills in.
+    pub node_id: Option<String>,
+}
+
+/// `GET .../pulls?state=open&head={owner}:{head}`: GitHub filters by
+/// `user:branch`, so a same-repo PR's head is qualified by the repo owner.
+pub(crate) async fn list_open_pulls_for_head(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    head: &str,
+) -> HostResult<Vec<GhPull>> {
+    let qualified = format!("{owner}:{head}");
+    let path = format!(
+        "repos/{owner}/{repo}/pulls?state=open&head={}&per_page=10",
+        urlencode(&qualified)
+    );
+    Ok(http.get::<Vec<GhPull>>(&path).await?.value)
+}
+
+#[derive(serde::Serialize)]
+struct CreatePullBody<'a> {
+    title: &'a str,
+    body: &'a str,
+    head: &'a str,
+    base: &'a str,
+    draft: bool,
+}
+
+/// `POST .../pulls`. GitHub answers 422 with
+/// `errors[].message = "A pull request already exists for o:branch."` when
+/// `head` already has an open PR; that becomes `HostError::Conflict`. Any
+/// other 422 stays `Validation`.
+pub(crate) async fn create_pull(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    pr: &NewPr,
+) -> HostResult<GhPull> {
+    let path = format!("repos/{owner}/{repo}/pulls");
+    let body = CreatePullBody {
+        title: &pr.title,
+        body: &pr.body,
+        head: &pr.head,
+        base: &pr.base,
+        draft: pr.draft,
+    };
+    match http.post_json::<_, GhPull>(&path, &body).await {
+        Ok(resp) => Ok(resp.value),
+        Err(HostError::Validation(msg)) if msg.contains("A pull request already exists") => {
+            Err(HostError::Conflict(msg))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn urlencode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }

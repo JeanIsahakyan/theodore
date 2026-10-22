@@ -9,7 +9,7 @@ use theodore_domain::{
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    MergeMethod, MergeState, MergeStatus, ReviewComment, ReviewSubmission, SubmittedReview,
+    MergeMethod, MergeState, MergeStatus, NewPr, ReviewComment, ReviewSubmission, SubmittedReview,
 };
 
 use crate::{anchor, graphql, pagination, rest, time};
@@ -341,6 +341,17 @@ impl HostAdapter for GithubAdapter {
                 })
             }
         }
+    }
+
+    async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        let pulls =
+            rest::list_open_pulls_for_head(&self.rest, &repo.owner, &repo.name, head).await?;
+        Ok(pulls.into_iter().next().map(|p| pull_to_pr_ref(repo, p)))
+    }
+
+    async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
+        let pull = rest::create_pull(&self.rest, &repo.owner, &repo.name, pr).await?;
+        Ok(pull_to_pr_ref(repo, pull))
     }
 
     async fn set_viewed(&self, pr: &PrRef, path: &str, viewed: bool) -> HostResult<()> {
@@ -854,6 +865,16 @@ fn notification_to_pr_ref(n: &rest::GhNotification) -> Option<PrRef> {
         number,
         host_id: None,
     })
+}
+
+/// Same shape `get_pr` returns: the repo as asked, the PR number, and the
+/// GraphQL node id as `host_id` (saves `resolve_node_id` a round trip).
+fn pull_to_pr_ref(repo: &RepoRef, pull: rest::GhPull) -> PrRef {
+    PrRef {
+        repo: repo.clone(),
+        number: pull.number,
+        host_id: pull.node_id,
+    }
 }
 
 fn search_node_to_pr_ref(n: &graphql::GqlSearchPr) -> Option<PrRef> {
