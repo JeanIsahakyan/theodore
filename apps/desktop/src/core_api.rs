@@ -177,6 +177,13 @@ pub trait CoreApi: Send + Sync {
     async fn archive_space(&self, _space: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
+    /// Open PR / Push / Merge locally / Keep as branch.
+    async fn ship_space(
+        &self,
+        _req: theodore_contract::ShipSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
     /// Theodore account (plan "Theodore account"): signed in or out, and
     /// whether the feature is configured at all.
     async fn account_status(&self) -> Result<AccountStatus, CommandError>;

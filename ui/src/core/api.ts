@@ -53,6 +53,7 @@ import type {
   SandboxFaultRequest,
   SandboxStatus,
   CreateSpaceRequest,
+  ShipSpaceRequest,
   Space,
   SpaceReviewRequest,
   SpaceSendRequest,
@@ -203,6 +204,7 @@ export const api = {
   spaceReview: (req: SpaceReviewRequest) =>
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),
+  shipSpace: (req: ShipSpaceRequest) => call<Space>('ship_space', { req }),
   /** Theodore account (Settings → Account, Onboarding). The sign-in
    *  dialog shows its own failures, so starting and polling don't toast. */
   accountStatus: () => call<AccountStatus>('account_status'),

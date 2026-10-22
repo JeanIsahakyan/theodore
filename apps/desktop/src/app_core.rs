@@ -351,6 +351,12 @@ impl CoreApi for AppCore {
     async fn archive_space(&self, space: String) -> Result<(), CommandError> {
         self.core.archive_space(&space).await.map_err(err)
     }
+    async fn ship_space(
+        &self,
+        req: theodore_contract::ShipSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.ship_space(req).await.map_err(err)
+    }
     async fn account_status(&self) -> Result<AccountStatus, CommandError> {
         self.core.account_status().await.map_err(err)
     }
