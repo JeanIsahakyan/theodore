@@ -132,6 +132,9 @@ const BranchList = observer(function BranchList({
       {branches.map((b) => {
         const match = branchPr(b.name, project.repo, items);
         const here = b.name === checkedOut;
+        // The default branch, or one with no commits of its own, has
+        // nothing to review against the default branch.
+        const reviewable = b.name !== project.default_branch && b.ahead > 0;
         return (
           <div
             key={b.name}
@@ -196,15 +199,17 @@ const BranchList = observer(function BranchList({
               )}
             </span>
             <span className="flex justify-end">
-              <Button
-                size="sm"
-                variant="tertiary"
-                className="whitespace-nowrap"
-                isPending={opening === b.name}
-                onPress={() => review(b)}
-              >
-                Review branch
-              </Button>
+              {reviewable && (
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  className="whitespace-nowrap"
+                  isPending={opening === b.name}
+                  onPress={() => review(b)}
+                >
+                  Review branch
+                </Button>
+              )}
             </span>
           </div>
         );
