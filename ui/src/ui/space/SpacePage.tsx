@@ -9,11 +9,12 @@ import type { MutableRefObject } from 'react';
 import {
   Archive,
   ArrowUpFromLine,
+  BranchesRight,
   ChevronDown,
-  CircleStop,
+  ChevronRight,
   CodeMerge,
   CodePullRequest,
-  PaperPlane,
+  Folder,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -23,11 +24,9 @@ import {
   Input,
   InputGroup,
   Label,
-  ListBox,
+  Modal,
   Popover,
-  Select,
   Switch,
-  TextArea,
   TextField,
   Tooltip,
   Typography,
@@ -40,11 +39,18 @@ import { FEATURES } from '../../features';
 import { setSetting } from '../../actions';
 
 import { useRootStore, useUi } from '../../stores/context';
-import { AgentTag, Hints, K, Shell, Spinner } from '../bits';
+import { AgentTag, Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { budgetStatus, fmtUsage } from '../SidePanel';
 import { latinKey, useViewKeys } from '../keys';
+import {
+  AgentChip,
+  ChipMenu,
+  Composer,
+  parseAgentChoice,
+  type AgentChoice,
+} from './Composer';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
 import {
@@ -633,87 +639,39 @@ const SpaceChat = observer(function SpaceChat({
         )}
         <div ref={end} />
       </div>
-      <div className="flex flex-col gap-2 border-t border-separator px-4 py-3">
-        <TextArea
-          ref={input}
-          rows={2}
-          fullWidth
-          aria-label="Message the agent"
+      <div className="flex flex-col gap-2 px-4 pb-3">
+        {space.status === 'failed' && space.error && (
+          <span
+            className="truncate px-2 text-xs text-danger"
+            title={space.error}
+          >
+            {space.error}
+          </span>
+        )}
+        <Composer
+          inputRef={input}
+          value={text}
+          onChange={setText}
+          onSubmit={send}
           placeholder={
             space.status === 'archived'
               ? 'Archived'
               : 'Ask the agent to change something…'
           }
-          value={text}
           disabled={space.status === 'archived'}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            } else if (e.key === 'Escape') {
-              // Leave the composer, so page keys work again.
-              e.stopPropagation();
-              e.currentTarget.blur();
-            }
-          }}
+          running={!!run}
+          onStop={() => void api.spaceStop(space.id).catch(() => {})}
+          chips={
+            <ChipMenu
+              ariaLabel="Mode"
+              label={MODES.find((m) => m.id === mode)?.label ?? mode}
+              items={MODES}
+              selected={mode}
+              onSelect={setMode}
+              isDisabled={locked}
+            />
+          }
         />
-        <div className="flex items-center gap-2">
-          {space.status === 'failed' && space.error && (
-            <span
-              className="min-w-0 flex-1 truncate text-xs text-danger"
-              title={space.error}
-            >
-              {space.error}
-            </span>
-          )}
-          <span className="flex-1" />
-          <Select
-            aria-label="Mode"
-            className="space-mode w-28"
-            value={mode}
-            isDisabled={!!run || space.status === 'archived'}
-            onChange={(v) => v && setMode(v as SpaceMode)}
-          >
-            <Select.Trigger>
-              {/* Just the mode's name here; its hint is in the list. */}
-              <Select.Value>{({ selectedText }) => selectedText}</Select.Value>
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox selectionMode="single">
-                {MODES.map((m) => (
-                  <ListBox.Item key={m.id} id={m.id} textValue={m.label}>
-                    <span className="flex flex-col">
-                      <span>{m.label}</span>
-                      <span className="text-xs text-muted">{m.hint}</span>
-                    </span>
-                    <ListBox.ItemIndicator />
-                  </ListBox.Item>
-                ))}
-              </ListBox>
-            </Select.Popover>
-          </Select>
-          {run ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onPress={() => void api.spaceStop(space.id).catch(() => {})}
-            >
-              <CircleStop className="size-3.5" />
-              Stop
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              isDisabled={!text.trim() || space.status === 'archived'}
-              onPress={send}
-            >
-              <PaperPlane className="size-3.5" />
-              Send
-            </Button>
-          )}
-        </div>
       </div>
     </>
   );
@@ -784,30 +742,35 @@ const SpaceChanges = observer(function SpaceChanges({
   );
 });
 
-/** New space: project, goal, optional name. Start creates the worktree and
- *  sends the goal as the first turn. */
+/** New space: a composer, not a form — say what you want; the project,
+ *  agent and base sit as chips around it. ⏎ creates and sends it as the
+ *  first turn; the space opens on that turn. */
 export const NewSpaceModal = observer(function NewSpaceModal() {
   const store = useRootStore();
   const ui = useUi();
   const ready = store.models.projects.where((p) => p.status === 'ready');
   const [project, setProject] = useState<string | null>(
-    ui.workspace !== ALL ? ui.workspace : (ready[0]?.id ?? null),
+    ui.workspace !== ALL && ready.some((p) => p.id === ui.workspace)
+      ? ui.workspace
+      : (ready[0]?.id ?? null),
   );
   const [goal, setGoal] = useState('');
-  const [name, setName] = useState('');
+  const [agent, setAgent] = useState<AgentChoice>('');
   const [busy, setBusy] = useState(false);
+  const chosen = ready.find((p) => p.id === project);
   const start = async () => {
-    if (!project || !goal.trim()) return;
+    if (!project || !goal.trim() || busy) return;
     setBusy(true);
     try {
+      const { agent: a, model } = parseAgentChoice(agent);
       const s = await api.createSpace({
         project,
         goal: goal.trim(),
-        name: name.trim() || null,
+        name: null,
         branch: null,
         base: null,
-        agent: null,
-        model: null,
+        agent: a,
+        model,
       });
       ui.closeModal();
       ui.go({ name: 'space', id: s.id });
@@ -818,61 +781,65 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
     }
   };
   return (
-    <Shell
-      title="New space"
-      onClose={() => ui.closeModal()}
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onPress={() => ui.closeModal()}>
-            Cancel
-          </Button>
-          <Button
-            isDisabled={!project || !goal.trim()}
-            isPending={busy}
-            onPress={() => void start()}
-          >
-            Start
-          </Button>
-        </div>
-      }
-    >
-      {ui.workspace === ALL && (
-        <Select
-          aria-label="Project"
-          value={project}
-          onChange={(v) => setProject(v ? String(v) : null)}
+    <Modal.Backdrop isOpen onOpenChange={(open) => !open && ui.closeModal()}>
+      <Modal.Container placement="top" className="mt-[14vh]">
+        <Modal.Dialog
+          aria-label="New space"
+          className="modal new-space flex w-[680px] max-w-[92vw] flex-col gap-3 p-3"
         >
-          <Label>Project</Label>
-          <Select.Trigger>
-            <Select.Value />
-            <Select.Indicator />
-          </Select.Trigger>
-          <Select.Popover>
-            <ListBox selectionMode="single">
-              {ready.map((p) => (
-                <ListBox.Item key={p.id} id={p.id} textValue={p.repo.name}>
-                  {p.repo.name}
-                  <ListBox.ItemIndicator />
-                </ListBox.Item>
-              ))}
-            </ListBox>
-          </Select.Popover>
-        </Select>
-      )}
-      <TextArea
-        rows={3}
-        fullWidth
-        autoFocus
-        aria-label="What should change?"
-        placeholder="What should change?"
-        value={goal}
-        onChange={(e) => setGoal(e.target.value)}
-      />
-      <TextField value={name} onChange={setName}>
-        <Label>Name (optional, from the goal)</Label>
-        <Input placeholder="retry-export-429" className="font-mono text-sm" />
-      </TextField>
-    </Shell>
+          <header className="flex items-center gap-1.5 px-1 text-sm">
+            {ready.length > 1 ? (
+              <ChipMenu
+                ariaLabel="Project"
+                label={chosen ? chosen.repo.name : 'Project'}
+                icon={<Folder className="size-3.5" />}
+                items={ready.map((p) => ({
+                  id: p.id,
+                  label: p.repo.name,
+                  hint: p.path ?? `${p.repo.owner}/${p.repo.name}`,
+                }))}
+                selected={project ?? ''}
+                onSelect={setProject}
+              />
+            ) : (
+              <span className="flex items-center gap-1.5 px-2 text-xs">
+                <Folder className="size-3.5 text-muted" />
+                {chosen?.repo.name}
+              </span>
+            )}
+            <ChevronRight className="size-3 text-muted" />
+            <span className="font-medium">New space</span>
+            <span className="flex-1" />
+            <Modal.CloseTrigger aria-label="Close" className="static" />
+          </header>
+          <Composer
+            value={goal}
+            onChange={setGoal}
+            onSubmit={() => void start()}
+            placeholder="What do you want to work on?"
+            rows={5}
+            autoFocus
+            disabled={busy || !project}
+            submit={busy ? 'Creating…' : 'Create'}
+            chips={
+              <>
+                <AgentChip value={agent} onChange={setAgent} />
+                {chosen?.default_branch && (
+                  <span className="flex items-center gap-1 px-2 text-xs text-muted">
+                    <BranchesRight className="size-3.5" />
+                    from {chosen.default_branch}
+                  </span>
+                )}
+              </>
+            }
+          />
+          <span className="px-2 text-xs text-muted">
+            The agent works in its own worktree — your checkout is never
+            touched. <K>⇧⏎</K> new line.
+          </span>
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
   );
 });
 
