@@ -6,6 +6,7 @@ import {
   CircleCheckFill,
   CircleInfo,
   Cpu,
+  Cubes3,
   Flask,
   Folder,
   Gear,
@@ -13,10 +14,10 @@ import {
   Keyboard,
   Lock,
   LogoGithub,
+  Person,
   PlugConnection,
 } from '@gravity-ui/icons';
 import {
-  Alert,
   Button,
   Card,
   Chip,
@@ -70,13 +71,12 @@ const BUDGET_KEY = 'budget.per_pr_usd';
 
 /** Settings pages. */
 const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
-  { id: 'account', title: 'Account', icon: <LogoGithub /> },
+  { id: 'account', title: 'Account', icon: <Person /> },
   { id: 'agents', title: 'Agents', icon: <Cpu /> },
   { id: 'integrations', title: 'Integrations', icon: <PlugConnection /> },
   { id: 'projects', title: 'Projects', icon: <Folder /> },
-  { id: 'updates', title: 'Updates', icon: <ArrowRotateRight /> },
-  { id: 'about', title: 'About', icon: <CircleInfo /> },
-  { id: 'sandbox', title: 'Sandbox', icon: <Flask /> },
+  { id: 'about', title: 'About & updates', icon: <CircleInfo /> },
+  { id: 'sandbox', title: 'Sandbox', icon: <Cubes3 /> },
   { id: 'labs', title: 'Labs', icon: <Flask /> },
 ];
 
@@ -86,8 +86,8 @@ const SUB: Record<Page, string> = {
   agents: 'Agent CLIs on this computer, and which one handles each task.',
   integrations: 'Other tools Theodore can link PRs to.',
   projects: 'Connected repositories and the settings effective in each.',
-  updates: 'Check for and install new versions of Theodore.',
-  about: 'Version and release channel.',
+  updates: 'Version, release channel and updates.',
+  about: 'Version, release channel and updates.',
   sandbox: 'The simulated host this window runs against: faults and timeline.',
   labs: 'Hidden features in progress. They may change or go away.',
 };
@@ -146,7 +146,7 @@ export const SettingsNav = observer(function SettingsNav({
       <ListBox
         aria-label="Settings pages"
         selectionMode="single"
-        selectedKeys={[page]}
+        selectedKeys={[page === 'updates' ? 'about' : page]}
         onSelectionChange={(keys) => {
           const k = keys === 'all' ? undefined : [...keys][0];
           if (k) ui.go({ name: 'settings', page: k as Page });
@@ -918,26 +918,8 @@ const AboutPage = observer(function AboutPage() {
           <Gear className="size-4 text-muted" />
           <span className="font-medium">Theodore {info.version}</span>
         </div>
-        <span className="text-muted">Channel: {info.channel}</span>
-        {info.update && (
-          <Alert status="default">
-            <Alert.Indicator />
-            <Alert.Content>
-              <Alert.Description>
-                Update available: v{info.update.version}
-              </Alert.Description>
-            </Alert.Content>
-          </Alert>
-        )}
-        <Switch size="sm" isSelected aria-label="Automatic updates" isDisabled>
-          <Switch.Content>
-            <Switch.Control>
-              <Switch.Thumb />
-            </Switch.Control>
-            Check for updates automatically
-          </Switch.Content>
-        </Switch>
       </Card>
+      <UpdatesPage />
       <Card
         variant="secondary"
         className="flex flex-row items-center gap-3 p-4"
@@ -978,7 +960,9 @@ export const SettingsPage = observer(function SettingsPage({
 }) {
   const store = useRootStore();
   const labs = isLabsVisible(store);
-  const title = PAGES.find((p) => p.id === page)?.title ?? 'Settings';
+  // `updates` is an old page id: it now lives on About & updates.
+  const shown: Page = page === 'updates' ? 'about' : page;
+  const title = PAGES.find((p) => p.id === shown)?.title ?? 'Settings';
   return (
     <div className="view settings-page flex min-w-0 flex-1 flex-col overflow-auto">
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-8 py-8">
@@ -994,8 +978,6 @@ export const SettingsPage = observer(function SettingsPage({
           <IntegrationsPage />
         ) : page === 'projects' ? (
           <ProjectsPage />
-        ) : page === 'updates' ? (
-          <UpdatesPage />
         ) : page === 'sandbox' ? (
           <SandboxPage />
         ) : page === 'labs' ? (
