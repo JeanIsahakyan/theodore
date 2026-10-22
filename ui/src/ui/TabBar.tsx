@@ -88,15 +88,21 @@ export const TabBar = observer(function TabBar({
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [selectedKey]);
   // Fade whichever edge has tabs scrolled out of view behind it.
+  // The tab set, not just its size: a workspace switch can swap in as
+  // many tabs of a different width.
+  const tabSet = ui.tabs.map(key).join('|');
   const [edges, setEdges] = useState({ left: false, right: false });
   useEffect(() => {
     const list =
       listRef.current?.querySelector<HTMLElement>('[role="tablist"]');
     if (!list) return;
+    // A few px of slack: a tab's close button hangs a little past its
+    // edge, which isn't "scrolled out of view" and mustn't fade the tab.
+    const SLACK = 8;
     const update = () =>
       setEdges({
-        left: list.scrollLeft > 1,
-        right: list.scrollLeft + list.clientWidth < list.scrollWidth - 1,
+        left: list.scrollLeft > SLACK,
+        right: list.scrollLeft + list.clientWidth < list.scrollWidth - SLACK,
       });
     update();
     list.addEventListener('scroll', update, { passive: true });
@@ -107,7 +113,7 @@ export const TabBar = observer(function TabBar({
       list.removeEventListener('scroll', update);
       ro?.disconnect();
     };
-  }, [ui.tabs.length]);
+  }, [tabSet]);
   return (
     <Toolbar
       aria-label="Tabs"
