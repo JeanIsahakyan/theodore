@@ -280,8 +280,11 @@ export function ReviewerStrip({ reviewers }: { reviewers: Reviewer[] }) {
  *  people, not teams. */
 export const ReviewerPicker = observer(function ReviewerPicker({
   pr,
+  compact = false,
 }: {
   pr: PrId;
+  /** Icon only, for a narrow header. */
+  compact?: boolean;
 }) {
   const store = useRootStore();
   const [open, setOpen] = useState(false);
@@ -302,9 +305,15 @@ export const ReviewerPicker = observer(function ReviewerPicker({
 
   return (
     <Dropdown isOpen={open} onOpenChange={setOpen}>
-      <Button size="sm" variant="tertiary" className="reviewer-picker gap-1.5">
+      <Button
+        size="sm"
+        variant="tertiary"
+        className="reviewer-picker shrink-0 gap-1.5"
+        isIconOnly={compact}
+        aria-label="Reviewers"
+      >
         <PersonPlus className="size-4" />
-        Reviewers
+        {!compact && 'Reviewers'}
       </Button>
       <Dropdown.Popover placement="bottom end">
         {users === 'loading' || users === null ? (

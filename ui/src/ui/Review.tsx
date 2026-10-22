@@ -1,3 +1,4 @@
+import { useElementWidth } from './useElementWidth';
 import { REVIEW_EVENT } from '../core/menu';
 import { DiffSkeleton } from './Loading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -80,41 +81,23 @@ const lastSeenKey = (pr: PrId) => `${STORAGE_NS}theodore-lastseen:${pr}`;
  *  anything. */
 const GROUPS_BREAKPOINT = 1060;
 const ASIDE_BREAKPOINT = 1280;
+/** Below this the header's buttons go icon-only and the breadcrumb drops
+ *  the repo, so the title keeps some room (the tab carries it anyway). */
+const HEADER_BREAKPOINT = 820;
 export const DIFF_MIN = 520;
 
 export type ReviewLayout = {
   groups: 'column' | 'drawer';
   aside: 'column' | 'drawer';
+  header: 'full' | 'compact';
 };
 
 export function layoutFor(width: number): ReviewLayout {
   return {
     groups: width < GROUPS_BREAKPOINT ? 'drawer' : 'column',
     aside: width < ASIDE_BREAKPOINT ? 'drawer' : 'column',
+    header: width < HEADER_BREAKPOINT ? 'compact' : 'full',
   };
-}
-
-/** Tracks an element's rendered width. No-op where `ResizeObserver` doesn't
- *  exist (tests) — callers get one read of `window.innerWidth` and nothing
- *  ever updates, which is fine since nothing in this file is DOM-rendered
- *  under vitest today. */
-function useElementWidth(ref: { current: HTMLElement | null }): number {
-  const [width, setWidth] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth : ASIDE_BREAKPOINT,
-  );
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w != null) setWidth(w);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ref]);
-  return width;
 }
 
 function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
@@ -130,8 +113,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const ui = useUi();
   const rootRef = useRef<HTMLDivElement>(null);
-  const width = useElementWidth(rootRef);
+  const width = useElementWidth(rootRef, ASIDE_BREAKPOINT);
   const layout = layoutFor(width);
+  const compact = layout.header === 'compact';
   // Groups-pane drawer is page-local — unlike `ui.aside`, which the user may
   // also toggle off at wide widths, this only ever matters once collapsed.
   const [groupsOpen, setGroupsOpen] = useState(false);
@@ -550,13 +534,15 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             </Tooltip.Content>
           </Tooltip>
         )}
-        <div className="rv-title flex min-w-0 flex-1 items-center gap-3">
+        <div className="rv-title flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           {summary ? (
             <>
               <Breadcrumbs className="shrink-0 text-sm">
-                <Breadcrumbs.Item onPress={() => ui.goBack()}>
-                  {summary.pr.repo.owner}/{summary.pr.repo.name}
-                </Breadcrumbs.Item>
+                {!compact && (
+                  <Breadcrumbs.Item onPress={() => ui.goBack()}>
+                    {summary.pr.repo.owner}/{summary.pr.repo.name}
+                  </Breadcrumbs.Item>
+                )}
                 <Breadcrumbs.Item>
                   {branchReview ? summary.head_ref : `#${summary.pr.number}`}
                 </Breadcrumbs.Item>
@@ -584,7 +570,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         </div>
         <ToggleButton
           size="sm"
-          className="gap-1.5"
+          className="shrink-0 gap-1.5"
+          isIconOnly={compact}
+          aria-label="Tour"
           isSelected={tour !== null}
           onChange={() => (tour === null ? startTour() : setTour(null))}
         >
@@ -593,8 +581,12 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           ) : (
             <Stop className="size-4" />
           )}
-          Tour
-          <K>T</K>
+          {!compact && (
+            <>
+              Tour
+              <K>T</K>
+            </>
+          )}
         </ToggleButton>
         {!local && mine && summary && !finished && (
           <Btn
@@ -616,23 +608,29 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         )}
         {/* A merged or closed PR takes no more reviews, reviewers or merges. */}
         {!finished && !branchReview && (
-          <Btn tone="primary" onPress={() => ui.openModal('submit')}>
-            Submit review
+          <Btn
+            tone="primary"
+            className="shrink-0"
+            onPress={() => ui.openModal('submit')}
+          >
+            {compact ? 'Submit' : 'Submit review'}
           </Btn>
         )}
         {!local && !finished && FEATURES.hostWrites && (
-          <ReviewerPicker pr={pr} />
+          <ReviewerPicker pr={pr} compact={compact} />
         )}
         {!local && !finished && (
           <Tooltip>
             <Btn
               tone={mergeBlock ? 'tertiary' : 'success'}
               icon={<CodeMerge />}
-              className="merge-btn"
+              className="merge-btn shrink-0"
+              isIconOnly={compact}
+              aria-label="Merge"
               isDisabled={!FEATURES.hostWrites}
               onPress={() => setMergeOpen(true)}
             >
-              Merge
+              {!compact && 'Merge'}
             </Btn>
             <Tooltip.Content>
               {!FEATURES.hostWrites
@@ -647,10 +645,12 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           <Btn
             tone="tertiary"
             icon={<Xmark />}
-            className="close-review"
+            className="close-review shrink-0"
+            isIconOnly={compact}
+            aria-label="Close review"
             onPress={() => void closeBranchReview(store, pr)}
           >
-            Close review
+            {!compact && 'Close review'}
           </Btn>
         )}
         <Tooltip>
