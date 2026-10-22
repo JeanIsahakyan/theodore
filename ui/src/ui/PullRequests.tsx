@@ -4,7 +4,7 @@
  * projects it spans every repo and each row names its repo. The filter is
  * saved per workspace (`UiStore.prsFilter`).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BranchesRight, CodePullRequest, Xmark } from '@gravity-ui/icons';
 import { Button, Chip, Tabs, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
@@ -14,7 +14,16 @@ import { ALL } from '../core/workspaces';
 import { useRootStore, useUi } from '../stores/context';
 import { Avatar, CheckIcon, Empty, Hints, K } from './bits';
 import { useContextMenu } from './ContextMenu';
-import { PeekToggle, PrRow, RowList, ViewHeader, ago } from './List';
+import {
+  PEEK_FITS_FROM,
+  PeekToggle,
+  PrRow,
+  RowList,
+  ViewHeader,
+  ago,
+  peekFits,
+} from './List';
+import { useElementWidth } from './useElementWidth';
 import { RowsSkeleton } from './Loading';
 import { Peek } from './Peek';
 import { branchReviewMenu, closeBranchReview } from './project/closeReview';
@@ -217,6 +226,8 @@ export const PullRequests = observer(function PullRequests() {
   const filter = ui.prsFilter;
   // Per filter, a group the user opened or closed; else its default.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const pageRef = useRef<HTMLDivElement>(null);
+  const fits = peekFits(useElementWidth(pageRef, PEEK_FITS_FROM));
 
   useEffect(() => {
     void loadViewer(store);
@@ -258,9 +269,9 @@ export const PullRequests = observer(function PullRequests() {
             </Tabs.List>
           </Tabs.ListContainer>
         </Tabs>
-        <PeekToggle on={ui.peek} toggle={() => ui.togglePeek()} />
+        <PeekToggle on={ui.peek} fits={fits} toggle={() => ui.togglePeek()} />
       </ViewHeader>
-      <div className="flex min-h-0 flex-1">
+      <div ref={pageRef} className="flex min-h-0 flex-1">
         <RowList
           groups={groups}
           sel={ui.selected}
@@ -304,7 +315,7 @@ export const PullRequests = observer(function PullRequests() {
             )
           }
         />
-        {ui.peek && ui.selected && order.includes(ui.selected) && (
+        {ui.peek && fits && ui.selected && order.includes(ui.selected) && (
           <Peek id={ui.selected} />
         )}
       </div>

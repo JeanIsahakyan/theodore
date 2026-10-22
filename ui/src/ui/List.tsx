@@ -1,5 +1,6 @@
+import { useElementWidth } from './useElementWidth';
 import { RowsSkeleton } from './Loading';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ComponentProps, Key, ReactNode } from 'react';
 import {
   ArrowRotateLeft,
@@ -841,23 +842,42 @@ function DisplayButton({
   );
 }
 
+/** The list keeps at least this much room; Peek only shows beside it when
+ *  the page is at least this plus Peek's own minimum width. */
+const LIST_MIN_WIDTH = 560;
+const PEEK_MIN_WIDTH = 280;
+export const PEEK_FITS_FROM = LIST_MIN_WIDTH + PEEK_MIN_WIDTH;
+
+/** Whether Peek fits beside the list in a page `width` px wide. Narrower,
+ *  it hides itself — `ui.peek` stays on and it comes back on widening. */
+export function peekFits(width: number): boolean {
+  return width >= PEEK_FITS_FROM;
+}
+
 export function PeekToggle({
   on,
   toggle,
+  fits = true,
 }: {
   on: boolean;
   toggle: () => void;
+  /** `false` when the window is too narrow for Peek beside the list. */
+  fits?: boolean;
 }) {
   return (
-    <ToggleButton
-      size="sm"
-      className="gap-1.5"
-      isSelected={on}
-      onChange={toggle}
-    >
-      <LayoutSideContentRight className="size-4" />
-      Peek
-    </ToggleButton>
+    <Tooltip isDisabled={fits}>
+      <ToggleButton
+        size="sm"
+        className="gap-1.5"
+        isSelected={on && fits}
+        isDisabled={!fits}
+        onChange={toggle}
+      >
+        <LayoutSideContentRight className="size-4" />
+        Peek
+      </ToggleButton>
+      <Tooltip.Content>Widen the window to show Peek</Tooltip.Content>
+    </Tooltip>
   );
 }
 
@@ -975,6 +995,8 @@ export const Inbox = observer(function Inbox() {
   const store = useRootStore();
   const ui = useUi();
   const [refreshing, setRefreshing] = useState(false);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const fits = peekFits(useElementWidth(pageRef, PEEK_FITS_FROM));
   // Per workspace, in its UI snapshot.
   const showDone = ui.inboxShowDone;
   const setShowDone = (v: boolean) => ui.setInboxShowDone(v);
@@ -1037,9 +1059,9 @@ export const Inbox = observer(function Inbox() {
           showDone={showDone}
           setShowDone={setShowDone}
         />
-        <PeekToggle on={ui.peek} toggle={() => ui.togglePeek()} />
+        <PeekToggle on={ui.peek} fits={fits} toggle={() => ui.togglePeek()} />
       </ViewHeader>
-      <div className="flex min-h-0 flex-1">
+      <div ref={pageRef} className="flex min-h-0 flex-1">
         <ListBody
           groups={groups}
           sel={ui.selected}
@@ -1070,7 +1092,7 @@ export const Inbox = observer(function Inbox() {
             )
           }
         />
-        {ui.peek && ui.selected && <Peek id={ui.selected} />}
+        {ui.peek && fits && ui.selected && <Peek id={ui.selected} />}
       </div>
       <ListHints />
       {ui.picked.length > 0 && (

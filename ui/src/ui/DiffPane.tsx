@@ -1,3 +1,4 @@
+import { useElementWidth } from './useElementWidth';
 import { MarkdownDiff } from './MarkdownDiff';
 import { isMarkdown } from './mdDiff';
 import { ImageDiffCard } from './media/ImageDiffCard';
@@ -228,29 +229,6 @@ function useMountedNear(
   return mounted || force;
 }
 
-/** Tracks an element's rendered width (see `Review.tsx`'s twin of this —
- *  not shared, each file owns its own small copy). No-op without
- *  `ResizeObserver` (tests): one read of `clientWidth`/`innerWidth`, then
- *  it never updates. */
-function useElementWidth(ref: { current: HTMLElement | null }): number {
-  const [width, setWidth] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth : SPLIT_MIN_WIDTH,
-  );
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w != null) setWidth(w);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ref]);
-  return width;
-}
-
 export const DiffPane = observer(function DiffPane({
   pr,
   rev,
@@ -300,7 +278,7 @@ export const DiffPane = observer(function DiffPane({
   const store = useRootStore();
   const ui = useUi();
   const mainRef = useRef<HTMLDivElement>(null);
-  const diffWidth = useElementWidth(mainRef);
+  const diffWidth = useElementWidth(mainRef, SPLIT_MIN_WIDTH);
   // Split needs room for two readable halves; below that, unified is more
   // useful than two unreadably-thin columns.
   const splitRequested = ui.diffView === 'split';
