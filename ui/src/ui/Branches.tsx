@@ -31,6 +31,9 @@ import { isSpaceReview } from './space/spaces';
 // and the commit column takes what's left (and truncates).
 const COLS =
   'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_56px_112px] items-center gap-3';
+// A local folder has no host PRs: no PR column.
+const COLS_LOCAL =
+  'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_112px] items-center gap-3';
 
 const BranchList = observer(function BranchList({
   project,
@@ -54,6 +57,8 @@ const BranchList = observer(function BranchList({
     .sort((a, b) => b.updated_at - a.updated_at);
   const checkedOut = working?.current_branch ?? null;
   const dirty = working?.dirty_files ?? 0;
+  const hasPrs = !isLocalFolder(project);
+  const cols = hasPrs ? COLS : COLS_LOCAL;
 
   useEffect(() => {
     let live = true;
@@ -121,12 +126,12 @@ const BranchList = observer(function BranchList({
         </section>
       )}
       <div
-        className={`${COLS} sticky top-0 z-[1] border-b border-separator bg-background py-2 text-xs text-muted`}
+        className={`${cols} sticky top-0 z-[1] border-b border-separator bg-background py-2 text-xs text-muted`}
       >
         <span>branch</span>
         <span>last commit</span>
         <span className="whitespace-nowrap text-right">ahead / behind</span>
-        <span>PR</span>
+        {hasPrs && <span>PR</span>}
         <span />
       </div>
       {branches.map((b) => {
@@ -138,7 +143,7 @@ const BranchList = observer(function BranchList({
         return (
           <div
             key={b.name}
-            className={`${COLS} border-b border-separator py-2.5 last:border-b-0`}
+            className={`${cols} border-b border-separator py-2.5 last:border-b-0`}
           >
             <span
               className="flex min-w-0 items-center gap-1.5 font-mono text-sm"
@@ -184,20 +189,22 @@ const BranchList = observer(function BranchList({
             <span className="whitespace-nowrap text-right text-xs tabular-nums text-muted">
               +{b.ahead} / −{b.behind}
             </span>
-            <span className="text-xs">
-              {match ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-1.5 font-mono text-xs"
-                  onPress={() => ui.go({ name: 'review', pr: match.id })}
-                >
-                  #{match.pr.number}
-                </Button>
-              ) : (
-                <span className="text-muted">—</span>
-              )}
-            </span>
+            {hasPrs && (
+              <span className="text-xs">
+                {match ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5 font-mono text-xs"
+                    onPress={() => ui.go({ name: 'review', pr: match.id })}
+                  >
+                    #{match.pr.number}
+                  </Button>
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </span>
+            )}
             <span className="flex justify-end">
               {reviewable && (
                 <Button
