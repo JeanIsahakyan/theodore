@@ -400,7 +400,7 @@ impl Core {
             if done_at.is_none()
                 && let Some(pr) = &space.pr
             {
-                if let Some(pr_ref) = self.pr_ref(pr).await
+                if let Some(pr_ref) = self.space_pr_ref(&space, pr).await
                     && self.pr_state(pr).await != Some(PrState::Merged)
                 {
                     self.refresh_pr(pr, &pr_ref).await;
@@ -425,6 +425,22 @@ impl Core {
                 });
             }
         }
+    }
+
+    /// The host ref of a space's PR: the stored row's, else rebuilt from
+    /// the project and the number (the first fetch after opening it may
+    /// have failed).
+    async fn space_pr_ref(&self, space: &Space, pr: &theodore_domain::PrId) -> Option<PrRef> {
+        if let Some(r) = self.pr_ref(pr).await {
+            return Some(r);
+        }
+        let number = pr.0.rsplit_once('#')?.1.parse().ok()?;
+        let project = self.project_row(&space.project).await.ok()??;
+        Some(PrRef {
+            repo: project.repo,
+            number,
+            host_id: None,
+        })
     }
 
     async fn pr_state(&self, pr: &theodore_domain::PrId) -> Option<PrState> {

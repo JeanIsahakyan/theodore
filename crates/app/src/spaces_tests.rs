@@ -127,7 +127,7 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     let s = idle(&f, &created.id).await;
 
     assert_eq!(s.name, "fix-the-login-redirect");
-    assert_eq!(s.branch, "theo/fix-the-login-redirect");
+    assert_eq!(s.branch, "space/fix-the-login-redirect");
     assert_eq!(s.base, "main");
     assert_eq!(s.base_sha, Sha::new("base000"));
     assert_eq!(s.status, SpaceStatus::Idle);
@@ -170,7 +170,7 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     let pr: PrSummary =
         serde_json::from_value(f.store.get(models::PR, &review.0).unwrap().unwrap().data).unwrap();
     assert_eq!(pr.title, "fix-the-login-redirect");
-    assert_eq!(pr.head_ref, "theo/fix-the-login-redirect");
+    assert_eq!(pr.head_ref, "space/fix-the-login-redirect");
     assert_eq!(pr.base_ref, "main");
     assert!(pr.url.is_empty());
     assert_eq!(f.grouper.last_agent(), None);
