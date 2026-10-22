@@ -88,6 +88,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::space_stop,
             commands::space_review,
             commands::archive_space,
+            commands::ship_space,
             commands::account_status,
             commands::account_sign_in_start,
             commands::account_sign_in_poll,

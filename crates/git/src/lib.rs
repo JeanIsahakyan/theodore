@@ -22,6 +22,7 @@ mod parse;
 mod process;
 pub use process::isolate_from_user_config;
 mod safety;
+mod ship;
 mod spaces;
 mod worktree;
 
@@ -32,7 +33,7 @@ use async_trait::async_trait;
 use theodore_domain::{PrRef, RepoRef, Revision, Sha};
 use theodore_ports::{
     BranchInfo, CommitLog, ConflictEntry, CredentialSource, DiffOptions, GitError, GitPort,
-    GitResult, GrepHit, WorkingState, Worktree,
+    GitResult, GrepHit, Identity, SpaceCommit, WorkingState, Worktree,
 };
 
 use process::GitProc;
@@ -343,6 +344,55 @@ impl GitPort for GitCli {
 
     async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {
         self.remove_space_worktree_op(repo, space).await
+    }
+
+    async fn user_identity(&self, repo: &Path) -> GitResult<Option<Identity>> {
+        self.user_identity_op(repo).await
+    }
+
+    async fn space_commit(&self, repo: &Path, space: &str, c: &SpaceCommit) -> GitResult<Sha> {
+        self.space_commit_op(repo, space, c).await
+    }
+
+    async fn remote_branch(
+        &self,
+        repo: &Path,
+        repo_ref: &RepoRef,
+        branch: &str,
+    ) -> GitResult<Option<Sha>> {
+        self.remote_branch_op(repo, repo_ref, branch).await
+    }
+
+    async fn push_branch(
+        &self,
+        repo: &Path,
+        repo_ref: &RepoRef,
+        sha: &Sha,
+        branch: &str,
+    ) -> GitResult<()> {
+        self.push_branch_op(repo, repo_ref, sha, branch).await
+    }
+
+    async fn merge_into_folder(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        self.merge_into_folder_op(folder, repo, space, message)
+            .await
+    }
+
+    async fn write_folder_branch(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        branch: &str,
+    ) -> GitResult<()> {
+        self.write_folder_branch_op(folder, repo, space, branch)
+            .await
     }
 }
 

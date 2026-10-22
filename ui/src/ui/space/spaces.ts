@@ -86,6 +86,83 @@ export function turnEnded(
   return { level: 'info', text: `${next.name}: turn done` };
 }
 
+/** Per-space spend limit (docs/spaces.md §12), its own key — not the PR
+ *  review budget. */
+export const SPACE_BUDGET_KEY = 'budget.per_space_usd';
+/** Days after a space is done before it archives itself; 0 = never. */
+export const AUTO_ARCHIVE_KEY = 'spaces.auto_archive_days';
+export const DEFAULT_AUTO_ARCHIVE_DAYS = 7;
+
+/** `budget.per_space_usd` for a repo: its `repo:<slug>` row (from the
+ *  repo's `.review/config.yaml`) wins over the user's. `null` = no limit. */
+export function spaceBudget(
+  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+  repoSlug: string,
+): number | null {
+  const rows = settings.filter((s) => s.key === SPACE_BUDGET_KEY);
+  const row =
+    rows.find((s) => s.scope === `repo:${repoSlug}`) ??
+    rows.find((s) => s.scope === 'user');
+  return typeof row?.value === 'number' && row.value > 0 ? row.value : null;
+}
+
+/** `spaces.auto_archive_days`, user scope; unset or invalid = 7. */
+export function autoArchiveDays(
+  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+): number {
+  const v = userSetting(settings, AUTO_ARCHIVE_KEY)?.value;
+  return typeof v === 'number' && v >= 0 && Number.isFinite(v)
+    ? Math.floor(v)
+    : DEFAULT_AUTO_ARCHIVE_DAYS;
+}
+
+/** "$0.42 / $5.00", or just "$0.42" without a budget. */
+export function fmtSpend(usd: number, budget: number | null): string {
+  const spent = `$${usd.toFixed(2)}`;
+  return budget == null ? spent : `${spent} / $${budget.toFixed(2)}`;
+}
+
+/** Where a space is in its lifecycle (docs/spaces.md §1). `opening`: the
+ *  branch is pushed and the PR is being opened (or the attempt failed —
+ *  Open PR again is safe, it never opens a second one). */
+export type SpaceStage =
+  'drafting' | 'opening' | 'in_review' | 'merged_locally' | 'branch' | 'done';
+
+export function spaceStage(
+  s: Pick<Space, 'pr' | 'shipped' | 'done_at'>,
+  prState?: PrSummary['state'],
+): SpaceStage {
+  if (s.shipped?.how === 'merged_locally') return 'merged_locally';
+  if (s.shipped?.how === 'branch') return 'branch';
+  if (s.pr) return prState === 'merged' || s.done_at ? 'done' : 'in_review';
+  if (s.shipped?.how === 'pr') return 'opening';
+  return 'drafting';
+}
+
+export const STAGE_LABEL: Record<SpaceStage, string> = {
+  drafting: 'Drafting',
+  opening: 'Opening PR',
+  in_review: 'In review',
+  merged_locally: 'Merged locally',
+  branch: 'Kept as branch',
+  done: 'Merged',
+};
+
+/** Turns since the last ship that a Push would send. */
+export function unshipped(s: Pick<Space, 'shipped' | 'head_sha'>): boolean {
+  return s.shipped != null && s.shipped.head !== s.head_sha;
+}
+
+/** The title Open PR / Merge locally proposes: the goal's first line,
+ *  else the space's name. */
+export function defaultTitle(s: Pick<Space, 'goal' | 'name'>): string {
+  const line = s.goal
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  return line ?? s.name;
+}
+
 /** "3 files +42 −7" for the changes pane header. */
 export function diffStat(
   files: { additions: number; deletions: number }[],

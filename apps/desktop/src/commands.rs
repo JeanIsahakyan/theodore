@@ -629,6 +629,15 @@ pub async fn archive_space(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn ship_space(
+    req: theodore_contract::ShipSpaceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.ship_space(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn account_status(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<theodore_contract::AccountStatus, CommandError> {

@@ -37,8 +37,32 @@ pub(crate) async fn run(inner: Arc<Inner>) {
     tokio::join!(
         poll_open_prs(inner.clone()),
         poll_inbox(inner.clone()),
-        poll_projects(inner)
+        poll_projects(inner.clone()),
+        poll_spaces(inner)
     );
+}
+
+/// Shipped spaces (docs/spaces.md §1): notices a space's PR merging and
+/// archives done spaces after `spaces.auto_archive_days`.
+const SPACES_SWEEP_MS: i64 = 60_000;
+
+async fn poll_spaces(inner: Arc<Inner>) {
+    let core = Core(inner.clone());
+    let mut next_due = inner.deps.clock.now() + SPACES_SWEEP_MS;
+    loop {
+        if inner.shutdown.is_cancelled() {
+            return;
+        }
+        let now = inner.deps.clock.now();
+        if now >= next_due {
+            next_due = now + SPACES_SWEEP_MS;
+            core.sweep_spaces().await;
+        }
+        tokio::select! {
+            _ = inner.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(REAL_TICK_MS)) => {},
+        }
+    }
 }
 
 /// Keeps host projects' PR lists fresh without the page open: every

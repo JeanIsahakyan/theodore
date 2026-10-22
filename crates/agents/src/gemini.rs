@@ -28,7 +28,7 @@ pub const SETTINGS_PATH_ENV_VAR: &str = "GEMINI_CLI_SYSTEM_SETTINGS_PATH";
 fn core_tools(mode: AgentMode) -> Vec<&'static str> {
     match mode {
         AgentMode::ReadOnly => vec!["ReadFileTool", "GlobTool", "SearchTextTool"],
-        AgentMode::Edit => {
+        AgentMode::Edit | AgentMode::Run => {
             vec![
                 "ReadFileTool",
                 "GlobTool",
@@ -81,6 +81,8 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         match req.mode {
             AgentMode::ReadOnly => "default",
             AgentMode::Edit => "auto_edit",
+            // Shell commands too, without asking.
+            AgentMode::Run => "yolo",
         }
         .to_string(),
     );
@@ -348,5 +350,27 @@ mod tests {
             model: None,
             stall_after_ms: 1000,
         }
+    }
+}
+
+#[cfg(test)]
+mod run_mode_tests {
+    use super::*;
+
+    #[test]
+    fn run_mode_may_edit_and_run_commands() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Gemini,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::Run,
+            mcp: None,
+            model: None,
+            stall_after_ms: 1000,
+        };
+        let args = build_args(&req, &Default::default());
+        assert!(args.windows(2).any(|w| w == ["--approval-mode", "yolo"]));
+        assert!(core_tools(AgentMode::Run).contains(&"ShellTool"));
     }
 }

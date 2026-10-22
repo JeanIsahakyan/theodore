@@ -102,6 +102,7 @@ export const commands = {
 	spaceStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("space_stop", { space })),
 	spaceReview: (req: SpaceReviewRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("space_review", { req })),
 	archiveSpace: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("archive_space", { space })),
+	shipSpace: (req: ShipSpaceRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("ship_space", { req })),
 	accountStatus: () => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_status")),
 	accountSignInStart: (req: AccountSignInRequest) => typedError<AccountSignInStart, CommandError>(__TAURI_INVOKE("account_sign_in_start", { req })),
 	accountSignInPoll: () => typedError<AccountSignInState, CommandError>(__TAURI_INVOKE("account_sign_in_poll")),
@@ -259,7 +260,7 @@ export type CreateSpaceRequest = {
 	goal: string,
 	/**  Defaults to a slug of the goal. */
 	name?: string | null,
-	/**  Defaults to `theo/<name>`. */
+	/**  Defaults to `<host login>/<name>` (`space/<name>` without a login). */
 	branch?: string | null,
 	/**  Defaults to the project's default branch. */
 	base?: string | null,
@@ -751,6 +752,38 @@ export type SetTokenRequest = {
 
 export type Sha = string;
 
+/**  What "ship" does (docs/spaces.md §1, §12). */
+export type ShipAction =
+/**  Host project: squash, push the branch, open a ready PR. */
+"open_pr" |
+/**  Same, as a draft. */
+"open_draft_pr" |
+/**  The space has a PR: push the turns since as one new commit. */
+"push" |
+/**  Local folder: merge into its checked-out branch. */
+"merge_locally" |
+/**  Local folder: write the branch only. */
+"keep_branch";
+
+/**  How a space was shipped (docs/spaces.md §1). */
+export type ShipKind =
+/**  Pushed to the host; `Space::pr` is (or is about to be) its PR. */
+"pr" |
+/**  Merged into a local folder's checked-out branch. */
+"merged_locally" |
+/**  Written as a branch in a local folder. */
+"branch";
+
+export type ShipSpaceRequest = {
+	space: string,
+	action: ShipAction,
+	/**
+	 *  Commit message / PR title; defaults to the goal's first line (Push:
+	 *  the latest message since the last push).
+	 */
+	title?: string | null,
+};
+
 export type Side = "old" | "new";
 
 export type SkillBody = {
@@ -779,7 +812,10 @@ export type Space = {
 	name: string,
 	/**  What the space is for; sent as the first turn. */
 	goal: string,
-	/**  Branch name the work is pushed to once shipped (`theo/<slug>`). */
+	/**
+	 *  Branch name the work is shipped as: `<host login>/<slug>`, or
+	 *  `space/<slug>` with no login (a local folder, or offline).
+	 */
 	branch: string,
 	/**  Base branch name, and the commit the space forked from. */
 	base: string,
@@ -805,6 +841,13 @@ export type Space = {
 	 */
 	run?: string | null,
 	error?: string | null,
+	/**  The last Open PR / Push / Merge locally / Keep as branch. */
+	shipped?: SpaceShipped | null,
+	/**
+	 *  When the change was done: its PR merged, or it was merged locally /
+	 *  kept as a branch. `spaces.auto_archive_days` counts from here.
+	 */
+	done_at?: number | null,
 	created_at: number,
 	updated_at: number,
 };
@@ -814,7 +857,12 @@ export type SpaceMode =
 /**  Read, grep, MCP; no writes. */
 "ask" |
 /**  Edit files inside the space. */
-"edit";
+"edit" |
+/**
+ *  Edit, plus run shell commands (tests, installs) without asking. No
+ *  sandbox of Theodore's own: the agent CLI runs as configured.
+ */
+"run";
 
 export type SpaceReviewRequest = {
 	space: string,
@@ -829,6 +877,26 @@ export type SpaceSendRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+};
+
+/**  The space's last ship: the squashed commit and where it went. */
+export type SpaceShipped = {
+	how: ShipKind,
+	/**
+	 *  Branch it was pushed to / written as (the folder's branch for
+	 *  `merged_locally`).
+	 */
+	branch: string,
+	/**
+	 *  The squashed commit last pushed or merged
+	 *  (`refs/theodore/shipped/<id>`).
+	 */
+	sha: Sha,
+	/**  The checkpoint it was made from: turns after it are "not pushed". */
+	head: Sha,
+	/**  Pushes to the PR branch so far, the first one included. */
+	pushes: number,
+	at: number,
 };
 
 export type SpaceStatus =

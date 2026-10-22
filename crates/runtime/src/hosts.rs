@@ -10,7 +10,7 @@ use theodore_domain::{
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
-    MergeStatus, ReviewSubmission, SubmittedReview,
+    MergeStatus, NewPr, ReviewSubmission, SubmittedReview,
 };
 
 pub struct Hosts {
@@ -107,6 +107,12 @@ impl HostAdapter for Hosts {
     }
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
         self.for_pr(pr)?.get_pr(pr, etag).await
+    }
+    async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        self.for_repo(repo)?.find_open_pr(repo, head).await
+    }
+    async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
+        self.for_repo(repo)?.create_pr(repo, pr).await
     }
     async fn set_viewed(&self, pr: &PrRef, path: &str, viewed: bool) -> HostResult<()> {
         self.for_pr(pr)?.set_viewed(pr, path, viewed).await

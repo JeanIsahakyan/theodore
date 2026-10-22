@@ -32,10 +32,16 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     args.push(
         match req.mode {
             AgentMode::ReadOnly => "read-only",
-            AgentMode::Edit => "workspace-write",
+            AgentMode::Edit | AgentMode::Run => "workspace-write",
         }
         .to_string(),
     );
+    if req.mode == AgentMode::Run {
+        // Writes stay inside the workspace; commands may reach the network
+        // (installs). Codex's own sandbox, nothing added by Theodore.
+        args.push("-c".to_string());
+        args.push("sandbox_workspace_write.network_access=true".to_string());
+    }
     if let Some(mcp) = &req.mcp {
         args.push("-c".to_string());
         args.push(format!("mcp_servers.review-tools.url=\"{}\"", mcp.url));
@@ -365,5 +371,30 @@ mod tests {
             }
         }
         assert_eq!(terminals, 1);
+    }
+}
+
+#[cfg(test)]
+mod run_mode_tests {
+    use super::*;
+
+    #[test]
+    fn run_mode_may_edit_and_run_commands() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Codex,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::Run,
+            mcp: None,
+            model: None,
+            stall_after_ms: 1000,
+        };
+        let args = build_args(&req, &Default::default());
+        assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
+        assert!(
+            args.iter()
+                .any(|a| a == "sandbox_workspace_write.network_access=true")
+        );
     }
 }

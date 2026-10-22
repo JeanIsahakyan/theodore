@@ -197,6 +197,23 @@ pub(crate) struct UpdateMrBody<'a> {
     pub reviewer_ids: Option<&'a [u64]>,
 }
 
+/// `POST /projects/:id/merge_requests`. GitLab has no draft flag on create:
+/// a draft is a `Draft: ` title.
+#[derive(Debug, Serialize)]
+pub(crate) struct CreateMrBody<'a> {
+    pub source_branch: &'a str,
+    pub target_branch: &'a str,
+    pub title: &'a str,
+    pub description: &'a str,
+}
+
+/// Just the identity of an MR — what `create_pr`/`find_open_pr` hand back.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GlMrRef {
+    pub iid: u64,
+    pub project_id: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct AwardEmojiBody<'a> {
     pub name: &'a str,

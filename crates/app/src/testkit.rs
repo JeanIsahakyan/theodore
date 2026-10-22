@@ -373,6 +373,31 @@ pub struct FakeGit {
     /// `(space, message)` of every `space_checkpoint`.
     pub checkpoints: Mutex<Vec<(String, String)>>,
     removed_spaces: Mutex<Vec<String>>,
+    /// Shipping a space: identity, squashed commits, pushes, folder ops.
+    pub ship: Mutex<FakeShip>,
+}
+
+/// `FakeGit`'s state for shipping a space (docs/spaces.md §6).
+#[derive(Default)]
+pub struct FakeShip {
+    /// `user_identity`'s answer.
+    pub identity: Option<theodore_ports::Identity>,
+    /// `(space, commit)` of every `space_commit`; the n-th returns `squash<n>`.
+    pub commits: Vec<(String, theodore_ports::SpaceCommit)>,
+    /// `space_commit` errors, consumed before succeeding.
+    pub commit_errors: VecDeque<GitError>,
+    /// The remote's branches: branch → tip.
+    pub remote: HashMap<String, Sha>,
+    /// `(branch, sha)` of every successful `push_branch`.
+    pub pushes: Vec<(String, Sha)>,
+    /// `push_branch` errors, consumed before succeeding.
+    pub push_errors: VecDeque<GitError>,
+    /// `(folder, space, message)` of every `merge_into_folder`.
+    pub merges: Vec<(PathBuf, String, String)>,
+    pub merge_errors: VecDeque<GitError>,
+    /// `(folder, space, branch)` of every `write_folder_branch`.
+    pub branches: Vec<(PathBuf, String, String)>,
+    pub branch_errors: VecDeque<GitError>,
 }
 
 /// `GitResult` isn't `Clone` (`GitError` holds a `std::io::Error`); a fake
@@ -416,6 +441,13 @@ impl FakeGit {
             checkpoint_heads: Mutex::new(VecDeque::new()),
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
+            ship: Mutex::new(FakeShip {
+                identity: Some(theodore_ports::Identity {
+                    name: "Ada Lovelace".into(),
+                    email: "ada@example.com".into(),
+                }),
+                ..FakeShip::default()
+            }),
         })
     }
 
@@ -697,6 +729,81 @@ impl GitPort for FakeGit {
         self.removed_spaces.lock().unwrap().push(space.to_string());
         Ok(())
     }
+
+    async fn user_identity(&self, _repo: &Path) -> GitResult<Option<theodore_ports::Identity>> {
+        Ok(self.ship.lock().unwrap().identity.clone())
+    }
+
+    async fn space_commit(
+        &self,
+        _repo: &Path,
+        space: &str,
+        c: &theodore_ports::SpaceCommit,
+    ) -> GitResult<Sha> {
+        let mut ship = self.ship.lock().unwrap();
+        if let Some(e) = ship.commit_errors.pop_front() {
+            return Err(e);
+        }
+        ship.commits.push((space.to_string(), c.clone()));
+        Ok(Sha::new(format!("squash{}", ship.commits.len())))
+    }
+
+    async fn remote_branch(
+        &self,
+        _repo: &Path,
+        _repo_ref: &RepoRef,
+        branch: &str,
+    ) -> GitResult<Option<Sha>> {
+        Ok(self.ship.lock().unwrap().remote.get(branch).cloned())
+    }
+
+    async fn push_branch(
+        &self,
+        _repo: &Path,
+        _repo_ref: &RepoRef,
+        sha: &Sha,
+        branch: &str,
+    ) -> GitResult<()> {
+        let mut ship = self.ship.lock().unwrap();
+        if let Some(e) = ship.push_errors.pop_front() {
+            return Err(e);
+        }
+        ship.remote.insert(branch.to_string(), sha.clone());
+        ship.pushes.push((branch.to_string(), sha.clone()));
+        Ok(())
+    }
+
+    async fn merge_into_folder(
+        &self,
+        folder: &Path,
+        _repo: &Path,
+        space: &str,
+        message: &str,
+    ) -> GitResult<Sha> {
+        let mut ship = self.ship.lock().unwrap();
+        if let Some(e) = ship.merge_errors.pop_front() {
+            return Err(e);
+        }
+        ship.merges
+            .push((folder.to_path_buf(), space.to_string(), message.to_string()));
+        Ok(Sha::new("merged000"))
+    }
+
+    async fn write_folder_branch(
+        &self,
+        folder: &Path,
+        _repo: &Path,
+        space: &str,
+        branch: &str,
+    ) -> GitResult<()> {
+        let mut ship = self.ship.lock().unwrap();
+        if let Some(e) = ship.branch_errors.pop_front() {
+            return Err(e);
+        }
+        ship.branches
+            .push((folder.to_path_buf(), space.to_string(), branch.to_string()));
+        Ok(())
+    }
 }
 
 // ── host ──────────────────────────────────────────────────────────────────
@@ -739,6 +846,15 @@ pub struct FakeHost {
     /// Every check id `rerun_check` was called with, for assertions.
     pub rerun_check_calls: Mutex<Vec<String>>,
     pub repo_info_responses: Mutex<VecDeque<HostResult<HostRepo>>>,
+    /// Open PRs `create_pr` made, by head branch.
+    pub created_prs: Mutex<HashMap<String, PrRef>>,
+    /// Every `create_pr` call that reached the "host".
+    pub create_pr_calls: Mutex<Vec<(RepoRef, theodore_ports::NewPr)>>,
+    /// `create_pr` errors, consumed before succeeding. A queued error is
+    /// returned *after* the PR is recorded when `create_pr_lands` is set
+    /// (a timeout after the host did open it).
+    pub create_pr_errors: Mutex<VecDeque<HostError>>,
+    pub create_pr_lands: Mutex<bool>,
 }
 
 impl FakeHost {
@@ -841,6 +957,35 @@ impl FakeHost {
 impl HostAdapter for FakeHost {
     fn kind(&self) -> theodore_domain::HostKind {
         theodore_domain::HostKind::Github
+    }
+    async fn find_open_pr(&self, _repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
+        Ok(self.created_prs.lock().unwrap().get(head).cloned())
+    }
+    async fn create_pr(&self, repo: &RepoRef, pr: &theodore_ports::NewPr) -> HostResult<PrRef> {
+        let error = self.create_pr_errors.lock().unwrap().pop_front();
+        let lands = *self.create_pr_lands.lock().unwrap();
+        let error = match error {
+            Some(e) if !lands => return Err(e),
+            other => other,
+        };
+        let mut prs = self.created_prs.lock().unwrap();
+        if prs.contains_key(&pr.head) {
+            return Err(HostError::Conflict("a PR for this branch exists".into()));
+        }
+        self.create_pr_calls
+            .lock()
+            .unwrap()
+            .push((repo.clone(), pr.clone()));
+        let pr_ref = PrRef {
+            repo: repo.clone(),
+            number: 100 + prs.len() as u64,
+            host_id: None,
+        };
+        prs.insert(pr.head.clone(), pr_ref.clone());
+        match error {
+            Some(e) => Err(e),
+            None => Ok(pr_ref),
+        }
     }
     fn capabilities(&self) -> Capabilities {
         Capabilities {

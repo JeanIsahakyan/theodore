@@ -127,7 +127,7 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     let s = idle(&f, &created.id).await;
 
     assert_eq!(s.name, "fix-the-login-redirect");
-    assert_eq!(s.branch, "theo/fix-the-login-redirect");
+    assert_eq!(s.branch, "space/fix-the-login-redirect");
     assert_eq!(s.base, "main");
     assert_eq!(s.base_sha, Sha::new("base000"));
     assert_eq!(s.status, SpaceStatus::Idle);
@@ -170,7 +170,7 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     let pr: PrSummary =
         serde_json::from_value(f.store.get(models::PR, &review.0).unwrap().unwrap().data).unwrap();
     assert_eq!(pr.title, "fix-the-login-redirect");
-    assert_eq!(pr.head_ref, "theo/fix-the-login-redirect");
+    assert_eq!(pr.head_ref, "space/fix-the-login-redirect");
     assert_eq!(pr.base_ref, "main");
     assert!(pr.url.is_empty());
     assert_eq!(f.grouper.last_agent(), None);
@@ -558,6 +558,46 @@ mod real_git {
         assert_eq!(
             run(&folder, &["branch", "--format=%(refname:short)"]),
             "main"
+        );
+        assert_eq!(run(&folder, &["status", "--porcelain"]), "");
+
+        // Merge locally is the one action that writes into the folder: a
+        // dirty tree is refused untouched, a clean one gets the squashed
+        // commit on its checked-out branch.
+        std::fs::write(folder.join("scratch.txt"), "wip\n").unwrap();
+        let err = core
+            .ship_space(theodore_contract::ShipSpaceRequest {
+                space: s.id.clone(),
+                action: theodore_contract::ShipAction::MergeLocally,
+                title: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("uncommitted"), "{err}");
+        assert_eq!(run(&folder, &["rev-parse", "HEAD"]), folder_head);
+        std::fs::remove_file(folder.join("scratch.txt")).unwrap();
+
+        let shipped = core
+            .ship_space(theodore_contract::ShipSpaceRequest {
+                space: s.id.clone(),
+                action: theodore_contract::ShipAction::MergeLocally,
+                title: Some("Add an export".into()),
+            })
+            .await
+            .expect("merge locally");
+        assert_eq!(shipped.shipped.as_ref().unwrap().branch, "main");
+        assert_eq!(
+            run(&folder, &["log", "-1", "--format=%s|%an"]),
+            "Add an export|test"
+        );
+        assert_eq!(
+            run(&folder, &["rev-parse", "HEAD~1"]),
+            folder_head,
+            "one commit on top"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("export.csv")).unwrap(),
+            "a,b\n"
         );
         assert_eq!(run(&folder, &["status", "--porcelain"]), "");
 

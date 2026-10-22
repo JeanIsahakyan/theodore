@@ -1,12 +1,12 @@
 //! REST API 2.0 calls, grouped by resource. Pagination for list endpoints is
 //! handled uniformly by [`crate::pagination::paginate_all`] (plan §6.9).
 
-use theodore_ports::HostResult;
+use theodore_ports::{HostError, HostResult};
 
 use crate::http::BbHttp;
 use crate::model::{
-    BbComment, BbCommit, BbDiffStatEntry, BbPullRequest, BbRepository, BbStatus, BbUser,
-    CreateCommentBody, MergeBody,
+    BbComment, BbCommit, BbDiffStatEntry, BbPrId, BbPullRequest, BbRepository, BbStatus, BbUser,
+    CreateCommentBody, CreatePrBody, MergeBody,
 };
 use crate::pagination::paginate_all;
 
@@ -210,6 +210,34 @@ pub(crate) async fn merge(
 ) -> HostResult<BbPullRequest> {
     http.post_json(&pr_path(workspace, repo_slug, id, "/merge"), body)
         .await
+}
+
+/// Bitbucket rejects a second open PR for the same source branch with a 400
+/// (`"There is already an open pull request from ... to ..."` style
+/// wording); that one becomes `HostError::Conflict`, every other 400 stays
+/// `Validation`.
+pub(crate) async fn create_pull_request(
+    http: &BbHttp,
+    workspace: &str,
+    repo_slug: &str,
+    body: &CreatePrBody<'_>,
+) -> HostResult<BbPrId> {
+    let path = format!(
+        "repositories/{}/{}/pullrequests",
+        urlencode(workspace),
+        urlencode(repo_slug),
+    );
+    match http.post_json(&path, body).await {
+        Err(HostError::Validation(msg)) if is_already_open(&msg) => Err(HostError::Conflict(msg)),
+        other => other,
+    }
+}
+
+fn is_already_open(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("already an open pull request")
+        || lower.contains("pull request already exists")
+        || lower.contains("already has an open pull request")
 }
 
 fn pr_path(workspace: &str, repo_slug: &str, id: u64, suffix: &str) -> String {

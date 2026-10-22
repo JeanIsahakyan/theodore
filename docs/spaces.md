@@ -3,8 +3,10 @@
 A **space** is a change while it is being made. You open one in a project, say
 what you want, and an agent writes the code in an isolated worktree while you
 watch the diff, review it by meaning, and send comments back. When it is good,
-the space becomes a pull request — the same branch, the same history — and
-Theodore's existing review, inbox and merge flow takes over.
+the space becomes a pull request — its turns squashed into one commit by
+you on its own branch — and Theodore's existing review, inbox and merge flow
+takes over. In a local folder it is merged into the checked-out branch
+instead, or kept as a branch.
 
 Ships hidden: `FEATURES.buildMode = false`, turned on per machine by the
 `labs.build_mode` setting (Settings → Labs, §10).
@@ -20,9 +22,10 @@ Ships hidden: `FEATURES.buildMode = false`, turned on per machine by the
 │     ▲        (checkpoints) │ │   │ reviewers, merge)            │
 │     └── review · comments ◀┘ │──▶│     ▲            │           │──▶ merged ──▶ archived
 └──────────────────────────────┘   │     └─ threads ◀─┘ → agent   │
-         "Open PR"                 └──────────────────────────────┘
+         "Open PR" ▾ draft         └──────────────────────────────┘
          (host project)
-         "Keep as branch"  ─────────────────────────────────────────▶ branch ──▶ archived
+         "Merge locally"   ─────────────────────────────────────────▶ merged ──▶ archived
+         ▾ "Keep as branch" ────────────────────────────────────────▶ branch ──▶ archived
          (local folder)
 ```
 
@@ -32,9 +35,9 @@ space, and a push from the space updates the PR.
 
 | Stage | Space shows | Who acts | Ends when |
 | --- | --- | --- | --- |
-| Drafting | chat · live diff vs base · spend | you + the agent | Open PR / Keep as branch |
-| In review | the same, plus PR checks, reviews, threads | reviewers → you → the agent | merged or closed on the host |
-| Done | read-only transcript and final diff | — | archived (auto, 7 days after merge) |
+| Drafting | chat · live diff vs base · spend / budget | you + the agent | Open PR / Merge locally / Keep as branch |
+| In review | the same, plus the PR (opened from the header) | reviewers → you → the agent | merged or closed on the host |
+| Done | transcript and final diff | — | archived (auto, `spaces.auto_archive_days` after merge, merge locally or keep) |
 
 ## 2. The core loop
 
@@ -49,10 +52,11 @@ New space "fix-login"  ──▶  worktree ~/.theodore/spaces/<id> @ main
    ◀── live diff ─────────  branch review row (base...checkpoint), no grouping
 Review ▸               ──▶  same review, grouped by meaning (existing pipeline)
 comment on a line      ──▶  draft ─▶ "Send to agent" ─▶ next turn ─▶ checkpoint 2
-Open PR                ──▶  push <ref>:refs/heads/theo/fix-login ─▶ outbox create_pr
+Open PR                ──▶  squash checkpoints ─▶ one commit by you
+                            push it to <login>/fix-login ─▶ outbox create_space_pr
                             space.pr = github:o/r#123 ─▶ PR row, inbox, polling
-reviewer comments      ──▶  thread ─▶ "Send to agent" ─▶ turn ─▶ Push ─▶ PR updated
-merged                 ──▶  space stage = done ─▶ archive after 7 days
+reviewer comments      ──▶  thread ─▶ (v2: "Send to agent") ─▶ turn ─▶ Push ─▶ PR updated
+merged                 ──▶  space.done_at ─▶ archive after spaces.auto_archive_days
 ```
 
 ---
@@ -113,7 +117,7 @@ a separate feature island.
 │ │ Retry the export job on 429s with backoff   │ │
 │ └─────────────────────────────────────────────┘ │
 │ Name       retry-export-429   (from the goal)   │
-│ Branch     theo/retry-export-429  from  main ▾  │
+│ Branch     ada/retry-export-429   from  main ▾  │
 │ Agent      claude ▾   Mode  Edit ▾              │
 │                              [Cancel] [Start ⏎] │
 └─────────────────────────────────────────────────┘
@@ -129,8 +133,8 @@ Chat left, changes right. The diff is the whole branch vs its base, the same
 `DiffPane` the review uses, refreshed after every turn.
 
 ```
-┌ ◐ fix-login-redirect ── theo/fix-login-redirect ← main ── Drafting ── $0.42 / $5 ─┐
-│ claude ▾  Edit ▾                                   [Review ▸] [Open PR] [⋯]      │
+┌ ◐ fix-login-redirect ── ada/fix-login-redirect ← main ── Drafting ── $0.42 / $5.00 ┐
+│ claude                             [Review] [Open PR ▾] [Archive]                │
 ├──────────── chat ──────────────────┬──────────── changes ────────────────────────┤
 │ you  The login page should send    │ 3 files  +42 −7   vs main · after turn 2    │
 │      people back where they were…  │ ▾ src/auth/redirect.ts               +30 −5  │
@@ -155,7 +159,7 @@ Reviewer threads carry "Send to agent"; after the agent's turn, "Push" updates
 the PR.
 
 ```
-┌ ○ rate-limits ── PR #123 ⎇ theo/rate-limits ── In review ── ✓ 9/9 ── 2 threads ──┐
+┌ ○ rate-limits ── PR #123 ⎇ ada/rate-limits ── In review ── ✓ 9/9 ── 2 threads ───┐
 │ claude ▾  Edit ▾                         [Review ▸] [Push 1 turn] [Open on host] │
 ├──────────── chat ──────────────────┬── Changes │ Threads 2 │ Checks ─────────────┤
 │ …                                  │ ● anna · limiter.ts:41                      │
@@ -207,8 +211,10 @@ anchor, assigned to the space's agent. When the turn ends the tasks move to
   turn into `task` rows aimed at the space's agent. The loop "read → comment →
   agent fixes → read what changed" uses tasks and interdiff, which already
   exist.
-- **Budget per space.** `budget.per_space_usd` (repo-scoped, falls back to
-  `budget.per_pr_usd`). Spend is summed from the space's chat rows, shown in
+- **Budget per space.** `budget.per_space_usd` (user scope, a repo's
+  `.review/config.yaml` overrides it), its own limit: PR review runs keep
+  `budget.per_pr_usd`, and neither counts against the other. Unset = no
+  limit; set it in Settings → Labs. Spend is summed from the space's chat rows, shown in
   the header and the sidebar tooltip; the composer locks at the limit.
 - **Stages, not modes.** Writing code and reviewing it are one lifecycle;
   nothing is exported from one tool into another.
@@ -221,9 +227,12 @@ anchor, assigned to the space's agent. When the turn ends the tasks move to
 | --- | --- | --- |
 | Ask | read, grep, MCP; no writes | `AgentMode::ReadOnly` |
 | Edit (default) | + edit files in the space | `AgentMode::Edit` |
-| Run | + shell commands (tests, installs) | needs a third `AgentMode`: today Claude's Edit already allows Bash, Codex's `workspace-write` runs commands in its own sandbox |
+| Run | + any shell command (tests, installs), no prompts | `AgentMode::Run`: Claude `--permission-mode bypassPermissions`; Codex `workspace-write` with network access; Gemini `--approval-mode yolo`. No sandbox of Theodore's own (§12 #4) |
 
-Mode is chosen per message and sticky per space.
+Mode is picked next to Send (Ask · Edit · Run) and sticky per space. Edit
+is unchanged from before: Claude's Edit already pre-approves Bash, Codex's
+`workspace-write` already runs commands in its own sandbox; Run lifts the
+remaining prompts and limits.
 
 - **Stop** cancels the run (SIGTERM → 5 s → SIGKILL, existing lifecycle), then
   checkpoints whatever was edited as "turn N (stopped)". Nothing is lost.
@@ -237,7 +246,7 @@ Mode is chosen per message and sticky per space.
   its description and diff stats, `/skill` runs a skill as the turn's
   instructions. MCP gets space-scoped tools in v2 (`get_space_context`: goal,
   base, diff stat, open tasks).
-- **Scripts**: repo settings `spaces.setup` (once, after create — e.g.
+- **Scripts**: repo settings `spaces.setup` (v2; once, after create — e.g.
   `pnpm i`) and `spaces.check` (after each turn; a failing check is fed into
   the next turn). Output streams as run log lines.
 - **Safety**:
@@ -266,7 +275,11 @@ Mode is chosen per message and sticky per space.
 ~/.theodore/spaces/<id>/          detached worktree at the checkpoint + live edits
 
 turn ends ─▶ git add -A ─▶ commit "turn N" ─▶ update-ref refs/theodore/spaces/<id> HEAD
-Open PR   ─▶ git push origin refs/theodore/spaces/<id>:refs/heads/<branch>
+Ship      ─▶ commit-tree <checkpoint tree> -p <base> (author: you) ─▶ refs/theodore/shipped/<id>
+Open PR   ─▶ git push origin <shipped>:refs/heads/<login>/<slug>   (never forced)
+Push      ─▶ commit-tree <checkpoint tree> -p <last shipped> ─▶ push (fast-forward)
+Merge     ─▶ (local folder) fetch <cache> <shipped ref> ─▶ git merge into its checked-out branch
+Keep      ─▶ (local folder) fetch <cache> <shipped ref>:refs/heads/space/<slug>
 Keep      ─▶ (local folder) git -C <folder> fetch <cache> <ref>:refs/heads/<branch>
 ```
 
@@ -279,8 +292,42 @@ Why detached plus a private ref, not a real branch in the cache:
 
 Every turn is a commit, so the diff is commit-to-commit (cacheable, same as a
 PR's revisions), "undo last turn" is a ref move (v2), and the agent's own
-`git commit`s are simply kept. Checkpoints are authored by Theodore; "Open PR"
-may squash them into one commit authored by you (open question 2).
+`git commit`s are simply kept. Checkpoints are authored by Theodore and never
+leave the cache; what ships is one squashed commit authored by you (§12 #2).
+
+**Shipping, step by step**
+
+- *Author*: `user.name` / `user.email` as git resolves them (a local
+  folder's own config first, then the cache's, i.e. your global one); on
+  GitHub without either, your login with its noreply address. Unsigned:
+  Theodore can't answer a passphrase prompt. Message: the title (editable
+  in the confirm popover, default the goal's first line), then the goal
+  when it says more.
+- *Open PR*: the commit's parent is the base. If the branch name is
+  already taken on the host, nothing is pushed. After the push the outbox
+  item `create_space_pr` asks the host for an open PR from that branch
+  first and only then creates one; a create the host refuses as a
+  duplicate is looked up again. So a retry — after a timeout, a crash, or
+  clicking Open PR again after a failure — never opens a second PR, and a
+  retry with no new turns pushes nothing.
+- *Push*: one more commit on top of the last pushed one, so reviewers'
+  history and comments stay put. No force push, ever:
+
+  | PR branch on the host | the new commit |
+  | --- | --- |
+  | where the last push left it | parent = last push, tree = latest checkpoint |
+  | moved (someone pushed to it) | parent = their tip, tree = their tip + the turns since the last push (three-way, no worktree); refused if that conflicts |
+  | gone | parent = last push, pushed again |
+
+- *Merge locally*: refused, folder untouched, on a dirty working tree
+  (untracked files count), a detached `HEAD`, or a merge that would
+  conflict (checked first with `git merge-tree`, before the index or any
+  file changes). Otherwise a normal `git merge` (fast-forward when it can
+  be) with the user's own hooks; a merge that still fails is aborted. The
+  objects come over with `fetch --no-write-fetch-head`: no `FETCH_HEAD`,
+  no extra ref. A second merge after more turns brings only those turns.
+- *Keep as branch*: writes `refs/heads/space/<slug>` in the folder and
+  nothing else; refused if that branch exists.
 
 ---
 
@@ -291,13 +338,15 @@ New synced model `space` (core-owned, written only by commands):
 | Field | |
 | --- | --- |
 | `id`, `project`, `name`, `goal` | `goal` is the first message |
-| `branch`, `base`, `base_sha`, `head_sha` | `branch` is pushed on Open PR; `head_sha` = last checkpoint |
+| `branch`, `base`, `base_sha`, `head_sha` | `branch` (`<login>/<slug>`, `space/<slug>` without a login) is pushed on Open PR; `head_sha` = last checkpoint |
 | `worktree` | absolute path |
 | `status` | `idle · running · failed · archived` |
 | `agent`, `model`, `mode` | sticky per space |
 | `review_pr` | the branch review the diff and Review use |
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
+| `shipped` | the last ship: `how` (`pr · merged_locally · branch`), `branch`, `sha` (the squashed commit), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
+| `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch |
 
 | Data | Where |
 | --- | --- |
@@ -307,7 +356,12 @@ New synced model `space` (core-owned, written only by commands):
 | Code | the worktree and `refs/theodore/spaces/<id>` |
 
 **Archive** checkpoints any uncommitted edits, removes the worktree, keeps the
-ref and the rows; unarchive recreates the worktree from the ref. **Delete** is
+ref and the rows; unarchive (v2) recreates the worktree from the ref. The
+space page's Archive button does it at any time (not while a turn runs).
+**Auto-archive**: once a minute the poller re-fetches each in-review space's
+PR, sets `done_at` when it has merged, and archives spaces done for
+`spaces.auto_archive_days` (default 7, `0` = never; Settings → Labs). A PR
+closed without merging leaves the space alone. **Delete** is
 archive plus deleting the ref and the chat rows. **GC**: archived spaces whose
 branch was never pushed lose their ref after `spaces.gc_days` (30); removing
 a project archives its spaces first. Space worktrees live outside
@@ -330,7 +384,7 @@ One run per space at a time; a send while running is refused (v2: queued).
 Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 (default 3) queues the rest.
 
-## 9. Commands (MVP)
+## 9. Commands
 
 | Command | Does |
 | --- | --- |
@@ -340,6 +394,7 @@ Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 | `space_stop` | cancels the running turn |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |
 | `archive_space` | checkpoint, remove the worktree, keep the ref |
+| `ship_space` | `open_pr` · `open_draft_pr` · `push` (host project) or `merge_locally` · `keep_branch` (local folder), with an optional title (§6) |
 
 ## 10. The flag
 
@@ -365,9 +420,9 @@ sqlite3 ~/.theodore/theodore.db "INSERT INTO models (model, id, data) VALUES
 
 | Phase | Scope |
 | --- | --- |
-| **MVP** (this skeleton) | `space` model; create / send / stop / review / archive; Edit mode; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; per-space spend shown; crash → failed |
-| **v2** | Open PR (`HostAdapter::create_pr` + outbox, idempotent by head branch) and Push; Keep as branch for local folders; My PRs "Drafting" group; drafts/findings/threads → "Send to agent"; `space_run` rows, per-turn diffs, undo turn; modes Ask/Run; `budget.per_space_usd` enforced; setup/check scripts; notifications + dock badge; unarchive; queue + `max_parallel` |
-| **Later** | native session resume per CLI; OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); squash on ship; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; `budget.per_space_usd` enforced and shown as spend / budget; Archive button and `spaces.auto_archive_days` |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; drafts/findings/threads → "Send to agent"; `space_run` rows, per-turn diffs, undo turn; setup/check scripts; notifications + dock badge; unarchive; queue + `max_parallel` |
+| **Later** | native session resume per CLI; OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
 ## 12. Decisions (owner, 2026-10-21)
 

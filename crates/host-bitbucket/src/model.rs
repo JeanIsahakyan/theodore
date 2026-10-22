@@ -204,6 +204,33 @@ pub(crate) struct ParentIdBody {
     pub id: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub(crate) struct BranchName<'a> {
+    pub name: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct BranchEndpoint<'a> {
+    pub branch: BranchName<'a>,
+}
+
+/// `POST /repositories/{ws}/{slug}/pullrequests`. No `repository` on
+/// `source`: same-repo PRs only.
+#[derive(Debug, Serialize)]
+pub(crate) struct CreatePrBody<'a> {
+    pub title: &'a str,
+    pub description: &'a str,
+    pub source: BranchEndpoint<'a>,
+    pub destination: BranchEndpoint<'a>,
+    pub draft: bool,
+}
+
+/// Just the PR id out of a create response.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct BbPrId {
+    pub id: u64,
+}
+
 #[derive(Debug, Serialize, Default)]
 pub(crate) struct MergeBody<'a> {
     pub merge_strategy: &'a str,
