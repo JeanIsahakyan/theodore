@@ -18,6 +18,8 @@ import {
   spaceChatKey,
   spaceGlyph,
   spacesIn,
+  nextMode,
+  spaceKeyAction,
   turnEnded,
 } from './spaces';
 
@@ -225,5 +227,29 @@ describe('space budget and archive settings', () => {
     expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 3)])).toBe(3);
     expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, -1)])).toBe(7);
     expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 'x')])).toBe(7);
+  });
+});
+
+describe('space keys', () => {
+  it('maps letters to page actions', () => {
+    expect(spaceKeyAction('c', false)).toBe('focus');
+    expect(spaceKeyAction('/', false)).toBe('focus');
+    expect(spaceKeyAction('m', false)).toBe('mode');
+    expect(spaceKeyAction('r', false)).toBe('review');
+    expect(spaceKeyAction('p', false)).toBe('ship');
+    expect(spaceKeyAction('p', true)).toBe('ship-alt');
+    expect(spaceKeyAction('o', false)).toBe('open-pr');
+    expect(spaceKeyAction('x', false)).toBeNull();
+  });
+
+  it('archives only with shift', () => {
+    expect(spaceKeyAction('e', false)).toBeNull();
+    expect(spaceKeyAction('e', true)).toBe('archive');
+  });
+
+  it('cycles modes', () => {
+    expect(nextMode('ask')).toBe('edit');
+    expect(nextMode('edit')).toBe('run');
+    expect(nextMode('run')).toBe('ask');
   });
 });

@@ -1,4 +1,6 @@
 import { latinKey } from './latin';
+import { isBuildMode } from './space/mode';
+import { spacesIn } from './space/spaces';
 import { useEffect, useRef, useState, type Key, type ReactNode } from 'react';
 import {
   EmptyState,
@@ -22,6 +24,8 @@ import {
   Keyboard,
   ListCheck,
   Moon,
+  Pencil,
+  Plus,
   Tray,
 } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
@@ -408,8 +412,30 @@ export const CommandMenu = observer(function CommandMenu() {
       icon: <CodePullRequest />,
       run: () => ui.go({ name: 'review', pr: p.id }),
     }));
+  // Spaces (build mode only): new, and every space of the workspace.
+  const spaceItems: Item[] = isBuildMode(store)
+    ? [
+        {
+          group: 'Spaces',
+          label: 'New space',
+          icon: <Plus />,
+          keys: 'G N',
+          run: () => ui.openModal('new-space'),
+        },
+        ...spacesIn(ui.workspace, store.models.spaces.all()).map(
+          (sp): Item => ({
+            group: 'Spaces',
+            label: sp.name,
+            sub: sp.branch,
+            icon: <Pencil />,
+            run: () => ui.go({ name: 'space', id: sp.id }),
+          }),
+        ),
+      ]
+    : [];
   const items: Item[] = [
     ...prItems,
+    ...spaceItems,
     {
       group: 'Go to',
       label: 'New tab — paste a PR link',
@@ -580,8 +606,10 @@ export function useGlobalKeys() {
         (e.target as HTMLElement).closest('input,textarea,select')
       ) {
         return;
-      } else if (inSequence() && /^[itsamk]$/.test(latinKey(e))) {
+      } else if (inSequence() && /^[itsamkn]$/.test(latinKey(e))) {
         gAt = 0;
+        if (latinKey(e) === 'n' && isBuildMode(store))
+          ui.openModal('new-space');
         if (latinKey(e) === 'i') ui.go({ name: 'inbox' });
         if (latinKey(e) === 't') ui.go({ name: 'tasks' });
         if (latinKey(e) === 's') ui.go({ name: 'settings', page: 'agents' });

@@ -3,7 +3,13 @@
  * it's on, which spaces a workspace lists, what each one's sidebar glyph
  * says, and which "branch reviews" are really a space's live diff.
  */
-import type { PrId, PrSummary, Setting, Space } from '../../gen/contract';
+import type {
+  PrId,
+  PrSummary,
+  Setting,
+  Space,
+  SpaceMode,
+} from '../../gen/contract';
 import { ALL, type WorkspaceId } from '../../core/workspaces';
 
 /** The per-machine switch (Settings → Labs). */
@@ -171,4 +177,40 @@ export function diffStat(
   const del = files.reduce((n, f) => n + f.deletions, 0);
   const n = files.length;
   return `${n} file${n === 1 ? '' : 's'}  +${add} −${del}`;
+}
+
+/** What a key does on a space page (outside the composer). */
+export type SpaceKeyAction =
+  'focus' | 'mode' | 'review' | 'ship' | 'ship-alt' | 'open-pr' | 'archive';
+
+/** `key` is the layout-independent letter (`latinKey`). Archive needs ⇧ —
+ *  it removes the worktree, so a stray `e` must not do it. */
+export function spaceKeyAction(
+  key: string,
+  shift: boolean,
+): SpaceKeyAction | null {
+  switch (key) {
+    case 'c':
+    case '/':
+      return shift ? null : 'focus';
+    case 'm':
+      return shift ? null : 'mode';
+    case 'r':
+      return shift ? null : 'review';
+    case 'p':
+      return shift ? 'ship-alt' : 'ship';
+    case 'o':
+      return shift ? null : 'open-pr';
+    case 'e':
+      return shift ? 'archive' : null;
+    default:
+      return null;
+  }
+}
+
+const MODE_ORDER: SpaceMode[] = ['ask', 'edit', 'run'];
+
+/** `M` cycles Ask → Edit → Run → Ask. */
+export function nextMode(m: SpaceMode): SpaceMode {
+  return MODE_ORDER[(MODE_ORDER.indexOf(m) + 1) % MODE_ORDER.length]!;
 }

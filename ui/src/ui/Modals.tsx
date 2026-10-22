@@ -209,8 +209,27 @@ const KEYS: [string, string][] = [
   ['Esc', 'close / back'],
 ];
 
+/** Spaces' keys — listed only with build mode on. */
+const SPACE_KEYS: [string, string][] = [
+  ['Spaces', ''],
+  ['G N', 'new space'],
+  ['C or /', 'message the agent (Esc leaves the box)'],
+  ['⏎ / ⇧⏎', 'send / new line'],
+  ['M', 'mode: Ask → Edit → Run'],
+  ['⌘.', 'stop the turn'],
+  ['R', 'review the changes, grouped'],
+  [
+    'P / ⇧P',
+    'open PR / as draft (local folder: merge / keep as branch); push once a PR exists',
+  ],
+  ['O', "open the space's PR"],
+  ['⇧E', 'archive'],
+];
+
 function HelpModalInner() {
   const ui = useUi();
+  const store = useRootStore();
+  const rows = isBuildMode(store) ? [...KEYS, ...SPACE_KEYS] : KEYS;
   return (
     <Shell title="Shortcuts" onClose={() => ui.closeModal()}>
       <Table variant="secondary">
@@ -221,7 +240,7 @@ function HelpModalInner() {
               <Table.Column>action</Table.Column>
             </Table.Header>
             <Table.Body>
-              {KEYS.map(([k, v], i) => (
+              {rows.map(([k, v], i) => (
                 <Table.Row key={i} id={i}>
                   <Table.Cell>
                     {v ? (

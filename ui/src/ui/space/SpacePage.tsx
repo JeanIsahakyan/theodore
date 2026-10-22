@@ -4,6 +4,7 @@
  * New space dialog, Settings → Labs, and the "turn done" notices.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 
 import {
   Archive,
@@ -39,10 +40,11 @@ import { FEATURES } from '../../features';
 import { setSetting } from '../../actions';
 
 import { useRootStore, useUi } from '../../stores/context';
-import { AgentTag, Shell, Spinner } from '../bits';
+import { AgentTag, Hints, K, Shell, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { budgetStatus, fmtUsage } from '../SidePanel';
+import { latinKey, useViewKeys } from '../keys';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
 import {
@@ -54,6 +56,8 @@ import {
   defaultTitle,
   diffStat,
   fmtSpend,
+  nextMode,
+  spaceKeyAction,
   spaceBudget,
   spaceChatKey,
   spaceStage,
@@ -70,9 +74,94 @@ const MODES: { id: SpaceMode; label: string; hint: string }[] = [
 /** The whole branch diff, ungrouped — every file of the revision. */
 const WHOLE_DIFF: ReviewMode = { mode: 'groups', group: null, file: null };
 
+type Store = ReturnType<typeof useRootStore>;
+type Ui = ReturnType<typeof useUi>;
+
+/** What the page's keys reach inside the chat and the ship controls. */
+interface ChatHandle {
+  focus: () => void;
+  cycleMode: () => void;
+}
+interface ShipHandle {
+  primary: () => void;
+  alternate: () => void;
+}
+
+async function openGroupedReview(store: Store, ui: Ui, space: Space) {
+  const res = await api.spaceReview({ space: space.id, group: true });
+  await store.sync.openPr(res.pr);
+  ui.go({ name: 'review', pr: res.pr });
+}
+
+function openSpacePr(store: Store, ui: Ui, space: Space) {
+  const id = space.pr;
+  if (!id) return;
+  void store.sync.openPr(id).then(() => ui.go({ name: 'review', pr: id }));
+}
+
+function archive(ui: Ui, space: Space) {
+  void api
+    .archiveSpace(space.id)
+    .then(() => ui.goBack())
+    .catch(() => {});
+}
+
 export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const store = useRootStore();
+  const ui = useUi();
   const space = store.models.spaces.get(id);
+  const chat = useRef<ChatHandle | null>(null);
+  const ship = useRef<ShipHandle | null>(null);
+
+  // Page keys (docs/spaces.md §3) — never while typing in the composer.
+  useViewKeys(
+    ui,
+    (e) => {
+      if (!space || e.key === 'Escape') return false;
+      const action = spaceKeyAction(latinKey(e), e.shiftKey);
+      const archived = space.status === 'archived';
+      const running = space.status === 'running';
+      switch (action) {
+        case 'focus':
+          chat.current?.focus();
+          return;
+        case 'mode':
+          chat.current?.cycleMode();
+          return;
+        case 'review':
+          if (!archived)
+            void openGroupedReview(store, ui, space).catch(() => {});
+          return;
+        case 'ship':
+          ship.current?.primary();
+          return;
+        case 'ship-alt':
+          ship.current?.alternate();
+          return;
+        case 'open-pr':
+          if (space.pr) openSpacePr(store, ui, space);
+          return;
+        case 'archive':
+          if (!running && !archived) archive(ui, space);
+          return;
+        default:
+          return false;
+      }
+    },
+    [space?.id, space?.status, space?.pr],
+  );
+
+  // ⌘. stops the turn — from anywhere on the page, the composer included.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || latinKey(e) !== '.') return;
+      if (store.models.spaces.get(id)?.status !== 'running') return;
+      e.preventDefault();
+      void api.spaceStop(id).catch(() => {});
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [store, id]);
 
   useEffect(() => {
     void store.sync.openPr(spaceChatKey(id));
@@ -107,10 +196,10 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   }
   return (
     <div className="view space-page flex min-w-0 flex-1 flex-col">
-      <SpaceHeader space={space} />
+      <SpaceHeader space={space} ship={ship} />
       <div className="flex min-h-0 flex-1">
         <section className="flex w-[40%] min-w-[340px] flex-col border-r border-separator">
-          <SpaceChat space={space} />
+          <SpaceChat space={space} handle={chat} />
         </section>
         <section className="flex min-w-0 flex-1 flex-col">
           {opened || !live ? (
@@ -131,11 +220,28 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           </Alert.Content>
         </Alert>
       )}
+      <Hints>
+        <K>C</K> message the agent <K>M</K> mode <K>⌘.</K> stop <K>R</K> review{' '}
+        <K>P</K> {space.pr ? 'push' : 'ship'}
+        {space.pr ? (
+          <>
+            {' '}
+            <K>O</K> open PR
+          </>
+        ) : null}{' '}
+        <K>⇧E</K> archive <K>Esc</K> back
+      </Hints>
     </div>
   );
 });
 
-const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
+const SpaceHeader = observer(function SpaceHeader({
+  space,
+  ship,
+}: {
+  space: Space;
+  ship: MutableRefObject<ShipHandle | null>;
+}) {
   const store = useRootStore();
   const ui = useUi();
   const [busy, setBusy] = useState(false);
@@ -197,9 +303,7 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
         onPress={async () => {
           setBusy(true);
           try {
-            const res = await api.spaceReview({ space: space.id, group: true });
-            await store.sync.openPr(res.pr);
-            ui.go({ name: 'review', pr: res.pr });
+            await openGroupedReview(store, ui, space);
           } catch {
             // toasted by api.ts
           } finally {
@@ -210,18 +314,17 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
         Review
       </Button>
       {!archived && project && (
-        <ShipControls space={space} local={project.path != null} />
+        <ShipControls
+          space={space}
+          local={project.path != null}
+          handle={ship}
+        />
       )}
       {space.pr && (
         <Button
           size="sm"
           variant="ghost"
-          onPress={() => {
-            const id = space.pr!;
-            void store.sync
-              .openPr(id)
-              .then(() => ui.go({ name: 'review', pr: id }));
-          }}
+          onPress={() => openSpacePr(store, ui, space)}
         >
           <CodePullRequest className="size-3.5" />
           PR
@@ -234,12 +337,7 @@ const SpaceHeader = observer(function SpaceHeader({ space }: { space: Space }) {
           aria-label="Archive space"
           className="space-archive"
           isDisabled={running || archived}
-          onPress={() => {
-            void api
-              .archiveSpace(space.id)
-              .then(() => ui.goBack())
-              .catch(() => {});
-          }}
+          onPress={() => archive(ui, space)}
         >
           <Archive className="size-3.5" />
           Archive
@@ -265,9 +363,12 @@ interface ShipChoice {
 const ShipControls = observer(function ShipControls({
   space,
   local,
+  handle,
 }: {
   space: Space;
   local: boolean;
+  /** `P` / `⇧P` on the page. */
+  handle: MutableRefObject<ShipHandle | null>;
 }) {
   const store = useRootStore();
   const [open, setOpen] = useState(false);
@@ -302,6 +403,12 @@ const ShipControls = observer(function ShipControls({
 
   if (space.pr) {
     const pending = unshipped(space);
+    handle.current = {
+      primary: () => {
+        if (!running && !busy && pending) void ship('push', null);
+      },
+      alternate: () => {},
+    };
     return (
       <Tooltip>
         <Button
@@ -355,6 +462,10 @@ const ShipControls = observer(function ShipControls({
     setOpen(true);
   };
   const current = choice ?? primary;
+  handle.current = {
+    primary: () => !disabled && start(primary),
+    alternate: () => !disabled && start(alternate),
+  };
 
   return (
     <div className="space-ship flex items-center">
@@ -433,9 +544,17 @@ const ShipControls = observer(function ShipControls({
   );
 });
 
-const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
+const SpaceChat = observer(function SpaceChat({
+  space,
+  handle,
+}: {
+  space: Space;
+  /** `C` / `M` on the page. */
+  handle: MutableRefObject<ChatHandle | null>;
+}) {
   const store = useRootStore();
   const [text, setText] = useState('');
+  const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const messages = [
     ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
@@ -450,6 +569,11 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
   useEffect(() => setMode(space.mode), [space.mode]);
+  const locked = !!run || space.status === 'archived';
+  handle.current = {
+    focus: () => input.current?.focus(),
+    cycleMode: () => !locked && setMode((m) => nextMode(m)),
+  };
 
   const send = () => {
     const t = text.trim();
@@ -511,6 +635,7 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
       </div>
       <div className="flex flex-col gap-2 border-t border-separator px-4 py-3">
         <TextArea
+          ref={input}
           rows={2}
           fullWidth
           aria-label="Message the agent"
@@ -526,6 +651,10 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               send();
+            } else if (e.key === 'Escape') {
+              // Leave the composer, so page keys work again.
+              e.stopPropagation();
+              e.currentTarget.blur();
             }
           }}
         />
@@ -547,7 +676,8 @@ const SpaceChat = observer(function SpaceChat({ space }: { space: Space }) {
             onChange={(v) => v && setMode(v as SpaceMode)}
           >
             <Select.Trigger>
-              <Select.Value />
+              {/* Just the mode's name here; its hint is in the list. */}
+              <Select.Value>{({ selectedText }) => selectedText}</Select.Value>
               <Select.Indicator />
             </Select.Trigger>
             <Select.Popover>
