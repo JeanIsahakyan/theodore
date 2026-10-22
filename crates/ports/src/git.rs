@@ -189,6 +189,23 @@ pub trait GitPort: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Co-change history for grouping: the last `max_commits` non-merge
+    /// commits reachable from `rev`, each reduced to the subset of `paths`
+    /// it touched. Commits touching more than `max_files` files in total
+    /// (bulk reformat, vendoring) and commits touching none of `paths` are
+    /// left out. Empty by default.
+    async fn co_change_commits(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        paths: &[String],
+        max_commits: usize,
+        max_files: usize,
+    ) -> GitResult<Vec<Vec<String>>> {
+        let _ = (repo, rev, paths, max_commits, max_files);
+        Ok(Vec::new())
+    }
+
     /// Deletes the cached clone/mirror of `repo` and any worktrees under it.
     /// Never touches a local folder project's own checkout.
     async fn remove_repo(&self, repo: &RepoRef) -> GitResult<()> {

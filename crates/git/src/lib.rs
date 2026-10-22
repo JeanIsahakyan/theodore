@@ -16,6 +16,7 @@ mod conflicts;
 mod diff;
 mod generated;
 mod grep;
+mod history;
 mod local;
 mod meta;
 mod parse;
@@ -307,6 +308,18 @@ impl GitPort for GitCli {
 
     async fn commit_log(&self, repo: &Path, base: &Sha, head: &Sha) -> GitResult<Vec<CommitLog>> {
         self.commit_log_op(repo, base, head).await
+    }
+
+    async fn co_change_commits(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        paths: &[String],
+        max_commits: usize,
+        max_files: usize,
+    ) -> GitResult<Vec<Vec<String>>> {
+        self.co_change_commits_op(repo, rev, paths, max_commits, max_files)
+            .await
     }
 
     async fn list_branches(&self, repo: &Path, default_branch: &str) -> GitResult<Vec<BranchInfo>> {
