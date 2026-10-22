@@ -30,10 +30,10 @@ import { isSpaceReview } from './space/spaces';
 // A fixed grid, not a table: columns keep their width at any window size
 // and the commit column takes what's left (and truncates).
 const COLS =
-  'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_56px_112px] items-center gap-3';
+  'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_104px_56px_112px] items-center gap-3';
 // A local folder has no host PRs: no PR column.
 const COLS_LOCAL =
-  'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_88px_112px] items-center gap-3';
+  'grid grid-cols-[minmax(160px,2fr)_minmax(0,3fr)_104px_112px] items-center gap-3';
 
 const BranchList = observer(function BranchList({
   project,
@@ -130,7 +130,9 @@ const BranchList = observer(function BranchList({
       >
         <span>branch</span>
         <span>last commit</span>
-        <span className="whitespace-nowrap text-right">ahead / behind</span>
+        <span className="whitespace-nowrap pe-4 text-right">
+          ahead / behind
+        </span>
         {hasPrs && <span>PR</span>}
         <span />
       </div>
@@ -186,7 +188,7 @@ const BranchList = observer(function BranchList({
                 {b.author || 'unknown'} · {ago(b.updated_at)}
               </span>
             </span>
-            <span className="whitespace-nowrap text-right text-xs tabular-nums text-muted">
+            <span className="whitespace-nowrap pe-4 text-right text-xs tabular-nums text-muted">
               +{b.ahead} / −{b.behind}
             </span>
             {hasPrs && (
