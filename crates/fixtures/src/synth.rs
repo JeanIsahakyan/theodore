@@ -707,13 +707,14 @@ fn first_text_file(cwd: &Path) -> Option<PathBuf> {
                 return None;
             }
             *budget -= 1;
+            // `.git` is a directory in a clone but a file in a worktree.
+            if path.file_name().is_some_and(|n| n == ".git") {
+                continue;
+            }
             let Ok(meta) = std::fs::symlink_metadata(&path) else {
                 continue;
             };
             if meta.is_dir() {
-                if path.file_name().is_some_and(|n| n == ".git") {
-                    continue;
-                }
                 if let Some(found) = walk(&path, budget) {
                     return Some(found);
                 }
@@ -1269,6 +1270,15 @@ mod tests {
                 .iter()
                 .all(|i| i.installed && i.version.as_deref() == Some("synthetic"))
         );
+    }
+
+    #[test]
+    fn first_text_file_skips_a_worktree_git_file() {
+        let cwd = tempfile::tempdir().unwrap();
+        std::fs::write(cwd.path().join(".git"), "gitdir: /elsewhere\n").unwrap();
+        std::fs::write(cwd.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let found = super::first_text_file(cwd.path()).unwrap();
+        assert_eq!(found.file_name().unwrap(), "main.rs");
     }
 
     #[tokio::test]
