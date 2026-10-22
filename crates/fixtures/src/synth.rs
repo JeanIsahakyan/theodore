@@ -91,7 +91,7 @@ impl Job {
 /// `Edit` mode is checked first: only fix runs use it, and a task body is
 /// free text that could quote any of the grouping markers below.
 fn classify(req: &AgentRequest) -> Job {
-    if req.mode == AgentMode::Edit {
+    if matches!(req.mode, AgentMode::Edit | AgentMode::Run) {
         return Job::Fix;
     }
     let system = req.system.as_deref().unwrap_or("");

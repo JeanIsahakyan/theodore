@@ -96,6 +96,11 @@ pub fn build_args(
             args.push("--permission-mode".to_string());
             args.push("acceptEdits".to_string());
         }
+        AgentMode::Run => {
+            // Every tool, no prompts: the CLI's own settings are the limit.
+            args.push("--permission-mode".to_string());
+            args.push("bypassPermissions".to_string());
+        }
     }
     if let Some(model) = req.model.as_ref().or(cfg.model.as_ref()) {
         args.push("--model".to_string());
@@ -469,5 +474,30 @@ mod mcp_config_tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod run_mode_tests {
+    use super::*;
+
+    #[test]
+    fn run_mode_may_edit_and_run_commands() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::Run,
+            mcp: None,
+            model: None,
+            stall_after_ms: 1000,
+        };
+        let args = build_args(&req, &Default::default(), None);
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--permission-mode", "bypassPermissions"])
+        );
+        assert!(!args.iter().any(|a| a == "--disallowedTools"));
     }
 }

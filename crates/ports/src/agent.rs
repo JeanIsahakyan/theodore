@@ -22,6 +22,10 @@ pub enum AgentMode {
     ReadOnly,
     /// may edit files inside `cwd`
     Edit,
+    /// may edit files and run any shell command without asking (a space's
+    /// Run mode, docs/spaces.md §5). Theodore adds no sandbox of its own:
+    /// the CLI's own configuration is what limits it.
+    Run,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
