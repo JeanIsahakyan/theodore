@@ -172,6 +172,7 @@ async fn process_item(core: &Core, item: OutboxItem) {
         "edit_comment" => do_edit_comment(core, &item).await,
         "rerun_check" => do_rerun_check(core, &item).await,
         "triage" => do_triage(core, &item).await,
+        "create_space_pr" => do_create_space_pr(core, &item).await,
         other => Err(Outcome::Fail(format!("unknown outbox op {other}"))),
     };
     let store = core.0.deps.store.clone();
@@ -622,6 +623,35 @@ async fn do_triage(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
         }
     }
     refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+    Ok(())
+}
+
+/// Opens a space's PR, idempotent by head branch (docs/spaces.md "Open
+/// PR"): an open PR for the branch — from an earlier attempt that timed
+/// out after the host made it — is linked instead of opening a second.
+async fn do_create_space_pr(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: crate::usecases::ship::CreateSpacePrPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let host = &core.0.deps.host;
+    let find = || host.find_open_pr(&payload.repo, &payload.pr.head);
+    let existing = match find().await {
+        Ok(found) => found,
+        // A host that can't look PRs up still gets one create attempt.
+        Err(HostError::Unsupported(_)) => None,
+        Err(e) => return Err(classify_host_error(core, item, e).await),
+    };
+    let pr_ref = match existing {
+        Some(pr_ref) => pr_ref,
+        None => match host.create_pr(&payload.repo, &payload.pr).await {
+            Ok(pr_ref) => pr_ref,
+            Err(HostError::Conflict(msg)) => match find().await {
+                Ok(Some(pr_ref)) => pr_ref,
+                Ok(None) | Err(_) => return Err(Outcome::Fail(msg)),
+            },
+            Err(e) => return Err(classify_host_error(core, item, e).await),
+        },
+    };
+    core.space_pr_opened(&payload.space, &pr_ref).await;
     Ok(())
 }
 

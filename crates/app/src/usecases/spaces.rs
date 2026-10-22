@@ -26,6 +26,9 @@ pub fn space_chat_key(space: &str) -> PrId {
     PrId(format!("space:{space}"))
 }
 
+/// The per-space spend limit (USD); unset = no limit.
+pub(crate) const SPACE_BUDGET_KEY: &str = "budget.per_space_usd";
+
 /// Messages of history replayed into each turn (the CLIs are spawned fresh
 /// per turn; docs/spaces.md §5 "Resume").
 const HISTORY_MESSAGES: usize = 12;
@@ -49,10 +52,25 @@ impl Core {
             Some(n) => n.to_string(),
             None => slug(&req.goal),
         };
-        let branch = req
-            .branch
-            .clone()
-            .unwrap_or_else(|| format!("theo/{}", slug(&name)));
+        let branch = match req.branch.clone() {
+            Some(b) => b,
+            None => {
+                // Named after you on the host (docs/spaces.md §12); a local
+                // folder, or a host we can't reach, gets `space/<slug>`.
+                let login = match project.path {
+                    Some(_) => None,
+                    None => self
+                        .0
+                        .deps
+                        .host
+                        .viewer_for(project.repo.host)
+                        .await
+                        .ok()
+                        .map(|p| p.login),
+                };
+                crate::usecases::ship::branch_for(login.as_deref(), &slug(&name))
+            }
+        };
         if !is_valid_branch(&branch) {
             return Err(AppError::Invalid(format!("bad branch name {branch:?}")));
         }
@@ -101,6 +119,8 @@ impl Core {
             turns: 0,
             run: None,
             error: None,
+            shipped: None,
+            done_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -407,20 +427,14 @@ impl Core {
             .ok_or_else(|| AppError::NotFound(format!("project {}", space.project)))
     }
 
-    /// `budget.per_space_usd`, else `budget.per_pr_usd`, against the
-    /// space's summed turn usage.
+    /// `budget.per_space_usd` (docs/spaces.md §12: its own budget, apart
+    /// from the PR review runs' `budget.per_pr_usd`) against the space's
+    /// summed turn usage.
     async fn check_space_budget(&self, space: &Space, project: &Project) -> AppResult<()> {
         let scope = project.repo.slug();
-        let budget = match self
-            .setting_f64_scoped("budget.per_space_usd", Some(&scope))
-            .await
-        {
-            Some(b) => Some(b),
-            None => {
-                self.setting_f64_scoped("budget.per_pr_usd", Some(&scope))
-                    .await
-            }
-        };
+        let budget = self
+            .setting_f64_scoped(SPACE_BUDGET_KEY, Some(&scope))
+            .await;
         if let Some(budget) = budget
             && space.usage.usd >= budget
         {
@@ -487,6 +501,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mode: match mode {
             SpaceMode::Ask => AgentMode::ReadOnly,
             SpaceMode::Edit => AgentMode::Edit,
+            SpaceMode::Run => AgentMode::Run,
         },
         mcp: None,
         model,

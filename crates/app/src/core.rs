@@ -47,6 +47,9 @@ pub(crate) struct Inner {
     pub shutdown: CancellationToken,
     /// Serializes PR opens so two callers never clone/fetch the same PR twice.
     pub open_lock: tokio::sync::Mutex<()>,
+    /// Serializes shipping spaces (Open PR / Push / Merge locally): two
+    /// clicks never squash and push the same space twice.
+    pub ship_lock: tokio::sync::Mutex<()>,
     /// PRs whose grouping is running, so a PR is never grouped twice at once.
     pub grouping_inflight: std::sync::Mutex<std::collections::HashSet<PrId>>,
     /// Last host health the UI was told about (`Ephemeral::HostStatus`):
@@ -94,6 +97,7 @@ impl Core {
             outbox_notify: Notify::new(),
             shutdown: CancellationToken::new(),
             open_lock: tokio::sync::Mutex::new(()),
+            ship_lock: tokio::sync::Mutex::new(()),
             grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
             host_health: std::sync::Mutex::new((true, None, true)),
             login: Mutex::new(None),

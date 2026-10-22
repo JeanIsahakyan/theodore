@@ -13,6 +13,7 @@ pub mod open_pr;
 pub mod projects;
 pub mod review;
 pub mod revision;
+pub mod ship;
 pub mod skills;
 pub mod spaces;
 pub mod suggestions;
