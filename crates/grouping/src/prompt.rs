@@ -276,7 +276,9 @@ fn write_related(out: &mut String, files: &[&theodore_domain::FileDiff], graph: 
     let _ = writeln!(
         out,
         "\n# Related changes\nFiles linked by imports, shared names or the same edit, \
-strongest first. Keep linked hunks in one group unless they are clearly separate steps."
+strongest first. Keep the changes that link them in one group unless they are clearly \
+separate steps. Links are between files, not hunks: a purely mechanical hunk (formatting, \
+syntax cleanup) in a linked file can still go to its own skim group."
     );
     let mut used = 0;
     for l in lines {
@@ -735,7 +737,14 @@ mod tests {
     #[test]
     fn packs_small_directories_into_one_chunk() {
         let files: Vec<_> = (0..6)
-            .map(|i| mk_file(&format!("d{i}/f.ts"), vec![mk_hunk(&format!("h{i}"), 20)]))
+            // Unrelated files (different edits, so no "same edit" link):
+            // only directory packing applies.
+            .map(|i| {
+                mk_file(
+                    &format!("d{i}/f.ts"),
+                    vec![mk_hunk(&format!("h{i}"), 20 + i)],
+                )
+            })
             .collect();
         let rev = Revision {
             base: Sha::new("b"),
