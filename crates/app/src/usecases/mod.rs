@@ -11,6 +11,7 @@ pub mod merge;
 pub mod open_pr;
 pub mod projects;
 pub mod review;
+pub mod review_config;
 pub mod revision;
 pub mod ship;
 pub mod skills;

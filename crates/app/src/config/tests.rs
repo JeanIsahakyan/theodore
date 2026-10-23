@@ -99,7 +99,7 @@ fn legacy_flat_and_top_level_agents_map_under_review() {
 }
 
 #[test]
-fn review_keys_parse_for_later() {
+fn review_keys_parse() {
     let m = merge(&[layer(
         ConfigLayer::Repo,
         r#"
@@ -111,6 +111,7 @@ review:
   checklist:
     "migrations/**": Has a down migration?
     "api/**": [Versioned?, Documented?]
+    "**/*.sql": Reversible?
   auto_skills: [security]
   ignore_findings: ["vendor/**"]
 "#,
@@ -125,6 +126,13 @@ review:
         vec!["Has a down migration?".to_string()]
     );
     assert_eq!(r.checklist["api/**"].items().len(), 2);
+    // A `.` in a glob key is part of the key, not a path.
+    assert_eq!(
+        r.checklist["**/*.sql"].items(),
+        vec!["Reversible?".to_string()]
+    );
+    assert!(m.sources.contains_key("review.checklist.**/*.sql"));
+    assert!(m.errors.is_empty(), "{:?}", m.errors);
     assert_eq!(r.auto_skills, vec!["security".to_string()]);
     assert_eq!(r.ignore_findings, vec!["vendor/**".to_string()]);
     assert!(m.unknown.is_empty(), "{:?}", m.unknown);

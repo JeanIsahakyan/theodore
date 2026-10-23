@@ -43,8 +43,8 @@ pub struct ProjectConfig {
     pub spaces: SpacesConfig,
 }
 
-/// `review:`. Only `agents` is wired today; the rest is parsed and
-/// documented as coming next.
+/// `review:` (docs/config.md §1); applied through
+/// `usecases::review_config`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct ReviewConfig {
@@ -75,7 +75,6 @@ pub enum OneOrMany {
 }
 
 impl OneOrMany {
-    #[allow(dead_code)] // read once `review.checklist` is wired
     pub fn items(&self) -> Vec<String> {
         match self {
             OneOrMany::One(s) => vec![s.clone()],
@@ -296,11 +295,26 @@ fn normalize(value: Value) -> Value {
 }
 
 fn undot(value: Value) -> Value {
+    undot_at("", value)
+}
+
+/// Maps whose keys are globs or names, not config paths: a `.` in them
+/// (`"**/*.sql"`) is part of the key.
+const LITERAL_KEYS: &[&str] = &["review.checklist", "spaces.env"];
+
+/// `undot` of the map at dotted path `at`.
+fn undot_at(at: &str, value: Value) -> Value {
     let mut nested = Value::Object(Map::new());
     if let Value::Object(map) = value {
         for (k, v) in map {
+            let path = if at.is_empty() {
+                k.clone()
+            } else {
+                format!("{at}.{k}")
+            };
             let v = match v {
-                Value::Object(_) => undot(v),
+                Value::Object(_) if LITERAL_KEYS.contains(&path.as_str()) => v,
+                Value::Object(_) => undot_at(&path, v),
                 other => other,
             };
             insert_dotted(&mut nested, &k, v);

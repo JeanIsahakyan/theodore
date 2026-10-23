@@ -73,6 +73,11 @@ pub(crate) struct Inner {
     pub setup_lock: tokio::sync::Mutex<()>,
     /// Config problems already shown (`file\0key`): warned once per session.
     pub config_warned: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Merged project configs by a hash of their layers' text
+    /// (`usecases::review_config`).
+    pub review_config: std::sync::Mutex<HashMap<String, Arc<crate::config::Merged>>>,
+    /// `review.auto_skills` runs at all (`Core::set_auto_skills`).
+    pub auto_skills: std::sync::atomic::AtomicBool,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -115,6 +120,8 @@ impl Core {
             ports_lock: tokio::sync::Mutex::new(()),
             setup_lock: tokio::sync::Mutex::new(()),
             config_warned: std::sync::Mutex::new(std::collections::HashSet::new()),
+            review_config: crate::usecases::review_config::new_cache(),
+            auto_skills: std::sync::atomic::AtomicBool::new(true),
         });
 
         let core = Core(inner.clone());

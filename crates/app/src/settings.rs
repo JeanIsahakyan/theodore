@@ -227,20 +227,8 @@ impl Core {
         // A local folder's config is its own files (working copy and
         // personal layer), whichever review of it is opened: one source per
         // repo, so a review's checkout never undoes the folder's values.
-        let store = self.0.deps.store.clone();
-        let folder = tokio::task::spawn_blocking(move || store.all(models::PROJECT))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|r| serde_json::from_value::<theodore_contract::Project>(r.data).ok())
-            .find(|p| &p.repo == repo && p.path.is_some());
-        let layers = match folder {
-            Some(project) => self.project_layers(&project, None).await,
-            None => config::read_layers(&self.0.deps.data_dir, Some(worktree), None).await,
-        };
-        let merged = config::merge(&layers);
+        let layers = self.pr_config_layers(worktree, repo).await;
+        let merged = self.merge_cached(&layers);
         self.warn_config(&merged);
         self.apply_review_agents(&merged, repo).await;
     }
