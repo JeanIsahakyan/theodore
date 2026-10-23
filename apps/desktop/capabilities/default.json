@@ -1,12 +1,16 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main Theodore window: core events, updater, process exit, opening links in the browser.",
+  "description": "Capabilities for the main Theodore window: core events, updater, process exit, opening links in the browser, a space's turn-finished notification and the dock badge.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-badge-count",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
     "updater:default",
     "process:default",
     {

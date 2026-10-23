@@ -163,6 +163,8 @@ pub fn run(
         .plugin(tauri_plugin_opener::init())
         // `theodore://` (the account sign-in redirect in an app bundle).
         .plugin(tauri_plugin_deep_link::init())
+        // A space's turn finished while the window was in the background.
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(builder.invoke_handler())
         .manage(core.clone())
         .manage(updater::UpdateState::default())
