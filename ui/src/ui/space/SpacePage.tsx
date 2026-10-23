@@ -49,6 +49,7 @@ import { useRootStore, useUi } from '../../stores/context';
 import { AgentTag, Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
+import { ToolCalls } from '../SidePanel';
 import { rich } from '../../highlight';
 import { latinKey, useViewKeys } from '../keys';
 import {
@@ -60,7 +61,13 @@ import {
 } from './Composer';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
-import { checksByReply, runControl, settingUp, setupView } from './commands';
+import {
+  checksByReply,
+  runControl,
+  runsByReply,
+  settingUp,
+  setupView,
+} from './commands';
 import { GlobalConfigSection } from './ConfigSection';
 import {
   CheckChip,
@@ -652,6 +659,13 @@ const SpaceChat = observer(function SpaceChat({
   const undone = undoneMessages(space);
   const undo = undoState(space);
   const checks = checksByReply(space.turn_log);
+  const turnRuns = runsByReply(space.id, space.turn_log);
+  // A finished turn's tool calls, kept for this session; the turn still
+  // running (its check) shows them below instead.
+  const turnTools = (reply: string): string[] => {
+    const r = turnRuns.get(reply);
+    return r && r !== run ? (store.ephemeral.runLog.get(r) ?? []) : [];
+  };
   const setupStage = setupView(space) === 'stage';
   const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
   const tools = run ? (store.ephemeral.runLog.get(run) ?? []) : [];
@@ -719,6 +733,9 @@ const SpaceChat = observer(function SpaceChat({
                 {m.author.kind === 'me' ? m.text : rich(m.text)}
               </div>
             )}
+            {m.author.kind === 'agent' && turnTools(m.id).length > 0 && (
+              <ToolCalls tools={turnTools(m.id)} running={false} />
+            )}
             {m.author.kind === 'agent' && checks.has(m.id) && (
               <CheckChip check={checks.get(m.id)!} />
             )}
@@ -730,6 +747,7 @@ const SpaceChat = observer(function SpaceChat({
               <Spinner /> {space.agent} is working
               {tools.length ? ` · ${tools.length} tool calls` : ''}
             </span>
+            {tools.length > 0 && <ToolCalls tools={tools} running />}
             {streaming && (
               <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
                 {rich(streaming)}

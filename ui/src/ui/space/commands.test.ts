@@ -16,6 +16,7 @@ import {
   groupEntries,
   logCounts,
   runControl,
+  runsByReply,
   seedLogs,
   settingUp,
   setupView,
@@ -179,6 +180,19 @@ describe('check chip', () => {
     const m = checksByReply([t('r1', null), t('r2', check({}))]);
     expect([...m.keys()]).toEqual(['r2']);
     expect(checksByReply(undefined).size).toBe(0);
+  });
+
+  it("names each reply's turn run the way the core does", () => {
+    const t = (reply: string): SpaceTurn => ({
+      message: `m-${reply}`,
+      reply,
+      before: 'a',
+      after: 'b',
+      check: null,
+    });
+    const m = runsByReply('s1', [t('r1'), t('r2')]);
+    expect(m.get('r2')).toBe('space:s1:m-r2');
+    expect(runsByReply('s1', undefined).size).toBe(0);
   });
 });
 
