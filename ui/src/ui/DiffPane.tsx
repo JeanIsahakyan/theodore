@@ -1,3 +1,4 @@
+import { openExternal } from '../core/openExternal';
 import { useElementWidth } from './useElementWidth';
 import { MarkdownDiff } from './MarkdownDiff';
 import { isMarkdown } from './mdDiff';
@@ -1111,7 +1112,7 @@ function FileBlockInner({
         items.push({
           id: 'open-github',
           label: 'Open on GitHub',
-          onAction: () => window.open(`${summaryForMenu.url}/files`, '_blank'),
+          onAction: () => openExternal(`${summaryForMenu.url}/files`),
         });
       }
       if (generatedFlag || file.status === 'deleted') {

@@ -1,3 +1,4 @@
+import { openExternal } from '../core/openExternal';
 import { useElementWidth } from './useElementWidth';
 import { REVIEW_EVENT } from '../core/menu';
 import { DiffSkeleton } from './Loading';
@@ -322,7 +323,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: '/' }));
       } else if (id === 'open-on-host') {
         const url = summary?.url;
-        if (url) window.open(url, '_blank');
+        if (url) openExternal(url);
       }
     };
     window.addEventListener(REVIEW_EVENT, on);

@@ -1,13 +1,17 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main Theodore window: core events, updater, process exit.",
+  "description": "Capabilities for the main Theodore window: core events, updater, process exit, opening links in the browser.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:window:allow-start-dragging",
     "updater:default",
-    "process:default"
+    "process:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    }
   ]
 }

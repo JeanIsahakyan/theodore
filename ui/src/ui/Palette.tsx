@@ -1,3 +1,4 @@
+import { openExternal } from '../core/openExternal';
 import { latinKey } from './latin';
 import { isBuildMode } from './space/mode';
 import { spacesIn } from './space/spaces';
@@ -366,7 +367,7 @@ export const CommandMenu = observer(function CommandMenu() {
             icon: <Check />,
             run: () => {
               const url = store.models.prSummaries.get(r.pr)?.url;
-              if (url) window.open(url, '_blank');
+              if (url) openExternal(url);
             },
           },
         ]

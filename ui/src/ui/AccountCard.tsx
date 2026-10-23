@@ -1,3 +1,4 @@
+import { openExternal } from '../core/openExternal';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   ArrowRightFromSquare,
@@ -179,7 +180,7 @@ export function SignInView({
           <ArrowUpRightFromSquare className="size-4" /> Open the page again
         </Button>
         <Button variant="ghost" onPress={cancel}>
-          Use a different email
+          {email ? 'Use a different email' : 'Back'}
         </Button>
       </Stage>
     );
@@ -220,10 +221,7 @@ export function SignInView({
         <Button
           variant="primary"
           onPress={() =>
-            window.open(
-              d.verificationUriComplete ?? d.verificationUri,
-              '_blank',
-            )
+            openExternal(d.verificationUriComplete ?? d.verificationUri)
           }
         >
           <ArrowUpRightFromSquare className="size-4" /> Open the page

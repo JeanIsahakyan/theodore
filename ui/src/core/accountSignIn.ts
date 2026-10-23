@@ -1,6 +1,7 @@
 /** Drives a Theodore account sign-in end to end (`account_sign_in_start`,
  *  then `account_sign_in_poll` until it settles) over the pure
  *  `reduceFlow` machine, so Settings and Onboarding share one flow. */
+import { openExternal } from './openExternal';
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { api, CommandFailure } from './api';
 import {
@@ -72,7 +73,7 @@ export function useAccountSignIn(
       .accountSignInStart({ method, email: email?.trim() || null })
       .then((s) => {
         dispatch({ type: 'started', attempt: next, start: s });
-        if (s.method === 'browser') window.open(s.url, '_blank');
+        if (s.method === 'browser') openExternal(s.url);
       })
       .catch((e) =>
         dispatch({ type: 'failed', attempt: next, error: message(e) }),
@@ -85,7 +86,7 @@ export function useAccountSignIn(
   }, []);
 
   const reopen = useCallback(() => {
-    if (flow.url) window.open(flow.url, '_blank');
+    if (flow.url) openExternal(flow.url);
   }, [flow.url]);
 
   return { flow, start, cancel, reopen };

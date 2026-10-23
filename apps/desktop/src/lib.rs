@@ -154,6 +154,9 @@ pub fn run(
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        // Links out (a PR on its host, the sign-in page): the webview's own
+        // `window.open` opens nothing in a desktop window.
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .manage(core.clone())
         .manage(updater::UpdateState::default())

@@ -1,5 +1,6 @@
 /** Native menu bar → the same actions as ⌘K. Review-local actions are
  *  forwarded as a `theodore:review` DOM event that `Review.tsx` handles. */
+import { openExternal } from './openExternal';
 import type { RootStore } from '../stores/RootStore';
 import { toggleTheme } from '../stores/UiStore';
 import { refreshInbox } from '../actions';
@@ -58,9 +59,8 @@ export function runMenu(store: RootStore, id: string): void {
     case 'shortcuts':
       return ui.openModal('help');
     case 'report-issue':
-      return void window.open(
+      return void openExternal(
         'https://github.com/JeanIsahakyan/theodore/issues/new',
-        '_blank',
       );
     case 'submit-review': {
       if (ui.route.name !== 'review') return;

@@ -4,6 +4,7 @@
  * one workspace at a time, the way a team switcher works. ⌃0 / ⌃1…9 switch
  * without opening it; the menu shows each workspace's waiting-PR count.
  */
+import { openExternal } from '../core/openExternal';
 import {
   ArrowRotateLeft,
   ArrowUpRightFromSquare,
@@ -119,8 +120,7 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
               ui.go({ name: 'settings', page: 'projects' });
             else if (key === REFRESH && active)
               void refreshProjectTracked(store, active.id);
-            else if (key === OPEN_HOST && hostUrl)
-              window.open(hostUrl, '_blank');
+            else if (key === OPEN_HOST && hostUrl) openExternal(hostUrl);
             else ws.switchTo(key);
           }}
         >

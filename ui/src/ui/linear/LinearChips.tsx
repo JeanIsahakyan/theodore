@@ -1,6 +1,7 @@
 /** Chips for the Linear issues linked to a PR ("ABC-123 · In Progress"),
  *  shared by Peek and the Review header. Clicking one opens the issue on
  *  linear.app; nothing here writes anything back. */
+import { openExternal } from '../../core/openExternal';
 import { Chip, Tooltip } from '@heroui/react';
 import type { LinearIssue, PrId } from '../../gen/contract';
 import { useLinearIssues } from './useLinearIssues';
@@ -26,7 +27,7 @@ function LinearChip({ issue }: { issue: LinearIssue }) {
         variant="secondary"
         color={chipColorFor(issue.state_type)}
         className="lin shrink-0 cursor-pointer gap-1 whitespace-nowrap"
-        onClick={() => window.open(issue.url, '_blank')}
+        onClick={() => openExternal(issue.url)}
       >
         {issue.identifier} · {issue.state_name}
       </Chip>

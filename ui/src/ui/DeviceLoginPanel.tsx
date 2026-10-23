@@ -1,3 +1,4 @@
+import { openExternal } from '../core/openExternal';
 import { useState } from 'react';
 import { Copy } from '@gravity-ui/icons';
 import { Alert, Button } from '@heroui/react';
@@ -45,7 +46,7 @@ export function DeviceLoginPanel({ state }: { state: DeviceLoginState }) {
         <div className="flex gap-2">
           <Button
             size="sm"
-            onPress={() => window.open(device.verification_uri, '_blank')}
+            onPress={() => openExternal(device.verification_uri)}
           >
             Open github.com/login/device
           </Button>
