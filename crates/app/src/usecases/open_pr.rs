@@ -215,16 +215,18 @@ impl Core {
                 .await
                 .ok()
                 .and_then(|r| r.ok())
-                .flatten()
-                .and_then(|r| {
-                    let algo = theodore_domain::grouping::row_algo(&r.data);
-                    serde_json::from_value::<theodore_domain::Grouping>(r.data)
-                        .ok()
-                        .map(|g| (g, algo))
-                });
-            // Reuse a grouping of this head, unless an older algorithm made it.
-            if stored.is_some_and(|(g, algo)| {
-                g.rev == head && algo >= theodore_domain::grouping::ALGO_VERSION
+                .flatten();
+            let rules = core
+                .review_rules_at(&worktree, &detail.summary.pr.repo)
+                .await;
+            // Reuse a grouping of this head, unless an older algorithm or
+            // other review rules (`hide`, `skim`, `checklist`) made it.
+            if stored.is_some_and(|r| {
+                crate::usecases::grouping::row_is_current(
+                    &r.data,
+                    &head,
+                    rules.grouping_hash().as_deref(),
+                )
             }) {
                 return;
             }
@@ -248,7 +250,8 @@ impl Core {
                 .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
                 .await;
             let agent = core.effective_agent(configured).await;
-            let ctx = core.grouping_context(&worktree, &revision).await;
+            let mut ctx = core.grouping_context(&worktree, &revision).await;
+            ctx.review = rules;
             let result = core
                 .0
                 .deps
@@ -260,19 +263,21 @@ impl Core {
             let still_open = core.0.current_head.read().await.contains_key(&pr);
             let error = match result {
                 Ok(_) if !still_open => None,
-                Ok(grouping) => match theodore_domain::grouping::to_row(&grouping) {
-                    Ok(data) => core
-                        .apply(vec![NewAction {
-                            model: models::GROUPING.into(),
-                            model_id: pr.0.clone(),
-                            action: SyncActionCode::U,
-                            data: Some(data),
-                        }])
-                        .await
-                        .err()
-                        .map(|e| e.to_string()),
-                    Err(e) => Some(e.to_string()),
-                },
+                Ok(grouping) => {
+                    match crate::usecases::grouping::grouping_row(grouping, &revision, &ctx) {
+                        Ok(data) => core
+                            .apply(vec![NewAction {
+                                model: models::GROUPING.into(),
+                                model_id: pr.0.clone(),
+                                action: SyncActionCode::U,
+                                data: Some(data),
+                            }])
+                            .await
+                            .err()
+                            .map(|e| e.to_string()),
+                        Err(e) => Some(e.to_string()),
+                    }
+                }
                 Err(e) => Some(e.to_string()),
             };
             core.0

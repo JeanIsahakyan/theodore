@@ -5,6 +5,7 @@ use std::path::{Component, Path};
 
 use theodore_contract::{Ephemeral, models};
 use theodore_domain::grouping::{CO_CHANGE_MAX_COMMITS, CO_CHANGE_MAX_FILES, RepoContext};
+use theodore_domain::review_rules::ReviewRules;
 use theodore_domain::{AgentId, FileFlag, FileStatus, Grouping, PrId, Revision};
 use theodore_ports::{NewAction, SyncActionCode};
 
@@ -42,11 +43,18 @@ impl Core {
         // head, and only if the current algorithm made it; an explicit
         // regroup of the same head starts fresh (incremental regroup keeps
         // the previous groups' shape, including their fragmentation).
+        // A changed review config (`hide`, `skim`, `checklist`) starts
+        // fresh too: the previous groups were cut under other rules.
+        let rules = self
+            .review_rules_at(&entry.worktree_path, &entry.pr_ref.repo)
+            .await;
+        let hash = rules.grouping_hash();
         let prev: Option<Grouping> = prev_row.and_then(|r| {
             let algo = theodore_domain::grouping::row_algo(&r.data);
-            serde_json::from_value::<Grouping>(r.data)
-                .ok()
-                .filter(|g| g.rev != head && algo >= theodore_domain::grouping::ALGO_VERSION)
+            let same_rules = theodore_domain::grouping::row_review_hash(&r.data) == hash.as_deref();
+            serde_json::from_value::<Grouping>(r.data).ok().filter(|g| {
+                g.rev != head && algo >= theodore_domain::grouping::ALGO_VERSION && same_rules
+            })
         });
         let repo_scope = detail.summary.pr.repo.slug();
         let configured = self
@@ -69,7 +77,7 @@ impl Core {
             running: true,
             error: None,
         });
-        let result = self.regroup_run(&prev, &entry, &detail, agent).await;
+        let result = self.regroup_run(&prev, &entry, &detail, agent, rules).await;
         self.0
             .grouping_inflight
             .lock()
@@ -80,8 +88,8 @@ impl Core {
             running: false,
             error: result.as_ref().err().map(|e| e.to_string()),
         });
-        let grouping = result?;
-        let data = theodore_domain::grouping::to_row(&grouping)
+        let (grouping, ctx) = result?;
+        let data = grouping_row(grouping, &entry.revision, &ctx)
             .map_err(|e| AppError::Invalid(e.to_string()))?;
         let action = NewAction {
             model: models::GROUPING.into(),
@@ -99,10 +107,12 @@ impl Core {
         entry: &crate::core::RevisionEntry,
         detail: &theodore_domain::PrDetail,
         agent: AgentId,
-    ) -> AppResult<Grouping> {
-        let ctx = self
+        rules: ReviewRules,
+    ) -> AppResult<(Grouping, RepoContext)> {
+        let mut ctx = self
             .grouping_context(&entry.worktree_path, &entry.revision)
             .await;
+        ctx.review = rules;
         let grouping = match prev {
             Some(p) => {
                 self.0
@@ -126,7 +136,7 @@ impl Core {
                     .await?
             }
         };
-        Ok(grouping)
+        Ok((grouping, ctx))
     }
 
     /// What the grouper can use beyond the diff: head contents of the
@@ -181,6 +191,31 @@ impl Core {
             .unwrap_or_default();
         ctx
     }
+}
+
+/// The grouping as stored: the config's checklist items added to its
+/// groups, then the row with the algorithm version and the hash of the
+/// review rules it was made under.
+pub(crate) fn grouping_row(
+    mut grouping: Grouping,
+    rev: &Revision,
+    ctx: &RepoContext,
+) -> serde_json::Result<serde_json::Value> {
+    ctx.review.apply_checklist(&mut grouping, rev);
+    theodore_domain::grouping::to_row_with(&grouping, ctx.review.grouping_hash().as_deref())
+}
+
+/// A stored grouping row is still good for `head` under rules hashing to
+/// `hash`: same head, current algorithm, same review rules.
+pub(crate) fn row_is_current(
+    data: &serde_json::Value,
+    head: &theodore_domain::Sha,
+    hash: Option<&str>,
+) -> bool {
+    use theodore_domain::grouping::{ALGO_VERSION, row_algo, row_review_hash};
+    data.get("rev").and_then(|v| v.as_str()) == Some(head.as_str())
+        && row_algo(data) >= ALGO_VERSION
+        && row_review_hash(data) == hash
 }
 
 /// Caps on how much of the worktree `grouping_context` reads.
