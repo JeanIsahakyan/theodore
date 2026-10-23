@@ -3988,7 +3988,15 @@ async fn delegate_task_persists_a_failed_chat_message_on_agent_error() {
     .await
     .expect("delegate_task");
 
-    wait_until(|| task_row(&f, &task.id).status == TaskStatus::Todo).await;
+    // The task starts in `Todo` too: wait for the failure record itself,
+    // not the status, or this races the run.
+    wait_until(|| {
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| m.failed.as_deref() == Some("edit crashed"))
+    })
+    .await;
+    assert_eq!(task_row(&f, &task.id).status, TaskStatus::Todo);
     assert!(
         chat_messages(&f, &pr)
             .iter()
