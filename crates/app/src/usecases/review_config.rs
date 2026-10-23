@@ -80,23 +80,35 @@ impl Core {
     /// The review rules for an open PR, at its current head; the default
     /// (nothing set) when it isn't open.
     pub(crate) async fn review_rules_of(&self, pr: &PrId) -> ReviewRules {
-        let entry = {
-            let head = self.0.current_head.read().await.get(pr).cloned();
-            match head {
-                Some(head) => self
-                    .0
-                    .revisions
-                    .read()
-                    .await
-                    .get(&(pr.clone(), head))
-                    .cloned(),
-                None => None,
-            }
-        };
-        match entry {
+        match self.open_entry(pr).await {
             Some(e) => self.review_rules_at(&e.worktree_path, &e.pr_ref.repo).await,
             None => ReviewRules::default(),
         }
+    }
+
+    /// Whether a finding on `path` of an open PR is dropped by
+    /// `review.ignore_findings` (without resolving `context`).
+    pub(crate) async fn finding_ignored(&self, pr: &PrId, path: &str) -> bool {
+        let Some(e) = self.open_entry(pr).await else {
+            return false;
+        };
+        let layers = self
+            .pr_config_layers(&e.worktree_path, &e.pr_ref.repo)
+            .await;
+        let merged = self.merge_cached(&layers);
+        clean(&merged.config.review.ignore_findings)
+            .iter()
+            .any(|g| glob_match(g, path))
+    }
+
+    async fn open_entry(&self, pr: &PrId) -> Option<Arc<crate::core::RevisionEntry>> {
+        let head = self.0.current_head.read().await.get(pr).cloned()?;
+        self.0
+            .revisions
+            .read()
+            .await
+            .get(&(pr.clone(), head))
+            .cloned()
     }
 
     /// The review rules a space's agent turns run with: its project's

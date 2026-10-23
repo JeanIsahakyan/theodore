@@ -234,11 +234,7 @@ impl Core {
         }
         // `review.ignore_findings`: dropped before it's stored, and counted
         // on its run so the AI panel can say so.
-        if self
-            .review_rules_of(&pr)
-            .await
-            .ignores_finding(&finding.anchor.path)
-        {
+        if self.finding_ignored(&pr, &finding.anchor.path).await {
             self.count_hidden_finding(&run_id).await?;
             return Ok(finding.id);
         }
