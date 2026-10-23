@@ -118,7 +118,7 @@ export const TabBar = observer(function TabBar({
     <Toolbar
       aria-label="Tabs"
       data-tauri-drag-region
-      className={`tabbar flex h-12 w-full shrink-0 items-center gap-2 border-b border-separator bg-background px-3 ${showOpen ? 'ps-20' : ''}`}
+      className={`tabbar flex h-12 w-full shrink-0 items-center gap-2 border-b border-separator bg-background px-3 ${showOpen ? 'ps-[104px]' : ''}`}
     >
       {showOpen && (
         <Tooltip>
