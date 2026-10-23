@@ -37,6 +37,7 @@ tauri-plugin-updater.workspace = true
 tauri-plugin-process.workspace = true
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
 tauri-specta = { workspace = true, features = ["derive", "typescript"] }
 
 [dev-dependencies]

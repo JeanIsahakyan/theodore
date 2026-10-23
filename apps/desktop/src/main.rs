@@ -37,6 +37,9 @@ fn main() {
         ..
     } = rt;
     let is_sandbox = sandbox.is_some();
+    // An app bundle receives `theodore://`: the account sign-in returns
+    // there instead of the loopback (unless a redirect is configured).
+    core.set_account_app_redirect(theodore_desktop::deep_link::app_redirect());
     let api = Arc::new(AppCore::new(core).with_sandbox(sandbox));
 
     run(api, is_sandbox, move |events| {

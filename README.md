@@ -97,8 +97,9 @@ implementations too, not stubs — just narrower, matching each host's API.
 ### Theodore account (optional, hidden until configured)
 - Sign in from a dialog — the first, skippable onboarding step, or Settings → Account: your
   email opens the hosted sign-in page on its code step and Theodore picks the sign-in up when you
-  finish; a device code covers signing in from another machine. Client-only (PKCE + loopback,
-  no secret in the app), session in the keychain. Shown only once a client id is set
+  finish; a device code covers signing in from another machine. Client-only (PKCE, no secret in
+  the app): the installed app gets the sign-in back through `theodore://callback`, a dev run
+  through a loopback redirect. Session in the keychain. Shown only once a client id is set
   (`THEODORE_WORKOS_CLIENT_ID`); setup in `docs/plan.md` §6.12.
 
 ### Labs: spaces (hidden)

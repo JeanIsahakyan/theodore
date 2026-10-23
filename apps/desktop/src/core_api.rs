@@ -187,7 +187,8 @@ pub trait CoreApi: Send + Sync {
     /// Theodore account (plan "Theodore account"): signed in or out, and
     /// whether the feature is configured at all.
     async fn account_status(&self) -> Result<AccountStatus, CommandError>;
-    /// Starts a browser (PKCE + loopback) or device-code sign-in.
+    /// Starts a browser (PKCE; loopback or app URL scheme redirect) or
+    /// device-code sign-in.
     async fn account_sign_in_start(
         &self,
         req: AccountSignInRequest,
@@ -197,6 +198,13 @@ pub trait CoreApi: Send + Sync {
     /// Drops the sign-in in progress (frees the loopback port).
     async fn account_sign_in_cancel(&self) -> Result<(), CommandError>;
     async fn account_sign_out(&self) -> Result<AccountStatus, CommandError>;
+    /// A `theodore://callback?…` sign-in redirect the OS opened the app
+    /// with. Not a command: the shell's URL-scheme handler calls it. `true`
+    /// when it belonged to the sign-in in progress (signed in or failed),
+    /// `false` when ignored.
+    async fn account_sign_in_callback(&self, _url: String) -> bool {
+        false
+    }
 }
 
 fn not_sandbox() -> CommandError {

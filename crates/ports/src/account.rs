@@ -2,8 +2,9 @@
 //! itself — a second, optional identity next to the host tokens, for the
 //! cloud features to come. The app owns the session (storage, refresh,
 //! status); an adapter owns the identity provider's protocol: the browser
-//! sign-in with PKCE and a loopback redirect, the device-code sign-in,
-//! token refresh and access-token validation.
+//! sign-in with PKCE (redirect to a loopback listener or to the app's own
+//! URL scheme), the device-code sign-in, token refresh and access-token
+//! validation.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,8 @@ pub enum AccountError {
     /// An access token failed validation (signature, issuer, expiry).
     #[error("invalid token: {0}")]
     InvalidToken(String),
-    /// Bad configuration: a redirect URI that isn't loopback, a port taken.
+    /// Bad configuration: an `http` redirect URI that isn't loopback, a
+    /// port taken.
     #[error("{0}")]
     Config(String),
     #[error("protocol: {0}")]
@@ -35,10 +37,20 @@ pub enum AccountError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountConfig {
     pub client_id: String,
-    /// Loopback URL the browser comes back to, e.g.
-    /// `http://127.0.0.1:47823/callback`. Port `0` picks a free port (only
-    /// valid when the provider has a wildcard-port redirect registered).
+    /// Where the browser comes back to. Either a loopback URL, e.g.
+    /// `http://127.0.0.1:47823/callback` (port `0` picks a free port, only
+    /// valid when the provider has a wildcard-port redirect registered), or
+    /// an app URL scheme, e.g. `theodore://callback`, which the OS hands to
+    /// the app (see [`is_loopback_redirect`]).
     pub redirect_uri: String,
+}
+
+/// `http`/`https` redirects are caught by a loopback listener the adapter
+/// binds; any other scheme is an app URL scheme the OS delivers to the
+/// app, which feeds the callback in itself.
+pub fn is_loopback_redirect(redirect_uri: &str) -> bool {
+    let scheme = redirect_uri.split_once(':').map_or("", |(s, _)| s);
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,7 +120,9 @@ pub struct BrowserSignIn {
     pub state: String,
     /// PKCE verifier for the code exchange.
     pub code_verifier: String,
-    pub callbacks: Box<dyn CallbackListener>,
+    /// The loopback listener; `None` for an app URL scheme redirect (the
+    /// app receives that callback from the OS, no port is bound).
+    pub callbacks: Option<Box<dyn CallbackListener>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,8 +155,9 @@ pub trait AccountPort: Send + Sync {
         true
     }
 
-    /// Binds the loopback listener and builds the hosted sign-in URL with a
-    /// fresh PKCE pair and `state`. `login_hint` pre-fills the email.
+    /// Builds the hosted sign-in URL with a fresh PKCE pair and `state`, and
+    /// binds the loopback listener when `cfg.redirect_uri` is loopback (see
+    /// [`is_loopback_redirect`]). `login_hint` pre-fills the email.
     async fn start_browser(
         &self,
         cfg: &AccountConfig,
@@ -222,5 +237,18 @@ impl AccountPort for LocalAccount {
     }
     async fn sign_out(&self, _cfg: &AccountConfig, _session: &AccountSession) -> AccountResult<()> {
         Err(AccountError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_redirect;
+
+    #[test]
+    fn http_redirects_are_loopback_and_app_schemes_are_not() {
+        assert!(is_loopback_redirect("http://127.0.0.1:47823/callback"));
+        assert!(is_loopback_redirect("HTTPS://example.com/cb"));
+        assert!(!is_loopback_redirect("theodore://callback"));
+        assert!(!is_loopback_redirect("not a url"));
     }
 }
