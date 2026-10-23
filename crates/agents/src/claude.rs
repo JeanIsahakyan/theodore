@@ -399,6 +399,7 @@ mod read_only_tests {
             mcp: None,
             model: None,
             stall_after_ms: 1000,
+            env: Vec::new(),
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -427,6 +428,7 @@ mod mcp_config_tests {
             }),
             model: None,
             stall_after_ms: 1000,
+            env: Vec::new(),
         }
     }
 
@@ -497,6 +499,7 @@ mod run_mode_tests {
             mcp: None,
             model: None,
             stall_after_ms: 1000,
+            env: Vec::new(),
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(

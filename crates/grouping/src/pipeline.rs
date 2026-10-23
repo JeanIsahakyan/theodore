@@ -400,6 +400,7 @@ pub(crate) async fn call_agent(
         mcp: None,
         model: opts.model.clone(),
         stall_after_ms: opts.stall_after_ms,
+        env: Vec::new(),
     };
     let mut run = agent.run(req).await?;
     let mut usage = Usage::default();

@@ -594,6 +594,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mcp: None,
         model,
         stall_after_ms: core.stall_after_ms().await,
+        env: Vec::new(),
     };
     let mut text = String::new();
     let mut error = None;
