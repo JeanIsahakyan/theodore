@@ -372,12 +372,7 @@ async fn drive_skill_run(
         if cancel.is_cancelled() {
             break;
         }
-        let mcp = core
-            .0
-            .deps
-            .tools
-            .as_ref()
-            .map(|t| t.register(&run_id, &pr, agent));
+        let mcp = core.pr_tools(&run_id, &pr, agent).await;
         let req = AgentRequest {
             agent,
             prompt: skill_prompt(&skill, agent, &cwd, &core.0.deps.claude_home),
@@ -401,7 +396,7 @@ async fn drive_skill_run(
                                 core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text });
                             }
                             AgentEvent::ToolCall { name, .. } => {
-                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool: {name}") });
+                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line(&name) });
                             }
                             AgentEvent::ToolResult { ok, .. } => {
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool result ok={ok}") });
@@ -476,6 +471,35 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
     }
 }
 
+/// The run-log line for a tool call. Theodore's own tools read as what
+/// they do instead of `mcp__space-tools__run_check` (Claude),
+/// `space-tools__run_check` (Codex) or the bare name; anything else is
+/// shown as the agent named it.
+pub(crate) fn tool_log_line(name: &str) -> String {
+    let own = [theodore_ports::REVIEW_TOOLS, theodore_ports::SPACE_TOOLS]
+        .iter()
+        .find_map(|server| {
+            let name = name.strip_prefix("mcp__").unwrap_or(name);
+            name.strip_prefix(server)?.strip_prefix("__")
+        })
+        .unwrap_or(name);
+    let label = match own {
+        "run_check" => "run the check",
+        "start_app" => "start the app",
+        "stop_app" => "stop the app",
+        "app_status" => "app status",
+        "read_logs" => "read the logs",
+        "space_info" => "space info",
+        "get_pr_context" => "read the PR",
+        "get_group" => "read a group",
+        "get_base_file" => "read a file before the change",
+        "add_finding" => "add a finding",
+        "propose_patch" => "propose a fix",
+        _ => name,
+    };
+    format!("tool: {label}")
+}
+
 /// Revokes a run's MCP token when the run's driver returns. `pub(crate)`:
 /// also used by `usecases::tasks` for fix runs.
 pub(crate) struct ToolsGuard<'a> {
@@ -543,12 +567,7 @@ async fn drive_ask(
     cwd: PathBuf,
     cancel: CancellationToken,
 ) {
-    let mcp = core
-        .0
-        .deps
-        .tools
-        .as_ref()
-        .map(|t| t.register(&run_id, &pr, agent));
+    let mcp = core.pr_tools(&run_id, &pr, agent).await;
     let system = core
         .review_rules_of(&pr)
         .await
@@ -628,5 +647,33 @@ async fn drive_ask(
                 data: Some(data),
             }])
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tool_label_tests {
+    use super::tool_log_line;
+
+    #[test]
+    fn theodores_tools_read_as_what_they_do() {
+        assert_eq!(
+            tool_log_line("mcp__space-tools__run_check"),
+            "tool: run the check"
+        );
+        assert_eq!(
+            tool_log_line("space-tools__start_app"),
+            "tool: start the app"
+        );
+        assert_eq!(
+            tool_log_line("mcp__review-tools__read_logs"),
+            "tool: read the logs"
+        );
+        assert_eq!(tool_log_line("app_status"), "tool: app status");
+        assert_eq!(tool_log_line("Bash"), "tool: Bash");
+        assert_eq!(
+            tool_log_line("mcp__other__run_check"),
+            "tool: mcp__other__run_check",
+            "only Theodore's own servers"
+        );
     }
 }

@@ -190,7 +190,13 @@ function Dots() {
  *  Open while the agent works, folds away once it's done — remounted (via
  *  `key`) rather than synced through an effect, so there's no setState in
  *  an effect body to cascade a render. */
-function ToolCalls({ tools, running }: { tools: string[]; running: boolean }) {
+export function ToolCalls({
+  tools,
+  running,
+}: {
+  tools: string[];
+  running: boolean;
+}) {
   return (
     <Disclosure
       key={running ? 'running' : 'done'}

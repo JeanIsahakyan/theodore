@@ -264,3 +264,48 @@ pub struct BaseFileResult {
     pub exists: bool,
     pub content: String,
 }
+
+// ── read_logs (space-tools; read-only on a space's PR) ──────────────────────
+
+/// Lines `read_logs` returns when `tail` is left out.
+pub const DEFAULT_LOG_TAIL: usize = 100;
+/// The most lines one `read_logs` call returns.
+pub const MAX_LOG_TAIL: usize = 400;
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LogKindParam {
+    Setup,
+    Run,
+    Check,
+    Archive,
+}
+
+impl From<LogKindParam> for theodore_ports::SpaceCommandName {
+    fn from(k: LogKindParam) -> Self {
+        use theodore_ports::SpaceCommandName as N;
+        match k {
+            LogKindParam::Setup => N::Setup,
+            LogKindParam::Run => N::Run,
+            LogKindParam::Check => N::Check,
+            LogKindParam::Archive => N::Archive,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadLogsParams {
+    /// Which command's output: setup, run (the app), check or archive.
+    pub kind: LogKindParam,
+    /// How many of the last lines (default 100, at most 400).
+    pub tail: Option<u32>,
+}
+
+impl ReadLogsParams {
+    /// `tail`, bounded to `1..=MAX_LOG_TAIL`.
+    pub fn bounded_tail(&self) -> usize {
+        self.tail
+            .map_or(DEFAULT_LOG_TAIL, |t| t as usize)
+            .clamp(1, MAX_LOG_TAIL)
+    }
+}

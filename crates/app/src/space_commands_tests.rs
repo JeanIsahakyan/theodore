@@ -18,7 +18,7 @@ use theodore_ports::{AgentEvent, Store};
 use crate::testkit::{FakeScript, Fixtures, fixtures};
 use crate::{Core, Receivers};
 
-async fn wait_until(mut cond: impl FnMut() -> bool) {
+pub(crate) async fn wait_until(mut cond: impl FnMut() -> bool) {
     for _ in 0..2000 {
         if cond() {
             return;
@@ -28,11 +28,11 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
     panic!("condition not met in time");
 }
 
-struct Env {
-    f: Fixtures,
-    core: Core,
+pub(crate) struct Env {
+    pub f: Fixtures,
+    pub core: Core,
     _recv: Receivers,
-    project: Project,
+    pub project: Project,
     folder: tempfile::TempDir,
     _spaces: tempfile::TempDir,
 }
@@ -40,11 +40,16 @@ struct Env {
 /// A local-folder project in a real temp dir, with space worktrees as real
 /// directories.
 async fn started() -> Env {
+    start_env(false).await
+}
+
+/// `started`, with `tools`: the fake MCP registry wired in.
+pub(crate) async fn start_env(tools: bool) -> Env {
     let f = fixtures();
     let folder = tempfile::tempdir().unwrap();
     let spaces = tempfile::tempdir().unwrap();
     f.git.set_space_root(spaces.path());
-    let (core, recv) = Core::start(f.deps());
+    let (core, recv) = Core::start(if tools { f.deps_with_tools() } else { f.deps() });
     tokio::time::sleep(Duration::from_millis(30)).await;
     let project = core
         .add_project(AddProjectRequest {
@@ -80,21 +85,21 @@ async fn started() -> Env {
 }
 
 impl Env {
-    fn global(&self, yaml: &str) {
+    pub fn global(&self, yaml: &str) {
         std::fs::write(self.f.data_dir.path().join("config.yaml"), yaml).unwrap();
     }
 
-    fn repo_file(&self, rel: &str, yaml: &str) {
+    pub fn repo_file(&self, rel: &str, yaml: &str) {
         let path = self.folder.path().join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, yaml).unwrap();
     }
 
-    fn space(&self, id: &str) -> Space {
+    pub fn space(&self, id: &str) -> Space {
         serde_json::from_value(self.f.store.get(models::SPACE, id).unwrap().unwrap().data).unwrap()
     }
 
-    async fn create(&self, goal: &str) -> Space {
+    pub async fn create(&self, goal: &str) -> Space {
         self.core
             .create_space(CreateSpaceRequest {
                 project: self.project.id.clone(),
@@ -109,7 +114,7 @@ impl Env {
             .expect("create_space")
     }
 
-    async fn until(&self, id: &str, cond: impl Fn(&Space) -> bool) -> Space {
+    pub async fn until(&self, id: &str, cond: impl Fn(&Space) -> bool) -> Space {
         wait_until(|| cond(&self.space(id))).await;
         self.space(id)
     }
@@ -119,7 +124,7 @@ impl Env {
     }
 }
 
-fn done(text: &str) -> Vec<AgentEvent> {
+pub(crate) fn done(text: &str) -> Vec<AgentEvent> {
     vec![AgentEvent::Done {
         final_text: text.into(),
         usage: Usage::default(),

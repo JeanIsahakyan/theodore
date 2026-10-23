@@ -43,6 +43,8 @@ mod ship_tests;
 #[cfg(test)]
 mod space_commands_tests;
 #[cfg(test)]
+mod space_tools_tests;
+#[cfg(test)]
 mod space_turns_tests;
 #[cfg(test)]
 mod spaces_tests;
@@ -53,3 +55,4 @@ pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::account::APP_REDIRECT_URI;
 pub use usecases::open_pr::parse_pr_ref;
+pub use usecases::spaces::space_chat_key;

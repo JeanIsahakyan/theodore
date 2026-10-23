@@ -45,10 +45,16 @@ pub trait Grouper: Send + Sync {
     ) -> Result<Grouping, GrouperError>;
 }
 
-/// Per-run MCP `review-tools` access for agents (plan §8.3). Implemented
-/// over the MCP server by whoever wires `Deps`.
+/// Per-run MCP tools for agents (plan §8.3). Implemented over the MCP
+/// server by whoever wires `Deps`.
 pub trait RunTools: Send + Sync {
-    fn register(&self, run_id: &str, pr: &PrId, agent: AgentId) -> McpEndpoint;
+    /// `review-tools` for a PR run. `space`: the space whose PR it is,
+    /// which adds the read-only `read_logs` / `app_status`.
+    fn register(&self, run_id: &str, pr: &PrId, agent: AgentId, space: Option<&str>)
+    -> McpEndpoint;
+    /// `space-tools` for a space's agent turn (docs/spaces.md "Tools the
+    /// agent gets").
+    fn register_space(&self, run_id: &str, space: &str, agent: AgentId) -> McpEndpoint;
     fn unregister(&self, endpoint: &McpEndpoint);
 }
 

@@ -24,7 +24,7 @@ use crate::process::LineParser;
 fn mcp_config_json(mcp: &theodore_ports::agent::McpEndpoint) -> Value {
     serde_json::json!({
         "mcpServers": {
-            "review-tools": {
+            mcp.name.clone(): {
                 "type": "http",
                 "url": mcp.url,
                 "headers": { "Authorization": format!("Bearer {}", mcp.token) },
@@ -84,10 +84,17 @@ pub fn build_args(
     // run shouldn't reach their other services, wait on their auth, or
     // report on them ("the Linear connector needs authorizing…").
     args.push("--strict-mcp-config".to_string());
+    // The run's own MCP server, whatever it is named.
+    let mcp_tools = format!(
+        "mcp__{}__*",
+        req.mcp
+            .as_ref()
+            .map_or(theodore_ports::REVIEW_TOOLS, |m| m.name.as_str())
+    );
     match req.mode {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
-            args.push("Read,Grep,Glob,mcp__review-tools__*".to_string());
+            args.push(format!("Read,Grep,Glob,{mcp_tools}"));
             // `--allowedTools` only pre-approves; anything that writes or runs
             // commands must be denied outright for a review run.
             args.push("--disallowedTools".to_string());
@@ -95,7 +102,9 @@ pub fn build_args(
         }
         AgentMode::Edit => {
             args.push("--allowedTools".to_string());
-            args.push("Read,Grep,Glob,Edit,Write,MultiEdit,Bash,mcp__review-tools__*".to_string());
+            args.push(format!(
+                "Read,Grep,Glob,Edit,Write,MultiEdit,Bash,{mcp_tools}"
+            ));
             args.push("--permission-mode".to_string());
             args.push("acceptEdits".to_string());
         }
@@ -425,6 +434,7 @@ mod mcp_config_tests {
             mcp: Some(McpEndpoint {
                 url: "http://127.0.0.1:1/mcp".into(),
                 token: token.into(),
+                name: theodore_ports::REVIEW_TOOLS.into(),
             }),
             model: None,
             stall_after_ms: 1000,
@@ -456,6 +466,21 @@ mod mcp_config_tests {
         let contents = std::fs::read_to_string(guard.path()).unwrap();
         assert!(contents.contains("super-secret-token"));
         assert!(contents.contains("Bearer"));
+    }
+
+    /// A space turn's server is `space-tools`: the config key and the
+    /// pre-approved tool names follow the endpoint's name.
+    #[test]
+    fn the_server_name_follows_the_endpoint() {
+        let mut req = req_with_mcp("t");
+        req.mode = AgentMode::Edit;
+        req.mcp.as_mut().unwrap().name = theodore_ports::SPACE_TOOLS.into();
+        let config = mcp_config_json(req.mcp.as_ref().unwrap());
+        assert!(config["mcpServers"]["space-tools"]["url"].is_string());
+        assert!(config["mcpServers"].get("review-tools").is_none());
+        let args = build_args(&req, &Default::default(), None);
+        let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+        assert!(args[i + 1].ends_with(",mcp__space-tools__*"), "{args:?}");
     }
 
     #[test]

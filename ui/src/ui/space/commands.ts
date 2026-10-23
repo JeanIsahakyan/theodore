@@ -186,6 +186,17 @@ export function checksByReply(
   return m;
 }
 
+/** Each reply's turn run id, as the core names it (`space:<id>:<message>`):
+ *  the key its tool calls are logged under for this session. */
+export function runsByReply(
+  space: string,
+  log: readonly SpaceTurn[] | undefined,
+): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const t of log ?? []) m.set(t.reply, `space:${space}:${t.message}`);
+  return m;
+}
+
 export const LAYER_LABEL: Record<ConfigLayer, string> = {
   global: 'global',
   repo: 'repo',

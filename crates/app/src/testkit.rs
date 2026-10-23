@@ -1953,6 +1953,90 @@ impl theodore_ports::CommandPort for FakeCommands {
     }
 }
 
+// ── run tools ─────────────────────────────────────────────────────────────
+
+/// One `RunTools` registration, as the fake saw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolRegistration {
+    pub run_id: String,
+    /// `review-tools` or `space-tools`.
+    pub name: String,
+    /// The PR of a review registration.
+    pub pr: Option<theodore_domain::PrId>,
+    pub space: Option<String>,
+}
+
+/// `RunTools` fake: records registrations, hands out one-off tokens.
+#[derive(Default)]
+pub struct FakeRunTools {
+    registered: Mutex<Vec<ToolRegistration>>,
+    unregistered: Mutex<Vec<String>>,
+}
+
+impl FakeRunTools {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn registered(&self) -> Vec<ToolRegistration> {
+        self.registered.lock().unwrap().clone()
+    }
+
+    /// Tokens revoked so far.
+    pub fn unregistered(&self) -> Vec<String> {
+        self.unregistered.lock().unwrap().clone()
+    }
+
+    fn add(&self, reg: ToolRegistration) -> theodore_ports::McpEndpoint {
+        let mut all = self.registered.lock().unwrap();
+        let endpoint = theodore_ports::McpEndpoint {
+            url: "http://127.0.0.1:1/mcp".into(),
+            token: format!("token-{}", all.len() + 1),
+            name: reg.name.clone(),
+        };
+        all.push(reg);
+        endpoint
+    }
+}
+
+impl crate::deps::RunTools for FakeRunTools {
+    fn register(
+        &self,
+        run_id: &str,
+        pr: &theodore_domain::PrId,
+        _agent: AgentId,
+        space: Option<&str>,
+    ) -> theodore_ports::McpEndpoint {
+        self.add(ToolRegistration {
+            run_id: run_id.into(),
+            name: theodore_ports::REVIEW_TOOLS.into(),
+            pr: Some(pr.clone()),
+            space: space.map(str::to_string),
+        })
+    }
+
+    fn register_space(
+        &self,
+        run_id: &str,
+        space: &str,
+        _agent: AgentId,
+    ) -> theodore_ports::McpEndpoint {
+        self.add(ToolRegistration {
+            run_id: run_id.into(),
+            name: theodore_ports::SPACE_TOOLS.into(),
+            pr: None,
+            space: Some(space.into()),
+        })
+    }
+
+    fn unregister(&self, endpoint: &theodore_ports::McpEndpoint) {
+        self.unregistered
+            .lock()
+            .unwrap()
+            .push(endpoint.token.clone());
+    }
+}
+
 // ── fixtures ──────────────────────────────────────────────────────────────
 
 pub struct Fixtures {
@@ -1973,9 +2057,20 @@ pub struct Fixtures {
     pub commands: Arc<FakeCommands>,
     /// A throwaway `~/.theodore` (the global `config.yaml`).
     pub data_dir: Arc<tempfile::TempDir>,
+    /// Wired only by [`Fixtures::deps_with_tools`]; `deps` runs agents
+    /// without MCP.
+    pub tools: Arc<FakeRunTools>,
 }
 
 impl Fixtures {
+    /// `deps` with the [`FakeRunTools`] wired in.
+    pub fn deps_with_tools(&self) -> Deps {
+        Deps {
+            tools: Some(self.tools.clone()),
+            ..self.deps()
+        }
+    }
+
     pub fn deps(&self) -> Deps {
         Deps {
             host: self.host.clone(),
@@ -2021,6 +2116,7 @@ pub fn fixtures() -> Fixtures {
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
         commands: FakeCommands::new(),
         data_dir: Arc::new(tempfile::tempdir().expect("tempdir")),
+        tools: FakeRunTools::new(),
     }
 }
 

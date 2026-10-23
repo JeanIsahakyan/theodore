@@ -222,7 +222,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         (None, None) => (real_adapters(cfg)?, None),
     };
     let backend = Arc::new(CoreTools::default());
-    let mcp = Arc::new(McpRunTools::start(backend.clone()).await?);
+    let mcp = Arc::new(McpRunTools::start(backend.clone(), backend.clone()).await?);
     let claude_home = dirs::home_dir()
         .map(|h| h.join(".claude/skills"))
         .unwrap_or_else(|| PathBuf::from(".claude/skills"));

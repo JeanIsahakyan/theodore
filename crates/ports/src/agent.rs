@@ -28,10 +28,23 @@ pub enum AgentMode {
     Run,
 }
 
+/// The MCP server name a PR run's tools go under (`mcp__review-tools__*`).
+pub const REVIEW_TOOLS: &str = "review-tools";
+/// The MCP server name a space turn's tools go under (`mcp__space-tools__*`).
+pub const SPACE_TOOLS: &str = "space-tools";
+
+fn review_tools() -> String {
+    REVIEW_TOOLS.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpEndpoint {
     pub url: String,
     pub token: String,
+    /// The server name the agent CLI registers it under: [`REVIEW_TOOLS`]
+    /// or [`SPACE_TOOLS`]. Decides the tool names the agent sees.
+    #[serde(default = "review_tools")]
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

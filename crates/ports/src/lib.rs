@@ -12,6 +12,7 @@ pub mod device_login;
 pub mod git;
 pub mod host;
 pub mod secrets;
+pub mod space_tools;
 pub mod store;
 pub mod worktree_lease;
 
@@ -23,5 +24,6 @@ pub use device_login::*;
 pub use git::*;
 pub use host::*;
 pub use secrets::*;
+pub use space_tools::*;
 pub use store::*;
 pub use worktree_lease::*;

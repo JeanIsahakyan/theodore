@@ -274,3 +274,48 @@ repo commands in effect ─▶ sha256 ─▶ allowed for this project? ─yes─
 
 What "Open in editor" creates when `~/.theodore/config.yaml` is missing:
 every line commented, the layers explained, an example of each section.
+
+## 7. Tools the agent gets
+
+Each agent turn in a space gets the `space-tools` MCP server: the space's
+configured commands as tools, and nothing else. No tool runs a command the
+agent writes; there is no shell tool.
+
+| Tool | Does |
+| --- | --- |
+| `run_check` | runs `check` now; returns `passed`, `exit_code`, `timed_out`, a one-line `summary` and the last 60 lines of `output` |
+| `start_app` | starts `run` unless it is running; returns the status |
+| `stop_app` | stops `run`, waits up to 10 s for it to exit; returns the status |
+| `app_status` | `running`, `ports`, `urls` (`http://localhost:<port>` each), whether `run` is set and allowed, how the last run ended |
+| `read_logs` | the last `tail` lines (default 100, at most 400) of one `kind`: `setup`, `run`, `check` or `archive`; stderr lines start with `! ` |
+| `space_info` | name, branch, base, worktree, ports and URLs, the **names** of the variables a command gets (§4, `env`) — never their values — and which commands are set and allowed |
+
+```
+agent ─▶ run_check / start_app ─▶ set? ─no──▶ error: no `spaces.check` command is configured
+                                    │
+                                    └─yes─▶ allowed (§5)? ─no──▶ error: not allowed by the user yet
+                                                │                (nothing runs)
+                                                └─yes─▶ the command, as the space runs it
+```
+
+- **Trust holds.** A repo command you haven't allowed — or said Not now to —
+  is refused with "not allowed by the user yet", and never runs. The agent
+  is told to ask you.
+- **Same commands, same state.** A tool's `check` or `run` is the space's:
+  same worktree, variables and timeouts, same logs drawer, same Run / Stop
+  in the header. The turn's Stop also stops a `run_check` in flight. An app
+  the agent started keeps running after the turn, until Stop, archive or
+  quit.
+- **Scoped to the space.** Each turn gets its own token, revoked when the
+  agent exits; it reaches only that space. The agent never names a space.
+- **Told in the prompt.** The turn's system prompt lists the tools: use
+  `run_check` after changes, `start_app` to try the app.
+- **A space's PR.** Chat, skills and fixes on a space's review (or the PR
+  it shipped as) keep `review-tools` and also get the read-only `read_logs`
+  and `app_status`. Any other PR is unchanged.
+- **In the turn.** The turn lists its tool calls; these read as what they
+  do ("run the check", "start the app").
+
+Claude and Gemini get the server over HTTP, Codex through its
+`mcp_servers.space-tools` override. A CLI that only speaks stdio MCP uses
+`theodore mcp-bridge`, same as `review-tools`.

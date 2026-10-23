@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
+use crate::usecases::agents::tool_log_line;
 use crate::usecases::projects::stable_hash_u32;
 
 /// The `chat_message.pr` key a space's transcript is stored under.
@@ -311,7 +312,7 @@ impl Core {
             system: self
                 .space_review_rules(&space, &project, &wt.path)
                 .await
-                .with_system(Some(system_prompt(&space)))
+                .with_system(Some(system_prompt(&space, self.0.deps.tools.is_some())))
                 .unwrap_or_default(),
             env: self.space_agent_env(&space).await,
             cwd: wt.path,
@@ -661,6 +662,17 @@ async fn drive_turn(core: &Core, turn: Turn) {
         cwd,
         cancel,
     } = turn;
+    // The space's commands as tools, for this turn only.
+    let mcp = core
+        .0
+        .deps
+        .tools
+        .as_ref()
+        .map(|t| t.register_space(&run_id, &space.id, agent));
+    let tools_guard = crate::usecases::agents::ToolsGuard {
+        core,
+        mcp: mcp.clone(),
+    };
     let req = AgentRequest {
         agent,
         prompt,
@@ -671,7 +683,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             SpaceMode::Edit => AgentMode::Edit,
             SpaceMode::Run => AgentMode::Run,
         },
-        mcp: None,
+        mcp,
         model,
         stall_after_ms: core.stall_after_ms().await,
         env,
@@ -690,7 +702,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
                             core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text: t });
                         }
                         AgentEvent::ToolCall { name, .. } => {
-                            core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool: {name}") });
+                            core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line(&name) });
                         }
                         AgentEvent::Stalled => {
                             core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
@@ -714,6 +726,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         },
         Err(e) => error = Some(e.to_string()),
     }
+    // The agent is done: its token goes before the after-turn check.
+    drop(tools_guard);
     let cancelled = cancel.is_cancelled();
     if cancelled && error.is_none() {
         error = Some("stopped".into());
@@ -1056,7 +1070,23 @@ pub(crate) fn is_valid_branch(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
 }
 
-fn system_prompt(space: &Space) -> String {
+/// Told to the agent when its turn has the `space-tools` server.
+pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server runs this \
+     space's configured commands for you: run_check (the project's check; use it after \
+     changes), start_app / stop_app / app_status (the app, its ports and http://localhost \
+     URLs; start_app to try it), read_logs (setup, run, check or archive output) and \
+     space_info.";
+
+fn system_prompt(space: &Space, tools: bool) -> String {
+    let mut prompt = base_system_prompt(space);
+    if tools {
+        prompt.push('\n');
+        prompt.push_str(SPACE_TOOLS_PROMPT);
+    }
+    prompt
+}
+
+fn base_system_prompt(space: &Space) -> String {
     format!(
         "You are working in a Theodore space: an isolated git worktree for one change.\n\
          Goal: {goal}\n\

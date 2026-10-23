@@ -44,11 +44,12 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     }
     if let Some(mcp) = &req.mcp {
         args.push("-c".to_string());
-        args.push(format!("mcp_servers.review-tools.url=\"{}\"", mcp.url));
+        args.push(format!("mcp_servers.{}.url=\"{}\"", mcp.name, mcp.url));
         args.push("-c".to_string());
-        args.push(
-            "mcp_servers.review-tools.bearer_token_env_var=\"REVIEW_TOOLS_TOKEN\"".to_string(),
-        );
+        args.push(format!(
+            "mcp_servers.{}.bearer_token_env_var=\"{MCP_TOKEN_ENV_VAR}\"",
+            mcp.name
+        ));
     }
     if let Some(model) = req.model.as_ref().or(cfg.model.as_ref()) {
         args.push("-m".to_string());
