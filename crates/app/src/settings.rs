@@ -224,7 +224,22 @@ impl Core {
     /// applies its `review.agents` to `repo`. Best-effort: a missing file is
     /// normal; a broken one is a toast, once.
     pub(crate) async fn load_repo_settings(&self, worktree: &Path, repo: &RepoRef) {
-        let layers = config::read_layers(&self.0.deps.data_dir, Some(worktree), None).await;
+        // A local folder's config is its own files (working copy and
+        // personal layer), whichever review of it is opened: one source per
+        // repo, so a review's checkout never undoes the folder's values.
+        let store = self.0.deps.store.clone();
+        let folder = tokio::task::spawn_blocking(move || store.all(models::PROJECT))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<theodore_contract::Project>(r.data).ok())
+            .find(|p| &p.repo == repo && p.path.is_some());
+        let layers = match folder {
+            Some(project) => self.project_layers(&project, None).await,
+            None => config::read_layers(&self.0.deps.data_dir, Some(worktree), None).await,
+        };
         let merged = config::merge(&layers);
         self.warn_config(&merged);
         self.apply_review_agents(&merged, repo).await;

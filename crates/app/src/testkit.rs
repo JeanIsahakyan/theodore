@@ -1341,6 +1341,9 @@ impl FakeAgent {
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
     }
+    pub fn requests(&self) -> Vec<AgentRequest> {
+        self.requests.lock().unwrap().clone()
+    }
     pub fn last_request(&self) -> Option<AgentRequest> {
         self.requests.lock().unwrap().last().cloned()
     }
