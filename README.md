@@ -19,6 +19,10 @@ a review.
                                                        tests/user.test.ts
 ```
 
+![Review grouped by meaning](docs/screenshots/03-review-grouped.webp)
+
+More in [docs/screenshots](docs/screenshots/README.md).
+
 ## What works today
 
 ### Inbox and triage
