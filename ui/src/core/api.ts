@@ -224,8 +224,7 @@ export const api = {
   spaceSetup: (req: SpaceSetupRequest) => call<Space>('space_setup', { req }),
   /** Starts or stops the space's `run` command. */
   spaceRun: (req: SpaceRunRequest) => call<Space>('space_run', { req }),
-  spaceLogs: (space: string) =>
-    call<SpaceLogLine[]>('space_logs', { space }),
+  spaceLogs: (space: string) => call<SpaceLogLine[]>('space_logs', { space }),
   /** A project's merged config, read-only (Settings → Labs). */
   projectConfig: (project: string) =>
     call<EffectiveConfig>('project_config', { project }),

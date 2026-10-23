@@ -3,7 +3,13 @@
  * "Setting up…" stage, Run / Stop and the port chips in the header, the
  * logs drawer, and the check chip on each turn.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   CircleCheck,
@@ -90,7 +96,7 @@ export function useSpaceLogsSeed(space: string): void {
 
 /** "Run commands from this repo?" — prominent until answered; after
  *  "Not now" a small note that opens it again. */
-export function TrustPrompt({
+export const TrustPrompt = observer(function TrustPrompt({
   space,
   config,
   onChanged,
@@ -145,8 +151,8 @@ export function TrustPrompt({
           </span>
           <span className="text-xs text-muted">
             The repo's config file asks to run these in the space. Allow is
-            remembered for this project until they change; Not now skips them
-            in this space only.
+            remembered for this project until they change; Not now skips them in
+            this space only.
           </span>
         </div>
       </div>
@@ -189,7 +195,7 @@ export function TrustPrompt({
       </div>
     </Card>
   );
-}
+});
 
 /** A box of log lines, mono; stderr tinted. Follows the end while you're
  *  at the bottom, stays put once you scroll up. */
@@ -297,38 +303,43 @@ export const SetupStage = observer(function SetupStage({
           {setup.error}
         </span>
       )}
-      {!archived && (setup.status === 'failed' || setup.status === 'waiting') && (
-        <div className="flex justify-end gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="space-setup-skip"
-            isDisabled={busy != null}
-            isPending={busy === 'skip'}
-            onPress={() => void act('skip')}
-          >
-            Continue without setup
-          </Button>
-          {setup.status === 'failed' && (
+      {!archived &&
+        (setup.status === 'failed' || setup.status === 'waiting') && (
+          <div className="flex justify-end gap-2">
             <Button
               size="sm"
-              className="space-setup-retry"
+              variant="ghost"
+              className="space-setup-skip"
               isDisabled={busy != null}
-              isPending={busy === 'retry'}
-              onPress={() => void act('retry')}
+              isPending={busy === 'skip'}
+              onPress={() => void act('skip')}
             >
-              Retry
+              Continue without setup
             </Button>
-          )}
-        </div>
-      )}
+            {setup.status === 'failed' && (
+              <Button
+                size="sm"
+                className="space-setup-retry"
+                isDisabled={busy != null}
+                isPending={busy === 'retry'}
+                onPress={() => void act('retry')}
+              >
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
     </Card>
   );
 });
 
 /** A finished setup that left notes (files not copied, commands
  *  skipped): one compact, dismissible line. */
-export function SetupNote({ space }: { space: Space }) {
+export const SetupNote = observer(function SetupNote({
+  space,
+}: {
+  space: Space;
+}) {
   const [hidden, setHidden] = useState(false);
   const notes = space.setup?.notes ?? [];
   if (hidden || setupView(space) !== 'note' || !space.setup) return null;
@@ -349,7 +360,7 @@ export function SetupNote({ space }: { space: Space }) {
       </Button>
     </div>
   );
-}
+});
 
 /** Starts / stops the space's `run` command (⇧R). */
 export function toggleRun(space: Pick<Space, 'id'>, start: boolean) {
@@ -360,7 +371,7 @@ export function toggleRun(space: Pick<Space, 'id'>, start: boolean) {
 }
 
 /** Header: Run / Stop for the `run` command, when one is set and allowed. */
-export function RunButton({
+export const RunButton = observer(function RunButton({
   space,
   config,
 }: {
@@ -395,10 +406,14 @@ export function RunButton({
       </Tooltip.Content>
     </Tooltip>
   );
-}
+});
 
 /** Header: one chip per reserved port, opening it in the browser. */
-export function PortChips({ space }: { space: Space }) {
+export const PortChips = observer(function PortChips({
+  space,
+}: {
+  space: Space;
+}) {
   const ports = space.ports ?? [];
   if (!ports.length || space.status === 'archived') return null;
   return (
@@ -418,7 +433,7 @@ export function PortChips({ space }: { space: Space }) {
       ))}
     </>
   );
-}
+});
 
 /** Header: opens and closes the logs drawer. */
 export function LogsToggle({
