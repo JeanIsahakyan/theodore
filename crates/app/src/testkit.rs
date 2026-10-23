@@ -1808,6 +1808,114 @@ impl AccountPort for FakeAccount {
     }
 }
 
+// ── commands ──────────────────────────────────────────────────────────────
+
+/// What a fake command does once spawned.
+#[derive(Debug, Clone)]
+pub enum FakeScript {
+    /// Prints `lines` (stdout) and exits with `code`.
+    Exit { lines: Vec<String>, code: i32 },
+    /// Prints `lines`, then runs until cancelled (a dev server).
+    Hang { lines: Vec<String> },
+    /// Runs until its timeout fires.
+    Timeout,
+}
+
+/// `CommandPort` fake: records every spec; a script whose text contains a
+/// registered needle behaves as registered, anything else exits 0.
+#[derive(Default)]
+pub struct FakeCommands {
+    specs: Mutex<Vec<theodore_ports::CommandSpec>>,
+    scripts: Mutex<Vec<(String, FakeScript)>>,
+}
+
+impl FakeCommands {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn on(&self, needle: &str, script: FakeScript) {
+        self.scripts
+            .lock()
+            .unwrap()
+            .insert(0, (needle.to_string(), script));
+    }
+
+    pub fn specs(&self) -> Vec<theodore_ports::CommandSpec> {
+        self.specs.lock().unwrap().clone()
+    }
+
+    /// The scripts run so far, in order.
+    pub fn scripts(&self) -> Vec<String> {
+        self.specs().into_iter().map(|s| s.script).collect()
+    }
+}
+
+#[async_trait]
+impl theodore_ports::CommandPort for FakeCommands {
+    async fn spawn(&self, spec: theodore_ports::CommandSpec) -> theodore_ports::CommandRun {
+        use theodore_ports::{CommandEvent, CommandExit};
+        let behaviour = self
+            .scripts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(n, _)| spec.script.contains(n.as_str()))
+            .map(|(_, s)| s.clone())
+            .unwrap_or(FakeScript::Exit {
+                lines: vec![],
+                code: 0,
+            });
+        let timeout = spec.timeout;
+        self.specs.lock().unwrap().push(spec);
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            let line = |text: &str| CommandEvent::Line {
+                stderr: false,
+                text: text.to_string(),
+            };
+            let exit = match behaviour {
+                FakeScript::Exit { lines, code } => {
+                    for l in &lines {
+                        let _ = tx.send(line(l)).await;
+                    }
+                    CommandExit {
+                        code: Some(code),
+                        ..CommandExit::default()
+                    }
+                }
+                FakeScript::Hang { lines } => {
+                    for l in &lines {
+                        let _ = tx.send(line(l)).await;
+                    }
+                    token.cancelled().await;
+                    CommandExit {
+                        cancelled: true,
+                        ..CommandExit::default()
+                    }
+                }
+                FakeScript::Timeout => {
+                    let wait = timeout.unwrap_or(Duration::from_secs(3600));
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait.min(Duration::from_millis(20))) => CommandExit {
+                            timed_out: true,
+                            ..CommandExit::default()
+                        },
+                        _ = token.cancelled() => CommandExit {
+                            cancelled: true,
+                            ..CommandExit::default()
+                        },
+                    }
+                }
+            };
+            let _ = tx.send(CommandEvent::Exit(exit)).await;
+        });
+        theodore_ports::CommandRun { events: rx, cancel }
+    }
+}
+
 // ── fixtures ──────────────────────────────────────────────────────────────
 
 pub struct Fixtures {
@@ -1825,6 +1933,9 @@ pub struct Fixtures {
     /// A throwaway `~/.claude/skills` stand-in (plan §8.4): kept alive for
     /// the fixture's lifetime, deleted on drop. Never the real home dir.
     pub claude_home: Arc<tempfile::TempDir>,
+    pub commands: Arc<FakeCommands>,
+    /// A throwaway `~/.theodore` (the global `config.yaml`).
+    pub data_dir: Arc<tempfile::TempDir>,
 }
 
 impl Fixtures {
@@ -1843,6 +1954,8 @@ impl Fixtures {
             device_login: self.device_login.clone(),
             worktree_lease: self.worktree_lease.clone(),
             account: self.account.clone(),
+            commands: self.commands.clone(),
+            data_dir: self.data_dir.path().to_path_buf(),
         }
     }
 }
@@ -1869,6 +1982,8 @@ pub fn fixtures() -> Fixtures {
         worktree_lease: FakeWorktreeLease::new(),
         account: FakeAccount::new(),
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
+        commands: FakeCommands::new(),
+        data_dir: Arc::new(tempfile::tempdir().expect("tempdir")),
     }
 }
 
