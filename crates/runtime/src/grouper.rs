@@ -64,9 +64,9 @@ impl Grouper for GroupingGrouper {
         prev: &Grouping,
         rev: &Revision,
         pr: &PrDetail,
-        // Incremental regroup only places new hunks into existing groups;
-        // the relatedness graph is for whole-PR grouping.
-        _ctx: &RepoContext,
+        // Head files and co-change sharpen the relatedness graph that
+        // suggests a group for each new hunk.
+        ctx: &RepoContext,
         worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
@@ -90,12 +90,13 @@ impl Grouper for GroupingGrouper {
                 (h.id.clone(), c)
             })
             .collect();
-        theodore_grouping::regroup(
+        theodore_grouping::regroup_with(
             &*self.agents,
             &meta(pr),
             prev,
             rev,
             &changes,
+            ctx,
             worktree,
             &opts,
         )

@@ -22,7 +22,7 @@ use crate::area::top_level_dir;
 use crate::graph::RelGraph;
 
 /// A group touching the tiny group's own file is related at least this much.
-const SAME_FILE: f64 = 2.0;
+pub(crate) const SAME_FILE: f64 = 2.0;
 
 /// Merge tiny (<= 1 hunk) groups into their most related same-kind group
 /// (falling back to the nearest same-area one) until
@@ -121,7 +121,7 @@ fn tiny_group_indices(groups: &[Group]) -> Vec<usize> {
 /// How related group `g` is to the files of `victim`'s hunks: summed graph
 /// weight to each distinct file `g` touches (`SAME_FILE` for a shared one),
 /// so a big group isn't preferred just for having many hunks of one file.
-fn relatedness(graph: &RelGraph, victim: &Group, g: &Group) -> f64 {
+pub(crate) fn relatedness(graph: &RelGraph, victim: &Group, g: &Group) -> f64 {
     let files = |grp: &Group| -> std::collections::BTreeSet<usize> {
         grp.hunks.iter().filter_map(|h| graph.file_of(h)).collect()
     };
@@ -180,7 +180,7 @@ fn pick_merge_target(
         .map(|(i, _)| i)
 }
 
-fn merge_into(target: &mut Group, absorbed: Group) {
+pub(crate) fn merge_into(target: &mut Group, absorbed: Group) {
     if !absorbed.title.is_empty() && absorbed.title != target.title {
         target
             .why

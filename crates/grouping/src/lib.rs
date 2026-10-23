@@ -15,7 +15,7 @@ mod target;
 
 pub mod testing;
 
-pub use incremental::regroup;
+pub use incremental::{regroup, regroup_with};
 pub use pipeline::{
     GroupingOptions, GroupingPipelineError, GroupingReport, PrMeta, group_revision,
     group_revision_with,
