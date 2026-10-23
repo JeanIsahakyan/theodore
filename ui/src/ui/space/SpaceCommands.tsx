@@ -43,28 +43,33 @@ const EMPTY: SpaceLogLine[] = [];
 
 /** `space_config` for the page, refetched when what it depends on moves
  *  (trust answered, setup moved on, archived). */
-export function useSpaceConfig(space: Space): {
+export function useSpaceConfig(
+  id: string,
+  space: Pick<Space, 'status' | 'commands_denied' | 'setup'> | undefined,
+): {
   config: SpaceConfigView | null;
   refresh: () => void;
 } {
   const [config, setConfig] = useState<SpaceConfigView | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((n) => n + 1), []);
-  const archived = space.status === 'archived';
+  const live = space != null && space.status !== 'archived';
+  const denied = space?.commands_denied;
+  const setup = space?.setup?.status;
   useEffect(() => {
-    if (archived) {
+    if (!live) {
       setConfig(null);
       return;
     }
     let on = true;
     api
-      .spaceConfig(space.id)
+      .spaceConfig(id)
       .then((c) => on && setConfig(c))
       .catch(() => {});
     return () => {
       on = false;
     };
-  }, [space.id, archived, space.commands_denied, space.setup?.status, tick]);
+  }, [id, live, denied, setup, tick]);
   return { config, refresh };
 }
 
