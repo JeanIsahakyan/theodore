@@ -480,3 +480,37 @@ async fn no_auto_skills_configured_runs_nothing() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(skill_runs(&f, &pr).is_empty());
 }
+
+// ── effective config view ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_effective_config_lists_review_keys_with_their_file() {
+    let f = fixtures();
+    global(
+        &f,
+        "review:\n  hide: [\"gen/**\"]\n  checklist:\n    \"**/*.sql\": Reversible?\n  auto_skills: [security-review]\n",
+    );
+    let (core, _recv) = Core::start(f.deps());
+    let project = core
+        .add_project(theodore_contract::AddProjectRequest {
+            repo: None,
+            path: Some("/tmp/my-folder".into()),
+        })
+        .await
+        .expect("add_project");
+    let cfg = core.project_config(&project.id).await.expect("config");
+    let entry = |key: &str| {
+        cfg.entries
+            .iter()
+            .find(|e| e.key == key)
+            .unwrap_or_else(|| panic!("{key} in {:?}", cfg.entries))
+    };
+    assert_eq!(entry("review.hide").value, r#"["gen/**"]"#);
+    assert_eq!(
+        entry("review.hide").layer,
+        theodore_contract::ConfigLayer::Global
+    );
+    assert_eq!(entry("review.checklist.**/*.sql").value, "Reversible?");
+    assert_eq!(entry("review.auto_skills").value, r#"["security-review"]"#);
+    assert!(cfg.unknown.is_empty(), "{:?}", cfg.unknown);
+}

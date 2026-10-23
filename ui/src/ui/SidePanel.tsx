@@ -45,6 +45,7 @@ import type {
   Finding,
   PrId,
   SkillInfo,
+  SkillRun,
   Thread,
 } from '../gen/contract';
 import { api } from '../core/api';
@@ -436,6 +437,11 @@ const SkillRunView = observer(function SkillRunView({
       {shown.map((f) => (
         <FindingCard key={f.id} pr={pr} f={f} />
       ))}
+      {hiddenFindingsNote(r) && (
+        <span className="hidden-findings text-xs text-muted">
+          {hiddenFindingsNote(r)}
+        </span>
+      )}
     </div>
   );
 });
@@ -595,6 +601,17 @@ function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
   if (!text.startsWith('/') || /\s/.test(text)) return null;
   const q = text.slice(1).toLowerCase();
   return skills.filter((s) => s.id.toLowerCase().includes(q));
+}
+
+/** "2 findings hidden by config" for a run whose findings on
+ *  `review.ignore_findings` paths were dropped; `null` when none were. */
+export function hiddenFindingsNote(
+  run: Pick<SkillRun, 'hidden_findings'>,
+): string | null {
+  const n = run.hidden_findings ?? 0;
+  return n > 0
+    ? `${plural(n, 'finding', 'findings', 'findings')} hidden by config`
+    : null;
 }
 
 /** Finds the user's question right before an agent's reply, for "Ask again". */

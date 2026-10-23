@@ -1042,6 +1042,11 @@ export type SkillRun = {
 	status: RunStatus,
 	error: string | null,
 	started_at: number,
+	/**
+	 *  Findings this run reported on paths the project config's
+	 *  `review.ignore_findings` matches: dropped, only counted.
+	 */
+	hidden_findings?: number,
 };
 
 export type SnoozeUntil = { kind: "time"; at: number } | { kind: "next_push" } | { kind: "checks_green" };
