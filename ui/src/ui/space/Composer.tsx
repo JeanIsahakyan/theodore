@@ -78,7 +78,9 @@ export function Composer({
               e.preventDefault();
               if (!empty && !running) onSubmit();
             } else if (e.key === 'Escape') {
-              // Leave the box, so page keys work again.
+              // In a dialog (New space) Esc closes the dialog. On the page
+              // it leaves the box, so page keys work again.
+              if (e.currentTarget.closest('[role="dialog"]')) return;
               e.stopPropagation();
               e.currentTarget.blur();
             }
