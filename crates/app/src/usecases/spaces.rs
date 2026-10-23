@@ -124,6 +124,10 @@ impl Core {
             shipped: None,
             done_at: None,
             turn_log: Vec::new(),
+            ports: Vec::new(),
+            setup: None,
+            process: None,
+            commands_denied: false,
             created_at: now,
             updated_at: now,
         };
@@ -699,6 +703,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             before: space.head_sha.clone(),
             after: head.clone(),
             undone: false,
+            check: None,
         });
         patch["turn_log"] = serde_json::json!(log);
     }

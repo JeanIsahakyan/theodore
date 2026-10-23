@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use theodore_domain::{AgentId, Millis, PrId, Sha};
 
+use crate::{SpaceCheck, SpaceProcess, SpaceSetup};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SpaceStatus {
@@ -108,6 +110,19 @@ pub struct Space {
     /// back to. Spaces from before it was recorded have none.
     #[serde(default)]
     pub turn_log: Vec<SpaceTurn>,
+    /// TCP ports reserved for the space's life (`spaces.ports`): free when
+    /// reserved, unique across live spaces, released on archive.
+    #[serde(default)]
+    pub ports: Vec<u16>,
+    /// The "Setting up…" stage: copy, then `spaces.setup`, before turn 1.
+    #[serde(default)]
+    pub setup: Option<SpaceSetup>,
+    /// The `spaces.run` command, while running or since it last ended.
+    #[serde(default)]
+    pub process: Option<SpaceProcess>,
+    /// "Not now" to the repo's commands: they are skipped in this space.
+    #[serde(default)]
+    pub commands_denied: bool,
     pub created_at: Millis,
     pub updated_at: Millis,
 }
@@ -127,6 +142,9 @@ pub struct SpaceTurn {
     /// turn, the next turns' prompts leave it out.
     #[serde(default)]
     pub undone: bool,
+    /// `spaces.check` after the turn, when it changed files.
+    #[serde(default)]
+    pub check: Option<SpaceCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

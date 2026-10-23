@@ -3,6 +3,7 @@
 //! `app` depends only on `domain` and `ports`; every adapter is injected
 //! through `Deps`. The same `Core` runs inside Tauri and inside the CLI.
 
+mod config;
 mod core;
 mod deps;
 mod error;
