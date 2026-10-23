@@ -763,8 +763,11 @@ async fn run_fix(
     let mut target = path_candidates(&req.prompt)
         .iter()
         .find_map(|rel| resolve_in_cwd(cwd, rel));
+    // Only a PR's fix run has `get_pr_context`; a space turn's server is
+    // `space-tools`.
     if target.is_none()
         && let Some(endpoint) = &req.mcp
+        && endpoint.name == theodore_ports::REVIEW_TOOLS
         && let Ok(client) = connect_mcp(endpoint).await
     {
         let mut seq = 0;
