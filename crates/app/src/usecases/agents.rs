@@ -335,12 +335,7 @@ async fn drive_skill_run(
         if cancel.is_cancelled() {
             break;
         }
-        let mcp = core
-            .0
-            .deps
-            .tools
-            .as_ref()
-            .map(|t| t.register(&run_id, &pr, agent));
+        let mcp = core.pr_tools(&run_id, &pr, agent).await;
         let req = AgentRequest {
             agent,
             prompt: skill_prompt(&skill, agent, &cwd, &core.0.deps.claude_home),
@@ -506,12 +501,7 @@ async fn drive_ask(
     cwd: PathBuf,
     cancel: CancellationToken,
 ) {
-    let mcp = core
-        .0
-        .deps
-        .tools
-        .as_ref()
-        .map(|t| t.register(&run_id, &pr, agent));
+    let mcp = core.pr_tools(&run_id, &pr, agent).await;
     let req = AgentRequest {
         agent,
         prompt: question,

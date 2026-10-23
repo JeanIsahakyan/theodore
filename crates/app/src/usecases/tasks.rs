@@ -289,12 +289,7 @@ async fn drive_fix_run(
     reject_reason: Option<String>,
     cancel: CancellationToken,
 ) {
-    let mcp = core
-        .0
-        .deps
-        .tools
-        .as_ref()
-        .map(|t| t.register(&run_id, &task.pr, agent));
+    let mcp = core.pr_tools(&run_id, &task.pr, agent).await;
     let mut prompt = format!(
         "Fix this review task in the pull request.\n\nTitle: {}\n\n{}\n\n\
          Make the necessary code changes directly in this worktree. Do not commit or push.",
