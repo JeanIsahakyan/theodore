@@ -154,7 +154,7 @@ pub async fn group_revision_with(
     }
     let prepass = prepass::run(rev);
     let graph = RelGraph::build(rev, &prepass, ctx);
-    let chunks = prompt::build_prompts_with(pr, rev, &prepass, &graph, &opts.budget);
+    let chunks = prompt::build_prompts_with(pr, rev, &prepass, &graph, ctx, &opts.budget);
     let total_visible_hunks: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
 
     // Run every chunk's agent call concurrently, capped at

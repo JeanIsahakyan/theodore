@@ -21,7 +21,7 @@
 mod imports;
 mod louvain;
 pub(crate) mod names;
-mod symbols;
+pub(crate) mod symbols;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -161,7 +161,7 @@ struct FileFacts {
     only_shaped: bool,
 }
 
-fn is_prose(path: &str) -> bool {
+pub(crate) fn is_prose(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     [".md", ".mdx", ".rst", ".txt", ".adoc"]
         .iter()
