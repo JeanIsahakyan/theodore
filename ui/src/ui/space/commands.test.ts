@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
   ConfigEntry,
+  SetupStatus,
   SpaceCheck,
   SpaceConfigView,
   SpaceLogLine,
@@ -16,6 +17,7 @@ import {
   logCounts,
   runControl,
   seedLogs,
+  settingUp,
   setupView,
   trustState,
 } from './commands';
@@ -210,5 +212,24 @@ describe('project config', () => {
       'spaces.check',
       'spaces.run',
     ]);
+  });
+});
+
+describe('settingUp', () => {
+  const setup = (status: SetupStatus) => ({
+    setup: {
+      status,
+      goal_pending: true,
+      error: null,
+      notes: [],
+      finished_at: null,
+    },
+  });
+  it('is on while setup runs or waits for approval', () => {
+    expect(settingUp(setup('running'))).toBe(true);
+    expect(settingUp(setup('waiting'))).toBe(true);
+    expect(settingUp(setup('failed'))).toBe(false);
+    expect(settingUp(setup('done'))).toBe(false);
+    expect(settingUp({ setup: null })).toBe(false);
   });
 });

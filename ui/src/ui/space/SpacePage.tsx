@@ -60,7 +60,7 @@ import {
 } from './Composer';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
-import { checksByReply, runControl, setupView } from './commands';
+import { checksByReply, runControl, settingUp, setupView } from './commands';
 import { GlobalConfigSection } from './ConfigSection';
 import {
   CheckChip,
@@ -750,9 +750,11 @@ const SpaceChat = observer(function SpaceChat({
           placeholder={
             space.status === 'archived'
               ? 'Archived'
-              : 'Ask the agent to change something…'
+              : settingUp(space)
+                ? 'Setting up…'
+                : 'Ask the agent to change something…'
           }
-          disabled={space.status === 'archived'}
+          disabled={space.status === 'archived' || settingUp(space)}
           running={!!run}
           onStop={() => void api.spaceStop(space.id).catch(() => {})}
           chips={

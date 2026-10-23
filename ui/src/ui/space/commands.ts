@@ -96,6 +96,12 @@ export function trustState(
  *  a finished setup that left notes; `null` nothing. */
 export type SetupView = 'stage' | 'note' | null;
 
+/** Setup is running or waiting for approval: the core refuses messages
+ *  until it ends, so the composer is off. */
+export function settingUp(s: Pick<Space, 'setup'>): boolean {
+  return s.setup?.status === 'running' || s.setup?.status === 'waiting';
+}
+
 export function setupView(s: Pick<Space, 'setup'>): SetupView {
   const setup = s.setup;
   if (!setup) return null;
