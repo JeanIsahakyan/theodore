@@ -155,7 +155,7 @@ pub struct SpaceProcess {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckStatus {
+pub enum SpaceCheckStatus {
     Running,
     Passed,
     Failed,
@@ -164,7 +164,7 @@ pub enum CheckStatus {
 /// `check` after a turn that changed files.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SpaceCheck {
-    pub status: CheckStatus,
+    pub status: SpaceCheckStatus,
     #[serde(default)]
     pub exit_code: Option<i32>,
     #[serde(default)]

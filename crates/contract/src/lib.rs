@@ -741,7 +741,7 @@ pub fn types() -> specta::Types {
         .register::<SpaceSetup>()
         .register::<ProcessStatus>()
         .register::<SpaceProcess>()
-        .register::<CheckStatus>()
+        .register::<SpaceCheckStatus>()
         .register::<SpaceCheck>()
         .register::<SpaceLogLine>()
         .register::<SpaceTrustRequest>()

@@ -204,6 +204,60 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<String, CommandError> {
         Err(not_ready())
     }
+    // ── project config (docs/config.md) ──────────────────────────────────
+
+    /// What a space runs, where each command comes from, trust.
+    async fn space_config(
+        &self,
+        _space: String,
+    ) -> Result<theodore_contract::SpaceConfigView, CommandError> {
+        Err(not_ready())
+    }
+    /// "Run commands from this repo?": Allow / Not now.
+    async fn space_trust(
+        &self,
+        _req: theodore_contract::SpaceTrustRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Retry a failed setup, or continue without it.
+    async fn space_setup(
+        &self,
+        _req: theodore_contract::SpaceSetupRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Starts or stops the space's `run` command.
+    async fn space_run(
+        &self,
+        _req: theodore_contract::SpaceRunRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// The last lines of the space's commands.
+    async fn space_logs(
+        &self,
+        _space: String,
+    ) -> Result<Vec<theodore_contract::SpaceLogLine>, CommandError> {
+        Err(not_ready())
+    }
+    /// A project's merged config, with each value's file.
+    async fn project_config(
+        &self,
+        _project: String,
+    ) -> Result<theodore_contract::EffectiveConfig, CommandError> {
+        Err(not_ready())
+    }
+    /// `~/.theodore/config.yaml`: path and whether it exists.
+    async fn global_config(&self) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
+        Err(not_ready())
+    }
+    /// Same, created from a commented template when missing.
+    async fn ensure_global_config(
+        &self,
+    ) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
+        Err(not_ready())
+    }
     /// Theodore account (plan "Theodore account"): signed in or out, and
     /// whether the feature is configured at all.
     async fn account_status(&self) -> Result<AccountStatus, CommandError>;

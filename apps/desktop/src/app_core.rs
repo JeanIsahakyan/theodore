@@ -318,6 +318,50 @@ impl CoreApi for AppCore {
         .await
     }
 
+    async fn space_config(
+        &self,
+        space: String,
+    ) -> Result<theodore_contract::SpaceConfigView, CommandError> {
+        self.core.space_config(&space).await.map_err(err)
+    }
+    async fn space_trust(
+        &self,
+        req: theodore_contract::SpaceTrustRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.space_trust(req).await.map_err(err)
+    }
+    async fn space_setup(
+        &self,
+        req: theodore_contract::SpaceSetupRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.space_setup(req).await.map_err(err)
+    }
+    async fn space_run(
+        &self,
+        req: theodore_contract::SpaceRunRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.space_run(req).await.map_err(err)
+    }
+    async fn space_logs(
+        &self,
+        space: String,
+    ) -> Result<Vec<theodore_contract::SpaceLogLine>, CommandError> {
+        self.core.space_logs(&space).await.map_err(err)
+    }
+    async fn project_config(
+        &self,
+        project: String,
+    ) -> Result<theodore_contract::EffectiveConfig, CommandError> {
+        self.core.project_config(&project).await.map_err(err)
+    }
+    async fn global_config(&self) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
+        self.core.global_config().await.map_err(err)
+    }
+    async fn ensure_global_config(
+        &self,
+    ) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
+        self.core.ensure_global_config().await.map_err(err)
+    }
     async fn create_space(
         &self,
         req: theodore_contract::CreateSpaceRequest,
