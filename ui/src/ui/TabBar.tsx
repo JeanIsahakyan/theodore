@@ -96,14 +96,23 @@ export const TabBar = observer(function TabBar({
     const list =
       listRef.current?.querySelector<HTMLElement>('[role="tablist"]');
     if (!list) return;
-    // A few px of slack: a tab's close button hangs a little past its
-    // edge, which isn't "scrolled out of view" and mustn't fade the tab.
-    const SLACK = 8;
-    const update = () =>
+    // From where the first and last tabs really are, not `scrollWidth`:
+    // the selected tab's indicator and shadow overhang the list by a few
+    // px, which read as "scrolled" and faded a tab that fits.
+    const update = () => {
+      const tabs = list.querySelectorAll<HTMLElement>('[role="tab"]');
+      const first = tabs[0];
+      const last = tabs[tabs.length - 1];
+      if (!first || !last) {
+        setEdges({ left: false, right: false });
+        return;
+      }
+      const box = list.getBoundingClientRect();
       setEdges({
-        left: list.scrollLeft > SLACK,
-        right: list.scrollLeft + list.clientWidth < list.scrollWidth - SLACK,
+        left: first.getBoundingClientRect().left < box.left - 2,
+        right: last.getBoundingClientRect().right > box.right + 2,
       });
+    };
     update();
     list.addEventListener('scroll', update, { passive: true });
     const ro =
