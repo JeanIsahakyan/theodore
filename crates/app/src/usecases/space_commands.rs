@@ -317,6 +317,23 @@ impl Core {
         space_env(&vars, &cfg.env(), inherited_env())
     }
 
+    /// `n` free ports no other live space holds. The caller holds
+    /// `ports_lock` until the row carrying them is written.
+    pub(crate) async fn reserve_ports(&self, n: u16, except: &str) -> AppResult<Vec<u16>> {
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let taken: std::collections::HashSet<u16> = self
+            .list_spaces(None)
+            .await?
+            .into_iter()
+            .filter(|s| s.id != except && s.status != theodore_contract::SpaceStatus::Archived)
+            .flat_map(|s| s.ports)
+            .collect();
+        config::ports::allocate(n, &taken)
+            .map_err(|e| AppError::Invalid(format!("couldn't reserve {n} ports: {e}")))
+    }
+
     fn push_log(&self, space: &str, kind: SpaceCommandKind, line: String, stderr: bool) {
         let entry = SpaceLogLine {
             kind,

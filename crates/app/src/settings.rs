@@ -1,21 +1,21 @@
 //! Settings (plan §8.5): `agents.grouping`, `agents.chat`, `agents.skills`,
-//! `agents.fix`, `updates.channel`, each with a default. Layered scopes: `user` is the baseline, a repo's own
-//! `.review/config.yaml` (loaded by `load_repo_settings`) overrides it when
-//! present — keeping it simple, the repo value always wins over `user`.
+//! `agents.fix`, `updates.channel`, each with a default. Layered scopes:
+//! `user` is the baseline; a project's config files (docs/config.md, read
+//! by `load_repo_settings`) set `review.agents.*`, stored as `repo:<slug>`
+//! rows that win over `user` for that repo.
 
 use std::path::Path;
 
-use theodore_contract::{Ephemeral, Setting, ToastLevel, models};
+use theodore_contract::{Setting, models};
 use theodore_domain::{AgentId, PrId, RepoRef};
-use theodore_ports::NewAction;
+use theodore_ports::{NewAction, SyncActionCode};
+
+use crate::config;
 
 use crate::core::Core;
 use crate::error::AppResult;
 
 pub const SCOPE_USER: &str = "user";
-
-/// Relative to a PR/project worktree (plan §8.5).
-const REPO_CONFIG_PATH: &str = ".review/config.yaml";
 
 pub fn defaults() -> Vec<Setting> {
     vec![
@@ -219,38 +219,55 @@ impl Core {
             .map(|s| s.value.clone())
     }
 
-    /// Loads `worktree`'s `.review/config.yaml` into `setting` rows scoped
-    /// to `repo` (plan §8.5): any key the file sets — `agents.grouping`,
-    /// `agents.skills`, `grouping.hide`, … — overrides
-    /// the `user` scope for this repo from then on. Best-effort: a missing
-    /// file is normal (most repos have none); an unparsable one is a toast,
-    /// not a hard failure.
+    /// Reads `worktree`'s config (docs/config.md: the global file, then the
+    /// repo's `.theodore/config.yaml` or legacy `.review/config.yaml`) and
+    /// applies its `review.agents` to `repo`. Best-effort: a missing file is
+    /// normal; a broken one is a toast, once.
     pub(crate) async fn load_repo_settings(&self, worktree: &Path, repo: &RepoRef) {
-        let path = worktree.join(REPO_CONFIG_PATH);
-        let Ok(text) = tokio::fs::read_to_string(&path).await else {
-            return;
-        };
-        let value = match serde_yaml::from_str::<serde_json::Value>(&text) {
-            Ok(v) => v,
-            Err(e) => {
-                self.emit(Ephemeral::Toast {
-                    level: ToastLevel::Warn,
-                    text: format!("{}: invalid .review/config.yaml ({e})", repo.slug()),
-                });
-                return;
-            }
-        };
-        let mut leaves = Vec::new();
-        flatten_yaml(String::new(), &value, &mut leaves);
-        // Budgets were dropped (owner, 2026-10-22): an old file's
-        // `budget.*` keys are ignored rather than stored.
-        leaves.retain(|(k, _)| !k.starts_with("budget."));
-        if leaves.is_empty() {
-            return;
-        }
+        let layers = config::read_layers(&self.0.deps.data_dir, Some(worktree), None).await;
+        let merged = config::merge(&layers);
+        self.warn_config(&merged);
+        self.apply_review_agents(&merged, repo).await;
+    }
+
+    /// `review.agents.<k>` → `setting` rows `agents.<k>` scoped to `repo`,
+    /// which win over the `user` scope for it. Rows of keys no longer set
+    /// are removed, so deleting a line from the file takes effect.
+    pub(crate) async fn apply_review_agents(&self, merged: &config::Merged, repo: &RepoRef) {
         let scope = format!("repo:{}", repo.slug());
-        let mut actions = Vec::with_capacity(leaves.len());
-        for (key, value) in leaves {
+        let wanted: Vec<(String, serde_json::Value)> = merged
+            .config
+            .review
+            .agents
+            .iter()
+            .map(|(k, v)| (format!("agents.{k}"), v.clone()))
+            .collect();
+        let store = self.0.deps.store.clone();
+        let scope_q = scope.clone();
+        let existing: Vec<Setting> =
+            tokio::task::spawn_blocking(move || store.query(models::SETTING, "scope", &scope_q))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|r| serde_json::from_value(r.data).ok())
+                .collect();
+        let mut actions = Vec::new();
+        for s in &existing {
+            if s.key.starts_with("agents.") && !wanted.iter().any(|(k, _)| *k == s.key) {
+                actions.push(NewAction {
+                    model: models::SETTING.into(),
+                    model_id: format!("{scope}:{}", s.key),
+                    action: SyncActionCode::D,
+                    data: None,
+                });
+            }
+        }
+        for (key, value) in wanted {
+            if existing.iter().any(|s| s.key == key && s.value == value) {
+                continue;
+            }
             let setting = Setting {
                 key: key.clone(),
                 scope: scope.clone(),
@@ -262,64 +279,10 @@ impl Core {
             actions.push(NewAction {
                 model: models::SETTING.into(),
                 model_id: format!("{scope}:{key}"),
-                action: theodore_ports::SyncActionCode::U,
+                action: SyncActionCode::U,
                 data: Some(data),
             });
         }
         let _ = self.apply(actions).await;
-    }
-}
-
-/// Recursively flattens a YAML/JSON object into dotted keys (`agents.grouping`).
-/// A leaf — scalar, array, or an empty object — stops the recursion, so a
-/// glob list like `grouping.hide: [a, b]` stays one setting, not several.
-fn flatten_yaml(
-    prefix: String,
-    value: &serde_json::Value,
-    out: &mut Vec<(String, serde_json::Value)>,
-) {
-    match value {
-        serde_json::Value::Object(map) if !map.is_empty() => {
-            for (k, v) in map {
-                let key = if prefix.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{prefix}.{k}")
-                };
-                flatten_yaml(key, v, out);
-            }
-        }
-        _ => {
-            if !prefix.is_empty() {
-                out.push((prefix, value.clone()));
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod flatten_tests {
-    use super::flatten_yaml;
-
-    #[test]
-    fn flattens_nested_keys_and_keeps_lists_as_one_leaf() {
-        let value: serde_json::Value = serde_json::from_str(
-            r#"{"agents":{"grouping":"codex","skills":["claude","codex"]},"spaces":{"auto_archive_days":5}}"#,
-        )
-        .unwrap();
-        let mut out = Vec::new();
-        flatten_yaml(String::new(), &value, &mut out);
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        assert_eq!(
-            out,
-            vec![
-                ("agents.grouping".to_string(), serde_json::json!("codex")),
-                (
-                    "agents.skills".to_string(),
-                    serde_json::json!(["claude", "codex"])
-                ),
-                ("spaces.auto_archive_days".to_string(), serde_json::json!(5)),
-            ]
-        );
     }
 }

@@ -75,6 +75,7 @@ pub enum OneOrMany {
 }
 
 impl OneOrMany {
+    #[allow(dead_code)] // read once `review.checklist` is wired
     pub fn items(&self) -> Vec<String> {
         match self {
             OneOrMany::One(s) => vec![s.clone()],

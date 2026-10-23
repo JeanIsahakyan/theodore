@@ -428,6 +428,42 @@ impl Core {
         }
     }
 
+    /// `archive` before the worktree is removed. A failure is a toast; the
+    /// archive goes on.
+    pub(crate) async fn run_archive_command(
+        &self,
+        space: &Space,
+        project: &theodore_contract::Project,
+        worktree_exists: bool,
+    ) {
+        let cfg = self.space_config_of(space, project).await;
+        let Some(script) = cfg.runnable(SpaceCommandKind::Archive) else {
+            return;
+        };
+        if !worktree_exists {
+            return;
+        }
+        let env = self.space_command_env(space, project, &cfg);
+        let timeout = cfg.timeout(SpaceCommandKind::Archive);
+        let (exit, _) = self
+            .run_space_command(
+                &space.id,
+                SpaceCommandKind::Archive,
+                &script,
+                Path::new(&space.worktree),
+                env,
+                timeout,
+                CancellationToken::new(),
+            )
+            .await;
+        if let Some(why) = describe_failure(SpaceCommandKind::Archive, &exit, timeout) {
+            self.emit(theodore_contract::Ephemeral::Toast {
+                level: ToastLevel::Warn,
+                text: format!("{}: {why}; archived anyway", space.name),
+            });
+        }
+    }
+
     /// `check` after a turn, when there is an allowed one; `cancel` (the
     /// turn's Stop) stops it.
     pub(crate) async fn run_check(

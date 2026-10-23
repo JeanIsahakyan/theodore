@@ -376,6 +376,9 @@ pub struct FakeGit {
     /// `(space, message)` of every `space_checkpoint`.
     pub checkpoints: Mutex<Vec<(String, String)>>,
     removed_spaces: Mutex<Vec<String>>,
+    /// Where space worktrees are created as real directories (tests that
+    /// copy files or run commands in them); `None`: a fake path.
+    space_root: Mutex<Option<PathBuf>>,
     /// `(space, to)` of every `space_reset`.
     pub resets: Mutex<Vec<(String, Sha)>>,
     /// Shipping a space: identity, squashed commits, pushes, folder ops.
@@ -447,6 +450,7 @@ impl FakeGit {
             checkpoint_heads: Mutex::new(VecDeque::new()),
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
+            space_root: Mutex::new(None),
             resets: Mutex::new(Vec::new()),
             ship: Mutex::new(FakeShip {
                 identity: Some(theodore_ports::Identity {
@@ -544,6 +548,11 @@ impl FakeGit {
     /// The next `space_checkpoint` moves the space to `head`.
     pub fn push_checkpoint(&self, head: Sha) {
         self.checkpoint_heads.lock().unwrap().push_back(head);
+    }
+
+    /// Space worktrees become real directories under `root`.
+    pub fn set_space_root(&self, root: &Path) {
+        *self.space_root.lock().unwrap() = Some(root.to_path_buf());
     }
 
     pub fn removed_spaces(&self) -> Vec<String> {
@@ -733,7 +742,14 @@ impl GitPort for FakeGit {
         };
         self.ensure_commit(base, "base");
         Ok(Worktree {
-            path: PathBuf::from(format!("/tmp/theodore-fake-space-{space}")),
+            path: match self.space_root.lock().unwrap().as_ref() {
+                Some(root) => {
+                    let path = root.join(space);
+                    let _ = std::fs::create_dir_all(&path);
+                    path
+                }
+                None => PathBuf::from(format!("/tmp/theodore-fake-space-{space}")),
+            },
             head,
         })
     }
@@ -1827,6 +1843,9 @@ pub enum FakeScript {
 pub struct FakeCommands {
     specs: Mutex<Vec<theodore_ports::CommandSpec>>,
     scripts: Mutex<Vec<(String, FakeScript)>>,
+    /// Called with each spec as it is spawned (to observe ordering).
+    #[allow(clippy::type_complexity)]
+    hook: Mutex<Option<Box<dyn Fn(&theodore_ports::CommandSpec) + Send + Sync>>>,
 }
 
 impl FakeCommands {
@@ -1839,6 +1858,10 @@ impl FakeCommands {
             .lock()
             .unwrap()
             .insert(0, (needle.to_string(), script));
+    }
+
+    pub fn on_spawn(&self, f: impl Fn(&theodore_ports::CommandSpec) + Send + Sync + 'static) {
+        *self.hook.lock().unwrap() = Some(Box::new(f));
     }
 
     pub fn specs(&self) -> Vec<theodore_ports::CommandSpec> {
@@ -1867,6 +1890,9 @@ impl theodore_ports::CommandPort for FakeCommands {
                 code: 0,
             });
         let timeout = spec.timeout;
+        if let Some(hook) = self.hook.lock().unwrap().as_ref() {
+            hook(&spec);
+        }
         self.specs.lock().unwrap().push(spec);
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let cancel = CancellationToken::new();

@@ -27,6 +27,7 @@ pub fn allocate(n: u16, taken: &HashSet<u16>) -> std::io::Result<Vec<u16>> {
 }
 
 /// Whether `port` can be bound on localhost right now.
+#[cfg(test)]
 pub fn is_free(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
