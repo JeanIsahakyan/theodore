@@ -21,12 +21,14 @@ pub mod detect;
 pub mod env;
 pub mod gemini;
 pub mod process;
+pub mod shell;
 
 use async_trait::async_trait;
 use theodore_domain::AgentId;
 use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun};
 
 pub use config::{AgentBinaryConfig, AgentCliConfig};
+pub use shell::ShellRunner;
 
 /// `AgentPort` over local CLI processes.
 #[derive(Debug, Clone, Default)]
