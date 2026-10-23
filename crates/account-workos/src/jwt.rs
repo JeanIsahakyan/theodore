@@ -120,8 +120,15 @@ pub fn check_claims(
     now_secs: i64,
 ) -> AccountResult<()> {
     let trim = |s: &str| s.trim_end_matches('/').to_string();
+    // AuthKit access tokens name the client in the issuer:
+    // `https://api.workos.com/user_management/<client_id>`.
+    let accepted = |iss: &str| {
+        issuers.iter().any(|i| {
+            trim(i) == trim(iss) || format!("{}/user_management/{client_id}", trim(i)) == trim(iss)
+        })
+    };
     match &claims.iss {
-        Some(iss) if issuers.iter().any(|i| trim(i) == trim(iss)) => {}
+        Some(iss) if accepted(iss) => {}
         other => {
             return Err(AccountError::InvalidToken(format!(
                 "unexpected issuer {other:?}"
@@ -286,5 +293,19 @@ mod tests {
         assert!(find_key(&jwks, Some(KID)).is_some());
         assert!(find_key(&jwks, Some("nope")).is_none());
         assert!(find_key(&jwks, None).is_some());
+    }
+
+    #[test]
+    fn accepts_the_user_management_issuer_of_this_client() {
+        let mut c = claims();
+        c["iss"] = json!("https://api.workos.com/user_management/client_1");
+        let t = token(&c);
+        let parsed = parse(&t).unwrap();
+        check_claims(&parsed.claims, &issuers(), "client_1", "user_1", NOW).unwrap();
+
+        c["iss"] = json!("https://api.workos.com/user_management/client_2");
+        let t = token(&c);
+        let parsed = parse(&t).unwrap();
+        assert!(check_claims(&parsed.claims, &issuers(), "client_1", "user_1", NOW).is_err());
     }
 }
