@@ -61,6 +61,7 @@ import {
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
 import { checksByReply, runControl, setupView } from './commands';
+import { GlobalConfigSection } from './ConfigSection';
 import {
   CheckChip,
   LogsDrawer,
@@ -1024,6 +1025,7 @@ export const LabsPage = observer(function LabsPage() {
           </div>
         </Card>
       )}
+      {on && <GlobalConfigSection />}
     </section>
   );
 });
