@@ -60,11 +60,17 @@ export function Composer({
       onChange={onChange}
       isDisabled={disabled}
     >
-      <InputGroup fullWidth className="flex flex-col gap-2 rounded-3xl py-3">
+      {/* A quiet card: no focus ring around a box this big — the caret
+          says where you are. */}
+      <InputGroup
+        fullWidth
+        className="flex h-auto flex-col gap-2 rounded-3xl py-3 focus-within:border-separator focus-within:ring-0 data-[focus-within=true]:ring-0"
+      >
         <InputGroup.TextArea
           ref={inputRef}
           rows={rows}
           autoFocus={autoFocus}
+          style={{ minHeight: `${rows * 1.625}em` }}
           className="w-full resize-none px-4 py-0 text-[15px] leading-relaxed"
           placeholder={placeholder}
           onKeyDown={(e) => {
