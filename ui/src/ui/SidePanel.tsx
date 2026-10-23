@@ -71,6 +71,7 @@ import { PatchView } from './Patch';
 import { isAgentEnabled } from './Settings';
 import { SkillBrowser } from './Skills';
 import { TaskRow } from './Tasks';
+import { SendToAgent } from './space/SendToAgent';
 
 export type SideTab = 'ai' | 'tasks' | 'threads';
 
@@ -679,6 +680,7 @@ const FindingCard = observer(function FindingCard({
             <Btn tone="tertiary" onPress={() => ignoreFinding(store, f.id)}>
               Ignore
             </Btn>
+            <SendToAgent pr={pr} item={{ kind: 'finding', id: f.id }} />
           </>
         )}
       </div>
@@ -1287,6 +1289,7 @@ function DraftCard({ d }: { d: Draft }) {
         </Chip>
         {d.source.kind === 'agent' && <AgentTag id={d.source.agent} />}
         <span className="flex-1" />
+        <SendToAgent pr={d.pr} item={{ kind: 'draft', id: d.id }} />
         <Ref a={d.anchor} />
       </div>
       <p className="line-clamp-2 text-sm text-muted">
@@ -1392,6 +1395,7 @@ function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
           >
             <ArrowUp className="size-4" />
           </Button>
+          <SendToAgent pr={pr} item={{ kind: 'thread', id: thread.id }} />
           <Btn
             tone="tertiary"
             icon={<Check />}

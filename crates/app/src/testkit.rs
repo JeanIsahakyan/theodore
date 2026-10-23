@@ -376,6 +376,8 @@ pub struct FakeGit {
     /// `(space, message)` of every `space_checkpoint`.
     pub checkpoints: Mutex<Vec<(String, String)>>,
     removed_spaces: Mutex<Vec<String>>,
+    /// `(space, to)` of every `space_reset`.
+    pub resets: Mutex<Vec<(String, Sha)>>,
     /// Shipping a space: identity, squashed commits, pushes, folder ops.
     pub ship: Mutex<FakeShip>,
 }
@@ -445,6 +447,7 @@ impl FakeGit {
             checkpoint_heads: Mutex::new(VecDeque::new()),
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
+            resets: Mutex::new(Vec::new()),
             ship: Mutex::new(FakeShip {
                 identity: Some(theodore_ports::Identity {
                     name: "Ada Lovelace".into(),
@@ -758,6 +761,18 @@ impl GitPort for FakeGit {
         drop(refs);
         self.ensure_commit(&head, message);
         Ok(head)
+    }
+
+    async fn space_reset(&self, _worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
+        self.resets
+            .lock()
+            .unwrap()
+            .push((space.to_string(), to.clone()));
+        self.resolve_refs
+            .lock()
+            .unwrap()
+            .insert(theodore_ports::space_ref(space), to.clone());
+        Ok(())
     }
 
     async fn remove_space_worktree(&self, _repo: &Path, space: &str) -> GitResult<()> {

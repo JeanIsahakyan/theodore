@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use theodore_contract::{
     ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, Space, SpaceMode,
-    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, ToastLevel, models,
+    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel, models,
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef, Usage};
 use theodore_ports::{
@@ -50,7 +50,13 @@ impl Core {
             })?;
         let name = match req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(n) => n.to_string(),
-            None => slug(&req.goal),
+            // Named after the goal; a second "fix login" in the project
+            // becomes `fix-login-2`, and so does its branch.
+            None => {
+                let siblings = self.list_spaces(Some(project.id.clone())).await?;
+                let taken: Vec<&str> = siblings.iter().map(|s| s.name.as_str()).collect();
+                unique_name(&slug(&req.goal), &taken)
+            }
         };
         let branch = match req.branch.clone() {
             Some(b) => b,
@@ -121,6 +127,7 @@ impl Core {
             error: None,
             shipped: None,
             done_at: None,
+            turn_log: Vec::new(),
             created_at: now,
             updated_at: now,
         };
@@ -202,7 +209,7 @@ impl Core {
             .space_worktree(&repo_path, &space.id, &space.base_sha)
             .await?;
 
-        let history = self.space_history(&space.id).await?;
+        let history = self.space_history(&space).await?;
         let key = space_chat_key(&space.id);
         let message_id = uuid::Uuid::new_v4().to_string();
         let now = self.0.deps.clock.now();
@@ -250,6 +257,7 @@ impl Core {
         );
         let turn = Turn {
             run_id,
+            message: message_id.clone(),
             space: space.clone(),
             agent,
             model,
@@ -342,6 +350,106 @@ impl Core {
         }])
         .await?;
         Ok(())
+    }
+
+    /// Undo last turn (docs/spaces.md §7): the worktree and the checkpoint
+    /// ref go back to where the turn started; the transcript keeps the turn,
+    /// marked undone, and later prompts leave it out. Refused while a turn
+    /// runs, on an archived space, and once the turn was shipped.
+    pub async fn undo_space_turn(&self, space: &str) -> AppResult<Space> {
+        // Not while a ship reads the checkpoint.
+        let _guard = self.0.ship_lock.lock().await;
+        let space = self.space_row(space).await?;
+        let i = undoable_turn(&space).map_err(AppError::Invalid)?;
+        let turn = space.turn_log[i].clone();
+        let project = self.space_project(&space).await?;
+        let repo_path = self.ensure_project_cache(&project).await?;
+        let wt = self
+            .0
+            .deps
+            .git
+            .space_worktree(&repo_path, &space.id, &space.base_sha)
+            .await?;
+        self.0
+            .deps
+            .git
+            .space_reset(&wt.path, &space.id, &turn.before)
+            .await?;
+        let mut log = space.turn_log.clone();
+        log[i].undone = true;
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: space.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(serde_json::json!({
+                "status": SpaceStatus::Idle,
+                "head_sha": turn.before,
+                "error": null,
+                "turn_log": log,
+                "updated_at": self.0.deps.clock.now(),
+            })),
+        }])
+        .await?;
+        if turn.before != turn.after {
+            self.space_review(SpaceReviewRequest {
+                space: space.id.clone(),
+                group: false,
+            })
+            .await?;
+        }
+        self.space_row(&space.id).await
+    }
+
+    /// Brings an archived space back: its worktree is recreated from the
+    /// checkpoint ref and the live diff reopened. A space that was done
+    /// starts its auto-archive countdown again.
+    pub async fn unarchive_space(&self, space: &str) -> AppResult<Space> {
+        let space = self.space_row(space).await?;
+        if space.status != SpaceStatus::Archived {
+            return Ok(space);
+        }
+        let project = self.space_project(&space).await?;
+        let repo_path = self.ensure_project_cache(&project).await?;
+        let wt = self
+            .0
+            .deps
+            .git
+            .space_worktree(&repo_path, &space.id, &space.base_sha)
+            .await?;
+        let now = self.0.deps.clock.now();
+        let mut patch = serde_json::json!({
+            "status": SpaceStatus::Idle,
+            "worktree": wt.path.display().to_string(),
+            "error": null,
+            "updated_at": now,
+        });
+        if wt.head != space.head_sha {
+            // The checkpoint ref is gone (deleted outside Theodore): the
+            // worktree starts over at the base. Say so instead of showing
+            // an empty diff as if nothing had happened.
+            patch["status"] = serde_json::json!(SpaceStatus::Failed);
+            patch["head_sha"] = serde_json::json!(wt.head);
+            patch["error"] = serde_json::json!(format!(
+                "the checkpoints were gone; the space restarted from {}",
+                space.base
+            ));
+        }
+        if space.done_at.is_some() {
+            patch["done_at"] = serde_json::json!(now);
+        }
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: space.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(patch),
+        }])
+        .await?;
+        self.space_review(SpaceReviewRequest {
+            space: space.id.clone(),
+            group: false,
+        })
+        .await?;
+        self.space_row(&space.id).await
     }
 
     /// Turns left `running` by a previous process can never finish
@@ -452,9 +560,15 @@ impl Core {
     }
 
     /// The transcript so far, oldest first, without failed placeholders.
-    async fn space_history(&self, space: &str) -> AppResult<Vec<ChatMessage>> {
+    async fn space_history(&self, space: &Space) -> AppResult<Vec<ChatMessage>> {
         let store = self.0.deps.store.clone();
-        let key = space_chat_key(space).0;
+        let key = space_chat_key(&space.id).0;
+        let undone: Vec<&str> = space
+            .turn_log
+            .iter()
+            .filter(|t| t.undone)
+            .flat_map(|t| [t.message.as_str(), t.reply.as_str()])
+            .collect();
         let rows =
             tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
                 .await
@@ -463,6 +577,7 @@ impl Core {
             .into_iter()
             .filter_map(|r| serde_json::from_value(r.data).ok())
             .filter(|m: &ChatMessage| m.failed.is_none())
+            .filter(|m| !undone.contains(&m.id.as_str()))
             .collect();
         messages.sort_by_key(|m| m.at);
         Ok(messages)
@@ -471,6 +586,8 @@ impl Core {
 
 struct Turn {
     run_id: String,
+    /// Your message that started it.
+    message: String,
     space: Space,
     agent: AgentId,
     model: Option<String>,
@@ -484,6 +601,7 @@ struct Turn {
 async fn drive_turn(core: &Core, turn: Turn) {
     let Turn {
         run_id,
+        message,
         space,
         agent,
         model,
@@ -602,6 +720,21 @@ async fn drive_turn(core: &Core, turn: Turn) {
     });
     if let Some(head) = &head {
         patch["head_sha"] = serde_json::json!(head);
+        // Nothing else writes the log while a turn runs (undo is refused),
+        // but read it fresh rather than trust the snapshot from the send.
+        let mut log = core
+            .space_row(&space.id)
+            .await
+            .map(|s| s.turn_log)
+            .unwrap_or_else(|_| space.turn_log.clone());
+        log.push(SpaceTurn {
+            message,
+            reply: reply.id.clone(),
+            before: space.head_sha.clone(),
+            after: head.clone(),
+            undone: false,
+        });
+        patch["turn_log"] = serde_json::json!(log);
     }
     let mut actions = Vec::new();
     if let Ok(data) = serde_json::to_value(&reply) {
@@ -646,15 +779,67 @@ fn new_space_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
+/// The index in `turn_log` of the turn "Undo last turn" would undo — the
+/// last one not undone yet — or why there is none to undo.
+pub(crate) fn undoable_turn(space: &Space) -> Result<usize, String> {
+    match space.status {
+        SpaceStatus::Running => {
+            return Err("the agent is still working; stop it before undoing".into());
+        }
+        SpaceStatus::Archived => return Err("this space is archived".into()),
+        SpaceStatus::Idle | SpaceStatus::Failed => {}
+    }
+    let i = space
+        .turn_log
+        .iter()
+        .rposition(|t| !t.undone)
+        .ok_or_else(|| "there is no turn to undo".to_string())?;
+    let turn = &space.turn_log[i];
+    if turn.after != space.head_sha {
+        return Err("the space moved since its last turn".into());
+    }
+    if let Some(shipped) = &space.shipped {
+        // Shipped from a checkpoint at or before this turn's start: the
+        // turn's own change hasn't left the space. Anything else (this
+        // turn's result, or a checkpoint we can't place) was shipped.
+        let mut earlier = space.turn_log[..i]
+            .iter()
+            .filter(|t| !t.undone)
+            .flat_map(|t| [&t.before, &t.after]);
+        let before_turn = shipped.head == turn.before
+            || shipped.head == space.base_sha
+            || earlier.any(|h| *h == shipped.head);
+        if !before_turn {
+            return Err(match shipped.how {
+                theodore_contract::ShipKind::Pr => {
+                    "this turn is already pushed; ask the agent to revert it instead"
+                }
+                theodore_contract::ShipKind::MergedLocally => {
+                    "this turn is already merged; ask the agent to revert it instead"
+                }
+                theodore_contract::ShipKind::Branch => {
+                    "this turn is already written as a branch; ask the agent to revert it instead"
+                }
+            }
+            .into());
+        }
+    }
+    Ok(i)
+}
+
 /// `true` for a space review's `PrRef::host_id`.
 pub(crate) fn is_space_ref(host_id: &str) -> bool {
     host_id.starts_with(SPACE_REF_PREFIX)
 }
 
 /// The first few words of `text`, lowercased and dash-joined:
-/// "Retry the export on 429s!" → "retry-the-export-on-429s".
+/// "Retry the export on 429s!" → "retry-the-export-on-429s". Cyrillic is
+/// transliterated ("исправить логин" → "ispravit-login") and accented
+/// Latin loses its accents; any other script separates words, and a goal
+/// with nothing left is "space".
 pub(crate) fn slug(text: &str) -> String {
-    let words: Vec<String> = text
+    let ascii: String = text.chars().map(to_ascii).collect();
+    let words: Vec<String> = ascii
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| !w.is_empty())
         .take(5)
@@ -664,6 +849,86 @@ pub(crate) fn slug(text: &str) -> String {
     let s: String = s.chars().take(40).collect();
     let s = s.trim_end_matches('-').to_string();
     if s.is_empty() { "space".into() } else { s }
+}
+
+/// One character of a goal as ASCII: itself, a transliteration, or a
+/// space (a word break) for anything without one.
+fn to_ascii(c: char) -> std::borrow::Cow<'static, str> {
+    use std::borrow::Cow;
+    if c.is_ascii() {
+        return Cow::Owned(c.to_string());
+    }
+    let lower: char = c.to_lowercase().next().unwrap_or(c);
+    let t: &'static str = match lower {
+        // Russian (GOST-like, the way people type names), plus the
+        // Ukrainian and Belarusian letters.
+        'а' => "a",
+        'б' => "b",
+        'в' => "v",
+        'г' => "g",
+        'ґ' => "g",
+        'д' => "d",
+        'е' | 'ё' | 'э' | 'є' => "e",
+        'ж' => "zh",
+        'з' => "z",
+        'и' | 'і' => "i",
+        'ї' => "yi",
+        'й' => "y",
+        'к' => "k",
+        'л' => "l",
+        'м' => "m",
+        'н' => "n",
+        'о' => "o",
+        'п' => "p",
+        'р' => "r",
+        'с' => "s",
+        'т' => "t",
+        'у' => "u",
+        'ў' => "u",
+        'ф' => "f",
+        'х' => "kh",
+        'ц' => "ts",
+        'ч' => "ch",
+        'ш' => "sh",
+        'щ' => "shch",
+        'ъ' | 'ь' => "",
+        'ы' => "y",
+        'ю' => "yu",
+        'я' => "ya",
+        // Latin with diacritics.
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => "a",
+        'æ' => "ae",
+        'ç' | 'ć' | 'č' => "c",
+        'ď' | 'đ' | 'ð' => "d",
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ė' | 'ę' | 'ě' => "e",
+        'ğ' => "g",
+        'ì' | 'í' | 'î' | 'ï' | 'ī' | 'į' | 'ı' => "i",
+        'ł' | 'ľ' | 'ĺ' => "l",
+        'ñ' | 'ń' | 'ň' => "n",
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ő' => "o",
+        'œ' => "oe",
+        'ř' | 'ŕ' => "r",
+        'ś' | 'š' | 'ş' | 'ș' => "s",
+        'ß' => "ss",
+        'ť' | 'ţ' | 'ț' => "t",
+        'þ' => "th",
+        'ù' | 'ú' | 'û' | 'ü' | 'ū' | 'ů' | 'ű' | 'ų' => "u",
+        'ý' | 'ÿ' => "y",
+        'ź' | 'ż' | 'ž' => "z",
+        _ => " ",
+    };
+    Cow::Borrowed(t)
+}
+
+/// `name`, or `name-2`, `name-3`… — the first one no space in `taken` has.
+pub(crate) fn unique_name(name: &str, taken: &[&str]) -> String {
+    if !taken.contains(&name) {
+        return name.to_string();
+    }
+    (2..)
+        .map(|n| format!("{name}-{n}"))
+        .find(|candidate| !taken.contains(&candidate.as_str()))
+        .expect("an unbounded range has a free suffix")
 }
 
 /// A conservative subset of `git check-ref-format --branch`.
@@ -733,6 +998,31 @@ mod tests {
         );
         assert_eq!(slug("  Fix: login/redirect!! "), "fix-login-redirect");
         assert_eq!(slug("¿?"), "space");
+    }
+
+    #[test]
+    fn cyrillic_goals_are_transliterated() {
+        assert_eq!(slug("тес"), "tes");
+        assert_eq!(slug("исправить логин"), "ispravit-login");
+        assert_eq!(slug("Починить ЭКСПОРТ в CSV"), "pochinit-eksport-v-csv");
+        assert_eq!(slug("щука, жёлтый объём"), "shchuka-zheltyy-obem");
+        assert_eq!(slug("Ґанок і їжак"), "ganok-i-yizhak");
+    }
+
+    #[test]
+    fn accents_are_dropped_and_other_scripts_break_words() {
+        assert_eq!(slug("Crème brûlée für Straße"), "creme-brulee-fur-strasse");
+        assert_eq!(slug("fix 登录 page"), "fix-page");
+        assert_eq!(slug("修复登录"), "space");
+        assert_eq!(slug("emoji 🚀 launch"), "emoji-launch");
+    }
+
+    #[test]
+    fn taken_names_get_a_number() {
+        assert_eq!(unique_name("tes", &[]), "tes");
+        assert_eq!(unique_name("tes", &["other"]), "tes");
+        assert_eq!(unique_name("tes", &["tes"]), "tes-2");
+        assert_eq!(unique_name("tes", &["tes", "tes-2", "tes-3"]), "tes-4");
     }
 
     #[test]

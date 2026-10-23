@@ -90,6 +90,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::space_review,
             commands::archive_space,
             commands::ship_space,
+            commands::undo_space_turn,
+            commands::unarchive_space,
+            commands::space_send_feedback,
             commands::account_status,
             commands::account_sign_in_start,
             commands::account_sign_in_poll,
@@ -160,6 +163,8 @@ pub fn run(
         .plugin(tauri_plugin_opener::init())
         // `theodore://` (the account sign-in redirect in an app bundle).
         .plugin(tauri_plugin_deep_link::init())
+        // A space's turn finished while the window was in the background.
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(builder.invoke_handler())
         .manage(core.clone())
         .manage(updater::UpdateState::default())

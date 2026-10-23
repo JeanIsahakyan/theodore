@@ -355,6 +355,10 @@ impl GitPort for GitCli {
         self.space_checkpoint_op(worktree, space, message).await
     }
 
+    async fn space_reset(&self, worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
+        self.space_reset_op(worktree, space, to).await
+    }
+
     async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {
         self.remove_space_worktree_op(repo, space).await
     }

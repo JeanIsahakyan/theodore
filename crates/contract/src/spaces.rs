@@ -106,8 +106,29 @@ pub struct Space {
     /// kept as a branch. `spaces.auto_archive_days` counts from here.
     #[serde(default)]
     pub done_at: Option<Millis>,
+    /// Every turn's checkpoints, oldest first: what "Undo last turn" moves
+    /// back to. Spaces from before it was recorded have none.
+    #[serde(default)]
+    pub turn_log: Vec<SpaceTurn>,
     pub created_at: Millis,
     pub updated_at: Millis,
+}
+
+/// One agent turn of a space: the messages it answered and the checkpoint
+/// it moved the space from and to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SpaceTurn {
+    /// The `chat_message` id of your message that started it.
+    pub message: String,
+    /// The `chat_message` id of the agent's reply.
+    pub reply: String,
+    /// Checkpoint before the turn, and after it (equal when nothing changed).
+    pub before: Sha,
+    pub after: Sha,
+    /// Undone: the space went back to `before`; the transcript keeps the
+    /// turn, the next turns' prompts leave it out.
+    #[serde(default)]
+    pub undone: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -175,4 +196,23 @@ pub struct ShipSpaceRequest {
     /// the latest message since the last push).
     #[serde(default)]
     pub title: Option<String>,
+}
+
+/// A review comment sent to a space's agent (docs/spaces.md §3): it must
+/// belong to the space's PR or to its own branch review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum SpaceFeedback {
+    /// A review thread (`Thread::id`), every comment quoted.
+    Thread(String),
+    /// A draft comment (`Draft::id`).
+    Draft(String),
+    /// A finding (`Finding::id`).
+    Finding(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SpaceFeedbackRequest {
+    pub space: String,
+    pub items: Vec<SpaceFeedback>,
 }

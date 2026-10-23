@@ -477,3 +477,45 @@ async fn the_user_identity_comes_from_git_config() {
         })
     );
 }
+
+/// Undo last turn: the worktree and the checkpoint ref go back to the turn
+/// before; the turn's untracked leftovers go too, ignored files stay.
+#[tokio::test]
+async fn space_reset_moves_the_worktree_and_ref_back_a_turn() {
+    let h = host().await;
+    let wt = h.git.space_worktree(&h.cache, "s1", &h.base).await.unwrap();
+    std::fs::write(wt.path.join(".gitignore"), "deps/\n").unwrap();
+    std::fs::write(wt.path.join("a.txt"), "one\ntwo\n").unwrap();
+    let turn1 = h
+        .git
+        .space_checkpoint(&wt.path, "s1", "turn 1")
+        .await
+        .unwrap();
+    std::fs::write(wt.path.join("c.txt"), "new\n").unwrap();
+    h.git
+        .space_checkpoint(&wt.path, "s1", "turn 2")
+        .await
+        .unwrap();
+    std::fs::create_dir_all(wt.path.join("deps")).unwrap();
+    std::fs::write(wt.path.join("deps/lib.js"), "x\n").unwrap();
+    std::fs::write(wt.path.join("stray.txt"), "left behind\n").unwrap();
+
+    h.git
+        .space_reset(&wt.path, "s1", &turn1)
+        .await
+        .expect("reset");
+
+    assert_eq!(git(&wt.path, &["rev-parse", "HEAD"]), turn1.as_str());
+    assert_eq!(
+        git(&h.cache, &["rev-parse", "refs/theodore/spaces/s1"]),
+        turn1.as_str()
+    );
+    assert!(!wt.path.join("c.txt").exists());
+    assert!(!wt.path.join("stray.txt").exists());
+    assert!(wt.path.join("deps/lib.js").exists(), "ignored files stay");
+    assert_eq!(
+        std::fs::read_to_string(wt.path.join("a.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert_eq!(git(&wt.path, &["status", "--porcelain"]), "");
+}

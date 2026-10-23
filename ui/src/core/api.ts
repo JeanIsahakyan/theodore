@@ -55,6 +55,7 @@ import type {
   CreateSpaceRequest,
   ShipSpaceRequest,
   Space,
+  SpaceFeedbackRequest,
   SpaceReviewRequest,
   SpaceSendRequest,
   SaveSkillRequest,
@@ -205,6 +206,10 @@ export const api = {
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),
   shipSpace: (req: ShipSpaceRequest) => call<Space>('ship_space', { req }),
+  undoSpaceTurn: (space: string) => call<Space>('undo_space_turn', { space }),
+  unarchiveSpace: (space: string) => call<Space>('unarchive_space', { space }),
+  spaceSendFeedback: (req: SpaceFeedbackRequest) =>
+    call<string>('space_send_feedback', { req }),
   /** Theodore account (Settings → Account, Onboarding). The sign-in
    *  dialog shows its own failures, so starting and polling don't toast. */
   accountStatus: () => call<AccountStatus>('account_status'),

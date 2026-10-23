@@ -345,6 +345,14 @@ pub trait GitPort: Send + Sync {
         Err(GitError::Unsupported("space_checkpoint"))
     }
 
+    /// Moves a space back to an earlier checkpoint `to`: its worktree is
+    /// reset to it (tracked and untracked edits dropped; ignored files
+    /// stay) and `refs/theodore/spaces/<space>` points at it again.
+    async fn space_reset(&self, worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
+        let _ = (worktree, space, to);
+        Err(GitError::Unsupported("space_reset"))
+    }
+
     /// Removes a space's worktree directory. The checkpoint ref stays, so
     /// `space_worktree` can bring the space back.
     async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {

@@ -184,6 +184,27 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// Undo last turn: back to the previous checkpoint (docs/spaces.md §7).
+    async fn undo_space_turn(
+        &self,
+        _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Recreates an archived space's worktree from its checkpoint ref.
+    async fn unarchive_space(
+        &self,
+        _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Send to agent": review threads / drafts / findings as the next turn.
+    async fn space_send_feedback(
+        &self,
+        _req: theodore_contract::SpaceFeedbackRequest,
+    ) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
     /// Theodore account (plan "Theodore account"): signed in or out, and
     /// whether the feature is configured at all.
     async fn account_status(&self) -> Result<AccountStatus, CommandError>;
