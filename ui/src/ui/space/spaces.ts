@@ -102,25 +102,9 @@ export function turnEnded(
   return { level: 'info', text: `${next.name}: turn done` };
 }
 
-/** Per-space spend limit (docs/spaces.md §12), its own key — not the PR
- *  review budget. */
-export const SPACE_BUDGET_KEY = 'budget.per_space_usd';
 /** Days after a space is done before it archives itself; 0 = never. */
 export const AUTO_ARCHIVE_KEY = 'spaces.auto_archive_days';
 export const DEFAULT_AUTO_ARCHIVE_DAYS = 7;
-
-/** `budget.per_space_usd` for a repo: its `repo:<slug>` row (from the
- *  repo's `.review/config.yaml`) wins over the user's. `null` = no limit. */
-export function spaceBudget(
-  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
-  repoSlug: string,
-): number | null {
-  const rows = settings.filter((s) => s.key === SPACE_BUDGET_KEY);
-  const row =
-    rows.find((s) => s.scope === `repo:${repoSlug}`) ??
-    rows.find((s) => s.scope === 'user');
-  return typeof row?.value === 'number' && row.value > 0 ? row.value : null;
-}
 
 /** `spaces.auto_archive_days`, user scope; unset or invalid = 7. */
 export function autoArchiveDays(
@@ -130,12 +114,6 @@ export function autoArchiveDays(
   return typeof v === 'number' && v >= 0 && Number.isFinite(v)
     ? Math.floor(v)
     : DEFAULT_AUTO_ARCHIVE_DAYS;
-}
-
-/** "$0.42 / $5.00", or just "$0.42" without a budget. */
-export function fmtSpend(usd: number, budget: number | null): string {
-  const spent = `$${usd.toFixed(2)}`;
-  return budget == null ? spent : `${spent} / $${budget.toFixed(2)}`;
 }
 
 /** Where a space is in its lifecycle (docs/spaces.md §1). `opening`: the

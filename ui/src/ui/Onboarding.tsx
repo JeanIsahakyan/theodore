@@ -361,7 +361,7 @@ export const Onboarding = observer(function Onboarding() {
                 <Alert.Content>
                   <Alert.Description>
                     Grouping runs once when you open a PR. Skills, chat and
-                    fixes run only when you ask; a per-PR budget caps spend.
+                    fixes run only when you ask.
                   </Alert.Description>
                 </Alert.Content>
               </Alert>

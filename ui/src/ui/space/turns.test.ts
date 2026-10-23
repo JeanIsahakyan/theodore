@@ -27,7 +27,6 @@ const space = (over: Partial<Space> & { id: string }): Space => ({
   mode: 'edit',
   review_pr: null,
   pr: null,
-  usage: { input_tokens: 0, output_tokens: 0, usd: 0 },
   turns: 0,
   run: null,
   error: null,

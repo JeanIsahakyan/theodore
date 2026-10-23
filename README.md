@@ -66,8 +66,8 @@ More in [docs/screenshots](docs/screenshots/README.md).
 - Findings turn into draft comments, tasks, or get a proposed fix attached.
 - Tasks: delegate to an agent, which edits inside the PR worktree. Accepting commits+pushes (your
   own or a local PR) or drafts a suggestion (someone else's PR); rejecting resets the worktree.
-- A per-PR USD budget, checked before every agent run. Claude's cost is tracked in real dollars;
-  Codex and Gemini report tokens but not cost yet.
+- No cost display, budget or limit in the app (owner, 2026-10-22). The grouping eval harness
+  (`theodore eval`) still reports what its runs cost.
 
 ### Merge, checks and conflicts
 - Merge, enqueue, auto-merge, update branch; reviewer and draft-state changes; re-running a check.
@@ -93,10 +93,9 @@ implementations too, not stubs — just narrower, matching each host's API.
   shown as chips in Peek and Review. No token stored means an empty list,
   never an error. No write-back.
 
-### Settings and budget
+### Settings
 - Per-host sign-in, agent selection split by task (grouping, chat, skills,
-  fix — default Claude for each), live AI spend per PR against a configured
-  limit.
+  fix — default Claude for each).
 
 ### Theodore account (optional, hidden until configured)
 - Sign in from a dialog — the first, skippable onboarding step, or Settings → Account: your
@@ -110,7 +109,7 @@ implementations too, not stubs — just narrower, matching each host's API.
 - A *space* is a change before it is a PR: an agent writes it in its own worktree while you
   chat, watch the diff and review it grouped, then ship it — **Open PR** (one squashed commit on
   `<login>/<slug>`, ready or draft), **Push** further turns, or for a local folder **Merge
-  locally** / **Keep as branch**. Own budget, auto-archive. Off by default; design and switch in
+  locally** / **Keep as branch**. Auto-archive. Off by default; design and switch in
   `docs/spaces.md`.
 
 ### Updates
@@ -128,7 +127,7 @@ Rust core — same code inside the desktop app and the `theodore` CLI
    contract → app (use cases, sync engine, outbox, poller)
                 │
               domain (pure logic: groups, anchors, interdiff,
-                      findings, tasks, snooze, budget — no I/O)
+                      findings, tasks, snooze — no I/O)
                 ▲
               ports (Host · Git · Agent · Store · Secrets · Clock)
                 ▲
@@ -224,7 +223,7 @@ theodore mcp-bridge --url <mcp-url>   # stdio↔HTTP bridge for CLIs without HTT
 
 ```
 crates/
-  domain/         models, invariants, diff/interdiff, anchors, grouping, snooze, budget
+  domain/         models, invariants, diff/interdiff, anchors, grouping, snooze
   contract/       command + sync types; generates ui/src/gen/*.ts
   app/            use cases, sync engine, outbox, poller, settings, built-in skills
   ports/          trait definitions: HostAdapter, GitPort, AgentPort, Store, Secrets, Clock
@@ -284,7 +283,6 @@ Git hooks (`lefthook install` once per clone):
 - GitLab OAuth/PKCE sign-in — personal access token only today.
 - Skills running on several agents at once in parallel (they run in
   sequence; findings still merge).
-- Cost tracking for Codex and Gemini runs (tokens are recorded, USD is not).
 - A Theodore server: the account sign-in is client-only; billing, sync and telemetry need it.
 - Spaces beyond shipping: "Send to agent" from review threads, undo a turn, setup/check scripts,
   notifications.

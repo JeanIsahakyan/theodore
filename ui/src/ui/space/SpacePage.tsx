@@ -43,7 +43,6 @@ import { useRootStore, useUi } from '../../stores/context';
 import { AgentTag, Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
-import { budgetStatus, fmtUsage } from '../SidePanel';
 import { rich } from '../../highlight';
 import { latinKey, useViewKeys } from '../keys';
 import {
@@ -59,16 +58,13 @@ import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
   NOTIFY_KEY,
-  SPACE_BUDGET_KEY,
   STAGE_LABEL,
   autoArchiveDays,
   defaultTitle,
   diffStat,
-  fmtSpend,
   nextMode,
   notifyOn,
   spaceKeyAction,
-  spaceBudget,
   spaceChatKey,
   spaceStage,
   undoState,
@@ -303,14 +299,6 @@ const SpaceHeader = observer(function SpaceHeader({
   const project = store.models.projects.get(space.project);
   const pr = space.pr ? store.models.prSummaries.get(space.pr) : undefined;
   const stage = spaceStage(space, pr?.state);
-  const budget = project
-    ? spaceBudget(
-        store.models.settings.all(),
-        `${project.repo.owner}/${project.repo.name}`,
-      )
-    : null;
-  const spent = space.usage.usd ?? 0;
-  const tone = budgetStatus(spent, budget).tone;
   const days = autoArchiveDays(store.models.settings.all());
   return (
     <header className="flex flex-wrap items-center gap-2 border-b border-separator px-5 py-3">
@@ -332,22 +320,6 @@ const SpaceHeader = observer(function SpaceHeader({
         {pr ? ` · #${pr.pr.number}` : ''}
       </span>
       <AgentTag id={space.agent} />
-      <span
-        className={`space-spend text-xs tabular-nums ${
-          tone === 'danger'
-            ? 'text-danger'
-            : tone === 'warning'
-              ? 'text-warning'
-              : 'text-muted'
-        }`}
-        title={
-          budget == null
-            ? 'No budget for this space (Settings → Labs)'
-            : 'Spend / budget for this space'
-        }
-      >
-        {fmtSpend(spent, budget)}
-      </span>
       <span className="flex-1" />
       <Button
         size="sm"
@@ -661,9 +633,6 @@ const SpaceChat = observer(function SpaceChat({
           >
             <span className="flex items-center gap-1.5 text-xs text-muted">
               {m.author.kind === 'me' ? 'you' : m.author.agent}
-              {m.usage && m.author.kind === 'agent'
-                ? ` · ${fmtUsage(m.usage)}`
-                : ''}
               {undone.has(m.id) && m.author.kind === 'agent' && (
                 <span className="rounded-full bg-default px-1.5 text-[10px]">
                   undone
@@ -958,14 +927,6 @@ export const LabsPage = observer(function LabsPage() {
       </Card>
       {on && (
         <Card variant="secondary" className="gap-0 p-0">
-          <NumberSettingRow
-            settingKey={SPACE_BUDGET_KEY}
-            label="Budget per space (USD)"
-            hint="A space's agent stops once its spend reaches this. Separate from the PR review budget. Empty = no limit."
-            prefix="$"
-            placeholder="No limit"
-            accept={(n) => n > 0}
-          />
           <NumberSettingRow
             settingKey={AUTO_ARCHIVE_KEY}
             label="Auto-archive after (days)"

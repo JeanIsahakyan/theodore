@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use theodore_contract::{
     AskRequest, ChatMessage, Ephemeral, RunSkillRequest, RunStatus, SkillRun, models,
 };
-use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId, Usage};
+use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId};
 use theodore_ports::{AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode};
 use tokio_util::sync::CancellationToken;
 
@@ -17,7 +17,6 @@ use crate::error::{AppError, AppResult};
 impl Core {
     pub async fn run_skill(&self, req: RunSkillRequest) -> AppResult<String> {
         self.ensure_open(&req.pr).await?;
-        self.check_budget(&req.pr).await?;
         let repo_scope = self.repo_scope_of(&req.pr).await;
         let agents = if req.agents.is_empty() {
             self.setting_agents_scoped(
@@ -61,7 +60,6 @@ impl Core {
             skill: req.skill.clone(),
             agents: agents.clone(),
             status: RunStatus::Running,
-            usage: Usage::default(),
             error: None,
             started_at,
         };
@@ -102,7 +100,6 @@ impl Core {
 
     pub async fn ask(&self, req: AskRequest) -> AppResult<String> {
         self.ensure_open(&req.pr).await?;
-        self.check_budget(&req.pr).await?;
         let message_id = uuid::Uuid::new_v4().to_string();
         let now = self.0.deps.clock.now();
         let question = ChatMessage {
@@ -111,7 +108,6 @@ impl Core {
             author: Author::Me,
             text: req.question.clone(),
             refs: req.about.clone().into_iter().collect(),
-            usage: None,
             at: now,
             failed: None,
         };
@@ -332,7 +328,6 @@ async fn drive_skill_run(
     };
     let stall_after_ms = core.stall_after_ms().await;
 
-    let mut total_usage = Usage::default();
     let mut error: Option<String> = None;
     let mut last_agent = first_agent;
     for agent in agents {
@@ -373,15 +368,12 @@ async fn drive_skill_run(
                             AgentEvent::ToolResult { ok, .. } => {
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool result ok={ok}") });
                             }
-                            AgentEvent::Usage { usage } => total_usage += usage,
                             AgentEvent::Stalled => {
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: "stalled".into() });
                                 core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                             }
-                            AgentEvent::Done { usage, .. } => {
-                                total_usage += usage;
-                                break;
-                            }
+                            AgentEvent::Usage { .. } => {}
+                            AgentEvent::Done { .. } => break,
                             AgentEvent::Error { message, .. } => {
                                 error = Some(message);
                                 break;
@@ -402,7 +394,7 @@ async fn drive_skill_run(
     } else {
         RunStatus::Done
     };
-    let data = serde_json::json!({ "status": status, "usage": total_usage, "error": error });
+    let data = serde_json::json!({ "status": status, "error": error });
     let _ = core
         .apply(vec![NewAction {
             model: models::SKILL_RUN.into(),
@@ -431,7 +423,6 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
         author: Author::Agent(agent),
         text: String::new(),
         refs: vec![],
-        usage: None,
         at: core.0.deps.clock.now(),
         failed: Some(text.to_string()),
     };
@@ -532,7 +523,6 @@ async fn drive_ask(
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();
-    let mut usage = Usage::default();
     let mut error = None;
     match core.0.deps.agents.run(req).await {
         Ok(mut run) => loop {
@@ -548,9 +538,8 @@ async fn drive_ask(
                         AgentEvent::Stalled => {
                             core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                         }
-                        AgentEvent::Done { final_text, usage: u } => {
+                        AgentEvent::Done { final_text, .. } => {
                             text = final_text;
-                            usage = u;
                             break;
                         }
                         AgentEvent::Error { message, .. } => {
@@ -584,7 +573,6 @@ async fn drive_ask(
         author: Author::Agent(agent),
         text,
         refs: vec![],
-        usage: Some(usage),
         at: now,
         failed: None,
     };

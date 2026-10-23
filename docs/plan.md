@@ -51,7 +51,7 @@ alphabetical list of files. The agents help; the reviewer decides.
 │        ▼
 ├─ domain ──────── pure logic, no I/O, unit-tested
 │                  groups + invariants, read → viewed, anchors, interdiff,
-│                  findings merge, task lifecycle, snooze, budget
+│                  findings merge, task lifecycle, snooze
 │        ▲
 ├─ ports ───────── traits: Host · Git · Agent · Store · Secrets · Clock
 │        ▲
@@ -247,7 +247,7 @@ theodore eval fixtures/            # replays saved PRs, prints a table
 | Valid partition on first call | ≥ 90 % |
 | Valid after repair | 100 % (with "Other" fallback) |
 | Latency, PR ≤ 50 files | ≤ 60 s |
-| Cost per PR | recorded; budget decided after M1 |
+| Cost per PR | recorded by the eval harness; the app shows no cost and has no budget (owner, 2026-10-22) |
 | Human rating 1–5 on 10 real PRs | ≥ 4 average |
 
 ---
@@ -714,14 +714,16 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 | `add_finding(file, line, severity, title, body)` | creates a finding → sync log → UI |
 | `propose_patch(file, before, after, note)` | attaches a fix to a finding |
 
-### 8.4 Skills, chat, cost
+### 8.4 Skills, chat
 
 - Skills: `SKILL.md` from `~/.claude/skills` and the repo's `.claude/skills`.
   Claude loads them natively; other agents get the text in the prompt.
 - A skill can run on several agents in parallel; findings merge (§4).
 - Chat: questions about the PR, a group, or a line; replies stream as ephemeral
   events and are stored when complete.
-- Usage: tokens and USD per run, per PR budget, hard stop at the limit.
+- Cost: the app neither shows nor limits what agent runs cost (budgets and
+  the spend display were dropped by the owner, 2026-10-22). The eval
+  harness (`theodore eval`) still reports cost per grouping run.
 
 ### 8.5 Agent selection
 
@@ -873,7 +875,7 @@ M0 scaffold ─▶ M1 grouping spike ─▶ M2 core + sync + UI ─▶ M3 GitHub
 | M1 | `domain` diff model, `git` (clone, worktree, diff), minimal GitHub read (token from `gh`), minimal Claude runner (JSON in the final message, no MCP yet), grouping + validation, `theodore group/eval` | §5.4 targets on 10 real PRs | 1–2 |
 | M2 | `store`, sync engine, `app` skeleton, Tauri wiring, UI with MobX object pool, fixture adapters | real PR opens read-only in the app, grouped | 2 |
 | M3 | Inbox sections, Viewed sync, threads, drafts → submit, notifications + ETag polling, outbox, offline | full review round-trip on a real PR | 1–2 |
-| M4 | MCP server, skill runs on several agents, findings merge, chat, fixes, tasks, budget | skill → findings → draft/task/fix works on claude + codex | 1–2 |
+| M4 | MCP server, skill runs on several agents, findings merge, chat, fixes, tasks | skill → findings → draft/task/fix works on claude + codex | 1–2 |
 | M5 | Push detection, interdiff, DISMISSED, incremental regroup, anchor remap, snooze by event | author push handled without losing reads or comments | 1 |
 | M6 | Onboarding, layered settings UI, keychain, beta channel, big-PR performance | signed DMG installs and updates on a clean Mac | 1–2 |
 | M7 | GitLab adapter; freeze `HostAdapter` | same review round-trip on GitLab | 1 |

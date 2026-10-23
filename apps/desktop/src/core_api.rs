@@ -12,7 +12,7 @@ use theodore_contract::{
     DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
     HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
     LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
-    OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
     ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
@@ -73,7 +73,6 @@ pub trait CoreApi: Send + Sync {
     async fn commit_suggestions(&self, req: CommitSuggestionsRequest) -> Result<(), CommandError>;
     async fn get_skill(&self, id: String, pr: Option<PrId>) -> Result<SkillBody, CommandError>;
     async fn save_skill(&self, req: SaveSkillRequest) -> Result<SkillInfo, CommandError>;
-    async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError>;
     async fn interdiff(&self, req: InterdiffRequest) -> Result<Vec<InterdiffEntry>, CommandError>;
     /// Starts a GitHub OAuth device-flow login (plan "login").
     async fn login_start(&self) -> Result<DeviceLogin, CommandError>;
@@ -365,9 +364,6 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn save_skill(&self, _req: SaveSkillRequest) -> Result<SkillInfo, CommandError> {
-        Err(not_ready())
-    }
-    async fn pr_spend(&self, _pr: PrId) -> Result<PrSpend, CommandError> {
         Err(not_ready())
     }
     async fn interdiff(&self, _req: InterdiffRequest) -> Result<Vec<InterdiffEntry>, CommandError> {

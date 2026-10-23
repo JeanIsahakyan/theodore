@@ -22,7 +22,6 @@ import {
   Card,
   Chip,
   Input,
-  InputGroup,
   Label,
   ListBox,
   Select,
@@ -66,8 +65,6 @@ const AI_TITLE: Record<(typeof AI_KEYS)[number], string> = {
   'agents.chat': 'Chat questions',
   'agents.fix': 'Finding fixes',
 };
-/** `PrSpend.budget_usd` — agent runs stop once a PR's spend reaches this. */
-const BUDGET_KEY = 'budget.per_pr_usd';
 
 /** Settings pages. */
 const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
@@ -597,63 +594,7 @@ const AgentsPage = observer(function AgentsPage() {
           })}
         </Card>
       </section>
-      <Separator />
-      <section className="flex flex-col gap-2">
-        <Typography.Heading level={6}>Budget</Typography.Heading>
-        <Card variant="secondary" className="gap-0 p-0">
-          <BudgetRow />
-        </Card>
-      </section>
     </>
-  );
-});
-
-/** `budget.per_pr_usd`, user scope — effective per-repo value shown read-only
- *  in Settings → Projects → ⟨repo⟩. Empty clears the setting (no limit). */
-const BudgetRow = observer(function BudgetRow() {
-  const store = useRootStore();
-  const raw = settingValue(store, 'user', BUDGET_KEY);
-  const [text, setText] = useState(typeof raw === 'number' ? String(raw) : '');
-  useEffect(() => {
-    setText(typeof raw === 'number' ? String(raw) : '');
-  }, [raw]);
-  const commit = () => {
-    const t = text.trim();
-    if (!t) {
-      setSetting(store, 'user', BUDGET_KEY, null);
-      return;
-    }
-    const n = Number(t);
-    if (Number.isFinite(n) && n > 0) setSetting(store, 'user', BUDGET_KEY, n);
-  };
-  return (
-    <div className="set-row budget-per-pr flex items-center gap-4 px-4 py-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-sm font-medium">Budget per PR (USD)</span>
-        <span className="text-xs text-muted">
-          Agent runs stop once a PR's spend reaches this. Empty = no limit.
-        </span>
-      </div>
-      <TextField
-        value={text}
-        onChange={setText}
-        aria-label="Budget per PR (USD)"
-        className="w-32 shrink-0"
-      >
-        <InputGroup className="w-full rounded-xl">
-          <InputGroup.Prefix className="text-xs text-muted">
-            $
-          </InputGroup.Prefix>
-          <InputGroup.Input
-            placeholder="No limit"
-            inputMode="decimal"
-            className="w-full min-w-0 text-right text-sm"
-            onBlur={commit}
-            onKeyDown={(e) => e.key === 'Enter' && commit()}
-          />
-        </InputGroup>
-      </TextField>
-    </div>
   );
 });
 
@@ -793,7 +734,6 @@ const RepoSettingsPage = observer(function RepoSettingsPage({
   const scope = `repo:${project.repo.owner}/${project.repo.name}`;
   const rows: { key: string; title: string }[] = [
     ...AI_KEYS.map((key) => ({ key, title: AI_TITLE[key] })),
-    { key: BUDGET_KEY, title: 'Budget per PR (USD)' },
   ];
   return (
     <>

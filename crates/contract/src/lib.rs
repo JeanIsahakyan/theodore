@@ -6,7 +6,7 @@ use specta::Type;
 use theodore_domain::{
     AgentId, Anchor, Author, CommentId, Draft, Finding, Group, Grouping, HostKind, HostRepo,
     HunkId, Millis, Person, PrDetail, PrId, PrSummary, RepoRef, ReviewEvent, Revision, Sha,
-    SnoozeUntil, Task, TaskId, Thread, ThreadId, Usage, ViewedState,
+    SnoozeUntil, Task, TaskId, Thread, ThreadId, ViewedState,
 };
 
 mod diff_media;
@@ -486,7 +486,7 @@ pub struct CommitSuggestionsRequest {
     pub message: String,
 }
 
-// ── skills, budget ──────────────────────────────────────────────────────────
+// ── skills ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SkillBody {
@@ -504,14 +504,6 @@ pub struct SaveSkillRequest {
     pub scope: String,
     pub pr: Option<PrId>,
     pub body: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-pub struct PrSpend {
-    pub pr: PrId,
-    pub usage: Usage,
-    /// `budget.per_pr_usd` setting; agent runs stop at this spend.
-    pub budget_usd: Option<f64>,
 }
 
 // ── ephemeral events (core → UI, not persisted) ─────────────────────────────
@@ -604,7 +596,6 @@ pub struct SkillRun {
     pub skill: String,
     pub agents: Vec<AgentId>,
     pub status: RunStatus,
-    pub usage: Usage,
     pub error: Option<String>,
     pub started_at: Millis,
 }
@@ -616,7 +607,6 @@ pub struct ChatMessage {
     pub author: Author,
     pub text: String,
     pub refs: Vec<Anchor>,
-    pub usage: Option<Usage>,
     pub at: Millis,
     /// Set instead of a normal reply when the run behind this message
     /// errored, crashed, hit its runtime cap, or was cancelled — the error
@@ -692,7 +682,6 @@ pub fn types() -> specta::Types {
         .register::<CommitSuggestionsRequest>()
         .register::<SkillBody>()
         .register::<SaveSkillRequest>()
-        .register::<PrSpend>()
         .register::<InterdiffRequest>()
         .register::<InterdiffEntry>()
         .register::<DeviceLogin>()

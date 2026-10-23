@@ -1,6 +1,6 @@
 //! Spaces (docs/spaces.md) against `Core` + `testkit` fakes: a turn runs in
 //! the space's worktree in Edit mode and ends in a checkpoint, the live diff
-//! follows it ungrouped, Review groups it, and stop / failure / budget /
+//! follows it ungrouped, Review groups it, and stop / failure /
 //! archive / restart leave the space in a sane state.
 
 use std::time::Duration;
@@ -133,7 +133,6 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     assert_eq!(s.status, SpaceStatus::Idle);
     assert_eq!(s.turns, 1);
     assert_eq!(s.head_sha, Sha::new("turn111"));
-    assert!((s.usage.usd - 0.25).abs() < 1e-9);
     assert_eq!(s.run, None);
 
     let req = f.agents.last_request().expect("agent ran");
@@ -279,8 +278,10 @@ async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
     assert!(!f.agents.last_request().unwrap().prompt.contains("boom"));
 }
 
+/// Budgets were dropped (owner, 2026-10-22): an old
+/// `budget.per_space_usd` row, already exceeded, never blocks a turn.
 #[tokio::test]
-async fn the_space_budget_stops_new_turns() {
+async fn a_leftover_space_budget_no_longer_stops_turns() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     put_setting(&f, "budget.per_space_usd", json!(0.2));
@@ -288,17 +289,17 @@ async fn the_space_budget_stops_new_turns() {
     let s = core.create_space(request(&project, "Spend")).await.unwrap();
     idle(&f, &s.id).await;
 
-    let err = core
-        .space_send(SpaceSendRequest {
-            space: s.id.clone(),
-            text: "more".into(),
-            agent: None,
-            model: None,
-            mode: None,
-        })
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("space budget"), "{err}");
+    f.agents.push_script(done("more", 0.25));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "more".into(),
+        agent: None,
+        model: None,
+        mode: None,
+    })
+    .await
+    .expect("over an old budget, the turn still starts");
+    assert_eq!(idle(&f, &s.id).await.turns, 2);
 }
 
 #[tokio::test]

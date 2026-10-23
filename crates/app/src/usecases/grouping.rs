@@ -14,7 +14,6 @@ use crate::error::{AppError, AppResult};
 impl Core {
     pub async fn regroup(&self, pr: PrId) -> AppResult<()> {
         self.ensure_open(&pr).await?;
-        self.check_budget(&pr).await?;
         let head = self.0.current_head.read().await.get(&pr).cloned();
         let Some(head) = head else {
             return Err(AppError::Invalid("pr is not open".into()));

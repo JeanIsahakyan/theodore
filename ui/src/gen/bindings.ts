@@ -64,7 +64,6 @@ export const commands = {
 	commitSuggestions: (req: CommitSuggestionsRequest) => typedError<null, CommandError>(__TAURI_INVOKE("commit_suggestions", { req })),
 	getSkill: (id: string, pr: string | null) => typedError<SkillBody, CommandError>(__TAURI_INVOKE("get_skill", { id, pr })),
 	saveSkill: (req: SaveSkillRequest) => typedError<SkillInfo, CommandError>(__TAURI_INVOKE("save_skill", { req })),
-	prSpend: (pr: PrId) => typedError<PrSpend, CommandError>(__TAURI_INVOKE("pr_spend", { pr })),
 	/**
 	 *  Native folder picker for the Add project dialog. Runs on a background
 	 *  thread: the dialog plugin's blocking call would otherwise stall the
@@ -568,13 +567,6 @@ export type Person = {
 
 export type PrId = string;
 
-export type PrSpend = {
-	pr: PrId,
-	usage: Usage,
-	/**  `budget.per_pr_usd` setting; agent runs stop at this spend. */
-	budget_usd: number | null,
-};
-
 /**
  *  A connected repository: a host repo (bare clone under `~/.theodore/repos`)
  *  or a local folder (mirrored into the same cache, the user's repo is never
@@ -835,8 +827,6 @@ export type Space = {
 	review_pr?: PrId | null,
 	/**  The host PR, once opened: the link from drafting to review. */
 	pr?: PrId | null,
-	/**  Sum of every finished turn's usage (the per-space budget reads it). */
-	usage: Usage,
 	turns: number,
 	/**
 	 *  Run id of the turn in flight (`space:<id>:<message>`); its streaming
@@ -1028,12 +1018,6 @@ export type UpdateInfo = {
 	version: string,
 	notes: string,
 	downloaded: boolean,
-};
-
-export type Usage = {
-	input_tokens: number,
-	output_tokens: number,
-	usd: number | null,
 };
 
 export type WireAction = {

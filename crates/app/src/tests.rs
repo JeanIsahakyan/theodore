@@ -3488,24 +3488,7 @@ async fn save_skill_repo_scope_writes_into_the_worktree_and_toasts() {
     assert!(saved.editable);
 }
 
-// ── budget / pr_spend ─────────────────────────────────────────────────────────
-
-fn skill_run_row(id: &str, pr: &PrId, usd: f64) -> theodore_contract::SkillRun {
-    theodore_contract::SkillRun {
-        id: id.into(),
-        pr: pr.clone(),
-        skill: "bugs".into(),
-        agents: vec![AgentId::Claude],
-        status: theodore_contract::RunStatus::Done,
-        usage: Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-            usd,
-        },
-        error: None,
-        started_at: 0,
-    }
-}
+// ── budgets (dropped) ─────────────────────────────────────────────────────────
 
 fn put_setting(f: &Fixtures, key: &str, scope: &str, value: serde_json::Value) {
     let setting = Setting {
@@ -3523,81 +3506,35 @@ fn put_setting(f: &Fixtures, key: &str, scope: &str, value: serde_json::Value) {
         .unwrap();
 }
 
+/// Budgets were dropped (owner, 2026-10-22): a `budget.per_pr_usd` row
+/// left over from an older version, already exceeded, never blocks a run.
 #[tokio::test]
-async fn pr_spend_sums_skill_run_and_chat_usage() {
+async fn a_leftover_budget_setting_no_longer_blocks_a_run() {
     let f = fixtures();
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
-
-    f.store
-        .apply(vec![NewAction {
-            model: models::SKILL_RUN.into(),
-            model_id: "run-1".into(),
-            action: SyncActionCode::I,
-            data: Some(serde_json::to_value(skill_run_row("run-1", &pr, 2.0)).unwrap()),
-        }])
-        .unwrap();
-    let chat = theodore_contract::ChatMessage {
-        id: "m1".into(),
-        pr: pr.clone(),
-        author: theodore_domain::Author::Agent(AgentId::Claude),
-        text: "reply".into(),
-        refs: vec![],
-        usage: Some(Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-            usd: 1.5,
-        }),
-        at: 0,
-        failed: None,
-    };
-    f.store
-        .apply(vec![NewAction {
-            model: models::CHAT_MESSAGE.into(),
-            model_id: "m1".into(),
-            action: SyncActionCode::I,
-            data: Some(serde_json::to_value(&chat).unwrap()),
-        }])
-        .unwrap();
-
-    let spend = core.pr_spend(pr).await.expect("pr_spend");
-    assert!((spend.usage.usd - 3.5).abs() < 1e-9);
-    assert_eq!(spend.budget_usd, None);
-}
-
-#[tokio::test]
-async fn run_skill_refuses_once_the_per_pr_budget_is_reached() {
-    let f = fixtures();
-    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
     put_setting(&f, "budget.per_pr_usd", "user", json!(1.0));
+    put_setting(&f, "budget.per_pr_usd", "repo:acme/widgets", json!(1.0));
     f.store
         .apply(vec![NewAction {
             model: models::SKILL_RUN.into(),
             model_id: "run-1".into(),
             action: SyncActionCode::I,
-            data: Some(serde_json::to_value(skill_run_row("run-1", &pr, 2.0)).unwrap()),
+            // A row from before spend was dropped, still carrying usage.
+            data: Some(json!({
+                "id": "run-1", "pr": pr, "skill": "bugs", "agents": ["claude"],
+                "status": "done", "usage": { "input_tokens": 0, "output_tokens": 0, "usd": 2.0 },
+                "error": null, "started_at": 0,
+            })),
         }])
         .unwrap();
 
-    let err = core
-        .run_skill(RunSkillRequest {
-            pr,
-            skill: "bugs".into(),
-            agents: vec![],
-        })
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("budget"));
-    let event = expect_ephemeral(&mut recv, |e| {
-        matches!(
-            e,
-            Ephemeral::Toast {
-                level: ToastLevel::Error,
-                ..
-            }
-        )
+    core.run_skill(RunSkillRequest {
+        pr,
+        skill: "bugs".into(),
+        agents: vec![],
     })
-    .await;
-    assert!(matches!(event, Ephemeral::Toast { .. }));
+    .await
+    .expect("over an old budget, the run still starts");
 }
 
 // ── repo settings (.review/config.yaml) ──────────────────────────────────────
@@ -3645,15 +3582,12 @@ async fn repo_settings_yaml_overrides_the_user_scoped_agent_setting() {
         .expect("repo-scoped agents.grouping row");
     assert_eq!(repo_row.data["value"], json!("codex"));
 
+    // Budgets are gone: a legacy file's budget key is ignored.
     let budget_rows = f
         .store
         .query(models::SETTING, "key", "budget.per_pr_usd")
         .unwrap();
-    assert!(
-        budget_rows
-            .iter()
-            .any(|r| r.data["scope"] == json!("repo:acme/widgets") && r.data["value"] == json!(3.5))
-    );
+    assert!(budget_rows.is_empty(), "{budget_rows:?}");
 
     wait_until(|| f.grouper.last_agent() == Some(AgentId::Codex)).await;
 }

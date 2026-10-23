@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use theodore_domain::{AgentId, Millis, PrId, Sha, Usage};
+use theodore_domain::{AgentId, Millis, PrId, Sha};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -90,8 +90,6 @@ pub struct Space {
     /// The host PR, once opened: the link from drafting to review.
     #[serde(default)]
     pub pr: Option<PrId>,
-    /// Sum of every finished turn's usage (the per-space budget reads it).
-    pub usage: Usage,
     pub turns: u32,
     /// Run id of the turn in flight (`space:<id>:<message>`); its streaming
     /// text arrives as `Ephemeral::AgentDelta` under this id.

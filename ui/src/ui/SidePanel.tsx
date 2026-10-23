@@ -31,7 +31,6 @@ import {
   InputGroup,
   Label,
   ListBox,
-  ProgressBar,
   Tabs,
   TextField,
   Tooltip,
@@ -45,10 +44,8 @@ import type {
   Draft,
   Finding,
   PrId,
-  PrSpend,
   SkillInfo,
   Thread,
-  Usage,
 } from '../gen/contract';
 import { api } from '../core/api';
 import {
@@ -224,96 +221,11 @@ function ToolCalls({ tools, running }: { tools: string[]; running: boolean }) {
   );
 }
 
-/** "12.4k tok · $0.08" — omits the price when the backend didn't report one. */
-export const fmtUsage = (u: Usage) => {
-  const tokens = u.input_tokens + u.output_tokens;
-  const tok = tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : `${tokens}`;
-  return u.usd != null ? `${tok} tok · $${u.usd.toFixed(2)}` : `${tok} tok`;
-};
-
-/** Where `spentUsd` sits against `budgetUsd` (`budget.per_pr_usd`, resolved
- *  by the core into `PrSpend.budget_usd`): no bar at all without a budget,
- *  warm past 75%, hot at or past the limit. */
-export interface BudgetStatus {
-  pct: number;
-  tone: 'default' | 'warning' | 'danger';
-  over: boolean;
-}
-
-export function budgetStatus(
-  spentUsd: number,
-  budgetUsd: number | null,
-): BudgetStatus {
-  if (budgetUsd == null || budgetUsd <= 0) {
-    return { pct: 0, tone: 'default', over: false };
-  }
-  const pct = Math.min(100, (spentUsd / budgetUsd) * 100);
-  const over = spentUsd >= budgetUsd;
-  return {
-    pct,
-    tone: over ? 'danger' : pct > 75 ? 'warning' : 'default',
-    over,
-  };
-}
-
-/** `pr_spend` is a plain command, not a synced row — refetch whenever the
- *  PR's run/message count changes, since those are what spend money. */
-function useSpend(pr: PrId): PrSpend | null {
-  const store = useRootStore();
-  const [spend, setSpend] = useState<PrSpend | null>(null);
-  const runs = store.models.skillRuns.byPr(pr).length;
-  const messages = store.models.chatMessages.byPr(pr).length;
-  useEffect(() => {
-    let live = true;
-    void api
-      .prSpend(pr)
-      .then((s) => live && setSpend(s))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [pr, runs, messages]);
-  return spend;
-}
-
-/** Spend vs. the per-PR AI budget, next to the chat input. */
-function BudgetMeter({ pr }: { pr: PrId }) {
-  const spend = useSpend(pr);
-  if (!spend || spend.budget_usd == null) return null;
-  const spent = spend.usage.usd ?? 0;
-  const { pct, tone } = budgetStatus(spent, spend.budget_usd);
-  return (
-    <Tooltip>
-      <Tooltip.Trigger>
-        <div className="budget flex shrink-0 items-center gap-2 whitespace-nowrap text-xs tabular-nums text-muted">
-          <ProgressBar
-            aria-label="AI budget for this PR"
-            value={pct}
-            size="sm"
-            color={tone}
-            className="w-14"
-          >
-            <ProgressBar.Track>
-              <ProgressBar.Fill />
-            </ProgressBar.Track>
-          </ProgressBar>
-          ${spent.toFixed(2)} / ${spend.budget_usd.toFixed(2)}
-        </div>
-      </Tooltip.Trigger>
-      <Tooltip.Content>
-        AI spend on this PR · limit in Settings → Agents
-      </Tooltip.Content>
-    </Tooltip>
-  );
-}
-
 function MessageActions({
   text,
-  usage,
   onRetry,
 }: {
   text: string;
-  usage?: Usage | null;
   onRetry?: () => void;
 }) {
   const [vote, setVote] = useState<'up' | 'down' | null>(null);
@@ -360,11 +272,6 @@ function MessageActions({
         <ThumbsDown className="size-3.5" />,
         () => setVote(vote === 'down' ? null : 'down'),
         vote === 'down',
-      )}
-      {usage && (
-        <span className="usage ms-2 text-xs tabular-nums text-muted">
-          {fmtUsage(usage)}
-        </span>
       )}
       {onRetry && (
         <Btn tone="ghost" className="ms-1 h-7 px-2 text-xs" onPress={onRetry}>
@@ -435,11 +342,6 @@ const SkillRunView = observer(function SkillRunView({
             </span>
           )}
         </span>
-        {r.usage && (
-          <span className="usage shrink-0 text-xs tabular-nums text-muted">
-            {fmtUsage(r.usage)}
-          </span>
-        )}
         {(live || r.status === 'stalled') && (
           <Button
             size="sm"
@@ -790,13 +692,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     (a, b) => a.at - b.at,
   );
   const runs = store.models.skillRuns.byPr(pr);
-  const spend = useSpend(pr);
-  const over =
-    spend?.budget_usd != null &&
-    budgetStatus(spend.usage.usd ?? 0, spend.budget_usd).over;
-  const overBudgetReason = over
-    ? `Over budget: $${(spend!.usage.usd ?? 0).toFixed(2)} of $${spend!.budget_usd!.toFixed(2)} spent on this PR — raise it in Settings → Agents.`
-    : null;
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
   }, [messages.length, runs.length, pending]);
@@ -821,14 +716,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   useEffect(() => setHi(0), [text]);
 
   const runMatch = (s: SkillInfo) => {
-    if (overBudgetReason) {
-      store.ephemeral.handle({
-        type: 'toast',
-        level: 'warn',
-        text: overBudgetReason,
-      });
-      return;
-    }
     void runSkill(store, pr, s.id, skillAgents);
     setText('');
   };
@@ -836,14 +723,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const send = () => {
     const t = text.trim();
     if (!t) return;
-    if (overBudgetReason) {
-      store.ephemeral.handle({
-        type: 'toast',
-        level: 'warn',
-        text: overBudgetReason,
-      });
-      return;
-    }
     if (matches && matches[hi]) {
       runMatch(matches[hi]!);
       return;
@@ -946,7 +825,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                         )}
                         <MessageActions
                           text={m.text}
-                          usage={m.usage}
                           onRetry={() => {
                             const q = priorQuestion(messages, m);
                             const agent =
@@ -1148,14 +1026,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                   skills={skills}
                   agents={skillAgents}
                   onRun={(s, agents) => {
-                    if (overBudgetReason) {
-                      store.ephemeral.handle({
-                        type: 'toast',
-                        level: 'warn',
-                        text: overBudgetReason,
-                      });
-                      return;
-                    }
                     void runSkill(store, pr, s.id, agents);
                   }}
                 />
@@ -1197,37 +1067,21 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 </Dropdown.Popover>
               </Dropdown>
               <span className="flex-1" />
-              {overBudgetReason ? (
-                <Tooltip>
-                  <Button
-                    isIconOnly
-                    size="sm"
-                    aria-label="Send"
-                    className="shrink-0 rounded-full"
-                    isDisabled
-                  >
-                    <ArrowUp className="size-4" />
-                  </Button>
-                  <Tooltip.Content>{overBudgetReason}</Tooltip.Content>
-                </Tooltip>
-              ) : (
-                <Button
-                  isIconOnly
-                  size="sm"
-                  aria-label="Send"
-                  className="shrink-0 rounded-full"
-                  isDisabled={!text.trim()}
-                  onPress={send}
-                >
-                  <ArrowUp className="size-4" />
-                </Button>
-              )}
+              <Button
+                isIconOnly
+                size="sm"
+                aria-label="Send"
+                className="shrink-0 rounded-full"
+                isDisabled={!text.trim()}
+                onPress={send}
+              >
+                <ArrowUp className="size-4" />
+              </Button>
             </InputGroup.Suffix>
           </InputGroup>
         </TextField>
-        <div className="flex items-center justify-between gap-2 text-xs text-muted">
+        <div className="flex items-center gap-2 text-xs text-muted">
           <span className="min-w-0 truncate">The agent can be wrong</span>
-          <BudgetMeter pr={pr} />
         </div>
       </div>
     </div>

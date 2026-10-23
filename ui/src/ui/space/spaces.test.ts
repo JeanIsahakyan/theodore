@@ -4,12 +4,9 @@ import { ALL } from '../../core/workspaces';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
-  SPACE_BUDGET_KEY,
   autoArchiveDays,
   buildModeOn,
   defaultTitle,
-  fmtSpend,
-  spaceBudget,
   spaceStage,
   unshipped,
   diffStat,
@@ -44,7 +41,6 @@ const space = (over: Partial<Space> & { id: string }): Space => ({
   mode: 'edit',
   review_pr: null,
   pr: null,
-  usage: { input_tokens: 0, output_tokens: 0, usd: 0 },
   turns: 0,
   run: null,
   error: null,
@@ -196,29 +192,11 @@ describe('shipping', () => {
   });
 });
 
-describe('space budget and archive settings', () => {
+describe('space archive settings', () => {
   const row = (key: string, value: unknown, scope = 'user') => ({
     key,
     scope,
     value,
-  });
-
-  it('reads the space budget, the repo row first', () => {
-    expect(spaceBudget([], 'o/r')).toBe(null);
-    expect(spaceBudget([row('budget.per_pr_usd', 5)], 'o/r')).toBe(null);
-    expect(spaceBudget([row(SPACE_BUDGET_KEY, 5)], 'o/r')).toBe(5);
-    expect(
-      spaceBudget(
-        [row(SPACE_BUDGET_KEY, 5), row(SPACE_BUDGET_KEY, 2, 'repo:o/r')],
-        'o/r',
-      ),
-    ).toBe(2);
-    expect(spaceBudget([row(SPACE_BUDGET_KEY, 0)], 'o/r')).toBe(null);
-  });
-
-  it('formats spend against the budget', () => {
-    expect(fmtSpend(0.4217, 5)).toBe('$0.42 / $5.00');
-    expect(fmtSpend(0.4, null)).toBe('$0.40');
   });
 
   it('defaults auto-archive to 7 days, 0 meaning never', () => {

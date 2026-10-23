@@ -11,7 +11,7 @@ use theodore_contract::{
     DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
     HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
     LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
-    OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
     ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
@@ -360,15 +360,6 @@ pub async fn save_skill(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<SkillInfo, CommandError> {
     core.save_skill(req).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn pr_spend(
-    pr: PrId,
-    core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<PrSpend, CommandError> {
-    core.pr_spend(pr).await
 }
 
 #[tauri::command]

@@ -39,7 +39,6 @@ import type {
   OpenPrResponse,
   Person,
   PrId,
-  PrSpend,
   Project,
   ProjectWorkingState,
   ReactRequest,
@@ -173,7 +172,6 @@ export const api = {
   getSkill: (id: string, pr: PrId | null) =>
     call<SkillBody>('get_skill', { id, pr }),
   saveSkill: (req: SaveSkillRequest) => call<SkillInfo>('save_skill', { req }),
-  prSpend: (pr: PrId) => call<PrSpend>('pr_spend', { pr }),
   pickFolder: () => call<string | null>('pick_folder'),
   interdiff: (req: InterdiffRequest) =>
     call<InterdiffEntry[]>('interdiff', { req }),

@@ -65,7 +65,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::commit_suggestions,
             commands::get_skill,
             commands::save_skill,
-            commands::pr_spend,
             commands::pick_folder,
             commands::interdiff,
             commands::login_start,
