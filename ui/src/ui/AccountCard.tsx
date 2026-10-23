@@ -249,12 +249,24 @@ export function SignInView({
         : flow.phase === 'expired'
           ? 'Sign-in timed out'
           : "Couldn't sign in";
+    const raw = flow.error ?? '';
+    const words = signInErrorText(raw);
     const text =
-      flow.phase === 'denied'
-        ? 'The request was declined on the sign-in page.'
-        : flow.phase === 'expired'
-          ? 'That sign-in waited too long.'
-          : signInErrorText(flow.error ?? '');
+      flow.phase === 'denied' ? (
+        'The request was declined on the sign-in page.'
+      ) : flow.phase === 'expired' ? (
+        'That sign-in waited too long.'
+      ) : (
+        <>
+          {words}
+          {/* The service's own words, for whoever has to fix it. */}
+          {words !== raw && (
+            <span className="mt-2 block font-mono text-[11px] text-muted [overflow-wrap:anywhere]">
+              {raw}
+            </span>
+          )}
+        </>
+      );
     return (
       <Stage
         mark={roundMark(<Person />, 'text-danger')}
