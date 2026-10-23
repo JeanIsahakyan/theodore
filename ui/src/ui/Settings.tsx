@@ -840,6 +840,7 @@ const RepoSettingsPage = observer(function RepoSettingsPage({
 
 const ProjectsPage = observer(function ProjectsPage() {
   const store = useRootStore();
+  const ui = useUi();
   const ws = useWorkspaces();
   const projects = ws.projects; // switcher order, not add order
   const [sel, setSel] = useState<string | null>(null);
@@ -859,9 +860,18 @@ const ProjectsPage = observer(function ProjectsPage() {
     <section className="flex flex-col gap-2">
       <Typography.Heading level={6}>Connected repositories</Typography.Heading>
       {projects.length === 0 ? (
-        <span className="text-sm text-muted">
-          No projects yet — add one from the sidebar.
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="flex-1 text-sm text-muted">
+            No projects yet — connect a repository or a local folder.
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            onPress={() => ui.openModal('add-project')}
+          >
+            Add project…
+          </Button>
+        </div>
       ) : (
         <>
           <Card variant="secondary" className="gap-0 p-0">
