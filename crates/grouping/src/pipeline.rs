@@ -152,8 +152,10 @@ pub async fn group_revision_with(
     if !dupes.is_empty() {
         return Err(GroupingPipelineError::DuplicateHunkIds(dupes));
     }
-    let prepass = prepass::run(rev);
+    let prepass = prepass::run_with(rev, &ctx.review);
     let graph = RelGraph::build(rev, &prepass, ctx);
+    let note = ctx.review.system_note();
+    let note = note.as_deref();
     let chunks = prompt::build_prompts_with(pr, rev, &prepass, &graph, ctx, &opts.budget);
     let total_visible_hunks: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
 
@@ -170,7 +172,7 @@ pub async fn group_revision_with(
     let results: Vec<(Grouping, u32, bool, Usage)> =
         stream::iter(chunks.into_iter().map(|chunk| {
             let sub_rev = sub_revision(rev, &chunk.hunk_ids);
-            async move { run_chunk(agent, opts, cwd, &sub_rev, &chunk.prompt).await }
+            async move { run_chunk(agent, opts, cwd, note, &sub_rev, &chunk.prompt).await }
         }))
         .buffered(concurrency)
         .try_collect()
@@ -197,7 +199,7 @@ pub async fn group_revision_with(
     } else {
         let all: Vec<Group> = chunk_groupings.into_iter().flat_map(|g| g.groups).collect();
         attempts += 1;
-        match merge_pass(agent, opts, cwd, pr, &all).await {
+        match merge_pass(agent, opts, cwd, note, pr, &all).await {
             Some(order) => {
                 let mut by_id: BTreeMap<GroupId, Group> =
                     all.into_iter().map(|g| (g.id.clone(), g)).collect();
@@ -295,7 +297,11 @@ fn hidden_groups(prepass: &PrePass, rev: &Revision) -> Vec<Group> {
     reasons.dedup();
     vec![Group {
         id: GroupId::new("hidden"),
-        title: "Lockfiles, generated and vendored files".into(),
+        title: if reasons.iter().all(|r| *r == HiddenReason::Config.label()) {
+            "Hidden by the repo's config".into()
+        } else {
+            "Lockfiles, generated and vendored files".into()
+        },
         why: format!("Not reviewed in detail: {}.", reasons.join(", ")),
         kind: theodore_domain::GroupKind::Hidden,
         risk: None,
@@ -311,11 +317,12 @@ async fn run_chunk(
     agent: &dyn AgentPort,
     opts: &GroupingOptions,
     cwd: &Path,
+    note: Option<&str>,
     sub_rev: &Revision,
     prompt: &PromptPart,
 ) -> Result<(Grouping, u32, bool, Usage), GroupingPipelineError> {
     let mut usage = Usage::default();
-    let (text, u) = call_agent(agent, opts, cwd, &prompt.system, &prompt.user).await?;
+    let (text, u) = call_agent(agent, opts, cwd, note, &prompt.system, &prompt.user).await?;
     usage += u;
     let grouping = schema::parse_grouping(&text, sub_rev.head.clone());
 
@@ -326,7 +333,7 @@ async fn run_chunk(
     debug_log_validation_failure(&errors, &text);
     let known: Vec<HunkId> = sub_rev.hunks().map(|h| h.id.clone()).collect();
     let repair = prompt::repair_prompt(&known, &text, &display_errors(&errors));
-    let (text2, u2) = call_agent(agent, opts, cwd, &repair.system, &repair.user).await?;
+    let (text2, u2) = call_agent(agent, opts, cwd, note, &repair.system, &repair.user).await?;
     usage += u2;
     let grouping2 = schema::parse_grouping(&text2, sub_rev.head.clone());
 
@@ -367,11 +374,12 @@ async fn merge_pass(
     agent: &dyn AgentPort,
     opts: &GroupingOptions,
     cwd: &Path,
+    note: Option<&str>,
     pr: &PrMeta,
     groups: &[Group],
 ) -> Option<Vec<GroupId>> {
     let prompt = prompt::merge_prompt(pr, groups);
-    let (text, _usage) = call_agent(agent, opts, cwd, &prompt.system, &prompt.user)
+    let (text, _usage) = call_agent(agent, opts, cwd, note, &prompt.system, &prompt.user)
         .await
         .ok()?;
     let value = crate::parse::extract_json(&text)?;
@@ -384,17 +392,24 @@ async fn merge_pass(
     Some(order)
 }
 
+/// One agent call; `note` (the repo's review config,
+/// `ReviewRules::system_note`) is appended to the system prompt.
 pub(crate) async fn call_agent(
     agent: &dyn AgentPort,
     opts: &GroupingOptions,
     cwd: &Path,
+    note: Option<&str>,
     system: &str,
     prompt: &str,
 ) -> Result<(String, Usage), GroupingPipelineError> {
+    let system = match note {
+        Some(note) => format!("{system}\n\n{note}"),
+        None => system.to_string(),
+    };
     let req = AgentRequest {
         agent: opts.agent,
         prompt: prompt.to_string(),
-        system: Some(system.to_string()),
+        system: Some(system),
         cwd: cwd.to_path_buf(),
         mode: AgentMode::ReadOnly,
         mcp: None,
@@ -668,6 +683,53 @@ mod tests {
         let reqs = agent.requests();
         assert_eq!(reqs.len(), 1);
         assert!(!reqs[0].prompt.contains("lock1"));
+    }
+
+    #[tokio::test]
+    async fn config_hide_skim_and_instructions_reach_the_pipeline() {
+        let mut rev = small_revision();
+        rev.files.push(file("gen/client.ts", vec![mk_hunk("gen1")]));
+        let ctx = RepoContext {
+            review: theodore_domain::review_rules::ReviewRules {
+                instructions: Some("Flag any new dependency.".into()),
+                context: vec!["docs/architecture.md".into()],
+                hide: vec!["gen/**".into()],
+                skim: vec!["src/a.ts".into()],
+                ..Default::default()
+            },
+            ..RepoContext::default()
+        };
+        let agent = FakeAgentPort::new([valid_json()]);
+        let report = group_revision_with(
+            &agent,
+            &PrMeta::default(),
+            &rev,
+            &ctx,
+            Path::new("."),
+            &GroupingOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert!(grouping::validate(&rev, &report.grouping).is_ok());
+        let hidden = report
+            .grouping
+            .groups
+            .iter()
+            .find(|g| g.kind == theodore_domain::GroupKind::Hidden)
+            .expect("hidden group present");
+        assert_eq!(hidden.hunks, vec![HunkId::new("gen1")]);
+        assert_eq!(hidden.title, "Hidden by the repo's config");
+        let reqs = agent.requests();
+        assert_eq!(reqs.len(), 1);
+        assert!(!reqs[0].prompt.contains("gen1"));
+        assert!(
+            reqs[0]
+                .prompt
+                .contains("skim candidate: marked skim in repo config")
+        );
+        let system = reqs[0].system.as_deref().unwrap();
+        assert!(system.contains("Flag any new dependency."));
+        assert!(system.contains("- docs/architecture.md"));
     }
 
     /// Speed goal: chunk prompts run concurrently (`buffered`), but the rest

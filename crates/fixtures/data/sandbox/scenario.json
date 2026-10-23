@@ -2327,6 +2327,7 @@
     }
   ],
   "agents": "real",
+  "auto_skills": false,
   "faults": {
     "latency": false,
     "latency_ms": 400,

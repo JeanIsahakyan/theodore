@@ -146,10 +146,91 @@ impl Core {
 
         // Group in the background; the UI gets it as a `grouping` sync row.
         if group {
+            let auto = AutoSkills {
+                pr: pr_id.clone(),
+                head: head.clone(),
+                state: detail.summary.state,
+                worktree: worktree_path.clone(),
+                repo: pr_ref.repo.clone(),
+            };
             self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
+            tokio::spawn(self.run_auto_skills(auto));
         }
 
         Ok(OpenPrResponse { pr: pr_id, head })
+    }
+}
+
+/// What `run_auto_skills` needs about a PR just opened.
+pub(crate) struct AutoSkills {
+    pub pr: PrId,
+    pub head: theodore_domain::Sha,
+    pub state: theodore_domain::PrState,
+    pub worktree: PathBuf,
+    pub repo: RepoRef,
+}
+
+impl Core {
+    /// `review.auto_skills` (docs/config.md §1): each skill runs once, the
+    /// first time a PR is opened at a head, through the normal skill run.
+    /// Not for a merged or closed PR, and not when switched off
+    /// (`set_auto_skills`).
+    ///
+    /// ```text
+    /// open ─▶ open/draft? ─▶ kv auto_skills:<pr> == head? ─no─▶ store head ─▶ run_skill × n
+    ///              └─no─▶ skip          └─yes─▶ skip (already ran at this head)
+    /// ```
+    ///
+    /// Boxed: `run_skill` may open the PR, which spawns this again; the
+    /// named `Send` future breaks that cycle for the compiler.
+    pub(crate) fn run_auto_skills(
+        &self,
+        auto: AutoSkills,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
+        let core = self.clone();
+        Box::pin(async move { core.auto_skills_now(auto).await })
+    }
+
+    async fn auto_skills_now(&self, auto: AutoSkills) {
+        use theodore_domain::PrState;
+        if !self.auto_skills_enabled() || !matches!(auto.state, PrState::Open | PrState::Draft) {
+            return;
+        }
+        let skills = self.auto_skills_of(&auto.worktree, &auto.repo).await;
+        if skills.is_empty() {
+            return;
+        }
+        let key = format!("auto_skills:{}", auto.pr.0);
+        let head = serde_json::json!(auto.head.as_str());
+        {
+            // Two opens of one head never both start the skills.
+            let _guard = self.0.review_lock.lock().await;
+            let store = self.0.deps.store.clone();
+            let k = key.clone();
+            let ran = tokio::task::spawn_blocking(move || store.kv_get(&k))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten();
+            if ran.as_ref() == Some(&head) {
+                return;
+            }
+            let store = self.0.deps.store.clone();
+            let _ = tokio::task::spawn_blocking(move || store.kv_set(&key, &head)).await;
+        }
+        for skill in skills {
+            let req = theodore_contract::RunSkillRequest {
+                pr: auto.pr.clone(),
+                skill: skill.clone(),
+                agents: vec![],
+            };
+            if let Err(e) = self.run_skill(req).await {
+                self.emit(Ephemeral::Toast {
+                    level: ToastLevel::Warn,
+                    text: format!("auto skill {skill} didn't start: {e}"),
+                });
+            }
+        }
     }
 }
 
@@ -215,16 +296,18 @@ impl Core {
                 .await
                 .ok()
                 .and_then(|r| r.ok())
-                .flatten()
-                .and_then(|r| {
-                    let algo = theodore_domain::grouping::row_algo(&r.data);
-                    serde_json::from_value::<theodore_domain::Grouping>(r.data)
-                        .ok()
-                        .map(|g| (g, algo))
-                });
-            // Reuse a grouping of this head, unless an older algorithm made it.
-            if stored.is_some_and(|(g, algo)| {
-                g.rev == head && algo >= theodore_domain::grouping::ALGO_VERSION
+                .flatten();
+            let rules = core
+                .review_rules_at(&worktree, &detail.summary.pr.repo)
+                .await;
+            // Reuse a grouping of this head, unless an older algorithm or
+            // other review rules (`hide`, `skim`, `checklist`) made it.
+            if stored.is_some_and(|r| {
+                crate::usecases::grouping::row_is_current(
+                    &r.data,
+                    &head,
+                    rules.grouping_hash().as_deref(),
+                )
             }) {
                 return;
             }
@@ -248,7 +331,8 @@ impl Core {
                 .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
                 .await;
             let agent = core.effective_agent(configured).await;
-            let ctx = core.grouping_context(&worktree, &revision).await;
+            let mut ctx = core.grouping_context(&worktree, &revision).await;
+            ctx.review = rules;
             let result = core
                 .0
                 .deps
@@ -260,19 +344,21 @@ impl Core {
             let still_open = core.0.current_head.read().await.contains_key(&pr);
             let error = match result {
                 Ok(_) if !still_open => None,
-                Ok(grouping) => match theodore_domain::grouping::to_row(&grouping) {
-                    Ok(data) => core
-                        .apply(vec![NewAction {
-                            model: models::GROUPING.into(),
-                            model_id: pr.0.clone(),
-                            action: SyncActionCode::U,
-                            data: Some(data),
-                        }])
-                        .await
-                        .err()
-                        .map(|e| e.to_string()),
-                    Err(e) => Some(e.to_string()),
-                },
+                Ok(grouping) => {
+                    match crate::usecases::grouping::grouping_row(grouping, &revision, &ctx) {
+                        Ok(data) => core
+                            .apply(vec![NewAction {
+                                model: models::GROUPING.into(),
+                                model_id: pr.0.clone(),
+                                action: SyncActionCode::U,
+                                data: Some(data),
+                            }])
+                            .await
+                            .err()
+                            .map(|e| e.to_string()),
+                        Err(e) => Some(e.to_string()),
+                    }
+                }
                 Err(e) => Some(e.to_string()),
             };
             core.0

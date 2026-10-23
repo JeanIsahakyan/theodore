@@ -120,7 +120,8 @@ pub async fn regroup_with(
         .filter(|id| matches!(changes.get(id), Some(HunkChange::Unchanged)))
         .cloned()
         .collect();
-    let to_place: Vec<HunkId> = all_ids.difference(&unchanged).cloned().collect();
+    let mut to_place: Vec<HunkId> = all_ids.difference(&unchanged).cloned().collect();
+    let pre = prepass::run_with(new_rev, &ctx.review);
 
     // Carry over existing groups, keeping only hunks that are still unchanged.
     let mut groups: Vec<Group> = previous
@@ -134,6 +135,36 @@ pub async fn regroup_with(
             g
         })
         .collect();
+
+    // New hunks of hidden files never reach the agent: straight to the
+    // Hidden group, as in a full grouping.
+    let hidden_new: Vec<HunkId> = new_rev
+        .files
+        .iter()
+        .filter(|f| pre.is_hidden(&f.path))
+        .flat_map(|f| f.hunks.iter().map(|h| h.id.clone()))
+        .filter(|id| !unchanged.contains(id))
+        .collect();
+    if !hidden_new.is_empty() {
+        let moved: BTreeSet<&HunkId> = hidden_new.iter().collect();
+        to_place.retain(|id| !moved.contains(id));
+        match groups.iter_mut().find(|g| g.kind == GroupKind::Hidden) {
+            Some(g) => g.hunks.extend(hidden_new),
+            None => groups.insert(
+                0,
+                Group {
+                    id: GroupId::new("hidden"),
+                    title: "Lockfiles, generated and vendored files".into(),
+                    why: "Not reviewed in detail.".into(),
+                    kind: GroupKind::Hidden,
+                    risk: None,
+                    check: vec![],
+                    hunks: hidden_new,
+                    outliers: vec![],
+                },
+            ),
+        }
+    }
 
     if to_place.is_empty() {
         let grouping = Grouping {
@@ -150,11 +181,13 @@ pub async fn regroup_with(
         });
     }
 
-    let graph = RelGraph::build(new_rev, &prepass::run(new_rev), ctx);
+    let graph = RelGraph::build(new_rev, &pre, ctx);
+    let note = ctx.review.system_note();
     let suggestions = suggest(previous, &groups, &to_place, changes, &graph);
 
     let prompt = build_prompt(pr, &groups, new_rev, &to_place, &suggestions);
-    let (text, mut usage) = pipeline::call_agent(agent, opts, cwd, &prompt.0, &prompt.1).await?;
+    let (text, mut usage) =
+        pipeline::call_agent(agent, opts, cwd, note.as_deref(), &prompt.0, &prompt.1).await?;
     let mut attempts = 1u32;
 
     // Filling in a hunk the agent left out is a repair, even when no
@@ -164,7 +197,9 @@ pub async fn regroup_with(
     if let Err(errors) = validate_hunks(new_rev, &applied) {
         any_repair = true;
         let repair_prompt = build_repair_prompt(&prompt.1, &text, &errors);
-        let (text2, u2) = pipeline::call_agent(agent, opts, cwd, &prompt.0, &repair_prompt).await?;
+        let (text2, u2) =
+            pipeline::call_agent(agent, opts, cwd, note.as_deref(), &prompt.0, &repair_prompt)
+                .await?;
         usage += u2;
         attempts += 1;
         (applied, _) = apply(&groups, &to_place, parse_incremental(&text2), &suggestions);
@@ -660,6 +695,46 @@ mod tests {
             .unwrap();
         assert!(g1.hunks.contains(&HunkId::new("h3")));
         assert!(grouping::validate(&new_rev, &report.grouping).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_new_hunk_of_a_hidden_file_skips_the_agent() {
+        let agent = FakeAgentPort::new(Vec::<String>::new());
+        let mut new_rev = rev(&["h1", "h2"]);
+        let mut gen_file = new_rev.files[0].clone();
+        gen_file.path = "gen/api.ts".into();
+        gen_file.hunks = vec![mk_hunk("g9")];
+        new_rev.files.push(gen_file);
+        let mut changes = BTreeMap::new();
+        changes.insert(HunkId::new("h1"), HunkChange::Unchanged);
+        changes.insert(HunkId::new("h2"), HunkChange::Unchanged);
+        changes.insert(HunkId::new("g9"), HunkChange::New);
+        let ctx = RepoContext {
+            review: theodore_domain::review_rules::ReviewRules {
+                hide: vec!["gen/**".into()],
+                ..Default::default()
+            },
+            ..RepoContext::default()
+        };
+
+        let report = regroup_with(
+            &agent,
+            &PrMeta::default(),
+            &previous_grouping(),
+            &new_rev,
+            &changes,
+            &ctx,
+            Path::new("."),
+            &GroupingOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(agent.calls_made(), 0);
+        assert!(grouping::validate(&new_rev, &report.grouping).is_ok());
+        let hidden = find(&report.grouping, "hidden").unwrap();
+        assert_eq!(hidden.kind, GroupKind::Hidden);
+        assert_eq!(hidden.hunks, vec![HunkId::new("g9")]);
     }
 
     #[tokio::test]

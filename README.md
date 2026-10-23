@@ -117,6 +117,8 @@ implementations too, not stubs — just narrower, matching each host's API.
   `~/.theodore/config.yaml` (global), layered. `review:` picks agents per task; `spaces:` sets up a
   space — files to copy, free ports, env, and `setup` / `run` / `check` / `archive` commands.
   Commands from a repo run only after you allow them. Every key: `docs/config.md`.
+- `review:` also feeds the repo's instructions and files to every agent run, hides or marks
+  files skimmable in the grouping, adds checklist items, auto-runs skills and drops findings by path.
 
 ### Updates
 - Checks for a new build on launch and every 6 hours, on a stable or beta

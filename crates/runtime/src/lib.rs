@@ -248,6 +248,9 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         )),
     };
     let (core, receivers) = Core::start(deps);
+    if let Some(sb) = &sandbox {
+        core.set_auto_skills(sb.auto_skills());
+    }
     backend.attach(core.clone());
     core.ensure_default_settings().await?;
 

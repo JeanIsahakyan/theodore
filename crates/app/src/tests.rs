@@ -1919,6 +1919,32 @@ async fn delegate_task_runs_the_agent_in_edit_mode_and_captures_a_patch() {
 }
 
 #[tokio::test]
+async fn a_fix_run_carries_the_repo_instructions() {
+    let f = fixtures();
+    std::fs::write(
+        f.data_dir.path().join("config.yaml"),
+        "review:\n  instructions: Unique fix instruction marker.\n",
+    )
+    .unwrap();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-instr", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: Usage::default(),
+    }]);
+    core.delegate_task(DelegateRequest {
+        task: task.id.clone(),
+        agent: Some(AgentId::Codex),
+    })
+    .await
+    .expect("delegate_task");
+    wait_until(|| f.agents.last_request().is_some()).await;
+    let system = f.agents.last_request().unwrap().system.expect("system");
+    assert!(system.contains("Unique fix instruction marker."));
+}
+
+#[tokio::test]
 async fn delegate_task_opens_its_pr_after_a_restart() {
     // Tasks lists tasks of PRs this session hasn't opened yet; delegating
     // one used to fail with "pr is not open".

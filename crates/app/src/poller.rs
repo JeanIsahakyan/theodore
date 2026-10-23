@@ -450,12 +450,20 @@ async fn regroup_after_push(
         .ok()
         .and_then(|r| r.ok())
         .flatten();
-    let prev: Option<Grouping> = prev_row.and_then(|r| serde_json::from_value(r.data).ok());
+    let rules = core
+        .review_rules_at(worktree, &detail.summary.pr.repo)
+        .await;
+    let hash = rules.grouping_hash();
+    // Under other review rules the previous groups don't carry over.
+    let prev: Option<Grouping> = prev_row
+        .filter(|r| theodore_domain::grouping::row_review_hash(&r.data) == hash.as_deref())
+        .and_then(|r| serde_json::from_value(r.data).ok());
     let repo_scope = detail.summary.pr.repo.slug();
     let agent = core
         .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
         .await;
-    let ctx = core.grouping_context(worktree, new_rev).await;
+    let mut ctx = core.grouping_context(worktree, new_rev).await;
+    ctx.review = rules;
     let result = match &prev {
         Some(p) => {
             core.0
@@ -473,7 +481,8 @@ async fn regroup_after_push(
         }
     };
     if let Ok(grouping) = result {
-        let data = serde_json::to_value(&grouping).expect("serializable");
+        let data =
+            crate::usecases::grouping::grouping_row(grouping, new_rev, &ctx).expect("serializable");
         let action = NewAction {
             model: models::GROUPING.into(),
             model_id: pr.0.clone(),

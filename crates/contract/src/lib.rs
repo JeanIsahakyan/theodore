@@ -606,6 +606,10 @@ pub struct SkillRun {
     pub status: RunStatus,
     pub error: Option<String>,
     pub started_at: Millis,
+    /// Findings this run reported on paths the project config's
+    /// `review.ignore_findings` matches: dropped, only counted.
+    #[serde(default)]
+    pub hidden_findings: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

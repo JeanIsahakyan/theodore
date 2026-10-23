@@ -1499,6 +1499,7 @@ pub fn build() -> (Scenario, Vec<(&'static str, Vec<u8>)>) {
             },
         ],
         agents: AgentsMode::Real,
+        auto_skills: false,
         faults: FaultConfig {
             not_found_prs: vec![107],
             ..FaultConfig::default()

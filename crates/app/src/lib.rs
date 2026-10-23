@@ -37,6 +37,8 @@ mod linear_tests;
 #[cfg(test)]
 mod projects_tests;
 #[cfg(test)]
+mod review_config_tests;
+#[cfg(test)]
 mod ship_tests;
 #[cfg(test)]
 mod space_commands_tests;

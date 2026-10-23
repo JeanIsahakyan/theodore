@@ -137,6 +137,7 @@ updated after your last review.
   }],
   "projects": [{ "repo": "acme/storefront" }, { "local": "handbook", "from": "acme/handbook" }],
   "agents": "real",                                  // or "replay"
+  "auto_skills": false,                              // replay only: run review.auto_skills
   "faults": { "latency": false, "latency_ms": 400, "not_found_prs": [107] },
   "ci": { "push_after": "8s", "push_result": "pass", "rerun_after": "8s", "queue_after": "8s" },
   "timeline": [

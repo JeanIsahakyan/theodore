@@ -310,6 +310,7 @@ fn co_change_history_links_files_without_code_signals() {
             vec!["src/net/socket.c".into()],
             vec!["src/parser/lexer.c".into(), "src/net/socket.c".into()],
         ],
+        ..RepoContext::default()
     };
     let g = RelGraph::build(&rev(files), &PrePass::default(), &ctx);
     let lexer = idx(&g, "src/parser/lexer.c");

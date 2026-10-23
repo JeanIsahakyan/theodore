@@ -1398,6 +1398,7 @@ pub struct FakeGrouper {
     last_ctx: Mutex<Option<theodore_domain::grouping::RepoContext>>,
     /// How long `group` takes, so a test can act while it runs.
     delay_ms: std::sync::atomic::AtomicU64,
+    calls: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeGrouper {
@@ -1407,7 +1408,12 @@ impl FakeGrouper {
             last_agent: Mutex::new(None),
             last_ctx: Mutex::new(None),
             delay_ms: std::sync::atomic::AtomicU64::new(0),
+            calls: std::sync::atomic::AtomicUsize::new(0),
         })
+    }
+    /// How many `group`/`regroup` calls were made.
+    pub fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
     }
     pub fn set_delay_ms(&self, ms: u64) {
         self.delay_ms.store(ms, std::sync::atomic::Ordering::SeqCst);
@@ -1436,6 +1442,7 @@ impl Grouper for FakeGrouper {
         _worktree: &Path,
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_agent.lock().unwrap() = Some(agent);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         let delay = self.delay_ms.load(std::sync::atomic::Ordering::SeqCst);
@@ -1454,6 +1461,7 @@ impl Grouper for FakeGrouper {
         agent: AgentId,
     ) -> Result<Grouping, GrouperError> {
         let _ = prev;
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_agent.lock().unwrap() = Some(agent);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         Ok(self.grouping.lock().unwrap().clone())

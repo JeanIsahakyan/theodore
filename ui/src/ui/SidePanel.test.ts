@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../gen/contract';
-import { priorQuestion } from './SidePanel';
+import { hiddenFindingsNote, priorQuestion } from './SidePanel';
 
 function msg(id: string, partial: Partial<ChatMessage>): ChatMessage {
   return {
@@ -44,5 +44,21 @@ describe('priorQuestion', () => {
       msg('m1', { author: { kind: 'agent', agent: 'claude' }, failed: 'boom' }),
     ];
     expect(priorQuestion(messages, messages[0]!)).toBe('');
+  });
+});
+
+describe('hiddenFindingsNote', () => {
+  it('names how many findings the repo config hid', () => {
+    expect(hiddenFindingsNote({ hidden_findings: 1 })).toBe(
+      '1 finding hidden by config',
+    );
+    expect(hiddenFindingsNote({ hidden_findings: 3 })).toBe(
+      '3 findings hidden by config',
+    );
+  });
+
+  it('says nothing when none were hidden', () => {
+    expect(hiddenFindingsNote({ hidden_findings: 0 })).toBeNull();
+    expect(hiddenFindingsNote({})).toBeNull();
   });
 });
