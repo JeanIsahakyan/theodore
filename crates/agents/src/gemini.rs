@@ -47,7 +47,7 @@ pub fn settings_json(req: &AgentRequest) -> Value {
     let mut settings = serde_json::json!({ "tools": { "core": core_tools(req.mode) } });
     if let Some(mcp) = &req.mcp {
         settings["mcpServers"] = serde_json::json!({
-            "review-tools": {
+            mcp.name.clone(): {
                 "httpUrl": mcp.url,
                 "headers": { "Authorization": format!("Bearer {}", mcp.token) },
             }
@@ -346,6 +346,7 @@ mod tests {
             mcp: Some(McpEndpoint {
                 url: "https://example.invalid/mcp".into(),
                 token: "t".into(),
+                name: theodore_ports::REVIEW_TOOLS.into(),
             }),
             model: None,
             stall_after_ms: 1000,
