@@ -296,8 +296,8 @@ remaining prompts and limits.
 - **Switch agent or model** per message (picker in the header).
 - **Context**: `@path` mentions (stored as refs), paste a PR link to attach
   its description and diff stats, `/skill` runs a skill as the turn's
-  instructions. MCP gets space-scoped tools in v2 (`get_space_context`: goal,
-  base, diff stat, open tasks).
+  instructions. The space's own commands come as MCP tools (below); a
+  `get_space_context` (goal, diff stat, open tasks) is v2.
 - **Scripts**: repo settings `spaces.setup` (v2; once, after create — e.g.
   `pnpm i`) and `spaces.check` (after each turn; a failing check is fed into
   the next turn). Output streams as run log lines.
@@ -315,6 +315,35 @@ remaining prompts and limits.
   - Not an OS sandbox: a CLI with shell access can still leave its directory.
     Later: run agents under a macOS sandbox profile that only allows writes
     inside the space (open question 4).
+
+### Tools the agent gets
+
+Every turn, in every mode, gets the `space-tools` MCP server: the space's
+configured commands, never a shell of the agent's choosing.
+
+| Tool | Does |
+| --- | --- |
+| `run_check` | the project's `check`, now: exit code + last lines |
+| `start_app` / `stop_app` / `app_status` | the `run` command: start, stop, running?, ports, `http://localhost:<port>` |
+| `read_logs` | the tail of `setup`, `run`, `check` or `archive` output (bounded) |
+| `space_info` | name, branch, base, worktree, ports, env variable names (not values), which commands are set |
+
+```
+turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
+  │                                  └─▶ start_app ─▶ run   ─▶ URLs   ─▶ agent tries it
+  └─ agent exits ─▶ token revoked
+```
+
+- The system prompt names them: use `run_check` after changes, `start_app`
+  to try the app.
+- Trust holds: a repo command not allowed yet is refused with "not allowed
+  by the user yet" and never runs.
+- The turn lists its tool calls while it runs and after (this session),
+  Theodore's own by what they do.
+- Review chat, skills and fixes on a space's PR also get the read-only
+  `read_logs` and `app_status` next to `review-tools`.
+
+Details, limits and errors: `docs/config.md` §7.
 
 ---
 
