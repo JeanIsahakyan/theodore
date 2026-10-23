@@ -363,6 +363,7 @@ impl Core {
     /// Runs one command to its end in `cwd`, logging every line. `cancel`
     /// (or Theodore shutting down) stops it. Returns how it ended and its
     /// last `CHECK_TAIL` lines.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_space_command(
         &self,
         space: &str,

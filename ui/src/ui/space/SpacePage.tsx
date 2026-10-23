@@ -646,7 +646,7 @@ const SpaceChat = observer(function SpaceChat({
   const undone = undoneMessages(space);
   const undo = undoState(space);
   const checks = checksByReply(space.turn_log);
-  const settingUp = setupView(space) === 'stage';
+  const setupStage = setupView(space) === 'stage';
   const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
   const tools = run ? (store.ephemeral.runLog.get(run) ?? []) : [];
   useEffect(() => {
@@ -682,7 +682,7 @@ const SpaceChat = observer(function SpaceChat({
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-5 py-4">
         <SetupStage space={space} />
         <SetupNote space={space} />
-        {messages.length === 0 && !run && !settingUp && (
+        {messages.length === 0 && !run && !setupStage && (
           <span className="text-sm text-muted">
             Tell the agent what to change. It works in its own worktree; your
             checkout is never touched.

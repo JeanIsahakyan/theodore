@@ -543,7 +543,7 @@ async fn run_and_stop_and_archive_in_order() {
         Some(ProcessStatus::Stopped)
     );
     assert_eq!(*removed_at_archive.lock().unwrap(), Some(0));
-    assert_eq!(e.f.git.removed_spaces(), [s.id.clone()]);
+    assert_eq!(e.f.git.removed_spaces(), std::slice::from_ref(&s.id));
     assert!(s.ports.is_empty(), "released");
     assert_eq!(
         e.f.commands.scripts(),
