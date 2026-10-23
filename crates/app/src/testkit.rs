@@ -376,6 +376,9 @@ pub struct FakeGit {
     /// `(space, message)` of every `space_checkpoint`.
     pub checkpoints: Mutex<Vec<(String, String)>>,
     removed_spaces: Mutex<Vec<String>>,
+    /// Where space worktrees are created as real directories (tests that
+    /// copy files or run commands in them); `None`: a fake path.
+    space_root: Mutex<Option<PathBuf>>,
     /// `(space, to)` of every `space_reset`.
     pub resets: Mutex<Vec<(String, Sha)>>,
     /// Shipping a space: identity, squashed commits, pushes, folder ops.
@@ -447,6 +450,7 @@ impl FakeGit {
             checkpoint_heads: Mutex::new(VecDeque::new()),
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
+            space_root: Mutex::new(None),
             resets: Mutex::new(Vec::new()),
             ship: Mutex::new(FakeShip {
                 identity: Some(theodore_ports::Identity {
@@ -544,6 +548,11 @@ impl FakeGit {
     /// The next `space_checkpoint` moves the space to `head`.
     pub fn push_checkpoint(&self, head: Sha) {
         self.checkpoint_heads.lock().unwrap().push_back(head);
+    }
+
+    /// Space worktrees become real directories under `root`.
+    pub fn set_space_root(&self, root: &Path) {
+        *self.space_root.lock().unwrap() = Some(root.to_path_buf());
     }
 
     pub fn removed_spaces(&self) -> Vec<String> {
@@ -733,7 +742,14 @@ impl GitPort for FakeGit {
         };
         self.ensure_commit(base, "base");
         Ok(Worktree {
-            path: PathBuf::from(format!("/tmp/theodore-fake-space-{space}")),
+            path: match self.space_root.lock().unwrap().as_ref() {
+                Some(root) => {
+                    let path = root.join(space);
+                    let _ = std::fs::create_dir_all(&path);
+                    path
+                }
+                None => PathBuf::from(format!("/tmp/theodore-fake-space-{space}")),
+            },
             head,
         })
     }
@@ -1325,6 +1341,9 @@ impl FakeAgent {
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
     }
+    pub fn requests(&self) -> Vec<AgentRequest> {
+        self.requests.lock().unwrap().clone()
+    }
     pub fn last_request(&self) -> Option<AgentRequest> {
         self.requests.lock().unwrap().last().cloned()
     }
@@ -1808,6 +1827,124 @@ impl AccountPort for FakeAccount {
     }
 }
 
+// ── commands ──────────────────────────────────────────────────────────────
+
+/// What a fake command does once spawned.
+#[derive(Debug, Clone)]
+pub enum FakeScript {
+    /// Prints `lines` (stdout) and exits with `code`.
+    Exit { lines: Vec<String>, code: i32 },
+    /// Prints `lines`, then runs until cancelled (a dev server).
+    Hang { lines: Vec<String> },
+    /// Runs until its timeout fires.
+    Timeout,
+}
+
+/// `CommandPort` fake: records every spec; a script whose text contains a
+/// registered needle behaves as registered, anything else exits 0.
+#[derive(Default)]
+pub struct FakeCommands {
+    specs: Mutex<Vec<theodore_ports::CommandSpec>>,
+    scripts: Mutex<Vec<(String, FakeScript)>>,
+    /// Called with each spec as it is spawned (to observe ordering).
+    #[allow(clippy::type_complexity)]
+    hook: Mutex<Option<Box<dyn Fn(&theodore_ports::CommandSpec) + Send + Sync>>>,
+}
+
+impl FakeCommands {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn on(&self, needle: &str, script: FakeScript) {
+        self.scripts
+            .lock()
+            .unwrap()
+            .insert(0, (needle.to_string(), script));
+    }
+
+    pub fn on_spawn(&self, f: impl Fn(&theodore_ports::CommandSpec) + Send + Sync + 'static) {
+        *self.hook.lock().unwrap() = Some(Box::new(f));
+    }
+
+    pub fn specs(&self) -> Vec<theodore_ports::CommandSpec> {
+        self.specs.lock().unwrap().clone()
+    }
+
+    /// The scripts run so far, in order.
+    pub fn scripts(&self) -> Vec<String> {
+        self.specs().into_iter().map(|s| s.script).collect()
+    }
+}
+
+#[async_trait]
+impl theodore_ports::CommandPort for FakeCommands {
+    async fn spawn(&self, spec: theodore_ports::CommandSpec) -> theodore_ports::CommandRun {
+        use theodore_ports::{CommandEvent, CommandExit};
+        let behaviour = self
+            .scripts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(n, _)| spec.script.contains(n.as_str()))
+            .map(|(_, s)| s.clone())
+            .unwrap_or(FakeScript::Exit {
+                lines: vec![],
+                code: 0,
+            });
+        let timeout = spec.timeout;
+        if let Some(hook) = self.hook.lock().unwrap().as_ref() {
+            hook(&spec);
+        }
+        self.specs.lock().unwrap().push(spec);
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            let line = |text: &str| CommandEvent::Line {
+                stderr: false,
+                text: text.to_string(),
+            };
+            let exit = match behaviour {
+                FakeScript::Exit { lines, code } => {
+                    for l in &lines {
+                        let _ = tx.send(line(l)).await;
+                    }
+                    CommandExit {
+                        code: Some(code),
+                        ..CommandExit::default()
+                    }
+                }
+                FakeScript::Hang { lines } => {
+                    for l in &lines {
+                        let _ = tx.send(line(l)).await;
+                    }
+                    token.cancelled().await;
+                    CommandExit {
+                        cancelled: true,
+                        ..CommandExit::default()
+                    }
+                }
+                FakeScript::Timeout => {
+                    let wait = timeout.unwrap_or(Duration::from_secs(3600));
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait.min(Duration::from_millis(20))) => CommandExit {
+                            timed_out: true,
+                            ..CommandExit::default()
+                        },
+                        _ = token.cancelled() => CommandExit {
+                            cancelled: true,
+                            ..CommandExit::default()
+                        },
+                    }
+                }
+            };
+            let _ = tx.send(CommandEvent::Exit(exit)).await;
+        });
+        theodore_ports::CommandRun { events: rx, cancel }
+    }
+}
+
 // ── fixtures ──────────────────────────────────────────────────────────────
 
 pub struct Fixtures {
@@ -1825,6 +1962,9 @@ pub struct Fixtures {
     /// A throwaway `~/.claude/skills` stand-in (plan §8.4): kept alive for
     /// the fixture's lifetime, deleted on drop. Never the real home dir.
     pub claude_home: Arc<tempfile::TempDir>,
+    pub commands: Arc<FakeCommands>,
+    /// A throwaway `~/.theodore` (the global `config.yaml`).
+    pub data_dir: Arc<tempfile::TempDir>,
 }
 
 impl Fixtures {
@@ -1843,6 +1983,8 @@ impl Fixtures {
             device_login: self.device_login.clone(),
             worktree_lease: self.worktree_lease.clone(),
             account: self.account.clone(),
+            commands: self.commands.clone(),
+            data_dir: self.data_dir.path().to_path_buf(),
         }
     }
 }
@@ -1869,6 +2011,8 @@ pub fn fixtures() -> Fixtures {
         worktree_lease: FakeWorktreeLease::new(),
         account: FakeAccount::new(),
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
+        commands: FakeCommands::new(),
+        data_dir: Arc::new(tempfile::tempdir().expect("tempdir")),
     }
 }
 

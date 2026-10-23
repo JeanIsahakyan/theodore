@@ -350,6 +350,7 @@ async fn drive_skill_run(
             mcp: mcp.clone(),
             model: None,
             stall_after_ms,
+            env: Vec::new(),
         };
         let _guard = ToolsGuard { core, mcp };
         match core.0.deps.agents.run(req).await {
@@ -520,6 +521,7 @@ async fn drive_ask(
         mcp: mcp.clone(),
         model: None,
         stall_after_ms: core.stall_after_ms().await,
+        env: Vec::new(),
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();

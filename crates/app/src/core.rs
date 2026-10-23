@@ -65,6 +65,14 @@ pub(crate) struct Inner {
     pub linear_cache: std::sync::Mutex<HashMap<PrId, (i64, Vec<theodore_contract::LinearIssue>)>>,
     /// The Theodore account: session, sign-in in progress, refresher.
     pub account: crate::usecases::account::AccountState,
+    /// Per space: its commands' last log lines and the ones in flight.
+    pub space_rt: std::sync::Mutex<HashMap<String, crate::usecases::space_commands::SpaceRuntime>>,
+    /// Serializes port reservation, so two creates never take one port.
+    pub ports_lock: tokio::sync::Mutex<()>,
+    /// Serializes changes to a space's setup stage (so the goal starts once).
+    pub setup_lock: tokio::sync::Mutex<()>,
+    /// Config problems already shown (`file\0key`): warned once per session.
+    pub config_warned: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -103,6 +111,10 @@ impl Core {
             login: Mutex::new(None),
             linear_cache: std::sync::Mutex::new(HashMap::new()),
             account: Default::default(),
+            space_rt: std::sync::Mutex::new(HashMap::new()),
+            ports_lock: tokio::sync::Mutex::new(()),
+            setup_lock: tokio::sync::Mutex::new(()),
+            config_warned: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 
         let core = Core(inner.clone());

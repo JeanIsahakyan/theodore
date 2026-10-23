@@ -29,6 +29,8 @@ mod project_state;
 pub use project_state::*;
 mod spaces;
 pub use spaces::*;
+mod config;
+pub use config::*;
 mod account;
 pub use account::*;
 
@@ -547,6 +549,12 @@ pub enum Ephemeral {
     AccountStatus {
         status: AccountStatus,
     },
+    /// One line of a space command's output (docs/config.md); the last
+    /// lines are kept per space and returned by `space_logs`.
+    SpaceLog {
+        space: String,
+        line: SpaceLogLine,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -720,6 +728,26 @@ pub fn types() -> specta::Types {
         .register::<SpaceTurn>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
+        .register::<ConfigLayer>()
+        .register::<ConfigFile>()
+        .register::<ConfigEntry>()
+        .register::<RepoCommands>()
+        .register::<EffectiveConfig>()
+        .register::<GlobalConfigInfo>()
+        .register::<SpaceCommandKind>()
+        .register::<ConfiguredCommand>()
+        .register::<SpaceConfigView>()
+        .register::<SetupStatus>()
+        .register::<SpaceSetup>()
+        .register::<ProcessStatus>()
+        .register::<SpaceProcess>()
+        .register::<SpaceCheckStatus>()
+        .register::<SpaceCheck>()
+        .register::<SpaceLogLine>()
+        .register::<SpaceTrustRequest>()
+        .register::<SetupAction>()
+        .register::<SpaceSetupRequest>()
+        .register::<SpaceRunRequest>()
         .register::<AccountUser>()
         .register::<AccountStatus>()
         .register::<AccountSignInMethod>()

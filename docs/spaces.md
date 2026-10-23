@@ -253,6 +253,12 @@ counts as seen while the window has focus.
 
 ---
 
+### Setup, run, check, archive
+
+A space can be set up for its project by the `spaces:` section of the project
+config — files copied in, free ports, env, and `setup` / `run` / `check` /
+`archive` commands. See `docs/config.md`.
+
 ## 4. What makes it Theodore's
 
 - **Review is the product.** The agent's diff is reviewed with the same

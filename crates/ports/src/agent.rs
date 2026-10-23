@@ -45,6 +45,11 @@ pub struct AgentRequest {
     pub model: Option<String>,
     /// No output for this long → `AgentEvent::Stalled`.
     pub stall_after_ms: u64,
+    /// Added to the child's environment after Theodore's own `THEODORE_*`
+    /// secrets are stripped from the inherited one: a space's `env` and
+    /// variables (docs/config.md).
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

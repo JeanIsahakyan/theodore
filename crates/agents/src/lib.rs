@@ -21,12 +21,14 @@ pub mod detect;
 pub mod env;
 pub mod gemini;
 pub mod process;
+pub mod shell;
 
 use async_trait::async_trait;
 use theodore_domain::AgentId;
 use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun};
 
 pub use config::{AgentBinaryConfig, AgentCliConfig};
+pub use shell::ShellRunner;
 
 /// `AgentPort` over local CLI processes.
 #[derive(Debug, Clone, Default)]
@@ -78,6 +80,7 @@ impl AgentPort for AgentCli {
         let program =
             detect::locate_binary(req.agent, &cfg).ok_or(AgentError::NotInstalled(req.agent))?;
         let mut child_env = env::filtered_env();
+        child_env.extend(req.env.iter().cloned());
         let mut guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
 
         let args = match req.agent {

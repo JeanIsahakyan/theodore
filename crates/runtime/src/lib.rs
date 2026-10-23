@@ -241,6 +241,8 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         device_login: a.device_login,
         account: a.account,
         claude_home,
+        commands: Arc::new(theodore_agents::ShellRunner::new()),
+        data_dir: cfg.data_dir.clone(),
         worktree_lease: Arc::new(worktree_gc::WorktreeLeaseAdapter::new(
             worktree_locks.clone(),
         )),

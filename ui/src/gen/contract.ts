@@ -183,6 +183,50 @@ export type CommitSuggestionsRequest = {
 	message: string,
 };
 
+/**  One effective value and where it came from. */
+export type ConfigEntry = {
+	/**  Dotted path: `spaces.run`, `spaces.env.API_URL`, `review.agents.chat`. */
+	key: string,
+	/**  Strings as they are, anything else as JSON. */
+	value: string,
+	layer: ConfigLayer,
+};
+
+/**  One of the files behind a project's config. */
+export type ConfigFile = {
+	layer: ConfigLayer,
+	path: string,
+	exists: boolean,
+	/**
+	 *  The deprecated `.review/config.yaml`, read because
+	 *  `.theodore/config.yaml` is absent.
+	 */
+	legacy: boolean,
+	/**  Why the file was ignored (unreadable or invalid YAML). */
+	error: string | null,
+};
+
+/**  Which file a config value came from. Later layers win, key by key. */
+export type ConfigLayer =
+/**  `~/.theodore/config.yaml`. */
+"global" |
+/**
+ *  `<repo>/.theodore/config.yaml` (or the legacy `.review/config.yaml`):
+ *  shared with the team, so its commands need your approval.
+ */
+"repo" |
+/**  `<repo>/.theodore/config.local.yaml`: personal, gitignored. */
+"local";
+
+/**  A space command as configured. */
+export type ConfiguredCommand = {
+	kind: SpaceCommandKind,
+	script: string,
+	layer: ConfigLayer,
+	/**  `false`: from the repo and not approved, so it is skipped. */
+	allowed: boolean,
+};
+
 export type ConflictFile = {
 	path: string,
 	kind: ConflictKind,
@@ -267,6 +311,16 @@ export type EditCommentRequest = {
 	body: string | null,
 };
 
+/**  A project's merged config, read-only (Settings → Labs). */
+export type EffectiveConfig = {
+	files: ConfigFile[],
+	entries: ConfigEntry[],
+	/**  Keys no Theodore version knows (typos, or a newer file). */
+	unknown: string[],
+	/**  `None` when the repo layer provides no command. */
+	repo_commands: RepoCommands | null,
+};
+
 export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } |
 /**
  *  No output for `agents.stall_after_ms` while `run` is still alive.
@@ -277,7 +331,12 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
 /**  Grouping of a PR started or finished (no sync row until it's done). */
 { type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean } |
 /**  The Theodore account signed in, signed out, or its session ended. */
-{ type: "account_status"; status: AccountStatus };
+{ type: "account_status"; status: AccountStatus } |
+/**
+ *  One line of a space command's output (docs/config.md); the last
+ *  lines are kept per space and returned by `space_logs`.
+ */
+{ type: "space_log"; space: string; line: SpaceLogLine };
 
 export type FileDiff = {
 	path: string,
@@ -362,6 +421,12 @@ export type GetBlobRequest = {
 	pr: PrId,
 	path: string,
 	side: DiffSide,
+};
+
+/**  `~/.theodore/config.yaml`. */
+export type GlobalConfigInfo = {
+	path: string,
+	exists: boolean,
 };
 
 export type Group = {
@@ -671,6 +736,14 @@ export type PrSummary = {
 	stack?: StackInfo | null,
 };
 
+export type ProcessStatus = "running" |
+/**  Ended by itself. */
+"exited" |
+/**  Stopped from the UI, by archive, or because Theodore closed. */
+"stopped" |
+/**  Could not start. */
+"failed";
+
 /**
  *  A connected repository: a host repo (bare clone under `~/.theodore/repos`)
  *  or a local folder (mirrored into the same cache, the user's repo is never
@@ -739,6 +812,18 @@ export type ReplyRequest = {
 	pr: PrId,
 	thread: ThreadId,
 	body: string,
+};
+
+/**
+ *  The repo layer's commands (and env, which can change what a command
+ *  runs) that are in effect: what "Run commands from this repo?" shows.
+ */
+export type RepoCommands = {
+	/**  sha256 of `items`; approval is stored per project against it. */
+	hash: string,
+	/**  You allowed exactly this set for this project. */
+	trusted: boolean,
+	items: ConfigEntry[],
 };
 
 /**  Host-neutral repository reference. */
@@ -884,6 +969,16 @@ export type Setting = {
 	value: unknown,
 };
 
+export type SetupAction = "retry" |
+/**  Continue without setup: the first turn starts. */
+"skip";
+
+export type SetupStatus =
+/**  Waiting for "Run commands from this repo?". */
+"waiting" | "running" | "done" | "failed" |
+/**  Nothing ran: no setup, not allowed, or "continue without setup". */
+"skipped";
+
 export type Severity = "info" | "warn" | "high";
 
 export type Sha = string;
@@ -1001,8 +1096,44 @@ export type Space = {
 	 *  back to. Spaces from before it was recorded have none.
 	 */
 	turn_log?: SpaceTurn[],
+	/**
+	 *  TCP ports reserved for the space's life (`spaces.ports`): free when
+	 *  reserved, unique across live spaces, released on archive.
+	 */
+	ports?: number[],
+	/**  The "Setting up…" stage: copy, then `spaces.setup`, before turn 1. */
+	setup?: SpaceSetup | null,
+	/**  The `spaces.run` command, while running or since it last ended. */
+	process?: SpaceProcess | null,
+	/**  "Not now" to the repo's commands: they are skipped in this space. */
+	commands_denied?: boolean,
 	created_at: number,
 	updated_at: number,
+};
+
+/**  `check` after a turn that changed files. */
+export type SpaceCheck = {
+	status: SpaceCheckStatus,
+	exit_code?: number | null,
+	timed_out?: boolean,
+	/**  The last lines of output. */
+	output?: string[],
+	started_at: number,
+	finished_at?: number | null,
+};
+
+export type SpaceCheckStatus = "running" | "passed" | "failed";
+
+export type SpaceCommandKind = "setup" | "run" | "check" | "archive";
+
+/**  What a space will run (`space_config`). */
+export type SpaceConfigView = {
+	commands: ConfiguredCommand[],
+	/**  `$THEODORE_PORT`, `$THEODORE_PORT_1`, … */
+	ports: number[],
+	repo_commands: RepoCommands | null,
+	/**  "Not now" was chosen for this space: repo commands are skipped. */
+	denied: boolean,
 };
 
 /**
@@ -1022,6 +1153,14 @@ export type SpaceFeedbackRequest = {
 	items: SpaceFeedback[],
 };
 
+/**  One line of a space command's output (`space_logs`, `Ephemeral::SpaceLog`). */
+export type SpaceLogLine = {
+	kind: SpaceCommandKind,
+	line: string,
+	stderr: boolean,
+	at: number,
+};
+
 /**  What the agent may do in a turn (docs/spaces.md §5). */
 export type SpaceMode =
 /**  Read, grep, MCP; no writes. */
@@ -1034,10 +1173,25 @@ export type SpaceMode =
  */
 "run";
 
+/**  The space's long-running `run` command. */
+export type SpaceProcess = {
+	status: ProcessStatus,
+	started_at: number,
+	ended_at?: number | null,
+	exit_code?: number | null,
+	error?: string | null,
+};
+
 export type SpaceReviewRequest = {
 	space: string,
 	/**  Also group the diff by meaning (Review); `false` for the live diff. */
 	group: boolean,
+};
+
+export type SpaceRunRequest = {
+	space: string,
+	/**  Start (`true`) or stop the `run` command. */
+	start: boolean,
 };
 
 export type SpaceSendRequest = {
@@ -1047,6 +1201,22 @@ export type SpaceSendRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+};
+
+/**  The "Setting up…" stage after create, before the first turn. */
+export type SpaceSetup = {
+	status: SetupStatus,
+	/**  The goal is sent as the first turn once setup ends. */
+	goal_pending: boolean,
+	error?: string | null,
+	/**  Files not copied, commands skipped, … */
+	notes?: string[],
+	finished_at?: number | null,
+};
+
+export type SpaceSetupRequest = {
+	space: string,
+	action: SetupAction,
 };
 
 /**  The space's last ship: the squashed commit and where it went. */
@@ -1075,6 +1245,15 @@ export type SpaceStatus =
 /**  The last turn errored, was interrupted, or the worktree is gone. */
 "failed" | "archived";
 
+/**  "Run commands from this repo?" for a space's project. */
+export type SpaceTrustRequest = {
+	space: string,
+	/**  Allow (stored for the project) or Not now (this space only). */
+	allow: boolean,
+	/**  `RepoCommands::hash` the user saw; refused if the commands changed. */
+	hash: string,
+};
+
 /**
  *  One agent turn of a space: the messages it answered and the checkpoint
  *  it moved the space from and to.
@@ -1092,6 +1271,8 @@ export type SpaceTurn = {
 	 *  turn, the next turns' prompts leave it out.
 	 */
 	undone?: boolean,
+	/**  `spaces.check` after the turn, when it changed files. */
+	check?: SpaceCheck | null,
 };
 
 /**

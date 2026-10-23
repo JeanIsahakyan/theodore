@@ -7,6 +7,7 @@
 pub mod account;
 pub mod agent;
 pub mod clock;
+pub mod command;
 pub mod device_login;
 pub mod git;
 pub mod host;
@@ -17,6 +18,7 @@ pub mod worktree_lease;
 pub use account::*;
 pub use agent::*;
 pub use clock::*;
+pub use command::*;
 pub use device_login::*;
 pub use git::*;
 pub use host::*;

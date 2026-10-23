@@ -77,6 +77,13 @@ impl Core {
         if !is_valid_branch(&branch) {
             return Err(AppError::Invalid(format!("bad branch name {branch:?}")));
         }
+        let repo_path = self.ensure_project_cache(&project).await?;
+        let base_sha = self.0.deps.git.resolve_ref(&repo_path, &base).await?;
+        // The project's config (docs/config.md), as of the space's base.
+        let layers = self.project_layers(&project, Some(&base_sha)).await;
+        let cfg = self.config_with_trust(&layers, &project, false).await;
+        self.apply_review_agents(&cfg.merged, &project.repo).await;
+
         let agent = match req.agent {
             Some(a) => a,
             None => {
@@ -91,8 +98,6 @@ impl Core {
             }
         };
 
-        let repo_path = self.ensure_project_cache(&project).await?;
-        let base_sha = self.0.deps.git.resolve_ref(&repo_path, &base).await?;
         let id = new_space_id();
         let wt = self
             .0
@@ -100,6 +105,35 @@ impl Core {
             .git
             .space_worktree(&repo_path, &id, &base_sha)
             .await?;
+
+        // Files from the checkout, then ports for the space's life.
+        let mut notes = Vec::new();
+        let copy = cfg.merged.config.spaces.copy.clone();
+        match (&project.path, copy.is_empty()) {
+            (_, true) => {}
+            (Some(root), false) => {
+                let (root, dest) = (PathBuf::from(root), wt.path.clone());
+                notes.extend(
+                    tokio::task::spawn_blocking(move || {
+                        crate::usecases::space_commands::copy_into(&root, &dest, &copy)
+                    })
+                    .await
+                    .map_err(AppError::join)?,
+                );
+            }
+            (None, false) => notes
+                .push("copy: skipped, this project has no local checkout to copy from".to_string()),
+        }
+        let ports_guard = self.0.ports_lock.lock().await;
+        let ports = self
+            .reserve_ports(cfg.merged.config.spaces.port_count(), &id)
+            .await
+            .unwrap_or_else(|e| {
+                notes.push(format!("ports: {e}"));
+                Vec::new()
+            });
+        let has_goal = !req.goal.trim().is_empty();
+        let setup = crate::usecases::space_hooks::initial_setup(&cfg, has_goal, notes);
 
         let now = self.0.deps.clock.now();
         let space = Space {
@@ -124,6 +158,10 @@ impl Core {
             shipped: None,
             done_at: None,
             turn_log: Vec::new(),
+            ports,
+            setup,
+            process: None,
+            commands_denied: false,
             created_at: now,
             updated_at: now,
         };
@@ -134,6 +172,7 @@ impl Core {
             data: Some(to_json(&space)?),
         }])
         .await?;
+        drop(ports_guard);
 
         // The empty diff exists from the start, so the page has a review id.
         self.space_review(SpaceReviewRequest {
@@ -142,7 +181,11 @@ impl Core {
         })
         .await?;
 
-        if !space.goal.is_empty() {
+        let setup_status = space.setup.as_ref().map(|s| s.status);
+        if setup_status == Some(theodore_contract::SetupStatus::Running) {
+            // The goal waits for setup (`goal_pending`).
+            self.spawn_setup(&id);
+        } else if !space.goal.is_empty() && !space.setup.as_ref().is_some_and(|s| s.goal_pending) {
             self.space_send(SpaceSendRequest {
                 space: id.clone(),
                 text: space.goal.clone(),
@@ -184,6 +227,14 @@ impl Core {
                 return Err(AppError::Invalid("this space is archived".into()));
             }
             SpaceStatus::Idle | SpaceStatus::Failed => {}
+        }
+        if let Some(setup) = &space.setup
+            && matches!(
+                setup.status,
+                theodore_contract::SetupStatus::Running | theodore_contract::SetupStatus::Waiting
+            )
+        {
+            return Err(AppError::Invalid("the space is still setting up".into()));
         }
         let text = req.text.trim().to_string();
         if text.is_empty() {
@@ -256,8 +307,9 @@ impl Core {
             agent,
             model,
             mode,
-            prompt: turn_prompt(&history, &text),
+            prompt: with_failed_check(&space, turn_prompt(&history, &text)),
             system: system_prompt(&space),
+            env: self.space_agent_env(&space).await,
             cwd: wt.path,
             cancel,
         };
@@ -312,7 +364,10 @@ impl Core {
         }
         let project = self.space_project(&space).await?;
         let repo_path = self.ensure_project_cache(&project).await?;
-        if Path::new(&space.worktree).exists() {
+        // docs/config.md: stop `run`, checkpoint, `archive`, then remove.
+        self.stop_space_commands(&space.id).await;
+        let worktree_exists = Path::new(&space.worktree).exists();
+        if worktree_exists {
             self.0
                 .deps
                 .git
@@ -323,6 +378,8 @@ impl Core {
                 )
                 .await?;
         }
+        self.run_archive_command(&space, &project, worktree_exists)
+            .await;
         self.0
             .deps
             .git
@@ -339,6 +396,8 @@ impl Core {
             data: Some(serde_json::json!({
                 "status": SpaceStatus::Archived,
                 "review_pr": null,
+                // Released: another space may take them now.
+                "ports": [],
                 "updated_at": self.0.deps.clock.now(),
             })),
         }])
@@ -410,11 +469,25 @@ impl Core {
             .git
             .space_worktree(&repo_path, &space.id, &space.base_sha)
             .await?;
+        // Ports were released on archive: reserve fresh ones.
+        let cfg = self.space_config_of(&space, &project).await;
+        let ports_guard = self.0.ports_lock.lock().await;
+        let ports = self
+            .reserve_ports(cfg.merged.config.spaces.port_count(), &space.id)
+            .await
+            .unwrap_or_else(|e| {
+                self.emit(Ephemeral::Toast {
+                    level: ToastLevel::Warn,
+                    text: format!("{}: {e}", space.name),
+                });
+                Vec::new()
+            });
         let now = self.0.deps.clock.now();
         let mut patch = serde_json::json!({
             "status": SpaceStatus::Idle,
             "worktree": wt.path.display().to_string(),
             "error": null,
+            "ports": ports,
             "updated_at": now,
         });
         if wt.head != space.head_sha {
@@ -438,6 +511,7 @@ impl Core {
             data: Some(patch),
         }])
         .await?;
+        drop(ports_guard);
         self.space_review(SpaceReviewRequest {
             space: space.id.clone(),
             group: false,
@@ -453,18 +527,18 @@ impl Core {
         let Ok(spaces) = self.list_spaces(None).await else {
             return;
         };
+        let now = self.0.deps.clock.now();
+        // Turns, and a space's setup, `run` and `check` (docs/config.md).
         let actions: Vec<NewAction> = spaces
             .into_iter()
-            .filter(|s| s.status == SpaceStatus::Running)
-            .map(|s| NewAction {
-                model: models::SPACE.into(),
-                model_id: s.id,
-                action: SyncActionCode::C,
-                data: Some(serde_json::json!({
-                    "status": SpaceStatus::Failed,
-                    "run": null,
-                    "error": "interrupted: Theodore was closed",
-                })),
+            .filter_map(|s| {
+                let patch = crate::usecases::space_hooks::interrupted_patch(&s, now)?;
+                Some(NewAction {
+                    model: models::SPACE.into(),
+                    model_id: s.id,
+                    action: SyncActionCode::C,
+                    data: Some(patch),
+                })
             })
             .collect();
         let _ = self.apply(actions).await;
@@ -523,7 +597,7 @@ impl Core {
         serde_json::from_value(data).map_err(|e| AppError::Invalid(e.to_string()))
     }
 
-    async fn space_project(&self, space: &Space) -> AppResult<Project> {
+    pub(crate) async fn space_project(&self, space: &Space) -> AppResult<Project> {
         self.project_row(&space.project)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("project {}", space.project)))
@@ -564,6 +638,7 @@ struct Turn {
     mode: SpaceMode,
     prompt: String,
     system: String,
+    env: Vec<(String, String)>,
     cwd: PathBuf,
     cancel: CancellationToken,
 }
@@ -578,6 +653,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mode,
         prompt,
         system,
+        env,
         cwd,
         cancel,
     } = turn;
@@ -594,6 +670,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mcp: None,
         model,
         stall_after_ms: core.stall_after_ms().await,
+        env,
     };
     let mut text = String::new();
     let mut error = None;
@@ -633,7 +710,6 @@ async fn drive_turn(core: &Core, turn: Turn) {
         },
         Err(e) => error = Some(e.to_string()),
     }
-    core.0.runs.write().await.remove(&run_id);
     let cancelled = cancel.is_cancelled();
     if cancelled && error.is_none() {
         error = Some("stopped".into());
@@ -676,9 +752,18 @@ async fn drive_turn(core: &Core, turn: Turn) {
         at: core.0.deps.clock.now(),
         failed: error.clone(),
     };
+    let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
+    // `check` (docs/config.md) is part of the turn: the space stays
+    // running, and Stop stops it too.
+    let checking = changed && !cancelled && core.has_check(&space).await;
+    let status = if error.is_some() && !cancelled {
+        SpaceStatus::Failed
+    } else {
+        SpaceStatus::Idle
+    };
     let mut patch = serde_json::json!({
-        "status": if error.is_some() && !cancelled { SpaceStatus::Failed } else { SpaceStatus::Idle },
-        "run": null,
+        "status": if checking { SpaceStatus::Running } else { status },
+        "run": if checking { Some(run_id.clone()) } else { None },
         "turns": turn_no,
         "error": if cancelled { None } else { error.clone() },
         "updated_at": core.0.deps.clock.now(),
@@ -698,6 +783,14 @@ async fn drive_turn(core: &Core, turn: Turn) {
             before: space.head_sha.clone(),
             after: head.clone(),
             undone: false,
+            check: checking.then(|| theodore_contract::SpaceCheck {
+                status: theodore_contract::SpaceCheckStatus::Running,
+                exit_code: None,
+                timed_out: false,
+                output: vec![],
+                started_at: core.0.deps.clock.now(),
+                finished_at: None,
+            }),
         });
         patch["turn_log"] = serde_json::json!(log);
     }
@@ -717,8 +810,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
         data: Some(patch),
     });
     let _ = core.apply(actions).await;
+    if !checking {
+        core.0.runs.write().await.remove(&run_id);
+    }
 
-    if head.is_some_and(|h| h != space.head_sha) {
+    if changed {
         // The live diff follows the new checkpoint; grouping waits for Review.
         if let Err(e) = core
             .space_review(SpaceReviewRequest {
@@ -732,6 +828,51 @@ async fn drive_turn(core: &Core, turn: Turn) {
                 text: format!("{}: diff refresh failed: {e}", space.name),
             });
         }
+    }
+
+    if checking {
+        let check = core.run_check(&space, cancel.clone()).await;
+        core.0.runs.write().await.remove(&run_id);
+        let mut log = core
+            .space_row(&space.id)
+            .await
+            .map(|s| s.turn_log)
+            .unwrap_or_default();
+        if let Some(t) = log.iter_mut().rev().find(|t| t.reply == reply.id) {
+            t.check = check;
+        }
+        let _ = core
+            .apply(vec![NewAction {
+                model: models::SPACE.into(),
+                model_id: space.id.clone(),
+                action: SyncActionCode::C,
+                data: Some(serde_json::json!({
+                    "status": status,
+                    "run": null,
+                    "turn_log": log,
+                    "updated_at": core.0.deps.clock.now(),
+                })),
+            }])
+            .await;
+    }
+}
+
+/// A failing `check` after the last turn goes into the next prompt, so
+/// the agent sees what broke.
+fn with_failed_check(space: &Space, prompt: String) -> String {
+    let failed = space
+        .turn_log
+        .iter()
+        .rev()
+        .find(|t| !t.undone)
+        .and_then(|t| t.check.as_ref())
+        .filter(|c| c.status == theodore_contract::SpaceCheckStatus::Failed);
+    match failed {
+        None => prompt,
+        Some(c) => format!(
+            "The project's check failed after your last turn. Its last output:\n```\n{}\n```\n\n{prompt}",
+            c.output.join("\n")
+        ),
     }
 }
 

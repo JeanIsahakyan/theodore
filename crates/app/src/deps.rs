@@ -10,8 +10,8 @@ use theodore_contract::TokenSource;
 use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{
-    AccountPort, AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, McpEndpoint, Secrets,
-    Store, WorktreeLease,
+    AccountPort, AgentPort, Clock, CommandPort, DeviceLoginPort, GitPort, HostAdapter, McpEndpoint,
+    Secrets, Store, WorktreeLease,
 };
 
 use crate::error::GrouperError;
@@ -91,4 +91,10 @@ pub struct Deps {
     /// `LocalAccount` where there is none (fixtures, sandbox, the CLI):
     /// the feature is then hidden.
     pub account: Arc<dyn AccountPort>,
+    /// Runs a space's `setup` / `run` / `check` / `archive` commands
+    /// (docs/config.md).
+    pub commands: Arc<dyn CommandPort>,
+    /// Theodore's data directory (`~/.theodore`): holds the global
+    /// `config.yaml`. Tests point it at a throwaway directory.
+    pub data_dir: std::path::PathBuf,
 }

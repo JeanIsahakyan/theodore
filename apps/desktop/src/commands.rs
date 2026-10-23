@@ -714,3 +714,93 @@ pub fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
     }
     Ok(())
 }
+
+// ── project config (docs/config.md) ─────────────────────────────────────────
+
+/// What a space runs, where each command comes from, trust.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_config(
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::SpaceConfigView, CommandError> {
+    core.space_config(space).await
+}
+
+/// "Run commands from this repo?": Allow / Not now.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_trust(
+    req: theodore_contract::SpaceTrustRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.space_trust(req).await
+}
+
+/// Retry a failed setup, or continue without it.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_setup(
+    req: theodore_contract::SpaceSetupRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.space_setup(req).await
+}
+
+/// Starts or stops the space's `run` command.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_run(
+    req: theodore_contract::SpaceRunRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.space_run(req).await
+}
+
+/// The last lines of the space's commands.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_logs(
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::SpaceLogLine>, CommandError> {
+    core.space_logs(space).await
+}
+
+/// A project's merged config, with each value's file.
+#[tauri::command]
+#[specta::specta]
+pub async fn project_config(
+    project: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::EffectiveConfig, CommandError> {
+    core.project_config(project).await
+}
+
+/// `~/.theodore/config.yaml`: path and whether it exists.
+#[tauri::command]
+#[specta::specta]
+pub async fn global_config(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
+    core.global_config().await
+}
+
+/// Creates `~/.theodore/config.yaml` from a commented template when
+/// missing, then opens it with the default editor.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_global_config(
+    app: AppHandle,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+    let info = core.ensure_global_config().await?;
+    app.opener()
+        .open_path(info.path.clone(), None::<&str>)
+        .map_err(|e| CommandError {
+            code: "internal".into(),
+            message: e.to_string(),
+        })?;
+    Ok(info)
+}
