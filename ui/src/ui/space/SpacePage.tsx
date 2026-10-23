@@ -9,6 +9,7 @@ import type { MutableRefObject } from 'react';
 import {
   Archive,
   ArrowUpFromLine,
+  ArrowUturnCcwLeft,
   BranchesRight,
   ChevronDown,
   ChevronRight,
@@ -56,6 +57,7 @@ import { markSpaceSeen } from './seen';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
+  NOTIFY_KEY,
   SPACE_BUDGET_KEY,
   STAGE_LABEL,
   autoArchiveDays,
@@ -63,10 +65,13 @@ import {
   diffStat,
   fmtSpend,
   nextMode,
+  notifyOn,
   spaceKeyAction,
   spaceBudget,
   spaceChatKey,
   spaceStage,
+  undoState,
+  undoneMessages,
   unshipped,
 } from './spaces';
 
@@ -109,6 +114,22 @@ function archive(ui: Ui, space: Space) {
   void api
     .archiveSpace(space.id)
     .then(() => ui.goBack())
+    .catch(() => {});
+}
+
+/** Undo last turn (button on the reply, palette). Errors are toasted by
+ *  api.ts. */
+export function undoLastTurn(space: Pick<Space, 'id'>): Promise<void> {
+  return api
+    .undoSpaceTurn(space.id)
+    .then(() => {})
+    .catch(() => {});
+}
+
+export function unarchive(space: Pick<Space, 'id'>): Promise<void> {
+  return api
+    .unarchiveSpace(space.id)
+    .then(() => {})
     .catch(() => {});
 }
 
@@ -189,9 +210,16 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     };
   }, [id, live]);
 
+  // Seen only when you can see it: a turn that ends with the window in the
+  // background still counts on the dock badge until you come back.
+  const updatedAt = space?.updated_at;
   useEffect(() => {
-    if (space) markSpaceSeen(id, space.updated_at);
-  }, [id, space, space?.updated_at]);
+    if (updatedAt == null) return;
+    const mark = () => markSpaceSeen(id, updatedAt);
+    if (document.hasFocus()) mark();
+    window.addEventListener('focus', mark);
+    return () => window.removeEventListener('focus', mark);
+  }, [id, updatedAt]);
 
   if (!space) {
     return (
@@ -217,15 +245,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           )}
         </section>
       </div>
-      {space.status === 'archived' && (
-        <Alert status="accent" className="m-3">
-          <Alert.Content>
-            <Alert.Description>
-              Archived. The transcript and the checkpoint ref are kept.
-            </Alert.Description>
-          </Alert.Content>
-        </Alert>
-      )}
+      {space.status === 'archived' && <ArchivedBanner space={space} />}
       <Hints>
         <K>C</K> message the agent <K>M</K> mode <K>⌘.</K> stop <K>R</K> review{' '}
         <K>P</K> {space.pr ? 'push' : 'ship'}
@@ -240,6 +260,32 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     </div>
   );
 });
+
+function ArchivedBanner({ space }: { space: Space }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Alert status="accent" className="m-3 items-center">
+      <Alert.Content>
+        <Alert.Description>
+          Archived. The transcript and the checkpoint ref are kept.
+        </Alert.Description>
+      </Alert.Content>
+      <Button
+        size="sm"
+        variant="secondary"
+        className="space-unarchive shrink-0"
+        isPending={busy}
+        onPress={() => {
+          setBusy(true);
+          void unarchive(space).finally(() => setBusy(false));
+        }}
+      >
+        <ArrowUturnCcwLeft className="size-3.5" />
+        Unarchive
+      </Button>
+    </Alert>
+  );
+}
 
 const SpaceHeader = observer(function SpaceHeader({
   space,
@@ -566,6 +612,8 @@ const SpaceChat = observer(function SpaceChat({
     ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
   ].sort((a, b) => a.at - b.at);
   const run = space.status === 'running' ? space.run : null;
+  const undone = undoneMessages(space);
+  const undo = undoState(space);
   const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
   const tools = run ? (store.ephemeral.runLog.get(run) ?? []) : [];
   useEffect(() => {
@@ -606,12 +654,23 @@ const SpaceChat = observer(function SpaceChat({
           </span>
         )}
         {messages.map((m) => (
-          <div key={m.id} className="flex flex-col gap-1">
-            <span className="text-xs text-muted">
+          <div
+            key={m.id}
+            className={`flex flex-col gap-1 ${undone.has(m.id) ? 'space-undone opacity-50' : ''}`}
+          >
+            <span className="flex items-center gap-1.5 text-xs text-muted">
               {m.author.kind === 'me' ? 'you' : m.author.agent}
               {m.usage && m.author.kind === 'agent'
                 ? ` · ${fmtUsage(m.usage)}`
                 : ''}
+              {undone.has(m.id) && m.author.kind === 'agent' && (
+                <span className="rounded-full bg-default px-1.5 text-[10px]">
+                  undone
+                </span>
+              )}
+              {undo.turn?.reply === m.id && space.status !== 'archived' && (
+                <UndoTurn space={space} reason={undo.ok ? null : undo.reason} />
+              )}
             </span>
             {m.failed ? (
               <span className="text-sm text-danger [overflow-wrap:anywhere]">
@@ -676,6 +735,33 @@ const SpaceChat = observer(function SpaceChat({
     </>
   );
 });
+
+/** Undo last turn, on the agent's reply that ended it. `reason` set:
+ *  shown disabled with why (still running, already shipped…). */
+function UndoTurn({ space, reason }: { space: Space; reason: string | null }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Tooltip>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="space-undo h-5 gap-1 px-1.5 text-[11px]"
+        isDisabled={reason != null}
+        isPending={busy}
+        onPress={() => {
+          setBusy(true);
+          void undoLastTurn(space).finally(() => setBusy(false));
+        }}
+      >
+        <ArrowUturnCcwLeft className="size-3" />
+        Undo
+      </Button>
+      <Tooltip.Content>
+        {reason ?? 'Back to the checkpoint before this turn; the chat keeps it'}
+      </Tooltip.Content>
+    </Tooltip>
+  );
+}
 
 const SpaceChanges = observer(function SpaceChanges({
   space,
@@ -886,6 +972,30 @@ export const LabsPage = observer(function LabsPage() {
             placeholder={String(autoArchiveDays([]))}
             accept={(n) => n >= 0 && Number.isInteger(n)}
           />
+          <div className="set-row flex items-center gap-4 px-4 py-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">
+                Notify when a turn ends
+              </span>
+              <span className="text-xs text-muted">
+                A system notification when a space's turn finishes or fails
+                while Theodore is in the background; the dock badge counts the
+                spaces waiting for you.
+              </span>
+            </div>
+            <Switch
+              size="sm"
+              aria-label="Notify when a turn ends"
+              isSelected={notifyOn(store.models.settings.all())}
+              onChange={(v) => setSetting(store, 'user', NOTIFY_KEY, v)}
+            >
+              <Switch.Content>
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+          </div>
         </Card>
       )}
     </section>

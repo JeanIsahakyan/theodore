@@ -1,7 +1,7 @@
 import { openExternal } from '../core/openExternal';
 import { latinKey } from './latin';
 import { isBuildMode } from './space/mode';
-import { spacesIn } from './space/spaces';
+import { archivedSpacesIn, spacesIn, undoState } from './space/spaces';
 import { useEffect, useRef, useState, type Key, type ReactNode } from 'react';
 import {
   EmptyState,
@@ -432,10 +432,53 @@ export const CommandMenu = observer(function CommandMenu() {
             run: () => ui.go({ name: 'space', id: sp.id }),
           }),
         ),
+        // Archived ones only when searched for: open one to unarchive it.
+        ...archivedSpacesIn(ui.workspace, store.models.spaces.all()).map(
+          (sp): Item => ({
+            group: 'Archived spaces',
+            searchOnly: true,
+            label: `${sp.name} (archived)`,
+            sub: sp.branch,
+            icon: <Pencil />,
+            run: () => ui.go({ name: 'space', id: sp.id }),
+          }),
+        ),
+      ]
+    : [];
+  // The open space's own commands.
+  const openSpace =
+    r.name === 'space' && isBuildMode(store)
+      ? store.models.spaces.get(r.id)
+      : undefined;
+  const undo = openSpace ? undoState(openSpace) : null;
+  const thisSpaceItems: Item[] = openSpace
+    ? [
+        ...(undo?.ok
+          ? [
+              {
+                group: 'This space',
+                label: 'Undo last turn',
+                icon: <ArrowUturnCcwLeft />,
+                run: () => void api.undoSpaceTurn(openSpace.id).catch(() => {}),
+              },
+            ]
+          : []),
+        ...(openSpace.status === 'archived'
+          ? [
+              {
+                group: 'This space',
+                label: 'Unarchive space',
+                icon: <ArrowUturnCcwLeft />,
+                run: () =>
+                  void api.unarchiveSpace(openSpace.id).catch(() => {}),
+              },
+            ]
+          : []),
       ]
     : [];
   const items: Item[] = [
     ...prItems,
+    ...thisSpaceItems,
     ...spaceItems,
     {
       group: 'Go to',

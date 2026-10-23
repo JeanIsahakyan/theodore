@@ -9,6 +9,7 @@ import type {
   Setting,
   Space,
   SpaceMode,
+  SpaceTurn,
 } from '../../gen/contract';
 import { ALL, type WorkspaceId } from '../../core/workspaces';
 
@@ -57,6 +58,15 @@ export function isSpaceReview(p: Pick<PrSummary, 'pr'>): boolean {
 export function spacesIn(ws: WorkspaceId, spaces: Space[]): Space[] {
   return spaces
     .filter((s) => s.status !== 'archived')
+    .filter((s) => ws === ALL || s.project === ws)
+    .sort((a, b) => b.updated_at - a.updated_at);
+}
+
+/** The workspace's archived spaces, latest first — the palette lists them
+ *  when searched for, so one can be opened and unarchived. */
+export function archivedSpacesIn(ws: WorkspaceId, spaces: Space[]): Space[] {
+  return spaces
+    .filter((s) => s.status === 'archived')
     .filter((s) => ws === ALL || s.project === ws)
     .sort((a, b) => b.updated_at - a.updated_at);
 }
@@ -213,4 +223,103 @@ const MODE_ORDER: SpaceMode[] = ['ask', 'edit', 'run'];
 /** `M` cycles Ask → Edit → Run → Ask. */
 export function nextMode(m: SpaceMode): SpaceMode {
   return MODE_ORDER[(MODE_ORDER.indexOf(m) + 1) % MODE_ORDER.length]!;
+}
+
+/** The space a review belongs to — its host PR or its own branch review —
+ *  while it can still take a turn. "Send to agent" shows only then. */
+export function spaceOfReview(spaces: Space[], pr: PrId): Space | undefined {
+  return spaces.find(
+    (s) => s.status !== 'archived' && (s.pr === pr || s.review_pr === pr),
+  );
+}
+
+export type UndoState =
+  | { ok: true; turn: SpaceTurn }
+  | { ok: false; turn: SpaceTurn | null; reason: string };
+
+/** What "Undo last turn" would undo — the last turn not undone yet — or
+ *  why it can't. Mirrors the core's rules (`undoable_turn`): not while
+ *  running, not archived, not once the turn shipped. */
+export function undoState(
+  s: Pick<Space, 'status' | 'turn_log' | 'head_sha' | 'shipped' | 'base_sha'>,
+): UndoState {
+  const log = s.turn_log ?? [];
+  let i = log.length - 1;
+  while (i >= 0 && log[i]!.undone) i--;
+  const turn = i >= 0 ? log[i]! : null;
+  const no = (reason: string): UndoState => ({ ok: false, turn, reason });
+  if (s.status === 'running') return no('The agent is still working');
+  if (s.status === 'archived') return no('Archived');
+  if (!turn) return no('No turn to undo');
+  if (turn.after !== s.head_sha) {
+    return no('The space moved since its last turn');
+  }
+  const shipped = s.shipped;
+  if (shipped) {
+    const earlier = log
+      .slice(0, i)
+      .filter((t) => !t.undone)
+      .flatMap((t) => [t.before, t.after]);
+    const beforeTurn =
+      shipped.head === turn.before ||
+      shipped.head === s.base_sha ||
+      earlier.includes(shipped.head);
+    if (!beforeTurn) {
+      const what =
+        shipped.how === 'pr'
+          ? 'Already pushed'
+          : shipped.how === 'merged_locally'
+            ? 'Already merged'
+            : 'Already written as a branch';
+      return no(`${what} — ask the agent to revert it instead`);
+    }
+  }
+  return { ok: true, turn };
+}
+
+/** Message ids (yours and the agent's) of the space's undone turns. */
+export function undoneMessages(s: Pick<Space, 'turn_log'>): Set<string> {
+  return new Set(
+    (s.turn_log ?? [])
+      .filter((t) => t.undone)
+      .flatMap((t) => [t.message, t.reply]),
+  );
+}
+
+/** Native "turn finished" notifications (Settings → Labs); on unless the
+ *  user turned them off. */
+export const NOTIFY_KEY = 'spaces.notify';
+
+export function notifyOn(
+  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+): boolean {
+  return userSetting(settings, NOTIFY_KEY)?.value !== false;
+}
+
+/** The native notification for a turn that just ended, `null` when none
+ *  did: "<space>: turn finished" / "<space>: turn failed". */
+export function nativeNotice(
+  prev: Pick<Space, 'status'> | undefined,
+  next: Pick<Space, 'status' | 'name' | 'error'>,
+): { title: string; body?: string } | null {
+  if (prev?.status !== 'running' || next.status === 'running') return null;
+  if (next.status === 'failed') {
+    const title = `${next.name}: turn failed`;
+    return next.error ? { title, body: next.error } : { title };
+  }
+  return { title: `${next.name}: turn finished` };
+}
+
+/** The dock badge: spaces whose last turn ended after you last looked
+ *  (finished or failed), archived ones aside. */
+export function waitingSpaces(
+  spaces: Pick<Space, 'id' | 'status' | 'updated_at' | 'turns'>[],
+  seen: (id: string) => number | undefined,
+): number {
+  return spaces.filter(
+    (s) =>
+      (s.status === 'idle' || s.status === 'failed') &&
+      s.turns > 0 &&
+      (seen(s.id) ?? 0) < s.updated_at,
+  ).length;
 }

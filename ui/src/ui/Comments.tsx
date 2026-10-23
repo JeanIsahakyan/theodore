@@ -61,6 +61,7 @@ import {
   type MentionQuery,
 } from './review/mention';
 import { AgentTag, Avatar, Btn } from './bits';
+import { SendToAgent } from './space/SendToAgent';
 
 export const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
@@ -575,6 +576,7 @@ export const ThreadView = observer(function ThreadView({
           {plural(t.comments.length, 'comment', 'comments')}
         </span>
         <span className="flex-1" />
+        <SendToAgent pr={pr} item={{ kind: 'thread', id }} />
         <Button
           size="sm"
           variant="ghost"
@@ -671,6 +673,9 @@ function DraftViewInner({ d }: { d: Draft }) {
           · {d.anchor.start_line != null ? 'lines' : 'line'} {label}
         </span>
         <span className="flex-1" />
+        {!editing && (
+          <SendToAgent pr={d.pr} item={{ kind: 'draft', id: d.id }} />
+        )}
         {editing ? (
           <Button
             size="sm"
