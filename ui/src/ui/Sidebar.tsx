@@ -218,11 +218,12 @@ export const Sidebar = observer(function Sidebar() {
 
       <ListBox
         aria-label="Navigation"
-        selectionMode="single"
-        selectedKeys={current ? [current.key] : []}
-        onSelectionChange={(keys) => {
-          const k = keys === 'all' ? undefined : [...keys][0];
-          const it = items.find((i) => i.key === k);
+        // Navigation, not a selection: every press acts, the current route
+        // is just styled. A selection list swallowed the first press after
+        // a dialog closed (it only moved focus there).
+        selectionMode="none"
+        onAction={(k) => {
+          const it = items.find((i) => i.key === String(k));
           if (it?.route) ui.go(it.route);
           else it?.onPress?.();
         }}
@@ -240,7 +241,8 @@ export const Sidebar = observer(function Sidebar() {
                 key={i.key}
                 id={i.key}
                 textValue={i.label}
-                className="nav group gap-3 px-3 text-sm data-[selected=true]:font-medium"
+                aria-current={current?.key === i.key ? 'page' : undefined}
+                className={`nav group gap-3 px-3 text-sm ${current?.key === i.key ? 'bg-default font-medium' : ''}`}
               >
                 <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
                   {i.icon}
