@@ -420,7 +420,7 @@ const CONTROL: &[&str] = &[
 /// Definition keywords that also declare function-local variables.
 const LOCAL_KEYWORDS: &[&str] = &["let", "var", "val", "const"];
 
-fn is_comment(line: &str) -> bool {
+pub(crate) fn is_comment(line: &str) -> bool {
     let t = line.trim_start();
     t.starts_with("//")
         || t.starts_with("/*")
@@ -444,6 +444,12 @@ pub(crate) fn is_distinctive(name: &str) -> bool {
 /// or a config/env key `FOO_BAR=`. Comments define nothing ("a first-class
 /// SECURE type" is prose, not `class SECURE`).
 pub(crate) fn definitions(line: &str) -> Vec<String> {
+    definitions_where(line, |n| !is_stop(n))
+}
+
+/// Like [`definitions`], keeping the names `keep` accepts instead of only
+/// the distinctive ones (a skeleton wants `save` and `show` too).
+pub(crate) fn definitions_where(line: &str, keep: impl Fn(&str) -> bool) -> Vec<String> {
     let mut out = Vec::new();
     if is_comment(line) {
         return out;
@@ -465,7 +471,7 @@ pub(crate) fn definitions(line: &str) -> Vec<String> {
             }
             if let Some(name) = toks.get(j)
                 && !DEF_KEYWORDS.contains(name)
-                && !is_stop(name)
+                && keep(name)
             {
                 out.push((*name).to_string());
             }
@@ -474,13 +480,13 @@ pub(crate) fn definitions(line: &str) -> Vec<String> {
         i += 1;
     }
     if let Some(c) = GO_FUNC.captures(line)
-        && !is_stop(&c[1])
+        && keep(&c[1])
     {
         out.push(c[1].to_string());
     }
     if let Some(c) = METHOD_DEF.captures(line) {
         let name = c[1].trim_start_matches('$');
-        if !CONTROL.contains(&name) && !is_stop(name) {
+        if !CONTROL.contains(&name) && keep(name) {
             out.push(name.to_string());
         }
     }

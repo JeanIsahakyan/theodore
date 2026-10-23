@@ -235,12 +235,12 @@ chunking, so they can never span directory chunks.
 
 ## What's left
 
-- One-line skeleton per file (exports, routes, calls) for large PRs: not built.
+- ~~One-line skeleton per file for large PRs~~: built, see "Follow-ups" below.
 - Hunk-level nodes, so a file serving two features can be split before
   chunking.
 - An eval set with repositories attached, to measure head-file imports and
   co-change.
-- Incremental regroup (after a push) doesn't use the graph yet.
+- ~~Incremental regroup doesn't use the graph~~: built, see "Follow-ups".
 
 ## Reproduce
 
@@ -252,4 +252,191 @@ theodore eval ~/.theodore-eval/sets/real --save ~/.theodore-eval/runs/<label>/re
 theodore eval ~/.theodore-eval/sets/big --graph-only --compare ~/.theodore-eval/runs/claude-default/big [--show]
 python3 docs/eval/scripts/graph_compare.py ~/.theodore-eval/runs ~/.theodore-eval/sets big claude-default <label>
 python3 docs/eval/scripts/metrics.py ~/.theodore-eval/runs ~/.theodore-eval/sets claude-default <label>
+```
+
+## Follow-ups: file skeletons and graph-aware regroup
+
+Dates: 2026-10-22. Agent: Claude CLI default model. Agent spend: $5.15 (two
+runs of the big set).
+
+**Skeletons: neutral.** Every run is still valid on the first try, with no
+"Other" hunks and the same agent calls. Group counts and split files stay
+within run-to-run noise. Cost rises about 10%. The cross-chunk duplicate it
+was meant to fix (the Swift runtime reviewed in two groups on kdb-83) is
+still there. It stays on: it costs no extra call and it gives each part
+real context. The numbers don't prove it helps.
+
+**Regroup: same-file suggestions only.** Replaying pushes on the eval PRs
+showed that links to other files don't predict where Claude puts a hunk.
+Links within the same file do: the suggested group was Claude's group for
+93-99% of the hunks it covers. Cross-file links are used only for the
+merge rule, and only when the regroup is over the size target.
+
+`ALGO_VERSION` stays 3. Groupings stored now are as good as before, so a
+fresh regroup isn't worth an agent call per PR. A bump would also stop
+`Core::regroup` from continuing a stored grouping after a push: it only
+continues from rows made by the current version.
+
+### File skeletons for large PRs
+
+```
+too big ─▶ chunks (unchanged: the skeleton is not reserved when packing)
+            │
+            └─ each chunk's prompt, after "Related changes":
+               "# The rest of this PR"
+                 ## Part k of n (label): N file(s)
+                 - path (new, +40 -0): adds …; edits …; removes …; routes …;
+                   calls …; sql …; hooks …
+                 - … +19 more file(s) in dir (8), dir (5), +3 dirs
+```
+
+- One line per file, regex-extracted (`crates/grouping/src/skeleton.rs`),
+  capped at 180 chars. Each list is capped too: 5 names, 3 routes, 4 calls,
+  4 tables, 3 hooks.
+- The section fills the room the chunk leaves under the budget: between
+  2 000 and 8 000 chars, never more than a sixth of the budget. When it
+  doesn't all fit, the files most related to this chunk are listed first.
+  The rest are counted by folder.
+- **edits** = the definition a change sits in (`Class.method`). With head
+  contents from the app, it comes from the file itself. Without them, from
+  the hunk header and context lines. The eval runs used diffs only.
+- Languages: TS/JS, Python, Rust, Go, PHP, Swift, C# (unit-tested per
+  language). Routes cover `router.get('/x')`, `Route::get`, `HandleFunc`,
+  `MapGet`, `.route("/x", …)`, decorators and attributes, Vapor, Django
+  `path()`. SQL tables are only read from lines that look like SQL, so a
+  Python `from x import y` is not a table.
+
+Lines from the fixtures:
+
+```
+apps/auth/src/registry/app-client-store.ts (new, +94 -0): adds AppClientRow, AppClientStore, applyIfNewer, loadAll; calls pool.query; sql app_client
+apps/core-api/test/persona-permissions.e2e-spec.ts (+111 -2): routes GET /v1/workspaces/${ws}, GET /v1/me/workspaces, GET /v1/workspaces/ws_cli/members +1; calls auth.mintToken …
+lib/classes/Processors/FriendProcessor.php (+17 -0): adds searchFriends; edits FriendProcessor; calls $this.fetchAll; sql friends, users
+lib/classes/Controllers/SettingsController.php (+56 -48): edits SettingsController, SettingsController.newpassAction, SettingsController.aRestoreAction …
+engines/api/api-handler.h (+1386 -10): adds signup, login, markRead, addMember, removeMember +26; edits ApiHandler, connection; calls rpc.send_error, tl.save_to_buffer …
+```
+
+The section adds 1 850 to 8 000 chars per chunk. Input tokens rise 4-6%.
+
+| run | valid 1st try | agent calls | Other hunks | groups | in target | groups ≤2 hunks | docs/config-only groups | files split over groups | cost ($) | wall (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| claude-default | 3/3 | 10 | 0 | 37 | 3/3 | 0 | 3 | 17 | 2.32 | 243 |
+| claude-default-2 | 3/3 | 10 | 0 | 33 | 3/3 | 0 | 2 | 17 | 2.41 | 270 |
+| graph-v4 | 3/3 | 10 | 0 | 40 | 3/3 | 2 | 0 | 21 | 2.34 | 203 |
+| skel-v1 | 3/3 | 10 | 0 | 38 | 3/3 | 2 | 0 | 17 | 2.60 | 220 |
+| skel-v2 | 3/3 | 10 | 0 | 39 | 3/3 | 3 | 1 | 22 | 2.55 | 198 |
+
+`skel-v1` is the skeleton alone. `skel-v2` also replaces the part prompt's
+"do not worry about the rest of the PR" with a pointer to the section. The
+chunks are identical to graph-v4 in both runs. Both runs predate one fix
+(import lines were read as enclosing definitions, so `edits Pool` showed up
+on a few TS files).
+
+What the groupings show:
+
+- **kdb-83**: the Swift runtime still appears as two groups, one per chunk
+  (v4: 23 + 13 hunks; skel-v1: 11 + 26; skel-v2: 23 + 14). A chunk's agent
+  now sees the other copy listed but still can't group it. The merge pass
+  only orders groups, so the overlap survives. skel-v1 split the
+  `sendMessage` signature updates three ways, one of them a 1-hunk group.
+  skel-v2 folded the probe-driver updates into the E2E tests and tools
+  group (10; v4 had 5 + 5 + 7 in three groups).
+- **migratro-77**: both skeleton runs pull the `app_client` migration (5)
+  out of the config group. They leave "Sync secret, exchange rate limit and
+  NODE_ENV wiring" (14-15 hunks): the same `.env`, CI, script and
+  `config.ts` files v4 had in "Registry→auth client sync: app_client table,
+  sync secret and config wiring" (18). v4's group was the same config plus
+  the migration and its two test helpers, so this is a split, not new
+  fragmentation.
+  skel-v2 added a 1-hunk changelog skim group.
+- **vkclone-3**: same shape as v4 in both runs. The 33 `al_dispatch` files
+  stay together (skel-v1 marks the group skim). Controllers are grouped by
+  the kind of change, as before.
+
+What didn't work: reserving the section's room when packing chunks. It
+moved kdb-83 from 3 to 4 chunks (one more agent call) and lowered chunk
+recall from 73% to 71% (migratro-77: 76% to 71%). That's why the section
+now only uses the room left over.
+
+### Graph in incremental regroup
+
+```
+push ─▶ unchanged hunks keep their group
+        new / changed hunk ─┬─ Changed: was in group G ────────▶ suggest G
+                            └─ only G holds hunks of its file ──▶ suggest G
+        prompt: each existing group lists its files (≤ 6)
+                each suggested hunk: "Suggested group: G (reason)"
+agent ─▶ assignments + new groups
+         ├─ hunk left out with a suggestion ─▶ G (no repair call; not
+         │                                     counted valid first try)
+         └─ over the size target: a new 1-hunk group joins the existing
+            same-kind group it is most related to (coarsen's relatedness,
+            ≥ 1.0), until the target is met. Existing ids never change.
+```
+
+The first version did what was asked: suggest the one existing group whose
+files the hunk's file is strongly linked to (edge ≥ 1.0), and merge a new
+1-hunk group into a strongly linked existing group every time. A push
+replay showed both rules were unreliable, so they were narrowed.
+
+Push replay: `theodore eval <set> --graph-only --compare <run>` now plays
+back pushes against a saved grouping. Each file in turn, then each hunk of
+a multi-hunk file in turn, is treated as new. It checks whether the
+suggested group is where the saved run put that hunk. No agent calls.
+Against graph-v4:
+
+| rule | file | kdb-83 | migratro-77 | vkclone-3 |
+| --- | --- | --- | --- | --- |
+| strong link (≥ 1.0) to exactly one group | whole file new | 23% covered, 66% right | 19%, 53% | 17%, **3%** |
+| same | one hunk new | 35%, 97% | 22%, 88% | 4%, 100% |
+| cross-file link only, ≥ 2.0 | one hunk new | 13%, 100% | 20%, 57% | 33%, **16%** |
+| **only group holding the same file** (kept) | one hunk new | 93%, 99% | 69%, 94% | 41%, 93% |
+| merge a new 1-hunk group via a ≥ 1.0 link, always | whole file new | 76% merged, 50% right | 83%, 54% | 82%, 42% |
+
+Against claude-default, the kept rule scores 91% / 99% (kdb-83), 80% / 99%
+(migratro-77) and 41% / 93% (vkclone-3).
+
+Cross-file links fail where Claude groups by the kind of change rather than
+by feature. On vkclone-3 each entry file imports its controller, but Claude
+puts the entry file in the `al_dispatch` rollout group and the controller in
+a "prepared statements" group. That is the file-level limit from the first
+evaluation again. A whole new file therefore gets no suggestion. The agent
+places it, seeing each group's file list.
+
+Changed hunks (`HunkChange::Changed { previous }`) are suggested the group
+of their previous version. No caller in the app passes `Changed` yet: the
+runtime grouper only marks hunks unchanged or new. The replay doesn't cover
+this path either; only the unit tests do.
+
+Deterministic tests (`crates/grouping/src/incremental.rs`) use a revision
+and a push: billing (route + service) and search groups, then a new service
+hunk, a new test file, an unrelated note and an edited search hunk. They
+check:
+
+- suggestions: same file → billing, edited hunk → its old group, the new
+  test file and the note → none, a file split over two groups → none;
+- the prompt lists each group's files and each suggestion;
+- a hunk the agent drops lands in its suggestion without a repair call;
+- over the target, one of three new 1-hunk groups merges into billing,
+  which meets the target, so the other two stay;
+- never merged: a skim group into a normal one, an unrelated group, a
+  2-hunk group, or anything within the target.
+
+### What's left
+
+- Let the merge pass merge, not just order: the Swift runtime split on
+  kdb-83 needs a cross-chunk merge, and the skeleton can't do that.
+- Hunk-level graph nodes (unchanged from above). This is what limits both
+  cross-file suggestions and chunking.
+- Run the skeleton on the real set, and with head files from a real
+  worktree. Neither is measured: the fixtures carry diffs only.
+- Pass `Changed` hunks from the app's runtime grouper (it only knows the
+  previous grouping, not the previous revision).
+
+### Reproduce (follow-ups)
+
+```
+theodore eval ~/.theodore-eval/sets/big --save ~/.theodore-eval/runs/skel-v2/big
+theodore eval ~/.theodore-eval/sets/big --graph-only --compare ~/.theodore-eval/runs/graph-v4/big --show
+python3 docs/eval/scripts/graph_compare.py ~/.theodore-eval/runs ~/.theodore-eval/sets big claude-default claude-default-2 graph-v4 skel-v1 skel-v2
 ```
