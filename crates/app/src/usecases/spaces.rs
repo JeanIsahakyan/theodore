@@ -308,7 +308,11 @@ impl Core {
             model,
             mode,
             prompt: with_failed_check(&space, turn_prompt(&history, &text)),
-            system: system_prompt(&space),
+            system: self
+                .space_review_rules(&space, &project, &wt.path)
+                .await
+                .with_system(Some(system_prompt(&space)))
+                .unwrap_or_default(),
             env: self.space_agent_env(&space).await,
             cwd: wt.path,
             cancel,

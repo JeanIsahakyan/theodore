@@ -306,7 +306,8 @@ async fn drive_fix_run(
     let req = AgentRequest {
         agent,
         prompt,
-        system: None,
+        // The repo's `review.instructions` / `review.context`.
+        system: core.review_rules_of(&task.pr).await.with_system(None),
         cwd: worktree.clone(),
         mode: AgentMode::Edit,
         mcp: mcp.clone(),

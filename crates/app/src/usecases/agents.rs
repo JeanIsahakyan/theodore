@@ -327,6 +327,8 @@ async fn drive_skill_run(
         }
     };
     let stall_after_ms = core.stall_after_ms().await;
+    // The repo's `review.instructions` / `review.context`.
+    let system = core.review_rules_of(&pr).await.with_system(None);
 
     let mut error: Option<String> = None;
     let mut last_agent = first_agent;
@@ -344,7 +346,7 @@ async fn drive_skill_run(
         let req = AgentRequest {
             agent,
             prompt: skill_prompt(&skill, agent, &cwd, &core.0.deps.claude_home),
-            system: None,
+            system: system.clone(),
             cwd: cwd.clone(),
             mode: AgentMode::ReadOnly,
             mcp: mcp.clone(),
@@ -512,10 +514,14 @@ async fn drive_ask(
         .tools
         .as_ref()
         .map(|t| t.register(&run_id, &pr, agent));
+    let system = core
+        .review_rules_of(&pr)
+        .await
+        .with_system(Some(ASK_SYSTEM.into()));
     let req = AgentRequest {
         agent,
         prompt: question,
-        system: Some(ASK_SYSTEM.into()),
+        system,
         cwd,
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),

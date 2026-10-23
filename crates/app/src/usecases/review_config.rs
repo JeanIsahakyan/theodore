@@ -99,6 +99,20 @@ impl Core {
         }
     }
 
+    /// The review rules a space's agent turns run with: its project's
+    /// config (a host project's repo file at the space's base), `context`
+    /// resolved against the space's worktree.
+    pub(crate) async fn space_review_rules(
+        &self,
+        space: &theodore_contract::Space,
+        project: &theodore_contract::Project,
+        worktree: &Path,
+    ) -> ReviewRules {
+        let layers = self.project_layers(project, Some(&space.base_sha)).await;
+        let merged = self.merge_cached(&layers);
+        rules_from(&merged.config.review, worktree).await
+    }
+
     /// The configured `review.auto_skills` for an open PR.
     pub(crate) async fn auto_skills_of(&self, worktree: &Path, repo: &RepoRef) -> Vec<String> {
         let layers = self.pr_config_layers(worktree, repo).await;

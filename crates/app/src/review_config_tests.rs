@@ -212,3 +212,110 @@ async fn context_files_resolve_against_the_pr_checkout() {
     assert_eq!(rules.instructions.as_deref(), Some("Be brief."));
     assert!(rules.context.is_empty());
 }
+
+// ── instructions in every agent run ─────────────────────────────────────
+
+const INSTRUCTIONS: &str = "review:\n  instructions: Unique repo instruction marker.\n";
+
+fn done() -> Vec<theodore_ports::AgentEvent> {
+    vec![theodore_ports::AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: theodore_domain::Usage::default(),
+    }]
+}
+
+#[tokio::test]
+async fn chat_and_skill_runs_carry_the_repo_instructions() {
+    let f = fixtures();
+    global(&f, INSTRUCTIONS);
+    let (core, _recv, pr) = open(&f).await;
+
+    f.agents.push_script(done());
+    core.ask(theodore_contract::AskRequest {
+        pr: pr.clone(),
+        question: "why?".into(),
+        about: None,
+        group: None,
+        agent: Some(theodore_domain::AgentId::Claude),
+    })
+    .await
+    .expect("ask");
+    wait_until(|| f.agents.last_request().is_some()).await;
+    let system = f.agents.last_request().unwrap().system.unwrap();
+    assert!(
+        system.contains("get_pr_context"),
+        "the chat's own prompt stays"
+    );
+    assert!(system.contains("Unique repo instruction marker."));
+
+    f.agents.push_script(done());
+    core.run_skill(theodore_contract::RunSkillRequest {
+        pr,
+        skill: "demo".into(),
+        agents: vec![theodore_domain::AgentId::Claude],
+    })
+    .await
+    .expect("run_skill");
+    wait_until(|| f.agents.requests().len() == 2).await;
+    let system = f.agents.last_request().unwrap().system.unwrap();
+    assert!(system.contains("Unique repo instruction marker."));
+}
+
+#[tokio::test]
+async fn no_review_config_leaves_the_prompts_alone() {
+    let f = fixtures();
+    let (core, _recv, pr) = open(&f).await;
+    f.agents.push_script(done());
+    core.run_skill(theodore_contract::RunSkillRequest {
+        pr,
+        skill: "demo".into(),
+        agents: vec![theodore_domain::AgentId::Claude],
+    })
+    .await
+    .expect("run_skill");
+    wait_until(|| f.agents.last_request().is_some()).await;
+    assert_eq!(f.agents.last_request().unwrap().system, None);
+}
+
+#[tokio::test]
+async fn space_turns_carry_the_repo_instructions() {
+    let f = fixtures();
+    global(&f, INSTRUCTIONS);
+    let (core, _recv) = Core::start(f.deps());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let project = core
+        .add_project(theodore_contract::AddProjectRequest {
+            repo: None,
+            path: Some("/tmp/my-folder".into()),
+        })
+        .await
+        .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, &project.id)
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == serde_json::json!("ready"))
+    })
+    .await;
+    f.git.set_resolve("main", Sha::new("base000"));
+    f.agents.push_script(done());
+    f.git.push_checkpoint(Sha::new("turn111"));
+    core.create_space(theodore_contract::CreateSpaceRequest {
+        project: project.id.clone(),
+        goal: "Fix the login redirect".into(),
+        name: None,
+        branch: None,
+        base: None,
+        agent: None,
+        model: None,
+    })
+    .await
+    .expect("create_space");
+    wait_until(|| f.agents.last_request().is_some()).await;
+    let system = f.agents.last_request().unwrap().system.unwrap();
+    assert!(
+        system.contains("Do not push"),
+        "the space's own prompt stays"
+    );
+    assert!(system.contains("Unique repo instruction marker."));
+}
