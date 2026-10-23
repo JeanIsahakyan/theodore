@@ -35,7 +35,7 @@ space, and a push from the space updates the PR.
 
 | Stage | Space shows | Who acts | Ends when |
 | --- | --- | --- | --- |
-| Drafting | chat · live diff vs base · spend / budget | you + the agent | Open PR / Merge locally / Keep as branch |
+| Drafting | chat · live diff vs base | you + the agent | Open PR / Merge locally / Keep as branch |
 | In review | the same, plus the PR (opened from the header) | reviewers → you → the agent | merged or closed on the host |
 | Done | transcript and final diff | — | archived (auto, `spaces.auto_archive_days` after merge, merge locally or keep) |
 
@@ -241,7 +241,6 @@ the turn ends.
 | --- | --- | --- | --- |
 | turn finished | diff refreshes | toast "fix-login: turn done" [Open] + ● | notification "fix-login: turn finished" |
 | turn failed | error in chat | error toast [Open] + ✕ | notification "fix-login: turn failed" + the error |
-| budget reached | composer locked, banner | toast | — |
 | PR checks / reviews | header + tabs | existing inbox | existing |
 
 "In the background" = the window isn't focused. The notification goes
@@ -264,11 +263,6 @@ counts as seen while the window has focus.
   the space's agent as its next turn, quoted with their `path:line`. The
   loop "read → comment → agent fixes → read what changed" runs on the
   review you already use; tracking each as a `task` is planned.
-- **Budget per space.** `budget.per_space_usd` (user scope, a repo's
-  `.review/config.yaml` overrides it), its own limit: PR review runs keep
-  `budget.per_pr_usd`, and neither counts against the other. Unset = no
-  limit; set it in Settings → Labs. Spend is summed from the space's chat rows, shown in
-  the header and the sidebar tooltip; the composer locks at the limit.
 - **Stages, not modes.** Writing code and reviewing it are one lifecycle;
   nothing is exported from one tool into another.
 
@@ -293,8 +287,7 @@ remaining prompts and limits.
   transcript, so a crash, a stop, or a different agent picks up where the
   last one left off. v2: native session resume when the agent stays the same
   (session id stored per run).
-- **Switch agent or model** per message (picker in the header). Spend is
-  tracked per message, so mixed spaces still add up.
+- **Switch agent or model** per message (picker in the header).
 - **Context**: `@path` mentions (stored as refs), paste a PR link to attach
   its description and diff stats, `/skill` runs a skill as the turn's
   instructions. MCP gets space-scoped tools in v2 (`get_space_context`: goal,
@@ -405,7 +398,7 @@ New synced model `space` (core-owned, written only by commands):
 
 | Data | Where |
 | --- | --- |
-| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap, budget and UI already work on it |
+| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it |
 | Streaming text, tool lines | `Ephemeral::AgentDelta` / `RunLog` with run id `space:<id>:<msg>`; not persisted |
 | A turn | on the space row: `status`, `turns`, `head_sha`, and an entry in `turn_log` (what undo moves back to). Later: `space_run` rows (agent, mode, usage, session id) for per-turn diffs and native resume |
 | Code | the worktree and `refs/theodore/spaces/<id>` |
@@ -483,7 +476,7 @@ sqlite3 ~/.theodore/theodore.db "INSERT INTO models (model, id, data) VALUES
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; `budget.per_space_usd` enforced and shown as spend / budget; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; setup/check scripts; Delete and ref GC; queue + `max_parallel` |
 | **Later** | native session resume per CLI; OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
@@ -496,5 +489,5 @@ sqlite3 ~/.theodore/theodore.db "INSERT INTO models (model, id, data) VALUES
 | 3 | Draft or ready | **Open PR** opens a ready PR; its dropdown offers *Open as draft* (and any other modes) |
 | 4 | Run mode safety | no extra sandbox: Run mode trusts the agent CLI as configured |
 | 5 | Local folder end state | **Merge locally**: a normal merge of the squashed commit into the folder's checked-out branch, instead of a PR; *Keep as branch* stays as the alternative |
-| 6 | Budget | its own `budget.per_space_usd`, separate from the PR's review runs |
+| 6 | Budget | none: budgets, and showing spend at all, were dropped by the owner on 2026-10-22. Nothing is limited, no cost is shown, and an old `budget.*` setting is ignored |
 | 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time |

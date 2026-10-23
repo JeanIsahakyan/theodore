@@ -11,7 +11,7 @@ use theodore_contract::{
     DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
     HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
     LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
-    OpenPrRequest, OpenPrResponse, PrSpend, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
+    OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
     ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
     SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
@@ -232,9 +232,6 @@ impl CoreApi for AppCore {
     }
     async fn save_skill(&self, req: SaveSkillRequest) -> Result<SkillInfo, CommandError> {
         self.core.save_skill(req).await.map_err(err)
-    }
-    async fn pr_spend(&self, pr: PrId) -> Result<PrSpend, CommandError> {
-        self.core.pr_spend(pr).await.map_err(err)
     }
     async fn interdiff(&self, req: InterdiffRequest) -> Result<Vec<InterdiffEntry>, CommandError> {
         self.core.interdiff(req).await.map_err(err)

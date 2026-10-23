@@ -20,7 +20,6 @@ use crate::usecases::agents::ToolsGuard;
 impl Core {
     pub async fn delegate_task(&self, req: DelegateRequest) -> AppResult<String> {
         let task = self.load_task(&req.task).await?;
-        self.check_budget(&task.pr).await?;
         let agent = match req.agent {
             Some(a) => a,
             None => {

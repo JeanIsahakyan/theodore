@@ -2,7 +2,6 @@
 
 pub mod account;
 pub mod agents;
-pub mod budget;
 pub mod grouping;
 pub mod host;
 pub mod inbox;

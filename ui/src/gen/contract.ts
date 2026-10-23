@@ -122,7 +122,6 @@ export type ChatMessage = {
 	author: Author,
 	text: string,
 	refs: Anchor[],
-	usage: Usage | null,
 	at: number,
 	/**
 	 *  Set instead of a normal reply when the run behind this message
@@ -634,13 +633,6 @@ export type PrRef = {
 	host_id: string | null,
 };
 
-export type PrSpend = {
-	pr: PrId,
-	usage: Usage,
-	/**  `budget.per_pr_usd` setting; agent runs stop at this spend. */
-	budget_usd: number | null,
-};
-
 export type PrState = "draft" | "open" | "merged" | "closed";
 
 /**  One row in the inbox / PR lists. */
@@ -953,7 +945,6 @@ export type SkillRun = {
 	skill: string,
 	agents: AgentId[],
 	status: RunStatus,
-	usage: Usage,
 	error: string | null,
 	started_at: number,
 };
@@ -991,8 +982,6 @@ export type Space = {
 	review_pr?: PrId | null,
 	/**  The host PR, once opened: the link from drafting to review. */
 	pr?: PrId | null,
-	/**  Sum of every finished turn's usage (the per-space budget reads it). */
-	usage: Usage,
 	turns: number,
 	/**
 	 *  Run id of the turn in flight (`space:<id>:<message>`); its streaming
@@ -1227,12 +1216,6 @@ export type UpdateInfo = {
 	version: string,
 	notes: string,
 	downloaded: boolean,
-};
-
-export type Usage = {
-	input_tokens: number,
-	output_tokens: number,
-	usd: number | null,
 };
 
 export type ViewedState = "unviewed" | "viewed" |

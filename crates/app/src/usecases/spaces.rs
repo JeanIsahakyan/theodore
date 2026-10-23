@@ -11,7 +11,7 @@ use theodore_contract::{
     ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, Space, SpaceMode,
     SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel, models,
 };
-use theodore_domain::{AgentId, Author, PrId, PrRef, Usage};
+use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
     AgentEvent, AgentMode, AgentRequest, NewAction, SPACE_REF_PREFIX, SyncActionCode, space_ref,
 };
@@ -25,9 +25,6 @@ use crate::usecases::projects::stable_hash_u32;
 pub fn space_chat_key(space: &str) -> PrId {
     PrId(format!("space:{space}"))
 }
-
-/// The per-space spend limit (USD); unset = no limit.
-pub(crate) const SPACE_BUDGET_KEY: &str = "budget.per_space_usd";
 
 /// Messages of history replayed into each turn (the CLIs are spawned fresh
 /// per turn; docs/spaces.md §5 "Resume").
@@ -121,7 +118,6 @@ impl Core {
             mode: SpaceMode::Edit,
             review_pr: None,
             pr: None,
-            usage: Usage::default(),
             turns: 0,
             run: None,
             error: None,
@@ -194,7 +190,6 @@ impl Core {
             return Err(AppError::Invalid("empty message".into()));
         }
         let project = self.space_project(&space).await?;
-        self.check_space_budget(&space, &project).await?;
 
         let agent = req.agent.unwrap_or(space.agent);
         let model = req.model.clone().or_else(|| space.model.clone());
@@ -219,7 +214,6 @@ impl Core {
             author: Author::Me,
             text: text.clone(),
             refs: vec![],
-            usage: None,
             at: now,
             failed: None,
         };
@@ -535,30 +529,6 @@ impl Core {
             .ok_or_else(|| AppError::NotFound(format!("project {}", space.project)))
     }
 
-    /// `budget.per_space_usd` (docs/spaces.md §12: its own budget, apart
-    /// from the PR review runs' `budget.per_pr_usd`) against the space's
-    /// summed turn usage.
-    async fn check_space_budget(&self, space: &Space, project: &Project) -> AppResult<()> {
-        let scope = project.repo.slug();
-        let budget = self
-            .setting_f64_scoped(SPACE_BUDGET_KEY, Some(&scope))
-            .await;
-        if let Some(budget) = budget
-            && space.usage.usd >= budget
-        {
-            let text = format!(
-                "space budget of ${budget:.2} reached (spent ${:.2})",
-                space.usage.usd
-            );
-            self.emit(Ephemeral::Toast {
-                level: ToastLevel::Error,
-                text: text.clone(),
-            });
-            return Err(AppError::Invalid(text));
-        }
-        Ok(())
-    }
-
     /// The transcript so far, oldest first, without failed placeholders.
     async fn space_history(&self, space: &Space) -> AppResult<Vec<ChatMessage>> {
         let store = self.0.deps.store.clone();
@@ -626,7 +596,6 @@ async fn drive_turn(core: &Core, turn: Turn) {
         stall_after_ms: core.stall_after_ms().await,
     };
     let mut text = String::new();
-    let mut usage = Usage::default();
     let mut error = None;
     match core.0.deps.agents.run(req).await {
         Ok(mut run) => loop {
@@ -642,22 +611,22 @@ async fn drive_turn(core: &Core, turn: Turn) {
                         AgentEvent::ToolCall { name, .. } => {
                             core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool: {name}") });
                         }
-                        AgentEvent::Usage { usage: u } => usage += u,
                         AgentEvent::Stalled => {
                             core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                         }
-                        AgentEvent::Done { final_text, usage: u } => {
+                        AgentEvent::Done { final_text, .. } => {
                             if !final_text.is_empty() {
                                 text = final_text;
                             }
-                            usage += u;
                             break;
                         }
                         AgentEvent::Error { message, .. } => {
                             error = Some(message);
                             break;
                         }
-                        AgentEvent::Thinking { .. } | AgentEvent::ToolResult { .. } => {}
+                        AgentEvent::Thinking { .. }
+                        | AgentEvent::ToolResult { .. }
+                        | AgentEvent::Usage { .. } => {}
                     }
                 }
             }
@@ -704,17 +673,13 @@ async fn drive_turn(core: &Core, turn: Turn) {
         author: Author::Agent(agent),
         text: if error.is_some() { String::new() } else { text },
         refs: vec![],
-        usage: Some(usage),
         at: core.0.deps.clock.now(),
         failed: error.clone(),
     };
-    let mut total = space.usage;
-    total += usage;
     let mut patch = serde_json::json!({
         "status": if error.is_some() && !cancelled { SpaceStatus::Failed } else { SpaceStatus::Idle },
         "run": null,
         "turns": turn_no,
-        "usage": total,
         "error": if cancelled { None } else { error.clone() },
         "updated_at": core.0.deps.clock.now(),
     });
@@ -1050,7 +1015,6 @@ mod tests {
             author,
             text: text.into(),
             refs: vec![],
-            usage: None,
             at,
             failed: None,
         }

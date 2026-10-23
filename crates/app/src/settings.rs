@@ -1,6 +1,5 @@
 //! Settings (plan §8.5): `agents.grouping`, `agents.chat`, `agents.skills`,
-//! `agents.fix`, `updates.channel`, `budget.per_pr_usd`, each with a
-//! default. Layered scopes: `user` is the baseline, a repo's own
+//! `agents.fix`, `updates.channel`, each with a default. Layered scopes: `user` is the baseline, a repo's own
 //! `.review/config.yaml` (loaded by `load_repo_settings`) overrides it when
 //! present — keeping it simple, the repo value always wins over `user`.
 
@@ -128,7 +127,7 @@ impl Core {
             .unwrap_or(default)
     }
 
-    /// `budget.per_pr_usd`: `None` when unset or not a number (no budget).
+    /// A numeric setting; `None` when unset or not a number.
     pub async fn setting_f64_scoped(&self, key: &str, repo_scope: Option<&str>) -> Option<f64> {
         self.setting_value_scoped(key, repo_scope)
             .await
@@ -222,7 +221,7 @@ impl Core {
 
     /// Loads `worktree`'s `.review/config.yaml` into `setting` rows scoped
     /// to `repo` (plan §8.5): any key the file sets — `agents.grouping`,
-    /// `agents.skills`, `budget.per_pr_usd`, `grouping.hide`, … — overrides
+    /// `agents.skills`, `grouping.hide`, … — overrides
     /// the `user` scope for this repo from then on. Best-effort: a missing
     /// file is normal (most repos have none); an unparsable one is a toast,
     /// not a hard failure.
@@ -243,6 +242,9 @@ impl Core {
         };
         let mut leaves = Vec::new();
         flatten_yaml(String::new(), &value, &mut leaves);
+        // Budgets were dropped (owner, 2026-10-22): an old file's
+        // `budget.*` keys are ignored rather than stored.
+        leaves.retain(|(k, _)| !k.starts_with("budget."));
         if leaves.is_empty() {
             return;
         }
@@ -302,7 +304,7 @@ mod flatten_tests {
     #[test]
     fn flattens_nested_keys_and_keeps_lists_as_one_leaf() {
         let value: serde_json::Value = serde_json::from_str(
-            r#"{"agents":{"grouping":"codex","skills":["claude","codex"]},"budget":{"per_pr_usd":5.0}}"#,
+            r#"{"agents":{"grouping":"codex","skills":["claude","codex"]},"spaces":{"auto_archive_days":5}}"#,
         )
         .unwrap();
         let mut out = Vec::new();
@@ -316,7 +318,7 @@ mod flatten_tests {
                     "agents.skills".to_string(),
                     serde_json::json!(["claude", "codex"])
                 ),
-                ("budget.per_pr_usd".to_string(), serde_json::json!(5.0)),
+                ("spaces.auto_archive_days".to_string(), serde_json::json!(5)),
             ]
         );
     }

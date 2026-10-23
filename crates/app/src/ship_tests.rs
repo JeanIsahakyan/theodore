@@ -1,7 +1,7 @@
 //! Shipping a space (docs/spaces.md §1, §12) against `Core` + `testkit`
 //! fakes: Open PR squashes, pushes `<login>/<slug>` and opens exactly one
 //! PR through the outbox; Push adds a commit on top; a local folder merges
-//! or keeps a branch; the per-space budget and auto-archive.
+//! or keeps a branch; auto-archive.
 
 use std::time::Duration;
 
@@ -541,32 +541,7 @@ async fn host_and_folder_actions_dont_mix() {
     assert!(err.to_string().contains("local folder"), "{err}");
 }
 
-// ── budget, archive, run mode ─────────────────────────────────────────────
-
-#[tokio::test]
-async fn the_space_budget_is_separate_from_the_pr_budget() {
-    let f = fixtures();
-    let (core, _recv, project) = folder_project(&f).await;
-    put_setting(&f, "budget.per_pr_usd", json!(0.1));
-    f.agents.push_script(done("spent", 0.25));
-    let s = one_turn(&f, &core, &project, "Spend").await;
-    // Over the PR budget, but no space budget is set.
-    let s = turn(&f, &core, &s, "more", "turn222").await;
-    assert_eq!(s.turns, 2);
-
-    put_setting(&f, "budget.per_space_usd", json!(0.2));
-    let err = core
-        .space_send(SpaceSendRequest {
-            space: s.id.clone(),
-            text: "again".into(),
-            agent: None,
-            model: None,
-            mode: None,
-        })
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("space budget of $0.20"), "{err}");
-}
+// ── archive, run mode ─────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn done_spaces_auto_archive_after_the_setting() {
