@@ -43,6 +43,7 @@ import { AgentTag, Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { budgetStatus, fmtUsage } from '../SidePanel';
+import { rich } from '../../highlight';
 import { latinKey, useViewKeys } from '../keys';
 import {
   AgentChip,
@@ -618,8 +619,8 @@ const SpaceChat = observer(function SpaceChat({
                 {m.failed}
               </span>
             ) : (
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {m.text}
+              <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                {m.author.kind === 'me' ? m.text : rich(m.text)}
               </div>
             )}
           </div>
@@ -631,8 +632,8 @@ const SpaceChat = observer(function SpaceChat({
               {tools.length ? ` · ${tools.length} tool calls` : ''}
             </span>
             {streaming && (
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {streaming}
+              <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                {rich(streaming)}
               </div>
             )}
           </div>
