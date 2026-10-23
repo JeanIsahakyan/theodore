@@ -112,10 +112,11 @@ pub fn run(
     for (name, fx) in fixtures {
         let rev = &fx.revision;
         let pre = prepass::run(rev);
-        let graph = RelGraph::build(rev, &pre, &RepoContext::default());
+        let ctx = RepoContext::default();
+        let graph = RelGraph::build(rev, &pre, &ctx);
         let pr: PrMeta = fx.pr.clone().into();
-        let new_chunks = build_prompts_with(&pr, rev, &pre, &graph, budget);
-        let dir_chunks = build_prompts_with(&pr, rev, &pre, &RelGraph::default(), budget);
+        let new_chunks = build_prompts_with(&pr, rev, &pre, &graph, &ctx, budget);
+        let dir_chunks = build_prompts_with(&pr, rev, &pre, &RelGraph::default(), &ctx, budget);
         let comms = graph.communities();
         let multi = comms.iter().filter(|c| c.len() > 1).count();
         let hubs = (0..graph.files.len()).filter(|&i| graph.is_hub(i)).count();

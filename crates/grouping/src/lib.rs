@@ -10,6 +10,7 @@ pub mod pipeline;
 pub mod prepass;
 pub mod prompt;
 mod schema;
+pub mod skeleton;
 mod target;
 
 pub mod testing;

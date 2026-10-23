@@ -9,7 +9,10 @@
 //! too big ─▶ units: each graph community (2+ files)
 //!                   + unconnected files by top-level dir
 //!           unit over budget ─▶ split it by top-level dir
-//!           first-fit-decreasing pack units into chunks ≤ budget
+//!           pack units into chunks ≤ budget, each into the chunk
+//!           it is most related to
+//!           each chunk's prompt lists every other chunk's files as one-line
+//!           skeletons (`skeleton.rs`), so it sees the whole PR's shape
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,6 +25,7 @@ use theodore_domain::{Group, GroupId, Hunk, HunkId, LineKind, Revision};
 use crate::PrMeta;
 use crate::graph::RelGraph;
 use crate::prepass::PrePass;
+use crate::skeleton;
 
 /// Caps on the "Related changes" section, so it stays a hint and never
 /// crowds out the hunks themselves.
@@ -29,6 +33,12 @@ const RELATED_MAX_EDGES: usize = 24;
 const RELATED_MAX_CHARS: usize = 2_400;
 const RELATED_MIN_WEIGHT: f64 = 0.3;
 const ROLLOUT_SHOWN_FILES: usize = 6;
+/// A chunk's "rest of this PR" skeleton section fills the room its chunk
+/// leaves under the budget, within these bounds. It is not reserved when
+/// packing: the floor may take a full chunk this far over the soft budget,
+/// which keeps chunk boundaries exactly what the graph alone decides.
+const SKELETON_MIN_CHARS: usize = 2_000;
+const SKELETON_MAX_CHARS: usize = 8_000;
 /// Pull of one same-directory file pair when choosing a chunk for a unit;
 /// small next to any real graph link.
 const DIR_AFFINITY: f64 = 0.05;
@@ -296,13 +306,25 @@ fn user_prompt(
     prepass: &PrePass,
     graph: &RelGraph,
     budget: &PromptBudget,
+    rest_of_pr: &str,
 ) -> String {
     let mut out = String::new();
     write_pr_meta(&mut out, pr);
     write_hidden_summary(&mut out, prepass);
     write_related(&mut out, files, graph);
+    out.push_str(rest_of_pr);
     write_files_and_hunks(&mut out, files, prepass, budget);
     out
+}
+
+/// Room for the skeleton section in a chunk whose prompt is `used` long
+/// without it: never more than a sixth of the budget.
+fn skeleton_budget(budget: &PromptBudget, used: usize) -> usize {
+    budget
+        .max_chars
+        .saturating_sub(used)
+        .clamp(SKELETON_MIN_CHARS, SKELETON_MAX_CHARS)
+        .min(budget.max_chars / 6)
 }
 
 /// Prompt size for `files` without the related-changes hint.
@@ -312,7 +334,7 @@ fn graph_free_size(
     prepass: &PrePass,
     budget: &PromptBudget,
 ) -> usize {
-    user_prompt(pr, files, prepass, &RelGraph::default(), budget).len()
+    user_prompt(pr, files, prepass, &RelGraph::default(), budget, "").len()
 }
 
 fn top_level_dir(path: &str) -> String {
@@ -468,8 +490,9 @@ pub fn build_prompts(
     prepass: &PrePass,
     budget: &PromptBudget,
 ) -> Vec<PromptChunk> {
-    let graph = RelGraph::build(rev, prepass, &RepoContext::default());
-    build_prompts_with(pr, rev, prepass, &graph, budget)
+    let ctx = RepoContext::default();
+    let graph = RelGraph::build(rev, prepass, &ctx);
+    build_prompts_with(pr, rev, prepass, &graph, &ctx, budget)
 }
 
 /// Build one prompt per chunk. A single chunk covers the whole PR unless the
@@ -477,12 +500,15 @@ pub fn build_prompts(
 /// chunks of related files (graph communities), falling back to top-level
 /// directories for unrelated files (plan §5.2). Each prompt tells the model
 /// the PR-size-scaled group count it should aim for
-/// (`target::target_group_count`).
+/// (`target::target_group_count`). A chunk's prompt also lists every other
+/// chunk's files as one-line skeletons, read from `ctx`'s head files when
+/// present, else from the diff.
 pub fn build_prompts_with(
     pr: &PrMeta,
     rev: &Revision,
     prepass: &PrePass,
     graph: &RelGraph,
+    ctx: &RepoContext,
     budget: &PromptBudget,
 ) -> Vec<PromptChunk> {
     let visible_files: Vec<&theodore_domain::FileDiff> = rev
@@ -493,7 +519,7 @@ pub fn build_prompts_with(
     let total_hunks: usize = visible_files.iter().map(|f| f.hunks.len()).sum();
     let whole_target = crate::target::target_group_count(total_hunks);
 
-    let whole = user_prompt(pr, &visible_files, prepass, graph, budget);
+    let whole = user_prompt(pr, &visible_files, prepass, graph, budget, "");
     if whole.len() <= budget.max_chars || visible_files.len() <= 1 {
         let hunk_ids = visible_files
             .iter()
@@ -547,16 +573,45 @@ pub fn build_prompts_with(
         a
     };
 
-    pack(units, overhead, budget.max_chars, &affinity)
-        .into_iter()
-        .map(|idx| {
+    let packed = pack(units, overhead, budget.max_chars, &affinity);
+    let labels: Vec<String> = packed
+        .iter()
+        .map(|idx| chunk_label(&idx.iter().map(|&i| visible_files[i]).collect::<Vec<_>>()))
+        .collect();
+    let skeleton_lines: Vec<String> = visible_files
+        .iter()
+        .map(|f| {
+            let head = ctx.head_files.get(&f.path).map(String::as_str);
+            skeleton::render(f, &skeleton::extract(f, head), skeleton::LINE_MAX_CHARS)
+        })
+        .collect();
+    let rest_of_pr = |this: usize, used: usize| -> String {
+        let parts: Vec<skeleton::Part> = packed
+            .iter()
+            .zip(&labels)
+            .map(|(idx, label)| skeleton::Part {
+                label: label.clone(),
+                files: idx
+                    .iter()
+                    .map(|&i| (skeleton_lines[i].clone(), affinity(&[i], &packed[this])))
+                    .collect(),
+            })
+            .collect();
+        skeleton::section(this, &parts, skeleton_budget(budget, used))
+    };
+
+    packed
+        .iter()
+        .enumerate()
+        .map(|(k, idx)| {
             let files: Vec<&theodore_domain::FileDiff> =
                 idx.iter().map(|&i| visible_files[i]).collect();
-            let label = chunk_label(&files);
+            let label = labels[k].clone();
             let chunk_hunks: usize = files.iter().map(|f| f.hunks.len()).sum();
             let chunk_target =
                 crate::target::scaled_for_chunk(whole_target, chunk_hunks, total_hunks);
-            let user = user_prompt(pr, &files, prepass, graph, budget);
+            let used = user_prompt(pr, &files, prepass, graph, budget, "").len();
+            let user = user_prompt(pr, &files, prepass, graph, budget, &rest_of_pr(k, used));
             let hunk_ids = files
                 .iter()
                 .flat_map(|f| f.hunks.iter().map(|h| h.id.clone()))
@@ -987,6 +1042,122 @@ mod tests {
                 .prompt
                 .user
                 .contains("api/routes/invoice.ts → core/billing/invoice-service.ts (imports")
+        );
+    }
+
+    /// Whole hunks in the prompt, so test files are big enough to chunk
+    /// with room left for a skeleton section.
+    fn full_excerpts() -> PromptBudget {
+        PromptBudget {
+            excerpt_lines: 1_000,
+            excerpt_max_chars: 100_000,
+            ..PromptBudget::default()
+        }
+    }
+
+    /// Each chunk of an over-budget PR sees the other chunks' files as
+    /// one-line skeletons (and never its own); a single-prompt PR has no
+    /// such section.
+    #[test]
+    fn chunks_list_the_rest_of_the_pr_as_skeletons() {
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![
+                file_with_lines(
+                    "api/routes/invoice.ts",
+                    "r1",
+                    &["router.post('/invoices', billInvoice);"],
+                    300,
+                ),
+                file_with_lines(
+                    "web/src/useInvoices.ts",
+                    "w1",
+                    &["export function useInvoices() {"],
+                    300,
+                ),
+            ],
+        };
+        let prepass = crate::prepass::run(&rev);
+        let whole = build_prompts(&PrMeta::default(), &rev, &prepass, &full_excerpts());
+        assert!(!whole[0].prompt.user.contains("# The rest of this PR"));
+        let budget = PromptBudget {
+            max_chars: whole[0].prompt.user.len() * 7 / 10,
+            ..full_excerpts()
+        };
+        let chunks = build_prompts(&PrMeta::default(), &rev, &prepass, &budget);
+        assert_eq!(chunks.len(), 2);
+        let of = |id: &str| {
+            chunks
+                .iter()
+                .find(|c| c.hunk_ids.contains(&HunkId::new(id)))
+                .unwrap()
+        };
+        let api = &of("r1").prompt.user;
+        let web = &of("w1").prompt.user;
+        assert!(
+            api.contains("- web/src/useInvoices.ts (+301 -0): adds useInvoices, filler_w1_0"),
+            "{api}"
+        );
+        assert!(!api.contains("- api/routes/invoice.ts ("));
+        assert!(
+            web.contains("; routes POST /invoices; calls router.post"),
+            "{web}"
+        );
+        // The section sits before the hunks.
+        assert!(web.find("# The rest of this PR") < web.find("# Files and hunks"));
+    }
+
+    /// With head contents, the skeleton names the definition a change sits
+    /// in even when the hunk shows none.
+    #[test]
+    fn skeletons_read_head_files_when_the_app_supplies_them() {
+        let mut h = mk_hunk("s1", 0);
+        h.new_start = 3;
+        h.lines = vec![DiffLine {
+            kind: LineKind::Add,
+            text: "    return total * rate;".into(),
+            old_no: None,
+            new_no: Some(3),
+        }];
+        let rev = Revision {
+            base: Sha::new("b"),
+            head: Sha::new("h"),
+            files: vec![
+                mk_file("core/tax.py", vec![h]),
+                file_with_lines("web/view.ts", "w1", &["export const shown = 1;"], 300),
+            ],
+        };
+        let mut ctx = RepoContext::default();
+        ctx.head_files.insert(
+            "core/tax.py".into(),
+            "class Tax:\n  def apply(self, total, rate):\n    return total * rate;\n".into(),
+        );
+        let prepass = crate::prepass::run(&rev);
+        let graph = RelGraph::build(&rev, &prepass, &ctx);
+        let whole = build_prompts_with(
+            &PrMeta::default(),
+            &rev,
+            &prepass,
+            &graph,
+            &ctx,
+            &full_excerpts(),
+        );
+        let budget = PromptBudget {
+            max_chars: whole[0].prompt.user.len() * 7 / 10,
+            ..full_excerpts()
+        };
+        let chunks = build_prompts_with(&PrMeta::default(), &rev, &prepass, &graph, &ctx, &budget);
+        let web = chunks
+            .iter()
+            .find(|c| c.hunk_ids.contains(&HunkId::new("w1")))
+            .unwrap();
+        assert!(
+            web.prompt
+                .user
+                .contains("- core/tax.py (+1 -0): edits Tax.apply"),
+            "{}",
+            web.prompt.user
         );
     }
 
