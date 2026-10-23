@@ -41,6 +41,8 @@ mod ship_tests;
 #[cfg(test)]
 mod space_commands_tests;
 #[cfg(test)]
+mod space_tools_tests;
+#[cfg(test)]
 mod space_turns_tests;
 #[cfg(test)]
 mod spaces_tests;
