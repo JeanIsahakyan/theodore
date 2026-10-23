@@ -62,6 +62,7 @@ impl Core {
             status: RunStatus::Running,
             error: None,
             started_at,
+            hidden_findings: 0,
         };
         let data = serde_json::to_value(&row).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -217,8 +218,9 @@ impl Core {
         // across agents by skill).
         let run_id = finding.skill.0.clone();
         let store = self.0.deps.store.clone();
+        let run_id2 = run_id.clone();
         if let Some(skill) =
-            tokio::task::spawn_blocking(move || store.get(models::SKILL_RUN, &run_id))
+            tokio::task::spawn_blocking(move || store.get(models::SKILL_RUN, &run_id2))
                 .await
                 .map_err(AppError::join)??
                 .and_then(|r| {
@@ -229,6 +231,16 @@ impl Core {
                 })
         {
             finding.skill = theodore_domain::SkillId(skill);
+        }
+        // `review.ignore_findings`: dropped before it's stored, and counted
+        // on its run so the AI panel can say so.
+        if self
+            .review_rules_of(&pr)
+            .await
+            .ignores_finding(&finding.anchor.path)
+        {
+            self.count_hidden_finding(&run_id).await?;
+            return Ok(finding.id);
         }
         let pr_s = pr.0.clone();
         let store = self.0.deps.store.clone();
@@ -270,6 +282,33 @@ impl Core {
         }])
         .await?;
         Ok(merged.id)
+    }
+
+    /// One more finding of `run` hidden by `review.ignore_findings`. A
+    /// report that names no stored run is dropped uncounted.
+    async fn count_hidden_finding(&self, run: &str) -> AppResult<()> {
+        let _guard = self.0.findings_lock.lock().await;
+        let store = self.0.deps.store.clone();
+        let id = run.to_string();
+        let Some(row) = tokio::task::spawn_blocking(move || store.get(models::SKILL_RUN, &id))
+            .await
+            .map_err(AppError::join)??
+        else {
+            return Ok(());
+        };
+        let n = row
+            .data
+            .get("hidden_findings")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        self.apply(vec![NewAction {
+            model: models::SKILL_RUN.into(),
+            model_id: run.to_string(),
+            action: SyncActionCode::C,
+            data: Some(serde_json::json!({ "hidden_findings": n + 1 })),
+        }])
+        .await?;
+        Ok(())
     }
 
     /// Attach an agent-proposed fix to a finding of `pr` (MCP `propose_patch`).

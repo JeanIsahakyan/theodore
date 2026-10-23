@@ -319,3 +319,67 @@ async fn space_turns_carry_the_repo_instructions() {
     );
     assert!(system.contains("Unique repo instruction marker."));
 }
+
+// ── ignore_findings ─────────────────────────────────────────────────────
+
+fn finding(pr: &PrId, id: &str, path: &str) -> theodore_domain::Finding {
+    theodore_domain::Finding {
+        id: theodore_domain::FindingId(id.into()),
+        pr: pr.clone(),
+        skill: theodore_domain::SkillId("run-1".into()),
+        agents: vec![theodore_domain::AgentId::Claude],
+        anchor: theodore_domain::Anchor {
+            rev: Sha::new("head111"),
+            path: path.into(),
+            side: theodore_domain::Side::New,
+            line: 1,
+            start_line: None,
+            start_side: None,
+        },
+        severity: theodore_domain::Severity::Warn,
+        title: format!("t {id}"),
+        body: "b".into(),
+        state: theodore_domain::FindingState::Open,
+        fix: None,
+        outdated: false,
+    }
+}
+
+#[tokio::test]
+async fn findings_on_ignored_paths_are_dropped_and_counted_on_their_run() {
+    let f = fixtures();
+    global(
+        &f,
+        "review:\n  ignore_findings: [\"vendor/**\", \"*.pb.go\"]\n",
+    );
+    let (core, _recv, pr) = open(&f).await;
+    f.store
+        .apply(vec![theodore_ports::NewAction {
+            model: models::SKILL_RUN.into(),
+            model_id: "run-1".into(),
+            action: theodore_ports::SyncActionCode::I,
+            data: Some(serde_json::json!({ "id": "run-1", "pr": pr.0, "skill": "bugs" })),
+        }])
+        .unwrap();
+
+    for (id, path) in [
+        ("f-1", "vendor/lib/x.go"),
+        ("f-2", "api/gen/user.pb.go"),
+        ("f-3", "src/lib.rs"),
+    ] {
+        core.add_finding(pr.clone(), finding(&pr, id, path))
+            .await
+            .expect("add_finding");
+    }
+
+    let stored: Vec<String> = f
+        .store
+        .query(models::FINDING, "pr", &pr.0)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.data["anchor"]["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(stored, vec!["src/lib.rs"]);
+    let run = f.store.get(models::SKILL_RUN, "run-1").unwrap().unwrap();
+    assert_eq!(run.data["hidden_findings"], serde_json::json!(2));
+}
