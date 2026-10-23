@@ -112,6 +112,12 @@ implementations too, not stubs — just narrower, matching each host's API.
   locally** / **Keep as branch**. Auto-archive. Off by default; design and switch in
   `docs/spaces.md`.
 
+### Project config
+- `.theodore/config.yaml` in the repo (shared), `.theodore/config.local.yaml` (yours) and
+  `~/.theodore/config.yaml` (global), layered. `review:` picks agents per task; `spaces:` sets up a
+  space — files to copy, free ports, env, and `setup` / `run` / `check` / `archive` commands.
+  Commands from a repo run only after you allow them. Every key: `docs/config.md`.
+
 ### Updates
 - Checks for a new build on launch and every 6 hours, on a stable or beta
   channel. Restarts only once no agent is running and the outbox is empty.
