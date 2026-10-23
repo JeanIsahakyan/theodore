@@ -113,7 +113,6 @@ function ProjectConfigRow({ project }: { project: Project }) {
   useEffect(() => {
     if (!open) return;
     let on = true;
-    setFailed(false);
     api
       .projectConfig(project.id)
       .then((c) => on && setConfig(c))
@@ -128,7 +127,10 @@ function ProjectConfigRow({ project }: { project: Project }) {
         type="button"
         aria-expanded={open}
         className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-default/50"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setFailed(false);
+          setOpen((v) => !v);
+        }}
       >
         <Folder className="size-4 text-muted" />
         <span className="min-w-0 flex-1 truncate text-sm">

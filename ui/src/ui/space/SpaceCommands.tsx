@@ -56,26 +56,27 @@ export function useSpaceConfig(
   config: SpaceConfigView | null;
   refresh: () => void;
 } {
-  const [config, setConfig] = useState<SpaceConfigView | null>(null);
+  const [got, setGot] = useState<{
+    id: string;
+    config: SpaceConfigView;
+  } | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((n) => n + 1), []);
   const live = space != null && space.status !== 'archived';
   const denied = space?.commands_denied;
   const setup = space?.setup?.status;
   useEffect(() => {
-    if (!live) {
-      setConfig(null);
-      return;
-    }
+    if (!live) return;
     let on = true;
     api
       .spaceConfig(id)
-      .then((c) => on && setConfig(c))
+      .then((config) => on && setGot({ id, config }))
       .catch(() => {});
     return () => {
       on = false;
     };
   }, [id, live, denied, setup, tick]);
+  const config = live && got?.id === id ? got.config : null;
   return { config, refresh };
 }
 
