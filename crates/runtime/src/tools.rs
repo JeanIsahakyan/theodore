@@ -273,3 +273,30 @@ impl RunTools for McpRunTools {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The server name the agent registers follows the run: a space turn's
+    /// endpoint is `space-tools`, a PR run's (on a space's PR or not)
+    /// `review-tools`.
+    #[tokio::test]
+    async fn space_turns_and_pr_runs_get_their_own_server() {
+        let backend = Arc::new(CoreTools::default());
+        let tools = McpRunTools::start(backend.clone(), backend).await.unwrap();
+        let pr = PrId("github:o/r#1".into());
+        let space = tools.register_space("space:s1:m1", "s1", AgentId::Claude);
+        let on_space_pr = tools.register("r1", &pr, AgentId::Claude, Some("s1"));
+        let plain = tools.register("r2", &pr, AgentId::Claude, None);
+        assert_eq!(space.name, "space-tools");
+        assert_eq!(on_space_pr.name, "review-tools");
+        assert_eq!(plain.name, "review-tools");
+        assert_ne!(space.token, plain.token);
+        assert_eq!(
+            space.url, plain.url,
+            "one server, the token picks the tools"
+        );
+        tools.shutdown().await;
+    }
+}
