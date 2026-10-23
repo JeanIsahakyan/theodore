@@ -5,10 +5,12 @@
 
 pub mod anchors;
 pub mod findings;
+pub mod glob;
 pub mod grouping;
 pub mod interdiff;
 pub mod model;
 pub mod reading;
+pub mod review_rules;
 pub mod snooze;
 pub mod stack;
 pub mod tasks;

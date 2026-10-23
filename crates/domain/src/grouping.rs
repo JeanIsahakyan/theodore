@@ -25,6 +25,9 @@ pub struct RepoContext {
     /// [`CO_CHANGE_MAX_FILES`] files in total are already left out (bulk
     /// reformatting or vendoring says nothing about relatedness).
     pub co_change_commits: Vec<Vec<String>>,
+    /// The project config's `review:` rules (`hide`, `skim`, the system
+    /// note from `instructions` and `context`).
+    pub review: crate::review_rules::ReviewRules,
 }
 
 /// Commits touching more files than this are ignored for co-change.
@@ -40,6 +43,24 @@ pub fn to_row(grouping: &Grouping) -> serde_json::Result<serde_json::Value> {
         o.insert("algo".into(), ALGO_VERSION.into());
     }
     Ok(v)
+}
+
+/// [`to_row`], plus the hash of the review config it was made with
+/// (`ReviewRules::grouping_hash`); `None` leaves it out.
+pub fn to_row_with(
+    grouping: &Grouping,
+    review_hash: Option<&str>,
+) -> serde_json::Result<serde_json::Value> {
+    let mut v = to_row(grouping)?;
+    if let (Some(o), Some(h)) = (v.as_object_mut(), review_hash) {
+        o.insert("review_hash".into(), h.into());
+    }
+    Ok(v)
+}
+
+/// The review config hash a stored grouping row was made with.
+pub fn row_review_hash(data: &serde_json::Value) -> Option<&str> {
+    data.get("review_hash").and_then(|v| v.as_str())
 }
 
 /// The algorithm version a stored grouping row was made with (0 = before
