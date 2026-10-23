@@ -109,6 +109,7 @@ pub fn run(
     );
     let mut totals = [PairScore::default(); 4];
     let mut compared = 0;
+    let mut replays: Vec<(String, [Replay; 2])> = Vec::new();
     for (name, fx) in fixtures {
         let rev = &fx.revision;
         let pre = prepass::run(rev);
@@ -174,6 +175,7 @@ pub fn run(
                 *t += *s;
             }
             compared += 1;
+            replays.push((name.clone(), replay_push(rev, &reference, &graph)));
             cols = scores.iter().map(fmt).collect();
             cols.push(format!(
                 "{:>4.0}%",
@@ -220,7 +222,103 @@ pub fn run(
 x = only pairs across different files; chunk R = share of the compared run's same-group \
 pairs that the new chunking keeps in one prompt."
     );
+    if !replays.is_empty() {
+        println!(
+            "\nPush replay (incremental regroup suggestions against the compared run):\n\
+{:<20} {:>28} {:>28}",
+            "fixture", "whole file new: sugg / right", "one hunk new: sugg / right"
+        );
+        for (name, [file, hunk]) in &replays {
+            println!("{:<20} {:>28} {:>28}", name, file.show(), hunk.show());
+        }
+        println!(
+            "whole file new: each file's hunks in turn arrive in a push; one hunk new: each \
+hunk of a multi-hunk file in turn. sugg = hunks given a suggested group, right = of those, \
+the compared run's group."
+        );
+    }
     Ok(())
+}
+
+/// Hunks replayed as new, how many got a suggestion, how many of those
+/// named the reference group.
+#[derive(Debug, Clone, Copy, Default)]
+struct Replay {
+    hunks: usize,
+    suggested: usize,
+    right: usize,
+}
+
+impl Replay {
+    fn show(&self) -> String {
+        let pct = |a: usize, b: usize| {
+            if b == 0 {
+                0.0
+            } else {
+                100.0 * a as f64 / b as f64
+            }
+        };
+        format!(
+            "{}/{} ({:.0}%) / {} ({:.0}%)",
+            self.suggested,
+            self.hunks,
+            pct(self.suggested, self.hunks),
+            self.right,
+            pct(self.right, self.suggested)
+        )
+    }
+}
+
+/// Replay pushes on a saved grouping: treat a whole file's hunks, then each
+/// single hunk of a multi-hunk file, as new, and check the group the
+/// incremental regroup would suggest against where the reference put it.
+fn replay_push(
+    rev: &theodore_domain::Revision,
+    reference: &Grouping,
+    graph: &RelGraph,
+) -> [Replay; 2] {
+    use theodore_domain::interdiff::HunkChange;
+    let group_of: BTreeMap<&HunkId, &theodore_domain::GroupId> = reference
+        .groups
+        .iter()
+        .flat_map(|g| g.hunks.iter().map(move |h| (h, &g.id)))
+        .collect();
+    let mut out = [Replay::default(); 2];
+    for f in rev
+        .files
+        .iter()
+        .filter(|f| graph.index_of(&f.path).is_some())
+    {
+        let mut cases: Vec<(usize, Vec<&HunkId>)> =
+            vec![(0, f.hunks.iter().map(|h| &h.id).collect())];
+        if f.hunks.len() > 1 {
+            cases.extend(f.hunks.iter().map(|h| (1, vec![&h.id])));
+        }
+        for (variant, new) in cases {
+            let changes: BTreeMap<HunkId, HunkChange> = rev
+                .hunks()
+                .map(|h| {
+                    let c = if new.contains(&&h.id) {
+                        HunkChange::New
+                    } else {
+                        HunkChange::Unchanged
+                    };
+                    (h.id.clone(), c)
+                })
+                .collect();
+            let suggested =
+                theodore_grouping::incremental::suggested_groups(reference, rev, &changes, graph);
+            for h in new {
+                let r = &mut out[variant];
+                r.hunks += 1;
+                if let Some(g) = suggested.get(h) {
+                    r.suggested += 1;
+                    r.right += usize::from(group_of.get(h) == Some(&g));
+                }
+            }
+        }
+    }
+    out
 }
 
 fn print_detail(graph: &RelGraph, chunks: &[theodore_grouping::prompt::PromptChunk]) {
