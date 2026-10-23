@@ -79,8 +79,11 @@ pub fn build_args(
     if let Some(path) = mcp_config_path {
         args.push("--mcp-config".to_string());
         args.push(path.display().to_string());
-        args.push("--strict-mcp-config".to_string());
     }
+    // Only Theodore's own tools, never the user's global MCP servers: a
+    // run shouldn't reach their other services, wait on their auth, or
+    // report on them ("the Linear connector needs authorizing…").
+    args.push("--strict-mcp-config".to_string());
     match req.mode {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
@@ -460,6 +463,8 @@ mod mcp_config_tests {
         assert!(write_mcp_config(&req).unwrap().is_none());
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--mcp-config"));
+        // …and still none of the user's own MCP servers.
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"));
     }
 
     #[cfg(unix)]
