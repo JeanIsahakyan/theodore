@@ -69,6 +69,8 @@ pub(crate) struct Inner {
     pub space_rt: std::sync::Mutex<HashMap<String, crate::usecases::space_commands::SpaceRuntime>>,
     /// Serializes port reservation, so two creates never take one port.
     pub ports_lock: tokio::sync::Mutex<()>,
+    /// Serializes changes to a space's setup stage (so the goal starts once).
+    pub setup_lock: tokio::sync::Mutex<()>,
     /// Config problems already shown (`file\0key`): warned once per session.
     pub config_warned: std::sync::Mutex<std::collections::HashSet<String>>,
 }
@@ -111,6 +113,7 @@ impl Core {
             account: Default::default(),
             space_rt: std::sync::Mutex::new(HashMap::new()),
             ports_lock: tokio::sync::Mutex::new(()),
+            setup_lock: tokio::sync::Mutex::new(()),
             config_warned: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 

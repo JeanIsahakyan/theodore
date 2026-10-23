@@ -527,7 +527,7 @@ impl Core {
         serde_json::from_value(data).map_err(|e| AppError::Invalid(e.to_string()))
     }
 
-    async fn space_project(&self, space: &Space) -> AppResult<Project> {
+    pub(crate) async fn space_project(&self, space: &Space) -> AppResult<Project> {
         self.project_row(&space.project)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("project {}", space.project)))

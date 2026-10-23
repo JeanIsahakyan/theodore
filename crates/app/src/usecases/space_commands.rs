@@ -10,15 +10,13 @@
 //! archive ─▶ stop run ─▶ checkpoint ─▶ archive? ─▶ remove worktree ─▶ release ports
 //! ```
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use theodore_contract::{
-    ConfigLayer, ConfiguredCommand, EffectiveConfig, Ephemeral, GlobalConfigInfo, Project,
-    RepoCommands, Setting, SetupAction, SetupStatus, Space, SpaceCommandKind, SpaceConfigView,
-    SpaceLogLine, SpaceRunRequest, SpaceSetup, SpaceSetupRequest, SpaceStatus, SpaceTrustRequest,
-    ToastLevel, models,
+    ConfigLayer, ConfiguredCommand, Ephemeral, Project, RepoCommands, Setting, Space,
+    SpaceCommandKind, SpaceLogLine, ToastLevel, models,
 };
 use theodore_domain::Sha;
 use theodore_ports::{CommandEvent, CommandExit, CommandSpec, NewAction, SyncActionCode};
@@ -34,7 +32,7 @@ const LOG_LINES: usize = 2_000;
 /// Lines of a `check`'s output kept on its turn.
 pub(crate) const CHECK_TAIL: usize = 60;
 /// How long archive waits for a stopped `run` to exit.
-const STOP_WAIT: Duration = Duration::from_secs(10);
+pub(crate) const STOP_WAIT: Duration = Duration::from_secs(10);
 
 /// The setting row holding a project's approved repo-command hash.
 const TRUST_KEY: &str = "spaces.trust";
@@ -283,7 +281,7 @@ impl Core {
         row.get("value")?.get("hash")?.as_str().map(str::to_string)
     }
 
-    async fn store_trust(&self, project: &str, hash: &str) -> AppResult<()> {
+    pub(crate) async fn store_trust(&self, project: &str, hash: &str) -> AppResult<()> {
         let setting = Setting {
             key: TRUST_KEY.into(),
             scope: format!("project:{project}"),
@@ -555,58 +553,5 @@ mod copy_tests {
         assert!(notes[1].contains("../up"));
         assert!(notes[2].contains("/abs"));
         assert!(notes[3].contains("symlink"));
-    }
-}
-
-#[allow(dead_code)]
-fn _unused(_: HashSet<u16>, _: SetupAction, _: SetupStatus, _: SpaceSetup, _: SpaceStatus) {}
-
-impl Core {
-    /// What the space will run, where each command comes from, and
-    /// whether the repo's commands are allowed.
-    pub async fn space_config(&self, space: &str) -> AppResult<SpaceConfigView> {
-        let _ = space;
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// "Run commands from this repo?": Allow (stored for the project
-    /// against `hash`) or Not now (skipped in this space).
-    pub async fn space_trust(&self, req: SpaceTrustRequest) -> AppResult<Space> {
-        let _ = req;
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// Retry a failed setup, or continue without it.
-    pub async fn space_setup(&self, req: SpaceSetupRequest) -> AppResult<Space> {
-        let _ = req;
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// Starts or stops the space's `run` command.
-    pub async fn space_run(&self, req: SpaceRunRequest) -> AppResult<Space> {
-        let _ = req;
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// The last lines of every command of the space, oldest first.
-    pub async fn space_logs(&self, space: &str) -> AppResult<Vec<SpaceLogLine>> {
-        let _ = space;
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// A project's merged config with each value's file.
-    pub async fn project_config(&self, project: &str) -> AppResult<EffectiveConfig> {
-        let _ = project;
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// Where `~/.theodore/config.yaml` is, and whether it exists.
-    pub async fn global_config(&self) -> AppResult<GlobalConfigInfo> {
-        Err(AppError::Invalid("not built yet".into()))
-    }
-
-    /// Same, creating the file from a commented template when missing.
-    pub async fn ensure_global_config(&self) -> AppResult<GlobalConfigInfo> {
-        Err(AppError::Invalid("not built yet".into()))
     }
 }

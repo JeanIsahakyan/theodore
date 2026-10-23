@@ -16,6 +16,7 @@ pub mod ship;
 pub mod skills;
 pub mod space_commands;
 pub mod space_feedback;
+pub mod space_hooks;
 pub mod spaces;
 pub mod suggestions;
 pub mod symbols;
