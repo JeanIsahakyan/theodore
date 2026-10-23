@@ -51,3 +51,4 @@ pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::account::APP_REDIRECT_URI;
 pub use usecases::open_pr::parse_pr_ref;
+pub use usecases::spaces::space_chat_key;

@@ -1,5 +1,5 @@
-//! MCP `review-tools` (plan §8.3): the backend over `Core`, and the per-run
-//! token registry `app` uses when it spawns agents.
+//! MCP `review-tools` and `space-tools` (plan §8.3): the backends over
+//! `Core`, and the per-run token registry `app` uses when it spawns agents.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -11,8 +11,9 @@ use theodore_domain::{
     SkillId,
 };
 use theodore_mcp::{
-    BackendError, FileSummary, GroupSummary, GroupWithHunks, McpHandle, McpServer, NewFinding,
-    NewPatch, PrContext, ReviewToolsBackend, RunContext,
+    AppStatus, BackendError, CheckOutcome, FileSummary, GroupSummary, GroupWithHunks, LogTail,
+    McpHandle, McpServer, NewFinding, NewPatch, PrContext, ReviewToolsBackend, RunContext,
+    SpaceCommandName, SpaceInfo, SpaceToolError, SpaceToolsBackend, ToolSet,
 };
 use theodore_ports::McpEndpoint;
 
@@ -26,6 +27,12 @@ pub struct CoreTools {
 impl CoreTools {
     pub fn attach(&self, core: Core) {
         let _ = self.core.set(core);
+    }
+
+    fn space_core(&self) -> Result<&Core, SpaceToolError> {
+        self.core
+            .get()
+            .ok_or_else(|| SpaceToolError::Unavailable("core not started".into()))
     }
 
     fn core(&self) -> Result<&Core, BackendError> {
@@ -165,14 +172,51 @@ impl ReviewToolsBackend for CoreTools {
     }
 }
 
+/// The space tools over the core: the space is the one the run's token
+/// was registered for (`theodore_mcp::RunContext::space`).
+#[async_trait]
+impl SpaceToolsBackend for CoreTools {
+    async fn run_check(&self, space: &str, run_id: &RunId) -> Result<CheckOutcome, SpaceToolError> {
+        self.space_core()?.space_tool_check(space, &run_id.0).await
+    }
+
+    async fn start_app(&self, space: &str) -> Result<AppStatus, SpaceToolError> {
+        self.space_core()?.space_tool_start(space).await
+    }
+
+    async fn stop_app(&self, space: &str) -> Result<AppStatus, SpaceToolError> {
+        self.space_core()?.space_tool_stop(space).await
+    }
+
+    async fn app_status(&self, space: &str) -> Result<AppStatus, SpaceToolError> {
+        self.space_core()?.space_tool_status(space).await
+    }
+
+    async fn read_logs(
+        &self,
+        space: &str,
+        kind: SpaceCommandName,
+        tail: usize,
+    ) -> Result<LogTail, SpaceToolError> {
+        self.space_core()?.space_tool_logs(space, kind, tail).await
+    }
+
+    async fn space_info(&self, space: &str) -> Result<SpaceInfo, SpaceToolError> {
+        self.space_core()?.space_tool_info(space).await
+    }
+}
+
 /// The running MCP server plus `RunTools` for `app`.
 pub struct McpRunTools {
     handle: Mutex<Option<McpHandle>>,
 }
 
 impl McpRunTools {
-    pub async fn start(backend: Arc<dyn ReviewToolsBackend>) -> anyhow::Result<Self> {
-        let handle = McpServer::start(backend).await?;
+    pub async fn start(
+        review: Arc<dyn ReviewToolsBackend>,
+        spaces: Arc<dyn SpaceToolsBackend>,
+    ) -> anyhow::Result<Self> {
+        let handle = McpServer::start_with_spaces(review, spaces).await?;
         Ok(Self {
             handle: Mutex::new(Some(handle)),
         })
@@ -184,19 +228,42 @@ impl McpRunTools {
             h.shutdown().await;
         }
     }
-}
 
-impl RunTools for McpRunTools {
-    fn register(&self, run_id: &str, pr: &PrId, agent: AgentId) -> McpEndpoint {
+    fn register_ctx(&self, ctx: RunContext) -> McpEndpoint {
         let guard = self.handle.lock().unwrap_or_else(|p| p.into_inner());
+        let name = ctx.server_name().to_string();
         match guard.as_ref() {
-            Some(h) => h.register_run(RunContext::review(RunId(run_id.into()), pr.clone(), agent)),
+            Some(h) => h.register_run(ctx),
             None => McpEndpoint {
                 url: String::new(),
                 token: String::new(),
-                name: theodore_ports::REVIEW_TOOLS.into(),
+                name,
             },
         }
+    }
+}
+
+impl RunTools for McpRunTools {
+    fn register(
+        &self,
+        run_id: &str,
+        pr: &PrId,
+        agent: AgentId,
+        space: Option<&str>,
+    ) -> McpEndpoint {
+        let mut ctx = RunContext::review(RunId(run_id.into()), pr.clone(), agent);
+        ctx.space = space.map(str::to_string);
+        self.register_ctx(ctx)
+    }
+
+    fn register_space(&self, run_id: &str, space: &str, agent: AgentId) -> McpEndpoint {
+        self.register_ctx(RunContext {
+            run_id: RunId(run_id.into()),
+            pr: theodore_app::space_chat_key(space),
+            agent,
+            space: Some(space.to_string()),
+            tools: ToolSet::Space,
+        })
     }
 
     fn unregister(&self, endpoint: &McpEndpoint) {
