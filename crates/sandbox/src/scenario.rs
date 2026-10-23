@@ -33,6 +33,10 @@ pub struct Scenario {
     /// `real` (installed agent CLIs) or `replay` (deterministic, no tokens).
     #[serde(default)]
     pub agents: AgentsMode,
+    /// With `replay` agents, a project config's `review.auto_skills` runs
+    /// only when this is on (docs/config.md §1).
+    #[serde(default)]
+    pub auto_skills: bool,
     #[serde(default)]
     pub faults: FaultConfig,
     #[serde(default)]

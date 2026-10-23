@@ -149,6 +149,12 @@ impl Sandbox {
         self.world.scenario.agents
     }
 
+    /// Whether `review.auto_skills` runs: always with real agents, with
+    /// `replay` only when the scenario says `"auto_skills": true`.
+    pub fn auto_skills(&self) -> bool {
+        self.world.scenario.agents == AgentsMode::Real || self.world.scenario.auto_skills
+    }
+
     /// Projects to add on the first start; empty once `mark_projects_seeded`.
     pub fn projects_to_seed(&self) -> Vec<SeedProject> {
         if self.world.lock().st.projects_seeded {

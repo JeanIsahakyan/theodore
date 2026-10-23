@@ -383,3 +383,100 @@ async fn findings_on_ignored_paths_are_dropped_and_counted_on_their_run() {
     let run = f.store.get(models::SKILL_RUN, "run-1").unwrap().unwrap();
     assert_eq!(run.data["hidden_findings"], serde_json::json!(2));
 }
+
+// ── auto_skills ─────────────────────────────────────────────────────────
+
+const AUTO: &str = "review:\n  auto_skills: [security-review, perf]\n";
+
+/// Opens the fixture PR at `head` in `state` on a fresh core.
+async fn open_at(f: &Fixtures, head: &str, state: theodore_domain::PrState) -> (Core, PrId) {
+    let mut detail = testkit::sample_pr_detail(&pr_ref(), &Sha::new("base000"), &Sha::new(head));
+    detail.summary.state = state;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: None,
+        value: detail,
+    }));
+    let (core, _recv) = Core::start(f.deps());
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+    (core, resp.pr)
+}
+
+/// The skill of every skill run of `pr`, sorted.
+fn skill_runs(f: &Fixtures, pr: &PrId) -> Vec<String> {
+    let mut out: Vec<String> = f
+        .store
+        .query(models::SKILL_RUN, "pr", &pr.0)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.data["skill"].as_str().unwrap().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn auto_skills_run_once_per_head() {
+    let f = fixtures();
+    global(&f, AUTO);
+    let (core, pr) = open_at(&f, "head111", theodore_domain::PrState::Open).await;
+    wait_until(|| skill_runs(&f, &pr).len() == 2).await;
+    assert_eq!(skill_runs(&f, &pr), vec!["perf", "security-review"]);
+    core.shutdown();
+
+    // Reopened at the same head (a new session): nothing new.
+    let (core, _) = open_at(&f, "head111", theodore_domain::PrState::Open).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(skill_runs(&f, &pr).len(), 2);
+    core.shutdown();
+
+    // A new head: once more.
+    let (core, _) = open_at(&f, "head222", theodore_domain::PrState::Draft).await;
+    wait_until(|| skill_runs(&f, &pr).len() == 4).await;
+    core.shutdown();
+}
+
+#[tokio::test]
+async fn auto_skills_skip_merged_and_closed_prs_and_can_be_switched_off() {
+    for state in [
+        theodore_domain::PrState::Merged,
+        theodore_domain::PrState::Closed,
+    ] {
+        let f = fixtures();
+        global(&f, AUTO);
+        let (core, pr) = open_at(&f, "head111", state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(skill_runs(&f, &pr).is_empty(), "{state:?}");
+        core.shutdown();
+    }
+
+    let f = fixtures();
+    global(&f, AUTO);
+    let detail = testkit::sample_pr_detail(&pr_ref(), &Sha::new("base000"), &Sha::new("head111"));
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: None,
+        value: detail,
+    }));
+    let (core, _recv) = Core::start(f.deps());
+    core.set_auto_skills(false);
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(skill_runs(&f, &resp.pr).is_empty());
+}
+
+#[tokio::test]
+async fn no_auto_skills_configured_runs_nothing() {
+    let f = fixtures();
+    let (_core, pr) = open_at(&f, "head111", theodore_domain::PrState::Open).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(skill_runs(&f, &pr).is_empty());
+}

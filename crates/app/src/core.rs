@@ -76,8 +76,9 @@ pub(crate) struct Inner {
     /// Merged project configs by a hash of their layers' text
     /// (`usecases::review_config`).
     pub review_config: std::sync::Mutex<HashMap<String, Arc<crate::config::Merged>>>,
-    /// Serializes the `review.ignore_findings` count on a skill run.
-    pub findings_lock: tokio::sync::Mutex<()>,
+    /// Serializes the review config's bookkeeping: the ignored-findings
+    /// count on a skill run, the head `review.auto_skills` last ran at.
+    pub review_lock: tokio::sync::Mutex<()>,
     /// `review.auto_skills` runs at all (`Core::set_auto_skills`).
     pub auto_skills: std::sync::atomic::AtomicBool,
 }
@@ -123,7 +124,7 @@ impl Core {
             setup_lock: tokio::sync::Mutex::new(()),
             config_warned: std::sync::Mutex::new(std::collections::HashSet::new()),
             review_config: crate::usecases::review_config::new_cache(),
-            findings_lock: tokio::sync::Mutex::new(()),
+            review_lock: tokio::sync::Mutex::new(()),
             auto_skills: std::sync::atomic::AtomicBool::new(true),
         });
 

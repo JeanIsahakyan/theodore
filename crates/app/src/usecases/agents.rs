@@ -287,7 +287,7 @@ impl Core {
     /// One more finding of `run` hidden by `review.ignore_findings`. A
     /// report that names no stored run is dropped uncounted.
     async fn count_hidden_finding(&self, run: &str) -> AppResult<()> {
-        let _guard = self.0.findings_lock.lock().await;
+        let _guard = self.0.review_lock.lock().await;
         let store = self.0.deps.store.clone();
         let id = run.to_string();
         let Some(row) = tokio::task::spawn_blocking(move || store.get(models::SKILL_RUN, &id))
