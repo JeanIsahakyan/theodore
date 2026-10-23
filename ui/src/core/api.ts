@@ -57,6 +57,13 @@ import type {
   SpaceFeedbackRequest,
   SpaceReviewRequest,
   SpaceSendRequest,
+  SpaceConfigView,
+  SpaceLogLine,
+  SpaceRunRequest,
+  SpaceSetupRequest,
+  SpaceTrustRequest,
+  EffectiveConfig,
+  GlobalConfigInfo,
   SaveSkillRequest,
   SetLinearTokenRequest,
   SetTokenRequest,
@@ -208,6 +215,24 @@ export const api = {
   unarchiveSpace: (space: string) => call<Space>('unarchive_space', { space }),
   spaceSendFeedback: (req: SpaceFeedbackRequest) =>
     call<string>('space_send_feedback', { req }),
+  /** What a space runs, where each command comes from, and trust. */
+  spaceConfig: (space: string) =>
+    call<SpaceConfigView>('space_config', { space }),
+  /** "Run commands from this repo?": Allow (per project) / Not now. */
+  spaceTrust: (req: SpaceTrustRequest) => call<Space>('space_trust', { req }),
+  /** Retry a failed setup, or continue without it. */
+  spaceSetup: (req: SpaceSetupRequest) => call<Space>('space_setup', { req }),
+  /** Starts or stops the space's `run` command. */
+  spaceRun: (req: SpaceRunRequest) => call<Space>('space_run', { req }),
+  spaceLogs: (space: string) =>
+    call<SpaceLogLine[]>('space_logs', { space }),
+  /** A project's merged config, read-only (Settings → Labs). */
+  projectConfig: (project: string) =>
+    call<EffectiveConfig>('project_config', { project }),
+  globalConfig: () => call<GlobalConfigInfo>('global_config'),
+  /** Creates the global config from a template when missing, then opens
+   *  it in the default editor. */
+  openGlobalConfig: () => call<GlobalConfigInfo>('open_global_config'),
   /** Theodore account (Settings → Account, Onboarding). The sign-in
    *  dialog shows its own failures, so starting and polling don't toast. */
   accountStatus: () => call<AccountStatus>('account_status'),
