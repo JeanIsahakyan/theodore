@@ -202,6 +202,36 @@ impl GitCli {
         Ok(Sha::new(head))
     }
 
+    pub(crate) async fn space_reset_op(
+        &self,
+        worktree: &Path,
+        id: &str,
+        to: &Sha,
+    ) -> GitResult<()> {
+        validate_space_id(id)?;
+        let askpass = self.ensure_askpass()?;
+        let refname = space_ref(id);
+        let steps: [&[&str]; 3] = [
+            &["reset", "-q", "--hard", to.as_str()],
+            // Untracked files the turn left behind; ignored ones (deps,
+            // build output) stay, so the next turn needn't reinstall.
+            &["clean", "-q", "-fd"],
+            &["update-ref", &refname, to.as_str()],
+        ];
+        for args in steps {
+            GitProc {
+                cwd: worktree,
+                askpass: &askpass,
+                args,
+                token: None,
+                stdin: None,
+            }
+            .run()
+            .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn remove_space_worktree_op(&self, repo: &Path, id: &str) -> GitResult<()> {
         let askpass = self.ensure_askpass()?;
         let path = self.space_path(id)?;
