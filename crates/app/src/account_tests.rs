@@ -15,7 +15,10 @@ use theodore_ports::{
 };
 
 use crate::testkit::{FAKE_ACCOUNT_STATE, Fixtures, fixtures, sample_account_session};
-use crate::usecases::account::{CLIENT_ID_ENV, CallbackCheck, check_callback};
+use crate::usecases::account::{
+    APP_REDIRECT_URI, CLIENT_ID_ENV, CallbackCheck, DEFAULT_REDIRECT_URI, REDIRECT_ENV,
+    app_callback_params, check_callback, choose_redirect,
+};
 use crate::{AppError, Core, Receivers};
 
 async fn set_setting(core: &Core, key: &str, value: &str) {
@@ -390,6 +393,242 @@ async fn starting_again_replaces_the_previous_sign_in() {
         AccountSignInState::Pending
     );
     assert!(f.account.calls().iter().any(|c| c == "poll:dc-1:5"));
+}
+
+// ── app URL scheme redirect ──────────────────────────────────────────────
+
+#[test]
+fn the_redirect_is_configured_else_the_app_scheme_else_loopback() {
+    assert_eq!(
+        choose_redirect(
+            Some("http://127.0.0.1:5555/cb".into()),
+            Some(APP_REDIRECT_URI)
+        ),
+        "http://127.0.0.1:5555/cb"
+    );
+    assert_eq!(
+        choose_redirect(None, Some(APP_REDIRECT_URI)),
+        APP_REDIRECT_URI
+    );
+    assert_eq!(choose_redirect(None, None), DEFAULT_REDIRECT_URI);
+}
+
+#[test]
+fn an_app_callback_must_be_the_redirect_itself() {
+    let p = app_callback_params(
+        "theodore://callback?code=c&state=s%2B1&extra=x",
+        APP_REDIRECT_URI,
+    )
+    .unwrap();
+    assert_eq!(p, params(Some("c"), Some("s+1")));
+    assert!(app_callback_params("theodore://callback/?code=c", APP_REDIRECT_URI).is_some());
+    for other in [
+        "theodore://other?code=c&state=s",
+        "theodore://callback/x?code=c&state=s",
+        "evil://callback?code=c&state=s",
+        "http://127.0.0.1:47823/callback?code=c&state=s",
+        "not a url",
+    ] {
+        assert_eq!(
+            app_callback_params(other, APP_REDIRECT_URI),
+            None,
+            "{other}"
+        );
+    }
+}
+
+fn app_url(query: &str) -> String {
+    format!("{APP_REDIRECT_URI}?{query}")
+}
+
+/// A configured core whose shell receives `theodore://` (an app bundle).
+/// `None` when this machine configures the redirect through the env.
+async fn bundled(f: &Fixtures) -> Option<(Core, Receivers)> {
+    if std::env::var(REDIRECT_ENV).is_ok() {
+        return None;
+    }
+    let (core, recv) = configured(f).await;
+    core.set_account_app_redirect(Some(APP_REDIRECT_URI));
+    Some((core, recv))
+}
+
+#[tokio::test]
+async fn a_bundled_app_signs_in_through_its_url_scheme_without_a_loopback() {
+    let f = fixtures();
+    let Some((core, mut recv)) = bundled(&f).await else {
+        return;
+    };
+    f.account.push_exchange(Ok(fresh(&f, "rt_1")));
+    let url = match core.account_sign_in_start(browser(None)).await.unwrap() {
+        AccountSignInStart::Browser { url } => url,
+        other => panic!("{other:?}"),
+    };
+    assert!(url.contains(&format!("redirect_uri={APP_REDIRECT_URI}")));
+    assert!(
+        !f.account.listening(),
+        "no loopback listener for the app-scheme redirect"
+    );
+    assert_eq!(
+        core.account_sign_in_poll().await.unwrap(),
+        AccountSignInState::Pending
+    );
+
+    let page = core
+        .account_sign_in_callback(&app_url(&format!("code=code_1&state={FAKE_ACCOUNT_STATE}")))
+        .await;
+    assert_eq!(
+        page,
+        CallbackPage::SignedIn {
+            email: "ada@example.com".into()
+        }
+    );
+    assert!(matches!(
+        poll_until_done(&core).await,
+        AccountSignInState::Done { .. }
+    ));
+    assert!(
+        f.account
+            .calls()
+            .contains(&"exchange:code_1:verifier-1".to_string()),
+        "the code is exchanged with this attempt's PKCE verifier"
+    );
+    assert_eq!(stored(&f).unwrap().refresh_token, "rt_1");
+    assert!(expect_account_event(&mut recv).await.user.is_some());
+    // Delivered again (a second "Open Theodore?"): the sign-in is over.
+    let again = core
+        .account_sign_in_callback(&app_url(&format!("code=code_1&state={FAKE_ACCOUNT_STATE}")))
+        .await;
+    assert_eq!(again, CallbackPage::Ignored);
+}
+
+#[tokio::test]
+async fn an_app_callback_with_the_wrong_state_is_ignored_and_keeps_waiting() {
+    let f = fixtures();
+    let Some((core, _recv)) = bundled(&f).await else {
+        return;
+    };
+    f.account.push_exchange(Ok(fresh(&f, "rt_1")));
+    core.account_sign_in_start(browser(None)).await.unwrap();
+
+    for forged in [
+        app_url("code=attacker&state=forged"),
+        app_url("code=attacker"),
+        format!("theodore://elsewhere?code=attacker&state={FAKE_ACCOUNT_STATE}"),
+    ] {
+        assert_eq!(
+            core.account_sign_in_callback(&forged).await,
+            CallbackPage::Ignored,
+            "{forged}"
+        );
+    }
+    assert_eq!(
+        core.account_sign_in_poll().await.unwrap(),
+        AccountSignInState::Pending
+    );
+    assert!(
+        !f.account.calls().iter().any(|c| c.starts_with("exchange")),
+        "a forged callback must never reach the token exchange"
+    );
+
+    let page = core
+        .account_sign_in_callback(&app_url(&format!("code=code_1&state={FAKE_ACCOUNT_STATE}")))
+        .await;
+    assert!(matches!(page, CallbackPage::SignedIn { .. }));
+    assert!(matches!(
+        poll_until_done(&core).await,
+        AccountSignInState::Done { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_app_callback_with_no_sign_in_waiting_is_ignored() {
+    let f = fixtures();
+    let Some((core, _recv)) = bundled(&f).await else {
+        return;
+    };
+    f.account.push_exchange(Ok(fresh(&f, "rt_1")));
+    let good = app_url(&format!("code=code_1&state={FAKE_ACCOUNT_STATE}"));
+
+    // Nothing started (e.g. the app was launched by the link itself).
+    assert_eq!(
+        core.account_sign_in_callback(&good).await,
+        CallbackPage::Ignored
+    );
+    // A device-code sign-in doesn't take redirects.
+    core.account_sign_in_start(device()).await.unwrap();
+    assert_eq!(
+        core.account_sign_in_callback(&good).await,
+        CallbackPage::Ignored
+    );
+    // Cancelled.
+    core.account_sign_in_start(browser(None)).await.unwrap();
+    core.account_sign_in_cancel();
+    assert_eq!(
+        core.account_sign_in_callback(&good).await,
+        CallbackPage::Ignored
+    );
+    // A loopback sign-in only listens on its port.
+    core.set_account_app_redirect(None);
+    core.account_sign_in_start(browser(None)).await.unwrap();
+    assert!(f.account.listening());
+    assert_eq!(
+        core.account_sign_in_callback(&good).await,
+        CallbackPage::Ignored
+    );
+    assert!(!f.account.calls().iter().any(|c| c.starts_with("exchange")));
+    assert!(stored(&f).is_none());
+}
+
+#[tokio::test]
+async fn an_app_callback_carrying_an_error_ends_the_sign_in() {
+    let f = fixtures();
+    let Some((core, _recv)) = bundled(&f).await else {
+        return;
+    };
+    core.account_sign_in_start(browser(None)).await.unwrap();
+    let page = core
+        .account_sign_in_callback(&app_url(&format!(
+            "error=access_denied&state={FAKE_ACCOUNT_STATE}"
+        )))
+        .await;
+    assert!(matches!(page, CallbackPage::Failed { .. }));
+    assert_eq!(poll_until_done(&core).await, AccountSignInState::Denied);
+
+    core.account_sign_in_start(browser(None)).await.unwrap();
+    let page = core
+        .account_sign_in_callback(&app_url(&format!(
+            "error=server_error&error_description=boom&state={FAKE_ACCOUNT_STATE}"
+        )))
+        .await;
+    assert!(matches!(page, CallbackPage::Failed { .. }));
+    assert_eq!(
+        poll_until_done(&core).await,
+        AccountSignInState::Failed {
+            message: "server_error: boom".into()
+        }
+    );
+    assert!(!f.account.calls().iter().any(|c| c.starts_with("exchange")));
+    assert!(stored(&f).is_none());
+}
+
+#[tokio::test]
+async fn a_configured_redirect_wins_over_the_app_scheme() {
+    let f = fixtures();
+    let Some((core, _recv)) = bundled(&f).await else {
+        return;
+    };
+    set_setting(
+        &core,
+        "account.workos.redirect_uri",
+        "http://127.0.0.1:5555/cb",
+    )
+    .await;
+    let url = match core.account_sign_in_start(browser(None)).await.unwrap() {
+        AccountSignInStart::Browser { url } => url,
+        other => panic!("{other:?}"),
+    };
+    assert!(url.contains("http://127.0.0.1:5555/cb"));
+    assert!(f.account.listening(), "the loopback listener is bound");
 }
 
 // ── device code ──────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 //! ```text
 //! browser  /user_management/authorize (PKCE S256, state, login_hint)
 //!            └─▶ hosted AuthKit page ─▶ http://127.0.0.1:<port>/callback
+//!                                       or theodore://callback (OS ─▶ app)
 //!                  └─▶ POST /user_management/authenticate  code + code_verifier
 //! device   POST /user_management/authorize/device ─▶ user_code
 //!            └─▶ poll /user_management/authenticate  device_code grant
@@ -22,7 +23,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use theodore_ports::{
     AccountConfig, AccountError, AccountPort, AccountProfile, AccountResult, AccountSession,
-    BrowserSignIn, DeviceSignIn, DeviceSignInPoll,
+    BrowserSignIn, CallbackListener, DeviceSignIn, DeviceSignInPoll, is_loopback_redirect,
 };
 use url::Url;
 
@@ -296,8 +297,20 @@ impl AccountPort for WorkosAccount {
         cfg: &AccountConfig,
         login_hint: Option<&str>,
     ) -> AccountResult<BrowserSignIn> {
-        let redirect = loopback::parse_redirect(&cfg.redirect_uri)?;
-        let (redirect_url, listener) = loopback::listen(&redirect).await?;
+        let (redirect_url, callbacks) = if is_loopback_redirect(&cfg.redirect_uri) {
+            let redirect = loopback::parse_redirect(&cfg.redirect_uri)?;
+            let (url, listener) = loopback::listen(&redirect).await?;
+            (url, Some(Box::new(listener) as Box<dyn CallbackListener>))
+        } else {
+            // An app URL scheme: the OS hands the redirect to the app.
+            let url = Url::parse(&cfg.redirect_uri).map_err(|e| {
+                AccountError::Config(format!(
+                    "redirect URI {:?} is not a URL: {e}",
+                    cfg.redirect_uri
+                ))
+            })?;
+            (url, None)
+        };
         let pkce = pkce::generate()?;
         let state = pkce::random_token()?;
         let url = self.authorize_url(
@@ -311,7 +324,7 @@ impl AccountPort for WorkosAccount {
             url: url.to_string(),
             state,
             code_verifier: pkce.verifier,
-            callbacks: Box::new(listener),
+            callbacks,
         })
     }
 

@@ -4,8 +4,11 @@
 //! the provider protocol lives behind `AccountPort`.
 //!
 //! ```text
-//! browser  start ─▶ port binds loopback, builds URL ─▶ UI opens it
+//! browser  start ─▶ port builds URL (binds loopback if http) ─▶ UI opens it
 //!            └─ task: callback ─▶ state check ─▶ exchange ─▶ keychain ─▶ emit
+//!                       ▲
+//!          loopback listener, or the shell's `account_sign_in_callback`
+//!          (theodore://callback handed to the app by the OS)
 //! device   start ─▶ user_code ─▶ UI polls ─▶ exchange ─▶ keychain ─▶ emit
 //! session  refresher wakes 60 s before `exp` ─▶ rotate ─▶ keychain
 //!            └─ rejected ─▶ signed out ─▶ emit
@@ -14,15 +17,18 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use theodore_contract::{
     AccountSignInMethod, AccountSignInRequest, AccountSignInStart, AccountSignInState,
     AccountStatus, AccountUser, Ephemeral,
 };
 use theodore_ports::{
-    AccountConfig, AccountError, AccountSession, BrowserSignIn, CallbackPage, CallbackParams,
-    DeviceSignInPoll,
+    AccountConfig, AccountError, AccountResult, AccountSession, BrowserSignIn, CallbackListener,
+    CallbackPage, CallbackParams, DeviceSignInPoll, IncomingCallback,
 };
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
@@ -34,8 +40,15 @@ pub const CLIENT_ID_ENV: &str = "THEODORE_WORKOS_CLIENT_ID";
 pub const CLIENT_ID_SETTING: &str = "account.workos.client_id";
 pub const REDIRECT_ENV: &str = "THEODORE_WORKOS_REDIRECT_URI";
 pub const REDIRECT_SETTING: &str = "account.workos.redirect_uri";
-/// Must be registered as a redirect URI on the WorkOS application.
+/// Loopback redirect, for when the app can't receive its URL scheme (a dev
+/// run, a bare binary). Must be registered as a redirect URI on the WorkOS
+/// application.
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:47823/callback";
+/// The app's own URL scheme redirect: the OS hands it to the installed app
+/// (`Core::account_sign_in_callback`). The shell opts in with
+/// `Core::set_account_app_redirect` when it can receive it. Must be
+/// registered as a redirect URI on the WorkOS application too.
+pub const APP_REDIRECT_URI: &str = "theodore://callback";
 
 /// Refresh this long before the access token's `exp`.
 pub(crate) const REFRESH_SKEW_MS: i64 = 60_000;
@@ -49,12 +62,24 @@ enum Pending {
         id: u64,
         cancel: CancellationToken,
         outcome: Option<AccountSignInState>,
+        /// Set when the redirect is an app URL scheme: where the shell's
+        /// `account_sign_in_callback` feeds the redirect in.
+        app_callbacks: Option<AppCallbacks>,
     },
     Device {
         id: u64,
         device_code: String,
         interval: u32,
     },
+}
+
+/// One browser sign-in, as its flow task sees it.
+struct BrowserAttempt {
+    id: u64,
+    state: String,
+    code_verifier: String,
+    callbacks: Box<dyn CallbackListener>,
+    cancel: CancellationToken,
 }
 
 /// In-memory account state, one per `Core`.
@@ -70,6 +95,63 @@ pub(crate) struct AccountState {
     /// never writes a stale session back.
     generation: AtomicU64,
     next_id: AtomicU64,
+    /// The app URL scheme redirect the shell can receive, if any
+    /// (`Core::set_account_app_redirect`).
+    app_redirect: std::sync::Mutex<Option<String>>,
+}
+
+/// The receiving end of an app URL scheme redirect for one sign-in.
+struct AppCallbacks {
+    redirect: String,
+    tx: mpsc::Sender<IncomingCallback>,
+}
+
+/// Stands in for the loopback listener when the OS delivers the redirect.
+struct AppSchemeCallbacks(mpsc::Receiver<IncomingCallback>);
+
+#[async_trait]
+impl CallbackListener for AppSchemeCallbacks {
+    async fn next(&mut self) -> AccountResult<IncomingCallback> {
+        self.0
+            .recv()
+            .await
+            .ok_or_else(|| AccountError::Protocol("the sign-in stopped waiting".into()))
+    }
+}
+
+/// Configured redirect (env or setting) wins; else the app URL scheme when
+/// the shell can receive it; else the loopback.
+pub(crate) fn choose_redirect(configured: Option<String>, app: Option<&str>) -> String {
+    configured
+        .or_else(|| app.map(str::to_string))
+        .unwrap_or_else(|| DEFAULT_REDIRECT_URI.to_string())
+}
+
+/// The query of `url` if it is `redirect` (same scheme, host and path; a
+/// trailing `/` doesn't matter). Unknown keys are ignored; a repeated key
+/// keeps its first value.
+pub(crate) fn app_callback_params(url: &str, redirect: &str) -> Option<CallbackParams> {
+    let (url, redirect) = (Url::parse(url).ok()?, Url::parse(redirect).ok()?);
+    let same = url.scheme() == redirect.scheme()
+        && url.host_str() == redirect.host_str()
+        && url.path().trim_end_matches('/') == redirect.path().trim_end_matches('/');
+    if !same {
+        return None;
+    }
+    let mut params = CallbackParams::default();
+    for (k, v) in url.query_pairs() {
+        let slot = match k.as_ref() {
+            "code" => &mut params.code,
+            "state" => &mut params.state,
+            "error" => &mut params.error,
+            "error_description" => &mut params.error_description,
+            _ => continue,
+        };
+        if slot.is_none() {
+            *slot = Some(v.into_owned());
+        }
+    }
+    Some(params)
 }
 
 /// What a redirect means for the sign-in waiting on it.
@@ -136,7 +218,8 @@ fn not_configured() -> AppError {
 
 impl Core {
     /// `THEODORE_WORKOS_*` env, else the `account.workos.*` settings. `None`
-    /// hides the feature: no provider in this mode, or no client id.
+    /// hides the feature: no provider in this mode, or no client id. The
+    /// redirect: see `choose_redirect`.
     pub(crate) async fn account_config(&self) -> Option<AccountConfig> {
         if !self.0.deps.account.enabled() {
             return None;
@@ -144,14 +227,27 @@ impl Core {
         let client_id = self
             .env_or_setting(CLIENT_ID_ENV, CLIENT_ID_SETTING)
             .await?;
-        let redirect_uri = self
-            .env_or_setting(REDIRECT_ENV, REDIRECT_SETTING)
-            .await
-            .unwrap_or_else(|| DEFAULT_REDIRECT_URI.to_string());
+        let configured = self.env_or_setting(REDIRECT_ENV, REDIRECT_SETTING).await;
+        let app = self
+            .0
+            .account
+            .app_redirect
+            .lock()
+            .expect("account lock")
+            .clone();
+        let redirect_uri = choose_redirect(configured, app.as_deref());
         Some(AccountConfig {
             client_id,
             redirect_uri,
         })
+    }
+
+    /// Called by the shell when it receives its URL scheme (an installed app
+    /// bundle): browser sign-ins then return to `uri` (normally
+    /// `APP_REDIRECT_URI`) instead of the loopback, unless a redirect is
+    /// configured. `None` goes back to the loopback.
+    pub fn set_account_app_redirect(&self, uri: Option<&str>) {
+        *self.0.account.app_redirect.lock().expect("account lock") = uri.map(str::to_string);
     }
 
     async fn env_or_setting(&self, env: &str, key: &str) -> Option<String> {
@@ -239,23 +335,47 @@ impl Core {
         let id = self.0.account.next_id.fetch_add(1, Ordering::SeqCst);
         match req.method {
             AccountSignInMethod::Browser => {
-                let sign_in = self
+                let BrowserSignIn {
+                    url,
+                    state,
+                    code_verifier,
+                    callbacks,
+                } = self
                     .0
                     .deps
                     .account
                     .start_browser(&cfg, req.email.as_deref())
                     .await?;
+                // No loopback listener: the redirect is an app URL scheme,
+                // delivered through `account_sign_in_callback`.
+                let (callbacks, app_callbacks) = match callbacks {
+                    Some(listener) => (listener, None),
+                    None => {
+                        let (tx, rx) = mpsc::channel(4);
+                        let listener: Box<dyn CallbackListener> = Box::new(AppSchemeCallbacks(rx));
+                        let app = AppCallbacks {
+                            redirect: cfg.redirect_uri.clone(),
+                            tx,
+                        };
+                        (listener, Some(app))
+                    }
+                };
                 let cancel = CancellationToken::new();
                 *self.0.account.pending.lock().expect("account lock") = Some(Pending::Browser {
                     id,
                     cancel: cancel.clone(),
                     outcome: None,
+                    app_callbacks,
                 });
-                let url = sign_in.url.clone();
                 let core = self.clone();
-                tokio::spawn(
-                    async move { core.account_browser_flow(cfg, id, sign_in, cancel).await },
-                );
+                let attempt = BrowserAttempt {
+                    id,
+                    state,
+                    code_verifier,
+                    callbacks,
+                    cancel,
+                };
+                tokio::spawn(async move { core.account_browser_flow(cfg, attempt).await });
                 Ok(AccountSignInStart::Browser { url })
             }
             AccountSignInMethod::DeviceCode => {
@@ -276,13 +396,42 @@ impl Core {
         }
     }
 
-    async fn account_browser_flow(
-        &self,
-        cfg: AccountConfig,
-        id: u64,
-        mut sign_in: BrowserSignIn,
-        cancel: CancellationToken,
-    ) {
+    /// A sign-in redirect the OS handed to the app through its URL scheme
+    /// (`theodore://callback?code=…&state=…`) instead of the loopback
+    /// listener. Same `state` check and code exchange as a loopback
+    /// callback, and it settles the outcome `account_sign_in_poll` reports.
+    /// `Ignored` when no browser sign-in is waiting on this redirect, or the
+    /// `state` isn't this sign-in's (it then keeps waiting).
+    pub async fn account_sign_in_callback(&self, url: &str) -> CallbackPage {
+        let found = {
+            let pending = self.0.account.pending.lock().expect("account lock");
+            match pending.as_ref() {
+                Some(Pending::Browser {
+                    outcome: None,
+                    app_callbacks: Some(app),
+                    ..
+                }) => app_callback_params(url, &app.redirect).map(|p| (p, app.tx.clone())),
+                _ => None,
+            }
+        };
+        let Some((params, tx)) = found else {
+            return CallbackPage::Ignored;
+        };
+        let (reply, page) = oneshot::channel();
+        if tx.send(IncomingCallback { params, reply }).await.is_err() {
+            return CallbackPage::Ignored;
+        }
+        page.await.unwrap_or(CallbackPage::Ignored)
+    }
+
+    async fn account_browser_flow(&self, cfg: AccountConfig, attempt: BrowserAttempt) {
+        let BrowserAttempt {
+            id,
+            state,
+            code_verifier,
+            mut callbacks,
+            cancel,
+        } = attempt;
         let deadline = tokio::time::sleep(BROWSER_TIMEOUT);
         tokio::pin!(deadline);
         let outcome = loop {
@@ -290,7 +439,7 @@ impl Core {
                 _ = cancel.cancelled() => return,
                 _ = self.0.shutdown.cancelled() => return,
                 _ = &mut deadline => break AccountSignInState::Expired,
-                r = sign_in.callbacks.next() => r,
+                r = callbacks.next() => r,
             };
             let incoming = match incoming {
                 Ok(i) => i,
@@ -300,7 +449,7 @@ impl Core {
                     };
                 }
             };
-            match check_callback(&incoming.params, &sign_in.state) {
+            match check_callback(&incoming.params, &state) {
                 CallbackCheck::Ignore => {
                     let _ = incoming.reply.send(CallbackPage::Ignored);
                 }
@@ -319,7 +468,7 @@ impl Core {
                         .0
                         .deps
                         .account
-                        .exchange_code(&cfg, &code, &sign_in.code_verifier)
+                        .exchange_code(&cfg, &code, &code_verifier)
                         .await
                         .map_err(AppError::from);
                     let result = match exchanged {
@@ -450,7 +599,8 @@ impl Core {
         }
     }
 
-    /// Drops the sign-in in progress, if any (frees the loopback port).
+    /// Drops the sign-in in progress, if any (frees the loopback port; an
+    /// app URL scheme redirect arriving later is ignored).
     pub fn account_sign_in_cancel(&self) {
         let pending = self.0.account.pending.lock().expect("account lock").take();
         if let Some(Pending::Browser { cancel, .. }) = pending {

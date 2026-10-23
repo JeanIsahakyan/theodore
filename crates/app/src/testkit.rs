@@ -1677,7 +1677,8 @@ impl FakeAccount {
         rx
     }
 
-    /// Whether the last browser sign-in's listener is still alive.
+    /// Whether the last browser sign-in's loopback listener is still alive
+    /// (`false` when none was bound: an app URL scheme redirect).
     pub fn listening(&self) -> bool {
         self.callbacks
             .lock()
@@ -1707,8 +1708,16 @@ impl AccountPort for FakeAccount {
         login_hint: Option<&str>,
     ) -> AccountResult<BrowserSignIn> {
         self.call(format!("start_browser:{}", login_hint.unwrap_or("")));
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
-        *self.callbacks.lock().unwrap() = Some(tx);
+        // Like the real adapter: a listener only for a loopback redirect.
+        let callbacks: Option<Box<dyn CallbackListener>> =
+            if theodore_ports::is_loopback_redirect(&cfg.redirect_uri) {
+                let (tx, rx) = tokio::sync::mpsc::channel(4);
+                *self.callbacks.lock().unwrap() = Some(tx);
+                Some(Box::new(FakeCallbacks(rx)))
+            } else {
+                *self.callbacks.lock().unwrap() = None;
+                None
+            };
         Ok(BrowserSignIn {
             url: format!(
                 "https://auth.example/authorize?client_id={}&redirect_uri={}",
@@ -1716,7 +1725,7 @@ impl AccountPort for FakeAccount {
             ),
             state: FAKE_ACCOUNT_STATE.into(),
             code_verifier: "verifier-1".into(),
-            callbacks: Box::new(FakeCallbacks(rx)),
+            callbacks,
         })
     }
 

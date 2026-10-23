@@ -138,6 +138,28 @@ async fn start_browser_rejects_a_non_loopback_redirect() {
 }
 
 #[tokio::test]
+async fn start_browser_with_an_app_scheme_binds_no_listener() {
+    let a = WorkosAccount::new();
+    let cfg = AccountConfig {
+        redirect_uri: "theodore://callback".into(),
+        ..cfg()
+    };
+    let sign_in = a.start_browser(&cfg, None).await.unwrap();
+    assert!(
+        sign_in.callbacks.is_none(),
+        "the OS delivers an app-scheme redirect; no loopback port is bound"
+    );
+    let url = Url::parse(&sign_in.url).unwrap();
+    let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    assert_eq!(q["redirect_uri"], "theodore://callback");
+    assert_eq!(q["state"], sign_in.state);
+    assert_eq!(
+        q["code_challenge"],
+        pkce::challenge_for(&sign_in.code_verifier)
+    );
+}
+
+#[tokio::test]
 async fn exchange_code_uses_the_verifier_and_no_secret() {
     let server = MockServer::start().await;
     mount_jwks(&server, 1).await;
