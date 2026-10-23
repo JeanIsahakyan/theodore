@@ -103,8 +103,11 @@ can approve as a unit."
                 out,
                 "You are reviewing one part (`{dir}`) of a larger pull request, \
 split into parts of related files for size; this part has {total_hunks} changed hunk(s). \
-Aim for about {lo}-{hi} groups in THIS part — a later pass orders and merges \
-every part's groups together, so do not worry about the rest of the PR."
+Aim for about {lo}-{hi} groups in THIS part; a later pass puts every part's \
+groups in reading order. The other parts are listed one line per file under \
+\"The rest of this PR\": use them to see what this part's changes connect to \
+and to title groups so they read well next to the other parts' groups, but \
+group only the hunks listed in this part."
             );
         }
     }
