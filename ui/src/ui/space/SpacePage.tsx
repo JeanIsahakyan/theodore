@@ -356,11 +356,16 @@ const SpaceHeader = observer(function SpaceHeader({
   const stage = spaceStage(space, pr?.state);
   const days = autoArchiveDays(store.models.settings.all());
   return (
-    <header className="flex flex-wrap items-center gap-2 border-b border-separator px-5 py-3">
-      <Typography.Heading level={6} className="min-w-0 truncate">
+    // One line: the name and branch give way (truncate) before any action
+    // does; the actions never wrap under the title.
+    <header className="flex flex-nowrap items-center gap-2 border-b border-separator px-5 py-3 [&>button]:shrink-0">
+      <Typography.Heading level={6} className="min-w-0 shrink truncate">
         {space.name}
       </Typography.Heading>
-      <span className="truncate font-mono text-xs text-muted">
+      <span
+        className="min-w-0 shrink-[2] truncate font-mono text-xs text-muted"
+        title={`${space.branch} ← ${space.base}`}
+      >
         {space.branch} ← {space.base}
       </span>
       <span
@@ -418,15 +423,16 @@ const SpaceHeader = observer(function SpaceHeader({
           size="sm"
           variant="ghost"
           aria-label="Archive space"
-          className="space-archive"
+          isIconOnly
+          className="space-archive shrink-0"
           isDisabled={running || archived}
           onPress={() => archive(ui, space)}
         >
-          <Archive className="size-3.5" />
-          Archive
+          <Archive className="size-4" />
         </Button>
         <Tooltip.Content>
-          Removes the worktree; the transcript and checkpoints are kept
+          Archive <K>⇧E</K> — removes the worktree; the transcript and
+          checkpoints are kept
         </Tooltip.Content>
       </Tooltip>
     </header>
