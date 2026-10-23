@@ -478,7 +478,7 @@ fn enclosing(lines: &[&str], changed: &[usize], keyword_only: bool) -> Vec<Strin
     let defs: Vec<(usize, usize, String)> = lines
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.len() <= SOURCE_LINE_MAX && !is_comment(l))
+        .filter(|(_, l)| l.len() <= SOURCE_LINE_MAX && !is_comment(l) && !is_import(l))
         .filter_map(|(i, l)| {
             def_names(l, keyword_only, true)
                 .into_iter()

@@ -475,10 +475,13 @@ fn imports_and_data_files_define_nothing_but_config_keys() {
         "",
         &[
             "+import type { Redis } from 'ioredis';",
+            "+  const key = `rl:${id}`;",
             "+export const WINDOW_SECONDS = 60;",
         ],
     );
     assert_eq!(s.adds, vec!["WINDOW_SECONDS"]);
+    // An import line is not a definition the next change sits in.
+    assert!(s.edits.is_empty(), "{:?}", s.edits);
 
     let j = sk(
         "contract/openapi.json",
