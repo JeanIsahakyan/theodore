@@ -220,6 +220,10 @@ describe('space keys', () => {
     expect(spaceKeyAction('x', false)).toBeNull();
   });
 
+  it('toggles the run command with shift+R', () => {
+    expect(spaceKeyAction('r', true)).toBe('run');
+  });
+
   it('archives only with shift', () => {
     expect(spaceKeyAction('e', false)).toBeNull();
     expect(spaceKeyAction('e', true)).toBe('archive');

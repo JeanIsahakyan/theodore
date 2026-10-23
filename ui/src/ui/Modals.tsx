@@ -218,6 +218,7 @@ const SPACE_KEYS: [string, string][] = [
   ['M', 'mode: Ask → Edit → Run'],
   ['⌘.', 'stop the turn'],
   ['R', 'review the changes, grouped'],
+  ['⇧R', "start / stop the space's run command"],
   [
     'P / ⇧P',
     'open PR / as draft (local folder: merge / keep as branch); push once a PR exists',

@@ -18,8 +18,10 @@ import type {
   PrId,
   Person,
   SandboxInfo,
+  SpaceLogLine,
   ToastLevel,
 } from '../gen/contract';
+import { appendLogs, seedLogs } from '../ui/space/commands';
 
 const LOG_LIMIT = 500;
 
@@ -81,6 +83,10 @@ export class EphemeralStore {
   reactionOverrides = new Map<string, boolean>();
   /** Suggestion comments queued for a batch commit, per PR. */
   suggestionBatch = new Map<PrId, Set<CommentId>>();
+  /** A space's command output (setup / run / check / archive), per space
+   *  id: live `space_log` events, seeded from `space_logs` when its page
+   *  opens. Bounded (`SPACE_LOG_LIMIT`). */
+  spaceLogs = new Map<string, SpaceLogLine[]>();
 
   private nextToastId = 1;
 
@@ -100,6 +106,7 @@ export class EphemeralStore {
       sandbox: computed,
       reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
+      spaceLogs: observableShallow,
     });
   }
 
@@ -238,7 +245,23 @@ export class EphemeralStore {
         case 'account_status':
           this.account = e.status;
           return;
+        case 'space_log': {
+          const next = new Map(this.spaceLogs);
+          next.set(e.space, appendLogs(next.get(e.space) ?? [], [e.line]));
+          this.spaceLogs = next;
+          return;
+        }
       }
+    });
+  }
+
+  /** The core's tail (`space_logs`) for a space, merged with the live
+   *  lines that arrived while it was fetched. */
+  seedSpaceLogs(space: string, lines: SpaceLogLine[]): void {
+    runInAction(() => {
+      const next = new Map(this.spaceLogs);
+      next.set(space, seedLogs(lines, next.get(space) ?? []));
+      this.spaceLogs = next;
     });
   }
 

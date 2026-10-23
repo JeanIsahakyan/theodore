@@ -33,7 +33,13 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { HunkId, ShipAction, Space, SpaceMode } from '../../gen/contract';
+import type {
+  HunkId,
+  ShipAction,
+  Space,
+  SpaceConfigView,
+  SpaceMode,
+} from '../../gen/contract';
 import { api } from '../../core/api';
 import { ALL } from '../../core/workspaces';
 import { FEATURES } from '../../features';
@@ -54,6 +60,21 @@ import {
 } from './Composer';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
+import { checksByReply, runControl, setupView } from './commands';
+import { GlobalConfigSection } from './ConfigSection';
+import {
+  CheckChip,
+  LogsDrawer,
+  LogsToggle,
+  PortChips,
+  RunButton,
+  SetupNote,
+  SetupStage,
+  TrustPrompt,
+  toggleRun,
+  useSpaceConfig,
+  useSpaceLogsSeed,
+} from './SpaceCommands';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
@@ -136,6 +157,10 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const space = store.models.spaces.get(id);
   const chat = useRef<ChatHandle | null>(null);
   const ship = useRef<ShipHandle | null>(null);
+  const { config, refresh: refreshConfig } = useSpaceConfig(id, space);
+  const [logsOpen, setLogsOpen] = useState(false);
+  useSpaceLogsSeed(id);
+  const run = space ? runControl(config, space) : null;
 
   // Page keys (docs/spaces.md §3) — never while typing in the composer.
   useViewKeys(
@@ -156,6 +181,10 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           if (!archived)
             void openGroupedReview(store, ui, space).catch(() => {});
           return;
+        case 'run':
+          if (!run) return false;
+          void toggleRun(space, !run.running);
+          return;
         case 'ship':
           ship.current?.primary();
           return;
@@ -172,7 +201,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           return false;
       }
     },
-    [space?.id, space?.status, space?.pr],
+    [space?.id, space?.status, space?.pr, run?.running, !!run],
   );
 
   // ⌘. stops the turn — from anywhere on the page, the composer included.
@@ -227,9 +256,20 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   }
   return (
     <div className="view space-page flex min-w-0 flex-1 flex-col">
-      <SpaceHeader space={space} ship={ship} />
+      <SpaceHeader
+        space={space}
+        ship={ship}
+        config={config}
+        logsOpen={logsOpen}
+        onToggleLogs={() => setLogsOpen((v) => !v)}
+      />
       <div className="flex min-h-0 flex-1">
         <section className="flex w-[40%] min-w-[340px] flex-col border-r border-separator">
+          <TrustPrompt
+            space={space}
+            config={config}
+            onChanged={refreshConfig}
+          />
           <SpaceChat space={space} handle={chat} />
         </section>
         <section className="flex min-w-0 flex-1 flex-col">
@@ -242,6 +282,9 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           )}
         </section>
       </div>
+      {logsOpen && (
+        <LogsDrawer space={space} onClose={() => setLogsOpen(false)} />
+      )}
       {space.status === 'archived' && <ArchivedBanner space={space} />}
       <Hints>
         <K>C</K> message the agent <K>M</K> mode <K>⌘.</K> stop <K>R</K> review{' '}
@@ -250,6 +293,12 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           <>
             {' '}
             <K>O</K> open PR
+          </>
+        ) : null}
+        {run ? (
+          <>
+            {' '}
+            <K>⇧R</K> {run.running ? 'stop' : 'run'}
           </>
         ) : null}{' '}
         <K>⇧E</K> archive <K>Esc</K> back
@@ -287,9 +336,15 @@ function ArchivedBanner({ space }: { space: Space }) {
 const SpaceHeader = observer(function SpaceHeader({
   space,
   ship,
+  config,
+  logsOpen,
+  onToggleLogs,
 }: {
   space: Space;
   ship: MutableRefObject<ShipHandle | null>;
+  config: SpaceConfigView | null;
+  logsOpen: boolean;
+  onToggleLogs: () => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -320,7 +375,10 @@ const SpaceHeader = observer(function SpaceHeader({
         {pr ? ` · #${pr.pr.number}` : ''}
       </span>
       <AgentTag id={space.agent} />
+      <PortChips space={space} />
       <span className="flex-1" />
+      <RunButton space={space} config={config} />
+      <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
       <Button
         size="sm"
         variant="secondary"
@@ -587,6 +645,8 @@ const SpaceChat = observer(function SpaceChat({
   const run = space.status === 'running' ? space.run : null;
   const undone = undoneMessages(space);
   const undo = undoState(space);
+  const checks = checksByReply(space.turn_log);
+  const settingUp = setupView(space) === 'stage';
   const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
   const tools = run ? (store.ephemeral.runLog.get(run) ?? []) : [];
   useEffect(() => {
@@ -620,7 +680,9 @@ const SpaceChat = observer(function SpaceChat({
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-5 py-4">
-        {messages.length === 0 && !run && (
+        <SetupStage space={space} />
+        <SetupNote space={space} />
+        {messages.length === 0 && !run && !settingUp && (
           <span className="text-sm text-muted">
             Tell the agent what to change. It works in its own worktree; your
             checkout is never touched.
@@ -650,6 +712,9 @@ const SpaceChat = observer(function SpaceChat({
               <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
                 {m.author.kind === 'me' ? m.text : rich(m.text)}
               </div>
+            )}
+            {m.author.kind === 'agent' && checks.has(m.id) && (
+              <CheckChip check={checks.get(m.id)!} />
             )}
           </div>
         ))}
@@ -960,6 +1025,7 @@ export const LabsPage = observer(function LabsPage() {
           </div>
         </Card>
       )}
+      {on && <GlobalConfigSection />}
     </section>
   );
 });

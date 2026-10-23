@@ -69,3 +69,25 @@ describe('EphemeralStore account', () => {
     expect(e.account?.available).toBe(false);
   });
 });
+
+describe('EphemeralStore space logs', () => {
+  const line = (at: number, text: string) => ({
+    kind: 'setup' as const,
+    line: text,
+    stderr: false,
+    at,
+  });
+
+  it('buffers space_log lines per space and seeds from the tail', () => {
+    const e = new EphemeralStore();
+    e.handle({ type: 'space_log', space: 's1', line: line(3, 'live') });
+    e.handle({ type: 'space_log', space: 's2', line: line(1, 'other') });
+    e.seedSpaceLogs('s1', [line(1, 'a'), line(2, 'b')]);
+    expect(e.spaceLogs.get('s1')?.map((l) => l.line)).toEqual([
+      'a',
+      'b',
+      'live',
+    ]);
+    expect(e.spaceLogs.get('s2')).toHaveLength(1);
+  });
+});

@@ -169,7 +169,14 @@ export function diffStat(
 
 /** What a key does on a space page (outside the composer). */
 export type SpaceKeyAction =
-  'focus' | 'mode' | 'review' | 'ship' | 'ship-alt' | 'open-pr' | 'archive';
+  | 'focus'
+  | 'mode'
+  | 'review'
+  | 'run'
+  | 'ship'
+  | 'ship-alt'
+  | 'open-pr'
+  | 'archive';
 
 /** `key` is the layout-independent letter (`latinKey`). Archive needs ⇧ —
  *  it removes the worktree, so a stray `e` must not do it. */
@@ -184,7 +191,8 @@ export function spaceKeyAction(
     case 'm':
       return shift ? null : 'mode';
     case 'r':
-      return shift ? null : 'review';
+      // ⇧R starts / stops the space's `run` command.
+      return shift ? 'run' : 'review';
     case 'p':
       return shift ? 'ship-alt' : 'ship';
     case 'o':
