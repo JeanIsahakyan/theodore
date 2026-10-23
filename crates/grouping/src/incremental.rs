@@ -249,9 +249,10 @@ pub fn suggested_groups(
 /// of the same file (none when two or more do).
 ///
 /// Links to other files are deliberately not used here: replaying pushes
-/// on the eval PRs, a strong cross-file link named the group Claude chose
-/// for 0–100% of hunks depending on the PR (16% on a refactor grouped by
-/// kind of change), while "same file, one group" did for 91–98%.
+/// on the eval PRs (`theodore eval --graph-only --compare`), a strong
+/// cross-file link named the group Claude chose for 3–100% of hunks
+/// depending on the PR (3–16% on a refactor grouped by kind of change),
+/// while "the only group holding the same file" did for 93–99%.
 fn suggest(
     previous: &Grouping,
     groups: &[Group],
