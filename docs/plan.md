@@ -30,7 +30,7 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in itself is D21), telemetry, Linux and Windows | decided |
 | D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
 | D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
-| D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE + loopback redirect, device code as fallback; no secret in the app, no server yet (§6.12) | decided |
+| D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE, redirect to `theodore://callback` in the app bundle and to a loopback listener elsewhere, device code as fallback; no secret in the app, no server yet (§6.12) | decided |
 
 ---
 
@@ -481,17 +481,22 @@ page, and that page then hands the sign-in back to the app.
 ```
 Settings → Account / Onboarding
   email ──▶ account_sign_in_start{browser, email}
-              core: bind 127.0.0.1:<port>, PKCE S256 + state
+              core: PKCE S256 + state; bind 127.0.0.1:<port> (loopback only)
               UI:   open /user_management/authorize?…&login_hint=<email>
                          │
   browser: AuthKit ─▶ "we emailed you a code" ─▶ code ─▶ 302
                          │
-  127.0.0.1:<port>/callback?code&state ──▶ state matches? ──no──▶ ignored, keep waiting
+         ┌───────────────┴────────────────┐
+  app bundle                         dev run / bare binary
+  theodore://callback?code&state     127.0.0.1:<port>/callback?code&state
+  macOS "Open Theodore?" ─▶ app      the running app's listener
+         └───────────────┬────────────────┘
+                 state matches? ──no──▶ ignored, keep waiting
                          │ yes
   POST /user_management/authenticate  code + code_verifier + client_id
                          │
   verify JWT (JWKS, RS256, iss, exp, sub) ─▶ keychain ─▶ event account_status
-  tab: "You're signed in"                   UI: card flips, window comes forward
+  loopback tab: "You're signed in"          UI: card flips, window comes forward
 ```
 
 - **Primary: the browser flow above.** It's the shortest path to "email → code
@@ -503,20 +508,35 @@ Settings → Account / Onboarding
   code and a link, and the user signs in on any browser or device. This is the
   "sign in on the web, the app picks it up" path. It needs no redirect at
   all, so it still works when the loopback port is blocked.
-- **Loopback, not a custom URL scheme.**
-  - AuthKit allows `http://127.0.0.1` redirects in production specifically for
-    native clients.
-  - A loopback redirect works in `cargo tauri dev`. A macOS URL scheme only
-    resolves for an installed bundle.
-  - No other app can claim the redirect, which a scheme allows.
-  - Nothing has to be routed into an already-running instance: the running
-    app is the listener.
-  - `theodore://` stays reserved for "open PR in Theodore" (§11).
+- **Redirect: the app's URL scheme in a bundle, loopback elsewhere.**
+
+  | Where the app runs | Redirect | How it gets back |
+  | --- | --- | --- |
+  | Installed app (`…/Theodore.app/Contents/MacOS/`) | `theodore://callback` | the browser hands it to macOS ("Open Theodore?"), Theodore comes to the front |
+  | `cargo tauri dev`, a bare `target/release/Theodore` | `http://127.0.0.1:47823/callback` | the running app's loopback listener; the tab shows "You're signed in" |
+  | A redirect is configured (env or setting) | that one, always | loopback if `http`, else the app scheme |
+
+  - The desktop shell decides: it tells the core
+    (`set_account_app_redirect`) when its executable sits inside an app
+    bundle, the only place macOS routes the scheme to. The scheme is
+    registered in the bundle's `Info.plist` from `tauri.conf.json`
+    (`plugins.deep-link`).
+  - With the scheme, no port is bound. The deep-link plugin hands
+    `theodore://callback?…` to the running app, which passes it to
+    `Core::account_sign_in_callback`: same `state` check and code exchange
+    as the loopback, same outcome for `account_sign_in_poll`, so the UI has
+    one flow. A URL that arrives with no browser sign-in waiting (e.g. the
+    link launched the app) is ignored.
+  - The loopback stays because a URL scheme only resolves for an installed
+    bundle, and AuthKit allows `http://127.0.0.1` redirects in production
+    for native clients.
+  - Other `theodore://` hosts stay free for "open PR in Theodore" (§11).
 - **CSRF.** Each attempt has a fresh 256-bit `state`. A redirect with a
-  missing or different `state` has no effect: the browser gets an "out of
-  date" page and the sign-in keeps waiting for the real one. The listener
-  binds only `127.0.0.1` and answers only `GET <path>`. It stops after 10
-  minutes, on cancel, or once the sign-in completes.
+  missing or different `state` has no effect and the sign-in keeps waiting
+  for the real one (the loopback tab gets an "out of date" page). The
+  listener binds only `127.0.0.1` and answers only `GET <path>`. A sign-in
+  stops after 10 minutes, on cancel, or once it completes. The code and
+  tokens are never logged.
 - **Session.**
   - The session lives in one keychain entry, `theodore.account`: a JSON object
     with the access token, refresh token, `exp`, `sid` and profile.
@@ -547,6 +567,7 @@ commands  account_status · account_sign_in_start · account_sign_in_poll ·
 app  usecases/account.rs   config, state check, keychain, refresher, events
 ports  AccountPort          LocalAccount = no provider (fixtures, sandbox, CLI)
 account-workos  WorkosAccount   PKCE, loopback listener, device code, refresh, JWKS
+desktop  deep_link.rs       theodore:// handler, bundle check ─▶ app redirect
 ```
 
 The browser method's outcome is held in core memory. `account_sign_in_poll`
@@ -563,12 +584,14 @@ card, no onboarding step). Fixture and sandbox modes always hide it.
 | What | Env | Setting (scope `user`) | Default |
 | --- | --- | --- | --- |
 | Client id | `THEODORE_WORKOS_CLIENT_ID` | `account.workos.client_id` | none: feature hidden |
-| Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | `http://127.0.0.1:47823/callback` |
+| Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | `theodore://callback` in the app bundle, else `http://127.0.0.1:47823/callback` |
 | API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
 | Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
 
-The redirect URI must be `http` on `127.0.0.1`, `[::1]` or `localhost`, with
-an explicit port. Port `0` binds any free port. Use it only with a
+A configured redirect always wins. An `http` one must be on `127.0.0.1`,
+`[::1]` or `localhost`, with an explicit port; any other scheme is treated as
+the app's URL scheme, so only `theodore://callback` makes sense there. Port
+`0` binds any free port. Use it only with a
 wildcard-port redirect registered (`http://127.0.0.1:*/callback`); WorkOS
 documents wildcard ports for loopback, but not yet for `127.0.0.1` in
 production.
@@ -578,11 +601,16 @@ production.
 1. **Create the application.** Create or pick the environment (staging first,
    then production). Under Applications, use the AuthKit application and copy
    its **Client ID** (`client_…`). The API key is never needed by the app.
-2. **Redirects**:
-   - add `http://127.0.0.1:47823/callback`;
+2. **Redirects** — register **both**:
+   - `theodore://callback`: used by the installed app;
+   - `http://127.0.0.1:47823/callback`: used by `cargo tauri dev` and a bare
+     binary;
    - optional: also add `http://127.0.0.1:*/callback`, if you later want
      port `0`;
    - leave the default redirect as-is: a wildcard can't be the default.
+
+   A sign-in whose redirect isn't registered fails on the AuthKit page with
+   an invalid redirect error.
 3. **Authentication methods**:
    - enable **Magic Auth** (email code); it gives the "email → code → in"
      experience;
@@ -744,8 +772,9 @@ Every component subscribes to the objects it reads, not to the whole state.
 - Tauri 2, one main window, `titleBarStyle: Overlay`.
 - Strict CSP (no remote scripts; Shiki and fonts bundled). Capabilities scoped
   to the commands the UI needs.
-- Deep link `theodore://` for "open PR in Theodore". OAuth sign-ins come back
-  through a loopback redirect instead (§6.12).
+- Deep link `theodore://`, registered in the bundle's `Info.plist`
+  (`tauri-plugin-deep-link`). `theodore://callback` carries the account
+  sign-in redirect (§6.12); other hosts are free for "open PR in Theodore".
 
 ### 11.1 Updates (from the first version)
 
