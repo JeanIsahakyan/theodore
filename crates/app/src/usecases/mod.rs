@@ -15,6 +15,7 @@ pub mod review;
 pub mod revision;
 pub mod ship;
 pub mod skills;
+pub mod space_feedback;
 pub mod spaces;
 pub mod suggestions;
 pub mod symbols;

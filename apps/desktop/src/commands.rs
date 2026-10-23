@@ -638,6 +638,33 @@ pub async fn ship_space(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn undo_space_turn(
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.undo_space_turn(space).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn unarchive_space(
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    core.unarchive_space(space).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_send_feedback(
+    req: theodore_contract::SpaceFeedbackRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    core.space_send_feedback(req).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn account_status(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<theodore_contract::AccountStatus, CommandError> {

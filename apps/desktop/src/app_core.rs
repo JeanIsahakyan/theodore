@@ -357,6 +357,24 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.ship_space(req).await.map_err(err)
     }
+    async fn undo_space_turn(
+        &self,
+        space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.undo_space_turn(&space).await.map_err(err)
+    }
+    async fn unarchive_space(
+        &self,
+        space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.unarchive_space(&space).await.map_err(err)
+    }
+    async fn space_send_feedback(
+        &self,
+        req: theodore_contract::SpaceFeedbackRequest,
+    ) -> Result<String, CommandError> {
+        self.core.space_send_feedback(req).await.map_err(err)
+    }
     async fn account_status(&self) -> Result<AccountStatus, CommandError> {
         self.core.account_status().await.map_err(err)
     }

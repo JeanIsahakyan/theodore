@@ -1007,8 +1007,30 @@ export type Space = {
 	 *  kept as a branch. `spaces.auto_archive_days` counts from here.
 	 */
 	done_at?: number | null,
+	/**
+	 *  Every turn's checkpoints, oldest first: what "Undo last turn" moves
+	 *  back to. Spaces from before it was recorded have none.
+	 */
+	turn_log?: SpaceTurn[],
 	created_at: number,
 	updated_at: number,
+};
+
+/**
+ *  A review comment sent to a space's agent (docs/spaces.md §3): it must
+ *  belong to the space's PR or to its own branch review.
+ */
+export type SpaceFeedback =
+/**  A review thread (`Thread::id`), every comment quoted. */
+{ kind: "thread"; id: string } |
+/**  A draft comment (`Draft::id`). */
+{ kind: "draft"; id: string } |
+/**  A finding (`Finding::id`). */
+{ kind: "finding"; id: string };
+
+export type SpaceFeedbackRequest = {
+	space: string,
+	items: SpaceFeedback[],
 };
 
 /**  What the agent may do in a turn (docs/spaces.md §5). */
@@ -1063,6 +1085,25 @@ export type SpaceStatus =
 "idle" | "running" |
 /**  The last turn errored, was interrupted, or the worktree is gone. */
 "failed" | "archived";
+
+/**
+ *  One agent turn of a space: the messages it answered and the checkpoint
+ *  it moved the space from and to.
+ */
+export type SpaceTurn = {
+	/**  The `chat_message` id of your message that started it. */
+	message: string,
+	/**  The `chat_message` id of the agent's reply. */
+	reply: string,
+	/**  Checkpoint before the turn, and after it (equal when nothing changed). */
+	before: Sha,
+	after: Sha,
+	/**
+	 *  Undone: the space went back to `before`; the transcript keeps the
+	 *  turn, the next turns' prompts leave it out.
+	 */
+	undone?: boolean,
+};
 
 /**
  *  One PR's place in a same-repo chain of stacked PRs (plan "Stack"): the
