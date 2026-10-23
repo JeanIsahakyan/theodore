@@ -496,6 +496,9 @@ pub const GLOBAL_TEMPLATE: &str = r#"# Theodore global config (docs/config.md).
 #   agents:
 #     chat: claude          # claude | codex | gemini
 #     grouping: claude
+#   instructions: Prefer small functions. Flag any new dependency.
+#   hide: ["gen/**"]        # never sent to the agent
+#   ignore_findings: ["vendor/**"]
 
 # spaces:
 #   copy: [.env, .env.local]

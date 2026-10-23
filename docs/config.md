@@ -65,32 +65,88 @@ review:
 any config file wins over the Settings choice for that project; remove the
 line and the Settings choice applies again.
 
-### Coming next
-
-These keys are parsed and checked today, but nothing uses them yet:
-
-| Key | Type | Will do |
-| --- | --- | --- |
-| `instructions` | text | fed to every agent run on this repo |
-| `context` | list of paths | repo files the agent reads first |
-| `hide` | list of globs | files collapsed in the diff |
-| `skim` | list of globs | files shown as skimmable |
-| `checklist` | glob → item or list of items | items shown when a matching file changes |
-| `auto_skills` | list of skill ids | skills run when a PR is opened |
-| `ignore_findings` | list of globs | findings on matching paths dropped |
+### Review rules
 
 ```yaml
 review:
   instructions: Prefer small functions. Flag any new dependency.
-  context: [docs/architecture.md]
-  hide: ["**/*.lock", "gen/**"]
-  skim: ["**/*.snap"]
+  context: [docs/architecture.md, "docs/adr/*.md"]
+  hide: ["gen/**", "*.min.js"]
+  skim: ["**/*.snap", "locales/"]
   checklist:
     "migrations/**": Is there a down migration?
     "api/**": [Is the change versioned?, Are the docs updated?]
+    "**/*.sql": Is it safe to run twice?
   auto_skills: [security-review]
-  ignore_findings: ["vendor/**"]
+  ignore_findings: ["vendor/**", "*.pb.go"]
 ```
+
+| Key | Type | Does |
+| --- | --- | --- |
+| `instructions` | text | appended to the system prompt of every agent run on the repo: grouping, chat, skills, fixes, space turns |
+| `context` | list of paths or globs | named in that same prompt as "read these first" (not inlined); at most 20 |
+| `hide` | list of globs | matching files go to the Hidden group, like generated files; never sent to the agent |
+| `skim` | list of globs | every hunk of a matching file is flagged to the grouping agent as a skim candidate |
+| `checklist` | glob → item or list of items | after grouping, each group holding a matching file gets the items in its "What to check" list |
+| `auto_skills` | list of skill ids | each runs once, through the normal skill run, the first time a PR is opened at a head |
+| `ignore_findings` | list of globs | a finding anchored on a matching path is dropped when reported, and counted |
+
+```
+config ─┬─ instructions, context ─▶ system prompt of every agent run
+        ├─ hide, skim ────────────▶ grouping pre-pass ─▶ Hidden group / skim hints
+        ├─ checklist ─────────────▶ after grouping ─▶ "What to check" items
+        ├─ auto_skills ───────────▶ PR opened at a new head ─▶ skill runs
+        └─ ignore_findings ───────▶ finding reported ─▶ dropped, counted on its run
+```
+
+**Globs.** Paths are relative to the repo root.
+
+| Pattern | Matches |
+| --- | --- |
+| `*.lock` | no `/`: the file name, at any depth (`Cargo.lock`, `ui/yarn.lock`) |
+| `gen/**` | a `/` anchors at the root; `**` is any number of directories |
+| `locales/` | a trailing `/`: everything under it |
+| `src/*.rs` | `*` and `?` stay inside one path segment |
+| `**/*.{ts,tsx}` | `{a,b}` alternatives |
+
+Quote a pattern that starts with `*` or contains `{` (`"*.lock"`): YAML
+reads it differently otherwise. A `.` inside a `checklist` key is part of
+the glob, not a nested key.
+
+- **Which config.** A review reads the PR's repo layer from the PR's
+  checkout (its head), plus your global file; a local folder project reads
+  its own working copy and personal file instead, whichever review of it is
+  open. A space reads its project's config at the space's base. The files
+  are read on every use and re-merged only when their text changes, so an
+  edit applies to the next agent run without a restart.
+- **`context`** is resolved against the PR's checkout (a space's worktree
+  for a space). A plain path that doesn't exist, a glob that matches
+  nothing and a path leaving the repo are left out (a debug log line says
+  so). Duplicates count once; the first 20 files are kept.
+- **`hide`, `skim`, `checklist` and the grouping.** A grouping is stored
+  with a hash of these three keys. Opening a PR whose stored grouping was
+  made under other values regroups it from scratch, and so does Regroup
+  (a push after a change doesn't continue the old groups either). Changing
+  `instructions`, `context`, `auto_skills` or `ignore_findings` doesn't
+  regroup. After a push, new hunks of a hidden file go straight to the
+  Hidden group.
+- **`checklist`** items come after the agent's own, globs in sorted order,
+  each glob's items as listed; an item a group already has isn't added
+  again. A hidden file's items go to the Hidden group.
+- **`auto_skills`** run with the Settings → Agents skills agents. Once per
+  head: reopening the PR at the same head (in this session or after a
+  restart) doesn't run them again; a push and a later open at the new head
+  does. Not for a merged or closed PR. A sandbox replaying agents
+  (docs/sandbox.md) runs them only when its scenario sets
+  `"auto_skills": true`. A skill that doesn't start (no agent installed) is
+  a toast.
+- **`ignore_findings`** matches the finding's anchor path. The AI panel
+  shows "N findings hidden by config" under the skill run that reported
+  them. Each dropped report counts, so two agents reporting the same
+  finding count two.
+- **Trust.** These keys run no commands, so a repo's file applies them
+  without asking (§5). It can still steer the agents and hide files from
+  the grouping: read a repo's `review:` before relying on it.
 
 ---
 
