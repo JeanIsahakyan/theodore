@@ -168,11 +168,11 @@ mod tests {
     }
 
     fn run_context() -> RunContext {
-        RunContext {
-            run_id: RunId::new("run-1"),
-            pr: PrId::new("github:o/r#1"),
-            agent: AgentId::Claude,
-        }
+        RunContext::review(
+            RunId::new("run-1"),
+            PrId::new("github:o/r#1"),
+            AgentId::Claude,
+        )
     }
 
     /// Bridge over in-process pipes: a real `McpServer` is the upstream, a

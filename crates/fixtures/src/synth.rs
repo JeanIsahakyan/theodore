@@ -1549,11 +1549,11 @@ mod tests {
     async fn skill_run_reports_one_finding_over_mcp() {
         let backend = Arc::new(FakeBackend::default());
         let handle = McpServer::start(backend.clone()).await.unwrap();
-        let endpoint = handle.register_run(RunContext {
-            run_id: RunId::new("run-1"),
-            pr: PrId::new("github:acme/widgets#42"),
-            agent: AgentId::Claude,
-        });
+        let endpoint = handle.register_run(RunContext::review(
+            RunId::new("run-1"),
+            PrId::new("github:acme/widgets#42"),
+            AgentId::Claude,
+        ));
         let dir = tempfile::tempdir().unwrap();
         let run = SynthAgents::new()
             .run(request(

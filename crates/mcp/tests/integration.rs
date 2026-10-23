@@ -120,11 +120,11 @@ impl ReviewToolsBackend for FakeBackend {
 }
 
 fn run_context() -> RunContext {
-    RunContext {
-        run_id: RunId::new("run-1"),
-        pr: PrId::new("github:acme/widgets#42"),
-        agent: AgentId::Claude,
-    }
+    RunContext::review(
+        RunId::new("run-1"),
+        PrId::new("github:acme/widgets#42"),
+        AgentId::Claude,
+    )
 }
 
 fn args(value: serde_json::Value) -> rmcp::model::JsonObject {

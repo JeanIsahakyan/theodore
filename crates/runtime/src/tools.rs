@@ -190,14 +190,11 @@ impl RunTools for McpRunTools {
     fn register(&self, run_id: &str, pr: &PrId, agent: AgentId) -> McpEndpoint {
         let guard = self.handle.lock().unwrap_or_else(|p| p.into_inner());
         match guard.as_ref() {
-            Some(h) => h.register_run(RunContext {
-                run_id: RunId(run_id.into()),
-                pr: pr.clone(),
-                agent,
-            }),
+            Some(h) => h.register_run(RunContext::review(RunId(run_id.into()), pr.clone(), agent)),
             None => McpEndpoint {
                 url: String::new(),
                 token: String::new(),
+                name: theodore_ports::REVIEW_TOOLS.into(),
             },
         }
     }
