@@ -1919,6 +1919,39 @@ async fn delegate_task_runs_the_agent_in_edit_mode_and_captures_a_patch() {
 }
 
 #[tokio::test]
+async fn delegate_task_opens_its_pr_after_a_restart() {
+    // Tasks lists tasks of PRs this session hasn't opened yet; delegating
+    // one used to fail with "pr is not open".
+    let f = fixtures();
+    let (_core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-restart", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: Usage::default(),
+    }]);
+
+    // The restarted core fetches the PR again.
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-2".into()),
+        value: testkit::sample_pr_detail(
+            &fixture_pr_ref(),
+            &Sha::new("base000"),
+            &Sha::new("head111"),
+        ),
+    }));
+    let (core2, _recv2) = started_core(&f).await;
+    let run_id = core2
+        .delegate_task(DelegateRequest {
+            task: task.id.clone(),
+            agent: Some(AgentId::Codex),
+        })
+        .await
+        .expect("delegate after a restart");
+    assert!(run_id.starts_with("fix:"));
+}
+
+#[tokio::test]
 async fn decide_task_accept_on_own_pr_commits_pushes_and_resolves_thread() {
     let f = fixtures();
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;

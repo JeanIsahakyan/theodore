@@ -12,9 +12,9 @@ import {
 } from '@heroui/react';
 import {
   ArrowRotateLeft,
+  ArrowUpRightFromSquare,
   ArrowUturnCcwLeft,
   BranchesRight,
-  Check,
   Clock,
   CodePullRequest,
   Eye,
@@ -23,9 +23,13 @@ import {
   FolderPlus,
   Gear,
   Keyboard,
+  LayoutColumns,
+  LayoutSideContentLeft,
   ListCheck,
   Moon,
+  PaperPlane,
   Pencil,
+  Play,
   Plus,
   Tray,
 } from '@gravity-ui/icons';
@@ -81,7 +85,10 @@ export function Palette({
   const [q, setQ] = useState('');
   const [i, setI] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  // Focus at once (keys typed right after ⌘K must land here), and again
+  // once the dialog's own focus handling has run.
   useEffect(() => {
+    input.current?.focus();
     const t = setTimeout(() => input.current?.focus(), 30);
     return () => clearTimeout(t);
   }, []);
@@ -120,6 +127,7 @@ export function Palette({
           )}
           <input
             ref={input}
+            autoFocus
             className="pal-input w-full border-b border-separator bg-transparent px-4 py-3.5 text-base outline-none placeholder:text-muted"
             placeholder={placeholder}
             value={q}
@@ -335,7 +343,7 @@ export const CommandMenu = observer(function CommandMenu() {
                 {
                   group: 'This PR',
                   label: 'Submit review…',
-                  icon: <Check />,
+                  icon: <PaperPlane />,
                   run: () => ui.openModal('submit'),
                 },
                 ...draftItems,
@@ -343,28 +351,28 @@ export const CommandMenu = observer(function CommandMenu() {
           {
             group: 'This PR',
             label: 'Start / stop tour',
-            icon: <Check />,
+            icon: <Play />,
             keys: 'T',
             run: press('t'),
           },
           {
             group: 'This PR',
             label: 'Unified / split diff',
-            icon: <Check />,
+            icon: <LayoutColumns />,
             keys: 'S',
             run: press('s'),
           },
           {
             group: 'This PR',
             label: 'Ask the agent or run a skill',
-            icon: <Check />,
+            icon: <Sparkles />,
             keys: '/',
             run: press('/'),
           },
           {
             group: 'This PR',
             label: 'Open on GitHub',
-            icon: <Check />,
+            icon: <ArrowUpRightFromSquare />,
             run: () => {
               const url = store.models.prSummaries.get(r.pr)?.url;
               if (url) openExternal(url);
@@ -552,7 +560,7 @@ export const CommandMenu = observer(function CommandMenu() {
     {
       group: 'General',
       label: 'Collapse / expand sidebar',
-      icon: <Check />,
+      icon: <LayoutSideContentLeft />,
       keys: '[',
       run: () => ui.toggleSidebar(),
     },

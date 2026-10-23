@@ -107,7 +107,13 @@ impl Core {
         serde_json::from_value(row.data).map_err(|e| AppError::Invalid(e.to_string()))
     }
 
+    /// The PR's worktree, opening the PR first if this session hasn't (a
+    /// task or suggestion acted on from Tasks after a restart, before the
+    /// PR's own page was visited). `None` only if it can't be opened.
     pub(crate) async fn worktree_of(&self, pr: &theodore_domain::PrId) -> Option<PathBuf> {
+        if self.ensure_open(pr).await.is_err() {
+            return None;
+        }
         let head = self.0.current_head.read().await.get(pr).cloned()?;
         let revisions = self.0.revisions.read().await;
         revisions

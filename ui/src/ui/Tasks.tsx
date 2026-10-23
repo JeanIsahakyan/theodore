@@ -43,6 +43,10 @@ type TaskTab = 'mine' | 'agents' | 'others' | 'all';
  *  doesn't also pull in agent work the viewer merely requested, and
  *  "others" can't require that the viewer was the one who assigned it —
  *  both fall back to the coarser assignee-only read. */
+/** `me` is what a task made before the login was known is assigned to. */
+export const isMe = (id: string, me: string | null) =>
+  id === 'me' || (me != null && id === me);
+
 function taskTabs(me: string | null): {
   id: TaskTab;
   title: string;
@@ -52,7 +56,7 @@ function taskTabs(me: string | null): {
     {
       id: 'mine',
       title: 'Mine',
-      match: (t) => t.assignee.kind === 'human' && t.assignee.id === me,
+      match: (t) => t.assignee.kind === 'human' && isMe(t.assignee.id, me),
     },
     {
       id: 'agents',
@@ -62,7 +66,7 @@ function taskTabs(me: string | null): {
     {
       id: 'others',
       title: 'Waiting on others',
-      match: (t) => t.assignee.kind === 'human' && t.assignee.id !== me,
+      match: (t) => t.assignee.kind === 'human' && !isMe(t.assignee.id, me),
     },
     { id: 'all', title: 'All', match: () => true },
   ];
@@ -340,7 +344,12 @@ export const Tasks = observer(function Tasks() {
   useTaskKeys(order);
   return (
     <div className="view flex min-w-0 flex-1 flex-col">
-      <ViewHeader title="Tasks" count={items.length}>
+      {/* Open tasks, like the tab counts and the sidebar — done ones are
+          listed but not counted. */}
+      <ViewHeader
+        title="Tasks"
+        count={items.filter((t) => t.status !== 'done').length}
+      >
         <Tabs
           data-plain
           selectedKey={taskTab}

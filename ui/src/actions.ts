@@ -181,7 +181,9 @@ export function findingToTask(
         anchor: finding.anchor,
         thread: null,
         status: 'todo',
-        assignee: { kind: 'human', id: 'me' },
+        // Yours: your host login, so Tasks → Mine finds it. `me` only
+        // before the login is known (Tasks treats it as yours too).
+        assignee: { kind: 'human', id: store.ephemeral.viewer?.login ?? 'me' },
         fix: null,
         created_at: Date.now(),
       },
