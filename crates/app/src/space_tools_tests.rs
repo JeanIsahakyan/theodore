@@ -1,7 +1,7 @@
 //! The space tools (docs/spaces.md "Tools the agent gets") against `Core`
-//! + testkit fakes: the trust gate, the check's result, start / stop /
-//! status, the log tail, `space_info` without env values, and which runs
-//! get which tools registered.
+//! and the testkit fakes: the trust gate, the check's result, start, stop
+//! and status, the log tail, `space_info` without env values, and which
+//! runs get which tools registered.
 
 use theodore_contract::{AskRequest, RunSkillRequest, SpaceTrustRequest};
 use theodore_domain::AgentId;

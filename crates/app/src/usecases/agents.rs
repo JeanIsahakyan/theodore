@@ -463,34 +463,6 @@ pub(crate) fn tool_log_line(name: &str) -> String {
     format!("tool: {label}")
 }
 
-#[cfg(test)]
-mod tool_label_tests {
-    use super::tool_log_line;
-
-    #[test]
-    fn theodores_tools_read_as_what_they_do() {
-        assert_eq!(
-            tool_log_line("mcp__space-tools__run_check"),
-            "tool: run the check"
-        );
-        assert_eq!(
-            tool_log_line("space-tools__start_app"),
-            "tool: start the app"
-        );
-        assert_eq!(
-            tool_log_line("mcp__review-tools__read_logs"),
-            "tool: read the logs"
-        );
-        assert_eq!(tool_log_line("app_status"), "tool: app status");
-        assert_eq!(tool_log_line("Bash"), "tool: Bash");
-        assert_eq!(
-            tool_log_line("mcp__other__run_check"),
-            "tool: mcp__other__run_check",
-            "only Theodore's own servers"
-        );
-    }
-}
-
 /// Revokes a run's MCP token when the run's driver returns. `pub(crate)`:
 /// also used by `usecases::tasks` for fix runs.
 pub(crate) struct ToolsGuard<'a> {
@@ -634,5 +606,33 @@ async fn drive_ask(
                 data: Some(data),
             }])
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tool_label_tests {
+    use super::tool_log_line;
+
+    #[test]
+    fn theodores_tools_read_as_what_they_do() {
+        assert_eq!(
+            tool_log_line("mcp__space-tools__run_check"),
+            "tool: run the check"
+        );
+        assert_eq!(
+            tool_log_line("space-tools__start_app"),
+            "tool: start the app"
+        );
+        assert_eq!(
+            tool_log_line("mcp__review-tools__read_logs"),
+            "tool: read the logs"
+        );
+        assert_eq!(tool_log_line("app_status"), "tool: app status");
+        assert_eq!(tool_log_line("Bash"), "tool: Bash");
+        assert_eq!(
+            tool_log_line("mcp__other__run_check"),
+            "tool: mcp__other__run_check",
+            "only Theodore's own servers"
+        );
     }
 }
