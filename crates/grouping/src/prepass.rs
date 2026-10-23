@@ -5,9 +5,14 @@
 //! candidates are hints only — mechanical-looking hunks flagged in the
 //! prompt so the agent can mark them `skim` without re-deriving the pattern,
 //! but the agent has the final say.
+//!
+//! The project config's `review.hide` / `review.skim` globs (docs/config.md)
+//! add to both: a hidden file goes to the Hidden group like a generated one,
+//! a skim file's hunks are all flagged.
 
 use std::collections::BTreeMap;
 
+use theodore_domain::review_rules::ReviewRules;
 use theodore_domain::{FileDiff, FileFlag, FileStatus, Hunk, HunkId, LineKind, Revision};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +22,8 @@ pub enum HiddenReason {
     Lockfile,
     Vendored,
     Snapshot,
+    /// Matches `review.hide`.
+    Config,
 }
 
 impl HiddenReason {
@@ -26,6 +33,7 @@ impl HiddenReason {
             HiddenReason::Lockfile => "lockfile",
             HiddenReason::Vendored => "vendored",
             HiddenReason::Snapshot => "snapshot",
+            HiddenReason::Config => "hidden by repo config",
         }
     }
 }
@@ -39,6 +47,8 @@ pub enum SkimCandidate {
     WhitespaceOnly,
     /// Every changed line matches the language's import/use statement shape.
     ImportOnly,
+    /// Matches `review.skim`.
+    Config,
 }
 
 impl SkimCandidate {
@@ -47,6 +57,7 @@ impl SkimCandidate {
             SkimCandidate::PureRename => "pure rename",
             SkimCandidate::WhitespaceOnly => "whitespace-only",
             SkimCandidate::ImportOnly => "import-only",
+            SkimCandidate::Config => "marked skim in repo config",
         }
     }
 }
@@ -193,11 +204,26 @@ fn skim_candidate(hunk: &Hunk, lang: Lang) -> Option<SkimCandidate> {
 
 /// Run the pre-pass over a revision.
 pub fn run(rev: &Revision) -> PrePass {
+    run_with(rev, &ReviewRules::default())
+}
+
+/// [`run`], plus the config's `hide` and `skim` globs.
+pub fn run_with(rev: &Revision, rules: &ReviewRules) -> PrePass {
     let mut hidden = BTreeMap::new();
     let mut skim = BTreeMap::new();
     for file in &rev.files {
         if let Some(reason) = hidden_reason(file) {
             hidden.insert(file.path.clone(), reason);
+            continue;
+        }
+        if rules.hides(&file.path) {
+            hidden.insert(file.path.clone(), HiddenReason::Config);
+            continue;
+        }
+        if rules.skims(&file.path) {
+            for hunk in &file.hunks {
+                skim.insert(hunk.id.clone(), SkimCandidate::Config);
+            }
             continue;
         }
         if file.status == FileStatus::Renamed {
@@ -381,6 +407,47 @@ mod tests {
             p.skim.get(&HunkId::new("h1")),
             Some(&SkimCandidate::PureRename)
         );
+    }
+
+    #[test]
+    fn config_globs_hide_files_and_flag_skim_hunks() {
+        let r = rev(vec![
+            file(
+                "gen/api.ts",
+                FileStatus::Modified,
+                vec![],
+                vec![hunk("h1", vec![line(LineKind::Add, "if (x) y();")])],
+            ),
+            file(
+                "tests/a.snapshot.txt",
+                FileStatus::Modified,
+                vec![],
+                vec![
+                    hunk("h2", vec![line(LineKind::Add, "if (x) y();")]),
+                    hunk("h3", vec![line(LineKind::Add, "z();")]),
+                ],
+            ),
+            file(
+                "src/a.ts",
+                FileStatus::Modified,
+                vec![],
+                vec![hunk("h4", vec![line(LineKind::Add, "if (x) y();")])],
+            ),
+        ]);
+        let rules = ReviewRules {
+            hide: vec!["gen/**".into()],
+            skim: vec!["tests/*.txt".into()],
+            ..ReviewRules::default()
+        };
+        let p = run_with(&r, &rules);
+        assert_eq!(p.hidden.get("gen/api.ts"), Some(&HiddenReason::Config));
+        assert!(!p.is_hidden("src/a.ts"));
+        assert_eq!(p.skim.get(&HunkId::new("h2")), Some(&SkimCandidate::Config));
+        assert_eq!(p.skim.get(&HunkId::new("h3")), Some(&SkimCandidate::Config));
+        assert!(!p.skim.contains_key(&HunkId::new("h4")));
+        // Without the config, none of it.
+        let p = run(&r);
+        assert!(p.hidden.is_empty() && p.skim.is_empty());
     }
 
     #[test]
