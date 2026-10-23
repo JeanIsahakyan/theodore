@@ -4,6 +4,7 @@
 pub mod app_core;
 pub mod commands;
 pub mod core_api;
+pub mod deep_link;
 pub mod events;
 pub mod menu;
 pub mod shell_path;
@@ -157,6 +158,8 @@ pub fn run(
         // Links out (a PR on its host, the sign-in page): the webview's own
         // `window.open` opens nothing in a desktop window.
         .plugin(tauri_plugin_opener::init())
+        // `theodore://` (the account sign-in redirect in an app bundle).
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(builder.invoke_handler())
         .manage(core.clone())
         .manage(updater::UpdateState::default())
@@ -164,6 +167,7 @@ pub fn run(
             builder.mount_events(app);
             let handle = app.handle().clone();
             forward(emitter(handle.clone()));
+            deep_link::listen(&handle, core.clone());
             updater::spawn_periodic_check(handle, core.clone());
             Ok(())
         })

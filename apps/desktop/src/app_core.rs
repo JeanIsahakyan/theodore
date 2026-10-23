@@ -376,4 +376,10 @@ impl CoreApi for AppCore {
     async fn account_sign_out(&self) -> Result<AccountStatus, CommandError> {
         self.core.account_sign_out().await.map_err(err)
     }
+    async fn account_sign_in_callback(&self, url: String) -> bool {
+        !matches!(
+            self.core.account_sign_in_callback(&url).await,
+            theodore_ports::CallbackPage::Ignored
+        )
+    }
 }

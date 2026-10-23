@@ -39,6 +39,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["theodore"]
+      }
+    },
     "updater": {
       "pubkey": "REPLACE_WITH_UPDATER_PUBLIC_KEY",
       "endpoints": [

@@ -680,13 +680,19 @@ pub async fn account_sign_out(
 #[tauri::command]
 #[specta::specta]
 pub async fn focus_window(app: AppHandle) -> Result<(), CommandError> {
+    focus_main(&app).map_err(|e| CommandError {
+        code: "internal".into(),
+        message: e.to_string(),
+    })
+}
+
+/// Un-minimizes and focuses the main window (also after a sign-in redirect
+/// reached the app through its URL scheme).
+pub fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
-        w.set_focus().map_err(|e| CommandError {
-            code: "internal".into(),
-            message: e.to_string(),
-        })?;
+        w.set_focus()?;
     }
     Ok(())
 }
