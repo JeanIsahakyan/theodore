@@ -1,7 +1,7 @@
 /** Build mode against the live store: on/off, Labs visibility, and the
  *  "turn done" notices. No React, so `RootStore` can start the watcher. */
 import { reaction } from 'mobx';
-import type { Space } from '../../gen/contract';
+import type { PrId, Space } from '../../gen/contract';
 import { OPEN_SPACE_EVENT, notifySpace, setBadge } from '../../core/native';
 import { getTransport } from '../../core/transport';
 import { FEATURES } from '../../features';
@@ -12,6 +12,8 @@ import {
   labsVisible,
   nativeNotice,
   notifyOn,
+  spaceOfReview,
+  spaceTitle,
   turnEnded,
   waitingSpaces,
 } from './spaces';
@@ -124,4 +126,15 @@ export function watchSpaceTurns(store: RootStore): () => void {
       window.removeEventListener('focus', onFocus);
     }
   };
+}
+
+/** A review's title, or — for a space's own review, whose row title is the
+ *  branch slug — the space's title (what was asked for). */
+export function reviewTitle(
+  store: RootStore,
+  pr: PrId,
+  fallback: string,
+): string {
+  const space = spaceOfReview(store.models.spaces.all(), pr);
+  return space && space.review_pr === pr ? spaceTitle(space) : fallback;
 }

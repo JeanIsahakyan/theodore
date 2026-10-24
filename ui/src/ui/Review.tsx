@@ -60,6 +60,7 @@ import { LinearChips } from './linear/LinearChips';
 import { MergeDialog } from './Merge';
 import { closeBranchReview } from './project/closeReview';
 import { isBranchReview } from './project/sections';
+import { reviewTitle } from './space/mode';
 import {
   groupsInRevision,
   nextReviewableGroup,
@@ -549,7 +550,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 </Breadcrumbs.Item>
               </Breadcrumbs>
               <Typography.Heading level={6} className="min-w-0 flex-1 truncate">
-                {summary.title}
+                {reviewTitle(store, pr, summary.title)}
               </Typography.Heading>
               <Chip size="sm" variant="secondary" className="shrink-0 gap-1.5">
                 <PRIcon

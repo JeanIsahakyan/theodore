@@ -24,6 +24,7 @@ import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
 import { isBranchReview } from './project/sections';
+import { reviewTitle } from './space/mode';
 import { spaceTitle } from './space/spaces';
 import { PRIcon } from './StatusIcon';
 
@@ -60,7 +61,7 @@ function useLabel(r: Route): {
         title: !p
           ? r.pr
           : isBranchReview(p)
-            ? p.title
+            ? reviewTitle(store, r.pr, p.title)
             : `#${p.pr.number} ${p.title}`,
         drafts,
       };
