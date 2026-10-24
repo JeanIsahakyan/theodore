@@ -534,18 +534,20 @@ impl Core {
         };
         let now = self.0.deps.clock.now();
         // Turns, and a space's setup, `run` and `check` (docs/config.md).
-        let actions: Vec<NewAction> = spaces
-            .into_iter()
-            .filter_map(|s| {
-                let patch = crate::usecases::space_hooks::interrupted_patch(&s, now)?;
-                Some(NewAction {
-                    model: models::SPACE.into(),
-                    model_id: s.id,
-                    action: SyncActionCode::C,
-                    data: Some(patch),
-                })
-            })
-            .collect();
+        let mut actions: Vec<NewAction> = Vec::new();
+        for s in spaces {
+            let reaped = self.reap_space_process(&s).await;
+            let Some(patch) = crate::usecases::space_hooks::interrupted_patch(&s, now, reaped)
+            else {
+                continue;
+            };
+            actions.push(NewAction {
+                model: models::SPACE.into(),
+                model_id: s.id,
+                action: SyncActionCode::C,
+                data: Some(patch),
+            });
+        }
         let _ = self.apply(actions).await;
     }
 

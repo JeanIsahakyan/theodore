@@ -1172,6 +1172,19 @@ export type SpaceProcess = {
 	ended_at?: number | null,
 	exit_code?: number | null,
 	error?: string | null,
+	/**
+	 *  Process-group id of a `running` command (its own pid, since it's
+	 *  spawned with `process_group(0)`); cleared once it exits or is
+	 *  stopped. Set while `status` is `running`, so a restart can reap a
+	 *  group an unclean exit left running (docs/spaces.md "Crash recovery").
+	 */
+	pgid?: number | null,
+	/**
+	 *  The `spaces.run` script started at `pgid`, kept so a restart can
+	 *  check the process still there is the one Theodore started — not a
+	 *  pid since reused by something else — before touching it.
+	 */
+	script?: string | null,
 };
 
 export type SpaceReviewRequest = {

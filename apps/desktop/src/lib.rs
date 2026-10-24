@@ -162,6 +162,7 @@ pub fn run(
         ))
         .build();
 
+    let exit_core = core.clone();
     tauri::Builder::default()
         .plugin(storage_ns)
         // Native menu bar. Its Edit submenu is also what makes ⌘C / ⌘V /
@@ -191,8 +192,18 @@ pub fn run(
             updater::spawn_periodic_check(handle, core.clone());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running the Theodore app");
+        .build(tauri::generate_context!())
+        .expect("error while building the Theodore app")
+        .run(move |_handle, event| {
+            // A clean quit stops every space's `run` command first: left to
+            // `kill_on_drop` alone, a SIGTERM'd process never runs its
+            // destructors, so its process group would be orphaned to PID 1
+            // (docs/spaces.md "Crash recovery") — the same way an unclean
+            // exit does, just needlessly.
+            if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
+                tauri::async_runtime::block_on(exit_core.stop_all_space_commands());
+            }
+        });
 }
 
 #[cfg(test)]

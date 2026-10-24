@@ -290,6 +290,9 @@ impl CoreApi for AppCore {
     async fn updates_enabled(&self) -> bool {
         self.sandbox.is_none()
     }
+    async fn stop_all_space_commands(&self) {
+        self.core.stop_all_running_spaces().await;
+    }
     async fn sandbox_status(
         &self,
     ) -> Result<Option<theodore_contract::SandboxStatus>, CommandError> {
