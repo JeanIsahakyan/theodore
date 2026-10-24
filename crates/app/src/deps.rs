@@ -97,6 +97,11 @@ pub struct Deps {
     /// `LocalAccount` where there is none (fixtures, sandbox, the CLI):
     /// the feature is then hidden.
     pub account: Arc<dyn AccountPort>,
+    /// The account client id compiled into this build, if any: the lowest
+    /// priority source, below the env and the setting
+    /// (`usecases::account::resolve_client_id`). `None` in tests, the CLI
+    /// and any build made without one.
+    pub account_client_id: Option<String>,
     /// Runs a space's `setup` / `run` / `check` / `archive` commands
     /// (docs/config.md).
     pub commands: Arc<dyn CommandPort>,

@@ -21,6 +21,10 @@ pub enum AppError {
     Join(String),
     #[error("account: {0}")]
     Account(#[from] AccountError),
+    /// Signing in to the Theodore account is required here and nobody is
+    /// signed in (plan §6.12 "Sign-in required").
+    #[error("Sign in to your Theodore account to continue")]
+    AccountRequired,
 }
 
 impl AppError {

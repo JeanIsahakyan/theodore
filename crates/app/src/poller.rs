@@ -51,7 +51,8 @@ async fn poll_spaces(inner: Arc<Inner>) {
     let core = Core(inner.clone());
     let mut next_due = inner.deps.clock.now() + SPACES_SWEEP_MS;
     loop {
-        if inner.shutdown.is_cancelled() {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
             return;
         }
         let now = inner.deps.clock.now();
@@ -74,7 +75,8 @@ async fn poll_projects(inner: Arc<Inner>) {
     let core = Core(inner.clone());
     let mut next_due = inner.deps.clock.now() + PROJECT_STAGGER_MS;
     loop {
-        if inner.shutdown.is_cancelled() {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
             return;
         }
         let now = inner.deps.clock.now();
@@ -104,7 +106,8 @@ async fn poll_open_prs(inner: Arc<Inner>) {
     let core = Core(inner.clone());
     let mut next_due = inner.deps.clock.now();
     loop {
-        if inner.shutdown.is_cancelled() {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
             return;
         }
         if inner.deps.clock.now() >= next_due {
@@ -549,7 +552,8 @@ async fn poll_inbox(inner: Arc<Inner>) {
     let mut next_due = inner.deps.clock.now();
 
     loop {
-        if inner.shutdown.is_cancelled() {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
             return;
         }
         if inner.deps.clock.now() >= next_due {

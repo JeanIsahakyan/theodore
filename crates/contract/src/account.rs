@@ -1,5 +1,5 @@
-//! Theodore account (plan "Theodore account"): an optional identity with
-//! Theodore itself, separate from the host tokens. `account_status`,
+//! Theodore account (plan "Theodore account"): an identity with Theodore
+//! itself, separate from the host tokens; required wherever it's configured. `account_status`,
 //! `account_sign_in_start` / `_poll` / `_cancel`, `account_sign_out`.
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,18 @@ pub struct AccountUser {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct AccountStatus {
     pub available: bool,
+    /// Signing in is required before the app does any work: until `user` is
+    /// set, only the sign-in screen shows and the core answers every other
+    /// command with `account_required`. Set wherever the account is
+    /// available.
+    #[serde(default)]
+    pub required: bool,
     pub user: Option<AccountUser>,
+    /// Signed out because the provider ended the session (revoked, or the
+    /// maximum session length reached), not by the user: the sign-in
+    /// screen says so. Cleared by the next sign-in or sign-out.
+    #[serde(default)]
+    pub session_ended: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]

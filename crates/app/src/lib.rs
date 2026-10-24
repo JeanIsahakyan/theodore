@@ -23,6 +23,8 @@ pub mod testkit;
 mod tests;
 
 #[cfg(test)]
+mod account_gate_tests;
+#[cfg(test)]
 mod account_tests;
 
 #[cfg(test)]
@@ -55,6 +57,6 @@ pub use core::{Core, Receivers};
 pub use deps::{Deps, Grouper, RunTools, TokenStatus};
 pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
-pub use usecases::account::APP_REDIRECT_URI;
+pub use usecases::account::{APP_REDIRECT_URI, AccountGate, resolve_client_id};
 pub use usecases::open_pr::parse_pr_ref;
 pub use usecases::spaces::space_chat_key;
