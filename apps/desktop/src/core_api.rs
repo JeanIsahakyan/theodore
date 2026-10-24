@@ -124,6 +124,12 @@ pub trait CoreApi: Send + Sync {
         true
     }
 
+    /// Stops every space's running `run` command and waits briefly for
+    /// each. Not a wire command; the shell calls it on a clean app exit
+    /// (`RunEvent::Exit`) so quitting normally never orphans a space's
+    /// server the way an unclean exit can (docs/spaces.md "Crash recovery").
+    async fn stop_all_space_commands(&self) {}
+
     /// Settings → Sandbox (docs/sandbox.md); `None` outside sandbox mode.
     async fn sandbox_status(&self) -> Result<Option<SandboxStatus>, CommandError> {
         Ok(None)
