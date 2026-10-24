@@ -39,6 +39,8 @@ mod interdiff_tests;
 #[cfg(test)]
 mod linear_tests;
 #[cfg(test)]
+mod offline_tests;
+#[cfg(test)]
 mod projects_tests;
 #[cfg(test)]
 mod review_config_tests;

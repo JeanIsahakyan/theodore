@@ -249,6 +249,15 @@ impl Core {
         )
     }
 
+    /// Whether the host answered the last read (host health's `online`).
+    pub(crate) fn host_online(&self) -> bool {
+        self.0
+            .host_health
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .0
+    }
+
     /// Reports a host read's outcome as host health, so the UI's offline,
     /// token and rate-limit banners reflect reads (inbox, polling, opening
     /// a PR) and not only outbox writes. Emits only when health changes.

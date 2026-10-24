@@ -155,6 +155,7 @@ fn err(e: AppError) -> CommandError {
         AppError::Account(_) => "account",
         // The UI shows the sign-in screen on this code (plan §6.12).
         AppError::AccountRequired => "account_required",
+        AppError::OfflineNotCached => "offline_not_cached",
     };
     CommandError {
         code: code.into(),

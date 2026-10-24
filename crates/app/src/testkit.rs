@@ -383,6 +383,13 @@ pub struct FakeGit {
     pub resets: Mutex<Vec<(String, Sha)>>,
     /// Shipping a space: identity, squashed commits, pushes, folder ops.
     pub ship: Mutex<FakeShip>,
+    // ── offline (a PR opened from its local copy) ──────────────────────
+    /// `cached_repo` finds the clone on disk (default `true`).
+    cached: Mutex<bool>,
+    /// Commits `has_commit` says were never downloaded.
+    missing_commits: Mutex<std::collections::HashSet<String>>,
+    /// Every call that would go to the network (`ensure_repo`, `fetch_pr`).
+    network_calls: Mutex<Vec<&'static str>>,
 }
 
 /// `FakeGit`'s state for shipping a space (docs/spaces.md §6).
@@ -467,7 +474,25 @@ impl FakeGit {
                 }),
                 ..FakeShip::default()
             }),
+            cached: Mutex::new(true),
+            missing_commits: Mutex::new(std::collections::HashSet::new()),
+            network_calls: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Whether `cached_repo` finds a clone on disk.
+    pub fn set_cached(&self, value: bool) {
+        *self.cached.lock().unwrap() = value;
+    }
+
+    /// `has_commit(_, sha)` says no: it was never downloaded.
+    pub fn set_missing_commit(&self, sha: &Sha) {
+        self.missing_commits.lock().unwrap().insert(sha.0.clone());
+    }
+
+    /// Every `ensure_repo` / `fetch_pr` call so far, in order.
+    pub fn network_calls(&self) -> Vec<&'static str> {
+        self.network_calls.lock().unwrap().clone()
     }
 
     pub fn set_working_state(&self, value: theodore_ports::WorkingState) {
@@ -587,10 +612,18 @@ impl FakeGit {
 #[async_trait]
 impl GitPort for FakeGit {
     async fn ensure_repo(&self, _repo: &theodore_domain::RepoRef) -> GitResult<PathBuf> {
+        self.network_calls.lock().unwrap().push("ensure_repo");
         Ok(self.repo_path.clone())
     }
     async fn fetch_pr(&self, _pr: &PrRef) -> GitResult<Sha> {
+        self.network_calls.lock().unwrap().push("fetch_pr");
         Ok(self.head.lock().unwrap().clone())
+    }
+    async fn cached_repo(&self, _repo: &theodore_domain::RepoRef) -> GitResult<Option<PathBuf>> {
+        Ok(self.cached.lock().unwrap().then(|| self.repo_path.clone()))
+    }
+    async fn has_commit(&self, _repo: &Path, sha: &Sha) -> GitResult<bool> {
+        Ok(!self.missing_commits.lock().unwrap().contains(&sha.0))
     }
     async fn worktree(&self, _pr: &PrRef, head: &Sha) -> GitResult<Worktree> {
         Ok(Worktree {

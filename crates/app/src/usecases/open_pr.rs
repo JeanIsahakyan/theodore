@@ -66,7 +66,13 @@ impl Core {
     async fn open_ref(&self, pr_ref: PrRef) -> AppResult<OpenPrResponse> {
         let fetched = self.0.deps.host.get_pr(&pr_ref, None).await;
         self.note_host(&fetched);
-        let fetched = fetched?;
+        let fetched = match fetched {
+            Ok(f) => f,
+            Err(e) if Self::is_connection_error(&e) => {
+                return self.open_offline(&pr_ref, e).await;
+            }
+            Err(e) => return Err(e.into()),
+        };
         let detail = match fetched {
             Fetched::Modified { value, .. } => value,
             Fetched::NotModified => {
@@ -90,6 +96,86 @@ impl Core {
 
         self.finish_open(pr_ref, detail, revision, repo_path, worktree.path)
             .await
+    }
+
+    /// Opens a host PR from what an earlier open left behind, when the
+    /// host can't be reached (offline, token rejected, rate-limited): the
+    /// stored `pr_detail` and the commits already in the clone. No fetch,
+    /// no host call; the poller refreshes it once the host answers again
+    /// (a moved head goes through its push pipeline as usual).
+    ///
+    /// ```text
+    /// get_pr ✗ (connection) ─▶ stored pr_detail? ─▶ clone has base+head? ─▶ worktree ─▶ diff ─▶ finish
+    ///                               └─no──────────────────┴─no─▶ offline_not_cached (or the host error)
+    /// ```
+    async fn open_offline(
+        &self,
+        pr_ref: &PrRef,
+        cause: theodore_ports::HostError,
+    ) -> AppResult<OpenPrResponse> {
+        let Some((detail, repo_path)) = self.local_copy(&pr_ref.id()).await? else {
+            // A token or rate-limit problem is better said as is: the
+            // banner names it, and "offline" would be wrong.
+            return Err(match cause {
+                theodore_ports::HostError::Network(_) => AppError::OfflineNotCached,
+                other => other.into(),
+            });
+        };
+        let pr_ref = detail.summary.pr.clone();
+        let head = detail.summary.head_sha.clone();
+        let worktree = self.0.deps.git.worktree(&pr_ref, &head).await?;
+        let revision = self
+            .0
+            .deps
+            .git
+            .diff(&repo_path, &detail.base_sha, &head, &DiffOptions::default())
+            .await?;
+        tracing::info!(pr = %pr_ref.id().0, error.code = cause.code(), "pr opened from the local copy");
+        // The stored rows are what this came from: writing them back would
+        // only roll a newer inbox summary back to the detail's.
+        self.finish_open_full(
+            pr_ref,
+            detail,
+            revision,
+            repo_path,
+            worktree.path,
+            true,
+            false,
+        )
+        .await
+    }
+
+    /// The stored detail of `pr` and the clone, when its base and head
+    /// commits are both already downloaded. Reads nothing off the network.
+    async fn local_copy(&self, pr: &PrId) -> AppResult<Option<(PrDetail, PathBuf)>> {
+        let detail = match self.load_pr_detail(pr).await {
+            Ok(d) => d,
+            Err(AppError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let shas = [&detail.base_sha, &detail.summary.head_sha];
+        let repo = &detail.summary.pr.repo;
+        Ok(self
+            .cached_repo_with(repo, &shas)
+            .await
+            .map(|path| (detail, path)))
+    }
+
+    /// The clone of `repo` if it's on disk and holds every commit in
+    /// `shas`, `None` otherwise. No network.
+    pub(crate) async fn cached_repo_with(
+        &self,
+        repo: &RepoRef,
+        shas: &[&theodore_domain::Sha],
+    ) -> Option<PathBuf> {
+        let git = &self.0.deps.git;
+        let path = git.cached_repo(repo).await.ok().flatten()?;
+        for sha in shas {
+            if !git.has_commit(&path, sha).await.unwrap_or(false) {
+                return None;
+            }
+        }
+        Some(path)
     }
 
     /// Caches the revision, writes the `pr`/`pr_detail` rows and kicks off
@@ -119,6 +205,31 @@ impl Core {
         worktree_path: PathBuf,
         group: bool,
     ) -> AppResult<OpenPrResponse> {
+        self.finish_open_full(
+            pr_ref,
+            detail,
+            revision,
+            repo_path,
+            worktree_path,
+            group,
+            true,
+        )
+        .await
+    }
+
+    /// `finish_open_with`, with writing the `pr`/`pr_detail` rows optional:
+    /// an offline open (`open_offline`) read them from the store.
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_open_full(
+        &self,
+        pr_ref: PrRef,
+        detail: PrDetail,
+        revision: Revision,
+        repo_path: PathBuf,
+        worktree_path: PathBuf,
+        group: bool,
+        write_rows: bool,
+    ) -> AppResult<OpenPrResponse> {
         let pr_id = pr_ref.id();
         let head = detail.summary.head_sha.clone();
 
@@ -146,8 +257,10 @@ impl Core {
                 .insert((pr_id.clone(), head.clone()), entry.clone());
         }
 
-        self.apply_pr_detail(&detail).await?;
-        self.refresh_stacks().await?;
+        if write_rows {
+            self.apply_pr_detail(&detail).await?;
+            self.refresh_stacks().await?;
+        }
 
         // Group in the background; the UI gets it as a `grouping` sync row.
         if group {
