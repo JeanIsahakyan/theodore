@@ -54,6 +54,7 @@ import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
 import { projectLabel } from './Projects';
 import { ConfigEditor } from './project/ConfigEditor';
+import { PrivacyCard } from './Privacy';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { visibleSettingsPages } from './sandbox/sandbox';
@@ -876,6 +877,24 @@ const AboutPage = observer(function AboutPage() {
         </div>
       </Card>
       <UpdatesPage />
+      <PrivacyCard />
+      <Card
+        variant="secondary"
+        className="flex flex-row items-center gap-3 p-4"
+      >
+        <CircleInfo className="size-4 text-muted" />
+        <span className="flex-1 text-sm text-muted">
+          Collects logs into a zip on this Mac for you to review and send.
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="report-problem-open"
+          onPress={() => ui.openModal('report-problem')}
+        >
+          Report a problem…
+        </Button>
+      </Card>
       <Card
         variant="secondary"
         className="flex flex-row items-center gap-3 p-4"

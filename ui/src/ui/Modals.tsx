@@ -19,6 +19,8 @@ import { AssignMenu, CommandMenu, SnoozeMenu } from './Palette';
 import { AddProjectModal } from './Projects';
 import { isBuildMode } from './space/mode';
 import { NewSpaceModal } from './space/SpacePage';
+import { ReportProblemModal } from './ReportProblem';
+import { WhatsCollectedModal } from './WhatsCollected';
 
 const EVENT_OPTS: [ReviewEvent, string, string][] = [
   ['COMMENT', 'Comment', 'no verdict'],
@@ -297,6 +299,24 @@ export const Modals = observer(function Modals() {
       return isBuildMode(store) ? <NewSpaceModal /> : null;
     case 'sign-in':
       return <SignInModal />;
+    case 'report-problem':
+      return <ReportProblemModal />;
+    case 'whats-collected':
+      return <WhatsCollectedModal />;
+    default:
+      return null;
+  }
+});
+
+/** Onboarding and the sign-in screen: only the modals that work before
+ *  the app opens (Help → Report a Problem…, "What's collected"). */
+export const GateModals = observer(function GateModals() {
+  const ui = useUi();
+  switch (ui.modal) {
+    case 'report-problem':
+      return <ReportProblemModal />;
+    case 'whats-collected':
+      return <WhatsCollectedModal />;
     default:
       return null;
   }
