@@ -152,7 +152,13 @@ export function unshipped(s: Pick<Space, 'shipped' | 'head_sha'>): boolean {
 /** What a space is called on screen: the first line of what you asked
  *  for, as you wrote it. The slug (`name`) is only for its branch. */
 export function spaceTitle(s: Pick<Space, 'goal' | 'name'>): string {
-  return defaultTitle(s);
+  // Short enough for a sidebar row or a notification: no trailing period
+  // (it reads as "formatter.: turn done"), cut at a word near 60 chars.
+  const t = defaultTitle(s).replace(/[.。!]+$/u, '');
+  if (t.length <= 60) return t;
+  const cut = t.slice(0, 60);
+  const word = cut.lastIndexOf(' ');
+  return `${(word > 30 ? cut.slice(0, word) : cut).replace(/[,;:]$/, '')}…`;
 }
 
 export function defaultTitle(s: Pick<Space, 'goal' | 'name'>): string {

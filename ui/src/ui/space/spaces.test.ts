@@ -15,6 +15,7 @@ import {
   spaceChatKey,
   spaceGlyph,
   spacesIn,
+  spaceTitle,
   nextMode,
   spaceKeyAction,
   turnEnded,
@@ -240,5 +241,26 @@ describe('space keys', () => {
     expect(nextMode('ask')).toBe('edit');
     expect(nextMode('edit')).toBe('run');
     expect(nextMode('run')).toBe('ask');
+  });
+});
+
+describe('spaceTitle', () => {
+  it('is the first line of the goal, without a trailing period', () => {
+    expect(spaceTitle({ name: 'x', goal: 'Fix the login.\nMore text' })).toBe(
+      'Fix the login',
+    );
+    expect(spaceTitle({ name: 'tes', goal: '' })).toBe('tes');
+  });
+
+  it('cuts a long goal at a word', () => {
+    const t = spaceTitle({
+      name: 'x',
+      goal: 'Show a "Free shipping over $50" note under the cart total, using the existing price formatter.',
+    });
+    expect(t.endsWith('…')).toBe(true);
+    expect(t.length).toBeLessThanOrEqual(61);
+    expect(t).toBe(
+      'Show a "Free shipping over $50" note under the cart total…',
+    );
   });
 });
