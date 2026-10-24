@@ -10,6 +10,7 @@ use theodore_contract::{
 use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId};
 use theodore_ports::{AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument as _;
 
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
@@ -92,10 +93,14 @@ impl Core {
         let pr = req.pr.clone();
         let skill = req.skill.clone();
         let run_id2 = run_id.clone();
-        tokio::spawn(async move {
-            let _lease = lease;
-            drive_skill_run(&core, run_id2, pr, skill, agents, cancel).await;
-        });
+        // In the command's span, so the run's records keep its `op_id`.
+        tokio::spawn(
+            async move {
+                let _lease = lease;
+                drive_skill_run(&core, run_id2, pr, skill, agents, cancel).await;
+            }
+            .in_current_span(),
+        );
         Ok(run_id)
     }
 
@@ -158,12 +163,25 @@ impl Core {
             .await
             .map(|r| self.0.deps.worktree_lease.acquire(r));
 
+        let scope = if req.about.is_some() {
+            "hunk"
+        } else if req.group.is_some() {
+            "group"
+        } else {
+            "pr"
+        };
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::ChatAsked {
+            scope: scope.into(),
+        });
         let core = self.clone();
         let pr = req.pr.clone();
-        tokio::spawn(async move {
-            let _lease = lease;
-            drive_ask(&core, run_id, pr, agent, req.question, cwd, cancel).await;
-        });
+        tokio::spawn(
+            async move {
+                let _lease = lease;
+                drive_ask(&core, run_id, pr, agent, req.question, cwd, cancel).await;
+            }
+            .in_current_span(),
+        );
         Ok(message_id)
     }
 
@@ -364,6 +382,9 @@ async fn drive_skill_run(
     let stall_after_ms = core.stall_after_ms().await;
     // The repo's `review.instructions` / `review.context`.
     let system = core.review_rules_of(&pr).await.with_system(None);
+    let started = std::time::Instant::now();
+    let findings_before = count_findings(core, &pr, &skill).await;
+    let agent_count = agents.len() as u32;
 
     let mut error: Option<String> = None;
     let mut last_agent = first_agent;
@@ -436,11 +457,56 @@ async fn drive_skill_run(
             data: Some(data),
         }])
         .await;
+    let ms = started.elapsed().as_millis() as u64;
+    if let Some(e) = &error {
+        tracing::warn!(
+            error.code = "skill.failed",
+            run = %run_id,
+            agent = last_agent.as_str(),
+            duration_ms = ms,
+            error = %e,
+            "skill run failed"
+        );
+    }
+    if !cancelled && error.is_none() {
+        let findings = count_findings(core, &pr, &skill)
+            .await
+            .saturating_sub(findings_before);
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::SkillRun {
+            skill: skill_label(&skill),
+            agents: agent_count,
+            findings,
+            ms,
+        });
+    }
     if cancelled || error.is_some() {
         let text = error.unwrap_or_else(|| "cancelled".into());
         persist_failed_message(core, &pr, last_agent, &text).await;
     }
     core.0.runs.write().await.remove(&run_id);
+}
+
+/// A built-in skill's id; anything the user wrote is just `custom` (its
+/// name could say what the code is about).
+pub(crate) fn skill_label(skill: &str) -> String {
+    if crate::usecases::skills::builtin_content(skill).is_some() {
+        skill.to_string()
+    } else {
+        "custom".to_string()
+    }
+}
+
+async fn count_findings(core: &Core, pr: &PrId, skill: &str) -> u32 {
+    let store = core.0.deps.store.clone();
+    let pr_s = pr.0.clone();
+    let rows = tokio::task::spawn_blocking(move || store.query(models::FINDING, "pr", &pr_s))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    rows.iter()
+        .filter(|r| r.data.get("skill").and_then(|s| s.as_str()) == Some(skill))
+        .count() as u32
 }
 
 /// Persists a `ChatMessage` with `failed` set and `agent` as author instead

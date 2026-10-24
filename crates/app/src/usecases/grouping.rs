@@ -8,6 +8,7 @@ use theodore_domain::grouping::{CO_CHANGE_MAX_COMMITS, CO_CHANGE_MAX_FILES, Repo
 use theodore_domain::review_rules::ReviewRules;
 use theodore_domain::{AgentId, FileFlag, FileStatus, Grouping, PrId, Revision};
 use theodore_ports::{NewAction, SyncActionCode};
+use tracing::Instrument as _;
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
@@ -75,7 +76,30 @@ impl Core {
             running: true,
             error: None,
         });
-        let result = self.regroup_run(&prev, &entry, &detail, agent, rules).await;
+        let span = tracing::info_span!(
+            "grouping",
+            pr = %pr.0,
+            agent = agent.as_str(),
+            incremental = prev.is_some()
+        );
+        let started = std::time::Instant::now();
+        let result = self
+            .regroup_run(&prev, &entry, &detail, agent, rules)
+            .instrument(span)
+            .await;
+        if let Err(e) = &result {
+            tracing::warn!(
+                error.code = e.code(),
+                pr = %pr.0,
+                agent = agent.as_str(),
+                duration_ms = started.elapsed().as_millis() as u64,
+                error = %e,
+                "grouping failed"
+            );
+            theodore_telemetry::product(theodore_telemetry::ProductEvent::GroupingFailed {
+                code: e.code().to_string(),
+            });
+        }
         self.0
             .grouping_inflight
             .lock()

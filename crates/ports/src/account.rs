@@ -33,6 +33,20 @@ pub enum AccountError {
     Protocol(String),
 }
 
+impl AccountError {
+    /// The stable error code logged as `error.code` (docs/telemetry.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            AccountError::Unavailable => "account.unavailable",
+            AccountError::Network(_) => "account.network",
+            AccountError::Rejected(_) => "account.rejected",
+            AccountError::InvalidToken(_) => "account.invalid_token",
+            AccountError::Config(_) => "account.config",
+            AccountError::Protocol(_) => "account.protocol",
+        }
+    }
+}
+
 /// Resolved by the app from env and settings; never hardcoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountConfig {

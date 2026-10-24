@@ -78,17 +78,23 @@ impl Core {
             },
         );
 
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::TaskDelegated {
+            agent: agent.as_str().into(),
+        });
         let core = self.clone();
         let run_id2 = run_id.clone();
-        tokio::spawn(async move {
+        tokio::spawn(tracing::Instrument::in_current_span(async move {
             let _lease = lease;
             drive_fix_run(&core, run_id2, task, agent, worktree, reason, cancel).await;
-        });
+        }));
         Ok(run_id)
     }
 
     pub async fn decide_task(&self, req: TaskDecision) -> AppResult<()> {
         let task = self.load_task(&req.task).await?;
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::TaskDecided {
+            accepted: req.accept,
+        });
         if req.accept {
             self.accept_task(task).await
         } else {

@@ -70,6 +70,8 @@ pub struct GroupingReport {
     pub valid_first_try: bool,
     pub usage: Usage,
     pub duration_ms: u64,
+    /// Agent calls the diff was split into (0: no agent call was needed).
+    pub chunks: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -178,6 +180,7 @@ pub async fn group_revision_with(
         .try_collect()
         .await?;
 
+    let chunk_count = results.len() as u32;
     let mut usage = Usage::default();
     let mut attempts: u32 = 0;
     let mut any_repair = false;
@@ -247,6 +250,7 @@ pub async fn group_revision_with(
         valid_first_try: !any_repair,
         usage,
         duration_ms: start.elapsed().as_millis() as u64,
+        chunks: chunk_count,
     })
 }
 

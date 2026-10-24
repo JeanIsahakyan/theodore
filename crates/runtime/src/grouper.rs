@@ -38,7 +38,45 @@ fn meta(pr: &PrDetail) -> PrMeta {
 }
 
 fn err(e: theodore_grouping::GroupingPipelineError) -> GrouperError {
-    GrouperError::Agent(e.to_string())
+    match e {
+        theodore_grouping::GroupingPipelineError::DuplicateHunkIds(_) => {
+            GrouperError::Invalid(e.to_string())
+        }
+        e => GrouperError::Agent(e.to_string()),
+    }
+}
+
+/// Logs a finished run and emits `grouping_done` (docs/telemetry.md).
+fn done(report: theodore_grouping::GroupingReport, agent: AgentId, rev: &Revision) -> Grouping {
+    let hunks = rev.hunks().count() as u32;
+    let groups = report.grouping.groups.len() as u32;
+    tracing::info!(
+        agent = agent.as_str(),
+        duration_ms = report.duration_ms,
+        attempts = report.attempts,
+        valid_first_try = report.valid_first_try,
+        chunks = report.chunks,
+        groups,
+        hunks,
+        "grouping done"
+    );
+    if !report.valid_first_try {
+        tracing::warn!(
+            error.code = "grouping.repaired",
+            agent = agent.as_str(),
+            attempts = report.attempts,
+            "grouping needed a repair round or the Other fallback"
+        );
+    }
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::GroupingDone {
+        ms: report.duration_ms,
+        valid_first_try: report.valid_first_try,
+        groups,
+        hunks,
+        agent: agent.as_str().to_string(),
+        chunks: report.chunks,
+    });
+    report.grouping
 }
 
 #[async_trait]
@@ -55,7 +93,7 @@ impl Grouper for GroupingGrouper {
         opts.agent = agent;
         theodore_grouping::group_revision_with(&*self.agents, &meta(pr), rev, ctx, worktree, &opts)
             .await
-            .map(|r| r.grouping)
+            .map(|r| done(r, agent, rev))
             .map_err(err)
     }
 
@@ -101,7 +139,7 @@ impl Grouper for GroupingGrouper {
             &opts,
         )
         .await
-        .map(|r| r.grouping)
+        .map(|r| done(r, agent, rev))
         .map_err(err)
     }
 }

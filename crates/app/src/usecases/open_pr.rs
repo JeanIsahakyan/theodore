@@ -7,6 +7,7 @@ use std::sync::Arc;
 use theodore_contract::{Ephemeral, OpenPrRequest, OpenPrResponse, ToastLevel, models};
 use theodore_domain::{AgentId, HostKind, PrDetail, PrId, PrRef, PrSummary, RepoRef, Revision};
 use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
+use tracing::Instrument as _;
 
 use crate::core::{Core, RevisionEntry};
 use crate::error::{AppError, AppResult};
@@ -156,8 +157,14 @@ impl Core {
                 state: detail.summary.state,
                 entry: entry.clone(),
             };
+            let host = serde_json::to_value(pr_ref.repo.host)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            tracing::info!(pr = %pr_id.0, files = revision.files.len(), "pr opened");
+            theodore_telemetry::product(theodore_telemetry::ProductEvent::PrOpened { host });
             self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, entry);
-            tokio::spawn(self.run_auto_skills(auto));
+            tokio::spawn(self.run_auto_skills(auto).in_current_span());
         }
 
         Ok(OpenPrResponse { pr: pr_id, head })
@@ -291,94 +298,118 @@ impl Core {
         entry: Arc<RevisionEntry>,
     ) {
         let core = self.clone();
-        tokio::spawn(async move {
-            let worktree = entry.worktree_path.clone();
-            let store = core.0.deps.store.clone();
-            let id = pr.0.clone();
-            let stored = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &id))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .flatten();
-            let rules = core.review_rules_at(entry.config_source()).await;
-            // Reuse a grouping of this head, unless an older algorithm or
-            // other review rules (`hide`, `skim`, `checklist`) made it.
-            if stored.is_some_and(|r| {
-                crate::usecases::grouping::row_is_current(
-                    &r.data,
-                    &head,
-                    rules.grouping_hash().as_deref(),
-                )
-            }) {
-                return;
-            }
-            {
-                let mut inflight = core
-                    .0
-                    .grouping_inflight
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                if !inflight.insert(pr.clone()) {
+        tokio::spawn(
+            async move {
+                let worktree = entry.worktree_path.clone();
+                let store = core.0.deps.store.clone();
+                let id = pr.0.clone();
+                let stored = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &id))
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .flatten();
+                let rules = core.review_rules_at(entry.config_source()).await;
+                // Reuse a grouping of this head, unless an older algorithm or
+                // other review rules (`hide`, `skim`, `checklist`) made it.
+                if stored.is_some_and(|r| {
+                    crate::usecases::grouping::row_is_current(
+                        &r.data,
+                        &head,
+                        rules.grouping_hash().as_deref(),
+                    )
+                }) {
                     return;
                 }
-            }
-            core.emit(Ephemeral::Grouping {
-                pr: pr.clone(),
-                running: true,
-                error: None,
-            });
-            let repo_scope = detail.summary.pr.repo.slug();
-            let configured = core
-                .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
-                .await;
-            let agent = core.effective_agent(configured).await;
-            let mut ctx = core.grouping_context(&worktree, &revision).await;
-            ctx.review = rules;
-            let result = core
-                .0
-                .deps
-                .grouper
-                .group(&revision, &detail, &ctx, &worktree, agent)
-                .await;
-            // The PR may have been closed while the agent worked (a branch
-            // review's "Close review"): don't write an orphaned grouping back.
-            let still_open = core.0.current_head.read().await.contains_key(&pr);
-            let error = match result {
-                Ok(_) if !still_open => None,
-                Ok(grouping) => {
-                    match crate::usecases::grouping::grouping_row(grouping, &revision, &ctx) {
-                        Ok(data) => core
-                            .apply(vec![NewAction {
-                                model: models::GROUPING.into(),
-                                model_id: pr.0.clone(),
-                                action: SyncActionCode::U,
-                                data: Some(data),
-                            }])
-                            .await
-                            .err()
-                            .map(|e| e.to_string()),
-                        Err(e) => Some(e.to_string()),
+                {
+                    let mut inflight = core
+                        .0
+                        .grouping_inflight
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if !inflight.insert(pr.clone()) {
+                        return;
                     }
                 }
-                Err(e) => Some(e.to_string()),
-            };
-            core.0
-                .grouping_inflight
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(&pr);
-            if let Some(e) = &error {
-                core.emit(Ephemeral::Toast {
-                    level: ToastLevel::Error,
-                    text: format!("grouping failed: {e}"),
+                core.emit(Ephemeral::Grouping {
+                    pr: pr.clone(),
+                    running: true,
+                    error: None,
+                });
+                let repo_scope = detail.summary.pr.repo.slug();
+                let configured = core
+                    .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
+                    .await;
+                let agent = core.effective_agent(configured).await;
+                let mut ctx = core.grouping_context(&worktree, &revision).await;
+                ctx.review = rules;
+                let started = std::time::Instant::now();
+                let result = core
+                    .0
+                    .deps
+                    .grouper
+                    .group(&revision, &detail, &ctx, &worktree, agent)
+                    .instrument(tracing::info_span!(
+                        "grouping",
+                        pr = %pr.0,
+                        agent = agent.as_str(),
+                        incremental = false
+                    ))
+                    .await;
+                if let Err(e) = &result {
+                    let code = e.code();
+                    tracing::warn!(
+                        error.code = code,
+                        pr = %pr.0,
+                        agent = agent.as_str(),
+                        duration_ms = started.elapsed().as_millis() as u64,
+                        error = %e,
+                        "grouping failed"
+                    );
+                    theodore_telemetry::product(theodore_telemetry::ProductEvent::GroupingFailed {
+                        code: code.to_string(),
+                    });
+                }
+                // The PR may have been closed while the agent worked (a branch
+                // review's "Close review"): don't write an orphaned grouping back.
+                let still_open = core.0.current_head.read().await.contains_key(&pr);
+                let error = match result {
+                    Ok(_) if !still_open => None,
+                    Ok(grouping) => {
+                        match crate::usecases::grouping::grouping_row(grouping, &revision, &ctx) {
+                            Ok(data) => core
+                                .apply(vec![NewAction {
+                                    model: models::GROUPING.into(),
+                                    model_id: pr.0.clone(),
+                                    action: SyncActionCode::U,
+                                    data: Some(data),
+                                }])
+                                .await
+                                .err()
+                                .map(|e| e.to_string()),
+                            Err(e) => Some(e.to_string()),
+                        }
+                    }
+                    Err(e) => Some(e.to_string()),
+                };
+                core.0
+                    .grouping_inflight
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&pr);
+                if let Some(e) = &error {
+                    core.emit(Ephemeral::Toast {
+                        level: ToastLevel::Error,
+                        text: format!("grouping failed: {e}"),
+                    });
+                }
+                core.emit(Ephemeral::Grouping {
+                    pr,
+                    running: false,
+                    error,
                 });
             }
-            core.emit(Ephemeral::Grouping {
-                pr,
-                running: false,
-                error,
-            });
-        });
+            .in_current_span(),
+        );
     }
 }
 

@@ -35,6 +35,21 @@ pub enum GitError {
 
 pub type GitResult<T> = Result<T, GitError>;
 
+impl GitError {
+    /// The stable error code logged as `error.code` (docs/telemetry.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            GitError::NotInstalled => "git.not_installed",
+            GitError::Command { .. } => "git.command_failed",
+            GitError::Auth(_) => "git.auth",
+            GitError::Parse(_) => "git.parse",
+            GitError::Io(_) => "git.io",
+            GitError::Unsupported(_) => "git.unsupported",
+            GitError::Refused(_) => "git.refused",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiffOptions {
     pub context: u32,

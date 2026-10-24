@@ -71,6 +71,17 @@ pub enum StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
+impl StoreError {
+    /// The stable error code logged as `error.code` (docs/telemetry.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            StoreError::Db(_) => "store.db",
+            StoreError::Serde(_) => "store.serde",
+            StoreError::Migration(_) => "store.migration",
+        }
+    }
+}
+
 /// Synchronous on purpose (rusqlite); `app` calls it via `spawn_blocking`.
 pub trait Store: Send + Sync {
     /// Apply atomically: write model rows, append to the sync log, return the

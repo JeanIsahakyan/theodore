@@ -178,6 +178,7 @@ pub async fn regroup_with(
             valid_first_try: true,
             usage: Usage::default(),
             duration_ms: start.elapsed().as_millis() as u64,
+            chunks: 0,
         });
     }
 
@@ -221,6 +222,7 @@ pub async fn regroup_with(
         valid_first_try: !any_repair,
         usage,
         duration_ms: start.elapsed().as_millis() as u64,
+        chunks: 1,
     })
 }
 

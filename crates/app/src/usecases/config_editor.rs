@@ -140,6 +140,15 @@ impl Core {
     /// Writes `text` to `layer` (see the module doc). Refused, with nothing
     /// written, while the text has errors.
     pub async fn save_config(&self, req: SaveConfigRequest) -> AppResult<SaveConfigResult> {
+        let r#where = crate::usecases::telemetry::wire_str(&req.layer);
+        let result = self.save_config_inner(req).await;
+        if result.is_ok() {
+            theodore_telemetry::product(theodore_telemetry::ProductEvent::ConfigSaved { r#where });
+        }
+        result
+    }
+
+    async fn save_config_inner(&self, req: SaveConfigRequest) -> AppResult<SaveConfigResult> {
         let _guard = self.0.ship_lock.lock().await;
         let project = self.config_project(&req.project).await?;
         if let Some(p) = editor::validate(&req.text)

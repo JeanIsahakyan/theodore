@@ -680,6 +680,9 @@ impl Core {
         self.emit(Ephemeral::AccountStatus {
             status: status.clone(),
         });
+        // No account id, email or name: the event only says it happened.
+        tracing::info!("signed in to the Theodore account");
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::SignedIn);
         Ok(status)
     }
 
@@ -868,6 +871,11 @@ impl Core {
                 Ok(Some(next))
             }
             Err(e @ (AccountError::Rejected(_) | AccountError::InvalidToken(_))) => {
+                tracing::warn!(
+                    error.code = "account.refresh_rejected",
+                    error = %e,
+                    "the account session couldn't be refreshed; signed out"
+                );
                 if self.0.account.generation.load(Ordering::SeqCst) == generation {
                     self.0.account.session_ended.store(true, Ordering::SeqCst);
                     self.account_forget().await?;
@@ -877,7 +885,10 @@ impl Core {
                 }
                 Err(e.into())
             }
-            Err(e) => Err(e.into()),
+            Err(e) => {
+                tracing::warn!(error.code = e.code(), error = %e, "account refresh failed");
+                Err(e.into())
+            }
         }
     }
 
