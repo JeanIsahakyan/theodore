@@ -22,6 +22,8 @@ import type {
   ToastLevel,
 } from '../gen/contract';
 import { appendLogs, seedLogs } from '../ui/space/commands';
+import { configPrToast } from '../ui/project/configFile';
+import { openExternal } from '../core/openExternal';
 
 const LOG_LIMIT = 500;
 
@@ -249,6 +251,14 @@ export class EphemeralStore {
           const next = new Map(this.spaceLogs);
           next.set(e.space, appendLogs(next.get(e.space) ?? [], [e.line]));
           this.spaceLogs = next;
+          return;
+        }
+        case 'config_pr': {
+          const toast = configPrToast(e.number, e.url, openExternal);
+          this.toasts = [
+            ...this.toasts,
+            { id: this.nextToastId++, level: 'info', ...toast },
+          ];
           return;
         }
       }

@@ -39,6 +39,7 @@ import type {
   AgentStatus,
   AppInfo,
   HostAuthStatus,
+  Project,
   UpdateInfo,
 } from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
@@ -52,6 +53,7 @@ import { AccountCard } from './AccountCard';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
 import { projectLabel } from './Projects';
+import { ConfigEditor } from './project/ConfigEditor';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { visibleSettingsPages } from './sandbox/sandbox';
@@ -714,20 +716,19 @@ function effectiveOf(
 }
 
 const SOURCE_NOTE: Record<'repo' | 'user' | 'default', string> = {
-  repo: 'from .review/config.yaml in this repo',
+  repo: 'from this project’s config files',
   user: 'from your user settings',
   default: 'default',
 };
 
 /** Settings → Projects → ⟨repo⟩: the settings effective for this repo and
- *  where each came from. Repo values are read-only here — they live in the
- *  repo's own `.review/config.yaml` and change by editing that file, not
- *  through this app. */
+ *  where each came from, then the project's config file: create it from
+ *  these settings, edit, check and save it (`ConfigEditor`). */
 const RepoSettingsPage = observer(function RepoSettingsPage({
   project,
   onBack,
 }: {
-  project: { id: string; repo: { owner: string; name: string } };
+  project: Project;
   onBack: () => void;
 }) {
   const store = useRootStore();
@@ -770,10 +771,12 @@ const RepoSettingsPage = observer(function RepoSettingsPage({
           })}
         </Card>
         <span className="text-xs text-muted">
-          Repo values are read-only here — edit .review/config.yaml in the repo
-          to change them.
+          A value from the project’s config wins over your user settings for
+          this repo — change it in the config below.
         </span>
       </section>
+      <Separator />
+      <ConfigEditor project={project} />
     </>
   );
 });

@@ -159,7 +159,7 @@ function ProjectConfigRow({ project }: { project: Project }) {
   );
 }
 
-function EffectiveConfigView({ config }: { config: EffectiveConfig }) {
+export function EffectiveConfigView({ config }: { config: EffectiveConfig }) {
   const repo = config.repo_commands;
   return (
     <>

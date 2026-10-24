@@ -64,6 +64,11 @@ import type {
   SpaceTrustRequest,
   EffectiveConfig,
   GlobalConfigInfo,
+  ConfigDraft,
+  CheckConfigRequest,
+  ConfigCheck,
+  SaveConfigRequest,
+  SaveConfigResult,
   SaveSkillRequest,
   SetLinearTokenRequest,
   SetTokenRequest,
@@ -228,6 +233,15 @@ export const api = {
   /** A project's merged config, read-only (Settings → Labs). */
   projectConfig: (project: string) =>
     call<EffectiveConfig>('project_config', { project }),
+  /** Settings → Projects → Config: each layer's file and YAML generated
+   *  from the project's settings. */
+  configDraft: (project: string) =>
+    call<ConfigDraft>('config_draft', { project }),
+  /** Live check while typing: shown inline, never toasted. */
+  checkConfig: (req: CheckConfigRequest) =>
+    call<ConfigCheck>('check_config', { req }, true),
+  saveConfig: (req: SaveConfigRequest) =>
+    call<SaveConfigResult>('save_config', { req }),
   globalConfig: () => call<GlobalConfigInfo>('global_config'),
   /** Creates the global config from a template when missing, then opens
    *  it in the default editor. */
