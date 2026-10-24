@@ -494,11 +494,13 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     ? ''
     : local
       ? 'local branch'
-      : failing
-        ? `${failing} ${failing === 1 ? 'check' : 'checks'} failing`
-        : summary.approvals < (summary.required_approvals ?? 0)
-          ? `approvals ${summary.approvals}/${summary.required_approvals}`
-          : '';
+      : summary.conflicts
+        ? 'conflicts with base'
+        : failing
+          ? `${failing} ${failing === 1 ? 'check' : 'checks'} failing`
+          : summary.approvals < (summary.required_approvals ?? 0)
+            ? `approvals ${summary.approvals}/${summary.required_approvals}`
+            : '';
 
   return (
     <div ref={rootRef} className="review flex min-w-0 flex-1 flex-col">

@@ -98,50 +98,54 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
           ))}
         </RadioGroup>
       )}
-      <Label className="text-sm font-medium">
-        Pending comments ({drafts.length})
-      </Label>
-      <Table variant="secondary">
-        <Table.ScrollContainer>
-          <Table.Content aria-label="Pending comments">
-            <Table.Header>
-              <Table.Column isRowHeader>where</Table.Column>
-              <Table.Column>who</Table.Column>
-              <Table.Column>text</Table.Column>
-            </Table.Header>
-            <Table.Body
-              renderEmptyState={() => (
-                <span className="text-xs text-muted">
-                  none: only the verdict will be sent
-                </span>
-              )}
-            >
-              {drafts.map((d) => (
-                <Table.Row key={d.id} id={d.id}>
-                  <Table.Cell className="max-w-[200px] font-mono text-xs">
-                    <span
-                      className="block truncate"
-                      title={`${d.anchor.path}:${d.anchor.line}`}
-                    >
-                      {d.anchor.path}:{d.anchor.line}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell className="shrink-0">
-                    {d.source.kind === 'agent' ? (
-                      <AgentTag id={d.source.agent} />
-                    ) : (
-                      <span className="text-xs text-muted">you</span>
-                    )}
-                  </Table.Cell>
-                  <Table.Cell className="max-w-[320px] text-xs">
-                    <span className="line-clamp-2">{d.body.slice(0, 110)}</span>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table.Content>
-        </Table.ScrollContainer>
-      </Table>
+      {drafts.length === 0 ? (
+        <span className="text-xs text-muted">
+          No pending comments: only the verdict will be sent.
+        </span>
+      ) : (
+        <>
+          <Label className="text-sm font-medium">
+            Pending comments ({drafts.length})
+          </Label>
+          <Table variant="secondary">
+            <Table.ScrollContainer>
+              <Table.Content aria-label="Pending comments">
+                <Table.Header>
+                  <Table.Column isRowHeader>where</Table.Column>
+                  <Table.Column>who</Table.Column>
+                  <Table.Column>text</Table.Column>
+                </Table.Header>
+                <Table.Body>
+                  {drafts.map((d) => (
+                    <Table.Row key={d.id} id={d.id}>
+                      <Table.Cell className="max-w-[200px] font-mono text-xs">
+                        <span
+                          className="block truncate"
+                          title={`${d.anchor.path}:${d.anchor.line}`}
+                        >
+                          {d.anchor.path}:{d.anchor.line}
+                        </span>
+                      </Table.Cell>
+                      <Table.Cell className="shrink-0">
+                        {d.source.kind === 'agent' ? (
+                          <AgentTag id={d.source.agent} />
+                        ) : (
+                          <span className="text-xs text-muted">you</span>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell className="max-w-[320px] text-xs">
+                        <span className="line-clamp-2">
+                          {d.body.slice(0, 110)}
+                        </span>
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </Table.Content>
+            </Table.ScrollContainer>
+          </Table>
+        </>
+      )}
       <div className="flex justify-end gap-2">
         <Button variant="tertiary" onPress={() => ui.closeModal()}>
           Cancel
