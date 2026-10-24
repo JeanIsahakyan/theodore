@@ -10,6 +10,9 @@ name: Release
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  (required)
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
 #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID  (optional)
+# Variables:
+#   THEODORE_WORKOS_CLIENT_ID  the account's client id, baked into the build;
+#                              signing in is then required (unset: no account)
 
 on:
   push:
@@ -95,6 +98,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Compiled in as the lowest-priority client id (docs/releasing.md).
+          THEODORE_WORKOS_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
         run: cargo tauri build --target aarch64-apple-darwin --bundles app,dmg
 
       - name: locate bundle artifacts

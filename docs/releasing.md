@@ -38,6 +38,21 @@ Without these two secrets, `.github/workflows/release.yml` fails at the
 "build app, dmg and updater artifacts" step — the updater's pubkey is already
 configured, so the bundler insists on a matching private key to sign against.
 
+## Theodore account: the client id
+
+Signing in to a Theodore account is required wherever the account is
+configured (plan §6.12). A release build carries the WorkOS client id
+compiled in, from `THEODORE_WORKOS_CLIENT_ID` in the build's environment:
+
+- In the GitHub repo → Settings → Secrets and variables → Actions →
+  **Variables**, add `THEODORE_WORKOS_CLIENT_ID` = `client_…` (the
+  production environment's client id). It's a public value, so a variable,
+  not a secret; it is never committed. `release.yml` passes it to the build.
+- Without it the release builds and runs with no account at all: no
+  sign-in screen, no account card.
+- At run time the same env var or the `account.workos.client_id` setting
+  still wins over the compiled-in id (staging, a test environment).
+
 ## Optional: Developer ID signing + notarization
 
 Without this, every release is **ad-hoc signed** (`tauri.conf.json`'s
@@ -90,6 +105,14 @@ it: `<version>-nightly.<commits on HEAD>` (e.g. `0.0.1-nightly.340`), file
 only grows, one per commit. Nothing is tagged or published, and the version
 files keep the release version; a dirty tree is refused, so every nightly
 maps to exactly one commit.
+
+It bakes in the account's client id like a release, so it needs
+`THEODORE_WORKOS_CLIENT_ID` set and stops with a message when it isn't:
+
+```sh
+THEODORE_WORKOS_CLIENT_ID=client_… scripts/nightly-build.sh
+scripts/nightly-build.sh --no-account   # no account, no sign-in
+```
 
 ## First launch on a clean Mac (ad-hoc signed builds)
 

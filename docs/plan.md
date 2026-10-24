@@ -454,10 +454,11 @@ gap. `merge_status`, reviewer management and draft-state toggling stay
 
 ### 6.12 Theodore account
 
-A second, optional identity: who you are to Theodore itself, for the cloud
-features to come (sync, teams, licensing, enterprise SSO). It is not a code
-host and never touches the host tokens of §6.8; signing in or out of one
-leaves the other alone. Identity provider: WorkOS AuthKit, used as a
+A second identity: who you are to Theodore itself, for the cloud features to
+come (sync, teams, licensing, enterprise SSO). Wherever it's configured,
+signing in is required to use the app (see "Sign-in required" below). It is
+not a code host and never touches the host tokens of §6.8; signing in or out
+of one leaves the other alone. Identity provider: WorkOS AuthKit, used as a
 **public client** — no client secret or API key ships in the app, and there
 is no Theodore server yet.
 
@@ -557,14 +558,59 @@ Settings → Account / Onboarding
     token came straight from the provider over TLS, so the signature is
     defense in depth there.
 
+#### Sign-in required
+
+Wherever the account is configured (a client id from the env, the setting or
+the build), nothing runs until someone is signed in. The UI shows only the
+sign-in, and the core enforces it too.
+
+| Where | Gate |
+| --- | --- |
+| Fixture and sandbox modes, the CLI (`LocalAccount`) | none: exempt |
+| A build with no client id anywhere (a plain `cargo run`, `cargo tauri dev`) | none: no account, the app works as before |
+| Configured, signed in (a stored session) | open |
+| Configured, signed out | closed |
+
+```
+closed ─▶ UI     the window is the sign-in screen: logo + sign-in stages,
+                 centred; no sidebar, tabs, shortcuts, palette or menu
+                 actions. First launch: Onboarding's first step, no Skip;
+                 GitHub, agents and projects follow once signed in.
+          shell  every command off the allow-list answers
+                 {code: "account_required"} (desktop gate.rs)
+          core   the outbox, the poller, the start-up inbox refresh and
+                 clones hold (account_hold); nothing reaches a host
+sign in ─▶ open: the app comes back where it was; held work starts
+```
+
+- **Allowed while signed out**: `bootstrap`, `catch_up`, `app_info`,
+  `check_update`, `install_update`, `account_status`,
+  `account_sign_in_start` / `_poll` / `_cancel`, `account_sign_out`,
+  `focus_window`. Every other command is gated, new ones included (deny by
+  default; the list and its test live in `apps/desktop/src/gate.rs`).
+- **Offline.** A stored session keeps the app usable with no network: a
+  refresh that fails on the network, a timeout or a 5xx keeps the session,
+  and the refresher retries every ~30 s. Only a definitive rejection (the
+  refresh token revoked or no longer valid) signs out. The gate then closes
+  and says "Your session ended — sign in again".
+- **Signing out** (Settings → Account) closes the gate too. Only the
+  session goes: the store, projects, drafts and worktrees stay for the next
+  sign-in, and nothing is deleted.
+- **Dev builds.** With no client id, there's no gate: `cargo run` and
+  `cargo tauri dev` work as before. Setting `THEODORE_WORKOS_CLIENT_ID`
+  (env) or `account.workos.client_id` (setting) turns the gate on in a dev
+  run too.
+
 #### Where it lives
 
 ```
-ui  AccountCard (Settings → Account, top) · AccountStep (Onboarding, optional)
+ui  SignInGate (whole window, signed out) · AccountStep (Onboarding, first)
+    AccountCard (Settings → Account, top) · accountGate.ts (routing, pure)
      └─ useAccountSignIn ─▶ reduceFlow (pure, vitest)
 commands  account_status · account_sign_in_start · account_sign_in_poll ·
           account_sign_in_cancel · account_sign_out · focus_window (shell)
-app  usecases/account.rs   config, state check, keychain, refresher, events
+desktop  gate.rs             allow-list; every other command asks the gate
+app  usecases/account.rs   config, gate, state check, keychain, refresher, events
 ports  AccountPort          LocalAccount = no provider (fixtures, sandbox, CLI)
 account-workos  WorkosAccount   PKCE, loopback listener, device code, refresh, JWKS
 desktop  deep_link.rs       theodore:// handler, bundle check ─▶ app redirect
@@ -579,11 +625,12 @@ method, each poll is one token request at the server's interval, and
 #### Configuration
 
 Checked in this order; with no client id the whole feature is hidden (no
-card, no onboarding step). Fixture and sandbox modes always hide it.
+card, no onboarding step, no sign-in gate). Fixture and sandbox modes always
+hide it.
 
 | What | Env | Setting (scope `user`) | Default |
 | --- | --- | --- | --- |
-| Client id | `THEODORE_WORKOS_CLIENT_ID` | `account.workos.client_id` | none: feature hidden |
+| Client id | `THEODORE_WORKOS_CLIENT_ID` | `account.workos.client_id` | the one compiled in, else none: feature hidden |
 | Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | `theodore://callback` in the app bundle, else `http://127.0.0.1:47823/callback` |
 | API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
 | Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
@@ -628,10 +675,13 @@ production.
    background logout call never follows it.
 7. **CORS / allowed origins.** Not needed: every call comes from the Rust
    core, never from the webview.
-8. **Configure the app.** Set `THEODORE_WORKOS_CLIENT_ID=client_…` for the
-   app, or write the `account.workos.client_id` setting. A packaged build
-   reads the env from its launch environment, so a setting is the durable
-   choice there.
+8. **Configure the app.** Build it with `THEODORE_WORKOS_CLIENT_ID=client_…`
+   set: the id is compiled in (`option_env!` in `theodore-runtime`), the
+   lowest-priority source. The release workflow takes it from the
+   repository variable of the same name, and `scripts/nightly-build.sh`
+   from its environment (docs/releasing.md). At run time the env var, then
+   the `account.workos.client_id` setting, still win over it: that's how a
+   build points at staging. No client id is ever committed.
 
 #### Needs the future server
 
