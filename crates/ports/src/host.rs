@@ -42,6 +42,22 @@ pub enum HostError {
 
 pub type HostResult<T> = Result<T, HostError>;
 
+impl HostError {
+    /// The stable error code logged as `error.code` (docs/telemetry.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            HostError::Auth => "host.auth",
+            HostError::RateLimited { .. } => "host.rate_limited",
+            HostError::NotFound(_) => "host.not_found",
+            HostError::Conflict(_) => "host.conflict",
+            HostError::Validation(_) => "host.validation",
+            HostError::Network(_) => "host.network",
+            HostError::Unsupported(_) => "host.unsupported",
+            HostError::Protocol(_) => "host.protocol",
+        }
+    }
+}
+
 /// Conditional fetch result (ETag).
 #[derive(Debug, Clone)]
 pub enum Fetched<T> {

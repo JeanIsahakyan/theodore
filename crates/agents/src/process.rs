@@ -62,7 +62,28 @@ pub struct SpawnSpec {
     /// Where to record the child's pid while it runs, so a later process can
     /// reap it if Theodore dies without cleaning up (`reap_orphans`).
     pub pid_dir: Option<PathBuf>,
+    /// For the log: `claude`, `codex`, `gemini`, and the CLI's version
+    /// when known.
+    pub agent: String,
+    pub version: Option<String>,
 }
+
+/// What the log says about a run (docs/telemetry.md "Error codes").
+#[derive(Clone)]
+struct RunLog {
+    agent: String,
+    version: String,
+    started: tokio::time::Instant,
+}
+
+impl RunLog {
+    fn ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+}
+
+/// The stderr tail sent with an `agent.crashed` record.
+pub const LOGGED_STDERR_TAIL: usize = 2048;
 
 /// Deletes the pid marker once the run loop ends.
 struct PidMarker(PathBuf);
@@ -139,7 +160,22 @@ pub fn spawn_and_stream(
         // agent's own shell-tool children included), not just this one pid.
         .process_group(0);
 
-    let mut child = cmd.spawn().map_err(|e| AgentError::Spawn(e.to_string()))?;
+    let log = RunLog {
+        agent: spec.agent.clone(),
+        version: spec.version.clone().unwrap_or_default(),
+        started: tokio::time::Instant::now(),
+    };
+    let mut child = cmd.spawn().map_err(|e| {
+        tracing::warn!(
+            error.code = "agent.spawn_failed",
+            agent = %log.agent,
+            agent_version = %log.version,
+            error = %e,
+            "agent CLI failed to start"
+        );
+        AgentError::Spawn(e.to_string())
+    })?;
+    tracing::info!(agent = %log.agent, agent_version = %log.version, "agent run started");
     let mut guards = spec.guards;
     if let (Some(dir), Some(pid)) = (&spec.pid_dir, child.id())
         && std::fs::create_dir_all(dir).is_ok()
@@ -158,17 +194,23 @@ pub fn spawn_and_stream(
     let run_deadline = (spec.max_runtime_ms > 0)
         .then(|| tokio::time::Instant::now() + Duration::from_millis(spec.max_runtime_ms));
 
-    tokio::spawn(run_loop(
-        child,
-        stdout,
-        stderr,
-        tx,
-        cancel.clone(),
-        stall_after,
-        spec.max_runtime_ms,
-        run_deadline,
-        parser,
-        guards,
+    // In the caller's span: the run's records keep the command's `op_id`.
+    let span = tracing::info_span!("agent_run", agent = %log.agent, agent_version = %log.version);
+    tokio::spawn(tracing::Instrument::instrument(
+        run_loop(
+            child,
+            stdout,
+            stderr,
+            tx,
+            cancel.clone(),
+            stall_after,
+            spec.max_runtime_ms,
+            run_deadline,
+            parser,
+            guards,
+            log,
+        ),
+        span,
     ));
 
     Ok(AgentRun { events: rx, cancel })
@@ -196,6 +238,7 @@ async fn run_loop(
     run_deadline: Option<tokio::time::Instant>,
     mut parser: Box<dyn LineParser>,
     _guards: Vec<Box<dyn std::any::Any + Send>>,
+    log: RunLog,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut terminal_sent = false;
@@ -220,10 +263,19 @@ async fn run_loop(
         tokio::select! {
             _ = cancel.cancelled() => {
                 exit_success = Some(terminate(&mut child).await);
+                tracing::info!(agent = %log.agent, duration_ms = log.ms(), "agent run cancelled");
                 break;
             }
             _ = sleep_until_or_pending(run_deadline) => {
                 let _ = terminate(&mut child).await;
+                tracing::warn!(
+                    error.code = "agent.timed_out",
+                    agent = %log.agent,
+                    agent_version = %log.version,
+                    duration_ms = log.ms(),
+                    max_runtime_ms,
+                    "agent run hit its runtime cap and was stopped"
+                );
                 terminal_sent = true;
                 let ev = AgentEvent::Error {
                     message: format!(
@@ -251,6 +303,7 @@ async fn run_loop(
                                 continue;
                             }
                             terminal_sent |= terminal;
+                            log_terminal(&log, &ev, None);
                             if tx.send(ev).await.is_err() {
                                 return;
                             }
@@ -262,6 +315,14 @@ async fn run_loop(
             }
             _ = tokio::time::sleep(stall_after), if !stalled_notified => {
                 stalled_notified = true;
+                tracing::warn!(
+                    error.code = "agent.stalled",
+                    agent = %log.agent,
+                    agent_version = %log.version,
+                    duration_ms = log.ms(),
+                    silent_ms = stall_after.as_millis() as u64,
+                    "agent went quiet"
+                );
                 if tx.send(AgentEvent::Stalled).await.is_err() {
                     return;
                 }
@@ -277,13 +338,63 @@ async fn run_loop(
     let tail_str = String::from_utf8_lossy(&stderr_tail).into_owned();
 
     if !terminal_sent {
-        let success = match exit_success {
-            Some(s) => s,
-            None => child.wait().await.map(|s| s.success()).unwrap_or(false),
+        let cancelled = exit_success.is_some();
+        let (success, code) = match exit_success {
+            Some(s) => (s, None),
+            None => match child.wait().await {
+                Ok(s) => (s.success(), s.code()),
+                Err(_) => (false, None),
+            },
         };
         let ev = parser.on_exit(success, &tail_str);
+        if !cancelled {
+            log_terminal(&log, &ev, Some((code, &tail_str)));
+        }
         let _ = tx.send(ev).await;
     }
+}
+
+/// Logs how a run ended: `info` when done, `agent.crashed` with the exit
+/// code and the end of stderr when it failed.
+fn log_terminal(log: &RunLog, ev: &AgentEvent, exit: Option<(Option<i32>, &str)>) {
+    match ev {
+        AgentEvent::Done { .. } => {
+            tracing::info!(agent = %log.agent, duration_ms = log.ms(), "agent run done");
+        }
+        AgentEvent::Error {
+            message,
+            stderr_tail,
+        } => {
+            let (code, tail) = match exit {
+                Some((code, tail)) => (code, tail),
+                None => (None, stderr_tail.as_str()),
+            };
+            let tail = tail_of(tail, LOGGED_STDERR_TAIL);
+            tracing::warn!(
+                error.code = "agent.crashed",
+                agent = %log.agent,
+                agent_version = %log.version,
+                duration_ms = log.ms(),
+                exit_code = code,
+                stderr_tail = tail,
+                error = %message,
+                "agent run failed"
+            );
+        }
+        _ => {}
+    }
+}
+
+/// The last `max` bytes of `s`, on a char boundary.
+fn tail_of(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut i = s.len() - max;
+    while !s.is_char_boundary(i) {
+        i += 1;
+    }
+    &s[i..]
 }
 
 /// SIGTERM, then up to `GRACE_PERIOD` for a clean exit, else SIGKILL. Signals

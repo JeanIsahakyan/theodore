@@ -24,5 +24,6 @@ pub mod spaces;
 pub mod suggestions;
 pub mod symbols;
 pub mod tasks;
+pub mod telemetry;
 pub mod threads;
 pub mod triage;

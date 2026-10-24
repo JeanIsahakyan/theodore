@@ -9,7 +9,7 @@ import { useRootStore, useUi } from '../stores/context';
 import { ask } from '../actions';
 import { ContextMenuHost, useContextMenu } from './ContextMenu';
 import { Inbox } from './List';
-import { Modals } from './Modals';
+import { GateModals, Modals } from './Modals';
 import { useGlobalKeys } from './Palette';
 import { Branches } from './Branches';
 import { PullRequests } from './PullRequests';
@@ -146,6 +146,7 @@ export const App = observer(function App() {
     return (
       <>
         {view === 'onboarding' ? <Onboarding /> : <SignInGate />}
+        <GateModals />
         <Toast.Provider placement="bottom end" maxVisibleToasts={3} />
       </>
     );

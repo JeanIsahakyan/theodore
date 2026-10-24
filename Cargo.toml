@@ -28,6 +28,7 @@ theodore-mcp = { path = "crates/mcp" }
 theodore-store = { path = "crates/store" }
 theodore-secrets = { path = "crates/secrets" }
 theodore-grouping = { path = "crates/grouping" }
+theodore-telemetry = { path = "crates/telemetry" }
 
 # shared
 serde = { version = "1", features = ["derive"] }

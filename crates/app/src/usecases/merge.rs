@@ -111,6 +111,7 @@ impl Core {
             .await
             .ok_or_else(|| AppError::NotFound(format!("pr {}", req.pr)))?;
         reject_if_local(&pr_ref, "merging")?;
+        let method = crate::usecases::telemetry::wire_str(&req.method);
         let payload = MergePayload {
             pr: req.pr,
             method: to_port_method(req.method),
@@ -121,6 +122,7 @@ impl Core {
         };
         let data = serde_json::to_value(&payload).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.enqueue_outbox("merge_pr", data).await?;
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::Merge { method });
         Ok(())
     }
 

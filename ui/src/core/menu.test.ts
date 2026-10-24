@@ -49,4 +49,10 @@ describe('runMenu behind the account gate', () => {
     expect(s.ui.route).toEqual(before);
     expect(s.ui.modal).toBeNull();
   });
+
+  it('still opens Report a Problem', () => {
+    const s = store(signedOut);
+    runMenu(s, 'report-problem');
+    expect(s.ui.modal).toBe('report-problem');
+  });
 });

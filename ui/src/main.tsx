@@ -6,6 +6,8 @@ import { initialTheme } from './stores/UiStore';
 import { RootStore } from './stores/RootStore';
 import { RootStoreProvider } from './stores/context';
 import { App } from './ui/App';
+import { ErrorBoundary } from './ui/ErrorBoundary';
+import { installErrorForwarding } from './core/clientLog';
 import './styles.css';
 
 // Every mutation to observable state must go through an action — catches
@@ -24,13 +26,17 @@ window.addEventListener('contextmenu', (e) => {
 });
 
 const store = new RootStore();
+// Uncaught errors go to the core's log, tagged with the route name only.
+installErrorForwarding(window, () => store.ui.route.name);
 void store.start();
 
 // Before React mounts, so it runs ahead of every shortcut listener.
 installLatinKeys();
 
 createRoot(document.getElementById('root')!).render(
-  <RootStoreProvider store={store}>
-    <App />
-  </RootStoreProvider>,
+  <ErrorBoundary>
+    <RootStoreProvider store={store}>
+      <App />
+    </RootStoreProvider>
+  </ErrorBoundary>,
 );

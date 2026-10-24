@@ -9,6 +9,7 @@ pub mod events;
 pub mod gate;
 pub mod menu;
 pub mod notify;
+pub mod op;
 pub mod shell_path;
 pub mod updater;
 
@@ -113,6 +114,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::account_sign_out,
             commands::focus_window,
             commands::notify_space,
+            commands::log_client,
+            commands::track_ui,
+            commands::telemetry_status,
+            commands::set_telemetry,
+            commands::report_problem,
+            commands::reveal_report,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()
@@ -205,6 +212,13 @@ pub fn run(
             // exit does, just needlessly.
             if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
                 tauri::async_runtime::block_on(exit_core.stop_all_space_commands());
+            }
+            // Last: send what the remote sinks still hold, flush the file.
+            if let tauri::RunEvent::Exit = event
+                && let Some(t) = theodore_telemetry::global()
+            {
+                tracing::info!("Theodore quitting");
+                t.shutdown();
             }
         });
 }

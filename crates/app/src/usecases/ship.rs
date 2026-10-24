@@ -43,6 +43,24 @@ impl Core {
     /// as it is now; an opened PR lands on `space.pr` once the outbox item
     /// runs.
     pub async fn ship_space(&self, req: ShipSpaceRequest) -> AppResult<Space> {
+        let how = crate::usecases::telemetry::wire_str(&req.action);
+        let result = self.ship_space_inner(req).await;
+        match &result {
+            Ok(_) => {
+                theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceShipped { how })
+            }
+            Err(e) if !e.is_expected() => tracing::warn!(
+                error.code = e.code(),
+                how,
+                error = %e,
+                "shipping a space failed"
+            ),
+            Err(_) => {}
+        }
+        result
+    }
+
+    async fn ship_space_inner(&self, req: ShipSpaceRequest) -> AppResult<Space> {
         let _guard = self.0.ship_lock.lock().await;
         let space = self.space_row(&req.space).await?;
         match space.status {

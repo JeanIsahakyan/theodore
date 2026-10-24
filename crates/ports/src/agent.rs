@@ -106,6 +106,16 @@ pub enum AgentError {
     Spawn(String),
 }
 
+impl AgentError {
+    /// The stable error code logged as `error.code` (docs/telemetry.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            AgentError::NotInstalled(_) => "agent.not_installed",
+            AgentError::Spawn(_) => "agent.spawn_failed",
+        }
+    }
+}
+
 /// A running agent. Events end with exactly one `Done` or `Error`.
 pub struct AgentRun {
     pub events: mpsc::Receiver<AgentEvent>,

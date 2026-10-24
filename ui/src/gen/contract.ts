@@ -164,6 +164,26 @@ export type CheckRollup = "none" | "pending" | "pass" | "fail";
 
 export type CheckStatus = "pending" | "pass" | "fail" | "skipped";
 
+/**
+ *  One UI error or event, forwarded to the core's log. The core rate-limits
+ *  and dedupes these, then redacts them like every other record.
+ */
+export type ClientLog = {
+	level: ClientLogLevel,
+	/**  Where it came from: `onerror`, `unhandledrejection`, `boundary`. */
+	source: string,
+	message: string,
+	stack?: string | null,
+	/**  React's component stack (error boundary only). */
+	component_stack?: string | null,
+	/**  The operation the error belongs to, when a command failed. */
+	op_id?: string | null,
+	/**  The route name only (`review`, `inbox`), never ids or titles. */
+	route?: string | null,
+};
+
+export type ClientLogLevel = "error" | "warn" | "info";
+
 export type CommandError = {
 	code: string,
 	message: string,
@@ -829,6 +849,20 @@ export type PrSummary = {
 	stack?: StackInfo | null,
 };
 
+/**
+ *  A problem report built on disk for the user to review: nothing is
+ *  uploaded.
+ */
+export type ProblemReport = {
+	/**  The zip. */
+	path: string,
+	/**  The folder the zip was built from (same files, unzipped). */
+	dir: string,
+	files: ReportFile[],
+	/**  Version, OS, agent CLIs: for "Copy summary". */
+	summary: string,
+};
+
 export type ProcessStatus = "running" |
 /**  Ended by itself. */
 "exited" |
@@ -924,6 +958,11 @@ export type RepoRef = {
 	host: HostKind,
 	owner: string,
 	name: string,
+};
+
+export type ReportFile = {
+	name: string,
+	bytes: number,
 };
 
 export type RerunCheckRequest = {
@@ -1491,6 +1530,39 @@ export type TaskStatus = "todo" | "progress" |
 /**  Agent fix waiting for a human ("To verify"). */
 "review" | "done";
 
+export type TelemetryChoice = {
+	usage: boolean,
+	errors: boolean,
+};
+
+/**
+ *  One product event the app may send, with its field names (for "What's
+ *  collected"). Generated from the core's typed event list.
+ */
+export type TelemetryEventInfo = {
+	name: string,
+	fields: string[],
+};
+
+/**
+ *  The two sharing choices. `None` until the user chose (onboarding or
+ *  Settings); nothing leaves the machine before that.
+ */
+export type TelemetryStatus = {
+	/**  A usage-data sink (product events) is configured in this build. */
+	usage_available: boolean,
+	/**  An error-report sink (warnings, errors, traces) is configured. */
+	errors_available: boolean,
+	/**  "Share anonymous usage data". */
+	usage: boolean | null,
+	/**  "Send error reports". */
+	errors: boolean | null,
+	/**  Every product event and its fields. */
+	events: TelemetryEventInfo[],
+	/**  What is never sent, one line each. */
+	never_sent: string[],
+};
+
 export type Thread = {
 	id: ThreadId,
 	anchor: Anchor | null,
@@ -1529,6 +1601,17 @@ export type TriageRequest = {
 	pr: PrId,
 	action: TriageAction,
 };
+
+/**
+ *  A product event the UI reports (`track_ui`). Typed like the core's own:
+ *  the core accepts only known values and drops anything else.
+ */
+export type UiEvent =
+/**
+ *  An onboarding step was shown: `account`, `telemetry`, `github`,
+ *  `agents`, `projects`, `done`.
+ */
+{ event: "onboarding_step"; step: string };
 
 export type UpdateInfo = {
 	version: string,

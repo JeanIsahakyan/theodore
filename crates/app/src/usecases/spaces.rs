@@ -174,6 +174,9 @@ impl Core {
         }])
         .await?;
         drop(ports_guard);
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceCreated {
+            mode: crate::usecases::telemetry::wire_str(&space.mode),
+        });
 
         // The empty diff exists from the start, so the page has a review id.
         self.space_review(SpaceReviewRequest {
@@ -319,7 +322,11 @@ impl Core {
             cancel,
         };
         let core = self.clone();
-        tokio::spawn(async move { drive_turn(&core, turn).await });
+        let span = tracing::info_span!("space_turn", space = %space.id, agent = agent.as_str());
+        tokio::spawn(tracing::Instrument::instrument(
+            async move { drive_turn(&core, turn).await },
+            span,
+        ));
         Ok(message_id)
     }
 
@@ -692,6 +699,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     };
     let mut text = String::new();
     let mut error = None;
+    let started = std::time::Instant::now();
     match core.0.deps.agents.run(req).await {
         Ok(mut run) => loop {
             tokio::select! {
@@ -731,6 +739,22 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // The agent is done: its token goes before the after-turn check.
     drop(tools_guard);
     let cancelled = cancel.is_cancelled();
+    let ms = started.elapsed().as_millis() as u64;
+    if let (Some(e), false) = (&error, cancelled) {
+        tracing::warn!(
+            error.code = "space.turn_failed",
+            space = %space.id,
+            agent = agent.as_str(),
+            duration_ms = ms,
+            error = %e,
+            "space turn failed"
+        );
+    }
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceTurn {
+        ms,
+        mode: crate::usecases::telemetry::wire_str(&mode),
+        ok: error.is_none() && !cancelled,
+    });
     if cancelled && error.is_none() {
         error = Some("stopped".into());
     }

@@ -22,6 +22,28 @@ describe('onboardingSteps', () => {
   });
 });
 
+describe('onboardingSteps with a sharing choice', () => {
+  it('puts it right after the sign-in', () => {
+    expect(onboardingSteps(true, true)).toEqual([
+      'account',
+      'telemetry',
+      'github',
+      'agents',
+      'projects',
+      'done',
+    ]);
+  });
+
+  it('puts it first without a sign-in', () => {
+    expect(onboardingSteps(false, true)[0]).toBe('telemetry');
+  });
+
+  it('leaves it out when the build has nowhere to send', () => {
+    expect(onboardingSteps(true, false)).not.toContain('telemetry');
+    expect(onboardingSteps(false, false)).not.toContain('telemetry');
+  });
+});
+
 describe('skippable', () => {
   it('never lets the sign-in step be skipped', () => {
     expect(skippable('account', false)).toBe(false);

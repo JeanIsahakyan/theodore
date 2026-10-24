@@ -18,5 +18,35 @@ fn main() {
         .expect("write ui/dist placeholder index.html");
     }
 
+    commit();
     tauri_build::build();
+}
+
+/// `THEODORE_COMMIT` for the problem report and remote records: the
+/// release scripts' value, else `git rev-parse --short HEAD`, else
+/// `unknown`.
+fn commit() {
+    println!("cargo:rerun-if-env-changed=THEODORE_COMMIT");
+    let commit = std::env::var("THEODORE_COMMIT")
+        .ok()
+        .filter(|c| !c.trim().is_empty())
+        .or_else(|| {
+            let out = std::process::Command::new("git")
+                .args(["rev-parse", "--short=12", "HEAD"])
+                .output()
+                .ok()?;
+            let head = String::from_utf8(out.stdout).ok()?.trim().to_string();
+            (out.status.success() && !head.is_empty()).then_some(head)
+        })
+        .unwrap_or_else(|| "unknown".into());
+    // Rebuild when HEAD moves (a worktree's HEAD lives in its own git dir).
+    if let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--git-path", "HEAD"])
+        .output()
+        && out.status.success()
+    {
+        let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        println!("cargo:rerun-if-changed={head}");
+    }
+    println!("cargo:rustc-env=THEODORE_COMMIT={commit}");
 }

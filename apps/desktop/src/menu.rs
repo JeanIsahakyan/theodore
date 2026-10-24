@@ -125,6 +125,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let help = SubmenuBuilder::new(app, "Help")
         .item(&i("shortcuts", "Keyboard Shortcuts", Some("CmdOrCtrl+/"))?)
         .item(&i("report-issue", "Report an Issue…", None)?)
+        // A zip of the redacted logs + app info to attach (docs/telemetry.md).
+        .item(&i("report-problem", "Report a Problem…", None)?)
         .build()?;
 
     Menu::with_items(

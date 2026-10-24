@@ -35,6 +35,8 @@ pub use shell::ShellRunner;
 pub struct AgentCli {
     configs: AgentCliConfig,
     pid_dir: Option<std::path::PathBuf>,
+    /// Each CLI's `--version` from the last `detect`, for the log.
+    versions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<AgentId, String>>>,
 }
 
 impl AgentCli {
@@ -70,7 +72,14 @@ impl AgentPort for AgentCli {
         let mut out = Vec::with_capacity(AgentId::ALL.len());
         for id in AgentId::ALL {
             let cfg = self.configs.get(id);
-            out.push(detect::detect_one(id, &cfg).await);
+            let info = detect::detect_one(id, &cfg).await;
+            if let Some(v) = &info.version {
+                self.versions
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(id, v.clone());
+            }
+            out.push(info);
         }
         out
     }
@@ -126,6 +135,13 @@ impl AgentPort for AgentCli {
             max_runtime_ms: process::DEFAULT_MAX_RUNTIME_MS,
             guards,
             pid_dir: self.pid_dir.clone(),
+            agent: req.agent.as_str().to_string(),
+            version: self
+                .versions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&req.agent)
+                .cloned(),
         };
         process::spawn_and_stream(spec, parser)
     }

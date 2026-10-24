@@ -20,6 +20,7 @@ theodore-mcp.workspace = true
 theodore-store.workspace = true
 theodore-secrets.workspace = true
 theodore-grouping.workspace = true
+theodore-telemetry.workspace = true
 theodore-fixtures = { path = "../fixtures" }
 theodore-sandbox = { path = "../sandbox" }
 theodore-account-workos = { path = "../account-workos" }

@@ -156,6 +156,22 @@ export const commands = {
 	 *  it can't be (the UI then opens the space on the next window focus).
 	 */
 	notifySpace: (space: string, title: string, body: string | null) => typedError<boolean, CommandError>(__TAURI_INVOKE("notify_space", { space, title, body })),
+	/**
+	 *  A UI error or event for the core's log (docs/telemetry.md). Never
+	 *  fails: a dropped log line is not worth an error toast.
+	 */
+	logClient: (entry: ClientLog) => typedError<null, CommandError>(__TAURI_INVOKE("log_client", { entry })),
+	/**
+	 *  A product event from the UI (docs/telemetry.md). Unknown values are
+	 *  dropped by the core; never fails.
+	 */
+	trackUi: (event: UiEvent) => typedError<null, CommandError>(__TAURI_INVOKE("track_ui", { event })),
+	telemetryStatus: () => typedError<TelemetryStatus, CommandError>(__TAURI_INVOKE("telemetry_status")),
+	setTelemetry: (req: TelemetryChoice) => typedError<TelemetryStatus, CommandError>(__TAURI_INVOKE("set_telemetry", { req })),
+	/**  Settings → About & updates, Help → Report a Problem…, the error screen. */
+	reportProblem: () => typedError<ProblemReport, CommandError>(__TAURI_INVOKE("report_problem")),
+	/**  Shows a problem report in Finder. Only paths inside the reports folder. */
+	revealReport: (path: string) => typedError<null, CommandError>(__TAURI_INVOKE("reveal_report", { path })),
 };
 
 /* Types */
@@ -291,6 +307,26 @@ export type CheckConfigRequest = {
 	layer: ConfigLayer,
 	text: string,
 };
+
+/**
+ *  One UI error or event, forwarded to the core's log. The core rate-limits
+ *  and dedupes these, then redacts them like every other record.
+ */
+export type ClientLog = {
+	level: ClientLogLevel,
+	/**  Where it came from: `onerror`, `unhandledrejection`, `boundary`. */
+	source: string,
+	message: string,
+	stack?: string | null,
+	/**  React's component stack (error boundary only). */
+	component_stack?: string | null,
+	/**  The operation the error belongs to, when a command failed. */
+	op_id?: string | null,
+	/**  The route name only (`review`, `inbox`), never ids or titles. */
+	route?: string | null,
+};
+
+export type ClientLogLevel = "error" | "warn" | "info";
 
 export type CommandError = {
 	code: string,
@@ -766,6 +802,20 @@ export type Person = {
 
 export type PrId = string;
 
+/**
+ *  A problem report built on disk for the user to review: nothing is
+ *  uploaded.
+ */
+export type ProblemReport = {
+	/**  The zip. */
+	path: string,
+	/**  The folder the zip was built from (same files, unzipped). */
+	dir: string,
+	files: ReportFile[],
+	/**  Version, OS, agent CLIs: for "Copy summary". */
+	summary: string,
+};
+
 export type ProcessStatus = "running" |
 /**  Ended by itself. */
 "exited" |
@@ -850,6 +900,11 @@ export type RepoRef = {
 	host: HostKind,
 	owner: string,
 	name: string,
+};
+
+export type ReportFile = {
+	name: string,
+	bytes: number,
 };
 
 export type RerunCheckRequest = {
@@ -1337,6 +1392,39 @@ export type TaskDecision = {
 
 export type TaskId = string;
 
+export type TelemetryChoice = {
+	usage: boolean,
+	errors: boolean,
+};
+
+/**
+ *  One product event the app may send, with its field names (for "What's
+ *  collected"). Generated from the core's typed event list.
+ */
+export type TelemetryEventInfo = {
+	name: string,
+	fields: string[],
+};
+
+/**
+ *  The two sharing choices. `None` until the user chose (onboarding or
+ *  Settings); nothing leaves the machine before that.
+ */
+export type TelemetryStatus = {
+	/**  A usage-data sink (product events) is configured in this build. */
+	usage_available: boolean,
+	/**  An error-report sink (warnings, errors, traces) is configured. */
+	errors_available: boolean,
+	/**  "Share anonymous usage data". */
+	usage: boolean | null,
+	/**  "Send error reports". */
+	errors: boolean | null,
+	/**  Every product event and its fields. */
+	events: TelemetryEventInfo[],
+	/**  What is never sent, one line each. */
+	never_sent: string[],
+};
+
 export type ThreadId = string;
 
 export type ToastLevel = "info" | "warn" | "error";
@@ -1367,6 +1455,17 @@ export type TriageRequest = {
 	pr: PrId,
 	action: TriageAction,
 };
+
+/**
+ *  A product event the UI reports (`track_ui`). Typed like the core's own:
+ *  the core accepts only known values and drops anything else.
+ */
+export type UiEvent =
+/**
+ *  An onboarding step was shown: `account`, `telemetry`, `github`,
+ *  `agents`, `projects`, `done`.
+ */
+{ event: "onboarding_step"; step: string };
 
 export type UpdateInfo = {
 	version: string,

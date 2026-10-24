@@ -33,6 +33,8 @@ mod config;
 pub use config::*;
 mod account;
 pub use account::*;
+mod telemetry;
+pub use telemetry::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -773,7 +775,15 @@ pub fn types() -> specta::Types {
         .register::<AccountSignInMethod>()
         .register::<AccountSignInRequest>()
         .register::<AccountSignInStart>()
-        .register::<AccountSignInState>();
+        .register::<AccountSignInState>()
+        .register::<ClientLog>()
+        .register::<ClientLogLevel>()
+        .register::<UiEvent>()
+        .register::<TelemetryEventInfo>()
+        .register::<TelemetryStatus>()
+        .register::<TelemetryChoice>()
+        .register::<ReportFile>()
+        .register::<ProblemReport>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

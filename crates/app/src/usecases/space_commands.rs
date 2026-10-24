@@ -491,8 +491,26 @@ impl Core {
                 }
             }
         };
-        let summary = describe_failure(kind, &exit, timeout)
-            .unwrap_or_else(|| format!("{} finished", kind_name(kind)));
+        let failure = describe_failure(kind, &exit, timeout);
+        if let Some(why) = &failure
+            && !exit.cancelled
+        {
+            // Not the output: that's the user's program, and stays in the
+            // space's own log.
+            tracing::warn!(
+                error.code = if exit.timed_out {
+                    "space.command_timed_out"
+                } else {
+                    "space.command_failed"
+                },
+                space,
+                command = kind_name(kind),
+                exit_code = exit.code,
+                error = %why,
+                "space command failed"
+            );
+        }
+        let summary = failure.unwrap_or_else(|| format!("{} finished", kind_name(kind)));
         self.push_log(space, kind, format!("── {summary}"), !exit.success());
         (exit, tail.into())
     }

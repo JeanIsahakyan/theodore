@@ -13,6 +13,7 @@ testkit = []
 theodore-domain.workspace = true
 theodore-ports.workspace = true
 theodore-contract.workspace = true
+theodore-telemetry.workspace = true
 theodore-secrets.workspace = true
 # Not in [workspace.dependencies]: only `app`'s Linear usecase needs it.
 theodore-linear = { path = "../linear" }

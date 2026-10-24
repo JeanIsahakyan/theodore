@@ -136,6 +136,17 @@ implementations too, not stubs — just narrower, matching each host's API.
   channel. Restarts only once no agent is running and the outbox is empty.
   (No signed release has shipped yet — see **Not yet**.)
 
+### Logs, error reports and usage data
+- Everything is logged locally to `~/.theodore/logs/theodore.jsonl` (JSON lines, rotated, ≤ 50 MB),
+  redacted first: tokens, emails, the home directory, and never diff, file or comment text.
+  `THEODORE_LOG=debug` for more; `jq` recipes in `docs/telemetry.md`.
+- Two remote sinks, off unless the build or settings configure them *and* you opt in (onboarding's
+  "Help improve Theodore", or Settings → About & updates): error reports over OTLP (e.g. New
+  Relic) and typed product events to PostHog. Both use a random install id, not your account;
+  repository names are hashed.
+- **Report a problem** (Help menu, Settings, the error screen) zips the redacted logs and app info
+  for you to attach; nothing is uploaded. Events, codes, rules and settings: `docs/telemetry.md`.
+
 ## How it works
 
 ```
@@ -302,6 +313,7 @@ Git hooks (`lefthook install` once per clone):
 - GitLab OAuth/PKCE sign-in — personal access token only today.
 - Skills running on several agents at once in parallel (they run in
   sequence; findings still merge).
-- A Theodore server: the account sign-in is client-only; billing, sync and telemetry need it.
+- A Theodore server: the account sign-in is client-only; billing, sync and uploading problem
+  reports need it (reports are local zips for now).
 - Spaces beyond shipping: "Send to agent" from review threads, undo a turn, setup/check scripts,
   notifications.

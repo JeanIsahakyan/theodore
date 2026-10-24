@@ -141,7 +141,15 @@ pub(crate) async fn run(inner: Arc<Inner>) {
             .flatten();
 
         match item {
-            Some(item) => process_item(&core, item).await,
+            Some(item) => {
+                let span = tracing::info_span!(
+                    "outbox_item",
+                    op = %item.op,
+                    item = item.id,
+                    attempt = item.attempts
+                );
+                tracing::Instrument::instrument(process_item(&core, item), span).await
+            }
             None => {
                 // `not_before` is measured on the injected `Clock` (so tests
                 // control backoff deterministically), but this idle tick is
@@ -189,9 +197,14 @@ async fn process_item(core: &Core, item: OutboxItem) {
         }
         Err(Outcome::RetryAt(not_before)) => {
             let id = item.id;
+            tracing::info!(retry_at = not_before, "outbox item will retry");
             let _ = tokio::task::spawn_blocking(move || store.outbox_retry(id, not_before)).await;
         }
         Err(Outcome::AuthPaused(not_before)) => {
+            tracing::warn!(
+                error.code = "host.auth",
+                "outbox paused: the host token was rejected"
+            );
             let id = item.id;
             let _ = tokio::task::spawn_blocking(move || store.outbox_retry(id, not_before)).await;
             core.emit(Ephemeral::HostStatus {
@@ -202,6 +215,11 @@ async fn process_item(core: &Core, item: OutboxItem) {
         }
         Err(Outcome::Fail(message)) => {
             let id = item.id;
+            tracing::warn!(
+                error.code = "outbox.gave_up",
+                error = %message,
+                "outbox gave up on a host write"
+            );
             let _ = tokio::task::spawn_blocking(move || store.outbox_fail(id)).await;
             core.emit(Ephemeral::Toast {
                 level: ToastLevel::Error,

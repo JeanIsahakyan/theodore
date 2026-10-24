@@ -314,6 +314,7 @@ impl HttpClient {
 
         let url = self.url_for(path)?;
         let mut attempt: u32 = 0;
+        let started = std::time::Instant::now();
         loop {
             let mut req = self
                 .client
@@ -354,11 +355,28 @@ impl HttpClient {
                     }
 
                     if let Some(err) = self.classify(status, &headers) {
+                        log_status(
+                            &method,
+                            &url,
+                            status,
+                            attempt,
+                            started,
+                            matches!(err, HostError::RateLimited { .. }),
+                        );
                         let text = resp.text().await.unwrap_or_default();
                         return Err(self.attach_body(err, &text));
                     }
 
                     if status.is_server_error() {
+                        tracing::warn!(
+                            error.code = "host.server_error",
+                            method = %method,
+                            url = url.path(),
+                            status = status.as_u16(),
+                            attempt,
+                            duration_ms = started.elapsed().as_millis() as u64,
+                            "host server error after retries"
+                        );
                         return Err(HostError::Network(format!(
                             "server error {status} after retries"
                         )));
@@ -378,7 +396,19 @@ impl HttpClient {
                     attempt += 1;
                     self.backoff(attempt).await;
                 }
-                Err(e) => return Err(HostError::Network(self.redact(&e.to_string()))),
+                Err(e) => {
+                    let msg = self.redact(&e.to_string());
+                    tracing::warn!(
+                        error.code = "host.network",
+                        method = %method,
+                        url = url.path(),
+                        attempt,
+                        duration_ms = started.elapsed().as_millis() as u64,
+                        error = %msg,
+                        "host request failed"
+                    );
+                    return Err(HostError::Network(msg));
+                }
             }
         }
     }
@@ -436,6 +466,66 @@ impl HttpClient {
     }
 }
 
+/// The code for a failed status, as logged (docs/telemetry.md): the host
+/// adapters see 401 and a non-rate-limit 403 alike as `HostError::Auth`,
+/// so the log is where they're told apart.
+pub fn status_code(status: StatusCode, rate_limited: bool) -> &'static str {
+    match status {
+        _ if rate_limited => "host.rate_limited",
+        StatusCode::UNAUTHORIZED => "host.unauthorized",
+        StatusCode::FORBIDDEN => "host.forbidden",
+        StatusCode::NOT_FOUND => "host.not_found",
+        StatusCode::TOO_MANY_REQUESTS => "host.rate_limited",
+        StatusCode::CONFLICT | StatusCode::METHOD_NOT_ALLOWED => "host.conflict",
+        StatusCode::UNPROCESSABLE_ENTITY | StatusCode::BAD_REQUEST => "host.validation",
+        _ => "host.protocol",
+    }
+}
+
+/// A 404 / 409 / 422 is often an answer, not a failure (a PR without a
+/// file, a merge that isn't possible yet): logged at debug. Auth and rate
+/// limits are warnings.
+fn log_status(
+    method: &Method,
+    url: &url::Url,
+    status: StatusCode,
+    attempt: u32,
+    started: std::time::Instant,
+    rate_limited: bool,
+) {
+    let code = status_code(status, rate_limited);
+    let ms = started.elapsed().as_millis() as u64;
+    match status {
+        _ if rate_limited => tracing::warn!(
+            error.code = code,
+            method = %method,
+            url = url.path(),
+            status = status.as_u16(),
+            duration_ms = ms,
+            "host rate limit reached"
+        ),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => {
+            tracing::warn!(
+                error.code = code,
+                method = %method,
+                url = url.path(),
+                status = status.as_u16(),
+                attempt,
+                duration_ms = ms,
+                "host refused the request"
+            );
+        }
+        _ => tracing::debug!(
+            error.code = code,
+            method = %method,
+            url = url.path(),
+            status = status.as_u16(),
+            duration_ms = ms,
+            "host answered with an error status"
+        ),
+    }
+}
+
 fn extract_etag(headers: &HeaderMap) -> Option<String> {
     headers
         .get(reqwest::header::ETAG)
@@ -449,4 +539,28 @@ fn extract_etag(headers: &HeaderMap) -> Option<String> {
 /// status branch instead, so this only sees transport failures.
 fn is_retryable_send_error(e: &reqwest::Error) -> bool {
     e.is_timeout() || e.is_connect() || e.is_request()
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn statuses_map_to_their_codes() {
+        assert_eq!(
+            status_code(StatusCode::UNAUTHORIZED, false),
+            "host.unauthorized"
+        );
+        assert_eq!(status_code(StatusCode::FORBIDDEN, false), "host.forbidden");
+        assert_eq!(
+            status_code(StatusCode::FORBIDDEN, true),
+            "host.rate_limited"
+        );
+        assert_eq!(
+            status_code(StatusCode::TOO_MANY_REQUESTS, false),
+            "host.rate_limited"
+        );
+        assert_eq!(status_code(StatusCode::NOT_FOUND, false), "host.not_found");
+        assert_eq!(status_code(StatusCode::IM_A_TEAPOT, false), "host.protocol");
+    }
 }
