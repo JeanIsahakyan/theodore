@@ -1023,6 +1023,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         >
           <InputGroup
             fullWidth
+            variant="secondary"
             className="flex flex-col gap-2 rounded-3xl py-2.5"
           >
             <InputGroup.TextArea
