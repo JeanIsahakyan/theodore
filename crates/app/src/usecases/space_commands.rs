@@ -19,7 +19,9 @@ use theodore_contract::{
     SpaceCommandKind, SpaceLogLine, ToastLevel, models,
 };
 use theodore_domain::Sha;
-use theodore_ports::{CommandEvent, CommandExit, CommandSpec, NewAction, SyncActionCode};
+use theodore_ports::{
+    CommandEvent, CommandExit, CommandRun, CommandSpec, NewAction, SyncActionCode,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::vars::{SpaceVars, space_env};
@@ -375,7 +377,7 @@ impl Core {
             .map_err(|e| AppError::Invalid(format!("couldn't reserve {n} ports: {e}")))
     }
 
-    fn push_log(&self, space: &str, kind: SpaceCommandKind, line: String, stderr: bool) {
+    pub(crate) fn push_log(&self, space: &str, kind: SpaceCommandKind, line: String, stderr: bool) {
         let entry = SpaceLogLine {
             kind,
             line,
@@ -415,9 +417,28 @@ impl Core {
         timeout: Option<Duration>,
         cancel: CancellationToken,
     ) -> (CommandExit, Vec<String>) {
-        self.push_log(space, kind, format!("$ {script}"), false);
         let run = self
-            .0
+            .spawn_space_command(space, kind, script, cwd, env, timeout)
+            .await;
+        self.drive_space_command(space, kind, run, timeout, cancel)
+            .await
+    }
+
+    /// Logs `$ script` and spawns it; the caller drives it with
+    /// `drive_space_command`. Split out of `run_space_command` so a caller
+    /// that needs the pid before the command's output (a space's `run`,
+    /// to record its process group) can see it between the two steps.
+    pub(crate) async fn spawn_space_command(
+        &self,
+        space: &str,
+        kind: SpaceCommandKind,
+        script: &str,
+        cwd: &Path,
+        env: Vec<(String, String)>,
+        timeout: Option<Duration>,
+    ) -> CommandRun {
+        self.push_log(space, kind, format!("$ {script}"), false);
+        self.0
             .deps
             .commands
             .spawn(CommandSpec {
@@ -426,7 +447,20 @@ impl Core {
                 env,
                 timeout,
             })
-            .await;
+            .await
+    }
+
+    /// Streams `run`'s output to the space's log and waits for it to end;
+    /// `cancel` (or Theodore shutting down) stops it early. Returns how it
+    /// ended and its last `CHECK_TAIL` lines.
+    pub(crate) async fn drive_space_command(
+        &self,
+        space: &str,
+        kind: SpaceCommandKind,
+        run: CommandRun,
+        timeout: Option<Duration>,
+        cancel: CancellationToken,
+    ) -> (CommandExit, Vec<String>) {
         let mut events = run.events;
         let mut tail: VecDeque<String> = VecDeque::new();
         let mut stopping = false;

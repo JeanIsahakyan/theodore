@@ -690,3 +690,141 @@ async fn a_restart_settles_what_was_left_running() {
     assert!(s.process.unwrap().error.unwrap().contains("interrupted"));
     drop(core2);
 }
+
+#[tokio::test]
+async fn a_clean_exit_stops_every_running_space_command() {
+    let e = started().await;
+    e.global("spaces: {run: pnpm dev}");
+    let s = e.create("").await;
+    e.f.commands
+        .on("pnpm dev", FakeScript::Hang { lines: vec![] });
+    e.core
+        .space_run(SpaceRunRequest {
+            space: s.id.clone(),
+            start: true,
+        })
+        .await
+        .unwrap();
+    e.until(&s.id, |s| s.process.is_some()).await;
+
+    e.core.stop_all_running_spaces().await;
+
+    let s = e
+        .until(&s.id, |s| {
+            s.process
+                .as_ref()
+                .is_some_and(|p| p.status == ProcessStatus::Stopped)
+        })
+        .await;
+    assert_eq!(s.process.unwrap().pgid, None);
+}
+
+#[tokio::test]
+async fn a_restart_reaps_a_group_still_alive_and_matching() {
+    let e = started().await;
+    e.global("spaces: {run: pnpm dev}");
+    let s = e.create("").await;
+    e.f.commands
+        .on("pnpm dev", FakeScript::Hang { lines: vec![] });
+    e.f.commands.set_next_pid(4242);
+    e.core
+        .space_run(SpaceRunRequest {
+            space: s.id.clone(),
+            start: true,
+        })
+        .await
+        .unwrap();
+    let s = e.until(&s.id, |s| s.process.is_some()).await;
+    assert_eq!(s.process.as_ref().unwrap().pgid, Some(4242));
+
+    // The next Theodore process finds the group still alive, running the
+    // same script it started: reap it, then settle the row.
+    e.f.commands.set_group_matches(true);
+    let (core2, _recv2) = Core::start(e.f.deps());
+    let s = e
+        .until(&s.id, |s| {
+            s.process
+                .as_ref()
+                .is_some_and(|p| p.status == ProcessStatus::Stopped)
+        })
+        .await;
+    let process = s.process.unwrap();
+    assert!(
+        process.error.as_deref().unwrap().contains("restarted"),
+        "{process:?}"
+    );
+    assert_eq!(process.pgid, None, "cleared once settled");
+    assert_eq!(e.f.commands.reaped().len(), 1);
+    assert_eq!(e.f.commands.reaped()[0].0, 4242);
+    drop(core2);
+}
+
+#[tokio::test]
+async fn a_restart_never_kills_a_pid_that_no_longer_matches() {
+    let e = started().await;
+    e.global("spaces: {run: pnpm dev}");
+    let s = e.create("").await;
+    e.f.commands
+        .on("pnpm dev", FakeScript::Hang { lines: vec![] });
+    e.f.commands.set_next_pid(4343);
+    e.core
+        .space_run(SpaceRunRequest {
+            space: s.id.clone(),
+            start: true,
+        })
+        .await
+        .unwrap();
+    e.until(&s.id, |s| s.process.is_some()).await;
+
+    // `group_matches` defaults to false: a pid since reused, or the group
+    // already gone — never a confident match, so never killed.
+    let (core2, _recv2) = Core::start(e.f.deps());
+    let s = e
+        .until(&s.id, |s| {
+            s.process
+                .as_ref()
+                .is_some_and(|p| p.status == ProcessStatus::Stopped)
+        })
+        .await;
+    let process = s.process.unwrap();
+    assert!(process.error.unwrap().contains("interrupted"));
+    assert_eq!(process.pgid, None, "cleared even though nothing was killed");
+    assert!(e.f.commands.reaped().is_empty(), "never touched");
+    drop(core2);
+}
+
+#[tokio::test]
+async fn run_reports_a_port_already_held_instead_of_crashing() {
+    let e = started().await;
+    e.global("spaces: {ports: 1, run: pnpm dev}");
+    let s = e.create("").await;
+    let port = s.ports[0];
+    let _listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind the port");
+
+    e.core
+        .space_run(SpaceRunRequest {
+            space: s.id.clone(),
+            start: true,
+        })
+        .await
+        .unwrap();
+    let s = e
+        .until(&s.id, |s| {
+            s.process
+                .as_ref()
+                .is_some_and(|p| p.status == ProcessStatus::Failed)
+        })
+        .await;
+    let process = s.process.unwrap();
+    let message = format!("port {port} is already in use by another process");
+    assert_eq!(process.error.as_deref(), Some(message.as_str()));
+    assert!(
+        e.f.commands.scripts().is_empty(),
+        "the command was never spawned"
+    );
+    assert!(
+        e.core
+            .with_runtime(&s.id, |rt| rt.logs.iter().any(|l| l.line == message)),
+        "the run log explains it"
+    );
+}

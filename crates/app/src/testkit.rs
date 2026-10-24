@@ -1914,6 +1914,13 @@ pub struct FakeCommands {
     /// Called with each spec as it is spawned (to observe ordering).
     #[allow(clippy::type_complexity)]
     hook: Mutex<Option<Box<dyn Fn(&theodore_ports::CommandSpec) + Send + Sync>>>,
+    /// The next `spawn`'s `CommandRun::pid` (crash-recovery tests).
+    next_pid: Mutex<Option<u32>>,
+    /// What `group_matches` answers (crash-recovery tests); `false` by
+    /// default, as for a pgid nothing ever started.
+    matches: Mutex<bool>,
+    /// `(pgid, grace)` of every `reap_group` call, in order.
+    reaped: Mutex<Vec<(u32, Duration)>>,
 }
 
 impl FakeCommands {
@@ -1939,6 +1946,21 @@ impl FakeCommands {
     /// The scripts run so far, in order.
     pub fn scripts(&self) -> Vec<String> {
         self.specs().into_iter().map(|s| s.script).collect()
+    }
+
+    /// The pid the next `spawn` reports on its `CommandRun`.
+    pub fn set_next_pid(&self, pid: u32) {
+        *self.next_pid.lock().unwrap() = Some(pid);
+    }
+
+    /// Whether `group_matches` reports a live, matching group.
+    pub fn set_group_matches(&self, matches: bool) {
+        *self.matches.lock().unwrap() = matches;
+    }
+
+    /// Every `reap_group` call so far, in order.
+    pub fn reaped(&self) -> Vec<(u32, Duration)> {
+        self.reaped.lock().unwrap().clone()
     }
 }
 
@@ -2006,7 +2028,19 @@ impl theodore_ports::CommandPort for FakeCommands {
             };
             let _ = tx.send(CommandEvent::Exit(exit)).await;
         });
-        theodore_ports::CommandRun { events: rx, cancel }
+        theodore_ports::CommandRun {
+            events: rx,
+            cancel,
+            pid: self.next_pid.lock().unwrap().take(),
+        }
+    }
+
+    async fn group_matches(&self, _pgid: u32, _script: &str) -> bool {
+        *self.matches.lock().unwrap()
+    }
+
+    async fn reap_group(&self, pgid: u32, grace: Duration) {
+        self.reaped.lock().unwrap().push((pgid, grace));
     }
 }
 

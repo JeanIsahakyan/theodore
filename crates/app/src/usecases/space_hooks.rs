@@ -3,6 +3,7 @@
 //! config views. The config and runner plumbing is in `space_commands`.
 
 use std::path::Path;
+use std::time::Duration;
 
 use theodore_contract::{
     EffectiveConfig, GlobalConfigInfo, ProcessStatus, SetupAction, SetupStatus, Space, SpaceCheck,
@@ -42,8 +43,16 @@ pub(crate) fn initial_setup(
 
 /// The patch that settles what a previous process left running
 /// (docs/spaces.md §7 "Crash recovery"), or `None` when nothing did.
-pub(crate) fn interrupted_patch(space: &Space, now: i64) -> Option<serde_json::Value> {
+/// `process_reaped`: whether `reap_space_process` found the space's `run`
+/// still alive under its recorded pgid and killed it — picks the message
+/// a stopped `process` gets.
+pub(crate) fn interrupted_patch(
+    space: &Space,
+    now: i64,
+    process_reaped: bool,
+) -> Option<serde_json::Value> {
     const WHY: &str = "interrupted: Theodore was closed";
+    const REAPED: &str = "stopped when Theodore restarted";
     let mut patch = serde_json::Map::new();
     if space.status == SpaceStatus::Running {
         patch.insert("status".into(), serde_json::json!(SpaceStatus::Failed));
@@ -56,7 +65,9 @@ pub(crate) fn interrupted_patch(space: &Space, now: i64) -> Option<serde_json::V
         let mut p = p.clone();
         p.status = ProcessStatus::Stopped;
         p.ended_at = Some(now);
-        p.error = Some(WHY.into());
+        p.error = Some(if process_reaped { REAPED } else { WHY }.into());
+        p.pgid = None;
+        p.script = None;
         patch.insert("process".into(), serde_json::json!(p));
     }
     if let Some(s) = &space.setup
@@ -358,7 +369,53 @@ impl Core {
         if !started {
             return Ok(space);
         }
+        // Defensive: a port the space reserved may still be held by a
+        // process from before (docs/spaces.md "Crash recovery") — report it
+        // in the run log instead of letting the command crash on it.
+        if let Some(port) = space
+            .ports
+            .iter()
+            .copied()
+            .find(|p| !config::ports::is_free(*p))
+        {
+            self.with_runtime(&space.id, |rt| rt.run = None);
+            let message = format!("port {port} is already in use by another process");
+            self.push_log(&space.id, SpaceCommandKind::Run, message.clone(), true);
+            let now = self.0.deps.clock.now();
+            self.patch_space(
+                &space.id,
+                serde_json::json!({
+                    "process": SpaceProcess {
+                        status: ProcessStatus::Failed,
+                        started_at: now,
+                        ended_at: Some(now),
+                        exit_code: None,
+                        error: Some(message),
+                        pgid: None,
+                        script: None,
+                    },
+                }),
+            )
+            .await?;
+            return self.space_row(&space.id).await;
+        }
+        let env = self.space_command_env(&space, &project, &cfg);
         let now = self.0.deps.clock.now();
+        // Spawned here (not inside the task below) so the pid is known
+        // before the first write of `process`: a space's `run` is recorded
+        // as `running` with its pgid from the start, never with a gap a
+        // concurrent restart could race.
+        let run = self
+            .spawn_space_command(
+                &space.id,
+                SpaceCommandKind::Run,
+                &script,
+                Path::new(&space.worktree),
+                env,
+                None,
+            )
+            .await;
+        let pgid = run.pid;
         self.patch_space(
             &space.id,
             serde_json::json!({
@@ -368,25 +425,17 @@ impl Core {
                     ended_at: None,
                     exit_code: None,
                     error: None,
+                    pgid,
+                    script: Some(script.clone()),
                 },
             }),
         )
         .await?;
-        let env = self.space_command_env(&space, &project, &cfg);
         let core = self.clone();
         let id = space.id.clone();
-        let cwd = space.worktree.clone();
         tokio::spawn(async move {
             let (exit, _) = core
-                .run_space_command(
-                    &id,
-                    SpaceCommandKind::Run,
-                    &script,
-                    Path::new(&cwd),
-                    env,
-                    None,
-                    cancel.clone(),
-                )
+                .drive_space_command(&id, SpaceCommandKind::Run, run, None, cancel.clone())
                 .await;
             core.with_runtime(&id, |rt| rt.run = None);
             let status = if exit.error.is_some() {
@@ -406,6 +455,8 @@ impl Core {
                             ended_at: Some(core.0.deps.clock.now()),
                             exit_code: exit.code,
                             error: exit.error.clone(),
+                            pgid: None,
+                            script: None,
                         },
                     }),
                 )
@@ -426,6 +477,48 @@ impl Core {
             cancel.cancel();
             let _ = tokio::time::timeout(STOP_WAIT, done.cancelled()).await;
         }
+    }
+
+    /// Stops every space's running `run` (and in-flight `setup`), waiting
+    /// briefly for each — called on a clean app exit so quitting normally
+    /// never orphans a space's server the way an unclean exit can
+    /// (docs/spaces.md "Crash recovery").
+    pub async fn stop_all_running_spaces(&self) {
+        let ids: Vec<String> = {
+            let rt = self.0.space_rt.lock().unwrap_or_else(|p| p.into_inner());
+            rt.iter()
+                .filter(|(_, r)| r.run.is_some() || r.setup.is_some())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in ids {
+            self.stop_space_commands(&id).await;
+        }
+    }
+
+    /// Reaps a `run` an earlier, uncleanly-exited Theodore left behind
+    /// (docs/spaces.md §7 "Crash recovery"): if `space.process` is
+    /// `running` with a recorded pgid, and that group is still alive and
+    /// still running the script Theodore started there — never a pid
+    /// reused by something else — it's killed (SIGTERM, grace, SIGKILL).
+    /// Returns whether it found and killed one, for `interrupted_patch`'s
+    /// message. Called once at startup, before any space command runs.
+    pub(crate) async fn reap_space_process(&self, space: &Space) -> bool {
+        const GRACE: Duration = Duration::from_secs(5);
+        let Some(p) = &space.process else {
+            return false;
+        };
+        if p.status != ProcessStatus::Running {
+            return false;
+        }
+        let (Some(pgid), Some(script)) = (p.pgid, &p.script) else {
+            return false;
+        };
+        if !self.0.deps.commands.group_matches(pgid, script).await {
+            return false;
+        }
+        self.0.deps.commands.reap_group(pgid, GRACE).await;
+        true
     }
 
     /// `archive` before the worktree is removed. A failure is a toast; the
