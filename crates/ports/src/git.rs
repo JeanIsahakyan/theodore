@@ -433,6 +433,40 @@ pub trait GitPort: Send + Sync {
         let _ = (folder, repo, space, branch);
         Err(GitError::Unsupported("write_folder_branch"))
     }
+
+    // ── saving a project's config (docs/config.md) ───────────────────────
+
+    /// Writes one commit on top of `parent` in the bare cache `repo` whose
+    /// tree is `parent`'s with the file at `path` set to `content`,
+    /// authored and committed by `author`. Built from trees directly
+    /// (`hash-object`, `mktree`, `commit-tree`): no worktree, no checkout,
+    /// no index, no ref moved. Returns the new commit.
+    async fn commit_file(
+        &self,
+        repo: &Path,
+        parent: &Sha,
+        path: &str,
+        content: &[u8],
+        message: &str,
+        author: &Identity,
+    ) -> GitResult<Sha> {
+        let _ = (repo, parent, path, content, message, author);
+        Err(GitError::Unsupported("commit_file"))
+    }
+
+    /// Every path `git status` reports in a local folder's checkout
+    /// (staged, unstaged, untracked; both sides of a rename). Read-only.
+    async fn dirty_paths(&self, folder: &Path) -> GitResult<Vec<String>> {
+        let _ = folder;
+        Err(GitError::Unsupported("dirty_paths"))
+    }
+
+    /// `git add` then `git commit -- <paths>` in a local folder: only
+    /// those paths, the user's own identity and hooks. Returns `HEAD`.
+    async fn commit_paths(&self, folder: &Path, paths: &[String], message: &str) -> GitResult<Sha> {
+        let _ = (folder, paths, message);
+        Err(GitError::Unsupported("commit_paths"))
+    }
 }
 
 /// An author for a commit Theodore writes on the user's behalf.
