@@ -151,6 +151,17 @@ pub struct SpaceProcess {
     pub exit_code: Option<i32>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Process-group id of a `running` command (its own pid, since it's
+    /// spawned with `process_group(0)`); cleared once it exits or is
+    /// stopped. Set while `status` is `running`, so a restart can reap a
+    /// group an unclean exit left running (docs/spaces.md "Crash recovery").
+    #[serde(default)]
+    pub pgid: Option<u32>,
+    /// The `spaces.run` script started at `pgid`, kept so a restart can
+    /// check the process still there is the one Theodore started — not a
+    /// pid since reused by something else — before touching it.
+    #[serde(default)]
+    pub script: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
