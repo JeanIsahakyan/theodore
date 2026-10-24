@@ -3471,6 +3471,32 @@ async fn save_skill_user_scope_writes_to_the_home_skills_dir() {
 }
 
 #[tokio::test]
+async fn a_forked_built_in_skill_replaces_the_built_in() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    core.save_skill(SaveSkillRequest {
+        id: "bugs".into(),
+        scope: "user".into(),
+        pr: None,
+        body: "---\nname: bugs\ndescription: mine\n---\nmy version".into(),
+    })
+    .await
+    .expect("fork");
+
+    let got = core.get_skill("bugs", None).await.expect("get");
+    assert!(got.editable, "your copy, not the read-only built-in");
+    assert_eq!(
+        got.body.trim_end(),
+        "---\nname: bugs\ndescription: mine\n---\nmy version"
+    );
+
+    let list = core.list_skills(None).await.expect("list");
+    let bugs: Vec<_> = list.iter().filter(|s| s.id == "bugs").collect();
+    assert_eq!(bugs.len(), 1);
+    assert_eq!(bugs[0].source, "~/.claude/skills");
+}
+
+#[tokio::test]
 async fn save_skill_repo_scope_writes_into_the_worktree_and_toasts() {
     let f = fixtures();
     let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;

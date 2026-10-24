@@ -147,23 +147,25 @@ fn check_skill_id(id: &str) -> AppResult<()> {
 }
 
 /// Loads a skill's full `SKILL.md` text, for inlining into a non-Claude
-/// agent's prompt: built-ins first, then `claude_home`, then the PR
-/// worktree's own `.claude/skills`.
+/// agent's prompt. Yours wins (`claude_home`), then the PR worktree's own
+/// `.claude/skills`, then the built-in — so a forked built-in is the one
+/// that runs.
 pub(crate) fn resolve_skill_content(
     id: &str,
     worktree: &Path,
     claude_home: &Path,
 ) -> Option<String> {
-    if let Some(c) = builtin_content(id) {
-        return Some(c.to_string());
+    if is_valid_skill_id(id) {
+        if let Ok(s) = std::fs::read_to_string(claude_home.join(id).join("SKILL.md")) {
+            return Some(s);
+        }
+        if let Ok(s) =
+            std::fs::read_to_string(worktree.join(".claude/skills").join(id).join("SKILL.md"))
+        {
+            return Some(s);
+        }
     }
-    if !is_valid_skill_id(id) {
-        return None;
-    }
-    if let Ok(s) = std::fs::read_to_string(claude_home.join(id).join("SKILL.md")) {
-        return Some(s);
-    }
-    std::fs::read_to_string(worktree.join(".claude/skills").join(id).join("SKILL.md")).ok()
+    builtin_content(id).map(str::to_string)
 }
 
 impl Core {
@@ -195,20 +197,22 @@ impl Core {
             }
         }
 
+        // A built-in you or the repo forked is replaced by that copy.
+        let forked: std::collections::HashSet<String> = out
+            .iter()
+            .filter(|s| s.source != "built-in")
+            .map(|s| s.id.clone())
+            .collect();
+        out.retain(|s| s.source != "built-in" || !forked.contains(&s.id));
         Ok(out)
     }
 
-    /// `SKILL.md` text for `id`, in precedence order: built-in (read-only),
-    /// `~/.claude/skills`, then the open PR's own `.claude/skills`.
+    /// `SKILL.md` text for `id`, in precedence order: `~/.claude/skills`,
+    /// the open PR's own `.claude/skills`, then the built-in (read-only).
     pub async fn get_skill(&self, id: &str, pr: Option<PrId>) -> AppResult<SkillBody> {
-        if let Some(content) = builtin_content(id) {
-            return Ok(SkillBody {
-                info: skill_info(id, content, "built-in"),
-                body: content.to_string(),
-                editable: false,
-            });
+        if !is_valid_skill_id(id) {
+            return self.builtin_skill(id);
         }
-        check_skill_id(id)?;
         let path = self.0.deps.claude_home.join(id).join("SKILL.md");
         if let Ok(content) = tokio::fs::read_to_string(&path).await {
             return Ok(SkillBody {
@@ -232,7 +236,17 @@ impl Core {
                 }
             }
         }
-        Err(AppError::NotFound(format!("skill {id}")))
+        self.builtin_skill(id)
+    }
+
+    fn builtin_skill(&self, id: &str) -> AppResult<SkillBody> {
+        let content =
+            builtin_content(id).ok_or_else(|| AppError::NotFound(format!("skill {id}")))?;
+        Ok(SkillBody {
+            info: skill_info(id, content, "built-in"),
+            body: content.to_string(),
+            editable: false,
+        })
     }
 
     /// Writes a user skill to `~/.claude/skills/<id>/SKILL.md`, or a repo
