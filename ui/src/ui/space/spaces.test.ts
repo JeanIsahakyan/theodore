@@ -217,6 +217,7 @@ describe('space keys', () => {
     expect(spaceKeyAction('p', false)).toBe('ship');
     expect(spaceKeyAction('p', true)).toBe('ship-alt');
     expect(spaceKeyAction('o', false)).toBe('open-pr');
+    expect(spaceKeyAction('d', false)).toBe('changes');
     expect(spaceKeyAction('x', false)).toBeNull();
   });
 

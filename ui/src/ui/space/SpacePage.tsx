@@ -16,6 +16,7 @@ import {
   CodeMerge,
   CodePullRequest,
   Folder,
+  LayoutSideContentRight,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -29,6 +30,7 @@ import {
   Popover,
   Switch,
   TextField,
+  ToggleButton,
   Tooltip,
   Typography,
 } from '@heroui/react';
@@ -41,6 +43,7 @@ import type {
   SpaceMode,
 } from '../../gen/contract';
 import { api } from '../../core/api';
+import { STORAGE_NS } from '../../stores/UiStore';
 import { ALL } from '../../core/workspaces';
 import { FEATURES } from '../../features';
 import { setSetting } from '../../actions';
@@ -111,6 +114,8 @@ const MODES: { id: SpaceMode; label: string; hint: string }[] = [
 const WHOLE_DIFF: ReviewMode = { mode: 'groups', group: null, file: null };
 
 type Store = ReturnType<typeof useRootStore>;
+
+const LS_SPACE_CHANGES = `${STORAGE_NS}theodore-space-changes`;
 type Ui = ReturnType<typeof useUi>;
 
 /** What the page's keys reach inside the chat and the ship controls. */
@@ -166,6 +171,16 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const ship = useRef<ShipHandle | null>(null);
   const { config, refresh: refreshConfig } = useSpaceConfig(id, space);
   const [logsOpen, setLogsOpen] = useState(false);
+  // The changes pane can be hidden for a chat-only page; remembered for
+  // every space (it's a way of working, not a per-space thing).
+  const [showChanges, setShowChanges] = useState(
+    () => localStorage.getItem(LS_SPACE_CHANGES) !== '0',
+  );
+  const toggleChanges = () =>
+    setShowChanges((v) => {
+      localStorage.setItem(LS_SPACE_CHANGES, v ? '0' : '1');
+      return !v;
+    });
   useSpaceLogsSeed(id);
   const run = space ? runControl(config, space) : null;
 
@@ -200,6 +215,9 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           return;
         case 'open-pr':
           if (space.pr) openSpacePr(store, ui, space);
+          return;
+        case 'changes':
+          toggleChanges();
           return;
         case 'archive':
           if (!running && !archived) archive(ui, space);
@@ -269,9 +287,17 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         config={config}
         logsOpen={logsOpen}
         onToggleLogs={() => setLogsOpen((v) => !v)}
+        showChanges={showChanges}
+        onToggleChanges={toggleChanges}
       />
       <div className="flex min-h-0 flex-1">
-        <section className="flex w-[40%] min-w-[340px] flex-col border-r border-separator">
+        <section
+          className={
+            showChanges
+              ? 'flex w-[40%] min-w-[340px] flex-col border-r border-separator'
+              : 'mx-auto flex w-full max-w-[860px] flex-col'
+          }
+        >
           <TrustPrompt
             space={space}
             config={config}
@@ -279,23 +305,25 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           />
           <SpaceChat space={space} handle={chat} />
         </section>
-        <section className="flex min-w-0 flex-1 flex-col">
-          {opened || !live ? (
-            <SpaceChanges space={space} />
-          ) : (
-            <div className="grid flex-1 place-items-center text-muted">
-              <Spinner />
-            </div>
-          )}
-        </section>
+        {showChanges && (
+          <section className="flex min-w-0 flex-1 flex-col">
+            {opened || !live ? (
+              <SpaceChanges space={space} />
+            ) : (
+              <div className="grid flex-1 place-items-center text-muted">
+                <Spinner />
+              </div>
+            )}
+          </section>
+        )}
       </div>
       {logsOpen && (
         <LogsDrawer space={space} onClose={() => setLogsOpen(false)} />
       )}
       {space.status === 'archived' && <ArchivedBanner space={space} />}
       <Hints>
-        <K>C</K> message the agent <K>M</K> mode <K>⌘.</K> stop <K>R</K> review{' '}
-        <K>P</K> {space.pr ? 'push' : 'ship'}
+        <K>C</K> message the agent <K>M</K> mode <K>D</K> changes <K>⌘.</K> stop{' '}
+        <K>R</K> review <K>P</K> {space.pr ? 'push' : 'ship'}
         {space.pr ? (
           <>
             {' '}
@@ -346,12 +374,16 @@ const SpaceHeader = observer(function SpaceHeader({
   config,
   logsOpen,
   onToggleLogs,
+  showChanges,
+  onToggleChanges,
 }: {
   space: Space;
   ship: MutableRefObject<ShipHandle | null>;
   config: SpaceConfigView | null;
   logsOpen: boolean;
   onToggleLogs: () => void;
+  showChanges: boolean;
+  onToggleChanges: () => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -391,6 +423,21 @@ const SpaceHeader = observer(function SpaceHeader({
       <span className="flex-1" />
       <RunButton space={space} config={config} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
+      <Tooltip>
+        <ToggleButton
+          size="sm"
+          aria-label="Changes"
+          className="shrink-0 gap-1.5"
+          isSelected={showChanges}
+          onChange={onToggleChanges}
+        >
+          <LayoutSideContentRight className="size-4" />
+          Changes
+        </ToggleButton>
+        <Tooltip.Content>
+          {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
+        </Tooltip.Content>
+      </Tooltip>
       <Button
         size="sm"
         variant="secondary"

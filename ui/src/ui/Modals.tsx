@@ -218,6 +218,7 @@ const SPACE_KEYS: [string, string][] = [
   ['M', 'mode: Ask → Edit → Run'],
   ['⌘.', 'stop the turn'],
   ['R', 'review the changes, grouped'],
+  ['D', 'show / hide the changes'],
   ['⇧R', "start / stop the space's run command"],
   [
     'P / ⇧P',

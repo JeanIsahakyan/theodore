@@ -176,6 +176,7 @@ export type SpaceKeyAction =
   | 'ship'
   | 'ship-alt'
   | 'open-pr'
+  | 'changes'
   | 'archive';
 
 /** `key` is the layout-independent letter (`latinKey`). Archive needs ⇧ —
@@ -190,6 +191,9 @@ export function spaceKeyAction(
       return shift ? null : 'focus';
     case 'm':
       return shift ? null : 'mode';
+    case 'd':
+      // D shows / hides the changes: the conversation takes the page.
+      return shift ? null : 'changes';
     case 'r':
       // ⇧R starts / stops the space's `run` command.
       return shift ? 'run' : 'review';
