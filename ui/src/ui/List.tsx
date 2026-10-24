@@ -162,7 +162,7 @@ function sortPRs(items: InboxPr[], sort: Display['sort']): InboxPr[] {
   return [...items].sort((a, b) => by(a) - by(b));
 }
 
-function groupPRs(
+export function groupPRs(
   items: InboxPr[],
   d: Display,
 ): { id: string; title: string; items: InboxPr[] }[] {
@@ -183,11 +183,18 @@ function groupPRs(
       items: sorted.filter((p) => p.state === st),
     }));
   }
-  return SECTIONS.map((sec) => ({
-    id: sec.id,
-    title: sec.title,
-    items: sorted.filter((p) => p.reasons.some((r) => sec.reasons.includes(r))),
-  }));
+  // Each PR once, in the first section its reasons reach: a PR you're
+  // asked to review that also mentions you is a review request. (Listing it
+  // twice also gave the list two items with one key, and the list then
+  // showed the wrong rows under "Needs your review".)
+  const seen = new Set<PrId>();
+  return SECTIONS.map((sec) => {
+    const here = sorted.filter(
+      (p) => !seen.has(p.id) && p.reasons.some((r) => sec.reasons.includes(r)),
+    );
+    for (const p of here) seen.add(p.id);
+    return { id: sec.id, title: sec.title, items: here };
+  });
 }
 
 /** Wraps a `Btn` whose action has no backing command at all (not gated by
