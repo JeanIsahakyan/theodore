@@ -81,6 +81,8 @@ impl GrouperError {
     }
 }
 
+pub type AppResult<T> = Result<T, AppError>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +138,3 @@ mod tests {
         }
     }
 }
-
-pub type AppResult<T> = Result<T, AppError>;

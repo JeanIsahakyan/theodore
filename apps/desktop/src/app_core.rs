@@ -53,11 +53,7 @@ impl AppCore {
         let s = self.core.telemetry_settings().await;
         t.set_level(s.log_level.as_deref());
         t.set_channel(&self.update_channel().await);
-        let config = if self.remote_telemetry {
-            remote_config(&s)
-        } else {
-            theodore_telemetry::RemoteConfig::default()
-        };
+        let config = remote_config(self.remote_telemetry, &s);
         let choice = s.choice();
         let _ = tokio::task::spawn_blocking(move || t.apply(config, choice)).await;
     }
@@ -78,8 +74,15 @@ impl AppCore {
 }
 
 /// Each sink from the first source that sets it: env, setting, build.
-fn remote_config(s: &theodore_app::TelemetrySettings) -> theodore_telemetry::RemoteConfig {
+/// None at all where remote sinks aren't allowed (sandbox, fixtures).
+fn remote_config(
+    allowed: bool,
+    s: &theodore_app::TelemetrySettings,
+) -> theodore_telemetry::RemoteConfig {
     use theodore_telemetry::config as c;
+    if !allowed {
+        return theodore_telemetry::RemoteConfig::default();
+    }
     let env = |k: &str| std::env::var(k).ok();
     let (endpoint, headers, host, key) = (
         env(c::ENV_OTLP_ENDPOINT),
@@ -645,5 +648,22 @@ mod tests {
         let e = err(AppError::AccountRequired);
         assert_eq!(e.code, "account_required");
         assert_eq!(e.message, "Sign in to your Theodore account to continue");
+    }
+
+    #[test]
+    fn sandbox_and_fixture_runs_get_no_remote_sinks_whatever_is_set() {
+        let s = theodore_app::TelemetrySettings {
+            usage: Some(true),
+            errors: Some(true),
+            otlp_endpoint: Some("https://otlp.example".into()),
+            posthog_key: Some("phc_x".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            remote_config(false, &s),
+            theodore_telemetry::RemoteConfig::default()
+        );
+        let c = remote_config(true, &s);
+        assert!(c.otlp.is_some() && c.posthog.is_some());
     }
 }
