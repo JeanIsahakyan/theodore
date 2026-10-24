@@ -704,6 +704,28 @@ pub async fn focus_window(app: AppHandle) -> Result<(), CommandError> {
     })
 }
 
+/// Shows a space's "turn finished" notification while the window is in the
+/// background; a click brings the window forward and emits `open-space`
+/// with the space id. `true` when the click will be reported, `false` when
+/// it can't be (the UI then opens the space on the next window focus).
+#[tauri::command]
+#[specta::specta]
+pub async fn notify_space(
+    space: String,
+    title: String,
+    body: Option<String>,
+    app: AppHandle,
+    notifier: State<'_, Arc<dyn crate::notify::Notifier>>,
+) -> Result<bool, CommandError> {
+    use crate::notify::{MainWindow, Notice};
+    Ok(crate::notify::notify_space(
+        notifier.inner().as_ref(),
+        MainWindow(app),
+        space,
+        Notice { title, body },
+    ))
+}
+
 /// Un-minimizes and focuses the main window (also after a sign-in redirect
 /// reached the app through its URL scheme).
 pub fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {

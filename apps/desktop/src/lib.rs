@@ -7,12 +7,14 @@ pub mod core_api;
 pub mod deep_link;
 pub mod events;
 pub mod menu;
+pub mod notify;
 pub mod shell_path;
 pub mod updater;
 
 use std::path::Path;
 use std::sync::Arc;
 
+use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
 
 pub use core_api::{CoreApi, NotReadyCoreApi};
@@ -109,6 +111,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::account_sign_in_cancel,
             commands::account_sign_out,
             commands::focus_window,
+            commands::notify_space,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()
@@ -173,7 +176,8 @@ pub fn run(
         .plugin(tauri_plugin_opener::init())
         // `theodore://` (the account sign-in redirect in an app bundle).
         .plugin(tauri_plugin_deep_link::init())
-        // A space's turn finished while the window was in the background.
+        // A space's turn finished while the window was in the background
+        // (`notify`; the plugin is its fallback where clicks can't come back).
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(builder.invoke_handler())
         .manage(core.clone())
@@ -181,6 +185,7 @@ pub fn run(
         .setup(move |app| {
             builder.mount_events(app);
             let handle = app.handle().clone();
+            app.manage(notify::for_app(&handle));
             forward(emitter(handle.clone()));
             deep_link::listen(&handle, core.clone());
             updater::spawn_periodic_check(handle, core.clone());

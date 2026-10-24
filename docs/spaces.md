@@ -243,11 +243,30 @@ the turn ends.
 | turn failed | error in chat | error toast [Open] + ✕ | notification "fix-login: turn failed" + the error |
 | PR checks / reviews | header + tabs | existing inbox | existing |
 
-"In the background" = the window isn't focused. The notification goes
-through the shell's notification plugin (permissions: notify and its
-permission check only) and respects `spaces.notify` (Settings → Labs,
-default on). Coming back to the window after one — clicking it does that —
-opens the space it was about. The dock badge counts the spaces whose last
+"In the background" = the window isn't focused. The notification respects
+`spaces.notify` (Settings → Labs, default on); the shell sends it
+(`notify_space`), so the window keeps only the plugin's permission check.
+Clicking it brings the window forward and opens the space it was about:
+
+```text
+turn ends, window away ─▶ notify_space(id, title, body)
+  Theodore.app on macOS ─▶ thread waits on the notification ─▶ click
+  │    ─▶ focus window ─▶ `open-space` id ─▶ space opens            ⇒ true
+  dev run / bare binary / other OS ─▶ notification plugin, no click ⇒ false
+       ─▶ next window focus opens the space of the last notification
+```
+
+| | Clicks reported | Why |
+| --- | --- | --- |
+| `Theodore.app`, macOS | yes | posted under the app's own bundle id, `mac-notification-sys` waits for the click |
+| dev run, bare binary | no | posted as Terminal; the click goes to Terminal |
+| Linux, Windows | no | the plugin path, unchanged |
+
+On macOS a notification waits on a thread of its own until it's clicked,
+closed or cleared from Notification Center (the thread then ends); one left
+in Notification Center keeps its thread until the app quits. At most 16
+wait at once; past that a notification is only shown and falls back to the
+next window focus. The dock badge counts the spaces whose last
 turn ended after you last looked at them (finished or failed); a space only
 counts as seen while the window has focus.
 
