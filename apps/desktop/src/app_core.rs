@@ -79,6 +79,8 @@ fn err(e: AppError) -> CommandError {
         AppError::Invalid(_) => "invalid",
         AppError::Join(_) => "internal",
         AppError::Account(_) => "account",
+        // The UI shows the sign-in screen on this code (plan §6.12).
+        AppError::AccountRequired => "account_required",
     };
     CommandError {
         code: code.into(),
@@ -287,6 +289,9 @@ impl CoreApi for AppCore {
     async fn is_idle(&self) -> bool {
         self.core.is_idle().await
     }
+    async fn account_gate(&self) -> Result<(), CommandError> {
+        self.core.require_account().await.map_err(err)
+    }
     async fn updates_enabled(&self) -> bool {
         self.sandbox.is_none()
     }
@@ -461,5 +466,17 @@ impl CoreApi for AppCore {
             self.core.account_sign_in_callback(&url).await,
             theodore_ports::CallbackPage::Ignored
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_sign_in_has_its_own_code() {
+        let e = err(AppError::AccountRequired);
+        assert_eq!(e.code, "account_required");
+        assert_eq!(e.message, "Sign in to your Theodore account to continue");
     }
 }

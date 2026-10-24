@@ -114,6 +114,14 @@ pub trait CoreApi: Send + Sync {
         "stable".into()
     }
 
+    /// The account gate (plan §6.12 "Sign-in required"): `Err` with code
+    /// `account_required` while signed out where signing in is required.
+    /// Not a wire command; `gate::guard` asks it before every command off
+    /// `gate::ALLOWED_SIGNED_OUT`. Open by default.
+    async fn account_gate(&self) -> Result<(), CommandError> {
+        Ok(())
+    }
+
     /// Gates `install_update`'s restart: no agent running, outbox empty.
     async fn is_idle(&self) -> bool {
         true
