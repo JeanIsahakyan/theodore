@@ -428,3 +428,10 @@ body.cmd .lines .src span:hover {
   text-decoration-color: color-mix(in oklab, var(--danger) 60%, transparent);
   opacity: 0.75;
 }
+
+/* Switches on a grey card: the off track is the card's own grey and
+ * vanished. A darker off track (light) / lighter (dark) keeps it a switch. */
+.card .switch__control:not([data-selected='true']),
+[data-slot='card'] .switch__control:not([data-selected='true']) {
+  --switch-control-bg: color-mix(in oklab, var(--foreground) 16%, transparent);
+}
