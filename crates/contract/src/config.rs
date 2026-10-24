@@ -216,3 +216,101 @@ pub struct SpaceRunRequest {
     /// Start (`true`) or stop the `run` command.
     pub start: bool,
 }
+
+// ── creating and saving a project's config (Settings → Projects) ─────────
+
+/// One layer's file as the editor sees it: where saving to that layer
+/// writes, and its current text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ConfigDraftFile {
+    pub layer: ConfigLayer,
+    /// Where it is read from (a host project's repo file: `<slug>@<sha>:…`
+    /// on its default branch).
+    pub path: String,
+    /// Where saving to this layer writes: the same file, or for a host
+    /// project's repo layer the branch its PR is pushed to.
+    pub save_to: String,
+    /// `None`: the file doesn't exist.
+    pub text: Option<String>,
+}
+
+/// What the config editor starts from (`config_draft`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ConfigDraft {
+    pub project: String,
+    /// The project's current settings as YAML (per-task agents, values
+    /// from the repo and local files), the rest of `review:` and `spaces:`
+    /// as a commented template.
+    pub generated: String,
+    /// Global, repo, local.
+    pub files: Vec<ConfigDraftFile>,
+    /// The file to open first: the repo's, else the local one; `None` when
+    /// neither exists (start from `generated`).
+    pub initial: Option<ConfigLayer>,
+    /// Local folder project: whether saving to the repo can also commit
+    /// the file (the folder has no other uncommitted change).
+    pub can_commit: bool,
+    /// Why it can't, when it can't.
+    pub commit_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigProblemLevel {
+    /// The file would be ignored, or a section dropped: saving is refused.
+    Error,
+    /// Applied without the key (an unknown key).
+    Warning,
+}
+
+/// A problem in the editor's text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ConfigProblem {
+    pub level: ConfigProblemLevel,
+    /// 1-based, when known.
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub message: String,
+}
+
+/// `check_config`: the editor's text, as it would be saved to `layer`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CheckConfigRequest {
+    pub project: String,
+    pub layer: ConfigLayer,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ConfigCheck {
+    pub problems: Vec<ConfigProblem>,
+    /// The project's effective config with the text in place of `layer`.
+    pub preview: EffectiveConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SaveConfigRequest {
+    pub project: String,
+    pub layer: ConfigLayer,
+    pub text: String,
+    /// Local folder project, repo layer: also commit the file.
+    #[serde(default)]
+    pub commit: bool,
+}
+
+/// What `save_config` did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SaveConfigResult {
+    pub layer: ConfigLayer,
+    /// The file written, or the branch pushed.
+    pub path: String,
+    /// One line for the toast.
+    pub message: String,
+    /// Host project: the branch pushed; its PR arrives as
+    /// `Ephemeral::ConfigPr`.
+    pub branch: Option<String>,
+    /// The commit made (pushed, or in the folder).
+    pub commit: Option<String>,
+    /// The repo's commands now in effect were marked allowed.
+    pub trusted: bool,
+}

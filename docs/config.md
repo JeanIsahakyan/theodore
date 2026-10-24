@@ -21,9 +21,10 @@ global ──▶ repo ──▶ local ──▶ effective config
   it is missing.
 - **Repo** is committed. For a local folder project it is read from the
   folder's working copy. A host project has no checkout, so the file is read
-  as committed: at the space's base for a space, at the PR's head for a
-  review.
-- **Local** is yours. Add it to `.gitignore`:
+  as committed: at the space's base for a space, at the tip of the PR's base
+  branch for a review — never at the PR's head (§1 "Which config").
+- **Local** is yours. Add it to `.gitignore` (Theodore does when it saves
+  the file for you):
 
   ```gitignore
   .theodore/config.local.yaml
@@ -31,7 +32,8 @@ global ──▶ repo ──▶ local ──▶ effective config
 
   It is read only from a local folder project's own checkout, never from a
   space's worktree (where the agent could write it). A host project has no
-  local layer: use the global file.
+  checkout, so its local file lives in Theodore's data directory:
+  `~/.theodore/projects/<host>/<owner>/<name>/config.local.yaml`.
 
 Settings → Labs → Global config also shows each project's effective config
 read-only: every value and the file it came from, unknown keys, and whether
@@ -113,12 +115,22 @@ Quote a pattern that starts with `*` or contains `{` (`"*.lock"`): YAML
 reads it differently otherwise. A `.` inside a `checklist` key is part of
 the glob, not a nested key.
 
-- **Which config.** A review reads the PR's repo layer from the PR's
-  checkout (its head), plus your global file; a local folder project reads
-  its own working copy and personal file instead, whichever review of it is
-  open. A space reads its project's config at the space's base. The files
-  are read on every use and re-merged only when their text changes, so an
-  edit applies to the next agent run without a restart.
+- **Which config.** Review rules come from the base, so a PR can't change
+  how itself is reviewed: a PR that adds `hide: ["**"]` still has its own
+  files grouped, and its `instructions` don't reach its own agents. A
+  config change takes effect once it is merged.
+
+  | Review of | Repo layer read at |
+  | --- | --- |
+  | a host PR | the tip of its base branch in Theodore's cache (fetched on open), else the PR's base commit |
+  | a branch ("Review branch") | the tip of the branch it is compared against |
+  | a space | the space's base commit |
+  | anything in a local folder project | the folder's working copy (your own tree), plus your local file |
+
+  Your global file applies to all of them, and a host repo's local file
+  (above) to its reviews. The files are read on every use and re-merged
+  only when their text changes, so an edit applies to the next agent run
+  without a restart.
 - **`context`** is resolved against the PR's checkout (a space's worktree
   for a space). A plain path that doesn't exist, a glob that matches
   nothing and a path leaving the repo are left out (a debug log line says
@@ -145,8 +157,10 @@ the glob, not a nested key.
   them. Each dropped report counts, so two agents reporting the same
   finding count two.
 - **Trust.** These keys run no commands, so a repo's file applies them
-  without asking (§5). It can still steer the agents and hide files from
-  the grouping: read a repo's `review:` before relying on it.
+  without asking (§5). They can still steer the agents and hide files from
+  the grouping, which is why they come from the base: only what is already
+  merged decides how a PR is reviewed, and a PR changing `review:` is
+  reviewed under the old rules.
 
 ---
 
@@ -265,6 +279,10 @@ repo commands in effect ─▶ sha256 ─▶ allowed for this project? ─yes─
 - The approval is stored per project against a hash of the exact set. Any
   change to a gated value — a new command, an edited one, a new `env` key —
   asks again.
+- `review:` is not gated: it runs nothing, and a review reads it from the
+  base, so a PR's own `review:` never applies to that PR (§1 "Which
+  config"). `spaces:` is read as before (a space's base), and its commands
+  still wait for Allow.
 - **Not now** applies to that space only: its repo commands (and repo
   `env`) are skipped, everything else works, and the space shows that they
   were skipped with a way to review and allow them later.
@@ -315,7 +333,82 @@ agent ─▶ run_check / start_app ─▶ set? ─no──▶ error: no `spaces.
   and `app_status`. Any other PR is unchanged.
 - **In the turn.** The turn lists its tool calls; these read as what they
   do ("run the check", "start the app").
+- **Ask mode too.** A turn in Ask mode may call `run_check` and
+  `start_app` (owner decision, 2026-10-23: "if it needs to run, it can
+  run"). They run the configured commands only, under the same trust.
 
 Claude and Gemini get the server over HTTP, Codex through its
 `mcp_servers.space-tools` override. A CLI that only speaks stdio MCP uses
 `theodore mcp-bridge`, same as `review-tools`.
+
+## 8. Creating and saving the config from Theodore
+
+Settings → Projects → ⟨project⟩ → **Config**.
+
+```
+Create from current settings ─▶ the repo's file, else your local file, else generated:
+                                  review.agents per task (Settings → Agents)
+                                  + values already in the repo / local file
+                                  + the rest of review: and spaces: as comments
+edit ─▶ checked as you type ─▶ problems with line numbers · effective config preview
+Save to… ─┬─ Repo (team)
+          ├─ Repo (team) and commit      local folder, nothing else uncommitted
+          ├─ Local (mine)
+          └─ Global
+```
+
+- **Load** switches the editor to another layer's file, or back to the text
+  generated from your settings. The preview shows the project's effective
+  config with the editor's text in place of that layer (generated text is
+  previewed as the repo file), each value with the file it comes from —
+  the same view as Settings → Labs.
+- **Problems.** The text is checked by the same parser that reads the file.
+  Invalid YAML, a top level that isn't a mapping and a value of the wrong
+  type (`ports: lots`) are errors, at their line; an unknown key is a
+  warning. Save is off while there is an error.
+
+| Save to | Local folder project | Host project |
+| --- | --- | --- |
+| Repo (team) | `<folder>/.theodore/config.yaml` | a commit on `<login>/theodore-config` (`theodore/config` without a login), pushed, and a PR "Add Theodore config" into the default branch |
+| Repo (team) and commit | the file, then `git commit` of that file only | — |
+| Local (mine) | `<folder>/.theodore/config.local.yaml`, added to the folder's `.gitignore` if no line names it | `~/.theodore/projects/<host>/<owner>/<name>/config.local.yaml` |
+| Global | `~/.theodore/config.yaml` | same |
+
+`~/.theodore` is Theodore's data directory (`THEODORE_DATA_DIR`). A file is
+written through a temporary file and a rename.
+
+**A host repo, through a PR.**
+
+```
+default branch tip ─┐
+                    ├─▶ one commit: the tip's tree + .theodore/config.yaml ─▶ push (never forced)
+branch exists? ─────┘   (on top of the branch's tip; authored by you)          │
+                                                                                ▼
+                                             outbox create_config_pr: open PR for the branch?
+                                               yes ─▶ that PR   no ─▶ open "Add Theodore config"
+                                                                ▼
+                                                    toast "Config PR #n is open" · Open
+```
+
+- The commit is built from git trees in Theodore's own copy of the repo: no
+  checkout, never your working copy. You are its author and committer (git's
+  `user.name` / `user.email`, else your GitHub login's noreply address),
+  unsigned.
+- Saving again pushes one more commit to the same branch, and the PR is
+  found by its branch instead of opened twice. Saving the same text again
+  pushes nothing. The PR only changes how other PRs are reviewed once it is
+  merged (§1 "Which config").
+
+**A local folder, and commit.** Offered only when the folder is on a branch
+and has no uncommitted change besides `.theodore/config.yaml` itself. The
+commit (`Add Theodore config`, or `Update …`) takes that path only, with your
+identity and your hooks; a hook that fails leaves the file saved but not
+committed. Asked when the folder became dirty meanwhile, the save is
+refused before anything is written.
+
+**Trust.** Repo commands you save to the repo are yours: the save marks
+that set allowed for the project (§5), and the set allowed before stays
+allowed too, so a host repo's commands keep running while the PR waits to
+be merged. A local or global save never allows the repo's commands — it
+only keeps an allowed set allowed when it leaves nothing new in it. A later
+change to the repo file by anyone else asks again, as always.

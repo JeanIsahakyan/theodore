@@ -1,6 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { EphemeralStore } from './EphemeralStore';
 
+describe('EphemeralStore config PR', () => {
+  it('a config_pr event becomes a toast that opens the PR', () => {
+    const e = new EphemeralStore();
+    e.handle({
+      type: 'config_pr',
+      project: 'github:acme/widget',
+      number: 7,
+      url: 'https://github.com/acme/widget/pull/7',
+    });
+    expect(e.toasts).toHaveLength(1);
+    expect(e.toasts[0]).toMatchObject({
+      level: 'info',
+      text: 'Config PR #7 is open',
+    });
+    expect(e.toasts[0]!.action?.label).toBe('Open');
+  });
+});
+
 describe('EphemeralStore stalled tracking', () => {
   it('marks a run stalled on run_stalled', () => {
     const e = new EphemeralStore();

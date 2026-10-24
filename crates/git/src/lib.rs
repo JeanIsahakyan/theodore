@@ -12,6 +12,7 @@
 
 mod auth;
 mod branches;
+mod config_file;
 mod conflicts;
 mod diff;
 mod generated;
@@ -410,6 +411,27 @@ impl GitPort for GitCli {
     ) -> GitResult<()> {
         self.write_folder_branch_op(folder, repo, space, branch)
             .await
+    }
+
+    async fn commit_file(
+        &self,
+        repo: &Path,
+        parent: &Sha,
+        path: &str,
+        content: &[u8],
+        message: &str,
+        author: &Identity,
+    ) -> GitResult<Sha> {
+        self.commit_file_op(repo, parent, path, content, message, author)
+            .await
+    }
+
+    async fn dirty_paths(&self, folder: &Path) -> GitResult<Vec<String>> {
+        self.dirty_paths_op(folder).await
+    }
+
+    async fn commit_paths(&self, folder: &Path, paths: &[String], message: &str) -> GitResult<Sha> {
+        self.commit_paths_op(folder, paths, message).await
     }
 }
 

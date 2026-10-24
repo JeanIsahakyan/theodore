@@ -325,7 +325,11 @@ impl Core {
 
     /// The user's git identity; for GitHub, failing that, the signed-in
     /// account with its noreply address.
-    async fn ship_author(&self, repo_path: &Path, project: &Project) -> AppResult<Identity> {
+    pub(crate) async fn ship_author(
+        &self,
+        repo_path: &Path,
+        project: &Project,
+    ) -> AppResult<Identity> {
         // A local folder's own config (a per-repo identity) counts first.
         let config_from = project.path.as_deref().map_or(repo_path, Path::new);
         if let Some(id) = self.0.deps.git.user_identity(config_from).await? {
@@ -477,7 +481,21 @@ fn to_json<T: Serialize>(v: &T) -> AppResult<serde_json::Value> {
 /// `<login>/<slug>` (docs/spaces.md §12), `space/<slug>` without a usable
 /// login. Logins keep `[A-Za-z0-9._-]`; anything else becomes `-`.
 pub(crate) fn branch_for(login: Option<&str>, slug: &str) -> String {
-    let login: Option<String> = login
+    let branch = match login_segment(login) {
+        Some(l) => format!("{l}/{slug}"),
+        None => format!("space/{slug}"),
+    };
+    if crate::usecases::spaces::is_valid_branch(&branch) {
+        branch
+    } else {
+        format!("space/{slug}")
+    }
+}
+
+/// A login as a branch name segment: `[A-Za-z0-9._-]` kept, anything else
+/// `-`; `None` when nothing usable is left.
+pub(crate) fn login_segment(login: Option<&str>) -> Option<String> {
+    login
         .map(|l| {
             l.chars()
                 .map(|c| {
@@ -491,16 +509,7 @@ pub(crate) fn branch_for(login: Option<&str>, slug: &str) -> String {
                 .trim_matches(['-', '.'])
                 .to_string()
         })
-        .filter(|l| !l.is_empty());
-    let branch = match login {
-        Some(l) => format!("{l}/{slug}"),
-        None => format!("space/{slug}"),
-    };
-    if crate::usecases::spaces::is_valid_branch(&branch) {
-        branch
-    } else {
-        format!("space/{slug}")
-    }
+        .filter(|l| !l.is_empty())
 }
 
 /// First non-empty line, trimmed, cut to a subject line's length.

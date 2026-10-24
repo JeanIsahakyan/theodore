@@ -570,15 +570,10 @@ impl Core {
         };
         let layers = self.project_layers(&project, rev.as_ref()).await;
         let cfg = self.config_with_trust(&layers, &project, false).await;
-        let mut unknown: Vec<String> = cfg.merged.unknown.iter().map(|(_, k)| k.clone()).collect();
-        unknown.sort();
-        unknown.dedup();
-        Ok(EffectiveConfig {
-            files: cfg.merged.files.clone(),
-            entries: cfg.merged.entries(),
-            unknown,
-            repo_commands: cfg.repo,
-        })
+        Ok(crate::usecases::config_editor::effective(
+            &cfg.merged,
+            cfg.repo,
+        ))
     }
 
     /// Where `~/.theodore/config.yaml` is, and whether it exists.

@@ -29,6 +29,8 @@ mod account_tests;
 mod git_integration_tests;
 
 #[cfg(test)]
+mod config_editor_tests;
+#[cfg(test)]
 mod diff_media_integration_tests;
 #[cfg(test)]
 mod interdiff_tests;

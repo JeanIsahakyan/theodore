@@ -258,6 +258,28 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
         Err(not_ready())
     }
+    /// Settings → Projects → Config: each layer's file and YAML generated
+    /// from the project's settings.
+    async fn config_draft(
+        &self,
+        _project: String,
+    ) -> Result<theodore_contract::ConfigDraft, CommandError> {
+        Err(not_ready())
+    }
+    /// The editor's text checked (problems with lines) and previewed.
+    async fn check_config(
+        &self,
+        _req: theodore_contract::CheckConfigRequest,
+    ) -> Result<theodore_contract::ConfigCheck, CommandError> {
+        Err(not_ready())
+    }
+    /// Saves the editor's text to a layer (a host repo through a PR).
+    async fn save_config(
+        &self,
+        _req: theodore_contract::SaveConfigRequest,
+    ) -> Result<theodore_contract::SaveConfigResult, CommandError> {
+        Err(not_ready())
+    }
     /// Theodore account (plan "Theodore account"): signed in or out, and
     /// whether the feature is configured at all.
     async fn account_status(&self) -> Result<AccountStatus, CommandError>;

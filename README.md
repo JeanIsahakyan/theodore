@@ -119,6 +119,9 @@ implementations too, not stubs — just narrower, matching each host's API.
   Commands from a repo run only after you allow them. Every key: `docs/config.md`.
 - `review:` also feeds the repo's instructions and files to every agent run, hides or marks
   files skimmable in the grouping, adds checklist items, auto-runs skills and drops findings by path.
+  A review reads it from the base branch, so a PR can't change how itself is reviewed.
+- Settings → Projects → ⟨project⟩ → Config creates the file from your current settings, checks it
+  as you type, and saves it to the repo (a PR for a host project), your local file or the global one.
 
 ### Updates
 - Checks for a new build on launch and every 6 hours, on a stable or beta

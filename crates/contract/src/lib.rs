@@ -555,6 +555,14 @@ pub enum Ephemeral {
         space: String,
         line: SpaceLogLine,
     },
+    /// The PR a config save to a host project's repo pushed for was opened
+    /// (or found open) by the outbox.
+    ConfigPr {
+        project: String,
+        number: u64,
+        /// Empty when the host didn't say.
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -738,6 +746,14 @@ pub fn types() -> specta::Types {
         .register::<RepoCommands>()
         .register::<EffectiveConfig>()
         .register::<GlobalConfigInfo>()
+        .register::<ConfigDraftFile>()
+        .register::<ConfigDraft>()
+        .register::<ConfigProblemLevel>()
+        .register::<ConfigProblem>()
+        .register::<CheckConfigRequest>()
+        .register::<ConfigCheck>()
+        .register::<SaveConfigRequest>()
+        .register::<SaveConfigResult>()
         .register::<SpaceCommandKind>()
         .register::<ConfiguredCommand>()
         .register::<SpaceConfigView>()

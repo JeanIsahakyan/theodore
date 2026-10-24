@@ -10,6 +10,7 @@ use theodore_ports::{DiffOptions, Fetched, NewAction, SyncActionCode};
 
 use crate::core::{Core, RevisionEntry};
 use crate::error::{AppError, AppResult};
+use crate::usecases::review_config::ConfigBase;
 
 impl Core {
     pub async fn open_pr(&self, req: OpenPrRequest) -> AppResult<OpenPrResponse> {
@@ -120,7 +121,14 @@ impl Core {
         let pr_id = pr_ref.id();
         let head = detail.summary.head_sha.clone();
 
-        self.load_repo_settings(&worktree_path, &pr_ref.repo).await;
+        let entry = Arc::new(RevisionEntry {
+            revision: Arc::new(revision.clone()),
+            repo_path,
+            worktree_path,
+            base: ConfigBase::of(&pr_ref, &detail),
+            pr_ref: pr_ref.clone(),
+        });
+        self.load_repo_settings(entry.config_source()).await;
 
         {
             self.0
@@ -130,15 +138,11 @@ impl Core {
                 .insert(pr_id.clone(), head.clone());
         }
         {
-            self.0.revisions.write().await.insert(
-                (pr_id.clone(), head.clone()),
-                Arc::new(RevisionEntry {
-                    revision: Arc::new(revision.clone()),
-                    repo_path,
-                    worktree_path: worktree_path.clone(),
-                    pr_ref: pr_ref.clone(),
-                }),
-            );
+            self.0
+                .revisions
+                .write()
+                .await
+                .insert((pr_id.clone(), head.clone()), entry.clone());
         }
 
         self.apply_pr_detail(&detail).await?;
@@ -150,10 +154,9 @@ impl Core {
                 pr: pr_id.clone(),
                 head: head.clone(),
                 state: detail.summary.state,
-                worktree: worktree_path.clone(),
-                repo: pr_ref.repo.clone(),
+                entry: entry.clone(),
             };
-            self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, worktree_path);
+            self.spawn_grouping(pr_id.clone(), head.clone(), revision, detail, entry);
             tokio::spawn(self.run_auto_skills(auto));
         }
 
@@ -166,8 +169,7 @@ pub(crate) struct AutoSkills {
     pub pr: PrId,
     pub head: theodore_domain::Sha,
     pub state: theodore_domain::PrState,
-    pub worktree: PathBuf,
-    pub repo: RepoRef,
+    pub entry: Arc<RevisionEntry>,
 }
 
 impl Core {
@@ -196,7 +198,7 @@ impl Core {
         if !self.auto_skills_enabled() || !matches!(auto.state, PrState::Open | PrState::Draft) {
             return;
         }
-        let skills = self.auto_skills_of(&auto.worktree, &auto.repo).await;
+        let skills = self.auto_skills_of(auto.entry.config_source()).await;
         if skills.is_empty() {
             return;
         }
@@ -286,10 +288,11 @@ impl Core {
         head: theodore_domain::Sha,
         revision: theodore_domain::Revision,
         detail: theodore_domain::PrDetail,
-        worktree: std::path::PathBuf,
+        entry: Arc<RevisionEntry>,
     ) {
         let core = self.clone();
         tokio::spawn(async move {
+            let worktree = entry.worktree_path.clone();
             let store = core.0.deps.store.clone();
             let id = pr.0.clone();
             let stored = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &id))
@@ -297,9 +300,7 @@ impl Core {
                 .ok()
                 .and_then(|r| r.ok())
                 .flatten();
-            let rules = core
-                .review_rules_at(&worktree, &detail.summary.pr.repo)
-                .await;
+            let rules = core.review_rules_at(entry.config_source()).await;
             // Reuse a grouping of this head, unless an older algorithm or
             // other review rules (`hide`, `skim`, `checklist`) made it.
             if stored.is_some_and(|r| {
