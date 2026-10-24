@@ -23,7 +23,15 @@ let spaces: Space[];
 let store: RootStore;
 
 const space = (id: string, status: Space['status']): Space =>
-  ({ id, name: id, status, error: null, turns: 1, updated_at: 1 }) as Space;
+  ({
+    id,
+    name: id,
+    goal: '',
+    status,
+    error: null,
+    turns: 1,
+    updated_at: 1,
+  }) as Space;
 
 beforeEach(() => {
   localStorage.clear();

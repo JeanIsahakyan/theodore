@@ -90,16 +90,16 @@ export function spaceGlyph(
  *  not looking at the space. `null` when nothing finished. */
 export function turnEnded(
   prev: Pick<Space, 'status'> | undefined,
-  next: Pick<Space, 'status' | 'name' | 'error'>,
+  next: Pick<Space, 'status' | 'name' | 'error' | 'goal'>,
 ): { level: 'info' | 'error'; text: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
   if (next.status === 'failed') {
     return {
       level: 'error',
-      text: `${next.name}: turn failed${next.error ? ` — ${next.error}` : ''}`,
+      text: `${spaceTitle(next)}: turn failed${next.error ? ` — ${next.error}` : ''}`,
     };
   }
-  return { level: 'info', text: `${next.name}: turn done` };
+  return { level: 'info', text: `${spaceTitle(next)}: turn done` };
 }
 
 /** Days after a space is done before it archives itself; 0 = never. */
@@ -296,14 +296,14 @@ export function notifyOn(
  *  did: "<space>: turn finished" / "<space>: turn failed". */
 export function nativeNotice(
   prev: Pick<Space, 'status'> | undefined,
-  next: Pick<Space, 'status' | 'name' | 'error'>,
+  next: Pick<Space, 'status' | 'name' | 'error' | 'goal'>,
 ): { title: string; body?: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
   if (next.status === 'failed') {
-    const title = `${next.name}: turn failed`;
+    const title = `${spaceTitle(next)}: turn failed`;
     return next.error ? { title, body: next.error } : { title };
   }
-  return { title: `${next.name}: turn finished` };
+  return { title: `${spaceTitle(next)}: turn finished` };
 }
 
 /** The dock badge: spaces whose last turn ended after you last looked

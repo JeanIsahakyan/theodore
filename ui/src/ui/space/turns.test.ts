@@ -163,19 +163,29 @@ describe('notifications', () => {
   it('say a turn finished or failed, only when one ended', () => {
     const running = { status: 'running' as const };
     expect(
-      nativeNotice(running, { status: 'idle', name: 'fix', error: null }),
-    ).toEqual({ title: 'fix: turn finished' });
+      nativeNotice(running, {
+        status: 'idle',
+        name: 'fix-login',
+        goal: 'Fix the login redirect',
+        error: null,
+      }),
+    ).toEqual({ title: 'Fix the login redirect: turn finished' });
     expect(
-      nativeNotice(running, { status: 'failed', name: 'fix', error: 'boom' }),
+      nativeNotice(running, {
+        status: 'failed',
+        name: 'fix',
+        goal: '',
+        error: 'boom',
+      }),
     ).toEqual({ title: 'fix: turn failed', body: 'boom' });
     expect(
       nativeNotice(
         { status: 'idle' },
-        { status: 'idle', name: 'x', error: null },
+        { status: 'idle', name: 'x', goal: '', error: null },
       ),
     ).toBeNull();
     expect(
-      nativeNotice(undefined, { ...running, name: 'x', error: null }),
+      nativeNotice(undefined, { ...running, name: 'x', goal: '', error: null }),
     ).toBe(null);
   });
 

@@ -114,17 +114,23 @@ describe('spaces', () => {
   });
 
   it('notices only a turn that just ended', () => {
-    const next = { status: 'idle' as const, name: 'fix', error: null };
+    // Called by what was asked for; the slug only when there's no goal.
+    const next = {
+      status: 'idle' as const,
+      name: 'fix',
+      goal: 'Fix it',
+      error: null,
+    };
     expect(turnEnded({ status: 'running' }, next)).toEqual({
       level: 'info',
-      text: 'fix: turn done',
+      text: 'Fix it: turn done',
     });
     expect(
       turnEnded(
         { status: 'running' },
         { ...next, status: 'failed', error: 'boom' },
       ),
-    ).toEqual({ level: 'error', text: 'fix: turn failed — boom' });
+    ).toEqual({ level: 'error', text: 'Fix it: turn failed — boom' });
     expect(turnEnded({ status: 'idle' }, next)).toBeNull();
     expect(turnEnded(undefined, next)).toBeNull();
     expect(
