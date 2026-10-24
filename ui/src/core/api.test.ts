@@ -47,3 +47,50 @@ describe('a command turned away by the account gate', () => {
     expect(recheck).not.toHaveBeenCalled();
   });
 });
+
+describe('operation ids', () => {
+  let transport: FakeTransport;
+
+  beforeEach(() => {
+    transport = new FakeTransport();
+    setTransport(transport);
+    setCommandFailureHandler(() => {});
+  });
+
+  it('sends a fresh 16-hex op id with every command', async () => {
+    transport.onCall('app_info', () => ({ version: '1' }));
+    await api.appInfo();
+    await api.appInfo();
+    const [a, b] = transport.opIds;
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+    expect(b).toMatch(/^[0-9a-f]{16}$/);
+    expect(a).not.toBe(b);
+  });
+
+  it('puts the op id on the failure', async () => {
+    transport.onCall('open_pr', () => {
+      throw { code: 'host', message: 'offline' };
+    });
+    const err = (await api
+      .openPr({ url: 'https://github.com/a/b/pull/1' })
+      .catch((e: unknown) => e)) as CommandFailure;
+    expect(err.opId).toBe(transport.opIds[0]);
+    expect(err.opId).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('never throws or toasts from logClient and trackUi', async () => {
+    const toast = vi.fn();
+    setCommandFailureHandler(toast);
+    transport.onCall('log_client', () => {
+      throw { code: 'internal', message: 'down' };
+    });
+    // track_ui has no handler at all: the fake rejects.
+    await expect(
+      api.logClient({ level: 'error', source: 'onerror', message: 'x' }),
+    ).resolves.toBeNull();
+    await expect(
+      api.trackUi({ event: 'onboarding_step', step: 'github' }),
+    ).resolves.toBeNull();
+    expect(toast).not.toHaveBeenCalled();
+  });
+});

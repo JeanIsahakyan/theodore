@@ -11,6 +11,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Input,
   Kbd,
   Label,
@@ -20,7 +21,12 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AgentStatus, HostAuthStatus } from '../gen/contract';
+import type {
+  AgentStatus,
+  HostAuthStatus,
+  TelemetryChoice,
+  TelemetryStatus,
+} from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
 import { useDeviceLogin } from '../core/deviceLogin';
 import { useRootStore, useUi } from '../stores/context';
@@ -28,22 +34,54 @@ import { Btn, Spinner } from './bits';
 import { AccountStep, useAccountStatus } from './AccountCard';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { ProjectPicker } from './Projects';
+import { SHARE_ROWS, WhatsCollectedLink } from './Privacy';
+import { TELEMETRY_CLAIM } from './WhatsCollected';
 
-type StepId = 'github' | 'account' | 'agents' | 'projects' | 'done';
+type StepId =
+  'github' | 'account' | 'telemetry' | 'agents' | 'projects' | 'done';
 const STEP_TITLE: Record<StepId, string> = {
   github: 'GitHub',
   account: 'Account',
+  telemetry: 'Sharing',
   agents: 'Agents',
   projects: 'Projects',
   done: 'Done',
 };
 
 /** Signing in to Theodore comes first when it's required (a WorkOS client
- *  id is configured), and can't be skipped. */
-export function onboardingSteps(accountRequired: boolean): StepId[] {
-  return accountRequired
-    ? ['account', 'github', 'agents', 'projects', 'done']
-    : ['github', 'agents', 'projects', 'done'];
+ *  id is configured), and can't be skipped. The sharing choice comes next,
+ *  only when this build can send usage data or error reports at all. */
+export function onboardingSteps(
+  accountRequired: boolean,
+  telemetryAvailable = false,
+): StepId[] {
+  return [
+    ...(accountRequired ? (['account'] as const) : []),
+    ...(telemetryAvailable ? (['telemetry'] as const) : []),
+    'github',
+    'agents',
+    'projects',
+    'done',
+  ];
+}
+
+/** `loading` until `telemetry_status` answers; a failure counts as "no
+ *  sink in this build" so onboarding never waits on it. */
+type Telemetry = TelemetryStatus | 'loading' | 'none';
+
+function useTelemetryStatus(): Telemetry {
+  const [status, setStatus] = useState<Telemetry>('loading');
+  useEffect(() => {
+    let live = true;
+    api.telemetryStatus().then(
+      (s) => live && setStatus(s),
+      () => live && setStatus('none'),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  return status;
 }
 
 /** Only Projects can be skipped; the sign-in, where it's a step, can't. */
@@ -75,14 +113,32 @@ export const Onboarding = observer(function Onboarding() {
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentStatus[] | null>(null);
   const account = useAccountStatus();
-  // The app shows onboarding only once the account status is known.
-  const stepsKnown = account !== null;
-  const steps = onboardingSteps(account?.required ?? false);
+  const telemetry = useTelemetryStatus();
+  const telemetryAvailable =
+    typeof telemetry === 'object' &&
+    (telemetry.usage_available || telemetry.errors_available);
+  // The app shows onboarding only once the account status is known; the
+  // step list waits for the sharing status too, so it never shifts.
+  const stepsKnown = account !== null && telemetry !== 'loading';
+  const steps = onboardingSteps(account?.required ?? false, telemetryAvailable);
   // Signed out (or the session ended mid-way): back on the sign-in step,
   // and nothing past it runs.
   const locked = store.ephemeral.accountGate !== 'open';
   const step = locked ? 0 : picked;
   const id: StepId = steps[Math.min(step, steps.length - 1)] ?? 'done';
+
+  // Both on, unless chosen before (onboarding was reset).
+  const [chosen, setShare] = useState<TelemetryChoice | null>(null);
+  const share: TelemetryChoice = chosen ?? {
+    usage: typeof telemetry === 'object' ? (telemetry.usage ?? true) : true,
+    errors: typeof telemetry === 'object' ? (telemetry.errors ?? true) : true,
+  };
+  const [saving, setSaving] = useState(false);
+
+  // One event each time a step comes up.
+  useEffect(() => {
+    if (stepsKnown) void api.trackUi({ event: 'onboarding_step', step: id });
+  }, [stepsKnown, id]);
 
   const checkHost = useCallback(() => {
     setChecking(true);
@@ -123,6 +179,7 @@ export const Onboarding = observer(function Onboarding() {
   const canNext: Record<StepId, boolean> = {
     github: connected || host === 'unready',
     account: !!account?.user,
+    telemetry: !saving,
     agents: agents != null,
     projects: true,
     done: true,
@@ -287,6 +344,16 @@ export const Onboarding = observer(function Onboarding() {
 
           {stepsKnown && id === 'account' && <AccountStep />}
 
+          {stepsKnown &&
+            id === 'telemetry' &&
+            typeof telemetry === 'object' && (
+              <TelemetryStep
+                status={telemetry}
+                value={share}
+                onChange={setShare}
+              />
+            )}
+
           {id === 'agents' && (
             <>
               <Typography.Heading level={4}>Agent CLIs</Typography.Heading>
@@ -390,7 +457,24 @@ export const Onboarding = observer(function Onboarding() {
               // buttons are the call to action.
               variant={skip ? 'tertiary' : 'primary'}
               isDisabled={!canNext[id]}
-              onPress={() => setStep(step + 1)}
+              isPending={saving}
+              onPress={() => {
+                if (id !== 'telemetry' || typeof telemetry !== 'object')
+                  return setStep(step + 1);
+                // The choice is recorded before anything is sent, and
+                // before moving on.
+                setSaving(true);
+                void api
+                  .setTelemetry({
+                    usage: telemetry.usage_available && share.usage,
+                    errors: telemetry.errors_available && share.errors,
+                  })
+                  .then(() => setStep(step + 1))
+                  .catch(() => {
+                    // toasted by api.ts; stay on the step
+                  })
+                  .finally(() => setSaving(false));
+              }}
             >
               {skip ? 'Skip' : 'Next'}
             </Button>
@@ -405,3 +489,51 @@ export const Onboarding = observer(function Onboarding() {
     </div>
   );
 });
+
+function TelemetryStep({
+  status,
+  value,
+  onChange,
+}: {
+  status: TelemetryStatus;
+  value: TelemetryChoice;
+  onChange: (v: TelemetryChoice) => void;
+}) {
+  return (
+    <>
+      <Typography.Heading level={4}>Help improve Theodore</Typography.Heading>
+      <Typography.Paragraph size="sm" color="muted">
+        Choose what Theodore may send to help fix bugs and improve features.
+        Nothing is sent until you press Next. {TELEMETRY_CLAIM}
+      </Typography.Paragraph>
+      <div className="flex flex-col gap-3">
+        {SHARE_ROWS.map(({ kind, label, hint }) => {
+          const available =
+            kind === 'usage' ? status.usage_available : status.errors_available;
+          return (
+            <Checkbox
+              key={kind}
+              className={`share-${kind}`}
+              isSelected={available && value[kind]}
+              isDisabled={!available}
+              onChange={(v) => onChange({ ...value, [kind]: v })}
+            >
+              <Checkbox.Content>
+                <Checkbox.Control>
+                  <Checkbox.Indicator />
+                </Checkbox.Control>
+                <span className="flex flex-col">
+                  <span className="text-sm">{label}</span>
+                  <span className="text-xs text-muted">
+                    {available ? hint : 'Not configured in this build'}
+                  </span>
+                </span>
+              </Checkbox.Content>
+            </Checkbox>
+          );
+        })}
+      </div>
+      <WhatsCollectedLink />
+    </>
+  );
+}

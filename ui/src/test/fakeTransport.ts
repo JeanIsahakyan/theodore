@@ -1,5 +1,5 @@
 /** A scriptable `Transport` for tests — no Tauri, no network. */
-import type { Transport, Unlisten } from '../core/transport';
+import type { InvokeOptions, Transport, Unlisten } from '../core/transport';
 
 export class FakeTransport implements Transport {
   /** Queued responses per command, consumed in order; falls back to `handlers`. */
@@ -9,6 +9,9 @@ export class FakeTransport implements Transport {
     (args?: Record<string, unknown>) => unknown
   >();
   readonly calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  /** The operation id each call carried, in the same order as `calls`
+   *  (kept apart so existing `calls` assertions stay exact). */
+  readonly opIds: (string | undefined)[] = [];
   private readonly listeners = new Map<
     string,
     Set<(payload: unknown) => void>
@@ -24,8 +27,13 @@ export class FakeTransport implements Transport {
     this.handlers.set(cmd, fn);
   }
 
-  async invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  async invoke<T>(
+    cmd: string,
+    args?: Record<string, unknown>,
+    opts?: InvokeOptions,
+  ): Promise<T> {
     this.calls.push({ cmd, args });
+    this.opIds.push(opts?.opId);
     const q = this.queues.get(cmd);
     if (q && q.length) {
       const next = q.shift();

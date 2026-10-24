@@ -44,5 +44,7 @@ export function appView(onboarded: boolean, gate: AccountGate): AppView {
 export const MENU_WHILE_LOCKED: ReadonlySet<string> = new Set([
   'check-updates',
   'report-issue',
+  // Builds a local zip of logs: a broken sign-in can still be reported.
+  'report-problem',
   'toggle-theme',
 ]);

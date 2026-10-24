@@ -62,6 +62,8 @@ export function runMenu(store: RootStore, id: string): void {
       return void refreshInbox(store);
     case 'shortcuts':
       return ui.openModal('help');
+    case 'report-problem':
+      return ui.openModal('report-problem');
     case 'report-issue':
       return void openExternal(
         'https://github.com/JeanIsahakyan/theodore/issues/new',

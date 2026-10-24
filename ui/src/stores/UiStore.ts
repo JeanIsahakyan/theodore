@@ -71,6 +71,10 @@ export type ModalName =
   | 'add-project'
   /** Theodore account sign-in (only when it's configured). */
   | 'sign-in'
+  /** Help → Report a Problem…: a local zip of logs to review and attach. */
+  | 'report-problem'
+  /** The list of usage events and what is never sent. */
+  | 'whats-collected'
   /** Build mode only. */
   | 'new-space';
 

@@ -13,6 +13,7 @@ import type {
   BlobResponse,
   Bootstrap,
   BootstrapScope,
+  ClientLog,
   CommandError,
   CommitSuggestionsRequest,
   ConflictFile,
@@ -39,6 +40,7 @@ import type {
   OpenPrRequest,
   OpenPrResponse,
   Person,
+  ProblemReport,
   PrId,
   Project,
   ProjectWorkingState,
@@ -79,19 +81,33 @@ import type {
   SymbolHit,
   SyncFrame,
   TaskDecision,
+  TelemetryChoice,
+  TelemetryStatus,
   Transaction,
   TransactionResult,
   TriageRequest,
   UpdateInfo,
 } from '../gen/contract';
+import type { UiEvent } from '../gen/bindings';
+
+/** A fresh operation id: 16 lowercase hex chars. Sent with every command
+ *  (`x-theodore-op`) so the core's log records of it share one id. */
+export function newOpId(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 /** A command rejected; carries the core's error code, not just a message. */
 export class CommandFailure extends Error {
   readonly code: string;
-  constructor(err: CommandError) {
+  /** The operation id the command was sent with: matches the core's log. */
+  readonly opId: string | undefined;
+  constructor(err: CommandError, opId?: string) {
     super(err.message);
     this.name = 'CommandFailure';
     this.code = err.code;
+    this.opId = opId;
   }
 }
 
@@ -122,16 +138,32 @@ async function call<T>(
   /** The caller shows the failure itself (the sign-in dialog): no toast. */
   quiet = false,
 ): Promise<T> {
+  const opId = newOpId();
   try {
-    return await getTransport().invoke<T>(cmd, args);
+    return await getTransport().invoke<T>(cmd, args, { opId });
   } catch (e) {
     if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
-      const failure = new CommandFailure(e as CommandError);
+      const failure = new CommandFailure(e as CommandError, opId);
       if (failure.code === ACCOUNT_REQUIRED) onAccountRequired?.();
       else if (!quiet) onFailure?.(failure);
       throw failure;
     }
     throw e;
+  }
+}
+
+/** Fire-and-forget: bypasses the failure handler and swallows every error
+ *  (a transport that throws synchronously included). */
+function quietCall(cmd: string, args: Record<string, unknown>): Promise<null> {
+  try {
+    return getTransport()
+      .invoke<null>(cmd, args, { opId: newOpId() })
+      .then(
+        () => null,
+        () => null,
+      );
+  } catch {
+    return Promise.resolve(null);
   }
 }
 
@@ -275,9 +307,28 @@ export const api = {
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */
+  /** A UI error for the core's log. Never throws, never toasts: a lost
+   *  log line must not turn into another error. */
+  logClient: (entry: ClientLog): Promise<null> =>
+    quietCall('log_client', { entry }),
+  /** A product event (onboarding steps). Never throws, never toasts. */
+  trackUi: (event: UiEvent): Promise<null> => quietCall('track_ui', { event }),
+  telemetryStatus: () => call<TelemetryStatus>('telemetry_status'),
+  /** Records both sharing choices; the core applies them at once. */
+  setTelemetry: (req: TelemetryChoice) =>
+    call<TelemetryStatus>('set_telemetry', { req }),
+  /** Builds a local zip of redacted logs and app info. Nothing is sent.
+   *  The report view shows its own failure: no toast. */
+  reportProblem: () => call<ProblemReport>('report_problem', undefined, true),
+  revealReport: (path: string) => call<null>('reveal_report', { path }),
   conflicts: async (pr: PrId): Promise<ConflictFile[] | null> => {
+    const opId = newOpId();
     try {
-      return await getTransport().invoke<ConflictFile[]>('conflicts', { pr });
+      return await getTransport().invoke<ConflictFile[]>(
+        'conflicts',
+        { pr },
+        { opId },
+      );
     } catch (e) {
       if (
         e &&
@@ -288,7 +339,7 @@ export const api = {
         return null;
       }
       if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
-        const failure = new CommandFailure(e as CommandError);
+        const failure = new CommandFailure(e as CommandError, opId);
         onFailure?.(failure);
         throw failure;
       }
