@@ -68,8 +68,9 @@ impl CommandPort for ShellRunner {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .process_group(0);
-        match cmd.spawn() {
+        let pid = match cmd.spawn() {
             Ok(child) => {
+                let pid = child.id();
                 tokio::spawn(supervise(
                     child,
                     tx,
@@ -77,16 +78,61 @@ impl CommandPort for ShellRunner {
                     spec.timeout,
                     self.grace,
                 ));
+                pid
             }
             Err(e) => {
                 let _ = tx.try_send(CommandEvent::Exit(CommandExit {
                     error: Some(format!("could not start the command: {e}")),
                     ..CommandExit::default()
                 }));
+                None
             }
+        };
+        CommandRun {
+            events: rx,
+            cancel,
+            pid,
         }
-        CommandRun { events: rx, cancel }
     }
+
+    async fn group_matches(&self, pgid: u32, script: &str) -> bool {
+        let out = Command::new("ps")
+            .args(["-ww", "-o", "command=", "-p", &pgid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .await;
+        match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).contains(script),
+            _ => false,
+        }
+    }
+
+    async fn reap_group(&self, pgid: u32, grace: Duration) {
+        signal_group(pgid, "-TERM").await;
+        let deadline = tokio::time::Instant::now() + grace;
+        while tokio::time::Instant::now() < deadline {
+            if !group_alive(pgid).await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        signal_group(pgid, "-KILL").await;
+    }
+}
+
+/// Whether a process (any process, not necessarily ours) exists at `pid`.
+async fn group_alive(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 async fn supervise(
@@ -334,5 +380,53 @@ mod tests {
         let (_, exit) = collect(ShellRunner::new().spawn(s).await).await;
         assert!(exit.error.is_some());
         assert!(!exit.success());
+    }
+
+    // ── startup reaping (docs/spaces.md "Crash recovery") ──────────────
+
+    #[tokio::test]
+    async fn a_live_group_whose_command_matches_is_reaped() {
+        let runner = ShellRunner::new();
+        let run = runner.spawn(spec("sleep 30")).await;
+        let pgid = run.pid.expect("a real pid");
+        assert!(group_alive(pgid).await, "just started");
+        assert!(runner.group_matches(pgid, "sleep 30").await);
+
+        runner.reap_group(pgid, Duration::from_millis(300)).await;
+        assert!(!group_alive(pgid).await, "the group was killed");
+    }
+
+    #[tokio::test]
+    async fn a_command_that_no_longer_matches_is_never_touched() {
+        let runner = ShellRunner::new();
+        let run = runner.spawn(spec("sleep 30")).await;
+        let pgid = run.pid.expect("a real pid");
+
+        // A pid reuse would show a different command line; never a match.
+        assert!(!runner.group_matches(pgid, "totally different script").await);
+        assert!(
+            group_alive(pgid).await,
+            "group_matches must not have touched it"
+        );
+        signal_group(pgid, "-KILL").await;
+    }
+
+    #[tokio::test]
+    async fn a_pid_with_nothing_running_at_it_never_matches() {
+        let runner = ShellRunner::new();
+        let run = runner.spawn(spec("true")).await;
+        let pgid = run.pid.expect("a real pid");
+        wait_for_death(pgid).await;
+        assert!(!runner.group_matches(pgid, "true").await);
+    }
+
+    async fn wait_for_death(pid: u32) {
+        for _ in 0..100 {
+            if !group_alive(pid).await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("pid {pid} never exited");
     }
 }

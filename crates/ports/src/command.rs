@@ -55,6 +55,10 @@ impl CommandExit {
 pub struct CommandRun {
     pub events: mpsc::Receiver<CommandEvent>,
     pub cancel: CancellationToken,
+    /// The child's own pid, known as soon as it's spawned; `None` if it
+    /// never started. A space's `run` command is its own process group
+    /// leader (`process_group(0)`), so this doubles as its pgid.
+    pub pid: Option<u32>,
 }
 
 #[async_trait]
@@ -62,4 +66,18 @@ pub trait CommandPort: Send + Sync {
     /// Starts `spec`. A command that can't be spawned still yields a run
     /// whose only event is an `Exit` with `error` set.
     async fn spawn(&self, spec: CommandSpec) -> CommandRun;
+
+    /// Whether process group `pgid` (a `run` command's own pid, recorded by
+    /// a previous Theodore process) is still alive and its leader's command
+    /// line still contains `script` — the guard against a pid that's since
+    /// been reused by an unrelated process. `false` on anything that isn't
+    /// a confident match, including the group no longer existing.
+    async fn group_matches(&self, pgid: u32, script: &str) -> bool;
+
+    /// SIGTERM the group, `grace` to exit, then SIGKILL — the same
+    /// discipline a command gets on cancel/timeout (`ShellRunner`), applied
+    /// here to a group this process didn't itself spawn: one left running
+    /// by a previous Theodore process that didn't exit cleanly. Only ever
+    /// called after `group_matches` confirms it's ours.
+    async fn reap_group(&self, pgid: u32, grace: Duration);
 }
