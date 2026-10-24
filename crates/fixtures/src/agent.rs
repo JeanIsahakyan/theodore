@@ -302,6 +302,11 @@ impl AgentPort for ReplayAgents {
                     recorded.event,
                     AgentEvent::Done { .. } | AgentEvent::Error { .. }
                 );
+                // Close the MCP session before the run ends and its token
+                // is revoked; a dropped client deletes it late and gets a 401.
+                if terminal && let Some(client) = mcp_client.take() {
+                    let _ = client.cancel().await;
+                }
                 if tx.send(recorded.event).await.is_err() {
                     return;
                 }
@@ -313,6 +318,9 @@ impl AgentPort for ReplayAgents {
 
             // Every script ends in exactly one terminal event; if the
             // recording did not have one, supply it.
+            if let Some(client) = mcp_client.take() {
+                let _ = client.cancel().await;
+            }
             let _ = tx
                 .send(AgentEvent::Done {
                     final_text: String::new(),

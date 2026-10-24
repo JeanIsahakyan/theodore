@@ -580,8 +580,20 @@ async fn run_skill(
             ));
         }
     };
+    let summary = skill_with(&client, tx, cancel).await;
+    // Close the session while this run's token is still valid; a dropped
+    // client deletes it after the run ends and gets a 401.
+    let _ = client.cancel().await;
+    summary
+}
+
+async fn skill_with(
+    client: &RunningService<RoleClient, ()>,
+    tx: &mpsc::Sender<AgentEvent>,
+    cancel: &CancellationToken,
+) -> Option<String> {
     let mut seq = 0;
-    let Some(ctx) = tool(&client, tx, &mut seq, "get_pr_context", json!({})).await else {
+    let Some(ctx) = tool(client, tx, &mut seq, "get_pr_context", json!({})).await else {
         return Some("Synthetic skill run: get_pr_context failed; no findings.".to_string());
     };
 
@@ -594,7 +606,7 @@ async fn run_skill(
         .and_then(Value::as_str)
         .map(str::to_string);
     if let Some(group) = first_group
-        && let Some(g) = tool(&client, tx, &mut seq, "get_group", json!({ "id": group })).await
+        && let Some(g) = tool(client, tx, &mut seq, "get_group", json!({ "id": group })).await
     {
         target = g
             .get("diff")
@@ -621,7 +633,7 @@ async fn run_skill(
         "title": "Synthetic finding",
         "body": format!("Deterministic sandbox finding on {file}:{line}."),
     });
-    match tool(&client, tx, &mut seq, "add_finding", input).await {
+    match tool(client, tx, &mut seq, "add_finding", input).await {
         Some(_) => Some("reported 1 finding".to_string()),
         None => Some("Synthetic skill run: add_finding failed; no findings.".to_string()),
     }
@@ -777,6 +789,7 @@ async fn run_fix(
                 .filter(|(_, status)| status != "deleted")
                 .find_map(|(path, _)| resolve_in_cwd(cwd, &path));
         }
+        let _ = client.cancel().await;
     }
     let target = target.or_else(|| first_text_file(cwd).and_then(|p| p.canonicalize().ok()));
     let Some(target) = target else {
