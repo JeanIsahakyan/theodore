@@ -215,6 +215,17 @@ const SNOOZE_LABEL: Record<SnoozeUntil['kind'], string> = {
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 
+/** "storefront #104" for one PR, "3 PRs" for several — never the raw id. */
+function targetsLabel(
+  store: ReturnType<typeof useRootStore>,
+  targets: string[],
+): string {
+  if (targets.length !== 1) return `${targets.length} PRs`;
+  const p = store.models.prSummaries.get(targets[0]!);
+  if (!p) return targets[0]!;
+  return p.url ? `${p.pr.repo.name} #${p.pr.number}` : p.head_ref;
+}
+
 export const SnoozeMenu = observer(function SnoozeMenu() {
   const store = useRootStore();
   const ui = useUi();
@@ -226,7 +237,7 @@ export const SnoozeMenu = observer(function SnoozeMenu() {
   ];
   return (
     <Palette
-      title={`Snooze · ${targets.length === 1 ? targets[0] : `${targets.length} PR`}`}
+      title={`Snooze · ${targetsLabel(store, targets)}`}
       placeholder="Snooze until…"
       digits
       onClose={() => ui.closeModal()}

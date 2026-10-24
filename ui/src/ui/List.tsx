@@ -982,11 +982,18 @@ function useListKeys(order: PrId[]) {
     [order.join()],
   );
 
+  // When the selected PR leaves the list (done, snoozed), select the one
+  // that took its place — not the top of the list.
+  const lastIndex = useRef(0);
   useEffect(() => {
-    if (order.length && (!ui.selected || !order.includes(ui.selected)))
-      ui.select(order[0]!);
+    if (ui.selected && order.includes(ui.selected)) {
+      lastIndex.current = order.indexOf(ui.selected);
+      return;
+    }
+    if (order.length)
+      ui.select(order[Math.min(lastIndex.current, order.length - 1)]!);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order.join()]);
+  }, [order.join(), ui.selected]);
 
   useEffect(() => {
     if (ui.selected)
@@ -1042,7 +1049,11 @@ export const Inbox = observer(function Inbox() {
     ...(showDone ? [{ id: 'done', title: 'Done', items: done }] : []),
   ].filter((g) => g.items.length || g.id === 'snoozed');
 
-  useListKeys(order(groups));
+  // J/K and the Peek follow what's waiting: a PR you just snoozed or marked
+  // done leaves the selection, which moves on to the next one.
+  useListKeys(
+    order(groups.filter((g) => g.id !== 'snoozed' && g.id !== 'done')),
+  );
 
   return (
     <div className="view relative flex min-w-0 flex-1 flex-col">
