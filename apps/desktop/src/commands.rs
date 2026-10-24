@@ -777,6 +777,39 @@ pub async fn project_config(
     core.project_config(project).await
 }
 
+/// Settings → Projects → Config: each layer's file and YAML generated from
+/// the project's settings.
+#[tauri::command]
+#[specta::specta]
+pub async fn config_draft(
+    project: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ConfigDraft, CommandError> {
+    core.config_draft(project).await
+}
+
+/// The config editor's text checked (problems with lines) and the
+/// project's effective config with it in place.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_config(
+    req: theodore_contract::CheckConfigRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ConfigCheck, CommandError> {
+    core.check_config(req).await
+}
+
+/// Saves the config editor's text to the repo (a host repo through a PR),
+/// local or global layer.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_config(
+    req: theodore_contract::SaveConfigRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::SaveConfigResult, CommandError> {
+    core.save_config(req).await
+}
+
 /// `~/.theodore/config.yaml`: path and whether it exists.
 #[tauri::command]
 #[specta::specta]

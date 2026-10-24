@@ -140,6 +140,13 @@ export type Check = {
 	duration_ms: number | null,
 };
 
+/**  `check_config`: the editor's text, as it would be saved to `layer`. */
+export type CheckConfigRequest = {
+	project: string,
+	layer: ConfigLayer,
+	text: string,
+};
+
 export type CheckRollup = "none" | "pending" | "pass" | "fail";
 
 export type CheckStatus = "pending" | "pass" | "fail" | "skipped";
@@ -183,6 +190,57 @@ export type CommitSuggestionsRequest = {
 	message: string,
 };
 
+export type ConfigCheck = {
+	problems: ConfigProblem[],
+	/**  The project's effective config with the text in place of `layer`. */
+	preview: EffectiveConfig,
+};
+
+/**  What the config editor starts from (`config_draft`). */
+export type ConfigDraft = {
+	project: string,
+	/**
+	 *  The project's current settings as YAML (per-task agents, values
+	 *  from the repo and local files), the rest of `review:` and `spaces:`
+	 *  as a commented template.
+	 */
+	generated: string,
+	/**  Global, repo, local. */
+	files: ConfigDraftFile[],
+	/**
+	 *  The file to open first: the repo's, else the local one; `None` when
+	 *  neither exists (start from `generated`).
+	 */
+	initial: ConfigLayer | null,
+	/**
+	 *  Local folder project: whether saving to the repo can also commit
+	 *  the file (the folder has no other uncommitted change).
+	 */
+	can_commit: boolean,
+	/**  Why it can't, when it can't. */
+	commit_note: string | null,
+};
+
+/**
+ *  One layer's file as the editor sees it: where saving to that layer
+ *  writes, and its current text.
+ */
+export type ConfigDraftFile = {
+	layer: ConfigLayer,
+	/**
+	 *  Where it is read from (a host project's repo file: `<slug>@<sha>:…`
+	 *  on its default branch).
+	 */
+	path: string,
+	/**
+	 *  Where saving to this layer writes: the same file, or for a host
+	 *  project's repo layer the branch its PR is pushed to.
+	 */
+	save_to: string,
+	/**  `None`: the file doesn't exist. */
+	text: string | null,
+};
+
 /**  One effective value and where it came from. */
 export type ConfigEntry = {
 	/**  Dotted path: `spaces.run`, `spaces.env.API_URL`, `review.agents.chat`. */
@@ -217,6 +275,21 @@ export type ConfigLayer =
 "repo" |
 /**  `<repo>/.theodore/config.local.yaml`: personal, gitignored. */
 "local";
+
+/**  A problem in the editor's text. */
+export type ConfigProblem = {
+	level: ConfigProblemLevel,
+	/**  1-based, when known. */
+	line: number | null,
+	column: number | null,
+	message: string,
+};
+
+export type ConfigProblemLevel =
+/**  The file would be ignored, or a section dropped: saving is refused. */
+"error" |
+/**  Applied without the key (an unknown key). */
+"warning";
 
 /**  A space command as configured. */
 export type ConfiguredCommand = {
@@ -336,7 +409,14 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
  *  One line of a space command's output (docs/config.md); the last
  *  lines are kept per space and returned by `space_logs`.
  */
-{ type: "space_log"; space: string; line: SpaceLogLine };
+{ type: "space_log"; space: string; line: SpaceLogLine } |
+/**
+ *  The PR a config save to a host project's repo pushed for was opened
+ *  (or found open) by the outbox.
+ */
+{ type: "config_pr"; project: string; number: number;
+/**  Empty when the host didn't say. */
+url: string };
 
 export type FileDiff = {
 	path: string,
@@ -934,6 +1014,32 @@ export type SandboxStatus = {
 	viewer: string,
 	/**  Number of simulated PRs. */
 	prs: number,
+};
+
+export type SaveConfigRequest = {
+	project: string,
+	layer: ConfigLayer,
+	text: string,
+	/**  Local folder project, repo layer: also commit the file. */
+	commit?: boolean,
+};
+
+/**  What `save_config` did. */
+export type SaveConfigResult = {
+	layer: ConfigLayer,
+	/**  The file written, or the branch pushed. */
+	path: string,
+	/**  One line for the toast. */
+	message: string,
+	/**
+	 *  Host project: the branch pushed; its PR arrives as
+	 *  `Ephemeral::ConfigPr`.
+	 */
+	branch: string | null,
+	/**  The commit made (pushed, or in the folder). */
+	commit: string | null,
+	/**  The repo's commands now in effect were marked allowed. */
+	trusted: boolean,
 };
 
 export type SaveSkillRequest = {

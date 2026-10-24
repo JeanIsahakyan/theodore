@@ -362,6 +362,24 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
         self.core.ensure_global_config().await.map_err(err)
     }
+    async fn config_draft(
+        &self,
+        project: String,
+    ) -> Result<theodore_contract::ConfigDraft, CommandError> {
+        self.core.config_draft(&project).await.map_err(err)
+    }
+    async fn check_config(
+        &self,
+        req: theodore_contract::CheckConfigRequest,
+    ) -> Result<theodore_contract::ConfigCheck, CommandError> {
+        self.core.check_config(req).await.map_err(err)
+    }
+    async fn save_config(
+        &self,
+        req: theodore_contract::SaveConfigRequest,
+    ) -> Result<theodore_contract::SaveConfigResult, CommandError> {
+        self.core.save_config(req).await.map_err(err)
+    }
     async fn create_space(
         &self,
         req: theodore_contract::CreateSpaceRequest,
