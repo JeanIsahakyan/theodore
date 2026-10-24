@@ -1,7 +1,12 @@
 import { openExternal } from '../core/openExternal';
 import { latinKey } from './latin';
 import { isBuildMode } from './space/mode';
-import { archivedSpacesIn, spacesIn, undoState } from './space/spaces';
+import {
+  archivedSpacesIn,
+  spaceTitle,
+  spacesIn,
+  undoState,
+} from './space/spaces';
 import { useEffect, useRef, useState, type Key, type ReactNode } from 'react';
 import {
   EmptyState,
@@ -434,7 +439,7 @@ export const CommandMenu = observer(function CommandMenu() {
         ...spacesIn(ui.workspace, store.models.spaces.all()).map(
           (sp): Item => ({
             group: 'Spaces',
-            label: sp.name,
+            label: spaceTitle(sp),
             sub: sp.branch,
             icon: <Pencil />,
             run: () => ui.go({ name: 'space', id: sp.id }),
@@ -445,7 +450,7 @@ export const CommandMenu = observer(function CommandMenu() {
           (sp): Item => ({
             group: 'Archived spaces',
             searchOnly: true,
-            label: `${sp.name} (archived)`,
+            label: `${spaceTitle(sp)} (archived)`,
             sub: sp.branch,
             icon: <Pencil />,
             run: () => ui.go({ name: 'space', id: sp.id }),

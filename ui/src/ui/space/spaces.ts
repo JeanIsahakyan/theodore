@@ -149,6 +149,12 @@ export function unshipped(s: Pick<Space, 'shipped' | 'head_sha'>): boolean {
 
 /** The title Open PR / Merge locally proposes: the goal's first line,
  *  else the space's name. */
+/** What a space is called on screen: the first line of what you asked
+ *  for, as you wrote it. The slug (`name`) is only for its branch. */
+export function spaceTitle(s: Pick<Space, 'goal' | 'name'>): string {
+  return defaultTitle(s);
+}
+
 export function defaultTitle(s: Pick<Space, 'goal' | 'name'>): string {
   const line = s.goal
     .split('\n')

@@ -24,6 +24,7 @@ import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
 import { isBranchReview } from './project/sections';
+import { spaceTitle } from './space/spaces';
 import { PRIcon } from './StatusIcon';
 
 function useLabel(r: Route): {
@@ -49,7 +50,7 @@ function useLabel(r: Route): {
       return { icon: <Link />, title: 'New tab' };
     case 'space': {
       const s = store.models.spaces.get(r.id);
-      return { icon: <Pencil />, title: s?.name ?? 'Space' };
+      return { icon: <Pencil />, title: s ? spaceTitle(s) : 'Space' };
     }
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);

@@ -34,7 +34,12 @@ import { SyncStatus } from './shell/SyncStatus';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { spaceSeen } from './space/seen';
 import { isBuildMode } from './space/mode';
-import { spaceGlyph, spacesIn, type SpaceGlyph } from './space/spaces';
+import {
+  spaceGlyph,
+  spaceTitle,
+  spacesIn,
+  type SpaceGlyph,
+} from './space/spaces';
 
 interface NavItem {
   key: string;
@@ -175,7 +180,7 @@ export const Sidebar = observer(function Sidebar() {
               ...spaces.map((s): NavItem => ({
                 key: routeKey({ name: 'space', id: s.id }),
                 icon: <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />,
-                label: s.name,
+                label: spaceTitle(s),
                 route: { name: 'space', id: s.id },
               })),
               {

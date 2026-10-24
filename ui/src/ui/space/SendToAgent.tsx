@@ -9,7 +9,7 @@ import type { PrId, SpaceFeedback } from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore } from '../../stores/context';
 import { isBuildMode } from './mode';
-import { spaceOfReview } from './spaces';
+import { spaceOfReview, spaceTitle } from './spaces';
 
 export const SendToAgent = observer(function SendToAgent({
   pr,
@@ -28,7 +28,7 @@ export const SendToAgent = observer(function SendToAgent({
     setBusy(true);
     try {
       await api.spaceSendFeedback({ space: space.id, items: [item] });
-      store.ephemeral.toast(`Sent to ${space.name}`, 'info', {
+      store.ephemeral.toast(`Sent to ${spaceTitle(space)}`, 'info', {
         label: 'Open',
         onAction: () => store.ui.go({ name: 'space', id: space.id }),
       });
@@ -53,8 +53,8 @@ export const SendToAgent = observer(function SendToAgent({
       </Button>
       <Tooltip.Content>
         {running
-          ? `${space.agent} is still working in ${space.name}`
-          : `The next turn of ${space.name}, quoting this with its file and line`}
+          ? `${space.agent} is still working in ${spaceTitle(space)}`
+          : `The next turn of ${spaceTitle(space)}, quoting this with its file and line`}
       </Tooltip.Content>
     </Tooltip>
   );
