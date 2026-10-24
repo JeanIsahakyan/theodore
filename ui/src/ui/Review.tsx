@@ -12,8 +12,6 @@ import {
   LayoutSideContentLeft,
   LayoutSideContentRight,
   LayoutSplitColumns,
-  Play,
-  Stop,
   Xmark,
 } from '@gravity-ui/icons';
 import {
@@ -64,11 +62,11 @@ import { reviewTitle } from './space/mode';
 import {
   groupsInRevision,
   nextReviewableGroup,
+  nextUnreadGroup,
   prevReviewableGroup,
   reviewableGroups,
 } from './review/groups';
 import { hunksInScope, moveHunkFocus } from './review/hunks';
-import { tourNextIndex, tourPrevIndex, tourStartIndex } from './review/tour';
 import { SidePanel } from './SidePanel';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
@@ -135,9 +133,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   });
   useEffect(() => ui.setReviewPos(pr, mode), [ui, pr, mode]);
   const [tab, setTab] = useState<PrTab>('diff');
-  // Tour's cursor indexes into `tourGroups` below (reviewable groups only —
-  // hidden/mechanical ones are skipped, same as `N`/`P`).
-  const [tour, setTour] = useState<number | null>(null);
   const [sinceOnly, setSinceOnly] = useState(false);
   const [baselineSha, setBaselineSha] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -205,7 +200,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // Every group with hunks in this revision, in reading order — includes
   // hidden (lockfile/generated) groups, which `GroupsPane` lists collapsed.
   // Same as `groupsForRevision`, memoized on the grouping row (replaced
-  // whenever its groups change) so the tour props keep their identity.
+  // whenever its groups change) so dependents keep their identity.
   const grouping = store.models.groupings.get(pr);
   const allGroups = useMemo(() => {
     if (!revData) return [];
@@ -215,10 +210,10 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     return groupsInRevision(grouping?.groups ?? [], hunkIds);
   }, [grouping, revData]);
   const allGroupIds = allGroups.map((g) => g.id).join();
-  // The subset tour and `N`/`P` step through — hidden groups are nothing to
-  // review, so they're skipped unless opened by hand ("show anyway").
-  const tourGroups = useMemo(() => reviewableGroups(allGroups), [allGroups]);
-  const tourGroupIds = tourGroups.map((g) => g.id).join();
+  // The subset `N`/`P` step through — hidden groups are nothing to review,
+  // so they're skipped unless opened by hand ("show anyway").
+  const reviewable = useMemo(() => reviewableGroups(allGroups), [allGroups]);
+  const reviewableIds = reviewable.map((g) => g.id).join();
 
   const group =
     mode.mode === 'groups' && mode.group
@@ -229,56 +224,26 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // Like the prototype: in grouped mode a group is always selected —
   // preferring a reviewable one so a lockfile group is never the default.
   useEffect(() => {
-    const first = tourGroups[0] ?? allGroups[0];
+    const first = reviewable[0] ?? allGroups[0];
     // A resumed group id the PR no longer has counts as none.
     const known = !!mode.group && allGroups.some((g) => g.id === mode.group);
     if (mode.mode === 'groups' && !known && first) {
       setMode((m) => ({ ...m, group: first.id }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode.mode, mode.group, allGroupIds, tourGroupIds]);
+  }, [mode.mode, mode.group, allGroupIds, reviewableIds]);
 
-  // Tour drives group selection; keep `mode` in sync with the tour cursor.
-  useEffect(() => {
-    if (tour == null) return;
-    const g = tourGroups[tour];
-    if (g) setMode((m) => ({ ...m, mode: 'groups', group: g.id }));
-    else setTour(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tour, tourGroupIds]);
-
-  const startTour = () => {
+  // Marks the current group read and moves on to the next unread one —
+  // shared by the `R` shortcut and the menu's "Mark Group as Read".
+  const markReadAndAdvance = useCallback(() => {
+    const g = allGroups.find((x) => x.id === mode.group);
+    if (!g) return;
+    markGroupRead(store, pr, g.hunks);
     const reads = new Set(store.models.hunkReads.byPr(pr).map((r) => r.hunk));
-    const allRead = tourGroups.map((g) => g.hunks.every((h) => reads.has(h)));
-    setTour(tourStartIndex(allRead));
-  };
+    const next = nextUnreadGroup(allGroups, mode.group, reads);
+    if (next) setMode((m) => ({ ...m, mode: 'groups', group: next.id }));
+  }, [allGroups, mode.group, store, pr]);
 
-  // Marks the current tour group read and steps to the next one, ending the
-  // tour past the last — shared by the `R` shortcut and the tour bar's
-  // "Read, next" button.
-  const tourAdvance = useCallback(() => {
-    if (tour == null) return;
-    const g = tourGroups[tour];
-    if (g) markGroupRead(store, pr, g.hunks);
-    setTour(tourNextIndex(tour, tourGroups.length));
-  }, [tour, tourGroups, store, pr]);
-  const tourBack = useCallback(() => {
-    if (tour == null) return;
-    const prev = tourPrevIndex(tour);
-    if (prev != null) setTour(prev);
-  }, [tour]);
-  const tourState = useMemo(
-    () =>
-      tour !== null
-        ? {
-            groups: tourGroups,
-            index: tour,
-            onBack: tourBack,
-            onNext: tourAdvance,
-          }
-        : null,
-    [tour, tourGroups, tourBack, tourAdvance],
-  );
   // Clicking a file in a group's file list: open that group and jump to the
   // file's first hunk in it (the jump target is force-mounted by DiffPane).
   const [jumpStart, setJumpStart] = useState(false);
@@ -299,13 +264,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     },
     [allGroups, revision?.data],
   );
-  const onTourFrom = useCallback(
-    (groupId: string) => {
-      const idx = tourGroups.findIndex((g) => g.id === groupId);
-      if (idx >= 0) setTour(idx);
-    },
-    [tourGroups],
-  );
 
   // Review items of the native menu bar (see core/menu.ts).
   useEffect(() => {
@@ -314,10 +272,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       if (id === 'view-grouped') setMode((m) => ({ ...m, mode: 'groups' }));
       else if (id === 'view-files') setMode((m) => ({ ...m, mode: 'files' }));
       else if (id === 'view-split') ui.toggleDiffView();
-      else if (id === 'tour') {
-        if (tour === null) startTour();
-        else setTour(null);
-      } else if (id === 'mark-group-read') {
+      else if (id === 'mark-group-read') {
         const g = allGroups.find((x) => x.id === mode.group);
         if (g) markGroupRead(store, pr, g.hunks);
       } else if (id === 'ask-agent') {
@@ -335,11 +290,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     ui,
     (e) => {
       const k = latinKey(e);
-      if (k === 't') {
-        if (tour === null) startTour();
-        else setTour(null);
-        return;
-      }
       if (k === 's') {
         ui.toggleDiffView();
         return;
@@ -362,16 +312,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           setComposer(null);
           return;
         }
-        if (tour !== null) {
-          setTour(null);
-          return;
-        }
         ui.goBack();
         return;
       }
       if (k === 'r') {
-        if (tour == null) return false;
-        tourAdvance();
+        markReadAndAdvance();
         return;
       }
       // The rest only make sense over the diff itself.
@@ -436,8 +381,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       }
     },
     [
-      tour,
-      tourGroupIds,
+      markReadAndAdvance,
       allGroupIds,
       pr,
       tab,
@@ -572,26 +516,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             <Spinner size="sm" />
           )}
         </div>
-        <ToggleButton
-          size="sm"
-          className="shrink-0 gap-1.5"
-          isIconOnly={compact}
-          aria-label="Tour"
-          isSelected={tour !== null}
-          onChange={() => (tour === null ? startTour() : setTour(null))}
-        >
-          {tour === null ? (
-            <Play className="size-4" />
-          ) : (
-            <Stop className="size-4" />
-          )}
-          {!compact && (
-            <>
-              Tour
-              <K>T</K>
-            </>
-          )}
-        </ToggleButton>
         {!local && mine && summary && !finished && (
           <Btn
             tone="tertiary"
@@ -857,7 +781,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   setMode={setMode}
                   since={since}
                   sinceOnly={sinceOnly && sinceCount > 0}
-                  onTourFrom={onTourFrom}
                   onOpenFile={onOpenFile}
                 />
               )}
@@ -874,7 +797,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   since={since}
                   sinceOnly={sinceOnly && sinceCount > 0}
                   baselineSha={baselineSha}
-                  tour={tourState}
                   focusHunk={focusHunk}
                   setFocusHunk={setFocusHunk}
                   composer={composer}
@@ -897,7 +819,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                       setMode={setMode}
                       since={since}
                       sinceOnly={sinceOnly && sinceCount > 0}
-                      onTourFrom={onTourFrom}
                       onOpenFile={onOpenFile}
                     />
                   </div>
@@ -928,8 +849,8 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         <Hints>
           <K>J</K>
           <K>K</K> hunk <K>N</K>
-          <K>P</K> group <K>V</K> viewed <K>C</K> comment <K>E</K> context{' '}
-          <K>T</K> tour <K>S</K> split <K>/</K> ask AI <K>]</K> AI panel{' '}
+          <K>P</K> group <K>R</K> mark read <K>V</K> viewed <K>C</K> comment{' '}
+          <K>E</K> context <K>S</K> split <K>/</K> ask AI <K>]</K> AI panel{' '}
           <K>Esc</K> back
         </Hints>
       )}

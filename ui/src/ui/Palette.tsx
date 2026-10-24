@@ -34,7 +34,6 @@ import {
   Moon,
   PaperPlane,
   Pencil,
-  Play,
   Plus,
   Tray,
 } from '@gravity-ui/icons';
@@ -364,13 +363,6 @@ export const CommandMenu = observer(function CommandMenu() {
                 },
                 ...draftItems,
               ]),
-          {
-            group: 'This PR',
-            label: 'Start / stop tour',
-            icon: <Play />,
-            keys: 'T',
-            run: press('t'),
-          },
           {
             group: 'This PR',
             label: 'Unified / split diff',

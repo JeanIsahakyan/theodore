@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Group } from '../../gen/contract';
 import {
   groupsInRevision,
+  groupsProgress,
   nextReviewableGroup,
+  nextUnreadGroup,
   prevReviewableGroup,
   reviewableGroups,
 } from './groups';
@@ -76,5 +78,72 @@ describe('nextReviewableGroup / prevReviewableGroup', () => {
 
   it('returns null before the first reviewable group', () => {
     expect(prevReviewableGroup(groups, 'g1')).toBeNull();
+  });
+});
+
+describe('nextUnreadGroup', () => {
+  const groups = [
+    group({ id: 'g1', kind: 'normal', hunks: ['h1'] }),
+    group({ id: 'g2', kind: 'hidden', hunks: ['h2'] }),
+    group({ id: 'g3', kind: 'normal', hunks: ['h3'] }),
+    group({ id: 'g4', kind: 'normal', hunks: ['h4'] }),
+  ];
+
+  it('moves to the next group once the current one is read', () => {
+    const read = new Set(['h1']);
+    expect(nextUnreadGroup(groups, 'g1', read)?.id).toBe('g3');
+  });
+
+  it('skips a hidden group', () => {
+    const read = new Set(['h1']);
+    expect(nextUnreadGroup(groups, 'g1', read)?.id).not.toBe('g2');
+  });
+
+  it('skips a group that is already fully read', () => {
+    const read = new Set(['h1', 'h3']);
+    expect(nextUnreadGroup(groups, 'g1', read)?.id).toBe('g4');
+  });
+
+  it('returns null once nothing after the current group is unread', () => {
+    const read = new Set(['h1', 'h3', 'h4']);
+    expect(nextUnreadGroup(groups, 'g1', read)).toBeNull();
+  });
+});
+
+describe('groupsProgress', () => {
+  const groups = [
+    group({ id: 'g1', kind: 'normal', hunks: ['h1', 'h2'] }),
+    group({ id: 'g2', kind: 'hidden', hunks: ['h3'] }),
+    group({ id: 'g3', kind: 'normal', hunks: ['h4'] }),
+  ];
+
+  it('counts reviewable groups only, each read once all its hunks are', () => {
+    const read = new Set(['h1', 'h2']);
+    expect(groupsProgress(groups, read)).toEqual({
+      read: 1,
+      total: 2,
+      label: '1 of 2 groups read',
+    });
+  });
+
+  it('reports all groups read once every reviewable group is fully read', () => {
+    const read = new Set(['h1', 'h2', 'h4']);
+    expect(groupsProgress(groups, read)).toEqual({
+      read: 2,
+      total: 2,
+      label: 'All groups read',
+    });
+  });
+
+  it('is "0 of N" when nothing is read yet', () => {
+    const read = new Set<string>();
+    expect(groupsProgress(groups, read).label).toBe('0 of 2 groups read');
+  });
+
+  it('singularizes "group" for a single reviewable group', () => {
+    const one = [group({ id: 'g1', kind: 'normal', hunks: ['h1'] })];
+    expect(groupsProgress(one, new Set<string>()).label).toBe(
+      '0 of 1 group read',
+    );
   });
 });

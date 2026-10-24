@@ -195,10 +195,9 @@ const KEYS: [string, string][] = [
   ['Review', ''],
   ['J / K', 'next / previous hunk'],
   ['N', 'next group'],
-  ['R', 'mark group as read (in tour: next)'],
+  ['R', 'mark group as read, go to the next one'],
   ['V', 'Viewed for focused file'],
   ['C', 'comment on focused hunk'],
-  ['T', 'toggle tour'],
   ['S', 'unified / side by side'],
   [']', 'hide / show AI panel'],
   [

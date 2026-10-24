@@ -44,7 +44,8 @@ More in [docs/screenshots](docs/screenshots/README.md).
   actions and stays out of PR counts.
 
 ### The review screen
-- Diff grouped by meaning into titled groups, each with a *why*, a checklist and a risk; a tour bar steps through them.
+- Diff grouped by meaning into titled groups, each with a *why*, a checklist and a risk; a progress line
+  tracks how many you've read, and `R` marks the current group read and moves to the next unread one.
 - Groupings are versioned: a grouping from an older algorithm is redone automatically on open; ↻ regroups from scratch.
 - Keyboard-driven reading, with per-hunk read state.
 - Interdiff: after a push, only new/changed hunks are flagged, with a "what changed" view.

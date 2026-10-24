@@ -171,7 +171,6 @@ export function Harness({
       since={null}
       sinceOnly={false}
       baselineSha={null}
-      tour={null}
       focusHunk={focusHunk}
       setFocusHunk={setFocusHunk}
       composer={composer}
