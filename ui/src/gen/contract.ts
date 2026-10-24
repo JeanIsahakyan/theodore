@@ -1602,6 +1602,17 @@ export type TriageRequest = {
 	action: TriageAction,
 };
 
+/**
+ *  A product event the UI reports (`track_ui`). Typed like the core's own:
+ *  the core accepts only known values and drops anything else.
+ */
+export type UiEvent =
+/**
+ *  An onboarding step was shown: `account`, `telemetry`, `github`,
+ *  `agents`, `projects`, `done`.
+ */
+{ event: "onboarding_step"; step: string };
+
 export type UpdateInfo = {
 	version: string,
 	notes: string,

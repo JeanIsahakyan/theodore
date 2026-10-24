@@ -23,6 +23,8 @@ use crate::core_api::CoreApi;
 pub struct AppCore {
     core: Core,
     sandbox: Option<theodore_sandbox::Sandbox>,
+    /// Remote telemetry sinks may exist (off in sandbox and fixture runs).
+    remote_telemetry: bool,
 }
 
 impl AppCore {
@@ -30,7 +32,34 @@ impl AppCore {
         Self {
             core,
             sandbox: None,
+            remote_telemetry: false,
         }
+    }
+
+    /// Lets this run point telemetry at remote sinks (env, settings, the
+    /// build); still nothing is sent without the user's choice.
+    pub fn with_remote_telemetry(mut self, allowed: bool) -> Self {
+        self.remote_telemetry = allowed;
+        self
+    }
+
+    /// Resolves the sinks from env, settings and the build, and applies
+    /// the recorded choice and log level (docs/telemetry.md "Settings").
+    /// A no-op where telemetry wasn't initialised (tests, the CLI).
+    pub async fn apply_telemetry(&self) {
+        let Some(t) = theodore_telemetry::global() else {
+            return;
+        };
+        let s = self.core.telemetry_settings().await;
+        t.set_level(s.log_level.as_deref());
+        t.set_channel(&self.update_channel().await);
+        let config = if self.remote_telemetry {
+            remote_config(&s)
+        } else {
+            theodore_telemetry::RemoteConfig::default()
+        };
+        let choice = s.choice();
+        let _ = tokio::task::spawn_blocking(move || t.apply(config, choice)).await;
     }
 
     /// Sandbox mode (docs/sandbox.md): `app_info` carries the badge info
@@ -46,6 +75,42 @@ impl AppCore {
             message: "not running in sandbox mode".into(),
         })
     }
+}
+
+/// Each sink from the first source that sets it: env, setting, build.
+fn remote_config(s: &theodore_app::TelemetrySettings) -> theodore_telemetry::RemoteConfig {
+    use theodore_telemetry::config as c;
+    let env = |k: &str| std::env::var(k).ok();
+    let (endpoint, headers, host, key) = (
+        env(c::ENV_OTLP_ENDPOINT),
+        env(c::ENV_OTLP_HEADERS),
+        env(c::ENV_POSTHOG_HOST),
+        env(c::ENV_POSTHOG_KEY),
+    );
+    let from_env = theodore_telemetry::Sources {
+        otlp_endpoint: endpoint.as_deref(),
+        otlp_headers: headers.as_deref(),
+        posthog_host: host.as_deref(),
+        posthog_key: key.as_deref(),
+    };
+    theodore_telemetry::RemoteConfig::resolve(&[from_env, s.sources(), c::BUILT_IN])
+}
+
+/// `macOS 15.1` and the like, for the problem report.
+async fn os_version() -> String {
+    let os = std::env::consts::OS;
+    if os == "macos"
+        && let Ok(out) = tokio::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .await
+    {
+        let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !v.is_empty() {
+            return format!("macOS {v}");
+        }
+    }
+    os.to_string()
 }
 
 /// Sandbox calls shell out to git under a lock: keep them off the runtime.
@@ -66,6 +131,12 @@ async fn sandbox_call<T: Send + 'static>(
 }
 
 fn err(e: AppError) -> CommandError {
+    // In the command's span: the record carries its `op_id` and `cmd`.
+    if e.is_expected() {
+        tracing::info!(error.code = e.code(), error = %e, "command refused");
+    } else {
+        tracing::warn!(error.code = e.code(), error = %e, "command failed");
+    }
     let code = match &e {
         AppError::Store(_) => "store",
         // An old local `git` lacking `merge-tree --write-tree` (`conflicts`):
@@ -297,6 +368,102 @@ impl CoreApi for AppCore {
     }
     async fn stop_all_space_commands(&self) {
         self.core.stop_all_running_spaces().await;
+    }
+    async fn telemetry_status(&self) -> Result<theodore_contract::TelemetryStatus, CommandError> {
+        let (usage_available, errors_available, _) = theodore_telemetry::global()
+            .map(|t| t.status())
+            .unwrap_or_default();
+        // The stored choice is the truth; the sinks follow it.
+        let s = self.core.telemetry_settings().await;
+        Ok(theodore_contract::TelemetryStatus {
+            usage_available,
+            errors_available,
+            usage: s.usage,
+            errors: s.errors,
+            events: theodore_telemetry::ProductEvent::catalog(),
+            never_sent: theodore_telemetry::product::never_sent(),
+        })
+    }
+    async fn set_telemetry(
+        &self,
+        req: theodore_contract::TelemetryChoice,
+    ) -> Result<theodore_contract::TelemetryStatus, CommandError> {
+        self.core
+            .set_telemetry_choice(req.usage, req.errors)
+            .await
+            .map_err(err)?;
+        self.apply_telemetry().await;
+        self.telemetry_status().await
+    }
+    async fn report_problem(&self) -> Result<theodore_contract::ProblemReport, CommandError> {
+        let internal = |m: String| CommandError {
+            code: "internal".into(),
+            message: m,
+        };
+        let t = theodore_telemetry::global()
+            .ok_or_else(|| internal("logging isn't set up in this run".into()))?;
+        t.flush(std::time::Duration::from_secs(2));
+        let meta = t.meta();
+        let os = os_version().await;
+        let agents = self.core.deps().agents.detect().await;
+        let agent_line = agents
+            .iter()
+            .map(|a| match (&a.version, a.installed) {
+                (Some(v), true) => format!("{} {v}", a.id.as_str()),
+                (None, true) => format!("{} (version unknown)", a.id.as_str()),
+                _ => format!("{} not found", a.id.as_str()),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut info = serde_json::Map::new();
+        info.insert("version".into(), meta.version.clone().into());
+        info.insert("channel".into(), meta.channel.clone().into());
+        info.insert("commit".into(), meta.commit.clone().into());
+        info.insert("os".into(), os.clone().into());
+        info.insert("arch".into(), std::env::consts::ARCH.into());
+        info.insert("sandbox".into(), self.sandbox.is_some().into());
+        info.insert(
+            "agents".into(),
+            serde_json::json!(
+                agents
+                    .iter()
+                    .map(|a| serde_json::json!({
+                        "id": a.id.as_str(),
+                        "installed": a.installed,
+                        "version": a.version,
+                    }))
+                    .collect::<Vec<_>>()
+            ),
+        );
+        let summary = vec![
+            format!(
+                "Theodore {} ({}, {})",
+                meta.version, meta.channel, meta.commit
+            ),
+            format!("{os} ({})", std::env::consts::ARCH),
+            format!("Agents: {agent_line}"),
+        ];
+        let logs_dir = t.logs_dir().to_path_buf();
+        let redactor = t.redactor().clone();
+        let report = tokio::task::spawn_blocking(move || {
+            let root = theodore_telemetry::report::reports_dir();
+            std::fs::create_dir_all(&root)?;
+            theodore_telemetry::report::build(
+                theodore_telemetry::report::ReportInput {
+                    logs_dir: &logs_dir,
+                    app_info: info,
+                    summary,
+                    max_log_bytes: theodore_telemetry::report::MAX_LOG_BYTES,
+                    redactor: &redactor,
+                },
+                &root,
+            )
+        })
+        .await
+        .map_err(|e| internal(e.to_string()))?
+        .map_err(|e| internal(e.to_string()))?;
+        tracing::info!(files = report.files.len(), "problem report built");
+        Ok(report)
     }
     async fn sandbox_status(
         &self,

@@ -23,13 +23,38 @@ fn main() {
     }
 
     theodore_desktop::shell_path::inherit_login_path();
-    tracing_subscriber::fmt::init();
     let cfg = match sandbox_arg(std::env::args().skip(1)) {
         Some(dir) => theodore_runtime::RuntimeConfig::sandbox(dir),
         None => theodore_runtime::RuntimeConfig::from_env(),
     };
-    let rt = tauri::async_runtime::block_on(theodore_runtime::start(&cfg))
-        .expect("starting the Theodore core");
+    // Before anything else logs: the file sink under the data dir, stderr
+    // in dev, the panic hook. Remote sinks wait for settings and consent.
+    let telemetry = theodore_telemetry::init(theodore_telemetry::InitConfig {
+        data_dir: cfg.data_dir.clone(),
+        level: std::env::var(theodore_telemetry::config::ENV_LOG)
+            .ok()
+            .filter(|l| !l.trim().is_empty()),
+        stderr: cfg!(debug_assertions)
+            || std::env::var_os(theodore_telemetry::config::ENV_LOG_STDERR).is_some(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        channel: String::new(),
+        commit: env!("THEODORE_COMMIT").into(),
+    });
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        commit = env!("THEODORE_COMMIT"),
+        sandbox = cfg.sandbox.is_some(),
+        fixtures = cfg.fixtures.is_some(),
+        "Theodore starting"
+    );
+    let rt = match tauri::async_runtime::block_on(theodore_runtime::start(&cfg)) {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!(error.code = "app.start_failed", error = %format!("{e:#}"), "the core didn't start");
+            telemetry.shutdown();
+            panic!("starting the Theodore core: {e:#}");
+        }
+    };
     let theodore_runtime::Runtime {
         core,
         receivers,
@@ -40,7 +65,17 @@ fn main() {
     // An app bundle receives `theodore://`: the account sign-in returns
     // there instead of the loopback (unless a redirect is configured).
     core.set_account_app_redirect(theodore_desktop::deep_link::app_redirect());
-    let api = Arc::new(AppCore::new(core).with_sandbox(sandbox));
+    // No remote sinks in sandbox or fixture runs, whatever is configured.
+    let remote = !is_sandbox && cfg.fixtures.is_none();
+    let app_core = AppCore::new(core)
+        .with_sandbox(sandbox)
+        .with_remote_telemetry(remote);
+    tauri::async_runtime::block_on(app_core.apply_telemetry());
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::AppStarted {
+        version: env!("CARGO_PKG_VERSION").into(),
+        channel: telemetry.meta().channel,
+    });
+    let api = Arc::new(app_core);
 
     run(api, is_sandbox, move |events| {
         let mut sync = receivers.sync;

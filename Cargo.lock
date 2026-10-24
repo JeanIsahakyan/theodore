@@ -5567,8 +5567,8 @@ dependencies = [
  "theodore-telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]

@@ -79,8 +79,9 @@ pub struct Telemetry {
     /// `THEODORE_LOG` was set: it wins over the setting.
     env_level: bool,
     logs_dir: PathBuf,
-    meta: AppMeta,
-    state: Mutex<(RemoteConfig, Choice)>,
+    meta: Mutex<AppMeta>,
+    /// What `apply` last set up, and the meta its sinks were started with.
+    state: Mutex<(RemoteConfig, Choice, AppMeta)>,
 }
 
 static GLOBAL: OnceLock<Telemetry> = OnceLock::new();
@@ -161,23 +162,43 @@ pub fn init(cfg: InitConfig) -> &'static Telemetry {
         .with(TelemetryLayer::new(shared.clone()))
         .try_init()
         .is_ok();
-    let t = Telemetry {
-        shared,
-        file,
-        filter: installed.then_some(handle),
-        env_level: cfg.level.is_some(),
-        logs_dir,
-        meta,
-        state: Mutex::new((RemoteConfig::default(), Choice::default())),
-    };
+    let mut t = Telemetry::detached(shared, meta, logs_dir);
+    t.file = file;
+    t.filter = installed.then_some(handle);
+    t.env_level = cfg.level.is_some();
     let t = GLOBAL.get_or_init(|| t);
     panic::install();
     t
 }
 
 impl Telemetry {
-    pub fn meta(&self) -> &AppMeta {
-        &self.meta
+    /// A handle over `shared` that installs nothing globally: `init` builds
+    /// on it, tests drive it with their own subscriber
+    /// (`TelemetryLayer::new(t.shared())`).
+    pub fn detached(shared: Arc<Shared>, meta: AppMeta, logs_dir: PathBuf) -> Self {
+        Telemetry {
+            shared,
+            file: None,
+            filter: None,
+            env_level: false,
+            logs_dir,
+            meta: Mutex::new(meta),
+            state: Mutex::new(Default::default()),
+        }
+    }
+
+    pub fn shared(&self) -> Arc<Shared> {
+        self.shared.clone()
+    }
+
+    pub fn meta(&self) -> AppMeta {
+        self.meta.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// The update channel, known once settings are read (after `init`);
+    /// sinks started from here on report it.
+    pub fn set_channel(&self, channel: &str) {
+        self.meta.lock().unwrap_or_else(|p| p.into_inner()).channel = channel.to_string();
     }
 
     pub fn logs_dir(&self) -> &Path {
@@ -206,16 +227,20 @@ impl Telemetry {
 
     /// Points the remote sinks at `config` and lets each send only when
     /// its choice is `Some(true)`. Starts, stops or restarts sinks as
-    /// needed; a sink turned off drops what it had queued.
+    /// needed; a sink turned off drops what it had queued. Without a
+    /// choice nothing is started, so nothing is queued either.
     pub fn apply(&self, config: RemoteConfig, choice: Choice) {
+        let meta = self.meta();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let usage_on =
             |c: &RemoteConfig, ch: &Choice| c.posthog.is_some() && ch.usage == Some(true);
         let errors_on = |c: &RemoteConfig, ch: &Choice| c.otlp.is_some() && ch.errors == Some(true);
-        let (old_cfg, old_choice) = (&state.0, &state.1);
+        let (old_cfg, old_choice, old_meta) = (&state.0, &state.1, &state.2);
+        let meta_changed = *old_meta != meta;
 
         let posthog_changed = usage_on(old_cfg, old_choice) != usage_on(&config, &choice)
-            || old_cfg.posthog != config.posthog;
+            || old_cfg.posthog != config.posthog
+            || meta_changed;
         if posthog_changed {
             let old = self
                 .shared
@@ -231,7 +256,7 @@ impl Telemetry {
             {
                 match posthog::PosthogSink::start(
                     c.clone(),
-                    self.meta.clone(),
+                    meta.clone(),
                     self.shared.redactor.clone(),
                 ) {
                     Ok(s) => {
@@ -247,7 +272,8 @@ impl Telemetry {
         }
 
         let otlp_changed = errors_on(old_cfg, old_choice) != errors_on(&config, &choice)
-            || old_cfg.otlp != config.otlp;
+            || old_cfg.otlp != config.otlp
+            || meta_changed;
         if otlp_changed {
             let old = self
                 .shared
@@ -261,7 +287,7 @@ impl Telemetry {
             if errors_on(&config, &choice)
                 && let Some(c) = &config.otlp
             {
-                match otlp::OtlpSink::start(c, &self.meta, self.shared.redactor.clone()) {
+                match otlp::OtlpSink::start(c, &meta, self.shared.redactor.clone()) {
                     Ok(s) => {
                         *self.shared.otlp.write().unwrap_or_else(|p| p.into_inner()) =
                             Some(Arc::new(s))
@@ -270,7 +296,7 @@ impl Telemetry {
                 }
             }
         }
-        *state = (config, choice);
+        *state = (config, choice, meta);
     }
 
     /// Writes/sends what's queued, waiting at most about `timeout` per sink.

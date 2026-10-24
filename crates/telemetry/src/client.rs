@@ -104,10 +104,12 @@ pub fn emit(e: &ClientLog, repeats: u64) {
         s @ ("onerror" | "unhandledrejection" | "boundary" | "console") => s,
         _ => "other",
     };
-    let stack = e.stack.as_deref().unwrap_or("");
-    let component_stack = e.component_stack.as_deref().unwrap_or("");
-    let op_id = e.op_id.as_deref().unwrap_or("");
-    let route = e.route.as_deref().unwrap_or("");
+    // `None` records nothing, so the `log_client` command's own op id (from
+    // its span) stays unless the UI names the failed command's.
+    let stack = e.stack.as_deref();
+    let component_stack = e.component_stack.as_deref();
+    let op_id = e.op_id.as_deref().filter(|s| !s.is_empty());
+    let route = e.route.as_deref();
     macro_rules! ev {
         ($lvl:ident, $code:expr) => {
             tracing::$lvl!(

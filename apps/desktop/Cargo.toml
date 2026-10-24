@@ -29,8 +29,8 @@ serde_json.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 url.workspace = true
+uuid.workspace = true
 specta = { workspace = true, features = ["function"] }
 specta-typescript.workspace = true
 tauri = { workspace = true, features = ["devtools", "specta"] }
