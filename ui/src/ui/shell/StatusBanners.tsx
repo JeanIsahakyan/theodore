@@ -60,10 +60,7 @@ export const StatusBanners = observer(function StatusBanners() {
   if (kind === 'offline') {
     const pending = store.sync.queue.pending.length;
     return (
-      <Alert
-        status="warning"
-        className="status-banner status-offline rounded-none border-b border-separator"
-      >
+      <Alert status="warning" className="status-banner status-offline">
         <Alert.Indicator />
         <Alert.Content>
           <Alert.Title>Offline</Alert.Title>
@@ -98,10 +95,7 @@ export const StatusBanners = observer(function StatusBanners() {
 
   if (kind === 'auth') {
     return (
-      <Alert
-        status="danger"
-        className="status-banner status-auth rounded-none border-b border-separator"
-      >
+      <Alert status="danger" className="status-banner status-auth">
         <Alert.Indicator />
         <Alert.Content>
           <Alert.Title>GitHub sign-in failed</Alert.Title>
@@ -123,10 +117,7 @@ export const StatusBanners = observer(function StatusBanners() {
 
   if (kind === 'rate') {
     return (
-      <Alert
-        status="warning"
-        className="status-banner status-rate rounded-none border-b border-separator"
-      >
+      <Alert status="warning" className="status-banner status-rate">
         <Alert.Indicator />
         <Alert.Content>
           <Alert.Title>GitHub rate limit reached</Alert.Title>

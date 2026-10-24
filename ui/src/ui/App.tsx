@@ -166,9 +166,8 @@ export const App = observer(function App() {
         ) : (
           ui.sidebar && <Sidebar />
         )}
-        <Surface className="flex min-w-0 flex-1 flex-col rounded-none">
+        <Surface className="relative flex min-w-0 flex-1 flex-col rounded-none">
           <TabBar showOpen={!ui.sidebar} />
-          <StatusBanners />
           <div className="flex min-h-0 flex-1">
             {r.name === 'inbox' ? (
               <Inbox />
@@ -192,6 +191,11 @@ export const App = observer(function App() {
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}
+          </div>
+          {/* Floats above the hint bar: a banner appearing or clearing
+              never moves the page, and never covers the header. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-14 z-30 flex justify-center px-4 [&>*]:pointer-events-auto">
+            <StatusBanners />
           </div>
         </Surface>
       </div>

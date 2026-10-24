@@ -447,3 +447,41 @@ body.cmd .lines .src span:hover {
 .list .list-box-item[data-selected='true'] .chip {
   background-color: var(--background);
 }
+
+/* Status banners (offline, sign-in, rate limit): a slim pill floating
+ * above the hint bar, so the page never moves when one appears. */
+.status-banner.alert {
+  width: max-content;
+  max-width: min(760px, 100%);
+  align-items: center;
+  gap: calc(var(--spacing) * 2.5);
+  padding-block: 4px;
+  padding-inline: 14px 6px;
+  min-height: 0;
+  border-radius: 9999px;
+  border: 1px solid var(--separator);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
+}
+.status-banner .alert__content {
+  flex-direction: row;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+}
+.status-banner .alert__title {
+  flex-shrink: 0;
+}
+.status-banner .alert__description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-banner .alert__indicator svg {
+  width: 16px;
+  height: 16px;
+}
+.status-banner .button {
+  height: 26px;
+  border-radius: 9999px;
+}
