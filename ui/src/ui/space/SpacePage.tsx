@@ -101,6 +101,7 @@ import {
   undoState,
   undoneMessages,
   unshipped,
+  spaceTitle,
 } from './spaces';
 
 /** What the agent may do in a turn (docs/spaces.md §5). */
@@ -404,7 +405,7 @@ const SpaceHeader = observer(function SpaceHeader({
         className="min-w-0 shrink truncate"
         title={`${space.branch} ← ${space.base} · ${space.agent}`}
       >
-        {space.name}
+        {spaceTitle(space)}
       </Typography.Heading>
       {stage !== 'drafting' && (
         <span
@@ -419,9 +420,9 @@ const SpaceHeader = observer(function SpaceHeader({
           {pr ? ` · #${pr.pr.number}` : ''}
         </span>
       )}
-      <PortChips space={space} />
       <span className="flex-1" />
       <RunButton space={space} config={config} />
+      <PortChips space={space} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
       <Tooltip>
         <ToggleButton

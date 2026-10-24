@@ -19,6 +19,7 @@ import {
   StopFill,
   Terminal,
   Xmark,
+  ArrowUpRightFromSquare,
 } from '@gravity-ui/icons';
 import { Button, Card, Chip, Tabs, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
@@ -419,19 +420,22 @@ export const PortChips = observer(function PortChips({
   // A port is only worth a link while the app is up to answer on it.
   const up = space.process?.status === 'running';
   if (!ports.length || !up || space.status === 'archived') return null;
+  // The first port is the app the `run` command serves: "Open app".
+  // Any others are extra ports it was given, named by their number.
   return (
     <>
-      {ports.map((p) => (
+      {ports.map((p, i) => (
         <Tooltip key={p}>
           <Button
             size="sm"
-            variant="ghost"
-            className="space-port h-6 px-2 font-mono text-xs"
+            variant="secondary"
+            className="space-port shrink-0 gap-1.5"
             onPress={() => openExternal(portUrl(p))}
           >
-            :{p}
+            <ArrowUpRightFromSquare className="size-3.5" />
+            {i === 0 ? 'Open app' : `Port ${p}`}
           </Button>
-          <Tooltip.Content>Open {portUrl(p)}</Tooltip.Content>
+          <Tooltip.Content>Open {portUrl(p)} in the browser</Tooltip.Content>
         </Tooltip>
       ))}
     </>
