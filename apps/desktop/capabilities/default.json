@@ -1,7 +1,7 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main Theodore window: core events, updater, process exit, opening links in the browser, a space's turn-finished notification and the dock badge.",
+  "description": "Capabilities for the main Theodore window: core events, updater, process exit, opening links in the browser, the notification permission check (the shell sends a space's turn-finished notification) and the dock badge.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -10,7 +10,6 @@
     "core:window:allow-set-badge-count",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
-    "notification:allow-notify",
     "updater:default",
     "process:default",
     {

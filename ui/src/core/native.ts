@@ -2,6 +2,11 @@
  *  Outside the desktop window (tests, dev in a browser tab) both are
  *  no-ops, like `openExternal`'s fallback. */
 import { isTauri } from '@tauri-apps/api/core';
+import { getTransport } from './transport';
+
+/** The shell's event for a click on a space's notification; the payload
+ *  is the space id. The shell has brought the window forward already. */
+export const OPEN_SPACE_EVENT = 'open-space';
 
 let permission: Promise<boolean> | null = null;
 
@@ -16,10 +21,20 @@ function allowed(): Promise<boolean> {
   return permission;
 }
 
-export async function notify(title: string, body?: string): Promise<void> {
-  if (!isTauri() || !(await allowed())) return;
-  const { sendNotification } = await import('@tauri-apps/plugin-notification');
-  sendNotification(body ? { title, body } : { title });
+/** Shows a notification about `space`. `true` when a click on it comes
+ *  back as `OPEN_SPACE_EVENT` (macOS, from the app bundle); `false` when
+ *  it can't, or nothing was shown. */
+export async function notifySpace(
+  space: string,
+  title: string,
+  body?: string,
+): Promise<boolean> {
+  if (!isTauri() || !(await allowed())) return false;
+  return getTransport().invoke<boolean>('notify_space', {
+    space,
+    title,
+    body: body ?? null,
+  });
 }
 
 /** The number on the app's dock icon; 0 clears it. */
