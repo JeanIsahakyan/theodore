@@ -113,6 +113,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::account_sign_out,
             commands::focus_window,
             commands::notify_space,
+            commands::log_client,
+            commands::track_ui,
+            commands::telemetry_status,
+            commands::set_telemetry,
+            commands::report_problem,
+            commands::reveal_report,
         ])
         // Not a command return type, but still an event payload the UI needs.
         .typ::<theodore_contract::Ephemeral>()

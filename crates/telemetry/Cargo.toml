@@ -1,0 +1,35 @@
+[package]
+name = "theodore-telemetry"
+description = "Logs, product events and error reports: one tracing stream, one redaction step, sinks picked by settings."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-contract.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["registry", "std", "env-filter"] }
+regex.workspace = true
+sha2.workspace = true
+hex.workspace = true
+uuid.workspace = true
+url.workspace = true
+dirs.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+reqwest.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "logs"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "logs"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock.workspace = true
+tokio = { workspace = true, features = ["full"] }
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

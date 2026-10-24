@@ -23,6 +23,7 @@ theodore-ports.workspace = true
 theodore-runtime = { path = "../../crates/runtime" }
 theodore-sandbox = { path = "../../crates/sandbox" }
 theodore-contract.workspace = true
+theodore-telemetry.workspace = true
 theodore-domain = { workspace = true, features = ["specta"] }
 serde_json.workspace = true
 async-trait.workspace = true

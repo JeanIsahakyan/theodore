@@ -38,6 +38,13 @@ pub const ALLOWED_SIGNED_OUT: &[&str] = &[
     "account_sign_in_cancel",
     "account_sign_out",
     "focus_window",
+    // Telemetry: UI errors on the sign-in screen still reach the log, and
+    // a broken sign-in can still be reported (docs/telemetry.md).
+    "log_client",
+    "track_ui",
+    "telemetry_status",
+    "report_problem",
+    "reveal_report",
 ];
 
 pub fn allowed_signed_out(command: &str) -> bool {
@@ -140,6 +147,11 @@ mod tests {
             "account_sign_in_cancel",
             "account_sign_out",
             "focus_window",
+            "log_client",
+            "track_ui",
+            "telemetry_status",
+            "report_problem",
+            "reveal_report",
         ]
         .into_iter()
         .collect();

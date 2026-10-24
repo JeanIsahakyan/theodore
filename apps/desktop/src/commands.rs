@@ -859,3 +859,67 @@ pub async fn open_global_config(
         })?;
     Ok(info)
 }
+
+/// A UI error or event for the core's log (docs/telemetry.md). Never
+/// fails: a dropped log line is not worth an error toast.
+#[tauri::command]
+#[specta::specta]
+pub async fn log_client(entry: theodore_contract::ClientLog) -> Result<(), CommandError> {
+    theodore_telemetry::client_log(&entry);
+    Ok(())
+}
+
+/// A product event from the UI (docs/telemetry.md). Unknown values are
+/// dropped by the core; never fails.
+#[tauri::command]
+#[specta::specta]
+pub async fn track_ui(event: theodore_contract::UiEvent) -> Result<(), CommandError> {
+    theodore_telemetry::track_ui(&event);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn telemetry_status(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::TelemetryStatus, CommandError> {
+    core.telemetry_status().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_telemetry(
+    req: theodore_contract::TelemetryChoice,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::TelemetryStatus, CommandError> {
+    core.set_telemetry(req).await
+}
+
+/// Settings → About & updates, Help → Report a Problem…, the error screen.
+#[tauri::command]
+#[specta::specta]
+pub async fn report_problem(
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ProblemReport, CommandError> {
+    core.report_problem().await
+}
+
+/// Shows a problem report in Finder. Only paths inside the reports folder.
+#[tauri::command]
+#[specta::specta]
+pub async fn reveal_report(path: String, app: AppHandle) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = std::path::PathBuf::from(path);
+    if !theodore_telemetry::report::is_report_path(&path) {
+        return Err(CommandError {
+            code: "invalid".into(),
+            message: "not a problem report".into(),
+        });
+    }
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|e| CommandError {
+            code: "internal".into(),
+            message: e.to_string(),
+        })
+}

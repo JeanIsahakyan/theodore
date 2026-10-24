@@ -138,6 +138,22 @@ pub trait CoreApi: Send + Sync {
     /// server the way an unclean exit can (docs/spaces.md "Crash recovery").
     async fn stop_all_space_commands(&self) {}
 
+    /// The two sharing choices and what each would send (docs/telemetry.md).
+    async fn telemetry_status(&self) -> Result<theodore_contract::TelemetryStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Records the user's sharing choices and applies them to the sinks.
+    async fn set_telemetry(
+        &self,
+        _req: theodore_contract::TelemetryChoice,
+    ) -> Result<theodore_contract::TelemetryStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Builds a problem report (redacted logs + app info) on disk.
+    async fn report_problem(&self) -> Result<theodore_contract::ProblemReport, CommandError> {
+        Err(not_ready())
+    }
+
     /// Settings → Sandbox (docs/sandbox.md); `None` outside sandbox mode.
     async fn sandbox_status(&self) -> Result<Option<SandboxStatus>, CommandError> {
         Ok(None)
