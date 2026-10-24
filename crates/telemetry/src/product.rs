@@ -44,7 +44,7 @@ pub enum ProductEvent {
         findings: u32,
         ms: u64,
     },
-    /// `pr`, `group`, `hunk`, `space`.
+    /// `pr`, `group`, `hunk`.
     ChatAsked {
         scope: String,
     },
@@ -72,11 +72,11 @@ pub enum ProductEvent {
         mode: String,
         ok: bool,
     },
-    /// `pr`, `push`, `merge_locally`.
+    /// `open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`.
     SpaceShipped {
         how: String,
     },
-    /// `user`, `repo`, `project`.
+    /// The config layer: `global`, `repo`, `local`.
     ConfigSaved {
         r#where: String,
     },

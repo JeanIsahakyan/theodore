@@ -37,7 +37,7 @@ export const SHARE_ROWS: {
   {
     kind: 'errors',
     label: 'Send error reports',
-    hint: 'Warnings, errors and crash reports, with personal details redacted.',
+    hint: 'Warnings, errors and crash reports. Tokens and emails are removed; repository names and paths are hashed.',
   },
 ];
 

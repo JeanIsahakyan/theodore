@@ -85,10 +85,10 @@ import type {
   TelemetryStatus,
   Transaction,
   TransactionResult,
+  UiEvent,
   TriageRequest,
   UpdateInfo,
 } from '../gen/contract';
-import type { UiEvent } from '../gen/bindings';
 
 /** A fresh operation id: 16 lowercase hex chars. Sent with every command
  *  (`x-theodore-op`) so the core's log records of it share one id. */
@@ -304,9 +304,6 @@ export const api = {
     getTransport()
       .invoke<null>('focus_window')
       .catch(() => null),
-  /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
-   *  the Merge dialog hides the list instead of toasting a routine
-   *  degrade; any other failure still toasts like every other command. */
   /** A UI error for the core's log. Never throws, never toasts: a lost
    *  log line must not turn into another error. */
   logClient: (entry: ClientLog): Promise<null> =>
@@ -321,6 +318,9 @@ export const api = {
    *  The report view shows its own failure: no toast. */
   reportProblem: () => call<ProblemReport>('report_problem', undefined, true),
   revealReport: (path: string) => call<null>('reveal_report', { path }),
+  /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
+   *  the Merge dialog hides the list instead of toasting a routine
+   *  degrade; any other failure still toasts like every other command. */
   conflicts: async (pr: PrId): Promise<ConflictFile[] | null> => {
     const opId = newOpId();
     try {

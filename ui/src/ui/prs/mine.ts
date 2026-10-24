@@ -6,7 +6,12 @@
 import type { PrSummary } from '../../gen/contract';
 
 export type Step =
-  'merge' | 'yours' | 'waiting' | 'draft' | 'merged' | 'closed';
+  | 'merge'
+  | 'yours'
+  | 'waiting'
+  | 'draft'
+  | 'merged'
+  | 'closed';
 
 export const STEPS: { id: Step; title: string }[] = [
   { id: 'merge', title: 'Ready to merge' },

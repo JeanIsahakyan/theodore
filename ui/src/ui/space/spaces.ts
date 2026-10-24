@@ -120,7 +120,12 @@ export function autoArchiveDays(
  *  branch is pushed and the PR is being opened (or the attempt failed —
  *  Open PR again is safe, it never opens a second one). */
 export type SpaceStage =
-  'drafting' | 'opening' | 'in_review' | 'merged_locally' | 'branch' | 'done';
+  | 'drafting'
+  | 'opening'
+  | 'in_review'
+  | 'merged_locally'
+  | 'branch'
+  | 'done';
 
 export function spaceStage(
   s: Pick<Space, 'pr' | 'shipped' | 'done_at'>,

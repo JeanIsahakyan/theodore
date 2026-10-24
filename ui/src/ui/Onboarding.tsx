@@ -38,7 +38,12 @@ import { SHARE_ROWS, WhatsCollectedLink } from './Privacy';
 import { TELEMETRY_CLAIM } from './WhatsCollected';
 
 type StepId =
-  'github' | 'account' | 'telemetry' | 'agents' | 'projects' | 'done';
+  | 'github'
+  | 'account'
+  | 'telemetry'
+  | 'agents'
+  | 'projects'
+  | 'done';
 const STEP_TITLE: Record<StepId, string> = {
   github: 'GitHub',
   account: 'Account',

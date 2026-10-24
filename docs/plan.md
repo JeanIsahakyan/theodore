@@ -27,10 +27,11 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D15 | Agent per task is a setting (grouping, chat, skills, fixes), default Claude | decided |
 | D16 | Auto-update from this repo's GitHub Releases, built in from the first version | decided |
 | D17 | Data lives in `~/.theodore` | decided |
-| D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in itself is D21), telemetry, Linux and Windows | decided |
+| D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in itself is D21), Linux and Windows | decided |
 | D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
 | D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
 | D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE, redirect to `theodore://callback` in the app bundle and to a loopback listener elsewhere, device code as fallback; no secret in the app, no server yet (§6.12) | decided |
+| D22 | Telemetry = one `tracing` stream, one redaction step, sinks by setting: a local JSON-lines log always; OTLP error reports and PostHog product events only when configured and opted into (two separate choices, recorded before anything is sent), both keyed by a random install id — never the account (docs/telemetry.md) | decided |
 
 ---
 
@@ -934,7 +935,7 @@ M0 scaffold ─▶ M1 grouping spike ─▶ M2 core + sync + UI ─▶ M3 GitHub
 Total: ~11–14 sessions to v1 on GitHub, +1 for GitLab, +1 for Bitbucket.
 
 Later: LSP go-to-definition, Linear integration, merge queue UI, org settings
-via repo file, Windows/Linux, accounts and billing, telemetry.
+via repo file, Windows/Linux, accounts and billing, uploading problem reports.
 
 Spaces — the stage before a pull request, where an agent writes the change in
 its own worktree and you review it by meaning before it becomes a PR — are

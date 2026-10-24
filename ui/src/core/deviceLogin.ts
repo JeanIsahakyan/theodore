@@ -6,7 +6,12 @@ import { api, CommandFailure } from './api';
 import type { DeviceLogin, HostAuthStatus } from '../gen/contract';
 
 export type DeviceLoginPhase =
-  'idle' | 'starting' | 'pending' | 'denied' | 'expired' | 'error';
+  | 'idle'
+  | 'starting'
+  | 'pending'
+  | 'denied'
+  | 'expired'
+  | 'error';
 
 export interface DeviceLoginState {
   /** Whether the shell has a client id configured; the caller hides the

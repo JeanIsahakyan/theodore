@@ -53,7 +53,8 @@ impl Core {
             });
         }
 
-        let review_event = crate::usecases::telemetry::wire_str(&req.event);
+        // `APPROVE` on the wire to the host; `approve` in the event.
+        let review_event = crate::usecases::telemetry::wire_str(&req.event).to_ascii_lowercase();
         let comment_count = comments.len() as u32;
         let payload = SubmitReviewPayload {
             pr: req.pr.clone(),
