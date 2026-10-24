@@ -3,9 +3,12 @@ import { resourceCache, type ResourceCache } from '../core/resource';
 import { SyncClient, modelAccessors, type ModelAccessors } from '../sync';
 import type { Ephemeral, Revision } from '../gen/contract';
 import { reaction } from 'mobx';
-import { loadAppInfo, loadViewer } from '../actions';
+import { loadAccount, loadAppInfo, loadViewer } from '../actions';
 import { windowTitle } from '../ui/sandbox/sandbox';
-import { setCommandFailureHandler } from '../core/api';
+import {
+  setAccountRequiredHandler,
+  setCommandFailureHandler,
+} from '../core/api';
 import { EphemeralStore } from './EphemeralStore';
 import { UiStore } from './UiStore';
 import { WorkspaceStore } from './WorkspaceStore';
@@ -29,11 +32,15 @@ export class RootStore {
   private disposeViewerRetry: (() => void) | undefined;
   private disposeGoneWorkspace: (() => void) | undefined;
   private disposeSpaceTurns: (() => void) | undefined;
+  private disposeGateOpen: (() => void) | undefined;
 
   async start(): Promise<void> {
     setCommandFailureHandler((f) =>
       this.ephemeral.handle({ type: 'toast', level: 'warn', text: f.message }),
     );
+    // A command turned away for want of a sign-in: the session ended and
+    // its event got lost, so ask again; the gate then shows.
+    setAccountRequiredHandler(() => void loadAccount(this));
     this.unlistenEphemeral = await getTransport().listen<Ephemeral>(
       'ephemeral',
       (e) => this.ephemeral.handle(e),
@@ -46,11 +53,22 @@ export class RootStore {
       },
       { fireImmediately: true },
     );
+    // The window shows nothing but the sign-in until this says whether it
+    // may (plan §6.12).
+    void loadAccount(this);
     void loadAppInfo(this);
     await this.sync.start();
     // Spaces (docs/spaces.md): a no-op with build mode off.
     this.disposeSpaceTurns = watchSpaceTurns(this);
-    void loadViewer(this);
+    // Host calls wait for the account gate: at once without a required
+    // sign-in, else on signing in.
+    this.disposeGateOpen = reaction(
+      () => this.ephemeral.accountGate === 'open',
+      (open) => {
+        if (open) void loadViewer(this);
+      },
+      { fireImmediately: true },
+    );
     // The active project is gone (removed here or on another device) once
     // the pool is loaded: fall back to All.
     this.disposeGoneWorkspace = reaction(
@@ -81,5 +99,6 @@ export class RootStore {
     this.disposeViewerRetry?.();
     this.disposeGoneWorkspace?.();
     this.disposeSpaceTurns?.();
+    this.disposeGateOpen?.();
   }
 }

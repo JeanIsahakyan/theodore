@@ -1,5 +1,6 @@
 /** Typed wrappers for every command in `.context/commands.md`, over `Transport`. */
 import { getTransport } from './transport';
+import { ACCOUNT_REQUIRED } from './accountGate';
 import type {
   AccountSignInRequest,
   AccountSignInStart,
@@ -106,6 +107,15 @@ export function setCommandFailureHandler(
   onFailure = fn;
 }
 
+/** Set once by `RootStore.start()`: a command was turned away because
+ *  nobody is signed in (the session ended under the UI). No toast — the
+ *  sign-in screen is the message; the handler re-reads the account. */
+let onAccountRequired: (() => void) | null = null;
+
+export function setAccountRequiredHandler(fn: () => void): void {
+  onAccountRequired = fn;
+}
+
 async function call<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -117,7 +127,8 @@ async function call<T>(
   } catch (e) {
     if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
       const failure = new CommandFailure(e as CommandError);
-      if (!quiet) onFailure?.(failure);
+      if (failure.code === ACCOUNT_REQUIRED) onAccountRequired?.();
+      else if (!quiet) onFailure?.(failure);
       throw failure;
     }
     throw e;

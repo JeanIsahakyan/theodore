@@ -109,16 +109,20 @@ const roundMark = (icon: ReactNode, tone = 'text-muted') => (
 
 /** The sign-in itself, stage by stage: email → hosted page in the browser
  *  (the code is typed there; Theodore picks the sign-in up), or a code to
- *  confirm on another device. Shared by the sign-in dialog and Onboarding. */
+ *  confirm on another device. Shared by the sign-in screen, the dialog and
+ *  Onboarding. */
 export function SignInView({
   signIn,
   user,
   logo = true,
+  ended = false,
 }: {
   signIn: AccountSignIn;
   user: AccountUser | null;
   /** Off where the logo is already on screen (Onboarding's header). */
   logo?: boolean;
+  /** The provider ended the last session: say so on the first stage. */
+  ended?: boolean;
 }) {
   const { flow, start, cancel, reopen } = signIn;
   const [email, setEmail] = useState('');
@@ -289,8 +293,14 @@ export function SignInView({
   return (
     <Stage
       mark={logo ? <Logo size={44} /> : null}
-      title="Sign in to Theodore"
-      text="Optional — your code hosts stay connected."
+      title={
+        ended ? 'Your session ended — sign in again' : 'Sign in to Theodore'
+      }
+      text={
+        ended
+          ? 'Your projects, reviews and drafts are all still here.'
+          : 'Your code hosts stay connected.'
+      }
     >
       <form
         className="flex w-full flex-col gap-2"
@@ -379,8 +389,9 @@ export const SignInModal = observer(function SignInModal() {
 });
 
 /** Settings → Account: one row for the Theodore account, above the host
- *  cards — who you are and Sign out, or a Sign in button that opens the
- *  dialog. Hidden while the feature isn't configured (no client id). */
+ *  cards — who you are and Sign out (which brings back the sign-in
+ *  screen), or a Sign in button that opens the dialog. Hidden while the
+ *  feature isn't configured (no client id). */
 export const AccountCard = observer(function AccountCard() {
   const store = useRootStore();
   const ui = useUi();
@@ -424,7 +435,7 @@ export const AccountCard = observer(function AccountCard() {
               ? user.name
                 ? user.email
                 : 'Signed in'
-              : 'Optional — for sync and teams as they arrive'}
+              : 'Sign in to keep using Theodore'}
           </span>
         </div>
         {user ? (
@@ -453,7 +464,30 @@ export const AccountCard = observer(function AccountCard() {
   );
 });
 
-/** Onboarding's optional step body: the same stages as the dialog. */
+/** The whole window while signed out where signing in is required (plan
+ *  §6.12): the logo and the sign-in stages, centred — no sidebar, no tabs,
+ *  no way past it. Signing in opens the app where it was. */
+export const SignInGate = observer(function SignInGate() {
+  const store = useRootStore();
+  const status = store.ephemeral.account;
+  const signIn = useAccountSignIn((s) => store.ephemeral.setAccount(s));
+  return (
+    <div className="sign-in-gate relative flex h-full items-center-safe justify-center-safe overflow-auto bg-background p-6 text-sm text-foreground">
+      {/* The title bar is an overlay: keep the window draggable. */}
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-10" />
+      <div className="w-full max-w-[360px]">
+        <SignInView
+          signIn={signIn}
+          user={status?.user ?? null}
+          ended={status?.session_ended ?? false}
+        />
+      </div>
+    </div>
+  );
+});
+
+/** Onboarding's first step body: the same stages as the dialog. Required
+ *  where the account is configured, so there's no skipping it. */
 export const AccountStep = observer(function AccountStep() {
   const store = useRootStore();
   const status = useAccountStatus();

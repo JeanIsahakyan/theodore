@@ -5,6 +5,7 @@ import type { Route } from './stores/UiStore';
  * easy to call from components and from tests alike.
  */
 import { api } from './core/api';
+import { NO_ACCOUNT } from './core/accountGate';
 import type {
   AddProjectRequest,
   AgentId,
@@ -369,6 +370,8 @@ export async function refreshInbox(store: RootStore): Promise<void> {
 /** Fetches and caches the authenticated host user, for the Mine filter and "you" labels. */
 export async function loadViewer(store: RootStore): Promise<void> {
   if (store.ephemeral.viewer || store.ephemeral.viewerLoading) return;
+  // Behind the account gate the core turns it away; it runs once open.
+  if (store.ephemeral.accountGate !== 'open') return;
   store.ephemeral.setViewerLoading(true);
   try {
     store.ephemeral.setViewer(await api.viewer());
@@ -376,6 +379,17 @@ export async function loadViewer(store: RootStore): Promise<void> {
     // No host connected yet (onboarding not finished) — Mine stays empty.
   } finally {
     store.ephemeral.setViewerLoading(false);
+  }
+}
+
+/** `account_status` into the store: at startup (the gate waits on it) and
+ *  whenever a command is turned away for want of a sign-in. A failure
+ *  leaves the UI open; the core still enforces the gate. */
+export async function loadAccount(store: RootStore): Promise<void> {
+  try {
+    store.ephemeral.setAccount(await api.accountStatus());
+  } catch {
+    if (!store.ephemeral.account) store.ephemeral.setAccount(NO_ACCOUNT);
   }
 }
 

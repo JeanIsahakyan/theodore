@@ -65,6 +65,8 @@ describe('EphemeralStore account', () => {
       type: 'account_status',
       status: {
         available: true,
+        required: true,
+        session_ended: false,
         user: {
           id: 'u',
           email: 'ada@example.com',
@@ -76,15 +78,49 @@ describe('EphemeralStore account', () => {
     expect(e.account?.user?.email).toBe('ada@example.com');
     e.handle({
       type: 'account_status',
-      status: { available: true, user: null },
+      status: {
+        available: true,
+        required: true,
+        user: null,
+        session_ended: true,
+      },
     });
     expect(e.account?.user).toBeNull();
   });
 
   it('setAccount stores a fetched status', () => {
     const e = new EphemeralStore();
-    e.setAccount({ available: false, user: null });
+    e.setAccount({
+      available: false,
+      required: false,
+      user: null,
+      session_ended: false,
+    });
     expect(e.account?.available).toBe(false);
+  });
+
+  it('locks the gate while signed out where sign-in is required', () => {
+    const e = new EphemeralStore();
+    expect(e.accountGate).toBe('unknown');
+    const out = {
+      available: true,
+      required: true,
+      user: null,
+      session_ended: false,
+    };
+    e.setAccount(out);
+    expect(e.accountGate).toBe('locked');
+    e.setAccount({
+      ...out,
+      user: { id: 'u', email: 'a@b.co', name: null, avatar_url: null },
+    });
+    expect(e.accountGate).toBe('open');
+    // The session ended: the event closes it again.
+    e.handle({
+      type: 'account_status',
+      status: { ...out, session_ended: true },
+    });
+    expect(e.accountGate).toBe('locked');
   });
 });
 

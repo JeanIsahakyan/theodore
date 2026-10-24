@@ -640,6 +640,8 @@ export function useGlobalKeys() {
   const ui = useUi();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Behind the account gate no shortcut, and no palette (plan §6.12).
+      if (store.ephemeral.accountGate !== 'open') return;
       if ((e.metaKey || e.ctrlKey) && latinKey(e) === 'k') {
         if (ui.modal === 'cmdk') ui.closeModal();
         else ui.openModal('cmdk');
