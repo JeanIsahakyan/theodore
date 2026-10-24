@@ -49,7 +49,7 @@ import { FEATURES } from '../../features';
 import { setSetting } from '../../actions';
 
 import { useRootStore, useUi } from '../../stores/context';
-import { AgentTag, Hints, K, Spinner } from '../bits';
+import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../SidePanel';
@@ -395,30 +395,30 @@ const SpaceHeader = observer(function SpaceHeader({
   const stage = spaceStage(space, pr?.state);
   const days = autoArchiveDays(store.models.settings.all());
   return (
-    // One line: the name and branch give way (truncate) before any action
-    // does; the actions never wrap under the title.
+    // Just what you act on: the name, and the stage only once it says
+    // something (in review, done). Branch, base and agent are in the
+    // name's tooltip.
     <header className="flex flex-nowrap items-center gap-2 border-b border-separator px-5 py-3 [&>button]:shrink-0">
-      <Typography.Heading level={6} className="min-w-0 shrink truncate">
+      <Typography.Heading
+        level={6}
+        className="min-w-0 shrink truncate"
+        title={`${space.branch} ← ${space.base} · ${space.agent}`}
+      >
         {space.name}
       </Typography.Heading>
-      <span
-        className="min-w-0 shrink-[2] truncate font-mono text-xs text-muted"
-        title={`${space.branch} ← ${space.base}`}
-      >
-        {space.branch} ← {space.base}
-      </span>
-      <span
-        className="space-stage rounded-full bg-default px-2 py-0.5 text-xs"
-        title={
-          space.done_at && days > 0
-            ? `Archives itself ${days} day${days === 1 ? '' : 's'} after it was done`
-            : undefined
-        }
-      >
-        {STAGE_LABEL[stage]}
-        {pr ? ` · #${pr.pr.number}` : ''}
-      </span>
-      <AgentTag id={space.agent} />
+      {stage !== 'drafting' && (
+        <span
+          className="space-stage shrink-0 rounded-full bg-default px-2 py-0.5 text-xs"
+          title={
+            space.done_at && days > 0
+              ? `Archives itself ${days} day${days === 1 ? '' : 's'} after it was done`
+              : undefined
+          }
+        >
+          {STAGE_LABEL[stage]}
+          {pr ? ` · #${pr.pr.number}` : ''}
+        </span>
+      )}
       <PortChips space={space} />
       <span className="flex-1" />
       <RunButton space={space} config={config} />

@@ -416,7 +416,9 @@ export const PortChips = observer(function PortChips({
   space: Space;
 }) {
   const ports = space.ports ?? [];
-  if (!ports.length || space.status === 'archived') return null;
+  // A port is only worth a link while the app is up to answer on it.
+  const up = space.process?.status === 'running';
+  if (!ports.length || !up || space.status === 'archived') return null;
   return (
     <>
       {ports.map((p) => (
