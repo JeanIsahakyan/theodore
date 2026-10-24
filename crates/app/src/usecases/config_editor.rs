@@ -93,7 +93,7 @@ impl Core {
     /// The config editor's starting point for `project`.
     pub async fn config_draft(&self, project: &str) -> AppResult<ConfigDraft> {
         let project = self.config_project(project).await?;
-        let ed = self.editor_layers(&project).await;
+        let ed = self.editor_layers(&project, true).await;
         let generated = self.generated_config(&project, &ed).await;
         let mut files = Vec::with_capacity(3);
         for l in &ed.layers {
@@ -128,7 +128,7 @@ impl Core {
     /// effective config if it were saved to `layer`. Never toasts.
     pub async fn check_config(&self, req: CheckConfigRequest) -> AppResult<ConfigCheck> {
         let project = self.config_project(&req.project).await?;
-        let ed = self.editor_layers(&project).await;
+        let ed = self.editor_layers(&project, false).await;
         let merged = config::merge(&ed.with(req.layer, &req.text));
         let repo = self.repo_commands_of(&merged, &project.id).await;
         Ok(ConfigCheck {
@@ -157,7 +157,7 @@ impl Core {
                 "only a local folder's repo file can be committed from here".into(),
             ));
         }
-        let ed = self.editor_layers(&project).await;
+        let ed = self.editor_layers(&project, true).await;
         let before = config::merge(&ed.layers);
         let old = self.repo_commands_of(&before, &project.id).await;
 
@@ -250,8 +250,9 @@ impl Core {
     /// Global, repo, local for `project`: a local folder's own files; for a
     /// host project, the repo file at the default branch's tip in the cache
     /// (absent when the cache can't be read) and the local file in the
-    /// data directory.
-    async fn editor_layers(&self, project: &Project) -> Layers {
+    /// data directory. `fetch: false` reads a host repo from the cache as
+    /// it is when it was fetched before (the check while typing).
+    async fn editor_layers(&self, project: &Project, fetch: bool) -> Layers {
         let data_dir = &self.0.deps.data_dir;
         let global = config::global_path(data_dir);
         let mut layers = vec![LayerText {
@@ -266,7 +267,7 @@ impl Core {
             layers.push(config::read_local_layer(&folder.join(config::LOCAL_FILE)).await);
             return Layers { layers, host: None };
         }
-        let host = self.host_repo(project).await;
+        let host = self.host_repo(project, fetch).await;
         let slug = project.repo.slug();
         layers.push(match &host {
             Some(HostRepo {
@@ -287,8 +288,29 @@ impl Core {
         Layers { layers, host }
     }
 
-    async fn host_repo(&self, project: &Project) -> Option<HostRepo> {
-        let repo_path = self.ensure_project_cache(project).await.ok()?;
+    async fn host_repo(&self, project: &Project, fetch: bool) -> Option<HostRepo> {
+        let known = (!fetch)
+            .then(|| {
+                self.0
+                    .config_repos
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&project.id)
+                    .cloned()
+            })
+            .flatten();
+        let repo_path = match known {
+            Some(p) => p,
+            None => {
+                let p = self.ensure_project_cache(project).await.ok()?;
+                self.0
+                    .config_repos
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(project.id.clone(), p.clone());
+                p
+            }
+        };
         let git = &self.0.deps.git;
         let default_branch = match &project.default_branch {
             Some(b) => b.clone(),
