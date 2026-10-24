@@ -87,3 +87,21 @@ describe('gatesFor', () => {
     );
   });
 });
+
+describe('gates of a PR that is not mergeable yet', () => {
+  it('a draft or running checks never read as ready to merge', () => {
+    const base = {
+      checks: 'pass',
+      approvals: 1,
+      required_approvals: 1,
+      review_decision: null,
+      conflicts: false,
+      state: 'open',
+    } as unknown as Parameters<typeof gatesFor>[0];
+    expect(gatesFor(base).every((g) => g.ok)).toBe(true);
+    expect(gatesFor({ ...base, state: 'draft' }).some((g) => !g.ok)).toBe(true);
+    expect(
+      gatesFor({ ...base, checks: 'pending' }).find((g) => !g.ok)?.label,
+    ).toBe('checks running');
+  });
+});

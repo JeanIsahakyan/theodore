@@ -72,7 +72,7 @@ const MineRow = observer(function MineRow({
   return (
     <div
       id={`R-${id}`}
-      className={`minerow grid h-12 w-full grid-cols-[16px_16px_72px_minmax(140px,1fr)_minmax(0,1.4fr)_22px_16px_40px] items-center gap-3 ${
+      className={`minerow grid h-12 w-full grid-cols-[16px_16px_minmax(72px,auto)_minmax(140px,1fr)_minmax(0,1.4fr)_22px_16px_40px] items-center gap-3 ${
         sel ? 'sel' : ''
       }`}
     >
@@ -83,10 +83,14 @@ const MineRow = observer(function MineRow({
         )}
       </span>
       <span
-        className="truncate text-xs tabular-nums text-muted"
+        className="flex min-w-0 max-w-36 whitespace-nowrap text-xs tabular-nums text-muted"
         title={`${p.pr.repo.owner}/${p.pr.repo.name}#${p.pr.number}`}
       >
-        {repo ? `${p.pr.repo.name} ` : ''}#{p.pr.number}
+        {/* The repo name gives way; the number never clips. */}
+        {repo && (
+          <span className="min-w-0 truncate">{p.pr.repo.name}&nbsp;</span>
+        )}
+        <span className="shrink-0">#{p.pr.number}</span>
       </span>
       <span className="min-w-0 truncate font-medium" title={p.title}>
         {p.title}

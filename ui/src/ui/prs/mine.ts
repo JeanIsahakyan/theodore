@@ -26,7 +26,9 @@ export interface Gate {
 export function gatesFor(p: PrSummary): Gate[] {
   const gates: Gate[] = [
     {
-      ok: p.checks !== 'fail',
+      // Running checks aren't a pass yet: "ready to merge" only once
+      // they've finished green (or the repo has none).
+      ok: p.checks !== 'fail' && p.checks !== 'pending',
       label:
         p.checks === 'fail'
           ? 'checks failing'
@@ -46,6 +48,9 @@ export function gatesFor(p: PrSummary): Gate[] {
   }
   if (p.conflicts) {
     gates.push({ ok: false, label: 'conflicts with base' });
+  }
+  if (p.state === 'draft') {
+    gates.push({ ok: false, label: 'draft' });
   }
   return gates;
 }
