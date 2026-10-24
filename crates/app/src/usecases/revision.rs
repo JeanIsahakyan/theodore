@@ -10,7 +10,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use theodore_contract::{
     BlobResponse, DiffSide, FileRequest, GetBlobRequest, RevisionRequest, models,
 };
-use theodore_domain::{PrDetail, Revision};
+use theodore_domain::{HostKind, PrDetail, Revision};
 use theodore_ports::DiffOptions;
 
 use crate::core::{Core, RevisionEntry};
@@ -34,7 +34,19 @@ impl Core {
         }
 
         let detail = self.load_pr_detail(&req.pr).await?;
-        let repo_path = self.0.deps.git.ensure_repo(&detail.summary.pr.repo).await?;
+        let repo = &detail.summary.pr.repo;
+        // Both commits already downloaded: no fetch, which also keeps an
+        // earlier head of the PR reviewable offline.
+        let repo_path = match self
+            .cached_repo_with(repo, &[&detail.base_sha, &req.head])
+            .await
+        {
+            Some(path) => path,
+            None if repo.host != HostKind::Local && !self.host_online() => {
+                return Err(AppError::OfflineNotCached);
+            }
+            None => self.0.deps.git.ensure_repo(repo).await?,
+        };
         let worktree = self
             .0
             .deps

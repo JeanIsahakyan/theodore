@@ -25,6 +25,10 @@ pub enum AppError {
     /// signed in (plan §6.12 "Sign-in required").
     #[error("Sign in to your Theodore account to continue")]
     AccountRequired,
+    /// The host can't be reached and this PR's commits were never
+    /// downloaded, so there's no local copy to open.
+    #[error("You're offline and this PR's code hasn't been downloaded yet")]
+    OfflineNotCached,
 }
 
 impl AppError {
@@ -46,6 +50,7 @@ impl AppError {
             AppError::Join(_) => "app.internal",
             AppError::Account(e) => e.code(),
             AppError::AccountRequired => "account.required",
+            AppError::OfflineNotCached => "app.offline_not_cached",
         }
     }
 
@@ -57,6 +62,7 @@ impl AppError {
             AppError::NotFound(_)
                 | AppError::Invalid(_)
                 | AppError::AccountRequired
+                | AppError::OfflineNotCached
                 | AppError::Git(theodore_ports::GitError::Refused(_))
                 | AppError::Git(theodore_ports::GitError::Unsupported(_))
         )
@@ -129,6 +135,7 @@ mod tests {
             ),
             (AccountError::Network("x".into()).into(), "account.network"),
             (AppError::AccountRequired, "account.required"),
+            (AppError::OfflineNotCached, "app.offline_not_cached"),
         ];
         for (err, code) in cases {
             assert_eq!(err.code(), code, "{err}");

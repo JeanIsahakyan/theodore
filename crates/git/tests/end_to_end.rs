@@ -252,3 +252,27 @@ async fn merge_base_finds_the_common_ancestor() {
     let mb = cli.merge_base(&repo_dir, &base, &head).await.unwrap();
     assert_eq!(mb.as_str(), fx.base_sha);
 }
+
+#[tokio::test]
+async fn cached_repo_and_has_commit_read_the_clone_without_fetching() {
+    let fx = setup();
+    let cli = fx.cli();
+    let dir = cli.cached_repo(&fx.repo).await.unwrap().expect("cloned");
+    assert_eq!(dir, fx.repo_dir());
+    let other = RepoRef {
+        name: "absent".into(),
+        ..fx.repo.clone()
+    };
+    assert!(cli.cached_repo(&other).await.unwrap().is_none());
+
+    let base = theodore_domain::Sha::new(fx.base_sha.clone());
+    let head = theodore_domain::Sha::new(fx.head_sha.clone());
+    cli.fetch_pr(&fx.pr(1)).await.unwrap();
+    assert!(cli.has_commit(&dir, &base).await.unwrap());
+    assert!(cli.has_commit(&dir, &head).await.unwrap());
+
+    let absent = theodore_domain::Sha::new("0123456789abcdef0123456789abcdef01234567");
+    assert!(!cli.has_commit(&dir, &absent).await.unwrap());
+    let flag = theodore_domain::Sha::new("--all");
+    assert!(!cli.has_commit(&dir, &flag).await.unwrap());
+}
