@@ -19,7 +19,14 @@ export function useViewKeys(
       if (ui.modal || e.metaKey || e.ctrlKey || e.altKey || inSequence())
         return;
       const t = e.target as HTMLElement;
-      if (t.closest('input,textarea,[role=dialog]')) return;
+      // Typing goes to the field. A switch or checkbox is an <input> too,
+      // but nothing is typed there: Esc and page keys still work after
+      // flipping one.
+      const typing =
+        t.closest('textarea,[role=dialog],[contenteditable=true]') ||
+        (t instanceof HTMLInputElement &&
+          !['checkbox', 'radio', 'button', 'range'].includes(t.type));
+      if (typing) return;
       if (handler(e) === false) return;
       e.preventDefault();
       e.stopPropagation();
