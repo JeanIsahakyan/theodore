@@ -13,7 +13,8 @@ Retina, macOS window shadow, WebP.
 | ![Workspace switcher](07-workspace-switcher.webp) **Workspaces** — All projects or one project, ⌃0 / ⌃1…9; each keeps its own tabs. | ![Branches](08-branches.webp) **Branches** — ahead / behind, the PR a branch belongs to, a local review of any branch. |
 | ![Skill findings](09-skill-findings.webp) **Skills** — `/bugs` found a test that will fail; findings become drafts or tasks. | ![Task with an agent fix](10-tasks-agent-fix.webp) **Tasks** — delegated to an agent, the fix comes back as a patch to accept or reject. |
 | ![New space](11-new-space.webp) **New space** (Labs) — say what to change; the agent works in its own worktree. | ![A space](12-space.webp) **A space** — the conversation beside the live diff, then Open PR. |
-| ![Settings](13-settings-account.webp) **Settings → Account** — host sign-ins; tokens in the keychain. | ![Dark theme](14-review-dark.webp) **Dark theme**. |
+| ![Space app and logs](15-space-run-logs.webp) **Run the app** — the project config's `run` command, Open app in the browser, the setup / run / check logs. | ![Project config](13-project-config.webp) **Project config** — created from your settings, checked as you type, saved to the repo (as a PR), locally or globally. |
+| ![Dark theme](14-review-dark.webp) **Dark theme**. | |
 
 Retake them with the sandbox: `theodore sandbox init <dir>`, then run the app
 with `THEODORE_SANDBOX=<dir>` and `"agents": "real"` in `scenario.json`.
