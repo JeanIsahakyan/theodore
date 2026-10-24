@@ -435,3 +435,15 @@ body.cmd .lines .src span:hover {
 [data-slot='card'] .switch__control:not([data-selected='true']) {
   --switch-control-bg: color-mix(in oklab, var(--foreground) 16%, transparent);
 }
+
+/* PR and task lists: the row you're on (J/K, click) is marked, like the
+ * sidebar's current page — the HeroUI list has no selected background. */
+.list .list-box-item[data-selected='true'] {
+  background-color: var(--default);
+}
+.list .list-box-item[data-selected='true'][data-focus-visible='true'] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.list .list-box-item[data-selected='true'] .chip {
+  background-color: var(--background);
+}
