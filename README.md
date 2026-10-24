@@ -1,10 +1,40 @@
-# Theodore
+<p align="center">
+  <img src="apps/desktop/icons/128x128@2x.png" width="128" height="128" alt="Theodore">
+</p>
 
-Theodore is a local-first desktop app for reviewing pull requests. It runs AI
-agent CLIs you already have installed — Claude Code, Codex, Gemini CLI — on
-your machine, inside a git worktree of the PR, to group the diff by meaning,
-find issues, and propose fixes. The agents help; you decide what goes out as
-a review.
+<h1 align="center">Theodore</h1>
+
+<p align="center">
+  <b>Review pull requests by meaning, not by file order.</b>
+</p>
+
+<p align="center">
+  Your own agent CLIs — Claude Code, Codex, Gemini CLI — run on your machine.<br>
+  Agents never post to the PR — you decide what goes out.<br>
+  One inbox for GitHub, GitLab and Bitbucket.<br>
+  macOS · local-first · keyboard-first
+</p>
+
+Theodore is a desktop app for code review. It pulls your pull requests into one
+inbox, checks each PR out into its own git worktree, and has the agent CLI you
+already use regroup the diff into the steps the change actually takes. You read
+it group by group, ask the agent about any line, run review skills, and turn
+what you agree with into comments. The agents help; you decide what goes out.
+
+## Why Theodore
+
+Agents now write more code than people can read. Review is the bottleneck.
+
+| Problem | How Theodore answers it |
+| --- | --- |
+| A diff in file order hides the story: the model, the API that uses it and its tests sit far apart. | The diff is grouped by meaning into titled groups, each with a *why*, a risk and a checklist, read in order. |
+| A big PR has no sense of "done". | A progress line ("3 of 5 groups read"), per-hunk read state, and after a push only the new or changed hunks are flagged. |
+| AI review bots post their noise straight onto the PR. | Findings stay in the app. You turn the ones you agree with into drafts, which go out together as one review when you submit (Bitbucket has no batched review: each comment posts at once). |
+| Cloud review tools want your code on their servers. | Theodore has no review server. It runs the agent CLIs you already have installed and logged in, inside a local worktree; code goes only where your CLI already sends it. |
+| Review means juggling the host's website, a local checkout and a chat. | One window: inbox, diff, threads, checks, merge, an AI chat scoped to the diff, ⌘-click definitions across the worktree. |
+| Flaky Wi-Fi breaks web review. | Local-first: state lives in SQLite, host writes queue in a resumable outbox and go out when you're back online. |
+| The mouse is slow. | Keyboard-first: lists, reading and marking read by key; ⌘K finds every action and PR; `?` shows the shortcuts. |
+| An idea still has to become a PR before anyone can review it. | *Spaces* (Labs): an agent writes the change in its own worktree while you chat and review it grouped, then **Open PR**. |
 
 ```
                     git diff (file order)          Theodore (meaning order)
@@ -21,59 +51,68 @@ a review.
 
 ![Review grouped by meaning](docs/screenshots/03-review-grouped.webp)
 
-More in [docs/screenshots](docs/screenshots/README.md).
+| | |
+| --- | --- |
+| ![Inbox](docs/screenshots/01-inbox.webp) **Inbox** — review requests, assignments and mentions in sections. | ![AI panel](docs/screenshots/04-ai-panel.webp) **AI panel** — ask about the change; the agent reads the diff. |
+| ![Task with an agent fix](docs/screenshots/10-tasks-agent-fix.webp) **Tasks** — an agent's fix comes back as a patch to accept or reject. | ![A space](docs/screenshots/12-space.webp) **A space** — the conversation beside the live diff, then Open PR. |
+
+All screenshots: [docs/screenshots](docs/screenshots/README.md).
 
 ## What works today
 
 ### Inbox and triage
-- PR inbox split into sections: review requested, assigned, authored, mentioned.
-- Snooze until a push, until checks go green, or for a fixed time; wakes automatically.
-- Triage a review request: take, decline or reassign it.
-- Keyboard-first: full list navigation, ⌘K command palette, `?` for shortcuts.
+- One inbox in sections: review requested, assigned, authored, mentioned.
+- Snooze until a push, until checks go green, or for a fixed time; it wakes on its own.
+- Triage a review request: take, decline or reassign.
+- Keyboard-first: list navigation, ⌘K command palette, `?` for shortcuts.
 
 ### Pull requests and branches
-- One list of the workspace's PRs, filtered to All (open), Mine (grouped by what each needs to merge), Drafts or Merged.
-- A Branches page per project: ahead/behind, the PR a branch belongs to, and a local folder's checked-out branch and uncommitted files.
+- The workspace's PRs in one list: All (open), Mine (grouped by what each needs to merge), Drafts, Merged.
+- A Branches page per project: ahead/behind, the PR a branch belongs to, a local folder's checked-out
+  branch and uncommitted files.
 
 ### Projects and workspaces
 - Add, browse and remove projects from any configured host, or a local folder.
-- A switcher in the sidebar's corner scopes the whole app to *All projects* or one project; each keeps
-  its own tabs, filters and position, restored on switch. ⌃0 / ⌃1…9 switch without the menu; drag
-  projects in Settings → Projects to set that order.
-- Open a local review of a branch against its project's base, with no hosted PR; it takes no host
-  actions and stays out of PR counts.
+- The sidebar's switcher scopes the app to *All projects* or one project.
+- Each keeps its own tabs, filters and position, restored on switch.
+- ⌃0 / ⌃1…9 switch directly; drag projects in Settings → Projects to set the order.
+- A local review of a branch against its project's base: no hosted PR, no host actions, not in PR counts.
 
 ### The review screen
-- Diff grouped by meaning into titled groups, each with a *why*, a checklist and a risk; a progress line
-  tracks how many you've read, and `R` marks the current group read and moves to the next unread one.
-- Groupings are versioned: a grouping from an older algorithm is redone automatically on open; ↻ regroups from scratch.
-- Keyboard-driven reading, with per-hunk read state.
-- Interdiff: after a push, only new/changed hunks are flagged, with a "what changed" view.
-- Markdown diffs have a rendered Preview next to the code; image diffs show side by side, swipe or onion skin.
-- ⌘-click an identifier for definitions and references across the worktree, found with `git grep` and per-language patterns — not a language server.
-- Narrow windows: Peek hides itself beside lists, and the review header goes icon-only.
+- The diff grouped by meaning into titled groups, each with a *why*, a checklist and a risk.
+- A progress line, "N of M groups read"; `R` marks the current group read and moves to the next unread one.
+- Per-hunk read state, keyboard-driven reading.
+- Groupings are versioned: one from an older algorithm is redone on open; ↻ regroups from scratch.
+- Interdiff: after a push only new or changed hunks are flagged, with a "what changed" view.
+- Markdown diffs get a rendered Preview; image diffs show side by side, swipe or onion skin.
+- ⌘-click an identifier for definitions and references across the worktree (`git grep` plus
+  per-language patterns, not a language server).
+- Narrow windows: Peek hides itself beside lists, the review header goes icon-only.
 
 ### Comments, suggestions and reactions
-- Threads: reply, resolve — written back to the host.
+- Threads: reply and resolve, written back to the host.
 - Draft comments, submitted together as one review.
 - Suggested-change blocks, applied as a commit on the branch.
 - Reactions.
 
 ### The AI panel
-- Chat scoped to a PR, a group, or a single line. The agent reads what the PR changed through the
-  review tools (the worktree holds only the head), so answers are about the diff.
-- Skills: `SKILL.md` files — three built in (`bugs`, `security`, `tests`), plus `~/.claude/skills`
-  and the repo's own `.claude/skills`. Several configured agents run in sequence; findings merge.
-- Findings turn into draft comments, tasks, or get a proposed fix attached.
-- Tasks: delegate to an agent, which edits inside the PR worktree. Accepting commits+pushes (your
-  own or a local PR) or drafts a suggestion (someone else's PR); rejecting resets the worktree.
-- No cost display, budget or limit in the app (owner, 2026-10-22). The grouping eval harness
-  (`theodore eval`) still reports what its runs cost.
+- Chat scoped to a PR, a group or a single line.
+- The agent reads what the PR changed through the review tools (the worktree holds only the head),
+  so answers are about the diff.
+- Skills are `SKILL.md` files: three built in (`bugs`, `security`, `tests`), plus `~/.claude/skills`
+  and the repo's `.claude/skills`.
+- Run one from the `/` list in the chat input: type to filter, Enter runs it; the list's footer
+  has **Manage skills…**.
+- Several configured skill agents run in sequence; their findings merge.
+- A finding becomes a draft comment or a task, or gets a proposed fix attached.
+- Tasks: an agent edits inside the PR worktree.
+  Accept commits and pushes (your own or a local PR) or drafts a suggestion (someone else's PR).
+  Reject resets the worktree.
 
 ### Merge, checks and conflicts
-- Merge, enqueue, auto-merge, update branch; reviewer and draft-state changes; re-running a check.
-- Conflicts computed locally against the current base branch tip with `git merge-tree --write-tree`,
-  not read from the host's (possibly stale) mergeability flag.
+- Merge, enqueue, auto-merge, update branch; change reviewers and draft state; re-run a check.
+- Conflicts are computed locally against the base branch tip with `git merge-tree --write-tree`,
+  not read from the host's possibly stale mergeability flag.
 
 ### Hosts
 | | GitHub | GitLab | Bitbucket Cloud |
@@ -86,65 +125,81 @@ More in [docs/screenshots](docs/screenshots/README.md).
 | Reactions | yes | yes | no |
 | Auth | keychain → `gh auth token` → `GITHUB_TOKEN` → OAuth device flow | personal access token | app password or access token |
 
-GitHub is the most complete adapter. GitLab and Bitbucket are real, tested
-implementations too, not stubs — just narrower, matching each host's API.
+GitHub is the most complete adapter.
+GitLab and Bitbucket are real, tested adapters too, narrower to match each host's API.
 
 ### Linear (read-only)
-- Issue keys found in a PR's title, branch name or body are looked up and
-  shown as chips in Peek and Review. No token stored means an empty list,
-  never an error. No write-back.
+- Issue keys in a PR's title, branch name or body show as chips in Peek and Review.
+- No token stored means an empty list, never an error. No write-back.
 
 ### Settings
-- Per-host sign-in, agent selection split by task (grouping, chat, skills,
-  fix — default Claude for each).
+- Sign-in per host.
+- Agent per task: grouping, chat, skills, fix — Claude by default for each.
 
 ### Theodore account (required where configured)
-- Where the account is configured, signing in is required: until then the window shows only the
-  sign-in, and the core turns away every command that does work (`account_required`) and holds
-  the poller and outbox. On first launch it's the first onboarding step, with no Skip.
-- Your email opens the hosted sign-in page on its code step and Theodore picks the sign-in up
-  when you finish; a device code covers signing in from another machine. Client-only (PKCE, no
-  secret in the app): the installed app gets the sign-in back through `theodore://callback`, a
-  dev run through a loopback redirect. Session in the keychain.
-- Offline is fine: a stored session keeps the app usable, and only a definitive rejection of
-  the session signs you out ("Your session ended — sign in again"). Signing out (Settings →
-  Account) brings the sign-in back; local data is never deleted.
-- The client id comes from `THEODORE_WORKOS_CLIENT_ID` (env, or compiled into release and
-  nightly builds) or the `account.workos.client_id` setting. A dev build without one has no
-  account and no sign-in; sandbox and fixture modes never have one. Setup in `docs/plan.md`
-  §6.12.
+- Where the account is configured, sign-in is required.
+  Until then the window shows only the sign-in, the core refuses every command that does work
+  (`account_required`), and the poller and outbox wait. It is onboarding's first step, with no Skip.
+- Your email opens the hosted sign-in page on its code step; Theodore picks the sign-in up when you
+  finish. A device code covers signing in from another machine.
+- Client-only (PKCE, no secret in the app). The installed app gets the sign-in back through
+  `theodore://callback`, a dev run through a loopback redirect. Session in the keychain.
+- Offline is fine: a stored session keeps the app usable; only a definitive rejection signs you out
+  ("Your session ended — sign in again"). Signing out (Settings → Account) never deletes local data.
+- The client id comes from `THEODORE_WORKOS_CLIENT_ID` (env, or compiled into release and nightly
+  builds) or the `account.workos.client_id` setting. A dev build without one has no account;
+  sandbox and fixture modes never do. Setup: `docs/plan.md` §6.12.
 
-### Labs: spaces (hidden)
-- A *space* is a change before it is a PR: an agent writes it in its own worktree while you
-  chat, watch the diff and review it grouped, then ship it — **Open PR** (one squashed commit on
-  `<login>/<slug>`, ready or draft), **Push** further turns, or for a local folder **Merge
-  locally** / **Keep as branch**. Auto-archive. Off by default; design and switch in
-  `docs/spaces.md`.
+### Labs: spaces
+A *space* is a change before it is a PR.
+
+```
+New space "fix-login" ─▶ worktree @ base ─▶ agent turn ─▶ checkpoint ─▶ live diff
+        ▲                                                                  │
+        └──── comment / thread / finding ─▶ "Send to agent" ◀── Review ▸ ──┘
+                                                                           │
+host project:  Open PR (one squashed commit on <login>/<slug>) ─▶ Push more turns
+local folder:  Merge locally  ·  Keep as branch
+```
+
+- Modes per turn: Ask (read only), Edit, Run (edit plus shell commands).
+- The project config's `setup` / `run` / `check` / `archive` commands run with the space; logs on
+  the space page, **Open app** for the `run` command's port.
+- Undo the last turn: worktree and ref go back to the previous checkpoint.
+- "Send to agent" on a draft, a finding or a thread of the space's PR or own review makes it the
+  next turn.
+- A turn that ends while the window is in the background sends a system notification
+  (`spaces.notify`); clicking it opens the space. The dock badge counts spaces waiting on you.
+- Archive any time, or automatically `spaces.auto_archive_days` after shipping.
+- Off by default. On with the build flag `FEATURES.buildMode`, or per machine with the
+  `labs.build_mode` setting: Settings → Labs appears once that setting exists, and its switch
+  turns spaces on. How to create it, and the design: `docs/spaces.md` §10.
 
 ### Project config
-- `.theodore/config.yaml` in the repo (shared), `.theodore/config.local.yaml` (yours) and
-  `~/.theodore/config.yaml` (global), layered. `review:` picks agents per task; `spaces:` sets up a
-  space — files to copy, free ports, env, and `setup` / `run` / `check` / `archive` commands.
-  Commands from a repo run only after you allow them. Every key: `docs/config.md`.
-- `review:` also feeds the repo's instructions and files to every agent run, hides or marks
-  files skimmable in the grouping, adds checklist items, auto-runs skills and drops findings by path.
-  A review reads it from the base branch, so a PR can't change how itself is reviewed.
-- Settings → Projects → ⟨project⟩ → Config creates the file from your current settings, checks it
-  as you type, and saves it to the repo (a PR for a host project), your local file or the global one.
+- Three layered files: `.theodore/config.yaml` in the repo (shared), `.theodore/config.local.yaml`
+  (yours), `~/.theodore/config.yaml` (global). Every key: `docs/config.md`.
+- `review:` picks agents per task, feeds the repo's instructions and files to every agent run, hides
+  or marks files skimmable in the grouping, adds checklist items, auto-runs skills, drops findings
+  by path.
+- A review reads `review:` from the base branch, so a PR can't change how it is itself reviewed.
+- `spaces:` sets up a space: files to copy, free ports, env, and the `setup` / `run` / `check` /
+  `archive` commands. Commands from a repo run only after you allow them.
+- Settings → Projects → ⟨project⟩ → Config creates the file from your current settings, checks it as
+  you type, and saves it to the repo (a PR for a host project), your local file or the global one.
 
 ### Updates
-- Checks for a new build on launch and every 6 hours, on a stable or beta
-  channel. Restarts only once no agent is running and the outbox is empty.
-  (No signed release has shipped yet — see **Not yet**.)
+- Checks for a new build on launch and every 6 hours, on a stable or beta channel.
+- Restarts only once no agent is running and the outbox is empty.
+- No signed release has shipped yet — see **Not yet**.
 
 ### Logs, error reports and usage data
-- Everything is logged locally to `~/.theodore/logs/theodore.jsonl` (JSON lines, rotated, ≤ 50 MB),
-  redacted first: tokens, emails, the home directory, and never diff, file or comment text.
+- Everything is logged locally to `~/.theodore/logs/theodore.jsonl` (JSON lines, rotated, ≤ 50 MB).
+- Redacted first: tokens, emails, the home directory; diff, file and comment text are never logged.
   `THEODORE_LOG=debug` for more; `jq` recipes in `docs/telemetry.md`.
 - Two remote sinks, off unless the build or settings configure them *and* you opt in (onboarding's
   "Help improve Theodore", or Settings → About & updates): error reports over OTLP (e.g. New
-  Relic) and typed product events to PostHog. Both use a random install id, not your account;
-  repository names are hashed.
+  Relic) and typed product events to PostHog.
+- Both use a random install id, not your account; repository names are hashed.
 - **Report a problem** (Help menu, Settings, the error screen) zips the redacted logs and app info
   for you to attach; nothing is uploaded. Events, codes, rules and settings: `docs/telemetry.md`.
 
@@ -182,27 +237,31 @@ UI  ◀── sync{actions, N} event ────┤
 poller (ETag poll of open PRs, cursor poll of the inbox) ──▶ same apply path ──▶ sync log ──▶ UI
 ```
 
-Every change — yours, an agent's, or something the poller noticed — becomes
-one `SyncAction` with a monotonically increasing id. The UI has one inbound
-stream and one object pool fed by it. Host writes go through an outbox:
-resumable steps, an idempotency marker so a retried comment isn't posted
-twice, backoff that depends on the error kind.
+- Every change — yours, an agent's, or one the poller noticed — is one `SyncAction` with an
+  increasing id.
+- The UI has one inbound stream and one object pool fed by it.
+- Host writes go through the outbox: resumable steps, an idempotency marker so a retried comment
+  isn't posted twice, backoff by error kind.
 
 **Grouping.**
 
 ```
 diff ─▶ hunks ─▶ pre-pass (hide lockfiles/generated/vendored; flag pure
                  renames/whitespace-only/import-only as skim candidates)
-      ─▶ split by top-level directory, up to 3 chunks in flight
+      ─▶ relatedness graph (imports, symbols, names, tests ↔ source,
+                            git co-change) ─▶ communities of related files
+      ─▶ large PR: one chunk per community (top-level dir as fallback),
+                   other files shown as one-line skeletons, ≤ 3 chunks in flight
       ─▶ one agent call per chunk ─▶ validate (must partition all hunk ids)
              ├─ ok ──────────────────────────▶ groups
              └─ invalid ─▶ one repair call ─▶ still invalid ─▶ "Other"
       ─▶ merge pass (order across chunks) ─▶ coarsen (merge tiny groups)
+
+push ─▶ unchanged hunks keep their group ─▶ only new/changed hunks go to the agent
 ```
 
-Each stored grouping carries an algorithm version (`ALGO_VERSION`, currently
-`2`). Reopening a PR or a push past a version bump regroups automatically;
-the Review screen's Regroup button forces it on demand.
+- Each stored grouping carries an algorithm version (`ALGO_VERSION`, currently `3`).
+- Opening a PR grouped by an older version regroups it; ↻ in Review forces it.
 
 ## Run it
 
@@ -211,8 +270,8 @@ Prerequisites:
 - `pnpm` for the `ui/` workspace.
 - `git` ≥ 2.38 — conflict detection needs `merge-tree --write-tree`.
 - `cargo install tauri-cli --version "^2" --locked`, for `cargo tauri …`.
-- At least one agent CLI, installed and logged in: `claude`, `codex`, or `gemini`. Claude Code's
-  runner is the best-tested; Gemini's flags are unverified against a real install.
+- At least one agent CLI, installed and logged in: `claude`, `codex` or `gemini`.
+  Claude Code's runner is the best-tested; Gemini's flags are unverified against a real install.
 
 Dev:
 
@@ -227,15 +286,25 @@ Release build:
 cargo tauri build
 ```
 
-Auth: GitHub tries, in order, a keychain token, `gh auth token`, the `GITHUB_TOKEN` env var, then
-the "Sign in with GitHub" OAuth device flow once `THEODORE_GITHUB_CLIENT_ID` (or the
-`host.github.client_id` setting) is set. GitLab and Bitbucket take a pasted token or app password
-(`GITLAB_TOKEN` / `BITBUCKET_TOKEN`) — no device flow for those yet.
+Auth:
+- GitHub tries, in order: a keychain token, `gh auth token`, `GITHUB_TOKEN`, then the "Sign in with
+  GitHub" OAuth device flow once `THEODORE_GITHUB_CLIENT_ID` (or the `host.github.client_id`
+  setting) is set.
+- GitLab and Bitbucket take a pasted token or app password (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`);
+  no device flow for those yet.
 
-Data lives in `~/.theodore`: a bare clone per repo under `repos/`, one git
-worktree per PR under `wt/`, one per space under `spaces/`, and `theodore.db` (SQLite).
+Data lives in `~/.theodore`:
 
-Sandbox: `theodore sandbox init <dir>` then `THEODORE_SANDBOX=<dir>` runs the app against a
+```
+~/.theodore/
+  repos/        a bare clone per repo
+  wt/           a git worktree per PR
+  spaces/       a git worktree per space
+  theodore.db   SQLite
+  logs/         theodore.jsonl
+```
+
+Sandbox: `theodore sandbox init <dir>`, then `THEODORE_SANDBOX=<dir>` runs the app against a
 simulated host with its own data in `~/.theodore-sandbox` — faults, offline, scripted agents
 (`docs/sandbox.md`).
 
@@ -246,8 +315,9 @@ CLI:
 
 ```sh
 theodore group <pr-url> [--agent claude|codex|gemini] [--model <name>] [--json] [--save <dir>]
-theodore eval <fixtures-dir> [--agent claude|codex|gemini] [--model <name>]
+theodore eval <fixtures-dir> [--agent claude|codex|gemini] [--model <name>]   # quality + cost table
 theodore mcp-bridge --url <mcp-url>   # stdio↔HTTP bridge for CLIs without HTTP MCP
+theodore sandbox …                    # init a sandbox, drive its simulated host
 ```
 
 ## Develop
@@ -265,15 +335,19 @@ crates/
   linear/         read-only GraphQL client (issue linking)
   git/            clone, worktree, diff → hunks, conflict detection
   agents/         claude / codex / gemini CLI runners, stream parsers, process lifecycle
-  grouping/       grouping pipeline: pre-pass, prompt, validation, repair, coarsen, eval
+  grouping/       grouping pipeline: pre-pass, relatedness graph, prompt, validation, repair,
+                  coarsen, incremental regroup, eval
   mcp/            "review-tools" MCP server + stdio bridge
   store/          SQLite schema, migrations, sync log, outbox
   secrets/        keychain (shells to /usr/bin/security)
   runtime/        host token resolution (keychain → gh/env fallback)
+  account-workos/ Theodore account: PKCE, loopback redirect, device code, refresh
+  telemetry/      one tracing stream, one redaction step; local log, OTLP, PostHog sinks
+  sandbox/        simulated code host over local bare repos, fault injection, scripted timeline
   fixtures/       recorded PRs, diffs and agent streams for tests and eval
 apps/
   desktop/        the Tauri app
-  cli/            `theodore` — grouping eval, debugging, the MCP stdio bridge
+  cli/            `theodore` — grouping eval, debugging, the MCP stdio bridge, sandbox
 ui/               React app, MobX sync client, gen/ (generated TS types)
 e2e/              WebDriver specs against the real core with fixture adapters
 ```
@@ -298,23 +372,22 @@ cargo run -p theodore-desktop -- --export-bindings
 ```
 
 Git hooks (`lefthook install` once per clone):
-- **pre-commit** — trailing whitespace / conflict markers (`git diff --cached --check`), a large-file check, `cargo fmt --check` on staged Rust files.
+- **pre-commit** — trailing whitespace / conflict markers (`git diff --cached --check`), a large-file
+  check, `cargo fmt --check` on staged Rust files.
 - **commit-msg** — Conventional Commits format.
-- **pre-push** — `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `pnpm -C ui typecheck`, `pnpm -C ui lint`.
+- **pre-push** — `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+  `pnpm -C ui typecheck`, `pnpm -C ui lint`.
 
 ## Not yet
 
-- Signed releases: the updater's signing key is still a placeholder in
-  `tauri.conf.json`; every build so far is ad-hoc signed only.
-- Notarization and a Developer ID (release workflow has the steps, no
-  secrets configured yet).
+- Signed releases: the updater's signing key is still a placeholder in `tauri.conf.json`; every
+  build so far is ad-hoc signed.
+- Notarization and a Developer ID (the release workflow has the steps, no secrets yet).
 - Linux and Windows builds — macOS (Apple Silicon) only.
-- `theodore://` deep links for OAuth callbacks (planned, not wired into the
-  Tauri config).
-- GitLab OAuth/PKCE sign-in — personal access token only today.
-- Skills running on several agents at once in parallel (they run in
-  sequence; findings still merge).
+- GitLab OAuth/PKCE sign-in — personal access token only.
+- Skills on several agents in parallel (they run in sequence; findings still merge).
 - A Theodore server: the account sign-in is client-only; billing, sync and uploading problem
-  reports need it (reports are local zips for now).
-- Spaces beyond shipping: "Send to agent" from review threads, undo a turn, setup/check scripts,
-  notifications.
+  reports need one (reports are local zips for now).
+- Spaces: a "Send all to agent" footer and feedback tracked as tasks, a "Drafting" group in My PRs,
+  Threads / Checks tabs on the space page, per-turn diffs, deleting a space, a queue with a
+  parallel limit (`docs/spaces.md` §11).
