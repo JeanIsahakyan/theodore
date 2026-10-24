@@ -272,6 +272,32 @@ impl GitPort for GitCli {
         self.show_op(repo, rev, path).await
     }
 
+    async fn cached_repo(&self, repo: &RepoRef) -> GitResult<Option<PathBuf>> {
+        let dir = self.repo_dir(repo)?;
+        Ok(dir.join("HEAD").exists().then_some(dir))
+    }
+
+    async fn has_commit(&self, repo: &Path, sha: &Sha) -> GitResult<bool> {
+        // Only a hex object id: never anything `cat-file` could read as a
+        // flag or a ref expression.
+        let s = sha.as_str();
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(false);
+        }
+        let askpass = self.ensure_askpass()?;
+        let object = format!("{s}^{{commit}}");
+        let out = GitProc {
+            cwd: repo,
+            askpass: &askpass,
+            args: &["cat-file", "-e", &object],
+            token: None,
+            stdin: None,
+        }
+        .run_raw()
+        .await?;
+        Ok(out.status == 0)
+    }
+
     async fn commit_and_push(
         &self,
         worktree: &Path,

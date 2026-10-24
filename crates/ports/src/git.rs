@@ -139,6 +139,21 @@ pub trait GitPort: Send + Sync {
     /// File contents at `rev`, `None` if absent.
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>>;
 
+    /// The bare clone of `repo` if one is already on disk, `None` if not.
+    /// Unlike `ensure_repo`, never touches the network: opening a PR
+    /// offline reads from what was downloaded before.
+    async fn cached_repo(&self, repo: &RepoRef) -> GitResult<Option<PathBuf>> {
+        let _ = repo;
+        Ok(None)
+    }
+
+    /// Whether commit `sha` is present in `repo`, without fetching.
+    /// `false` by default: a port that can't tell never claims a commit.
+    async fn has_commit(&self, repo: &Path, sha: &Sha) -> GitResult<bool> {
+        let _ = (repo, sha);
+        Ok(false)
+    }
+
     /// Stages every change in `worktree`, commits it, and pushes to
     /// `branch` on `repo`'s remote (plan §4 "Fix target": own or local PR).
     /// Returns the new head sha. `Unsupported` by default; only a `GitPort`
