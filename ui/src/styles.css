@@ -485,15 +485,3 @@ body.cmd .lines .src span:hover {
   height: 26px;
   border-radius: 9999px;
 }
-
-/* Chat composers sit on the page as a grey field (secondary), so the
- * grey (tertiary) chips inside them take the page colour to stay visible. */
-.input-group--secondary .button--tertiary {
-  --button-bg: var(--surface);
-  --button-bg-hover: color-mix(
-    in oklab,
-    var(--surface) 92%,
-    var(--foreground) 8%
-  );
-  --button-bg-pressed: var(--button-bg-hover);
-}

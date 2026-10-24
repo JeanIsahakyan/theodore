@@ -296,14 +296,16 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           className={
             showChanges
               ? 'flex w-[40%] min-w-[340px] flex-col border-r border-separator'
-              : 'mx-auto flex w-full max-w-[860px] flex-col'
+              : 'flex w-full min-w-0 flex-col'
           }
         >
-          <TrustPrompt
-            space={space}
-            config={config}
-            onChanged={refreshConfig}
-          />
+          <div className="mx-auto w-full max-w-[860px]">
+            <TrustPrompt
+              space={space}
+              config={config}
+              onChanged={refreshConfig}
+            />
+          </div>
           <SpaceChat space={space} handle={chat} />
         </section>
         {showChanges && (
@@ -747,99 +749,108 @@ const SpaceChat = observer(function SpaceChat({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-5 py-4">
-        <SetupStage space={space} />
-        <SetupNote space={space} />
-        {messages.length === 0 && !run && !setupStage && (
-          <span className="text-sm text-muted">
-            Tell the agent what to change. It works in its own worktree; your
-            checkout is never touched.
-          </span>
-        )}
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex flex-col gap-1 ${undone.has(m.id) ? 'space-undone opacity-50' : ''}`}
-          >
-            <span className="flex items-center gap-1.5 text-xs text-muted">
-              {m.author.kind === 'me' ? 'you' : m.author.agent}
-              {undone.has(m.id) && m.author.kind === 'agent' && (
-                <span className="rounded-full bg-default px-1.5 text-[10px]">
-                  undone
-                </span>
-              )}
-              {undo.turn?.reply === m.id && space.status !== 'archived' && (
-                <UndoTurn space={space} reason={undo.ok ? null : undo.reason} />
-              )}
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+        {/* Messages keep a reading width; the scroll area and the input
+            strip below span the whole column. */}
+        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 px-5 py-4">
+          <SetupStage space={space} />
+          <SetupNote space={space} />
+          {messages.length === 0 && !run && !setupStage && (
+            <span className="text-sm text-muted">
+              Tell the agent what to change. It works in its own worktree; your
+              checkout is never touched.
             </span>
-            {m.failed ? (
-              <span className="text-sm text-danger [overflow-wrap:anywhere]">
-                {m.failed}
+          )}
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              className={`flex flex-col gap-1 ${undone.has(m.id) ? 'space-undone opacity-50' : ''}`}
+            >
+              <span className="flex items-center gap-1.5 text-xs text-muted">
+                {m.author.kind === 'me' ? 'you' : m.author.agent}
+                {undone.has(m.id) && m.author.kind === 'agent' && (
+                  <span className="rounded-full bg-default px-1.5 text-[10px]">
+                    undone
+                  </span>
+                )}
+                {undo.turn?.reply === m.id && space.status !== 'archived' && (
+                  <UndoTurn
+                    space={space}
+                    reason={undo.ok ? null : undo.reason}
+                  />
+                )}
               </span>
-            ) : (
-              <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                {m.author.kind === 'me' ? m.text : rich(m.text)}
-              </div>
-            )}
-            {m.author.kind === 'agent' && turnTools(m.id).length > 0 && (
-              <ToolCalls tools={turnTools(m.id)} running={false} />
-            )}
-            {m.author.kind === 'agent' && checks.has(m.id) && (
-              <CheckChip check={checks.get(m.id)!} />
-            )}
-          </div>
-        ))}
-        {run && (
-          <div className="flex flex-col gap-1">
-            <span className="flex items-center gap-2 text-xs text-muted">
-              <Spinner /> {space.agent} is working
-              {tools.length ? ` · ${tools.length} tool calls` : ''}
-            </span>
-            {tools.length > 0 && <ToolCalls tools={tools} running />}
-            {streaming && (
-              <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                {rich(streaming)}
-              </div>
-            )}
-          </div>
-        )}
-        <div ref={end} />
+              {m.failed ? (
+                <span className="text-sm text-danger [overflow-wrap:anywhere]">
+                  {m.failed}
+                </span>
+              ) : (
+                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                  {m.author.kind === 'me' ? m.text : rich(m.text)}
+                </div>
+              )}
+              {m.author.kind === 'agent' && turnTools(m.id).length > 0 && (
+                <ToolCalls tools={turnTools(m.id)} running={false} />
+              )}
+              {m.author.kind === 'agent' && checks.has(m.id) && (
+                <CheckChip check={checks.get(m.id)!} />
+              )}
+            </div>
+          ))}
+          {run && (
+            <div className="flex flex-col gap-1">
+              <span className="flex items-center gap-2 text-xs text-muted">
+                <Spinner /> {space.agent} is working
+                {tools.length ? ` · ${tools.length} tool calls` : ''}
+              </span>
+              {tools.length > 0 && <ToolCalls tools={tools} running />}
+              {streaming && (
+                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                  {rich(streaming)}
+                </div>
+              )}
+            </div>
+          )}
+          <div ref={end} />
+        </div>
       </div>
-      <div className="flex flex-col gap-2 px-4 pb-3">
-        {space.status === 'failed' && space.error && (
-          <span
-            className="truncate px-2 text-xs text-danger"
-            title={space.error}
-          >
-            {space.error}
-          </span>
-        )}
-        <Composer
-          inputRef={input}
-          value={text}
-          onChange={setText}
-          onSubmit={send}
-          placeholder={
-            space.status === 'archived'
-              ? 'Archived'
-              : settingUp(space)
-                ? 'Setting up…'
-                : 'Ask the agent to change something…'
-          }
-          disabled={space.status === 'archived' || settingUp(space)}
-          running={!!run}
-          onStop={() => void api.spaceStop(space.id).catch(() => {})}
-          chips={
-            <ChipMenu
-              ariaLabel="Mode"
-              label={MODES.find((m) => m.id === mode)?.label ?? mode}
-              items={MODES}
-              selected={mode}
-              onSelect={setMode}
-              isDisabled={locked}
-            />
-          }
-        />
+      <div className="border-t border-separator bg-background px-4 pb-3 pt-3">
+        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
+          {space.status === 'failed' && space.error && (
+            <span
+              className="truncate px-2 text-xs text-danger"
+              title={space.error}
+            >
+              {space.error}
+            </span>
+          )}
+          <Composer
+            inputRef={input}
+            value={text}
+            onChange={setText}
+            onSubmit={send}
+            placeholder={
+              space.status === 'archived'
+                ? 'Archived'
+                : settingUp(space)
+                  ? 'Setting up…'
+                  : 'Ask the agent to change something…'
+            }
+            disabled={space.status === 'archived' || settingUp(space)}
+            running={!!run}
+            onStop={() => void api.spaceStop(space.id).catch(() => {})}
+            chips={
+              <ChipMenu
+                ariaLabel="Mode"
+                label={MODES.find((m) => m.id === mode)?.label ?? mode}
+                items={MODES}
+                selected={mode}
+                onSelect={setMode}
+                isDisabled={locked}
+              />
+            }
+          />
+        </div>
       </div>
     </>
   );

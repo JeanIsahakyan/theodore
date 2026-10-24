@@ -993,7 +993,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         <div ref={end} />
       </div>
 
-      <div className="chat-input flex flex-col gap-2.5 border-t border-separator px-4 pb-3 pt-3">
+      <div className="chat-input flex flex-col gap-2.5 border-t border-separator bg-background px-4 pb-3 pt-3">
         {matches && matches.length > 0 && (
           <Card className="slash-menu min-w-0 gap-0 p-1.5 shadow-overlay">
             <ListBox
@@ -1052,7 +1052,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         >
           <InputGroup
             fullWidth
-            variant="secondary"
             className="flex flex-col gap-2 rounded-3xl py-2.5"
           >
             <InputGroup.TextArea

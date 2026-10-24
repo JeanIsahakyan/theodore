@@ -64,7 +64,6 @@ export function Composer({
           says where you are. */}
       <InputGroup
         fullWidth
-        variant="secondary"
         className="flex h-auto flex-col gap-2 rounded-3xl py-3 focus-within:border-separator focus-within:ring-0 data-[focus-within=true]:ring-0"
       >
         <InputGroup.TextArea
