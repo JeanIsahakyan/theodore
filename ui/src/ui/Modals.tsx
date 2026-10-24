@@ -252,7 +252,18 @@ function HelpModalInner() {
                 <Table.Row key={i} id={i}>
                   <Table.Cell>
                     {v ? (
-                      <K>{k}</K>
+                      // One keycap per key or chord: "G I / G T" reads as
+                      // two sequences, not one squashed "GI/GT".
+                      <span className="flex flex-wrap items-center gap-1">
+                        {k.split(' / ').map((chord, i) => (
+                          <span key={i} className="flex items-center gap-1">
+                            {i > 0 && <span className="text-muted">/</span>}
+                            {chord.split(' ').map((key, j) => (
+                              <K key={j}>{key}</K>
+                            ))}
+                          </span>
+                        ))}
+                      </span>
                     ) : (
                       <b className="text-sm font-medium">{k}</b>
                     )}
