@@ -73,7 +73,7 @@ const SOURCES: {
   { id: 'repo', title: 'Repository', match: (s) => s.source.includes('·') },
   {
     id: 'user',
-    title: 'Mine · ~/.claude/skills',
+    title: 'Mine',
     match: (s) => s.source === '~/.claude/skills',
   },
   { id: 'builtin', title: 'Built-in', match: (s) => s.source === 'built-in' },
@@ -239,12 +239,17 @@ const SOURCE_FILTER: {
 export const SkillEditorPanel = observer(function SkillEditorPanel({
   id,
   pr,
+  onSaved,
 }: {
   id: string;
   pr: PrId | null;
+  /** After a save or fork lands: the list re-reads (a fork adds a row). */
+  onSaved?: () => void;
 }) {
   const store = useRootStore();
   const [body, setBody] = useState<SkillBody | null>(null);
+  // Bumped after a fork: re-read the skill, now your editable copy.
+  const [version, setVersion] = useState(0);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState<'user' | 'repo' | null>(null);
 
@@ -259,7 +264,7 @@ export const SkillEditorPanel = observer(function SkillEditorPanel({
     return () => {
       live = false;
     };
-  }, [store, id, pr]);
+  }, [store, id, pr, version]);
 
   if (!body) {
     return (
@@ -276,7 +281,9 @@ export const SkillEditorPanel = observer(function SkillEditorPanel({
     setSaving(scope);
     void saveSkill(store, { id: body.info.id, scope, pr, body: draft })
       .then((ok) => {
-        if (ok) setBody((b) => (b ? { ...b, body: draft } : b));
+        if (!ok) return;
+        setBody((b) => (b ? { ...b, body: draft } : b));
+        onSaved?.();
       })
       .finally(() => setSaving(null));
   };
@@ -288,7 +295,13 @@ export const SkillEditorPanel = observer(function SkillEditorPanel({
       scope: 'user',
       pr: null,
       body: draft,
-    }).finally(() => setSaving(null));
+    })
+      .then((ok) => {
+        if (!ok) return;
+        onSaved?.();
+        setVersion((v) => v + 1);
+      })
+      .finally(() => setSaving(null));
   };
 
   return (
@@ -375,6 +388,7 @@ export const SkillsManagerModal = observer(function SkillsManagerModal({
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [sel, setSel] = useState<string | null>(null);
 
+  const [listVersion, setListVersion] = useState(0);
   useEffect(() => {
     void api
       .listSkills(pr)
@@ -383,7 +397,7 @@ export const SkillsManagerModal = observer(function SkillsManagerModal({
         setSel((cur) => cur ?? s[0]?.id ?? null);
       })
       .catch(() => setSkills([]));
-  }, [pr]);
+  }, [pr, listVersion]);
 
   return (
     <Modal.Backdrop isOpen onOpenChange={(open) => !open && onClose()}>
@@ -437,7 +451,12 @@ export const SkillsManagerModal = observer(function SkillsManagerModal({
               })}
             </ListBox>
             {sel ? (
-              <SkillEditorPanel key={sel} id={sel} pr={pr} />
+              <SkillEditorPanel
+                key={sel}
+                id={sel}
+                pr={pr}
+                onSaved={() => setListVersion((v) => v + 1)}
+              />
             ) : (
               <Empty
                 icon={<Sparkles />}
@@ -649,7 +668,7 @@ export const SkillsPage = observer(function SkillsPage() {
           </ListBox>
         )}
         {sel ? (
-          <SkillEditorPanel key={sel} id={sel} pr={null} />
+          <SkillEditorPanel key={sel} id={sel} pr={null} onSaved={reload} />
         ) : (
           <Empty
             icon={<Sparkles />}
