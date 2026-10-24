@@ -5,7 +5,13 @@ import { modelAccessors } from './sync';
 import { SyncClient } from './sync/SyncClient';
 import { EphemeralStore } from './stores/EphemeralStore';
 import type { RootStore } from './stores/RootStore';
-import { assignTask, markDone, snoozePrs, unsnooze } from './actions';
+import {
+  assignTask,
+  loadViewer,
+  markDone,
+  snoozePrs,
+  unsnooze,
+} from './actions';
 
 /** Just the two members every action under test touches — `models` reads
  *  straight through `sync.pool`, so it is wired up the same way `RootStore`
@@ -101,5 +107,43 @@ describe('assignTask', () => {
     });
     expect(store.sync.undo.canUndo).toBe(true);
     expect(store.ephemeral.toasts.at(-1)?.text).toBe('Assigned to claude');
+  });
+});
+
+describe('loadViewer', () => {
+  // Signing in isn't required here: the gate is open.
+  const open = (store: RootStore) => {
+    store.ephemeral.setAccount({
+      available: false,
+      required: false,
+      user: null,
+      session_ended: false,
+    } as never);
+    return store;
+  };
+
+  it('keeps the last known login when the host is unreachable', async () => {
+    localStorage.clear();
+    const online = open(fakeStore());
+    transport.queueResult('viewer', {
+      login: 'sam',
+      name: 'Sam',
+      avatar_url: null,
+    });
+    await loadViewer(online);
+    expect(online.ephemeral.viewer?.login).toBe('sam');
+
+    const offline = open(fakeStore());
+    transport.queueResult('viewer', new Error('network'));
+    await loadViewer(offline);
+    expect(offline.ephemeral.viewer?.login).toBe('sam');
+  });
+
+  it('stays signed out when nothing was ever known', async () => {
+    localStorage.clear();
+    const store = open(fakeStore());
+    transport.queueResult('viewer', new Error('network'));
+    await loadViewer(store);
+    expect(store.ephemeral.viewer).toBeNull();
   });
 });

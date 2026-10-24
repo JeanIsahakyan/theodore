@@ -1,3 +1,4 @@
+import { STORAGE_NS } from './stores/UiStore';
 import type { Route } from './stores/UiStore';
 /**
  * Every user action as a transaction or a direct command — nothing here is
@@ -373,10 +374,20 @@ export async function loadViewer(store: RootStore): Promise<void> {
   // Behind the account gate the core turns it away; it runs once open.
   if (store.ephemeral.accountGate !== 'open') return;
   store.ephemeral.setViewerLoading(true);
+  const key = `${STORAGE_NS}theodore-viewer`;
   try {
-    store.ephemeral.setViewer(await api.viewer());
+    const viewer = await api.viewer();
+    store.ephemeral.setViewer(viewer);
+    localStorage.setItem(key, JSON.stringify(viewer));
   } catch {
-    // No host connected yet (onboarding not finished) — Mine stays empty.
+    // Offline (or no host yet): you're still you — the last known login
+    // keeps Mine and "you" working; no host connected leaves it empty.
+    try {
+      const cached = localStorage.getItem(key);
+      if (cached) store.ephemeral.setViewer(JSON.parse(cached));
+    } catch {
+      // unreadable cache: stay signed-out-looking until the host answers
+    }
   } finally {
     store.ephemeral.setViewerLoading(false);
   }
