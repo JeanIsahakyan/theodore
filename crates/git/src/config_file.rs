@@ -96,10 +96,10 @@ pub(crate) fn parse_status_z(out: &[u8]) -> Vec<String> {
         }
         let (xy, path) = f.split_at(3);
         paths.push(path.to_string());
-        if xy.starts_with('R') || xy.starts_with('C') {
-            if let Some(from) = fields.next() {
-                paths.push(from.to_string());
-            }
+        if (xy.starts_with('R') || xy.starts_with('C'))
+            && let Some(from) = fields.next()
+        {
+            paths.push(from.to_string());
         }
     }
     paths
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn ls_tree_entries_round_trip_into_mktree_input() {
-        let out = b"100644 blob aaa\tREADME.md\0040000 tree bbb\t.theodore\0";
+        let out = b"100644 blob aaa\tREADME.md\x00040000 tree bbb\t.theodore\0";
         let entries = parse_ls_tree(out);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].name, ".theodore");
@@ -301,7 +301,7 @@ mod tests {
         );
         assert_eq!(
             String::from_utf8(input).unwrap(),
-            "100644 blob aaa\tREADME.md\0040000 tree ccc\t.theodore\0"
+            "100644 blob aaa\tREADME.md\x00040000 tree ccc\t.theodore\0"
         );
     }
 

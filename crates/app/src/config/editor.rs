@@ -308,10 +308,8 @@ fn line_of(lines: &BTreeMap<String, u32>, dotted: &str) -> Option<u32> {
         {
             return Some(*l);
         }
-        match key.rfind('.') {
-            Some(i) => key.truncate(i),
-            None => return None,
-        }
+        let i = key.rfind('.')?;
+        key.truncate(i);
     }
 }
 

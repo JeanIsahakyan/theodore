@@ -210,10 +210,7 @@ impl Core {
     ) -> Option<theodore_contract::RepoCommands> {
         let set = trust::repo_commands(merged, None)?;
         let allowed = self.trusted_hashes(project).await;
-        let hit = allowed
-            .iter()
-            .any(|h| *h == set.hash)
-            .then_some(set.hash.as_str());
+        let hit = allowed.contains(&set.hash).then_some(set.hash.as_str());
         trust::repo_commands(merged, hit)
     }
 
