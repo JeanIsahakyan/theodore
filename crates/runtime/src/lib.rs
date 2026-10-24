@@ -9,7 +9,7 @@ mod token;
 mod tools;
 mod worktree_gc;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -231,9 +231,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
     };
     let backend = Arc::new(CoreTools::default());
     let mcp = Arc::new(McpRunTools::start(backend.clone(), backend.clone()).await?);
-    let claude_home = dirs::home_dir()
-        .map(|h| h.join(".claude/skills"))
-        .unwrap_or_else(|| PathBuf::from(".claude/skills"));
+    let claude_home = skills_dir(cfg.sandbox.is_some(), &cfg.data_dir, dirs::home_dir());
 
     let worktree_locks = WorktreeLocks::new();
     let deps = Deps {
@@ -290,4 +288,33 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         worktree_locks,
         sandbox,
     })
+}
+
+/// Where "my skills" live. The sandbox keeps its own under its data dir:
+/// creating or forking a skill there must never write into the user's real
+/// `~/.claude/skills`.
+fn skills_dir(sandbox: bool, data_dir: &Path, home: Option<PathBuf>) -> PathBuf {
+    if sandbox {
+        return data_dir.join("claude-skills");
+    }
+    home.map(|h| h.join(".claude/skills"))
+        .unwrap_or_else(|| PathBuf::from(".claude/skills"))
+}
+
+#[cfg(test)]
+mod skills_dir_tests {
+    use super::*;
+
+    #[test]
+    fn the_sandbox_never_points_at_the_real_skills_folder() {
+        let home = Some(PathBuf::from("/Users/me"));
+        assert_eq!(
+            skills_dir(true, Path::new("/data/sb"), home.clone()),
+            PathBuf::from("/data/sb/claude-skills")
+        );
+        assert_eq!(
+            skills_dir(false, Path::new("/data/real"), home),
+            PathBuf::from("/Users/me/.claude/skills")
+        );
+    }
 }
