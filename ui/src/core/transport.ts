@@ -5,15 +5,34 @@
  */
 export type Unlisten = () => void;
 
+/** The invoke header that carries a call's operation id: the core puts it
+ *  on every log record of that command, so one failure can be followed
+ *  from the UI through the core to the agent and the host. */
+export const OP_HEADER = 'x-theodore-op';
+
+export interface InvokeOptions {
+  opId?: string;
+}
+
 export interface Transport {
-  invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>;
+  invoke<T>(
+    cmd: string,
+    args?: Record<string, unknown>,
+    opts?: InvokeOptions,
+  ): Promise<T>;
   listen<T>(event: string, cb: (payload: T) => void): Promise<Unlisten>;
 }
 
 export class TauriTransport implements Transport {
-  async invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  async invoke<T>(
+    cmd: string,
+    args?: Record<string, unknown>,
+    opts?: InvokeOptions,
+  ): Promise<T> {
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<T>(cmd, args);
+    return opts?.opId
+      ? invoke<T>(cmd, args, { headers: { [OP_HEADER]: opts.opId } })
+      : invoke<T>(cmd, args);
   }
 
   async listen<T>(event: string, cb: (payload: T) => void): Promise<Unlisten> {
