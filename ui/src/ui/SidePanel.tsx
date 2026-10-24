@@ -13,6 +13,7 @@ import {
   FileCode,
   Layers,
   ListCheck,
+  Pencil,
   Plus,
   Sparkles,
   ThumbsDown,
@@ -67,7 +68,7 @@ import { ago } from './List';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
 import { isAgentEnabled } from './Settings';
-import { SkillBrowser } from './Skills';
+import { SkillsManagerModal } from './Skills';
 import { TaskRow } from './Tasks';
 import { SendToAgent } from './space/SendToAgent';
 
@@ -625,7 +626,9 @@ const FindingCard = observer(function FindingCard({
 function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
   if (!text.startsWith('/') || /\s/.test(text)) return null;
   const q = text.slice(1).toLowerCase();
-  return skills.filter((s) => s.id.toLowerCase().includes(q));
+  return skills.filter(
+    (s) => s.id.toLowerCase().includes(q) || s.title.toLowerCase().includes(q),
+  );
 }
 
 /** "2 findings hidden by config" for a run whose findings on
@@ -722,6 +725,8 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     };
   }, [store]);
   const [hi, setHi] = useState(0);
+  const [managing, setManaging] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [pending, setPending] = useState<{
     run: string;
     startedAt: number;
@@ -789,6 +794,19 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
 
   return (
     <div className="chat flex min-h-0 flex-1 flex-col">
+      {managing && (
+        <SkillsManagerModal
+          pr={pr}
+          onClose={() => {
+            setManaging(false);
+            // A skill forked or added there shows up in the list right away.
+            void api
+              .listSkills(pr)
+              .then(setSkills)
+              .catch(() => {});
+          }}
+        />
+      )}
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 py-5">
         {messages.length === 0 && runs.length === 0 && !pending ? (
           <div className="m-auto flex w-full flex-col gap-4">
@@ -1010,8 +1028,17 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 </ListBox.Item>
               ))}
             </ListBox>
-            <div className="flex items-center gap-1 px-3 pb-1 pt-1.5 text-xs text-muted">
+            <div className="flex items-center gap-1 ps-3 pt-1 text-xs text-muted">
               Runs on {skillAgents.join(' + ')}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="manage-skills ms-auto gap-1.5 text-xs text-muted"
+                onPress={() => setManaging(true)}
+              >
+                <Pencil className="size-3.5" />
+                Manage skills…
+              </Button>
             </div>
           </Card>
         )}
@@ -1027,10 +1054,18 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
             className="flex flex-col gap-2 rounded-3xl py-2.5"
           >
             <InputGroup.TextArea
+              ref={inputRef}
               rows={2}
               className="w-full resize-none px-4 py-0"
               placeholder="Ask about the code, or / to run a skill"
               onKeyDown={(e) => {
+                if (matches && e.key === 'Escape') {
+                  // Esc closes the skills list, not the page.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setText('');
+                  return;
+                }
                 if (matches && matches.length > 0) {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
@@ -1062,22 +1097,15 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                   variant="tertiary"
                   aria-label="Skills"
                   className="slash-btn shrink-0 rounded-full font-mono"
-                  onPress={() => setText('/')}
+                  onPress={() => {
+                    setText(text === '/' ? '' : '/');
+                    inputRef.current?.focus();
+                  }}
                 >
                   /
                 </Button>
-                <Tooltip.Content>Run a skill</Tooltip.Content>
+                <Tooltip.Content>Skills</Tooltip.Content>
               </Tooltip>
-              <span className="shrink-0">
-                <SkillBrowser
-                  pr={pr}
-                  skills={skills}
-                  agents={skillAgents}
-                  onRun={(s, agents) => {
-                    void runSkill(store, pr, s.id, agents);
-                  }}
-                />
-              </span>
               <Dropdown>
                 <Button
                   size="sm"

@@ -51,7 +51,7 @@ export type Route =
   | { name: 'branches' }
   | { name: 'tasks' }
   /** The standalone skills library: every source, filterable, with the
-   *  SKILL.md editor — unlike the in-review `SkillBrowser` popover, this
+   *  SKILL.md editor — unlike the in-review `SkillsManagerModal`, this
    *  one isn't scoped to a PR. */
   | { name: 'skills' }
   | { name: 'settings'; page: SettingsPage }
