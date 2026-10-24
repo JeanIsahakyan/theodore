@@ -52,7 +52,6 @@ import type {
   Anchor,
   DiffLine,
   FileDiff,
-  Group,
   Hunk,
   HunkId,
   InterdiffEntry,
@@ -80,7 +79,6 @@ import { groupsForRevision, type ReviewMode } from './GroupsPane';
 import { nextReviewableGroup } from './review/groups';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
-import { TourBar } from './review/TourBar';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 import { identifierAt } from './symbols/extract';
 
@@ -240,7 +238,6 @@ export const DiffPane = observer(function DiffPane({
   /** The head you had open last visit, shown short in the since-only banner
    *  — `null` on a first visit, when there's nothing to compare against. */
   baselineSha,
-  tour,
   /** Focused hunk and open composer are owned by `Review` — its `J`/`K`/`C`
    *  shortcuts drive them, and the diff pane just renders what they say. */
   focusHunk,
@@ -261,14 +258,6 @@ export const DiffPane = observer(function DiffPane({
   since?: Map<HunkId, SinceKind> | null;
   sinceOnly?: boolean;
   baselineSha?: string | null;
-  /** Active tour state — the reviewable groups in order, which one is
-   *  current, and the Back/Next handlers; `null`/absent outside a tour. */
-  tour?: {
-    groups: Group[];
-    index: number;
-    onBack: () => void;
-    onNext: () => void;
-  } | null;
   focusHunk: HunkId | null;
   setFocusHunk: (h: HunkId | null) => void;
   composer: ComposerState | null;
@@ -504,14 +493,6 @@ export const DiffPane = observer(function DiffPane({
         onScroll={(e) => ui.setReviewScroll(pr, e.currentTarget.scrollTop)}
         className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
       >
-        {tour && (
-          <TourBar
-            groups={tour.groups}
-            index={tour.index}
-            onBack={tour.onBack}
-            onNext={tour.onNext}
-          />
-        )}
         {splitDowngraded && (
           <Alert status="default" className="split-note mb-4">
             <Alert.Content>
@@ -623,7 +604,7 @@ export const DiffPane = observer(function DiffPane({
           </>
         )}
         <div className="flex justify-center py-4">
-          {nextGroup && mode.mode === 'groups' && !tour && (
+          {nextGroup && mode.mode === 'groups' && (
             <NextGroup pr={pr} rev={rev} mode={mode} setMode={setMode} />
           )}
         </div>

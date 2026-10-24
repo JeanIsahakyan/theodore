@@ -36,7 +36,7 @@ import { ask, markGroupRead, regroup, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
-import { groupsInRevision } from './review/groups';
+import { groupsInRevision, groupsProgress } from './review/groups';
 
 export interface ReviewMode {
   mode: 'groups' | 'files';
@@ -70,10 +70,10 @@ const plural = (n: number, one: string, few: string, many: string) =>
 
 /** Groups loaded for this PR whose hunks are part of the open revision, in
  *  reading order — see the final report on why `Group` needs its own `pr`
- *  field. Exported so Review can drive Tour mode over the same ordering.
- *  Includes `hidden` groups (lockfiles, generated code): they're still
- *  listed here, just collapsed by default in the diff — see
- *  `review/groups.ts`'s `reviewableGroups` for the subset tour/N-P skip. */
+ *  field. Exported so Review can drive `N`/`P` navigation over the same
+ *  ordering. Includes `hidden` groups (lockfiles, generated code): they're
+ *  still listed here, just collapsed by default in the diff — see
+ *  `review/groups.ts`'s `reviewableGroups` for the subset `N`/`P` skip. */
 export function groupsForRevision(
   store: ReturnType<typeof useRootStore>,
   pr: PrId,
@@ -114,7 +114,6 @@ export const GroupsPane = observer(function GroupsPane({
   setMode,
   since,
   sinceOnly,
-  onTourFrom,
   onOpenFile,
 }: {
   pr: PrId;
@@ -123,8 +122,6 @@ export const GroupsPane = observer(function GroupsPane({
   setMode: (m: ReviewMode) => void;
   since: Map<HunkId, SinceKind> | null;
   sinceOnly: boolean;
-  /** Starts the tour at this group — wired from `Review.tsx`'s own tour state. */
-  onTourFrom?: (groupId: string) => void;
   onOpenFile?: (groupId: string, path: string) => void;
 }) {
   const store = useRootStore();
@@ -137,6 +134,7 @@ export const GroupsPane = observer(function GroupsPane({
   const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
   const hunkReads = store.models.hunkReads.byPr(pr);
   const readSet = new Set(hunkReads.map((r) => r.hunk));
+  const progress = groupsProgress(groups, readSet);
   const fileViews = store.models.fileViews.byPr(pr);
   const viewedCount = fileViews.filter((v) => v.state === 'viewed').length;
 
@@ -156,7 +154,28 @@ export const GroupsPane = observer(function GroupsPane({
       variant="secondary"
       className="groups flex min-h-0 flex-col border-r border-separator"
     >
-      <div className="mx-4 mb-2 mt-4 flex items-center gap-1">
+      {progress.total > 0 && (
+        <ProgressBar
+          aria-label="Groups read"
+          value={progress.read}
+          maxValue={progress.total}
+          size="sm"
+          color={progress.read === progress.total ? 'success' : 'default'}
+          className="groups-progress mx-4 mb-1 mt-4"
+        >
+          <Label
+            className={`text-xs ${progress.read === progress.total ? 'text-success' : 'text-muted'}`}
+          >
+            {progress.label}
+          </Label>
+          <ProgressBar.Track>
+            <ProgressBar.Fill />
+          </ProgressBar.Track>
+        </ProgressBar>
+      )}
+      <div
+        className={`mx-4 mb-2 flex items-center gap-1 ${progress.total > 0 ? 'mt-2' : 'mt-4'}`}
+      >
         <Tabs
           selectedKey={mode.mode}
           onSelectionChange={(k) =>
@@ -252,16 +271,6 @@ export const GroupsPane = observer(function GroupsPane({
                             isDisabled: read === hs.length,
                             disabledReason: 'Already read',
                             onAction: () => markGroupRead(store, pr, hs),
-                          },
-                          {
-                            id: 'tour-from-here',
-                            label: 'Tour from here',
-                            isDisabled: !onTourFrom || g.kind === 'hidden',
-                            disabledReason:
-                              g.kind === 'hidden'
-                                ? 'Hidden groups are skipped by the tour'
-                                : undefined,
-                            onAction: () => onTourFrom?.(g.id),
                           },
                           {
                             id: 'ask-agent',

@@ -218,7 +218,7 @@ is left as it was.
 ### Review of a space
 
 "Review ▸" opens the normal Review tab for the space — groups by meaning, read
-marks, tour, findings, skills. One difference while drafting:
+marks and progress, findings, skills. One difference while drafting:
 
 ```
 ┌ Review · fix-login-redirect (your space) ───────────────────────────────────────┐
@@ -281,7 +281,7 @@ config — files copied in, free ports, env, and `setup` / `run` / `check` /
 ## 4. What makes it Theodore's
 
 - **Review is the product.** The agent's diff is reviewed with the same
-  grouping, read state, tour, findings and skills as a teammate's PR. A
+  grouping, read state, findings and skills as a teammate's PR. A
   space's review is an ordinary branch review (`open_branch` plumbing) whose
   head is the space's checkpoint.
 - **Comments are instructions.** Drafts, findings and reviewer threads go to

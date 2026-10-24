@@ -107,7 +107,6 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             Some("CmdOrCtrl+Shift+Enter"),
         )?)
         .separator()
-        .item(&i("tour", "Start / Stop Tour", None)?)
         .item(&i("mark-group-read", "Mark Group as Read", None)?)
         .item(&i("ask-agent", "Ask the Agent / Run a Skill", None)?)
         .separator()

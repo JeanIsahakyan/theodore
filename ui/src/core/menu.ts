@@ -76,7 +76,7 @@ export function runMenu(store: RootStore, id: string): void {
       return ui.openModal('submit');
     }
     default:
-      // view-*, tour, mark-group-read, ask-agent, open-on-host
+      // view-*, mark-group-read, ask-agent, open-on-host
       review();
   }
 }
