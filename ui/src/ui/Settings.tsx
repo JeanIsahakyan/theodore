@@ -712,8 +712,11 @@ function effectiveOf(
   if (repoVal !== undefined) return { value: repoVal, source: 'repo' };
   const userVal = settingValue(store, 'user', key);
   if (userVal !== undefined) return { value: userVal, source: 'user' };
-  return { value: undefined, source: 'default' };
+  // Every agent task falls back to Claude (the core's own default).
+  return { value: AGENT_DEFAULT, source: 'default' };
 }
+
+const AGENT_DEFAULT: AgentId = 'claude';
 
 const SOURCE_NOTE: Record<'repo' | 'user' | 'default', string> = {
   repo: 'from this project’s config files',
