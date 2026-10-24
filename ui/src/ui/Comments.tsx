@@ -1,3 +1,4 @@
+import { isBranchReview } from './project/sections';
 import { stripHtmlComments } from '../highlight';
 /**
  * The inline comment-thread UI used under a diff line: existing review
@@ -135,7 +136,12 @@ function useMentionMenu(pr: PrId, text: string, setText: (t: string) => void) {
   const [people, setPeople] = useState<Person[] | null>(null);
   const [state, setState] = useState<MentionMenuState | null>(null);
 
+  // A branch review or a local folder has no host to mention people on.
+  const summary = store.models.prSummaries.get(pr);
+  const noHost =
+    !!summary && (summary.pr.repo.host === 'local' || isBranchReview(summary));
   useEffect(() => {
+    if (noHost) return;
     let live = true;
     void assignableUsers(pr).then((p) => {
       if (live) setPeople(p);
@@ -143,7 +149,7 @@ function useMentionMenu(pr: PrId, text: string, setText: (t: string) => void) {
     return () => {
       live = false;
     };
-  }, [pr]);
+  }, [pr, noHost]);
 
   const sync = (value: string, caret: number) => {
     const q = mentionQueryAt(value, caret);

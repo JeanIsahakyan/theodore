@@ -216,7 +216,10 @@ export const api = {
       .catch(() => null),
   mergeInfo: (pr: PrId) => call<MergeInfo>('merge_info', { pr }),
   mergePr: (req: MergeRequest) => call<null>('merge_pr', { req }),
-  assignableUsers: (pr: PrId) => call<Person[]>('assignable_users', { pr }),
+  /** A passive read (the @-mention list, the reviewer picker): a failure
+   *  just leaves the list empty, it isn't toasted. */
+  assignableUsers: (pr: PrId) =>
+    call<Person[]>('assignable_users', { pr }, true),
   setReviewers: (req: ReviewersRequest) => call<null>('set_reviewers', { req }),
   setDraft: (req: DraftStateRequest) => call<null>('set_draft', { req }),
   updateBranch: (pr: PrId) => call<null>('update_branch', { pr }),
