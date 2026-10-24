@@ -149,6 +149,13 @@ export const commands = {
 	 *  app, and the user should land back in Theodore without hunting for it.
 	 */
 	focusWindow: () => typedError<null, CommandError>(__TAURI_INVOKE("focus_window")),
+	/**
+	 *  Shows a space's "turn finished" notification while the window is in the
+	 *  background; a click brings the window forward and emits `open-space`
+	 *  with the space id. `true` when the click will be reported, `false` when
+	 *  it can't be (the UI then opens the space on the next window focus).
+	 */
+	notifySpace: (space: string, title: string, body: string | null) => typedError<boolean, CommandError>(__TAURI_INVOKE("notify_space", { space, title, body })),
 };
 
 /* Types */

@@ -42,6 +42,11 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-notification = "2"
 tauri-specta = { workspace = true, features = ["derive", "typescript"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The click on a space's notification (src/notify.rs); the plugin's own
+# backend, called directly so it waits for the click.
+mac-notification-sys = "0.6"
+
 [dev-dependencies]
 tempfile.workspace = true
 
