@@ -11,6 +11,7 @@
 //! Pure: reading the files is the caller's job (`load`), so layering,
 //! the legacy flat keys and unknown-key detection are testable on strings.
 
+pub mod editor;
 pub mod ports;
 pub mod trust;
 pub mod vars;
