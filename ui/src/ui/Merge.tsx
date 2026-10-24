@@ -110,7 +110,10 @@ function gatesFor(
     });
     gates.push({
       ok: summary.approvals >= (summary.required_approvals ?? 0),
-      label: `${summary.approvals}/${summary.required_approvals ?? 0} approvals`,
+      label:
+        summary.required_approvals != null
+          ? `${summary.approvals}/${summary.required_approvals} approvals`
+          : `${summary.approvals} approval${summary.approvals === 1 ? '' : 's'}`,
     });
     if (summary.review_decision === 'changes_requested') {
       gates.push({ ok: false, label: 'changes requested' });
@@ -240,7 +243,10 @@ export const MergeDialog = observer(function MergeDialog({
           Add to merge queue
         </Btn>
       )}
-      {(info.auto_merge_allowed || info.auto_merge_enabled) && (
+      {/* Auto-merge is for a PR that can't merge yet: offered while a
+          gate is red, and always shown once on, so it can be turned off. */}
+      {((info.auto_merge_allowed && blocked.length > 0) ||
+        info.auto_merge_enabled) && (
         <Btn
           tone={info.auto_merge_enabled ? 'secondary' : 'tertiary'}
           icon={<CodeMerge />}
