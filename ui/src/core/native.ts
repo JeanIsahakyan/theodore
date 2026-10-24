@@ -13,9 +13,8 @@ let permission: Promise<boolean> | null = null;
 /** Asks once per session; macOS remembers the answer. */
 function allowed(): Promise<boolean> {
   permission ??= (async () => {
-    const { isPermissionGranted, requestPermission } = await import(
-      '@tauri-apps/plugin-notification'
-    );
+    const { isPermissionGranted, requestPermission } =
+      await import('@tauri-apps/plugin-notification');
     if (await isPermissionGranted()) return true;
     return (await requestPermission()) === 'granted';
   })().catch(() => false);

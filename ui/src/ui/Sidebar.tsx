@@ -177,16 +177,12 @@ export const Sidebar = observer(function Sidebar() {
             id: 'spaces',
             title: 'Spaces',
             items: [
-              ...spaces.map(
-                (s): NavItem => ({
-                  key: routeKey({ name: 'space', id: s.id }),
-                  icon: (
-                    <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />
-                  ),
-                  label: spaceTitle(s),
-                  route: { name: 'space', id: s.id },
-                }),
-              ),
+              ...spaces.map((s): NavItem => ({
+                key: routeKey({ name: 'space', id: s.id }),
+                icon: <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />,
+                label: spaceTitle(s),
+                route: { name: 'space', id: s.id },
+              })),
               {
                 key: 'new-space',
                 icon: <Plus />,
