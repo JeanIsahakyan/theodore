@@ -1,0 +1,77 @@
+[
+  {
+    "event": "app_started",
+    "version": "",
+    "channel": ""
+  },
+  {
+    "event": "signed_in"
+  },
+  {
+    "event": "onboarding_step",
+    "step": ""
+  },
+  {
+    "event": "pr_opened",
+    "host": ""
+  },
+  {
+    "event": "grouping_done",
+    "ms": 0,
+    "valid_first_try": false,
+    "groups": 0,
+    "hunks": 0,
+    "agent": "",
+    "chunks": 0
+  },
+  {
+    "event": "grouping_failed",
+    "code": ""
+  },
+  {
+    "event": "skill_run",
+    "skill": "",
+    "agents": 0,
+    "findings": 0,
+    "ms": 0
+  },
+  {
+    "event": "chat_asked",
+    "scope": ""
+  },
+  {
+    "event": "task_delegated",
+    "agent": ""
+  },
+  {
+    "event": "task_decided",
+    "accepted": false
+  },
+  {
+    "event": "review_submitted",
+    "comments": 0,
+    "review_event": ""
+  },
+  {
+    "event": "merge",
+    "method": ""
+  },
+  {
+    "event": "space_created",
+    "mode": ""
+  },
+  {
+    "event": "space_turn",
+    "ms": 0,
+    "mode": "",
+    "ok": false
+  },
+  {
+    "event": "space_shipped",
+    "how": ""
+  },
+  {
+    "event": "config_saved",
+    "where": ""
+  }
+]
