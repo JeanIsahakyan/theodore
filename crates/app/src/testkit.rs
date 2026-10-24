@@ -406,6 +406,14 @@ pub struct FakeShip {
     /// `(folder, space, branch)` of every `write_folder_branch`.
     pub branches: Vec<(PathBuf, String, String)>,
     pub branch_errors: VecDeque<GitError>,
+    /// `(parent, path, content, message, author)` of every `commit_file`;
+    /// the n-th returns `cfg<n>`, which then `show`s the parent's files
+    /// plus this one.
+    pub file_commits: Vec<(Sha, String, String, String, theodore_ports::Identity)>,
+    /// `dirty_paths`' answer; `None`: unsupported.
+    pub dirty: Option<Vec<String>>,
+    /// `(folder, paths, message)` of every `commit_paths`.
+    pub folder_commits: Vec<(PathBuf, Vec<String>, String)>,
 }
 
 /// `GitResult` isn't `Clone` (`GitError` holds a `std::io::Error`); a fake
@@ -869,6 +877,55 @@ impl GitPort for FakeGit {
         ship.branches
             .push((folder.to_path_buf(), space.to_string(), branch.to_string()));
         Ok(())
+    }
+
+    async fn commit_file(
+        &self,
+        _repo: &Path,
+        parent: &Sha,
+        path: &str,
+        content: &[u8],
+        message: &str,
+        author: &theodore_ports::Identity,
+    ) -> GitResult<Sha> {
+        let sha = {
+            let mut ship = self.ship.lock().unwrap();
+            ship.file_commits.push((
+                parent.clone(),
+                path.to_string(),
+                String::from_utf8_lossy(content).into_owned(),
+                message.to_string(),
+                author.clone(),
+            ));
+            Sha::new(format!("cfg{}", ship.file_commits.len()))
+        };
+        let mut files = self.files.lock().unwrap();
+        let inherited: Vec<(String, Vec<u8>)> = files
+            .iter()
+            .filter(|((rev, _), _)| rev == &parent.0)
+            .map(|((_, p), c)| (p.clone(), c.clone()))
+            .collect();
+        for (p, c) in inherited {
+            files.insert((sha.0.clone(), p), c);
+        }
+        files.insert((sha.0.clone(), path.to_string()), content.to_vec());
+        Ok(sha)
+    }
+
+    async fn dirty_paths(&self, _folder: &Path) -> GitResult<Vec<String>> {
+        self.ship
+            .lock()
+            .unwrap()
+            .dirty
+            .clone()
+            .ok_or(GitError::Unsupported("dirty_paths"))
+    }
+
+    async fn commit_paths(&self, folder: &Path, paths: &[String], message: &str) -> GitResult<Sha> {
+        let mut ship = self.ship.lock().unwrap();
+        ship.folder_commits
+            .push((folder.to_path_buf(), paths.to_vec(), message.to_string()));
+        Ok(Sha::new(format!("folder{}", ship.folder_commits.len())))
     }
 }
 
