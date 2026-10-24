@@ -196,7 +196,9 @@ async fn signed_out_until_a_session_exists() {
         status,
         AccountStatus {
             available: true,
-            user: None
+            required: true,
+            user: None,
+            session_ended: false,
         }
     );
 }

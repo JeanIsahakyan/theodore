@@ -32,6 +32,14 @@ pub use worktree_gc::{WorktreeGuard, WorktreeLocks};
 /// this errs slow.
 const WORKTREE_GC_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
+/// The Theodore account's WorkOS client id, baked in when the build ran
+/// with `THEODORE_WORKOS_CLIENT_ID` set (`scripts/nightly-build.sh`, the
+/// release workflow). The lowest-priority source: the same env var at run
+/// time and the `account.workos.client_id` setting both win. A build made
+/// without it (a plain `cargo run`) has no account, so no sign-in gate.
+/// Ignored in fixture and sandbox modes, which have no account provider.
+pub const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("THEODORE_WORKOS_CLIENT_ID");
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     /// `~/.theodore` by default.
@@ -240,6 +248,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         token_status: a.token_status,
         device_login: a.device_login,
         account: a.account,
+        account_client_id: BUILT_IN_CLIENT_ID.map(str::to_string),
         claude_home,
         commands: Arc::new(theodore_agents::ShellRunner::new()),
         data_dir: cfg.data_dir.clone(),

@@ -191,7 +191,20 @@ export type AccountSignInState = { state: "pending" } |
  */
 export type AccountStatus = {
 	available: boolean,
+	/**
+	 *  Signing in is required before the app does any work: until `user` is
+	 *  set, only the sign-in screen shows and the core answers every other
+	 *  command with `account_required`. Set wherever the account is
+	 *  available.
+	 */
+	required: boolean,
 	user: AccountUser | null,
+	/**
+	 *  Signed out because the provider ended the session (revoked, or the
+	 *  maximum session length reached), not by the user: the sign-in
+	 *  screen says so. Cleared by the next sign-in or sign-out.
+	 */
+	session_ended: boolean,
 };
 
 export type AccountUser = {

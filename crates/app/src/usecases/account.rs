@@ -1,7 +1,18 @@
 //! Theodore account (plan "Theodore account"): `account_status`,
 //! `account_sign_in_start` / `_poll` / `_cancel`, `account_sign_out`. An
-//! optional identity with Theodore itself, separate from the host tokens;
-//! the provider protocol lives behind `AccountPort`.
+//! identity with Theodore itself, separate from the host tokens; the
+//! provider protocol lives behind `AccountPort`.
+//!
+//! Wherever it's configured, signing in is required (plan §6.12 "Sign-in
+//! required"): until then `require_account` turns away the commands that
+//! do work and the background loops hold (`account_hold`).
+//!
+//! ```text
+//! gate   no provider (fixtures, sandbox, CLI) ─▶ Exempt        ─┐
+//!        no client id (plain dev build)       ─▶ NotConfigured ├─▶ open
+//!        session stored                       ─▶ SignedIn      ─┘
+//!        none                                 ─▶ SignedOut     ─▶ closed
+//! ```
 //!
 //! ```text
 //! browser  start ─▶ port builds URL (binds loopback if http) ─▶ UI opens it
@@ -34,8 +45,9 @@ use crate::core::Core;
 use crate::error::{AppError, AppResult};
 
 /// Checked before the settings: lets a packaged build or a developer
-/// configure the account without touching the store. Theodore never ships
-/// a client id; the owner creates the WorkOS application.
+/// configure the account without touching the store. A release build may
+/// also carry one baked in (`Deps::account_client_id`), checked last; no
+/// client id is ever committed, the owner creates the WorkOS application.
 pub const CLIENT_ID_ENV: &str = "THEODORE_WORKOS_CLIENT_ID";
 pub const CLIENT_ID_SETTING: &str = "account.workos.client_id";
 pub const REDIRECT_ENV: &str = "THEODORE_WORKOS_REDIRECT_URI";
@@ -56,6 +68,43 @@ const MIN_REFRESH_WAIT_MS: i64 = 5_000;
 const RETRY_AFTER: Duration = Duration::from_secs(30);
 /// A browser sign-in nobody finishes stops listening after this.
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// A held background loop re-checks the gate this often besides being woken
+/// by a sign-in (a client id setting removed, say).
+const GATE_RECHECK: Duration = Duration::from_secs(1);
+
+/// Whether the app may do work now (plan §6.12 "Sign-in required").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountGate {
+    /// No account provider in this mode (fixtures, sandbox, the CLI).
+    Exempt,
+    /// A provider, but no client id from the env, the setting or the
+    /// build: a plain dev build runs without an account.
+    NotConfigured,
+    SignedIn,
+    /// Sign-in required and missing: only the sign-in works.
+    SignedOut,
+}
+
+impl AccountGate {
+    pub fn is_open(self) -> bool {
+        !matches!(self, AccountGate::SignedOut)
+    }
+}
+
+/// The client id: the env var, else the setting, else the one baked into
+/// the build. Blank values don't count. `None`: no account in this build.
+pub fn resolve_client_id(
+    env: Option<&str>,
+    setting: Option<&str>,
+    built_in: Option<&str>,
+) -> Option<String> {
+    [env, setting, built_in]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|v| !v.is_empty())
+        .map(str::to_string)
+}
 
 enum Pending {
     Browser {
@@ -82,6 +131,29 @@ struct BrowserAttempt {
     cancel: CancellationToken,
 }
 
+/// Whether the gate is open from the configuration alone, worked out
+/// without waiting at start-up: no provider, or no client id anywhere.
+/// Otherwise it starts closed until `Core::account_gate` has read the
+/// stored session, so no host call slips out before that.
+pub(crate) fn gate_open_at_start(deps: &crate::Deps) -> bool {
+    if !deps.account.enabled() {
+        return true;
+    }
+    let env = std::env::var(CLIENT_ID_ENV).ok();
+    let setting = deps
+        .store
+        .query(theodore_contract::models::SETTING, "key", CLIENT_ID_SETTING)
+        .ok()
+        .and_then(|rows| crate::settings::pick_setting(rows, None))
+        .and_then(|v| v.as_str().map(str::to_string));
+    resolve_client_id(
+        env.as_deref(),
+        setting.as_deref(),
+        deps.account_client_id.as_deref(),
+    )
+    .is_none()
+}
+
 /// In-memory account state, one per `Core`.
 #[derive(Default)]
 pub(crate) struct AccountState {
@@ -98,6 +170,35 @@ pub(crate) struct AccountState {
     /// The app URL scheme redirect the shell can receive, if any
     /// (`Core::set_account_app_redirect`).
     app_redirect: std::sync::Mutex<Option<String>>,
+    /// The last gate `Core::account_gate` worked out, open or not: what the
+    /// background loops check on every tick. Seeded by
+    /// `gate_open_at_start`.
+    open: std::sync::atomic::AtomicBool,
+    /// Wakes held loops when the gate changes.
+    gate_changed: tokio::sync::Notify,
+    /// The provider ended the last session (a rejected refresh); cleared by
+    /// the next sign-in or sign-out.
+    session_ended: std::sync::atomic::AtomicBool,
+}
+
+impl AccountState {
+    pub(crate) fn new(open: bool) -> Self {
+        Self {
+            open: std::sync::atomic::AtomicBool::new(open),
+            ..Self::default()
+        }
+    }
+
+    /// The gate as last worked out.
+    pub(crate) fn is_open(&self) -> bool {
+        self.open.load(Ordering::SeqCst)
+    }
+
+    fn note_gate(&self, open: bool) {
+        if self.open.swap(open, Ordering::SeqCst) != open {
+            self.gate_changed.notify_waiters();
+        }
+    }
 }
 
 /// The receiving end of an app URL scheme redirect for one sign-in.
@@ -208,7 +309,9 @@ pub(crate) fn user_of(s: &AccountSession) -> AccountUser {
 fn unavailable() -> AccountStatus {
     AccountStatus {
         available: false,
+        required: false,
         user: None,
+        session_ended: false,
     }
 }
 
@@ -217,16 +320,21 @@ fn not_configured() -> AppError {
 }
 
 impl Core {
-    /// `THEODORE_WORKOS_*` env, else the `account.workos.*` settings. `None`
-    /// hides the feature: no provider in this mode, or no client id. The
-    /// redirect: see `choose_redirect`.
+    /// `THEODORE_WORKOS_*` env, else the `account.workos.*` settings (the
+    /// client id last falls back to the build's own, `resolve_client_id`).
+    /// `None` hides the feature: no provider in this mode, or no client id.
+    /// The redirect: see `choose_redirect`.
     pub(crate) async fn account_config(&self) -> Option<AccountConfig> {
         if !self.0.deps.account.enabled() {
             return None;
         }
-        let client_id = self
-            .env_or_setting(CLIENT_ID_ENV, CLIENT_ID_SETTING)
-            .await?;
+        let env = std::env::var(CLIENT_ID_ENV).ok();
+        let setting = self.setting_string(CLIENT_ID_SETTING, "").await;
+        let client_id = resolve_client_id(
+            env.as_deref(),
+            Some(&setting),
+            self.0.deps.account_client_id.as_deref(),
+        )?;
         let configured = self.env_or_setting(REDIRECT_ENV, REDIRECT_SETTING).await;
         let app = self
             .0
@@ -261,17 +369,69 @@ impl Core {
     }
 
     pub async fn account_status(&self) -> AppResult<AccountStatus> {
-        if self.account_config().await.is_none() {
-            return Ok(unavailable());
-        }
-        self.account_load().await;
-        Ok(self.account_status_now())
+        Ok(match self.account_gate().await {
+            AccountGate::Exempt | AccountGate::NotConfigured => unavailable(),
+            AccountGate::SignedIn | AccountGate::SignedOut => self.account_status_now(),
+        })
     }
 
     fn account_status_now(&self) -> AccountStatus {
         AccountStatus {
             available: true,
+            required: true,
             user: self.account_session().as_ref().map(user_of),
+            session_ended: self.0.account.session_ended.load(Ordering::SeqCst),
+        }
+    }
+
+    /// Works out whether the app may do work now, and records it for the
+    /// background loops (`account_hold`).
+    pub async fn account_gate(&self) -> AccountGate {
+        let gate = if !self.0.deps.account.enabled() {
+            AccountGate::Exempt
+        } else if self.account_config().await.is_none() {
+            AccountGate::NotConfigured
+        } else {
+            self.account_load().await;
+            if self.account_session().is_some() {
+                AccountGate::SignedIn
+            } else {
+                AccountGate::SignedOut
+            }
+        };
+        self.0.account.note_gate(gate.is_open());
+        gate
+    }
+
+    /// `Err(AccountRequired)` while signed out where sign-in is required.
+    /// The shell calls it before every command that does work.
+    pub async fn require_account(&self) -> AppResult<()> {
+        if self.account_gate().await.is_open() {
+            Ok(())
+        } else {
+            Err(AppError::AccountRequired)
+        }
+    }
+
+    /// Holds a background loop (poller, outbox) while the gate is closed,
+    /// so no host traffic starts before sign-in or after the session
+    /// ended. Free when the gate is open. `false` once the core shuts down.
+    pub(crate) async fn account_hold(&self) -> bool {
+        if self.0.account.is_open() {
+            return !self.0.shutdown.is_cancelled();
+        }
+        loop {
+            // Registered before the check, so a sign-in in between still
+            // wakes it.
+            let changed = self.0.account.gate_changed.notified();
+            if self.account_gate().await.is_open() {
+                return !self.0.shutdown.is_cancelled();
+            }
+            tokio::select! {
+                _ = self.0.shutdown.cancelled() => return false,
+                _ = changed => {}
+                _ = tokio::time::sleep(GATE_RECHECK) => {}
+            }
         }
     }
 
@@ -513,6 +673,8 @@ impl Core {
         self.account_persist(Some(&session)).await?;
         self.0.account.generation.fetch_add(1, Ordering::SeqCst);
         *self.0.account.session.lock().expect("account lock") = Some(session);
+        self.0.account.session_ended.store(false, Ordering::SeqCst);
+        self.account_gate().await;
         self.account_schedule_refresh();
         let status = self.account_status_now();
         self.emit(Ephemeral::AccountStatus {
@@ -609,10 +771,12 @@ impl Core {
     }
 
     /// Forgets the session locally (keychain included) and ends it at the
-    /// provider in the background, best effort.
+    /// provider in the background, best effort. Only the session goes: the
+    /// store, projects, drafts and worktrees stay, for the next sign-in.
     pub async fn account_sign_out(&self) -> AppResult<AccountStatus> {
         self.account_sign_in_cancel();
         self.account_load().await;
+        self.0.account.session_ended.store(false, Ordering::SeqCst);
         let old = self.account_forget().await?;
         if let (Some(old), Some(cfg)) = (old, self.account_config().await) {
             let port = self.0.deps.account.clone();
@@ -645,7 +809,9 @@ impl Core {
         }
         self.0.account.generation.fetch_add(1, Ordering::SeqCst);
         let old = self.0.account.session.lock().expect("account lock").take();
-        self.account_persist(None).await?;
+        let persisted = self.account_persist(None).await;
+        self.account_gate().await;
+        persisted?;
         Ok(old)
     }
 
@@ -666,8 +832,10 @@ impl Core {
     }
 
     /// Rotates the session unless another caller just did. A rejected
-    /// refresh token means the session is over: signed out, UI told.
-    /// `Ok(None)` when there's no session (anymore).
+    /// refresh token means the session is over: signed out, UI told, the
+    /// gate closes. Any other failure (offline, a 5xx) keeps the session:
+    /// the app stays usable and the refresher retries. `Ok(None)` when
+    /// there's no session (anymore).
     pub(crate) async fn account_refresh_now(&self) -> AppResult<Option<AccountSession>> {
         let _one_at_a_time = self.0.account.refresh_lock.lock().await;
         let generation = self.0.account.generation.load(Ordering::SeqCst);
@@ -701,6 +869,7 @@ impl Core {
             }
             Err(e @ (AccountError::Rejected(_) | AccountError::InvalidToken(_))) => {
                 if self.0.account.generation.load(Ordering::SeqCst) == generation {
+                    self.0.account.session_ended.store(true, Ordering::SeqCst);
                     self.account_forget().await?;
                     self.emit(Ephemeral::AccountStatus {
                         status: self.account_status_now(),

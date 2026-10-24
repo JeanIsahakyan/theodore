@@ -24,6 +24,7 @@ import type {
 import { appendLogs, seedLogs } from '../ui/space/commands';
 import { configPrToast } from '../ui/project/configFile';
 import { openExternal } from '../core/openExternal';
+import { accountGate, type AccountGate } from '../core/accountGate';
 
 const LOG_LIMIT = 500;
 
@@ -105,6 +106,7 @@ export class EphemeralStore {
       viewerLoading: observable,
       appInfo: observableRef,
       account: observableRef,
+      accountGate: computed,
       sandbox: computed,
       reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
@@ -187,6 +189,12 @@ export class EphemeralStore {
   /** Set only when this window runs against the sandbox host. */
   get sandbox(): SandboxInfo | null {
     return this.appInfo?.sandbox ?? null;
+  }
+
+  /** `locked` while signed out where signing in is required: only the
+   *  sign-in shows, shortcuts and the menu are inert. */
+  get accountGate(): AccountGate {
+    return accountGate(this.account);
   }
 
   setAccount(s: AccountStatus): void {

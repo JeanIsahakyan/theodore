@@ -128,7 +128,8 @@ enum Outcome {
 pub(crate) async fn run(inner: Arc<Inner>) {
     let core = Core(inner.clone());
     loop {
-        if inner.shutdown.is_cancelled() {
+        // Signed out where sign-in is required: writes wait in the outbox.
+        if !core.account_hold().await {
             return;
         }
         let now = inner.deps.clock.now();

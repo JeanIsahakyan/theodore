@@ -25,6 +25,9 @@ function message(e: unknown): string {
 
 export function useDeviceLogin(
   onDone: (status: HostAuthStatus) => void,
+  /** `false` holds the availability check (behind the account gate, where
+   *  the core turns it away); it runs once this turns `true`. */
+  enabled = true,
 ): DeviceLoginState {
   const [available, setAvailable] = useState(false);
   const [phase, setPhase] = useState<DeviceLoginPhase>('idle');
@@ -40,11 +43,12 @@ export function useDeviceLogin(
   }, [onDone]);
 
   useEffect(() => {
+    if (!enabled) return;
     void api
       .hostStatus()
       .then((s) => setAvailable(s.device_login_available ?? false))
       .catch(() => setAvailable(false));
-  }, []);
+  }, [enabled]);
 
   // One polling chain per `(phase === 'pending', device)` pair: a plain
   // recursive `setTimeout`, not a hook value, so it can call itself without

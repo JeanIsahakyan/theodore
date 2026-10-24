@@ -117,6 +117,7 @@ impl Core {
         let (sync_tx, sync_rx) = broadcast::channel(1024);
         let (ephemeral_tx, ephemeral_rx) = broadcast::channel(1024);
         let last = deps.store.last_sync_id().unwrap_or(0);
+        let open = crate::usecases::account::gate_open_at_start(&deps);
 
         let inner = Arc::new(Inner {
             deps,
@@ -136,7 +137,7 @@ impl Core {
             host_health: std::sync::Mutex::new((true, None, true)),
             login: Mutex::new(None),
             linear_cache: std::sync::Mutex::new(HashMap::new()),
-            account: Default::default(),
+            account: crate::usecases::account::AccountState::new(open),
             space_rt: std::sync::Mutex::new(HashMap::new()),
             ports_lock: tokio::sync::Mutex::new(()),
             setup_lock: tokio::sync::Mutex::new(()),
@@ -155,19 +156,27 @@ impl Core {
                 core.fail_interrupted_spaces().await;
             });
         }
+        // Host traffic waits for the account gate (`account_hold`): the
+        // outbox and the poller hold on every tick, the start-up inbox
+        // refresh and clones before they begin. Free when sign-in isn't
+        // required; else they start once signed in.
         tokio::spawn(crate::outbox::run(inner.clone()));
         tokio::spawn(crate::poller::run(inner.clone()));
         tokio::spawn(crate::sync::compactor::run(inner.clone()));
         {
             let core = core.clone();
             tokio::spawn(async move {
-                let _ = core.refresh_inbox().await;
+                if core.account_hold().await {
+                    let _ = core.refresh_inbox().await;
+                }
             });
         }
         {
             let core = core.clone();
             tokio::spawn(async move {
-                let _ = core.resume_cloning_projects().await;
+                if core.account_hold().await {
+                    let _ = core.resume_cloning_projects().await;
+                }
             });
         }
         {

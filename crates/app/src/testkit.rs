@@ -2177,6 +2177,7 @@ impl Fixtures {
             device_login: self.device_login.clone(),
             worktree_lease: self.worktree_lease.clone(),
             account: self.account.clone(),
+            account_client_id: None,
             commands: self.commands.clone(),
             data_dir: self.data_dir.path().to_path_buf(),
         }

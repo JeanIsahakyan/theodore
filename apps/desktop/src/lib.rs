@@ -6,6 +6,7 @@ pub mod commands;
 pub mod core_api;
 pub mod deep_link;
 pub mod events;
+pub mod gate;
 pub mod menu;
 pub mod notify;
 pub mod shell_path;
@@ -180,7 +181,9 @@ pub fn run(
         // A space's turn finished while the window was in the background
         // (`notify`; the plugin is its fallback where clicks can't come back).
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(builder.invoke_handler())
+        // Signed out where sign-in is required, only the sign-in screen's
+        // commands run (plan §6.12, `gate.rs`).
+        .invoke_handler(gate::guard_core(core.clone(), builder.invoke_handler()))
         .manage(core.clone())
         .manage(updater::UpdateState::default())
         .setup(move |app| {

@@ -49,6 +49,8 @@ mac-notification-sys = "0.6"
 
 [dev-dependencies]
 tempfile.workspace = true
+# `tauri::test`: the mock runtime the account gate's IPC test runs on.
+tauri = { workspace = true, features = ["test"] }
 
 [lints]
 workspace = true

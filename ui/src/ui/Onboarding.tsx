@@ -1,5 +1,5 @@
 import { Logo } from './Logo';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   CircleCheckFill,
   Lock,
@@ -38,12 +38,17 @@ const STEP_TITLE: Record<StepId, string> = {
   done: 'Done',
 };
 
-/** Signing in to Theodore comes first when the feature is configured (a
- *  WorkOS client id); it stays optional. */
-export function onboardingSteps(accountAvailable: boolean): StepId[] {
-  return accountAvailable
+/** Signing in to Theodore comes first when it's required (a WorkOS client
+ *  id is configured), and can't be skipped. */
+export function onboardingSteps(accountRequired: boolean): StepId[] {
+  return accountRequired
     ? ['account', 'github', 'agents', 'projects', 'done']
     : ['github', 'agents', 'projects', 'done'];
+}
+
+/** Only Projects can be skipped; the sign-in, where it's a step, can't. */
+export function skippable(id: StepId, hasProjects: boolean): boolean {
+  return id === 'projects' && !hasProjects;
 }
 
 const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
@@ -54,14 +59,15 @@ const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
   sandbox: 'the sandbox (simulated host)',
 };
 
-/** First launch: optionally sign in to a Theodore account, connect GitHub
- *  (reusing `gh` if it's already logged in, or a pasted token), detect agent
- *  CLIs, then straight to the Inbox — projects arrive by opening a PR by
- *  URL, so that step is a no-op you can skip. */
+/** First launch: sign in to the Theodore account where it's required
+ *  (nothing else runs before that), connect GitHub (reusing `gh` if it's
+ *  already logged in, or a pasted token), detect agent CLIs, then straight
+ *  to the Inbox — projects arrive by opening a PR by URL, so that step is a
+ *  no-op you can skip. */
 export const Onboarding = observer(function Onboarding() {
   const store = useRootStore();
   const ui = useUi();
-  const [step, setStep] = useState(0);
+  const [picked, setStep] = useState(0);
   const [host, setHost] = useState<HostAuthStatus | null | 'unready'>(null);
   const [checking, setChecking] = useState(false);
   const [useToken, setUseToken] = useState(false);
@@ -69,32 +75,33 @@ export const Onboarding = observer(function Onboarding() {
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentStatus[] | null>(null);
   const account = useAccountStatus();
-  // The steps depend on whether sign-in is configured: wait for that
-  // answer (briefly) so step 1 doesn't flip from GitHub to the sign-in.
-  const [accountSlow, setAccountSlow] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setAccountSlow(true), 1500);
-    return () => clearTimeout(t);
-  }, []);
-  const stepsKnown = account !== null || accountSlow;
-  const steps = onboardingSteps(account?.available ?? false);
+  // The app shows onboarding only once the account status is known.
+  const stepsKnown = account !== null;
+  const steps = onboardingSteps(account?.required ?? false);
+  // Signed out (or the session ended mid-way): back on the sign-in step,
+  // and nothing past it runs.
+  const locked = store.ephemeral.accountGate !== 'open';
+  const step = locked ? 0 : picked;
   const id: StepId = steps[Math.min(step, steps.length - 1)] ?? 'done';
 
-  const checkHost = () => {
+  const checkHost = useCallback(() => {
     setChecking(true);
     void api
       .hostStatus()
       .then(setHost)
       .catch(() => setHost('unready'))
       .finally(() => setChecking(false));
-  };
-
-  useEffect(checkHost, []);
-  useEffect(() => {
-    void api.detectAgents().then(setAgents);
   }, []);
 
-  const deviceLogin = useDeviceLogin((s) => setHost(s));
+  // Host and agent checks are work the core turns away until signed in.
+  useEffect(() => {
+    if (!locked) checkHost();
+  }, [locked, checkHost]);
+  useEffect(() => {
+    if (!locked) void api.detectAgents().then(setAgents);
+  }, [locked]);
+
+  const deviceLogin = useDeviceLogin((s) => setHost(s), !locked);
 
   const connectWithToken = () => {
     setTokenError(null);
@@ -109,14 +116,13 @@ export const Onboarding = observer(function Onboarding() {
   };
 
   const connected = host !== null && host !== 'unready' && host.connected;
-  // Optional steps say Skip until they've been done.
+  // Projects says Skip until one is added.
   const skipped = (s: StepId) =>
-    (s === 'projects' && store.models.projects.all().length === 0) ||
-    (s === 'account' && !account?.user);
+    skippable(s, store.models.projects.all().length > 0);
   const skip = skipped(id);
   const canNext: Record<StepId, boolean> = {
     github: connected || host === 'unready',
-    account: true,
+    account: !!account?.user,
     agents: agents != null,
     projects: true,
     done: true,
@@ -386,7 +392,7 @@ export const Onboarding = observer(function Onboarding() {
               isDisabled={!canNext[id]}
               onPress={() => setStep(step + 1)}
             >
-              {skip ? (id === 'account' ? 'Skip for now' : 'Skip') : 'Next'}
+              {skip ? 'Skip' : 'Next'}
             </Button>
           ) : (
             <Btn tone="primary" onPress={() => ui.finishOnboarding()}>

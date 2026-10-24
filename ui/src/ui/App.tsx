@@ -20,6 +20,8 @@ import { SkillsPage } from './Skills';
 import { TabBar } from './TabBar';
 import { Tasks } from './Tasks';
 import { Onboarding } from './Onboarding';
+import { SignInGate } from './AccountCard';
+import { appView } from '../core/accountGate';
 import { StatusBanners } from './shell/StatusBanners';
 import { isBuildMode } from './space/mode';
 import { SpacePage } from './space/SpacePage';
@@ -35,6 +37,7 @@ function useRootContextMenu() {
     const onPaste = (e: ClipboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest('input,textarea,[contenteditable=true]')) return;
+      if (store.ephemeral.accountGate !== 'open') return;
       const text = e.clipboardData?.getData('text') ?? '';
       if (!looksLikePrUrl(text)) return;
       e.preventDefault();
@@ -133,10 +136,16 @@ export const App = observer(function App() {
   useGlobalKeys();
   const onContextMenu = useRootContextMenu();
 
-  if (!ui.onboarded) {
+  // Signed out where sign-in is required: the sign-in and nothing else
+  // (plan §6.12). Onboarding's first step is that sign-in.
+  const view = appView(ui.onboarded, store.ephemeral.accountGate);
+  if (view === 'loading') {
+    return <div className="h-full bg-background" />;
+  }
+  if (view === 'onboarding' || view === 'sign-in') {
     return (
       <>
-        <Onboarding />
+        {view === 'onboarding' ? <Onboarding /> : <SignInGate />}
         <Toast.Provider placement="bottom end" maxVisibleToasts={3} />
       </>
     );

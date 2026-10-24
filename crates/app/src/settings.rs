@@ -200,21 +200,7 @@ impl Core {
                 .await
                 .ok()?
                 .ok()?;
-        let settings: Vec<Setting> = rows
-            .into_iter()
-            .filter_map(|r| serde_json::from_value(r.data).ok())
-            .collect();
-        if let Some(scope) = repo_scope {
-            let repo_scope_key = format!("repo:{scope}");
-            if let Some(s) = settings.iter().find(|s| s.scope == repo_scope_key) {
-                return Some(s.value.clone());
-            }
-        }
-        settings
-            .iter()
-            .find(|s| s.scope == SCOPE_USER)
-            .or_else(|| settings.first())
-            .map(|s| s.value.clone())
+        pick_setting(rows, repo_scope)
     }
 
     /// Reads a review's config (docs/config.md: the global file, then the
@@ -289,4 +275,27 @@ impl Core {
         }
         let _ = self.apply(actions).await;
     }
+}
+
+/// One setting's value among its rows: the repo scope's when asked for and
+/// present, else the user scope's, else any.
+pub(crate) fn pick_setting(
+    rows: Vec<theodore_ports::ModelRow>,
+    repo_scope: Option<&str>,
+) -> Option<serde_json::Value> {
+    let settings: Vec<Setting> = rows
+        .into_iter()
+        .filter_map(|r| serde_json::from_value(r.data).ok())
+        .collect();
+    if let Some(scope) = repo_scope {
+        let repo_scope_key = format!("repo:{scope}");
+        if let Some(s) = settings.iter().find(|s| s.scope == repo_scope_key) {
+            return Some(s.value.clone());
+        }
+    }
+    settings
+        .iter()
+        .find(|s| s.scope == SCOPE_USER)
+        .or_else(|| settings.first())
+        .map(|s| s.value.clone())
 }

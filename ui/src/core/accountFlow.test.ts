@@ -15,6 +15,8 @@ import type { AccountStatus } from '../gen/contract';
 
 const signedIn: AccountStatus = {
   available: true,
+  required: true,
+  session_ended: false,
   user: {
     id: 'user_01',
     email: 'ada@example.com',

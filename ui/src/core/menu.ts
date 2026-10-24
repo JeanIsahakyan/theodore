@@ -6,10 +6,14 @@ import { toggleTheme } from '../stores/UiStore';
 import { refreshInbox } from '../actions';
 import { api } from './api';
 import { getTransport } from './transport';
+import { MENU_WHILE_LOCKED } from './accountGate';
 
 export const REVIEW_EVENT = 'theodore:review';
 
 export function runMenu(store: RootStore, id: string): void {
+  // Behind the account gate only a few items do anything (plan §6.12).
+  if (store.ephemeral.accountGate !== 'open' && !MENU_WHILE_LOCKED.has(id))
+    return;
   const ui = store.ui;
   const review = () =>
     window.dispatchEvent(new CustomEvent(REVIEW_EVENT, { detail: id }));

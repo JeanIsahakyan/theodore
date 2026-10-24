@@ -97,13 +97,21 @@ implementations too, not stubs — just narrower, matching each host's API.
 - Per-host sign-in, agent selection split by task (grouping, chat, skills,
   fix — default Claude for each).
 
-### Theodore account (optional, hidden until configured)
-- Sign in from a dialog — the first, skippable onboarding step, or Settings → Account: your
-  email opens the hosted sign-in page on its code step and Theodore picks the sign-in up when you
-  finish; a device code covers signing in from another machine. Client-only (PKCE, no secret in
-  the app): the installed app gets the sign-in back through `theodore://callback`, a dev run
-  through a loopback redirect. Session in the keychain. Shown only once a client id is set
-  (`THEODORE_WORKOS_CLIENT_ID`); setup in `docs/plan.md` §6.12.
+### Theodore account (required where configured)
+- Where the account is configured, signing in is required: until then the window shows only the
+  sign-in, and the core turns away every command that does work (`account_required`) and holds
+  the poller and outbox. On first launch it's the first onboarding step, with no Skip.
+- Your email opens the hosted sign-in page on its code step and Theodore picks the sign-in up
+  when you finish; a device code covers signing in from another machine. Client-only (PKCE, no
+  secret in the app): the installed app gets the sign-in back through `theodore://callback`, a
+  dev run through a loopback redirect. Session in the keychain.
+- Offline is fine: a stored session keeps the app usable, and only a definitive rejection of
+  the session signs you out ("Your session ended — sign in again"). Signing out (Settings →
+  Account) brings the sign-in back; local data is never deleted.
+- The client id comes from `THEODORE_WORKOS_CLIENT_ID` (env, or compiled into release and
+  nightly builds) or the `account.workos.client_id` setting. A dev build without one has no
+  account and no sign-in; sandbox and fixture modes never have one. Setup in `docs/plan.md`
+  §6.12.
 
 ### Labs: spaces (hidden)
 - A *space* is a change before it is a PR: an agent writes it in its own worktree while you
