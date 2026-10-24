@@ -1029,11 +1029,13 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
               ))}
             </ListBox>
             <div className="flex items-center gap-1 ps-3 pt-1 text-xs text-muted">
-              Runs on {skillAgents.join(' + ')}
+              <span className="min-w-0 truncate">
+                Runs on {skillAgents.join(' + ')}
+              </span>
               <Button
                 size="sm"
                 variant="ghost"
-                className="manage-skills ms-auto gap-1.5 text-xs text-muted"
+                className="manage-skills ms-auto shrink-0 gap-1.5 text-xs text-muted"
                 onPress={() => setManaging(true)}
               >
                 <Pencil className="size-3.5" />

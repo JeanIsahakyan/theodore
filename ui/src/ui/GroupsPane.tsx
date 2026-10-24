@@ -160,8 +160,8 @@ export const GroupsPane = observer(function GroupsPane({
           value={progress.read}
           maxValue={progress.total}
           size="sm"
-          color={progress.read === progress.total ? 'success' : 'default'}
-          className="groups-progress mx-4 mb-1 mt-4"
+          color={progress.read === progress.total ? 'success' : 'accent'}
+          className="groups-progress mx-4 mb-1 mt-4 w-auto"
         >
           <Label
             className={`text-xs ${progress.read === progress.total ? 'text-success' : 'text-muted'}`}
