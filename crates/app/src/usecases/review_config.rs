@@ -2,22 +2,26 @@
 //! one PR or space and handed to whatever applies it.
 //!
 //! ```text
-//! global ─┐
-//! repo   ─┼─▶ sha256(layers) ─▶ cached Merged ─▶ ReviewRules ─▶ grouping, prompts,
-//! local  ─┘     (fresh read        (re-merged        │             findings, auto skills
-//!                every time)        on change)       └─ context: resolved against the
-//!                                                       PR's worktree
+//! global ─────────────────┐
+//! repo, at the base's tip ┼─▶ sha256(layers) ─▶ cached Merged ─▶ ReviewRules ─▶ grouping, prompts,
+//! local (yours)          ─┘     (fresh read        (re-merged        │             findings, auto skills
+//!                                every time)        on change)       └─ context: resolved against the
+//!                                                                       PR's worktree
 //! ```
+//!
+//! The repo layer is read at the base, never at the PR's head: a PR can't
+//! change how itself is reviewed (hide its own files, drop findings on
+//! them, steer the agents). A config change applies once it is merged.
 
 use std::collections::HashMap;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
-use theodore_contract::models;
+use theodore_contract::{ConfigLayer, models};
 use theodore_domain::glob::{glob_match, is_glob};
 use theodore_domain::review_rules::{MAX_CONTEXT_FILES, ReviewRules};
-use theodore_domain::{PrId, RepoRef};
+use theodore_domain::{HostKind, PrDetail, PrId, PrRef, RepoRef, Sha};
 
 use crate::config::{self, LayerText, Merged, ReviewConfig};
 use crate::core::Core;
@@ -29,13 +33,57 @@ const CACHE_MAX: usize = 64;
 /// Files looked at while expanding a `context` glob, at most.
 const WALK_MAX_ENTRIES: usize = 20_000;
 
+/// The commit a review's repo layer is read at.
+///
+/// | review | read at |
+/// | --- | --- |
+/// | host PR, branch review | tip of `refs/heads/<base>` in the cache, else the PR's base commit |
+/// | a space's review | the space's base commit |
+/// | local folder project | not used: the folder's own files |
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ConfigBase {
+    /// The base branch; `None` reads at `sha`.
+    pub branch: Option<String>,
+    /// The PR's base commit: read at when the branch doesn't resolve.
+    pub sha: Sha,
+}
+
+impl ConfigBase {
+    pub fn of(pr: &PrRef, detail: &PrDetail) -> Self {
+        // A space's review forks at a fixed commit, not at its base branch.
+        let space = pr
+            .host_id
+            .as_deref()
+            .is_some_and(crate::usecases::spaces::is_space_ref);
+        let branch = detail.summary.base_ref.trim();
+        Self {
+            branch: (!space && !branch.is_empty()).then(|| branch.to_string()),
+            sha: detail.base_sha.clone(),
+        }
+    }
+}
+
+/// Where a review's config is read: the repo layer from `repo_path` at
+/// `base`, `context` against `worktree`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReviewSource<'a> {
+    pub repo: &'a RepoRef,
+    /// The bare cache (or a local folder's mirror).
+    pub repo_path: &'a Path,
+    /// The PR's checkout at its head.
+    pub worktree: &'a Path,
+    pub base: &'a ConfigBase,
+}
+
 impl Core {
-    /// The layers of the config a review of `repo` checked out at
-    /// `worktree` runs with: a local folder project's own files (working
-    /// copy and personal layer), whichever review of it is open; otherwise
-    /// the global file and the repo's file at the PR's head.
-    pub(crate) async fn pr_config_layers(&self, worktree: &Path, repo: &RepoRef) -> Vec<LayerText> {
+    /// The layers of the config a review runs with: a local folder
+    /// project's own files (working copy and personal layer), whichever
+    /// review of it is open; otherwise the global file, the repo's file at
+    /// the base (never the PR's head) and, for a host repo, your personal
+    /// file in Theodore's data directory.
+    pub(crate) async fn pr_config_layers(&self, src: ReviewSource<'_>) -> Vec<LayerText> {
         let store = self.0.deps.store.clone();
+        let repo = src.repo.clone();
         let folder = tokio::task::spawn_blocking(move || store.all(models::PROJECT))
             .await
             .ok()
@@ -43,10 +91,60 @@ impl Core {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|r| serde_json::from_value::<theodore_contract::Project>(r.data).ok())
-            .find(|p| &p.repo == repo && p.path.is_some());
-        match folder {
-            Some(project) => self.project_layers(&project, None).await,
-            None => config::read_layers(&self.0.deps.data_dir, Some(worktree), None).await,
+            .find(|p| p.repo == repo && p.path.is_some());
+        if let Some(project) = folder {
+            return self.project_layers(&project, None).await;
+        }
+        let data_dir = &self.0.deps.data_dir;
+        let mut layers = config::read_layers(data_dir, None, None).await;
+        let rev = self.config_base_rev(src.repo_path, src.base).await;
+        layers.push(
+            self.repo_layer_at(src.repo_path, &rev, &src.repo.slug())
+                .await,
+        );
+        if src.repo.host != HostKind::Local {
+            let path = config::host_local_path(data_dir, src.repo);
+            layers.push(config::read_local_layer(&path).await);
+        }
+        layers
+    }
+
+    /// The tip of `base.branch` in the cache, else `base.sha`.
+    pub(crate) async fn config_base_rev(&self, repo_path: &Path, base: &ConfigBase) -> Sha {
+        if let Some(branch) = &base.branch
+            && let Ok(sha) = self
+                .0
+                .deps
+                .git
+                .resolve_ref(repo_path, &format!("refs/heads/{branch}"))
+                .await
+        {
+            return sha;
+        }
+        base.sha.clone()
+    }
+
+    /// The repo layer as committed at `rev` in `repo_path`, labelled
+    /// `<slug>@<short sha>:<file>`.
+    pub(crate) async fn repo_layer_at(&self, repo_path: &Path, rev: &Sha, slug: &str) -> LayerText {
+        let git = &self.0.deps.git;
+        let short: String = rev.as_str().chars().take(8).collect();
+        let label = |file: &str| PathBuf::from(format!("{slug}@{short}:{file}"));
+        for (file, legacy) in [(config::REPO_FILE, false), (config::LEGACY_REPO_FILE, true)] {
+            if let Ok(Some(bytes)) = git.show(repo_path, rev, file).await {
+                return LayerText {
+                    layer: ConfigLayer::Repo,
+                    path: label(file),
+                    legacy,
+                    text: Some(String::from_utf8_lossy(&bytes).into_owned()),
+                };
+            }
+        }
+        LayerText {
+            layer: ConfigLayer::Repo,
+            path: label(config::REPO_FILE),
+            legacy: false,
+            text: None,
         }
     }
 
@@ -69,19 +167,19 @@ impl Core {
         merged
     }
 
-    /// The review rules for `repo` checked out at `worktree`.
-    pub(crate) async fn review_rules_at(&self, worktree: &Path, repo: &RepoRef) -> ReviewRules {
-        let layers = self.pr_config_layers(worktree, repo).await;
+    /// The review rules for a review read from `src`.
+    pub(crate) async fn review_rules_at(&self, src: ReviewSource<'_>) -> ReviewRules {
+        let layers = self.pr_config_layers(src).await;
         let merged = self.merge_cached(&layers);
         self.warn_config(&merged);
-        rules_from(&merged.config.review, worktree).await
+        rules_from(&merged.config.review, src.worktree).await
     }
 
     /// The review rules for an open PR, at its current head; the default
     /// (nothing set) when it isn't open.
     pub(crate) async fn review_rules_of(&self, pr: &PrId) -> ReviewRules {
         match self.open_entry(pr).await {
-            Some(e) => self.review_rules_at(&e.worktree_path, &e.pr_ref.repo).await,
+            Some(e) => self.review_rules_at(e.config_source()).await,
             None => ReviewRules::default(),
         }
     }
@@ -92,9 +190,7 @@ impl Core {
         let Some(e) = self.open_entry(pr).await else {
             return false;
         };
-        let layers = self
-            .pr_config_layers(&e.worktree_path, &e.pr_ref.repo)
-            .await;
+        let layers = self.pr_config_layers(e.config_source()).await;
         let merged = self.merge_cached(&layers);
         clean(&merged.config.review.ignore_findings)
             .iter()
@@ -126,8 +222,8 @@ impl Core {
     }
 
     /// The configured `review.auto_skills` for an open PR.
-    pub(crate) async fn auto_skills_of(&self, worktree: &Path, repo: &RepoRef) -> Vec<String> {
-        let layers = self.pr_config_layers(worktree, repo).await;
+    pub(crate) async fn auto_skills_of(&self, src: ReviewSource<'_>) -> Vec<String> {
+        let layers = self.pr_config_layers(src).await;
         let merged = self.merge_cached(&layers);
         let mut out: Vec<String> = Vec::new();
         for s in &merged.config.review.auto_skills {

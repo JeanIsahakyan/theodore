@@ -45,9 +45,7 @@ impl Core {
         // the previous groups' shape, including their fragmentation).
         // A changed review config (`hide`, `skim`, `checklist`) starts
         // fresh too: the previous groups were cut under other rules.
-        let rules = self
-            .review_rules_at(&entry.worktree_path, &entry.pr_ref.repo)
-            .await;
+        let rules = self.review_rules_at(entry.config_source()).await;
         let hash = rules.grouping_hash();
         let prev: Option<Grouping> = prev_row.and_then(|r| {
             let algo = theodore_domain::grouping::row_algo(&r.data);

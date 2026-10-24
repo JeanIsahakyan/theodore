@@ -166,18 +166,6 @@ fn worktree_dir(head: &Sha) -> PathBuf {
     PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0))
 }
 
-/// `worktree_dir` is a fixed real path shared by every test using the
-/// default fixture head — removes `path` (recursively) even if the test
-/// panics, so a file one test plants there (e.g. `.review/config.yaml`)
-/// never leaks into a test that runs after it in the same process.
-struct RemoveOnDrop(PathBuf);
-
-impl Drop for RemoveOnDrop {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 // ── transact / sync frame / de-dup / rejection ──────────────────────────────
 
 #[tokio::test]
@@ -3568,10 +3556,6 @@ async fn a_leftover_budget_setting_no_longer_blocks_a_run() {
 #[tokio::test]
 async fn repo_settings_yaml_overrides_the_user_scoped_agent_setting() {
     let f = fixtures();
-    // A head unique to this test (not the shared `head111` every other test
-    // in this file uses): its worktree directory is therefore private, so
-    // the `.review/config.yaml` planted here can never leak into — or be
-    // raced by — another test running concurrently in the same process.
     let head = Sha::new("repo-settings-head");
     let base = Sha::new("repo-settings-base");
     f.git.set_head(head.clone());
@@ -3582,14 +3566,13 @@ async fn repo_settings_yaml_overrides_the_user_scoped_agent_setting() {
         value: detail,
     }));
 
-    let config_dir = worktree_dir(&head).join(".review");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    let _cleanup = RemoveOnDrop(worktree_dir(&head));
-    std::fs::write(
-        config_dir.join("config.yaml"),
-        "agents:\n  grouping: codex\nbudget:\n  per_pr_usd: 3.5\n",
-    )
-    .unwrap();
+    // The repo layer is read at the PR's base (docs/config.md "Which
+    // config"), as committed.
+    f.git.put_file(
+        &base,
+        ".review/config.yaml",
+        b"agents:\n  grouping: codex\nbudget:\n  per_pr_usd: 3.5\n",
+    );
 
     let (core, _recv) = Core::start(f.deps());
     core.open_pr(OpenPrRequest {

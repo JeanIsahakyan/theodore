@@ -23,6 +23,20 @@ pub(crate) struct RevisionEntry {
     pub repo_path: PathBuf,
     pub worktree_path: PathBuf,
     pub pr_ref: PrRef,
+    /// Where the repo layer of the review's config is read.
+    pub base: crate::usecases::review_config::ConfigBase,
+}
+
+impl RevisionEntry {
+    /// Where this review's config is read.
+    pub fn config_source(&self) -> crate::usecases::review_config::ReviewSource<'_> {
+        crate::usecases::review_config::ReviewSource {
+            repo: &self.pr_ref.repo,
+            repo_path: &self.repo_path,
+            worktree: &self.worktree_path,
+            base: &self.base,
+        }
+    }
 }
 
 pub(crate) struct RunHandle {

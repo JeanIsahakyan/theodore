@@ -4,8 +4,6 @@
 //! by `load_repo_settings`) set `review.agents.*`, stored as `repo:<slug>`
 //! rows that win over `user` for that repo.
 
-use std::path::Path;
-
 use theodore_contract::{Setting, models};
 use theodore_domain::{AgentId, PrId, RepoRef};
 use theodore_ports::{NewAction, SyncActionCode};
@@ -219,18 +217,21 @@ impl Core {
             .map(|s| s.value.clone())
     }
 
-    /// Reads `worktree`'s config (docs/config.md: the global file, then the
-    /// repo's `.theodore/config.yaml` or legacy `.review/config.yaml`) and
-    /// applies its `review.agents` to `repo`. Best-effort: a missing file is
-    /// normal; a broken one is a toast, once.
-    pub(crate) async fn load_repo_settings(&self, worktree: &Path, repo: &RepoRef) {
+    /// Reads a review's config (docs/config.md: the global file, then the
+    /// repo's `.theodore/config.yaml` or legacy `.review/config.yaml` at
+    /// the base) and applies its `review.agents` to the repo. Best-effort:
+    /// a missing file is normal; a broken one is a toast, once.
+    pub(crate) async fn load_repo_settings(
+        &self,
+        src: crate::usecases::review_config::ReviewSource<'_>,
+    ) {
         // A local folder's config is its own files (working copy and
         // personal layer), whichever review of it is opened: one source per
         // repo, so a review's checkout never undoes the folder's values.
-        let layers = self.pr_config_layers(worktree, repo).await;
+        let layers = self.pr_config_layers(src).await;
         let merged = self.merge_cached(&layers);
         self.warn_config(&merged);
-        self.apply_review_agents(&merged, repo).await;
+        self.apply_review_agents(&merged, src.repo).await;
     }
 
     /// `review.agents.<k>` → `setting` rows `agents.<k>` scoped to `repo`,

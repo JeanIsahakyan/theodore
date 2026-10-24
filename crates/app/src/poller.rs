@@ -16,6 +16,7 @@ use theodore_domain::{
 use theodore_ports::{DiffOptions, NewAction, SyncActionCode};
 
 use crate::core::{Core, Inner, RevisionEntry};
+use crate::usecases::review_config::{ConfigBase, ReviewSource};
 
 const OPEN_PR_POLL_MS: i64 = 15_000;
 const INBOX_ERROR_RETRY_MS: i64 = 30_000;
@@ -178,7 +179,14 @@ async fn handle_push(
         Ok(w) => w,
         Err(_) => return,
     };
-    core.load_repo_settings(&worktree.path, &pr_ref.repo).await;
+    let base = ConfigBase::of(pr_ref, &detail);
+    let source = ReviewSource {
+        repo: &pr_ref.repo,
+        repo_path: &repo_path,
+        worktree: &worktree.path,
+        base: &base,
+    };
+    core.load_repo_settings(source).await;
     let new_rev = match core
         .0
         .deps
@@ -244,7 +252,7 @@ async fn handle_push(
         remap_anchors_after_push(core, pr, &repo_path, old_head, &new_head).await;
     }
 
-    regroup_after_push(core, pr, &new_rev, &detail, &worktree.path).await;
+    regroup_after_push(core, pr, &new_rev, &detail, source).await;
     wake_next_push(core, pr).await;
 
     {
@@ -261,6 +269,7 @@ async fn handle_push(
                 revision: Arc::new(new_rev),
                 repo_path,
                 worktree_path: worktree.path,
+                base,
                 pr_ref: pr_ref.clone(),
             }),
         );
@@ -441,8 +450,9 @@ async fn regroup_after_push(
     pr: &PrId,
     new_rev: &Revision,
     detail: &PrDetail,
-    worktree: &Path,
+    source: ReviewSource<'_>,
 ) {
+    let worktree = source.worktree;
     let store = core.0.deps.store.clone();
     let pr_s = pr.0.clone();
     let prev_row = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &pr_s))
@@ -450,9 +460,7 @@ async fn regroup_after_push(
         .ok()
         .and_then(|r| r.ok())
         .flatten();
-    let rules = core
-        .review_rules_at(worktree, &detail.summary.pr.repo)
-        .await;
+    let rules = core.review_rules_at(source).await;
     let hash = rules.grouping_hash();
     // Under other review rules the previous groups don't carry over.
     let prev: Option<Grouping> = prev_row

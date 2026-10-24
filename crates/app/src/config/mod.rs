@@ -443,15 +443,37 @@ pub async fn read_layers(
         layers.push(read_repo_layer(root).await);
     }
     if let Some(root) = local_root {
-        let path = root.join(LOCAL_FILE);
-        layers.push(LayerText {
-            layer: ConfigLayer::Local,
-            text: read(&path).await,
-            path,
-            legacy: false,
-        });
+        layers.push(read_local_layer(&root.join(LOCAL_FILE)).await);
     }
     layers
+}
+
+/// The personal layer at `path`.
+pub async fn read_local_layer(path: &Path) -> LayerText {
+    LayerText {
+        layer: ConfigLayer::Local,
+        text: read(path).await,
+        path: path.to_path_buf(),
+        legacy: false,
+    }
+}
+
+/// A host project's personal layer: it has no checkout of its own, so the
+/// file lives in Theodore's data directory,
+/// `<data dir>/projects/<host>/<owner>/<name>/config.local.yaml`.
+/// Path segments that could leave that directory (`..`, empty) are dropped.
+pub fn host_local_path(data_dir: &Path, repo: &theodore_domain::RepoRef) -> PathBuf {
+    let host = serde_json::to_value(repo.host)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "host".into());
+    let mut path = data_dir.join("projects").join(host);
+    for part in repo.owner.split('/').chain(repo.name.split('/')) {
+        if !part.is_empty() && part != "." && part != ".." && !part.contains('\\') {
+            path.push(part);
+        }
+    }
+    path.join("config.local.yaml")
 }
 
 /// `.theodore/config.yaml`, or the legacy `.review/config.yaml` when it is

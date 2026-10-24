@@ -59,6 +59,7 @@ impl Core {
                 revision: Arc::new(revision.clone()),
                 repo_path,
                 worktree_path: worktree.path,
+                base: crate::usecases::review_config::ConfigBase::of(&detail.summary.pr, &detail),
                 pr_ref: detail.summary.pr,
             }),
         );

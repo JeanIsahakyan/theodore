@@ -151,7 +151,8 @@ fn inherited_env() -> Vec<(String, String)> {
 impl Core {
     /// The layers of `project`'s config. A local folder's own files (its
     /// working copy, and the personal `config.local.yaml`); a host project
-    /// has no checkout, so its repo file is read from the cache at `rev`.
+    /// has no checkout, so its repo file is read from the cache at `rev`
+    /// and its personal file from Theodore's data directory.
     pub(crate) async fn project_layers(
         &self,
         project: &Project,
@@ -166,32 +167,14 @@ impl Core {
         if let Some(rev) = rev
             && let Ok(repo_path) = self.ensure_project_cache(project).await
         {
-            layers.push(self.repo_layer_at(&repo_path, rev, project).await);
+            layers.push(
+                self.repo_layer_at(&repo_path, rev, &project.repo.slug())
+                    .await,
+            );
         }
+        let local = config::host_local_path(&data_dir, &project.repo);
+        layers.push(config::read_local_layer(&local).await);
         layers
-    }
-
-    /// The repo layer as committed at `rev` in the cache.
-    async fn repo_layer_at(&self, repo_path: &Path, rev: &Sha, project: &Project) -> LayerText {
-        let git = &self.0.deps.git;
-        let label =
-            |file: &str| PathBuf::from(format!("{}@{}:{file}", project.repo.slug(), short(rev)));
-        for (file, legacy) in [(config::REPO_FILE, false), (config::LEGACY_REPO_FILE, true)] {
-            if let Ok(Some(bytes)) = git.show(repo_path, rev, file).await {
-                return LayerText {
-                    layer: ConfigLayer::Repo,
-                    path: label(file),
-                    legacy,
-                    text: Some(String::from_utf8_lossy(&bytes).into_owned()),
-                };
-            }
-        }
-        LayerText {
-            layer: ConfigLayer::Repo,
-            path: label(config::REPO_FILE),
-            legacy: false,
-            text: None,
-        }
     }
 
     /// The config a space runs with: its project's layers (a host
@@ -421,10 +404,6 @@ impl Core {
         self.push_log(space, kind, format!("── {summary}"), !exit.success());
         (exit, tail.into())
     }
-}
-
-fn short(sha: &Sha) -> String {
-    sha.as_str().chars().take(8).collect()
 }
 
 /// Copies `patterns` (paths relative to `root`; `*` / `?` allowed in the
