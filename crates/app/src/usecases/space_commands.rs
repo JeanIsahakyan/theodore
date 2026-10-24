@@ -193,13 +193,28 @@ impl Core {
     ) -> SpaceConfig {
         let merged = config::merge(layers);
         self.warn_config(&merged);
-        let trusted = self.trusted_hash(&project.id).await;
-        let repo = trust::repo_commands(&merged, trusted.as_deref());
+        let repo = self.repo_commands_of(&merged, &project.id).await;
         SpaceConfig {
             merged,
             repo,
             denied,
         }
+    }
+
+    /// The repo layer's commands in `merged`, `trusted` when you allowed
+    /// that exact set for `project`.
+    pub(crate) async fn repo_commands_of(
+        &self,
+        merged: &Merged,
+        project: &str,
+    ) -> Option<theodore_contract::RepoCommands> {
+        let set = trust::repo_commands(merged, None)?;
+        let allowed = self.trusted_hashes(project).await;
+        let hit = allowed
+            .iter()
+            .any(|h| *h == set.hash)
+            .then_some(set.hash.as_str());
+        trust::repo_commands(merged, hit)
     }
 
     /// Unknown keys, unreadable files and badly typed sections: a toast
@@ -256,19 +271,65 @@ impl Core {
         }
     }
 
-    async fn trusted_hash(&self, project: &str) -> Option<String> {
-        let row = self
-            .get_row(models::SETTING, &trust_row_id(project))
-            .await
-            .ok()??;
-        row.get("value")?.get("hash")?.as_str().map(str::to_string)
+    /// The allowed sets' hashes: the one you allowed (`hash`), and the sets
+    /// your own config saves were allowed for (`also`, most recent first).
+    async fn trusted_hashes(&self, project: &str) -> Vec<String> {
+        let Ok(Some(row)) = self.get_row(models::SETTING, &trust_row_id(project)).await else {
+            return Vec::new();
+        };
+        let Some(value) = row.get("value") else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        if let Some(h) = value.get("hash").and_then(|h| h.as_str()) {
+            out.push(h.to_string());
+        }
+        for h in value
+            .get("also")
+            .and_then(|a| a.as_array())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(h) = h.as_str() {
+                out.push(h.to_string());
+            }
+        }
+        out
     }
 
+    /// "Allow": exactly this set is allowed for the project from now on.
     pub(crate) async fn store_trust(&self, project: &str, hash: &str) -> AppResult<()> {
+        self.write_trust(
+            project,
+            serde_json::json!({ "hash": hash, "at": self.0.deps.clock.now() }),
+        )
+        .await
+    }
+
+    /// A config you saved yourself: `hash` is allowed too, and the sets
+    /// allowed before stay allowed (a host repo's saved file only takes
+    /// effect once its PR merges). Keeps the last few.
+    pub(crate) async fn add_trust(&self, project: &str, hash: &str) -> AppResult<()> {
+        const KEEP: usize = 4;
+        let mut also: Vec<String> = self
+            .trusted_hashes(project)
+            .await
+            .into_iter()
+            .filter(|h| h != hash)
+            .collect();
+        also.truncate(KEEP);
+        self.write_trust(
+            project,
+            serde_json::json!({ "hash": hash, "also": also, "at": self.0.deps.clock.now() }),
+        )
+        .await
+    }
+
+    async fn write_trust(&self, project: &str, value: serde_json::Value) -> AppResult<()> {
         let setting = Setting {
             key: TRUST_KEY.into(),
             scope: format!("project:{project}"),
-            value: serde_json::json!({ "hash": hash, "at": self.0.deps.clock.now() }),
+            value,
         };
         self.apply(vec![NewAction {
             model: models::SETTING.into(),

@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod agents;
+pub mod config_editor;
 pub mod grouping;
 pub mod host;
 pub mod inbox;

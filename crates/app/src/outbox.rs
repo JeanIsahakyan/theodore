@@ -173,6 +173,7 @@ async fn process_item(core: &Core, item: OutboxItem) {
         "rerun_check" => do_rerun_check(core, &item).await,
         "triage" => do_triage(core, &item).await,
         "create_space_pr" => do_create_space_pr(core, &item).await,
+        "create_config_pr" => do_create_config_pr(core, &item).await,
         other => Err(Outcome::Fail(format!("unknown outbox op {other}"))),
     };
     let store = core.0.deps.store.clone();
@@ -632,17 +633,40 @@ async fn do_triage(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
 async fn do_create_space_pr(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
     let payload: crate::usecases::ship::CreateSpacePrPayload =
         serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = open_or_find_pr(core, item, &payload.repo, &payload.pr).await?;
+    core.space_pr_opened(&payload.space, &pr_ref).await;
+    Ok(())
+}
+
+/// Opens the PR of a config saved to a host repo (docs/config.md
+/// "Creating and saving the config"), idempotent by head branch the same
+/// way: a second save pushed to the branch and finds the PR open.
+async fn do_create_config_pr(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
+    let payload: crate::usecases::config_editor::CreateConfigPrPayload =
+        serde_json::from_value(item.payload.clone()).map_err(|e| Outcome::Fail(e.to_string()))?;
+    let pr_ref = open_or_find_pr(core, item, &payload.repo, &payload.pr).await?;
+    core.config_pr_opened(&payload.project, &pr_ref).await;
+    Ok(())
+}
+
+/// The open PR from `pr.head`, opened if there is none.
+async fn open_or_find_pr(
+    core: &Core,
+    item: &OutboxItem,
+    repo: &theodore_domain::RepoRef,
+    pr: &theodore_ports::NewPr,
+) -> Result<PrRef, Outcome> {
     let host = &core.0.deps.host;
-    let find = || host.find_open_pr(&payload.repo, &payload.pr.head);
+    let find = || host.find_open_pr(repo, &pr.head);
     let existing = match find().await {
         Ok(found) => found,
         // A host that can't look PRs up still gets one create attempt.
         Err(HostError::Unsupported(_)) => None,
         Err(e) => return Err(classify_host_error(core, item, e).await),
     };
-    let pr_ref = match existing {
+    Ok(match existing {
         Some(pr_ref) => pr_ref,
-        None => match host.create_pr(&payload.repo, &payload.pr).await {
+        None => match host.create_pr(repo, pr).await {
             Ok(pr_ref) => pr_ref,
             Err(HostError::Conflict(msg)) => match find().await {
                 Ok(Some(pr_ref)) => pr_ref,
@@ -650,9 +674,7 @@ async fn do_create_space_pr(core: &Core, item: &OutboxItem) -> Result<(), Outcom
             },
             Err(e) => return Err(classify_host_error(core, item, e).await),
         },
-    };
-    core.space_pr_opened(&payload.space, &pr_ref).await;
-    Ok(())
+    })
 }
 
 async fn apply_submitted_review(
