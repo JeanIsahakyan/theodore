@@ -295,8 +295,8 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         <section
           className={
             showChanges
-              ? 'flex w-[40%] min-w-[340px] flex-col border-r border-separator'
-              : 'flex w-full min-w-0 flex-col'
+              ? 'flex w-[40%] min-w-[340px] flex-col border-r border-separator bg-background'
+              : 'flex w-full min-w-0 flex-col bg-background'
           }
         >
           <div className="mx-auto w-full max-w-[860px]">
@@ -814,7 +814,7 @@ const SpaceChat = observer(function SpaceChat({
           <div ref={end} />
         </div>
       </div>
-      <div className="border-t border-separator bg-background px-4 pb-3 pt-3">
+      <div className="px-4 pb-3 pt-1">
         <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
           {space.status === 'failed' && space.error && (
             <span
