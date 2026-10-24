@@ -289,6 +289,25 @@ function MessageActions({
   );
 }
 
+type FeedItem =
+  | { kind: 'run'; at: number; run: SkillRun }
+  | { kind: 'message'; at: number; message: ChatMessage };
+
+/** Skill runs and chat messages in the order they happened. */
+export function feedOf(
+  runs: readonly SkillRun[],
+  messages: readonly ChatMessage[],
+): FeedItem[] {
+  return [
+    ...runs.map((run): FeedItem => ({ kind: 'run', at: run.started_at, run })),
+    ...messages.map((message): FeedItem => ({
+      kind: 'message',
+      at: message.at,
+      message,
+    })),
+  ].sort((a, b) => a.at - b.at);
+}
+
 const RANK = { high: 0, warn: 1, info: 2 } as const;
 
 /** A skill run inside the chat: the live log, then its findings — with a
@@ -818,54 +837,59 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
           </div>
         ) : (
           <>
-            {runs.map((r) => (
-              <SkillRunView key={r.id} pr={pr} run={r.id} />
-            ))}
-            {messages.map((m) =>
-              m.author.kind === 'me' ? (
-                <div key={m.id} className="msg user flex justify-end">
-                  <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-default px-4 py-2 text-sm">
-                    {rich(m.text)}
-                  </div>
-                </div>
+            {/* Skill runs and chat as one conversation, oldest first. */}
+            {feedOf(runs, messages).map((item) =>
+              item.kind === 'run' ? (
+                <SkillRunView key={item.run.id} pr={pr} run={item.run.id} />
               ) : (
-                <div key={m.id} className="msg agent flex gap-3">
-                  <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
-                    <AgentTag id={m.author.agent} />
-                    {m.failed ? (
-                      <AgentFailedCard pr={pr} m={m} messages={messages} />
-                    ) : (
-                      <>
-                        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                          {rich(m.text)}
-                        </div>
-                        {m.refs.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {m.refs.map((a, i) => (
-                              <Ref key={i} a={a} />
-                            ))}
-                          </div>
+                ((m) =>
+                  m.author.kind === 'me' ? (
+                    <div key={m.id} className="msg user flex justify-end">
+                      <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-default px-4 py-2 text-sm">
+                        {rich(m.text)}
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={m.id} className="msg agent flex gap-3">
+                      <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+                        <AgentTag id={m.author.agent} />
+                        {m.failed ? (
+                          <AgentFailedCard pr={pr} m={m} messages={messages} />
+                        ) : (
+                          <>
+                            <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+                              {rich(m.text)}
+                            </div>
+                            {m.refs.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {m.refs.map((a, i) => (
+                                  <Ref key={i} a={a} />
+                                ))}
+                              </div>
+                            )}
+                            <MessageActions
+                              text={m.text}
+                              onRetry={() => {
+                                const q = priorQuestion(messages, m);
+                                const agent =
+                                  m.author.kind === 'me'
+                                    ? null
+                                    : m.author.agent;
+                                if (q)
+                                  void ask(store, {
+                                    pr,
+                                    question: q,
+                                    about: null,
+                                    group: null,
+                                    agent,
+                                  }).catch(() => {});
+                              }}
+                            />
+                          </>
                         )}
-                        <MessageActions
-                          text={m.text}
-                          onRetry={() => {
-                            const q = priorQuestion(messages, m);
-                            const agent =
-                              m.author.kind === 'me' ? null : m.author.agent;
-                            if (q)
-                              void ask(store, {
-                                pr,
-                                question: q,
-                                about: null,
-                                group: null,
-                                agent,
-                              }).catch(() => {});
-                          }}
-                        />
-                      </>
-                    )}
-                  </div>
-                </div>
+                      </div>
+                    </div>
+                  ))(item.message)
               ),
             )}
             {pending &&

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../gen/contract';
-import { hiddenFindingsNote, priorQuestion } from './SidePanel';
+import { feedOf, hiddenFindingsNote, priorQuestion } from './SidePanel';
 
 function msg(id: string, partial: Partial<ChatMessage>): ChatMessage {
   return {
@@ -60,5 +60,20 @@ describe('hiddenFindingsNote', () => {
   it('says nothing when none were hidden', () => {
     expect(hiddenFindingsNote({ hidden_findings: 0 })).toBeNull();
     expect(hiddenFindingsNote({})).toBeNull();
+  });
+});
+
+describe('feedOf', () => {
+  it('interleaves skill runs and messages by time', () => {
+    const run = (id: string, started_at: number) =>
+      ({ id, started_at }) as unknown as Parameters<typeof feedOf>[0][number];
+    const msg = (id: string, at: number) =>
+      ({ id, at }) as unknown as Parameters<typeof feedOf>[1][number];
+    const f = feedOf([run('r2', 30)], [msg('m1', 10), msg('m3', 40)]);
+    expect(f.map((x) => (x.kind === 'run' ? x.run.id : x.message.id))).toEqual([
+      'm1',
+      'r2',
+      'm3',
+    ]);
   });
 });
