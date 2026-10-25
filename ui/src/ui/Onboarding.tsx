@@ -1,4 +1,4 @@
-import { Logo } from './Logo';
+import { WelcomeLogo } from './Welcome';
 import { ThemePicker } from './ThemePicker';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -194,7 +194,7 @@ export const Onboarding = observer(function Onboarding() {
       <Card className="w-full max-w-[600px] gap-0 p-0">
         <div className="flex flex-col gap-4 px-8 pb-6 pt-8">
           <div className="flex items-center gap-2.5">
-            <Logo size={28} />
+            <WelcomeLogo size={28} />
             <span className="font-semibold">Theodore</span>
             <span className="flex-1" />
             <span className="text-xs text-muted">
@@ -239,6 +239,19 @@ export const Onboarding = observer(function Onboarding() {
           {!stepsKnown && (
             <div className="grid flex-1 place-items-center">
               <Spinner />
+            </div>
+          )}
+          {stepsKnown && step === 0 && (
+            <div className="onb-welcome flex items-center gap-4 pb-2">
+              <WelcomeLogo size={56} />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-lg font-semibold">
+                  Welcome to Theodore
+                </span>
+                <span className="text-sm text-muted">
+                  A few steps, then straight to your reviews.
+                </span>
+              </span>
             </div>
           )}
           {stepsKnown && id === 'github' && (

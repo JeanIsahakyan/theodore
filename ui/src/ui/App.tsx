@@ -27,6 +27,7 @@ import { StatusBanners } from './shell/StatusBanners';
 import { isBuildMode } from './space/mode';
 import { isHostOn } from './settings/labs';
 import { SpacePage } from './space/SpacePage';
+import { useWelcome, Welcome } from './Welcome';
 
 /** Fallback for any surface with no menu of its own: inputs get Cut/Copy/
  *  Paste/Select all, a text selection gets Copy + "Ask agent about
@@ -137,6 +138,8 @@ export const App = observer(function App() {
   const buildMode = isBuildMode(store);
   useGlobalKeys();
   const onContextMenu = useRootContextMenu();
+  // Onboarding just finished: the logo, then *whoosh* into the app.
+  const welcome = useWelcome(ui.onboarded);
 
   // Signed out where sign-in is required: the sign-in and nothing else
   // (plan §6.12). Onboarding's first step is that sign-in.
@@ -157,7 +160,7 @@ export const App = observer(function App() {
   const r = ui.route;
   return (
     <div
-      className="flex h-full flex-col bg-background text-sm text-foreground"
+      className={`flex h-full flex-col bg-background text-sm text-foreground ${welcome ? 'app-enter' : ''}`}
       onContextMenu={onContextMenu}
     >
       <div className="flex min-h-0 flex-1">
@@ -206,6 +209,7 @@ export const App = observer(function App() {
       <ContextMenuHost />
       <ColorPreviewHost />
       <Toast.Provider placement="bottom end" maxVisibleToasts={3} />
+      {welcome && <Welcome />}
     </div>
   );
 });
