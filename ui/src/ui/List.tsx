@@ -52,8 +52,7 @@ import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { Peek } from './Peek';
 import {
-  ConflictsIcon,
-  PRIcon,
+  PrStatusIcon,
   ReviewDecisionIcon,
   prStatusLabel,
 } from './StatusIcon';
@@ -355,13 +354,11 @@ export const PrRow = observer(function PrRow({
           </Checkbox.Control>
         </Checkbox.Content>
       </Checkbox>
-      <PRIcon status={p.state} progress={readProgress(store, id)} />
+      <PrStatusIcon summary={p} progress={readProgress(store, id)} />
       <span className="flex items-center justify-center">
-        {p.state === 'open' && p.conflicts ? (
-          <ConflictsIcon />
-        ) : p.state === 'open' && p.review_decision ? (
+        {p.state === 'open' && p.review_decision === 'approved' && (
           <ReviewDecisionIcon decision={p.review_decision} />
-        ) : null}
+        )}
       </span>
       {on('id') && (
         <span

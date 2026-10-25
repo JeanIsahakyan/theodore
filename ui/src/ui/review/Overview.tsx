@@ -7,7 +7,7 @@ import { Avatar } from '../bits';
 import { ReviewerStrip } from '../Checks';
 import { LinearChips } from '../linear/LinearChips';
 import { ago } from '../List';
-import { PRIcon, prStatusLabel } from '../StatusIcon';
+import { StatusChip } from './StatusChip';
 
 /** The PR at a glance: its number, full title, who opened it, which branch
  *  goes where, labels and the description — the header keeps only a
@@ -46,10 +46,7 @@ export function Overview({
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-          <Chip size="sm" variant="secondary" className="gap-1.5">
-            <PRIcon status={summary.state} progress={progress} />
-            {prStatusLabel[summary.state]}
-          </Chip>
+          <StatusChip summary={summary} progress={progress} />
           <span className="flex items-center gap-1.5">
             <Avatar person={summary.author} />
             {summary.author.login}

@@ -1,4 +1,9 @@
-import type { PrState, ReviewDecision, TaskStatus } from '../gen/contract';
+import type {
+  PrState,
+  PrSummary,
+  ReviewDecision,
+  TaskStatus,
+} from '../gen/contract';
 
 const R = 5.5;
 const C = 2 * Math.PI * R;
@@ -154,4 +159,37 @@ export function TaskIcon({ status }: { status: TaskStatus }) {
   if (status === 'review')
     return <Ring color="var(--accent)" fill={0.75} title={t} />;
   return <Ring color="var(--accent)" check title={t} />;
+}
+
+/** What is wrong with an open or draft PR, most urgent first: failing
+ *  checks, conflicts with its base, changes requested. Empty when it's fine. */
+export function prProblems(
+  p: Pick<
+    PrSummary,
+    'state' | 'checks' | 'conflicts' | 'review_decision' | 'base_ref'
+  >,
+): string[] {
+  if (p.state !== 'open' && p.state !== 'draft') return [];
+  const out: string[] = [];
+  if (p.checks === 'fail') out.push('Checks failing');
+  if (p.conflicts) out.push(`Conflicts with ${p.base_ref}`);
+  if (p.review_decision === 'changes_requested') out.push('Changes requested');
+  return out;
+}
+
+/** The one status mark for a PR everywhere it shows: a red cross while
+ *  something is wrong (`prProblems`), otherwise its state ring, filled
+ *  with how much of it you've read. */
+export function PrStatusIcon({
+  summary,
+  progress = 0,
+}: {
+  summary: PrSummary;
+  progress?: number;
+}) {
+  const problems = prProblems(summary);
+  if (problems.length) {
+    return <Ring color="var(--danger)" cross title={problems.join(' · ')} />;
+  }
+  return <PRIcon status={summary.state} progress={progress} />;
 }

@@ -15,7 +15,6 @@ import {
 import { Code, CodeCommit, Eye, FileText } from '@gravity-ui/icons';
 import {
   Alert,
-  Chip,
   Spinner,
   Tabs,
   ToggleButton,
@@ -56,7 +55,7 @@ import {
 import { hunksInScope, moveHunkFocus } from './review/hunks';
 import { SidePanel } from './SidePanel';
 import { readProgress } from './review/progress';
-import { PRIcon, prStatusLabel } from './StatusIcon';
+import { StatusChip } from './review/StatusChip';
 import { latinKey, useViewKeys } from './keys';
 
 type PrTab = 'overview' | 'diff' | 'checks' | 'commits';
@@ -112,6 +111,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   });
   useEffect(() => ui.setReviewPos(pr, mode), [ui, pr, mode]);
   const [tab, setTab] = useState<PrTab>('diff');
+  const tabPicked = useRef(false);
+  const markTabPick = () => {
+    tabPicked.current = true;
+    setTimeout(() => (tabPicked.current = false), 500);
+  };
   const [sinceOnly, setSinceOnly] = useState(false);
   const [baselineSha, setBaselineSha] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -458,13 +462,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               >
                 {reviewTitle(store, pr, summary.title)}
               </Typography.Heading>
-              <Chip size="sm" variant="secondary" className="shrink-0 gap-1.5">
-                <PRIcon
-                  status={summary.state}
-                  progress={readProgress(store, pr)}
-                />
-                {prStatusLabel[summary.state]}
-              </Chip>
+              <StatusChip
+                summary={summary}
+                progress={readProgress(store, pr)}
+                className="shrink-0"
+              />
             </>
           ) : (
             <Spinner size="sm" />
@@ -555,47 +557,55 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         aria-label="Sections and people"
         className="flex w-full flex-wrap items-center gap-4 border-b border-separator px-4 py-2"
       >
-        <Tabs
-          data-plain
-          selectedKey={tab}
-          onSelectionChange={(k) => setTab(k as PrTab)}
-          className="rv-tabs"
+        {/* Only a click or a key in the tab list switches tabs: focus
+            landing on a tab on its own (a dialog closing, ⌘K) must not. */}
+        <div
+          className="contents"
+          onPointerDownCapture={markTabPick}
+          onKeyDownCapture={markTabPick}
         >
-          <Tabs.ListContainer>
-            <Tabs.List aria-label="PR sections">
-              <Tabs.Tab id="diff" className="gap-1.5">
-                <Code className="size-4" />
-                Code
-                <Tabs.Indicator />
-              </Tabs.Tab>
-              {!local && (
-                <Tabs.Tab id="checks" className="gap-1.5">
-                  <CheckIcon
-                    s={failing ? 'fail' : pending ? 'pending' : 'pass'}
-                  />
-                  Checks
+          <Tabs
+            data-plain
+            selectedKey={tab}
+            onSelectionChange={(k) => tabPicked.current && setTab(k as PrTab)}
+            className="rv-tabs"
+          >
+            <Tabs.ListContainer>
+              <Tabs.List aria-label="PR sections">
+                <Tabs.Tab id="overview" className="gap-1.5">
+                  <FileText className="size-4" />
+                  Overview
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+                {!local && (
+                  <Tabs.Tab id="checks" className="gap-1.5">
+                    <CheckIcon
+                      s={failing ? 'fail' : pending ? 'pending' : 'pass'}
+                    />
+                    Checks
+                    <span className="tabular-nums text-muted">
+                      {passed}/{checks.length}
+                    </span>
+                    <Tabs.Indicator />
+                  </Tabs.Tab>
+                )}
+                <Tabs.Tab id="commits" className="gap-1.5">
+                  <CodeCommit className="size-4" />
+                  Commits
                   <span className="tabular-nums text-muted">
-                    {passed}/{checks.length}
+                    {detail?.commits.length ?? 0}
                   </span>
                   <Tabs.Indicator />
                 </Tabs.Tab>
-              )}
-              <Tabs.Tab id="commits" className="gap-1.5">
-                <CodeCommit className="size-4" />
-                Commits
-                <span className="tabular-nums text-muted">
-                  {detail?.commits.length ?? 0}
-                </span>
-                <Tabs.Indicator />
-              </Tabs.Tab>
-              <Tabs.Tab id="overview" className="gap-1.5">
-                <FileText className="size-4" />
-                Overview
-                <Tabs.Indicator />
-              </Tabs.Tab>
-            </Tabs.List>
-          </Tabs.ListContainer>
-        </Tabs>
+                <Tabs.Tab id="diff" className="gap-1.5">
+                  <Code className="size-4" />
+                  Code
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              </Tabs.List>
+            </Tabs.ListContainer>
+          </Tabs>
+        </div>
         {baselineRevision?.status === 'ready' && (
           <ToggleButtonGroup
             size="sm"

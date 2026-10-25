@@ -37,7 +37,7 @@ import {
   type PrFilter,
 } from './prs/filters';
 import { gatesFor } from './prs/mine';
-import { PRIcon, ReviewDecisionIcon } from './StatusIcon';
+import { PrStatusIcon, ReviewDecisionIcon } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
 const EMPTY: Record<PrFilter, { title: string; text: string }> = {
@@ -77,9 +77,9 @@ const MineRow = observer(function MineRow({
         sel ? 'sel' : ''
       }`}
     >
-      <PRIcon status={p.state} progress={readProgress(store, id)} />
+      <PrStatusIcon summary={p} progress={readProgress(store, id)} />
       <span className="flex items-center justify-center">
-        {p.state === 'open' && p.review_decision && (
+        {p.state === 'open' && p.review_decision === 'approved' && (
           <ReviewDecisionIcon decision={p.review_decision} />
         )}
       </span>

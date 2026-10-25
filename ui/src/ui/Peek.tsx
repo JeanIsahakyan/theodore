@@ -50,10 +50,9 @@ import { gatesFor as mergeGatesFor } from './prs/mine';
 import { isBranchReview } from './project/sections';
 import { readProgress } from './review/progress';
 import {
-  ConflictsIcon,
-  PRIcon,
-  ReviewDecisionIcon,
+  PrStatusIcon,
   TaskIcon,
+  prProblems,
   prStatusLabel,
 } from './StatusIcon';
 
@@ -245,21 +244,17 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
     <Surface className="peek flex w-[clamp(280px,32vw,384px)] shrink-0 flex-col gap-5 overflow-auto rounded-none border-l border-separator p-6 pb-20">
       <header className="flex flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
-          <PRIcon status={p.state} progress={readProgress(store, id)} />
-          <span className="shrink-0">{prStatusLabel[p.state]}</span>
-          {p.state === 'open' && p.conflicts && (
-            <span className="flex shrink-0 items-center gap-1 text-danger">
-              <ConflictsIcon /> conflicts
+          <PrStatusIcon summary={p} progress={readProgress(store, id)} />
+          {prProblems(p).length ? (
+            <span className="min-w-0 truncate text-danger">
+              {prProblems(p).join(' · ')}
             </span>
-          )}
-          {p.state === 'open' && !p.conflicts && p.review_decision && (
-            <span className="flex shrink-0 items-center gap-1">
-              <ReviewDecisionIcon decision={p.review_decision} />
-              {p.review_decision === 'approved'
-                ? 'approved'
-                : p.review_decision === 'changes_requested'
-                  ? 'changes requested'
-                  : 'review required'}
+          ) : (
+            <span className="shrink-0">
+              {prStatusLabel[p.state]}
+              {p.state === 'open' && p.review_decision === 'approved' && (
+                <> · approved</>
+              )}
             </span>
           )}
           <span className="flex-1" />

@@ -26,7 +26,7 @@ import { K } from './bits';
 import { isBranchReview } from './project/sections';
 import { reviewTitle } from './space/mode';
 import { spaceTitle } from './space/spaces';
-import { PRIcon } from './StatusIcon';
+import { PRIcon, PrStatusIcon } from './StatusIcon';
 import { readProgress } from './review/progress';
 
 function useLabel(r: Route): {
@@ -58,11 +58,10 @@ function useLabel(r: Route): {
       const p = store.models.prSummaries.get(r.pr);
       const drafts = store.models.drafts.byPr(r.pr).length;
       return {
-        icon: (
-          <PRIcon
-            status={p?.state ?? 'open'}
-            progress={readProgress(store, r.pr)}
-          />
+        icon: p ? (
+          <PrStatusIcon summary={p} progress={readProgress(store, r.pr)} />
+        ) : (
+          <PRIcon status="open" />
         ),
         title: !p
           ? r.pr
