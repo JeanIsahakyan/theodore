@@ -426,21 +426,6 @@ const SpaceHeader = observer(function SpaceHeader({
       <RunButton space={space} config={config} />
       <PortChips space={space} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
-      <Tooltip>
-        <ToggleButton
-          size="sm"
-          aria-label="Changes"
-          className="shrink-0 gap-1.5"
-          isSelected={showChanges}
-          onChange={onToggleChanges}
-        >
-          <LayoutSideContentRight className="size-4" />
-          Changes
-        </ToggleButton>
-        <Tooltip.Content>
-          {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
-        </Tooltip.Content>
-      </Tooltip>
       <Button
         size="sm"
         variant="secondary"
@@ -490,6 +475,21 @@ const SpaceHeader = observer(function SpaceHeader({
         <Tooltip.Content>
           Archive <K>⇧E</K> — removes the worktree; the transcript and
           checkpoints are kept
+        </Tooltip.Content>
+      </Tooltip>
+      <Tooltip>
+        <ToggleButton
+          isIconOnly
+          size="sm"
+          aria-label="Changes"
+          className="shrink-0"
+          isSelected={showChanges}
+          onChange={onToggleChanges}
+        >
+          <LayoutSideContentRight className="size-4" />
+        </ToggleButton>
+        <Tooltip.Content>
+          {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
         </Tooltip.Content>
       </Tooltip>
     </header>
