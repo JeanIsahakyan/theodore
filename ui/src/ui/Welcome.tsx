@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 
 /** The whole welcome, start to finish: the logo holds for a beat, then
  *  zooms through while the app fades in (keyframes in styles.css). */
-export const WELCOME_MS = 1400;
+export const WELCOME_MS = 1650;
 
 /** Light drifting across the glass: each lens's stripes slide down one
  *  stripe pitch (110) and loop, the right lens half a beat behind. The
@@ -18,9 +18,12 @@ const LENSES = [352, 672];
 export function WelcomeLogo({
   size,
   className = '',
+  glint = false,
 }: {
   size: number;
   className?: string;
+  /** One soft band of light sweeps across the glass as it appears. */
+  glint?: boolean;
 }) {
   const id = `w${useId().replace(/[^\w-]/g, '')}`;
   return (
@@ -44,6 +47,11 @@ export function WelcomeLogo({
           <stop offset="0" stopColor="#FFFFFF" stopOpacity="1" />
           <stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0.25" />
           <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.7" />
+        </linearGradient>
+        <linearGradient id={`${id}-glint`} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0" />
+          <stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0.7" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
         </linearGradient>
         <clipPath id={`${id}-tile`}>
           <rect x="100" y="100" width="824" height="824" rx="185" />
@@ -93,6 +101,17 @@ export function WelcomeLogo({
               <path key={y} d={`M100 ${y} L 924 ${y}`} />
             ))}
           </g>
+          {glint && (
+            <rect
+              className={`welcome-glint${i ? ' welcome-glint-late' : ''}`}
+              x={cx - 260}
+              y="300"
+              width="120"
+              height="400"
+              fill={`url(#${id}-glint)`}
+              transform={`rotate(20 ${cx} 500)`}
+            />
+          )}
         </g>
       ))}
 
@@ -167,7 +186,8 @@ export function useWelcome(onboarded: boolean): boolean {
 export function Welcome() {
   return createPortal(
     <div className="welcome fixed inset-0 z-[100] grid place-items-center bg-background">
-      <WelcomeLogo size={168} className="welcome-zoom" />
+      <div className="welcome-glow" aria-hidden />
+      <WelcomeLogo size={168} glint className="welcome-zoom" />
     </div>,
     document.body,
   );
