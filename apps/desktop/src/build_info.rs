@@ -23,6 +23,12 @@ pub fn label() -> String {
     build_stamp::label(VERSION, COMMIT, BUILD_ENV)
 }
 
+/// What the macOS About panel shows after the version, in parentheses:
+/// `a1b2c3d · staging`, so it says the same as Settings → About.
+pub fn about_detail() -> String {
+    format!("{} · {BUILD_ENV}", build_stamp::short_commit(COMMIT))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

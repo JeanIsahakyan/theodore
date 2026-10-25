@@ -3,7 +3,7 @@
 //! get accelerators — single-letter shortcuts stay in the webview so they
 //! never steal typing.
 
-use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{AboutMetadataBuilder, Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Runtime};
 
 pub const EVENT_MENU: &str = "menu";
@@ -24,8 +24,15 @@ fn item<R: Runtime>(
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let i = |id: &str, text: &str, accel: Option<&str>| item(app, id, text, accel);
 
+    // The About panel shows `version (short_version)`: the commit and the
+    // build env go in the parentheses, as in Settings → About.
+    let about = AboutMetadataBuilder::new()
+        .name(Some("Theodore"))
+        .version(Some(crate::build_info::VERSION))
+        .short_version(Some(crate::build_info::about_detail()))
+        .build();
     let theodore = SubmenuBuilder::new(app, "Theodore")
-        .about(None)
+        .about(Some(about))
         .item(&i("check-updates", "Check for Updates…", None)?)
         .separator()
         .item(&i("settings", "Settings…", Some("CmdOrCtrl+,"))?)
