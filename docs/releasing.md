@@ -1,8 +1,38 @@
 # Releasing
 
-Plan §11.1 (updates) and §11.2 (signing without an Apple Developer ID). This
-is the one-time setup the owner does before the first tag; after that,
-`git tag vX.Y.Z && git push --tags` is the whole release.
+Plan §11.1 (updates) and §11.2 (signing without an Apple Developer ID). The
+one-time setup the owner does before the first release, then the branch flow
+that makes every build: a push to `staging` publishes a staging build, a
+version bump merged to `main` publishes a production release.
+
+## Branch flow: two builds
+
+```
+author/feature ──PR──▶ staging ──PR──▶ main
+                          │              │
+                    staging.yml     release.yml
+                          │              │
+              <ver>-staging.<run>   <ver>, only if v<ver> is new
+                          ▼              ▼
+          pre-release channel-staging   release v<ver> (+ tag)
+          (assets replaced each run)    else: workflow artifact only
+                          ▲              ▲
+                staging builds poll   production builds poll
+                channel-staging/      releases/latest/
+                latest.json           latest.json
+```
+
+| Build | Workflow, trigger | `THEODORE_BUILD_ENV` | WorkOS client id (variable) | Updates from |
+| --- | --- | --- | --- | --- |
+| Staging | `staging.yml`, push to `staging` | `staging` | `THEODORE_WORKOS_CLIENT_ID_STAGING` | `channel-staging` only |
+| Production | `release.yml`, push to `main` | `production` | `THEODORE_WORKOS_CLIENT_ID` | `stable` (or `beta`), never `channel-staging` |
+
+Both call `.github/workflows/build.yml` (`workflow_call`), the one build
+definition: same toolchain, signing, telemetry variables and assets, so the
+two can't drift. `ci.yml` runs on every PR (into `staging`, into `main`, or
+stacked) and on pushes to both branches. Both also have a manual **Run
+workflow** (`workflow_dispatch`); from any other branch it builds and
+publishes nothing.
 
 ## One-time: updater signing key (required before any release works)
 
@@ -40,7 +70,7 @@ only verify updates signed by the key they shipped with.
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you set in step 1
      (or an empty secret if you generated without one).
 
-Without these two secrets, `.github/workflows/release.yml` fails at the
+Without these two secrets, `.github/workflows/build.yml` fails at the
 "build app, dmg and updater artifacts" step — the updater's pubkey is already
 configured, so the bundler insists on a matching private key to sign against.
 
@@ -53,7 +83,8 @@ compiled in, from `THEODORE_WORKOS_CLIENT_ID` in the build's environment:
 - In the GitHub repo → Settings → Secrets and variables → Actions →
   **Variables**, add `THEODORE_WORKOS_CLIENT_ID` = `client_…` (the
   production environment's client id). It's a public value, so a variable,
-  not a secret; it is never committed. `release.yml` passes it to the build.
+  not a secret; it is never committed. `release.yml` passes it to the build;
+  `staging.yml` passes `THEODORE_WORKOS_CLIENT_ID_STAGING` instead.
 - Without it the release builds and runs with no account at all: no
   sign-in screen, no account card.
 - At run time the same env var or the `account.workos.client_id` setting
@@ -81,7 +112,7 @@ Without this, every release is **ad-hoc signed** (`tauri.conf.json`'s
 That's enough to run on Apple Silicon, but Gatekeeper still blocks the first
 launch (see below) and updates install into an unnotarized app.
 
-To turn on real signing, add these secrets — `release.yml` picks them up
+To turn on real signing, add these secrets — `build.yml` picks them up
 automatically (`tauri-bundler` reads them directly) and the ad-hoc path is
 skipped:
 
@@ -97,20 +128,56 @@ skipped:
 No other change: the workflow and `tauri.conf.json` are unchanged whether or
 not these are set.
 
-## Cutting a release
+## Cutting a production release
+
+Bump the version and let it travel the branch flow; `main` makes the tag:
 
 ```sh
+git switch -c author/release-0.3.0 staging
 scripts/bump-version.sh 0.3.0   # Cargo.toml + tauri.conf.json
 git commit -am "chore: bump version to 0.3.0"
-git push
-git tag v0.3.0
-git push --tags
+git push -u origin HEAD          # PR into staging, merge
+                                 # then PR staging → main, merge
 ```
 
-The tag push triggers `.github/workflows/release.yml`, which verifies the tag
-matches both version files, builds `aarch64-apple-darwin`, signs, packages
-the DMG and the updater artifacts, and publishes a GitHub release with the
-DMG, the `.app.tar.gz` + `.sig`, and `latest.json`.
+Every push to `main` runs `.github/workflows/release.yml`: `build.yml`
+checks both version files agree, builds `aarch64-apple-darwin`, signs,
+packages the DMG and the updater artifacts and writes `latest.json`. Then:
+
+- **No `v0.3.0` tag yet** → it creates the tag at that commit and a GitHub
+  release with the DMG, the `.app.tar.gz` + `.sig`, and `latest.json`.
+  Installed production builds pick it up from `releases/latest`.
+- **`v0.3.0` already exists** (a merge without a bump) → build only: the
+  assets stay as a workflow artifact on the run, nothing is published.
+
+There is no tag-push release any more: don't push `v*` tags by hand (a
+hand-pushed tag only makes the next merge skip that version).
+
+- **Never re-tag a published release.** Ship a new patch instead.
+
+## Staging channel
+
+Every push to `staging` runs `.github/workflows/staging.yml`, which builds
+with `THEODORE_BUILD_ENV=staging` and the staging client id, as version
+`<version files>-staging.<run number>` (e.g. `0.3.0-staging.57`; the run
+number only grows, so each build is newer to the updater). It publishes to
+one rolling **pre-release tagged `channel-staging`**, made on the first run:
+
+1. uploads the versioned DMG, `.app.tar.gz` and `.sig`,
+2. then `latest.json`, pointing at that tarball,
+3. then deletes the previous build's assets and names this build's commit
+   in the release notes.
+
+An updater polling mid-run sees either the old manifest with its tarball or
+the new one with its. A re-run of an older run publishes nothing. Being a pre-release, `channel-staging` is never
+`releases/latest`, and no `v*` tag or release is touched.
+
+A staging build polls only
+`.../releases/download/channel-staging/latest.json`, whatever
+`updates.channel` says, and Settings → Updates shows **Staging** instead of
+the channel picker. Any other build resolves `updates.channel` to `stable`
+or `beta` and never to staging (`effective_channel` in
+`apps/desktop/src/updater.rs`).
 
 - **Beta channel**: `updates.channel` = `"beta"` resolves to
   `.../releases/download/channel-beta/latest.json` instead of
@@ -144,19 +211,21 @@ for bug reports), and the problem report and telemetry carry them too.
 
 | Build | `THEODORE_BUILD_ENV` | Set by |
 | --- | --- | --- |
-| Release (tag) | `production` | `release.yml`, with `THEODORE_GIT_SHA=${{ github.sha }}` |
-| Staging | `staging` | by hand, below |
+| Production (`main`) | `production` | `release.yml` → `build.yml`, with `THEODORE_GIT_SHA=${{ github.sha }}` |
+| Staging (`staging`) | `staging` | `staging.yml` → `build.yml`; or by hand, below |
 | Nightly | `nightly` | `scripts/nightly-build.sh` (default) |
 | Local `cargo` / `cargo tauri dev` | `dev` | nothing set |
 
 The commit is `THEODORE_GIT_SHA` when set, else `git rev-parse HEAD`, else
 `unknown`; a `dev` build from uncommitted changes says `-dirty`. Any other
 `THEODORE_BUILD_ENV` value fails the build. `THEODORE_VERSION` overrides
-the version (the nightly script sets `-nightly.N`).
+the version (the nightly script sets `-nightly.N`, `build.yml` the version
+with its suffix).
 
-### A staging build
+### A local staging build
 
-The nightly script with the staging environment and the staging WorkOS
+The CI staging build is the usual one (above). For a local one: the
+nightly script with the staging environment and the staging WorkOS
 client id (the repository variable `THEODORE_WORKOS_CLIENT_ID_STAGING`):
 
 ```sh
@@ -166,7 +235,9 @@ scripts/nightly-build.sh
 ```
 
 Same DMG as a nightly (`<version>-nightly.<n>`), labelled `staging` in
-About and in telemetry (`deployment.environment.name`).
+About and in telemetry (`deployment.environment.name`). Like any staging
+build it updates from `channel-staging` only, so the next CI staging build
+of the same version (`-staging.N` sorts after `-nightly.N`) replaces it.
 
 ## First launch on a clean Mac (ad-hoc signed builds)
 

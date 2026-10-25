@@ -1,0 +1,198 @@
+name: Build
+
+# Plan §11.1/§11.2. The one macOS (aarch64) build both release workflows
+# call: release.yml (push to main) and staging.yml (push to staging).
+# Builds the app, signs it (ad-hoc by default; Developer ID + notarization
+# when the secrets below are set), packages a DMG and the updater artifacts,
+# writes the `latest.json` the app polls, and uploads them all as one
+# workflow artifact. Publishing is the caller's job.
+#
+# One-time setup for all of this to work: docs/releasing.md.
+#
+# Secrets (callers pass `secrets: inherit`):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  (required)
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+#   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID  (optional)
+# Variables:
+#   THEODORE_OTLP_ENDPOINT, THEODORE_POSTHOG_HOST, THEODORE_POSTHOG_KEY
+#                              remote telemetry sinks (optional, docs/telemetry.md)
+# Secrets (telemetry, optional):
+#   THEODORE_OTLP_HEADERS      e.g. `api-key=<New Relic license key>`
+# The WorkOS client id is an input: each caller picks its environment's.
+
+on:
+  workflow_call:
+    inputs:
+      build-env:
+        description: "THEODORE_BUILD_ENV: production | staging"
+        required: true
+        type: string
+      version-suffix:
+        description: "appended to the version files' X.Y.Z, e.g. -staging.42"
+        required: false
+        type: string
+        default: ""
+      release-tag:
+        description: "the release tag latest.json's url points at (empty: v<version>)"
+        required: false
+        type: string
+        default: ""
+      workos-client-id:
+        description: "the account's client id, baked in (empty: no account)"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      version:
+        description: "the version the build carries, suffix included"
+        value: ${{ jobs.build.outputs.version }}
+      artifact:
+        description: "the workflow artifact holding the release assets"
+        value: ${{ jobs.build.outputs.artifact }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-14
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact: theodore-${{ inputs.build-env }}
+    env:
+      # `secrets` can't be read in a step `if`; expose presence as a flag.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: version (Cargo.toml == tauri.conf.json, plus the suffix)
+        id: version
+        env:
+          SUFFIX: ${{ inputs.version-suffix }}
+        run: |
+          cargo_ver=$(awk '
+            /^\[workspace\.package\]/ { in_block = 1; next }
+            /^\[/ { in_block = 0 }
+            in_block && /^version = "/ { gsub(/version = "|"/, ""); print; exit }
+          ' Cargo.toml)
+          tauri_ver=$(jq -r .version apps/desktop/tauri.conf.json)
+          echo "cargo=$cargo_ver tauri=$tauri_ver suffix=$SUFFIX"
+          if [ -z "$cargo_ver" ] || [ "$cargo_ver" != "$tauri_ver" ]; then
+            echo "✗ version mismatch: Cargo.toml $cargo_ver, tauri.conf.json $tauri_ver" >&2
+            echo "  run scripts/bump-version.sh <version> and commit." >&2
+            exit 1
+          fi
+          echo "VERSION=$cargo_ver$SUFFIX" >> "$GITHUB_ENV"
+          echo "version=$cargo_ver$SUFFIX" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('ui/package.json') != ''
+
+      - uses: actions/setup-node@v4
+        if: hashFiles('ui/package.json') != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: build ui
+        if: hashFiles('ui/package.json') != ''
+        run: |
+          pnpm -C ui install --frozen-lockfile
+          pnpm -C ui build
+
+      # Developer ID signing + notarization (tauri-bundler reads these env
+      # vars itself — see crates/tauri-bundler/src/bundle/macos/sign.rs).
+      # Loaded only when the secret exists, so an absent secret never leaks
+      # an empty APPLE_CERTIFICATE into the build step below (which would
+      # make tauri-bundler try, and fail, to import an empty certificate).
+      - name: load Developer ID secrets
+        if: env.HAS_APPLE_CERT == 'true'
+        run: |
+          {
+            echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
+            echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
+            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
+            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+          } >> "$GITHUB_ENV"
+
+      # Builds + ad-hoc codesigns (tauri.conf.json's `bundle.macOS.signingIdentity:
+      # "-"`, i.e. `codesign --force --deep -s -`) unless the step above loaded
+      # a real Developer ID, in which case tauri-bundler signs and notarizes
+      # with that instead. Also produces the DMG and the updater artifacts
+      # (`.app.tar.gz` + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY).
+      # `--config version` is the version the updater compares against, so a
+      # staging build's `-staging.N` must be in the bundle, not only in About.
+      - name: build app, dmg and updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The build stamp Settings → About shows (docs/releasing.md).
+          THEODORE_BUILD_ENV: ${{ inputs.build-env }}
+          THEODORE_GIT_SHA: ${{ github.sha }}
+          THEODORE_VERSION: ${{ steps.version.outputs.version }}
+          # Compiled in as the lowest-priority client id (docs/releasing.md).
+          THEODORE_WORKOS_CLIENT_ID: ${{ inputs.workos-client-id }}
+          # Remote telemetry sinks, compiled in as the lowest-priority source
+          # (docs/telemetry.md); unset: the build has none. Nothing is sent
+          # until the user chooses during onboarding or in Settings.
+          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
+          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
+          THEODORE_POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
+          THEODORE_POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+        run: |
+          cargo tauri build --target aarch64-apple-darwin --bundles app,dmg \
+            --config "{\"version\":\"$VERSION\"}"
+
+      # Versioned names, so a rolling release (channel-staging) never serves
+      # a new tarball under an old latest.json's signature mid-upload.
+      - name: collect release assets
+        run: |
+          bundle="target/aarch64-apple-darwin/release/bundle"
+          dmg=$(find "$bundle/dmg" -name '*.dmg' | head -n1)
+          tarball=$(find "$bundle/macos" -name '*.app.tar.gz' | head -n1)
+          test -f "$dmg" && test -f "$tarball" && test -f "$tarball.sig"
+          mkdir -p dist
+          cp "$dmg" "dist/Theodore_${VERSION}_aarch64.dmg"
+          cp "$tarball" "dist/Theodore_${VERSION}_aarch64.app.tar.gz"
+          cp "$tarball.sig" "dist/Theodore_${VERSION}_aarch64.app.tar.gz.sig"
+
+      - name: build latest.json
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          tag="${RELEASE_TAG:-v$VERSION}"
+          tarball_name="Theodore_${VERSION}_aarch64.app.tar.gz"
+          signature=$(cat "dist/$tarball_name.sig")
+          pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$pub_date" \
+            --arg signature "$signature" \
+            --arg url "https://github.com/${{ github.repository }}/releases/download/$tag/$tarball_name" \
+            '{
+              version: $version,
+              notes: "See the GitHub release notes.",
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $signature, url: $url }
+              }
+            }' > dist/latest.json
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: theodore-${{ inputs.build-env }}
+          path: dist/
+          if-no-files-found: error

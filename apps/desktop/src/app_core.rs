@@ -507,7 +507,8 @@ impl CoreApi for AppCore {
         self.core.close_branch_review(&pr).await.map_err(err)
     }
     async fn update_channel(&self) -> String {
-        self.core.setting_string("updates.channel", "stable").await
+        let setting = self.core.setting_string("updates.channel", "stable").await;
+        crate::updater::effective_channel(build_info::BUILD_ENV, &setting).into()
     }
     async fn is_idle(&self) -> bool {
         self.core.is_idle().await

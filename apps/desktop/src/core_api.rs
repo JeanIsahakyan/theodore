@@ -108,8 +108,10 @@ pub trait CoreApi: Send + Sync {
     /// Closes a branch review: its local rows and worktree. Rejects a host PR.
     async fn close_branch_review(&self, pr: PrId) -> Result<(), CommandError>;
 
-    /// `updates.channel` setting (`"stable"` or `"beta"`), used to pick the
-    /// updater endpoint. Not a wire command; the shell calls it directly.
+    /// The channel the updater polls: `updates.channel` (`"stable"` or
+    /// `"beta"`), always `"staging"` in a staging build
+    /// (`updater::effective_channel`). Not a wire command; the shell calls
+    /// it directly.
     async fn update_channel(&self) -> String {
         "stable".into()
     }
