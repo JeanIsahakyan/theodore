@@ -146,7 +146,9 @@ jobs:
       - name: build the debug app
         # Picks up `ui/dist` (just built above) via `tauri.conf.json`'s
         # `frontendDist` — no `cargo tauri` CLI needed for a plain binary.
-        run: cargo build -p theodore-desktop
+        # `custom-protocol` makes a debug binary serve that bundle; without
+        # it, it loads `devUrl` (the Vite dev server) and the window is blank.
+        run: cargo build -p theodore-desktop --features tauri/custom-protocol
 
       - name: e2e dependencies
         run: pnpm -C e2e install --frozen-lockfile
