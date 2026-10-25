@@ -54,6 +54,8 @@ fn config(server: &MockServer) -> RemoteConfig {
         otlp: Some(otlp),
         posthog: Some(PosthogConfig {
             batch_size: 1,
+            // Generous: the whole workspace's tests share the machine.
+            timeout: Duration::from_secs(30),
             ..PosthogConfig::new(server.uri().parse().unwrap(), "phc_k")
         }),
     }
@@ -88,7 +90,7 @@ impl Rig {
             tracing::debug!(target: "theodore_app", "debug stays local");
         });
         let t = self.t.clone();
-        tokio::task::spawn_blocking(move || t.flush(Duration::from_secs(5)))
+        tokio::task::spawn_blocking(move || t.flush(Duration::from_secs(60)))
             .await
             .unwrap();
     }
@@ -126,7 +128,7 @@ async fn nothing_is_sent_or_queued_before_a_choice() {
     })
     .await;
     let t = rig.t.clone();
-    tokio::task::spawn_blocking(move || t.flush(Duration::from_secs(5)))
+    tokio::task::spawn_blocking(move || t.flush(Duration::from_secs(60)))
         .await
         .unwrap();
     assert_eq!(rig.paths().await, Vec::<String>::new());
