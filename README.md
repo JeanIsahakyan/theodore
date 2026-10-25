@@ -129,7 +129,7 @@ GitHub is the most complete adapter.
 GitLab and Bitbucket are real, tested adapters too, narrower to match each host's API.
 
 ### Linear (read-only)
-- Issue keys in a PR's title, branch name or body show as chips in Peek and Review.
+- Issue keys in a PR's title, branch name or body show as chips in Peek and the review's Overview tab.
 - No token stored means an empty list, never an error. No write-back.
 
 ### Settings

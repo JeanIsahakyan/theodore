@@ -1,4 +1,4 @@
-import { BranchesRight, ArrowRight } from '@gravity-ui/icons';
+import { ArrowRight, BranchesRight, Tag } from '@gravity-ui/icons';
 import { Chip, Typography } from '@heroui/react';
 import type { PrDetail, PrId, PrSummary } from '../../gen/contract';
 import { FEATURES } from '../../features';
@@ -74,8 +74,15 @@ export function Overview({
         {((detail?.labels.length ?? 0) > 0 || FEATURES.linear) && (
           <div className="flex flex-wrap items-center gap-2">
             {detail?.labels.map((l) => (
-              <Chip key={l} size="sm" variant="tertiary">
-                {l}
+              <Chip
+                key={l}
+                size="sm"
+                variant="soft"
+                color="default"
+                className="shrink-0 gap-1.5 ps-1.5"
+              >
+                <Tag className="size-3.5 text-muted" />
+                <span className="font-medium">{l}</span>
               </Chip>
             ))}
             {FEATURES.linear && <LinearChips pr={id} />}

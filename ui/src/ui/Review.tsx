@@ -49,7 +49,6 @@ import {
 import { STORAGE_NS } from '../stores/UiStore';
 import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
-import { LinearChips } from './linear/LinearChips';
 import { MergeDialog } from './Merge';
 import { Overview } from './review/Overview';
 import { closeBranchReview } from './project/closeReview';
@@ -483,12 +482,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 />
                 {prStatusLabel[summary.state]}
               </Chip>
-              {detail?.labels.map((l) => (
-                <Chip key={l} size="sm" variant="tertiary" className="shrink-0">
-                  {l}
-                </Chip>
-              ))}
-              {FEATURES.linear && <LinearChips pr={pr} />}
             </>
           ) : (
             <Spinner size="sm" />
