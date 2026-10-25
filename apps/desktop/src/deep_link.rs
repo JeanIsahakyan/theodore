@@ -85,11 +85,11 @@ mod tests {
     #[test]
     fn only_an_executable_inside_an_app_bundle_counts() {
         assert!(in_app_bundle(Path::new(
-            "/Applications/Theodore.app/Contents/MacOS/Theodore"
+            "/Applications/Theodore.app/Contents/MacOS/theodore-app"
         )));
         for bare in [
-            "/repo/target/release/Theodore",
-            "/repo/target/debug/Theodore",
+            "/repo/target/release/theodore-app",
+            "/repo/target/debug/theodore-app",
             "/x/Contents/MacOS/Theodore",
             "/x/Theodore.app/MacOS/Theodore",
             "Theodore",

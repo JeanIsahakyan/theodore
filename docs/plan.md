@@ -515,7 +515,7 @@ Settings → Account / Onboarding
   | Where the app runs | Redirect | How it gets back |
   | --- | --- | --- |
   | Installed app (`…/Theodore.app/Contents/MacOS/`) | `theodore://callback` | the browser hands it to macOS ("Open Theodore?"), Theodore comes to the front |
-  | `cargo tauri dev`, a bare `target/release/Theodore` | `http://127.0.0.1:47823/callback` | the running app's loopback listener; the tab shows "You're signed in" |
+  | `cargo tauri dev`, a bare `target/release/theodore-app` | `http://127.0.0.1:47823/callback` | the running app's loopback listener; the tab shows "You're signed in" |
   | A redirect is configured (env or setting) | that one, always | loopback if `http`, else the app scheme |
 
   - The desktop shell decides: it tells the core

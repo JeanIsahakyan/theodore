@@ -10,8 +10,11 @@ name = "theodore_desktop"
 path = "src/lib.rs"
 
 [[bin]]
-# The process name macOS shows in the menu bar and Dock.
-name = "Theodore"
+# Not "Theodore": on macOS's case-insensitive disk that is the same file as
+# the CLI's `theodore` in target/, and each build would overwrite the other
+# (`mainBinaryName` in tauri.conf.json matches). Menu bar and Dock show the
+# bundle's name, "Theodore", not this one.
+name = "theodore-app"
 path = "src/main.rs"
 
 [build-dependencies]
