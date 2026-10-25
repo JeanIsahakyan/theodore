@@ -33,8 +33,10 @@ export type SettingsPage =
   | 'about'
   /** Listed only in sandbox mode (`AppInfo.sandbox`). */
   | 'sandbox'
-  /** Hidden experiments; listed only once `labs.build_mode` exists. */
-  | 'labs';
+  /** Settings → Spaces (the id predates the rename). */
+  | 'labs'
+  /** Settings → Labs: switches for features in progress (`settings/labs.ts`). */
+  | 'experiments';
 
 export interface ContextMenuState {
   x: number;

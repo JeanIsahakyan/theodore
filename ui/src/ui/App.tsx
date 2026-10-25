@@ -25,6 +25,7 @@ import { SignInGate } from './AccountCard';
 import { appView } from '../core/accountGate';
 import { StatusBanners } from './shell/StatusBanners';
 import { isBuildMode } from './space/mode';
+import { isHostOn } from './settings/labs';
 import { SpacePage } from './space/SpacePage';
 
 /** Fallback for any surface with no menu of its own: inputs get Cut/Copy/
@@ -40,7 +41,7 @@ function useRootContextMenu() {
       if (t?.closest('input,textarea,[contenteditable=true]')) return;
       if (store.ephemeral.accountGate !== 'open') return;
       const text = e.clipboardData?.getData('text') ?? '';
-      if (!looksLikePrUrl(text)) return;
+      if (!looksLikePrUrl(text, (h) => isHostOn(store, h))) return;
       e.preventDefault();
       void openPr(store, text.trim());
     };

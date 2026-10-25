@@ -7,6 +7,8 @@ import type { Route } from './stores/UiStore';
  */
 import { api } from './core/api';
 import { NO_ACCOUNT } from './core/accountGate';
+import { prUrlHost } from './core/prUrl';
+import { isHostOn } from './ui/settings/labs';
 import type {
   AddProjectRequest,
   AgentId,
@@ -424,6 +426,16 @@ export async function openPr(
   /** A blank tab to turn into this review. */
   replace?: Route,
 ): Promise<PrId | null> {
+  // A GitLab / Bitbucket link while that host is off in Settings → Labs.
+  const host = prUrlHost(url);
+  if (host && !isHostOn(store, host)) {
+    const name = host === 'gitlab' ? 'GitLab' : 'Bitbucket';
+    store.ephemeral.toast(
+      `${name} links open once ${name} is on in Settings → Labs.`,
+      'warn',
+    );
+    return null;
+  }
   try {
     const res = await api.openPr({ url });
     await store.sync.openPr(res.pr);

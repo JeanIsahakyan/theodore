@@ -16,6 +16,7 @@ import {
   LogoGithub,
   Person,
   PlugConnection,
+  Sparkles,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -60,6 +61,8 @@ import { SandboxPage } from './sandbox/SandboxPage';
 import { visibleSettingsPages } from './sandbox/sandbox';
 import { isLabsVisible } from './space/mode';
 import { LabsPage } from './space/SpacePage';
+import { isHostOn, isLinearOn } from './settings/labs';
+import { LabsPage as ExperimentsPage } from './settings/LabsPage';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 const AI_KEYS = ['agents.grouping', 'agents.chat', 'agents.fix'] as const;
@@ -77,7 +80,8 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'projects', title: 'Projects', icon: <Folder /> },
   { id: 'about', title: 'About & updates', icon: <CircleInfo /> },
   { id: 'sandbox', title: 'Sandbox', icon: <Cubes3 /> },
-  { id: 'labs', title: 'Spaces', icon: <Flask /> },
+  { id: 'labs', title: 'Spaces', icon: <Sparkles /> },
+  { id: 'experiments', title: 'Labs', icon: <Flask /> },
 ];
 
 const SUB: Record<Page, string> = {
@@ -90,6 +94,8 @@ const SUB: Record<Page, string> = {
   about: 'Version, release channel and updates.',
   sandbox: 'The simulated host this window runs against: faults and timeline.',
   labs: 'An agent writes a change in its own worktree; you review it before it becomes a pull request.',
+  experiments:
+    'Features in progress. Off by default; they may change or go away.',
 };
 
 const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
@@ -119,8 +125,10 @@ export const SettingsNav = observer(function SettingsNav({
     [],
   );
   const labs = isLabsVisible(store);
+  // Integrations holds only Linear: it goes with the Linear lab.
+  const linear = isLinearOn(store);
   const pages = visibleSettingsPages(PAGES, store.ephemeral.sandbox).filter(
-    (p) => p.id !== 'labs' || labs,
+    (p) => (p.id !== 'labs' || labs) && (p.id !== 'integrations' || linear),
   );
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
@@ -464,20 +472,24 @@ const AccountPage = observer(function AccountPage() {
         </Card>
         {error && <span className="text-xs text-danger">{error}</span>}
       </section>
-      <TokenHostSection
-        host="gitlab"
-        title="GitLab"
-        domain="gitlab.com"
-        hint="A personal access token with the api scope"
-        placeholder="glpat-…"
-      />
-      <TokenHostSection
-        host="bitbucket"
-        title="Bitbucket"
-        domain="bitbucket.org"
-        hint="An app password (username:app_password) or an access token"
-        placeholder="username:app_password"
-      />
+      {isHostOn(store, 'gitlab') && (
+        <TokenHostSection
+          host="gitlab"
+          title="GitLab"
+          domain="gitlab.com"
+          hint="A personal access token with the api scope"
+          placeholder="glpat-…"
+        />
+      )}
+      {isHostOn(store, 'bitbucket') && (
+        <TokenHostSection
+          host="bitbucket"
+          title="Bitbucket"
+          domain="bitbucket.org"
+          hint="An app password (username:app_password) or an access token"
+          placeholder="username:app_password"
+        />
+      )}
     </>
   );
 });
@@ -950,7 +962,9 @@ export const SettingsPage = observer(function SettingsPage({
         ) : page === 'agents' ? (
           <AgentsPage />
         ) : page === 'integrations' ? (
-          <IntegrationsPage />
+          isLinearOn(store) ? (
+            <IntegrationsPage />
+          ) : null
         ) : page === 'projects' ? (
           <ProjectsPage />
         ) : page === 'sandbox' ? (
@@ -959,6 +973,8 @@ export const SettingsPage = observer(function SettingsPage({
           labs ? (
             <LabsPage />
           ) : null
+        ) : page === 'experiments' ? (
+          <ExperimentsPage />
         ) : (
           <AboutPage />
         )}

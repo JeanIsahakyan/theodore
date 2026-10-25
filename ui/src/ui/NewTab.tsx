@@ -7,6 +7,7 @@ import type { Route } from '../stores/UiStore';
 import { useRootStore, useUi } from '../stores/context';
 import { openPr } from '../actions';
 import { looksLikePrUrl } from '../core/prUrl';
+import { isHostOn } from './settings/labs';
 
 export const NewTab = observer(function NewTab({ route }: { route: Route }) {
   const store = useRootStore();
@@ -35,7 +36,10 @@ export const NewTab = observer(function NewTab({ route }: { route: Route }) {
           onChange={(v) => {
             setUrl(v);
             // Pasting a full link opens it right away.
-            if (looksLikePrUrl(v) && v.length - url.length > 10)
+            if (
+              looksLikePrUrl(v, (h) => isHostOn(store, h)) &&
+              v.length - url.length > 10
+            )
               submit(v.trim());
           }}
           autoFocus
@@ -63,9 +67,12 @@ export const NewTab = observer(function NewTab({ route }: { route: Route }) {
           </InputGroup>
         </TextField>
         <p className="text-xs text-muted">
-          github.com/owner/repo/pull/123 ·
-          gitlab.com/group/project/-/merge_requests/7 · owner/repo#123. You can
-          also press ⌘V anywhere outside a text field.
+          github.com/owner/repo/pull/123 ·{' '}
+          {isHostOn(store, 'gitlab') &&
+            'gitlab.com/group/project/-/merge_requests/7 · '}
+          {isHostOn(store, 'bitbucket') &&
+            'bitbucket.org/workspace/repo/pull-requests/5 · '}
+          owner/repo#123. You can also press ⌘V anywhere outside a text field.
         </p>
         {recent.length > 0 && (
           <div className="mt-6 flex flex-col gap-1">

@@ -244,8 +244,7 @@ export const Onboarding = observer(function Onboarding() {
                 Reviews, threads, Viewed and checks are read and written via the
                 GitHub API on your behalf. Theodore reuses{' '}
                 <code className="font-mono">gh</code>'s login automatically if
-                you're already signed in. GitLab and Bitbucket accounts connect
-                afterward, from Settings → Account.
+                you're already signed in.
               </Typography.Paragraph>
               {host === 'unready' ? (
                 <Alert status="warning">

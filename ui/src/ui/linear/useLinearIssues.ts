@@ -1,18 +1,17 @@
 /** Fetches the Linear issues linked to a PR (`linear_issues`): the core
  *  already caches the result for ~5 minutes, so this hook just re-asks on
- *  every mount/pr change rather than keeping its own cache on top. Behind
- *  `FEATURES.linear` so Peek and the Review header never call a command
- *  that isn't wired up yet. */
+ *  every mount/pr change rather than keeping its own cache on top. Asks
+ *  nothing while `on` is false (`isLinearOn`: the build flag and Settings →
+ *  Labs), so a hidden Linear never calls the command. */
 import { useEffect, useState } from 'react';
 import type { LinearIssue, PrId } from '../../gen/contract';
 import { api } from '../../core/api';
-import { FEATURES } from '../../features';
 
-export function useLinearIssues(pr: PrId): LinearIssue[] {
+export function useLinearIssues(pr: PrId, on: boolean): LinearIssue[] {
   const [issues, setIssues] = useState<LinearIssue[]>([]);
 
   useEffect(() => {
-    if (!FEATURES.linear) return;
+    if (!on) return;
     let cancelled = false;
     void api
       .linearIssues({ pr })
@@ -25,7 +24,7 @@ export function useLinearIssues(pr: PrId): LinearIssue[] {
     return () => {
       cancelled = true;
     };
-  }, [pr]);
+  }, [pr, on]);
 
   return issues;
 }

@@ -11,7 +11,7 @@
 <p align="center">
   Your own agent CLIs — Claude Code, Codex, Gemini CLI — run on your machine.<br>
   Agents never post to the PR — you decide what goes out.<br>
-  One inbox for GitHub, GitLab and Bitbucket.<br>
+  One inbox for your GitHub pull requests.<br>
   macOS · local-first · keyboard-first
 </p>
 
@@ -125,15 +125,20 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 | Reactions | yes | yes | no |
 | Auth | keychain → `gh auth token` → `GITHUB_TOKEN` → OAuth device flow | personal access token | app password or access token |
 
-GitHub is the most complete adapter.
-GitLab and Bitbucket are real, tested adapters too, narrower to match each host's API.
+GitHub is the most complete adapter, and the only host on by default.
+GitLab and Bitbucket are real, tested adapters too, narrower to match each host's API. They are
+behind Settings → Labs, off by default: until you turn one on, its sign-in, its repositories in
+Add project and its PR links stay hidden. Projects and reviews you already added keep working.
 
 ### Linear (read-only)
+- Behind Settings → Labs, off by default; with it off there is no Integrations page and no chips.
 - Issue keys in a PR's title, branch name or body show as chips in Peek and the review's Overview tab.
 - No token stored means an empty list, never an error. No write-back.
 
 ### Settings
 - Sign-in per host.
+- Labs: per-machine switches for features in progress (Linear, GitLab, Bitbucket), all off by
+  default. They may change or go away.
 - Agent per task: grouping, chat, skills, fix — Claude by default for each.
 
 ### Theodore account (required where configured)
@@ -289,8 +294,8 @@ Auth:
 - GitHub tries, in order: a keychain token, `gh auth token`, `GITHUB_TOKEN`, then the "Sign in with
   GitHub" OAuth device flow once `THEODORE_GITHUB_CLIENT_ID` (or the `host.github.client_id`
   setting) is set.
-- GitLab and Bitbucket take a pasted token or app password (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`);
-  no device flow for those yet.
+- GitLab and Bitbucket (once on in Settings → Labs) take a pasted token or app password
+  (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`); no device flow for those yet.
 
 Data lives in `~/.theodore`:
 
