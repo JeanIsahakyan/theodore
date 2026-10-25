@@ -129,6 +129,26 @@ export const Sidebar = observer(function Sidebar() {
     store.models.tasks.where((t) => t.status !== 'done'),
   ).length;
   const viewer = store.ephemeral.viewer;
+  // Who is signed in to Theodore; the host login only stands in when the
+  // build has no Theodore account (sandbox, fixtures, a dev build).
+  const user = store.ephemeral.account?.user ?? null;
+  const me = user
+    ? {
+        person: {
+          login: user.email,
+          name: user.name,
+          avatar_url: user.avatar_url,
+        },
+        label: user.name ?? user.email,
+        title: user.email,
+      }
+    : viewer
+      ? {
+          person: viewer,
+          label: viewer.login,
+          title: viewer.name ?? viewer.login,
+        }
+      : null;
 
   const all: Record<Section, NavItem> = {
     inbox: {
@@ -279,14 +299,14 @@ export const Sidebar = observer(function Sidebar() {
         aria-label="App"
         className="flex w-full items-center gap-1 px-5 pb-3 pt-1.5"
       >
-        {viewer ? (
+        {me ? (
           <>
-            <Avatar person={viewer} size={24} />
+            <Avatar person={me.person} size={24} />
             <span
               className="ms-1.5 min-w-0 flex-1 truncate text-sm"
-              title={viewer.name ?? viewer.login}
+              title={me.title}
             >
-              {viewer.login}
+              {me.label}
             </span>
           </>
         ) : (
