@@ -8,8 +8,9 @@ use theodore_domain::{
 };
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
-    Capabilities, Changes, Clock, Fetched, HostAdapter, HostError, HostResult, InboxSection,
-    MergeMethod, MergeState, MergeStatus, NewPr, ReviewComment, ReviewSubmission, SubmittedReview,
+    Capabilities, Changes, Clock, CreatedIssue, Fetched, HostAdapter, HostError, HostResult,
+    InboxSection, IssueTracker, MergeMethod, MergeState, MergeStatus, NewIssue, NewPr,
+    ReviewComment, ReviewSubmission, SubmittedReview,
 };
 
 use crate::{anchor, graphql, pagination, rest, time};
@@ -18,6 +19,7 @@ use crate::{anchor, graphql, pagination, rest, time};
 pub struct GithubAdapter {
     rest: HttpClient,
     graphql: HttpClient,
+    token: Arc<dyn TokenSource>,
 }
 
 impl GithubAdapter {
@@ -41,7 +43,8 @@ impl GithubAdapter {
     ) -> Self {
         Self {
             rest: HttpClient::new(rest_base, token.clone(), clock.clone()),
-            graphql: HttpClient::new(graphql_url, token, clock),
+            graphql: HttpClient::new(graphql_url, token.clone(), clock),
+            token,
         }
     }
 
@@ -618,6 +621,44 @@ impl HostAdapter for GithubAdapter {
             description: info.description,
             private: info.is_private,
             pushed_at: info.pushed_at.as_deref().map(time::parse_millis),
+        })
+    }
+}
+
+/// "Report a problem" as an issue (docs/telemetry.md). The labels are a
+/// nicety: GitHub refuses them (422, or 403 for a token that may open but
+/// not label issues), so one refusal is retried once without them.
+#[async_trait]
+impl IssueTracker for GithubAdapter {
+    fn has_token(&self) -> bool {
+        self.token.token().is_some()
+    }
+
+    async fn login(&self) -> HostResult<String> {
+        Ok(graphql::viewer(&self.graphql).await?.login)
+    }
+
+    async fn create_issue(
+        &self,
+        owner: &str,
+        name: &str,
+        issue: &NewIssue,
+    ) -> HostResult<CreatedIssue> {
+        let first = rest::create_issue(&self.rest, owner, name, issue).await;
+        let created = match first {
+            Err(HostError::Validation(_) | HostError::Auth) if !issue.labels.is_empty() => {
+                tracing::info!("issue labels refused; retrying without them");
+                let bare = NewIssue {
+                    labels: Vec::new(),
+                    ..issue.clone()
+                };
+                rest::create_issue(&self.rest, owner, name, &bare).await?
+            }
+            other => other?,
+        };
+        Ok(CreatedIssue {
+            number: created.number,
+            url: created.html_url,
         })
     }
 }

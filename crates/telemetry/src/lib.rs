@@ -19,6 +19,7 @@ pub mod client;
 pub mod config;
 pub mod console;
 pub mod file;
+pub mod issue;
 pub mod layer;
 pub mod otlp;
 pub mod panic;

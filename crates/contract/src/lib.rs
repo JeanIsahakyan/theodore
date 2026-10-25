@@ -791,7 +791,12 @@ pub fn types() -> specta::Types {
         .register::<TelemetryStatus>()
         .register::<TelemetryChoice>()
         .register::<ReportFile>()
-        .register::<ProblemReport>();
+        .register::<ProblemReport>()
+        .register::<ReportMode>()
+        .register::<IssueTarget>()
+        .register::<IssueRequest>()
+        .register::<IssuePreview>()
+        .register::<ReportedIssue>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

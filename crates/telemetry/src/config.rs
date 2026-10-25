@@ -27,6 +27,8 @@ pub const SETTING_OTLP_HEADERS: &str = "telemetry.otlp.headers";
 pub const SETTING_POSTHOG_HOST: &str = "telemetry.posthog.host";
 pub const SETTING_POSTHOG_KEY: &str = "telemetry.posthog.key";
 pub const SETTING_LOG_LEVEL: &str = "log.level";
+/// "Report a problem" posts issues here (`owner/name`; `issue.rs`).
+pub const SETTING_REPORT_REPO: &str = "report.github_repo";
 
 pub const DEFAULT_POSTHOG_HOST: &str = "https://us.i.posthog.com";
 

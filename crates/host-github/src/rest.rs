@@ -1,9 +1,9 @@
-//! REST calls: notification polling and the two writes that don't have a
-//! GraphQL equivalent worth using (comment edit/delete).
+//! REST calls: notification polling and the writes that don't have a
+//! GraphQL equivalent worth using (comment edit/delete, issues, …).
 
 use serde::Deserialize;
 use theodore_host_http::HttpClient;
-use theodore_ports::{HostError, HostResult, NewPr};
+use theodore_ports::{HostError, HostResult, NewIssue, NewPr};
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GhNotification {
@@ -308,6 +308,36 @@ pub(crate) async fn create_pull(
         }
         Err(e) => Err(e),
     }
+}
+
+#[derive(serde::Serialize)]
+struct CreateIssueBody<'a> {
+    title: &'a str,
+    body: &'a str,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    labels: &'a [String],
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhIssue {
+    pub number: u64,
+    pub html_url: String,
+}
+
+/// `POST /repos/{owner}/{repo}/issues`.
+pub(crate) async fn create_issue(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    issue: &NewIssue,
+) -> HostResult<GhIssue> {
+    let path = format!("repos/{owner}/{repo}/issues");
+    let body = CreateIssueBody {
+        title: &issue.title,
+        body: &issue.body,
+        labels: &issue.labels,
+    };
+    Ok(http.post_json::<_, GhIssue>(&path, &body).await?.value)
 }
 
 fn urlencode(s: &str) -> String {

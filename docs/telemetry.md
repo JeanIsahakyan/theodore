@@ -72,6 +72,7 @@ fixed set — never code, paths, titles or comment text. The wire shape is pinne
 | `space_turn` | `ms`, `mode`, `ok` |
 | `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`) |
 | `config_saved` | `where` (`global`, `repo`, `local`) |
+| `problem_reported` | `mode` (`issue`, `issue_with_logs`, `logs_only`) |
 
 Every PostHog event also carries `app_version`, `os`, `channel` (the update channel), `commit`
 and `build_env` (`production`, `staging`, `nightly`, `dev`; docs/releasing.md "Build stamp").
@@ -141,6 +142,7 @@ the file included.
 | `telemetry.posthog.key` | `THEODORE_POSTHOG_KEY` | the project API key |
 | `log.level` | `THEODORE_LOG` | `info` by default; a level or `tracing` directives (`info,theodore_app=debug`); the env wins |
 | — | `THEODORE_LOG_STDERR` | mirror the log to stderr outside debug builds |
+| `report.github_repo` | `THEODORE_FEEDBACK_REPO` (build time only) | where "Report a problem" opens issues, `owner/name`; default `JeanIsahakyan/theodore`; the setting wins |
 
 Each sink resolves from the first source that sets it — env, then setting, then compiled in
 (`option_env!` of the same `THEODORE_*` names; the release workflow passes repository variables
@@ -191,11 +193,42 @@ tail -f theodore.jsonl | jq -c '{ts, level, msg, "error.code"}'
 
 ## Report a problem
 
-Settings → About & updates, Help → Report a Problem…, or the "Something went wrong" screen. Builds
-`<tmp>/theodore-reports/theodore-report-<stamp>.zip` with `app-info.json` (version, commit, build
-environment and date, OS, agent CLI versions) and the newest logs up to 20 MB, redacted again with the remote rules
-(repository names and paths hashed). The dialog lists the files for review, then **Reveal in
-Finder** or **Copy summary**. Nothing is uploaded.
+Settings → About & updates, Help → Report a Problem…, the account menu, or the "Something went
+wrong" screen. One dialog, three modes:
+
+| Mode | Sends | Where |
+|---|---|---|
+| **Open an issue** | title, comment, app-info table | a **public** issue on GitHub, as you |
+| **Open an issue with logs** | the same + the newest redacted log lines, folded in `<details>` | the same |
+| **Save logs only** | nothing | a zip on disk for you to attach yourself |
+
+```text
+issue_target ─▶ repo + @login, or why not ─▶ modes 1–2 enabled / disabled with that reason
+preview_issue(title, comment, with_logs) ─▶ draft id + the exact body  (app info, log lines kept)
+submit_issue(…, draft) ─▶ POST /repos/{owner}/{repo}/issues, label from-app ─▶ #N + link
+                          └─ label refused (422/403) ─▶ once more without it
+```
+
+- **Issues** go to `JeanIsahakyan/theodore` — or `THEODORE_FEEDBACK_REPO` (`owner/name`) at build
+  time, or the `report.github_repo` setting (for a scratch repo). They are posted with your own
+  GitHub token (keychain → `gh` → `GITHUB_TOKEN`, as everywhere); the dialog says "Posted publicly
+  as @login on github.com/…" and requires a title and a comment.
+- **App info** in an issue: version, update channel, commit, build environment and date, macOS
+  version, architecture. No install id, no account, no agent CLIs, no paths.
+- **Logs** in an issue are the zip's lines — the same files, the same remote-rule redaction
+  (`report::log_tail`) — but only the newest ones: GitHub caps a body at 65,536 characters, so
+  the logs get what the comment and table leave, and the summary says how many older lines were
+  cut. A fence longer than any backtick run in them keeps a log line from closing it.
+- **Preview** shows the body exactly as posted (logs folded). The post reuses the preview's draft,
+  so it sends the app info and log lines the preview showed; the draft is dropped after posting.
+- **No GitHub sign-in, sandbox or fixture runs**: modes 1–2 are disabled with a one-line reason;
+  sandbox and fixture runs have no issue tracker at all, so they can't reach GitHub even if asked.
+  Errors show inline: an expired token reads "GitHub sign-in expired …".
+- **The zip** (`Save logs only`): `<tmp>/theodore-reports/theodore-report-<stamp>.zip` with
+  `app-info.json` (version, commit, build environment and date, OS, agent CLI versions) and the
+  newest logs up to 20 MB, redacted again with the remote rules (repository names and paths
+  hashed). The dialog lists the files for review, then **Reveal in Finder** or **Copy summary**.
+- Either way, `problem_reported` records only the mode, never the text or the issue.
 
 ## UI errors
 

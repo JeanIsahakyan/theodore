@@ -677,6 +677,43 @@ export type InterdiffWordSpan = {
 	text: string,
 };
 
+/**  Exactly what `submit_issue` would post for the same request. */
+export type IssuePreview = {
+	/**  Pass back in `IssueRequest::draft`. */
+	draft: string,
+	title: string,
+	body: string,
+	/**  The logs block `body` ends with (folded in the preview). */
+	logs: string | null,
+	log_lines: number,
+	/**  Older log lines left out to stay under GitHub's size limit. */
+	cut_lines: number,
+};
+
+export type IssueRequest = {
+	title: string,
+	comment: string,
+	with_logs: boolean,
+	/**
+	 *  The draft a preview came from: its app info and log lines are the
+	 *  ones posted, so the preview is exactly what's sent. `None` (or one
+	 *  that expired) collects them afresh.
+	 */
+	draft?: string | null,
+};
+
+/**  Where a report issue would go and whether it can be posted now. */
+export type IssueTarget = {
+	/**  `owner/name`. */
+	repo: string,
+	/**  `https://github.com/owner/name`. */
+	url: string,
+	/**  The GitHub login it would be posted as. */
+	login: string | null,
+	/**  Why issues can't be posted (signed out, sandbox); `None`: they can. */
+	unavailable: string | null,
+};
+
 export type LineKind = "ctx" | "add" | "del";
 
 /**
@@ -973,6 +1010,20 @@ export type RepoRef = {
 export type ReportFile = {
 	name: string,
 	bytes: number,
+};
+
+/**  How "Report a problem" shares the report (docs/telemetry.md). */
+export type ReportMode =
+/**  A public GitHub issue: title, comment, app info. */
+"issue" |
+/**  The same, plus the newest redacted log lines. */
+"issue_with_logs" |
+/**  A local zip; nothing is uploaded. */
+"logs_only";
+
+export type ReportedIssue = {
+	number: number,
+	url: string,
 };
 
 export type RerunCheckRequest = {

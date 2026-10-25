@@ -16,7 +16,8 @@ use std::time::Duration;
 use anyhow::Context;
 use theodore_app::{Core, Deps, Receivers};
 use theodore_ports::{
-    AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, Secrets, Store, SystemClock,
+    AgentPort, Clock, DeviceLoginPort, GitPort, HostAdapter, IssueTracker, Secrets, Store,
+    SystemClock,
 };
 
 pub use grouper::GroupingGrouper;
@@ -104,6 +105,9 @@ pub struct Runtime {
     /// The sandbox in sandbox mode (status, faults, events); its ticker is
     /// already running.
     pub sandbox: Option<theodore_sandbox::Sandbox>,
+    /// Posts "Report a problem" issues with the user's GitHub token; `None`
+    /// in sandbox and fixture runs, which never reach real GitHub.
+    pub issues: Option<Arc<dyn IssueTracker>>,
 }
 
 struct Adapters {
@@ -121,6 +125,8 @@ struct Adapters {
     token_status: Option<Arc<dyn theodore_app::TokenStatus>>,
     device_login: Arc<dyn DeviceLoginPort>,
     account: Arc<dyn theodore_ports::AccountPort>,
+    /// Real GitHub only: sandbox and fixture runs can't post issues.
+    issues: Option<Arc<dyn IssueTracker>>,
 }
 
 fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
@@ -153,8 +159,10 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         store.clone(),
         git.clone(),
     ));
+    let issues: Arc<dyn IssueTracker> = github.clone();
     let host = Arc::new(Hosts::new(github, Some(gitlab), Some(bitbucket), local));
     Ok(Adapters {
+        issues: Some(issues),
         host,
         git,
         agents: Arc::new(
@@ -189,6 +197,7 @@ fn fixture_adapters(dir: &std::path::Path) -> anyhow::Result<Adapters> {
         token_status: None,
         device_login: Arc::new(theodore_ports::NoDeviceLogin),
         account: Arc::new(theodore_ports::LocalAccount),
+        issues: None,
     })
 }
 
@@ -287,6 +296,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         fixture_host: a.fixture_host,
         worktree_locks,
         sandbox,
+        issues: a.issues,
     })
 }
 

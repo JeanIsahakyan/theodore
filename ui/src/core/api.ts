@@ -28,6 +28,9 @@ import type {
   HostKind,
   InterdiffEntry,
   InterdiffRequest,
+  IssuePreview,
+  IssueRequest,
+  IssueTarget,
   HostRepo,
   LinearIssue,
   LinearIssuesRequest,
@@ -46,6 +49,7 @@ import type {
   ProjectWorkingState,
   ReactRequest,
   ReplyRequest,
+  ReportedIssue,
   RerunCheckRequest,
   Revision,
   RevisionRequest,
@@ -321,6 +325,14 @@ export const api = {
    *  The report view shows its own failure: no toast. */
   reportProblem: () => call<ProblemReport>('report_problem', undefined, true),
   revealReport: (path: string) => call<null>('reveal_report', { path }),
+  /** "Report a problem" as a public GitHub issue: where it goes, as whom,
+   *  or why it can't. The report view shows every failure: no toasts. */
+  issueTarget: () => call<IssueTarget>('issue_target', undefined, true),
+  /** Exactly the issue `submitIssue` posts for the same request. */
+  previewIssue: (req: IssueRequest) =>
+    call<IssuePreview>('preview_issue', { req }, true),
+  submitIssue: (req: IssueRequest) =>
+    call<ReportedIssue>('submit_issue', { req }, true),
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */

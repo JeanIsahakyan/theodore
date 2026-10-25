@@ -7,7 +7,8 @@ license.workspace = true
 
 [features]
 default = []
-testkit = []
+# The fakes outside this crate's own tests (the desktop shell's).
+testkit = ["dep:tempfile"]
 
 [dependencies]
 theodore-domain.workspace = true
@@ -30,6 +31,7 @@ sha2.workspace = true
 hex.workspace = true
 base64 = "0.22"
 tracing.workspace = true
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -52,6 +52,23 @@ export async function settle(): Promise<void> {
   });
 }
 
+/** Sets a text field's value the way typing does (the native setter, then
+ *  an `input` event), so a controlled React field sees it. */
+export async function typeInto(
+  el: Element | null | undefined,
+  value: string,
+): Promise<void> {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    throw new Error('typeInto: not a text field');
+  }
+  const proto = Object.getPrototypeOf(el) as object;
+  const set = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  await act(async () => {
+    set?.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 /** Clicks inside act(). */
 export async function click(el: Element | null | undefined): Promise<void> {
   if (!el) throw new Error('click: no element');

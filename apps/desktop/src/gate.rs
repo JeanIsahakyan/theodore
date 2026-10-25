@@ -39,12 +39,16 @@ pub const ALLOWED_SIGNED_OUT: &[&str] = &[
     "account_sign_out",
     "focus_window",
     // Telemetry: UI errors on the sign-in screen still reach the log, and
-    // a broken sign-in can still be reported (docs/telemetry.md).
+    // a broken sign-in can still be reported (docs/telemetry.md), also as
+    // a GitHub issue: that posts with the GitHub token, not the account.
     "log_client",
     "track_ui",
     "telemetry_status",
     "report_problem",
     "reveal_report",
+    "issue_target",
+    "preview_issue",
+    "submit_issue",
 ];
 
 pub fn allowed_signed_out(command: &str) -> bool {
@@ -152,6 +156,9 @@ mod tests {
             "telemetry_status",
             "report_problem",
             "reveal_report",
+            "issue_target",
+            "preview_issue",
+            "submit_issue",
         ]
         .into_iter()
         .collect();
