@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClockArrowRotateLeft,
   CodeMerge,
-  Comments as CommentsIcon,
   LayoutRows,
   LayoutSideContentLeft,
   LayoutSideContentRight,
@@ -422,7 +421,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusHunk, jumpSeq]);
 
-  const unresolved = (detail?.threads ?? []).filter((t) => !t.resolved).length;
   // A branch review (no PR on the host) takes no host actions either.
   const branchReview = !!summary && isBranchReview(summary);
   const local = summary?.pr.repo.host === 'local' || branchReview;
@@ -683,13 +681,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </Tooltip>
         )}
       </Toolbar>
-
-      {unresolved > 0 && (
-        <div className="flex items-center gap-2 border-b border-separator px-4 py-1.5 text-xs text-warning">
-          <CommentsIcon className="size-3.5" />
-          {unresolved} unresolved thread{unresolved === 1 ? '' : 's'}
-        </div>
-      )}
 
       {sinceOnly &&
         sinceCount === 0 &&
