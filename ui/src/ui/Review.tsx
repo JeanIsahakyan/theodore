@@ -61,6 +61,7 @@ import { latinKey, useViewKeys } from './keys';
 type PrTab = 'overview' | 'diff' | 'checks' | 'commits';
 
 const lastSeenKey = (pr: PrId) => `${STORAGE_NS}theodore-lastseen:${pr}`;
+const baselineKeyOf = (pr: PrId) => `${STORAGE_NS}theodore-baseline:${pr}`;
 
 /** Below this width the groups pane and the aside stop being grid columns —
  *  there isn't room for three panes and a diff column no narrower than
@@ -146,13 +147,19 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       )
     : null;
 
-  // Note the head you had open last time, before overwriting it with this one.
+  // "Since last visit" compares against the head you had caught up on. A
+  // push you haven't read yet keeps that baseline across visits; it only
+  // moves once every hunk changed since then is read (below).
   useEffect(() => {
     if (!summary) return;
-    const key = lastSeenKey(pr);
-    const stored = localStorage.getItem(key);
-    if (stored && stored !== summary.head_sha) setBaselineSha(stored);
-    localStorage.setItem(key, summary.head_sha);
+    const seen = localStorage.getItem(lastSeenKey(pr));
+    let base = localStorage.getItem(baselineKeyOf(pr));
+    if (!base && seen && seen !== summary.head_sha) {
+      base = seen;
+      localStorage.setItem(baselineKeyOf(pr), base);
+    }
+    localStorage.setItem(lastSeenKey(pr), summary.head_sha);
+    setBaselineSha(base && base !== summary.head_sha ? base : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pr, summary?.head_sha]);
 
@@ -173,6 +180,18 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     [baseData, revData],
   );
   const sinceCount = since?.size ?? 0;
+  // Caught up: every hunk changed since the baseline is read, so the next
+  // visit compares against this head.
+  const caughtUp =
+    since != null &&
+    since.size > 0 &&
+    (() => {
+      const reads = new Set(store.models.hunkReads.byPr(pr).map((r) => r.hunk));
+      return [...since.keys()].every((h) => reads.has(h as HunkId));
+    })();
+  useEffect(() => {
+    if (caughtUp) localStorage.removeItem(baselineKeyOf(pr));
+  }, [caughtUp, pr]);
 
   useEffect(() => {
     if (!mode.file && revision?.data?.files.length) {
@@ -432,7 +451,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     <div ref={rootRef} className="review flex min-w-0 flex-1 flex-col">
       <Toolbar
         aria-label="PR"
-        className="flex w-full flex-wrap items-center gap-3 border-b border-separator py-2.5 pl-6 pr-4"
+        className="flex min-h-14 w-full flex-wrap items-center gap-3 border-b border-separator px-6 py-2"
       >
         {layout.groups === 'drawer' && (
           <Tooltip>
@@ -555,7 +574,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
 
       <Toolbar
         aria-label="Sections and people"
-        className="flex w-full flex-wrap items-center gap-4 border-b border-separator px-4 py-2"
+        className="flex w-full flex-wrap items-center gap-4 border-b border-separator px-6 py-2"
       >
         {/* Only a click or a key in the tab list switches tabs: focus
             landing on a tab on its own (a dialog closing, ⌘K) must not. */}
@@ -617,11 +636,14 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             >
               <Tabs.ListContainer>
                 <Tabs.List aria-label="What to show">
-                  <Tabs.Tab id="all">
+                  <Tabs.Tab id="all" className="w-auto whitespace-nowrap">
                     Whole PR
                     <Tabs.Indicator />
                   </Tabs.Tab>
-                  <Tabs.Tab id="since" className="gap-1.5">
+                  <Tabs.Tab
+                    id="since"
+                    className="w-auto gap-1.5 whitespace-nowrap"
+                  >
                     <ClockArrowRotateLeft className="size-4" />
                     Since last visit
                     <span className="tabular-nums text-muted">
