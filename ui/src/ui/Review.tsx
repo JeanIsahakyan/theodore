@@ -4,7 +4,6 @@ import { REVIEW_EVENT } from '../core/menu';
 import { DiffSkeleton } from './Loading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   ClockArrowRotateLeft,
   CodeMerge,
   Comments as CommentsIcon,
@@ -24,7 +23,6 @@ import {
 import {
   Alert,
   Breadcrumbs,
-  Button,
   Chip,
   Disclosure,
   Separator,
@@ -450,22 +448,8 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     <div ref={rootRef} className="review flex min-w-0 flex-1 flex-col">
       <Toolbar
         aria-label="PR"
-        className="flex w-full flex-wrap items-center gap-3 border-b border-separator px-4 py-2.5"
+        className="flex w-full flex-wrap items-center gap-3 border-b border-separator py-2.5 pl-6 pr-4"
       >
-        <Tooltip>
-          <Button
-            isIconOnly
-            size="sm"
-            variant="ghost"
-            aria-label="Back"
-            onPress={() => ui.goBack()}
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
-          <Tooltip.Content>
-            Back <K>Esc</K>
-          </Tooltip.Content>
-        </Tooltip>
         {layout.groups === 'drawer' && (
           <Tooltip>
             <ToggleButton

@@ -107,7 +107,7 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
     .byPr(pr)
     .filter((t) => t.status !== 'done').length;
   return (
-    <div className="side flex min-h-0 flex-col border-l border-separator">
+    <div className="side flex min-h-0 flex-col border-l border-separator bg-background">
       <Tabs
         data-plain
         selectedKey={tab}
@@ -863,7 +863,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 ((m) =>
                   m.author.kind === 'me' ? (
                     <div key={m.id} className="msg user flex justify-end">
-                      <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-default px-4 py-2 text-sm">
+                      <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-surface px-4 py-2 text-sm">
                         {rich(m.text)}
                       </div>
                     </div>
@@ -993,7 +993,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         <div ref={end} />
       </div>
 
-      <div className="chat-input flex flex-col gap-2.5 border-t border-separator bg-background px-4 pb-3 pt-3">
+      <div className="chat-input flex flex-col gap-2.5 px-4 pb-3 pt-1">
         {matches && matches.length > 0 && (
           <Card className="slash-menu min-w-0 gap-0 p-1.5 shadow-overlay">
             <ListBox
@@ -1191,7 +1191,7 @@ const PrTasks = observer(function PrTasks({ pr }: { pr: PrId }) {
           key={t.id}
           id={t.id}
           textValue={t.title}
-          className="mb-2 rounded-2xl border border-separator px-3"
+          className="mb-2 rounded-2xl border border-separator bg-surface px-3"
         >
           <TaskRow t={t} compact sel={ui.selected === t.id} />
         </ListBox.Item>
