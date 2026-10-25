@@ -34,8 +34,8 @@ export const FEATURES = {
    *  the description disclosure in Review read them. */
   prDetail: true,
   /** Spaces (docs/spaces.md): an agent writes a change in its own worktree
-   *  before it becomes a PR. Hidden: off here, turned on per machine by the
-   *  `labs.build_mode` setting (Settings → Labs). With both off there is no
-   *  route, sidebar section, modal or key for it. */
+   *  before it becomes a PR. On for everyone unless the `labs.build_mode`
+   *  setting turns them off (Settings → Spaces); `true` here forces them on.
+   *  Off means no route, sidebar section, modal or key for them. */
   buildMode: false,
 } as const;

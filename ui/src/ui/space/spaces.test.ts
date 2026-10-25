@@ -51,21 +51,20 @@ const space = (over: Partial<Space> & { id: string }): Space => ({
 });
 
 describe('build mode', () => {
-  it('is off by default and with the flag off', () => {
-    expect(buildModeOn(false, [])).toBe(false);
-    expect(buildModeOn(false, [setting(false)])).toBe(false);
-  });
-
-  it('turns on with the flag or the user setting, not a repo-scoped one', () => {
-    expect(buildModeOn(true, [])).toBe(true);
+  it('is on by default and when the user turns it on', () => {
+    expect(buildModeOn(false, [])).toBe(true);
     expect(buildModeOn(false, [setting(true)])).toBe(true);
-    expect(buildModeOn(false, [setting(true, 'repo:acme/web')])).toBe(false);
   });
 
-  it('lists Labs only once the setting exists, on or off', () => {
-    expect(labsVisible(false, [])).toBe(false);
+  it('turns off only by the user setting, not a repo-scoped one', () => {
+    expect(buildModeOn(false, [setting(false)])).toBe(false);
+    expect(buildModeOn(false, [setting(false, 'repo:acme/web')])).toBe(true);
+    expect(buildModeOn(true, [setting(false)])).toBe(true);
+  });
+
+  it('always lists the settings page, where spaces are turned off', () => {
+    expect(labsVisible(false, [])).toBe(true);
     expect(labsVisible(false, [setting(false)])).toBe(true);
-    expect(labsVisible(true, [])).toBe(true);
   });
 });
 

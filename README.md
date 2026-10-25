@@ -34,7 +34,7 @@ Agents now write more code than people can read. Review is the bottleneck.
 | Review means juggling the host's website, a local checkout and a chat. | One window: inbox, diff, threads, checks, merge, an AI chat scoped to the diff, ⌘-click definitions across the worktree. |
 | Flaky Wi-Fi breaks web review. | Local-first: state lives in SQLite, host writes queue in a resumable outbox and go out when you're back online. |
 | The mouse is slow. | Keyboard-first: lists, reading and marking read by key; ⌘K finds every action and PR; `?` shows the shortcuts. |
-| An idea still has to become a PR before anyone can review it. | *Spaces* (Labs): an agent writes the change in its own worktree while you chat and review it grouped, then **Open PR**. |
+| An idea still has to become a PR before anyone can review it. | *Spaces*: an agent writes the change in its own worktree while you chat and review it grouped, then **Open PR**. |
 
 ```
                     git diff (file order)          Theodore (meaning order)
@@ -150,7 +150,7 @@ GitLab and Bitbucket are real, tested adapters too, narrower to match each host'
   builds) or the `account.workos.client_id` setting. A dev build without one has no account;
   sandbox and fixture modes never do. Setup: `docs/plan.md` §6.12.
 
-### Labs: spaces
+### Spaces
 A *space* is a change before it is a PR.
 
 ```
@@ -171,9 +171,8 @@ local folder:  Merge locally  ·  Keep as branch
 - A turn that ends while the window is in the background sends a system notification
   (`spaces.notify`); clicking it opens the space. The dock badge counts spaces waiting on you.
 - Archive any time, or automatically `spaces.auto_archive_days` after shipping.
-- Off by default. On with the build flag `FEATURES.buildMode`, or per machine with the
-  `labs.build_mode` setting: Settings → Labs appears once that setting exists, and its switch
-  turns spaces on. How to create it, and the design: `docs/spaces.md` §10.
+- On for everyone; Settings → Spaces turns them off (the `labs.build_mode` setting). Design:
+  `docs/spaces.md`.
 
 ### Project config
 - Three layered files: `.theodore/config.yaml` in the repo (shared), `.theodore/config.local.yaml`

@@ -1071,8 +1071,8 @@ export const LabsPage = observer(function LabsPage() {
           </Switch.Content>
         </Switch>
         <span className="text-sm">
-          An agent writes a change in its own worktree; you review it before it
-          becomes a pull request. Experimental.
+          Spaces in the sidebar, ⌥N for a new one. Off hides them everywhere;
+          existing spaces stay on disk.
         </span>
       </Card>
       {on && (

@@ -24,21 +24,21 @@ function userSetting(
   return settings.find((s) => s.key === key && s.scope === 'user');
 }
 
-/** Build mode is on when the build flag says so, or the user turned it on. */
+/** Spaces are on unless the user turned them off; the build flag forces
+ *  them on. */
 export function buildModeOn(
   flag: boolean,
   settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
 ): boolean {
-  return flag || userSetting(settings, BUILD_MODE_KEY)?.value === true;
+  return flag || userSetting(settings, BUILD_MODE_KEY)?.value !== false;
 }
 
-/** Settings → Labs is listed once the `labs.build_mode` row exists at all
- *  (on or off) — creating it is the deliberate first step. */
+/** Settings → Spaces is always listed: it's where they're turned off. */
 export function labsVisible(
-  flag: boolean,
-  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+  _flag: boolean,
+  _settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
 ): boolean {
-  return flag || userSetting(settings, BUILD_MODE_KEY) !== undefined;
+  return true;
 }
 
 /** The `chat_message.pr` key of a space's transcript. */

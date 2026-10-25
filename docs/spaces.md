@@ -8,8 +8,8 @@ you on its own branch — and Theodore's existing review, inbox and merge flow
 takes over. In a local folder it is merged into the checked-out branch
 instead, or kept as a branch.
 
-Ships hidden: `FEATURES.buildMode = false`, turned on per machine by the
-`labs.build_mode` setting (Settings → Labs, §10).
+On for everyone; the `labs.build_mode` setting turns them off (Settings →
+Spaces, §10).
 
 ---
 
@@ -244,7 +244,7 @@ the turn ends.
 | PR checks / reviews | header + tabs | existing inbox | existing |
 
 "In the background" = the window isn't focused. The notification respects
-`spaces.notify` (Settings → Labs, default on); the shell sends it
+`spaces.notify` (Settings → Spaces, default on); the shell sends it
 (`notify_space`), so the window keeps only the plugin's permission check.
 Clicking it brings the window forward and opens the space it was about:
 
@@ -466,7 +466,7 @@ the unarchive. If the ref is gone the worktree starts over at the base and
 the space says so (`failed`, "the checkpoints were gone").
 **Auto-archive**: once a minute the poller re-fetches each in-review space's
 PR, sets `done_at` when it has merged, and archives spaces done for
-`spaces.auto_archive_days` (default 7, `0` = never; Settings → Labs). A PR
+`spaces.auto_archive_days` (default 7, `0` = never; Settings → Spaces). A PR
 closed without merging leaves the space alone. Space worktrees live outside
 `~/.theodore/wt`, so the PR worktree sweep never touches them.
 
@@ -508,21 +508,14 @@ Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 
 ## 10. The flag
 
-| | flag off (default) | flag on |
+| | on (default) | turned off |
 | --- | --- | --- |
-| Sidebar section, route, palette items, keys | absent | present |
-| Settings → Labs | absent unless a `labs.build_mode` setting row exists | present |
-| Core commands | registered, unused | used |
+| Sidebar section, route, palette items, keys | present | absent |
+| Settings → Spaces | present, switch on | present, switch off |
+| Core commands | used | registered, unused |
 
-On = `FEATURES.buildMode || setting labs.build_mode = true` (user scope).
-To turn it on without a rebuild, create the row once with Theodore closed,
-then use Settings → Labs:
-
-```sh
-sqlite3 ~/.theodore/theodore.db "INSERT INTO models (model, id, data) VALUES
-  ('setting', 'user:labs.build_mode',
-   '{\"key\":\"labs.build_mode\",\"scope\":\"user\",\"value\":false}')"
-```
+On = `FEATURES.buildMode || setting labs.build_mode != false` (user scope):
+no row, or `true`, means on. The flag forces them on and locks the switch.
 
 ---
 

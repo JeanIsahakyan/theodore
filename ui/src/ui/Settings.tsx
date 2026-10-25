@@ -77,7 +77,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'projects', title: 'Projects', icon: <Folder /> },
   { id: 'about', title: 'About & updates', icon: <CircleInfo /> },
   { id: 'sandbox', title: 'Sandbox', icon: <Cubes3 /> },
-  { id: 'labs', title: 'Labs', icon: <Flask /> },
+  { id: 'labs', title: 'Spaces', icon: <Flask /> },
 ];
 
 const SUB: Record<Page, string> = {
@@ -89,7 +89,7 @@ const SUB: Record<Page, string> = {
   updates: 'Version, release channel and updates.',
   about: 'Version, release channel and updates.',
   sandbox: 'The simulated host this window runs against: faults and timeline.',
-  labs: 'Hidden features in progress. They may change or go away.',
+  labs: 'An agent writes a change in its own worktree; you review it before it becomes a pull request.',
 };
 
 const SOURCE_LABEL: Record<HostAuthStatus['source'], string> = {
