@@ -275,6 +275,8 @@ mod tests {
             flush_every: Duration::from_secs(3600),
             backoff: Duration::from_millis(5),
             max_attempts: 3,
+            // Generous: the whole workspace's tests share the machine.
+            timeout: Duration::from_secs(30),
             ..PosthogConfig::new(server.uri().parse().unwrap(), "phc_test")
         }
     }
@@ -330,7 +332,7 @@ mod tests {
         for _ in 0..4 {
             s.write(&pr_opened());
         }
-        s.flush(Duration::from_secs(5));
+        s.flush(Duration::from_secs(60));
         let reqs = server.received_requests().await.unwrap();
         // 3 by size, then 1 on flush.
         assert_eq!(reqs.len(), 2);
@@ -357,7 +359,7 @@ mod tests {
             .await;
         let s = sink(cfg(&server));
         s.write(&pr_opened());
-        s.flush(Duration::from_secs(5));
+        s.flush(Duration::from_secs(60));
         assert_eq!(server.received_requests().await.unwrap().len(), 3);
         assert_eq!(s.stats().sent.load(Ordering::Relaxed), 1);
         assert_eq!(s.stats().dropped.load(Ordering::Relaxed), 0);
@@ -373,7 +375,7 @@ mod tests {
             .await;
         let s = sink(cfg(&server));
         s.write(&pr_opened());
-        s.flush(Duration::from_secs(5));
+        s.flush(Duration::from_secs(60));
         assert_eq!(server.received_requests().await.unwrap().len(), 3);
         assert_eq!(s.stats().dropped.load(Ordering::Relaxed), 1);
         s.shutdown(true);
@@ -385,7 +387,7 @@ mod tests {
             .await;
         let s = sink(cfg(&server));
         s.write(&pr_opened());
-        s.flush(Duration::from_secs(5));
+        s.flush(Duration::from_secs(60));
         // A 400 isn't retried.
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         assert_eq!(s.stats().dropped.load(Ordering::Relaxed), 1);
