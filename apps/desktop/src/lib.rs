@@ -158,10 +158,13 @@ pub fn export_bindings(out: impl AsRef<Path>) -> Result<(), String> {
 
 /// Runs the Theodore desktop shell. `core` is the use-case implementation;
 /// `forward` receives the event emitter once the app is up, to pipe the
-/// core's sync and ephemeral streams to the UI.
+/// core's sync and ephemeral streams to the UI. `auto_update` starts the
+/// launch-time and periodic update check (the menu's "Check for updates"
+/// works either way).
 pub fn run(
     core: Arc<dyn CoreApi>,
     sandbox: bool,
+    auto_update: bool,
     forward: impl FnOnce(CoreEvents<tauri::Wry>) + Send + 'static,
 ) {
     let builder = specta_builder();
@@ -204,7 +207,9 @@ pub fn run(
             app.manage(notify::for_app(&handle));
             forward(emitter(handle.clone()));
             deep_link::listen(&handle, core.clone());
-            updater::spawn_periodic_check(handle, core.clone());
+            if auto_update {
+                updater::spawn_periodic_check(handle, core.clone());
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

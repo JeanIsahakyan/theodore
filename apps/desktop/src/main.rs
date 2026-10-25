@@ -82,7 +82,10 @@ fn main() {
     });
     let api = Arc::new(app_core);
 
-    run(api, is_sandbox, move |events| {
+    // A fixture run (dev, e2e) never reaches a real host; the release feed
+    // would only add a failed check to its log on every launch.
+    let auto_update = cfg.fixtures.is_none();
+    run(api, is_sandbox, auto_update, move |events| {
         let mut sync = receivers.sync;
         let mut ephemeral = receivers.ephemeral;
         let ev = events.clone();

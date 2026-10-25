@@ -1,18 +1,24 @@
 import { $, expect } from '@wdio/globals';
-import { completeOnboardingIfPresent, openDemoPr, showGroupedView } from './helpers';
+import {
+  completeOnboardingIfPresent,
+  groupSelector,
+  openDemoPr,
+  showGroupedView,
+} from './helpers';
 
 describe('opening a PR', () => {
   it('shows the groups the fixture grouping script produced', async () => {
     await completeOnboardingIfPresent();
-    await openDemoPr('webhooks #101');
+    await openDemoPr();
     await showGroupedView();
-
-    const groups = await $('[aria-label="Groups"]');
-    await groups.waitForDisplayed();
 
     // `crates/fixtures/data/demo/agents/claude/grouping.jsonl`'s recorded
     // groups, surfaced as a `grouping` sync row (plan §5.1).
-    await expect($('*=Retry with backoff')).toBeDisplayed();
-    await expect($('*=Tests')).toBeDisplayed();
+    await expect($(groupSelector('Retry with backoff'))).toBeDisplayed();
+    await expect($(groupSelector('Tests'))).toBeDisplayed();
+    // Read progress over those groups (`GroupsPane.tsx`).
+    await expect(
+      $('[role="progressbar"][aria-label="Groups read"]'),
+    ).toBeDisplayed();
   });
 });

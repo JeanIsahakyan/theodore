@@ -155,7 +155,9 @@ jobs:
         run: pnpm -C e2e typecheck
 
       - name: run the specs
-        run: xvfb-run --auto-servernum pnpm -C e2e test
+        # A screen bigger than the 1400×900 window (`tauri.conf.json`), so
+        # it opens at full size and the review lays out the same each run.
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm -C e2e test
         env:
           TAURI_APP_BINARY: ${{ github.workspace }}/target/debug/theodore-app
           THEODORE_FIXTURES: ${{ github.workspace }}/crates/fixtures/data/demo

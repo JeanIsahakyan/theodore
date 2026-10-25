@@ -1,0 +1,2 @@
+{"type":"text","text":"gemini: the retry loop stops on the first 2xx or a non-retryable 4xx.","delay_ms":50}
+{"type":"done","final_text":"The retry loop stops on the first 2xx or a non-retryable 4xx.","usage":{"input_tokens":300,"output_tokens":80,"usd":0.00114},"delay_ms":0}

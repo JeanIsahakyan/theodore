@@ -48,7 +48,7 @@ pnpm typecheck
    pnpm install
    export TAURI_APP_BINARY="$(realpath ../target/debug/Theodore)"
    export THEODORE_FIXTURES="$(realpath ../crates/fixtures/data/demo)"
-   xvfb-run --auto-servernum pnpm test
+   xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm test
    ```
    `wdio.conf.ts` spawns `tauri-driver` itself (`onPrepare`/`onComplete`);
    `tauri-driver` in turn spawns `$TAURI_APP_BINARY`, inheriting this
@@ -61,19 +61,31 @@ pnpm typecheck
 | --- | --- |
 | `specs/inbox.e2e.ts` | Inbox lists both demo PRs |
 | `specs/open-pr-groups.e2e.ts` | Opening a PR shows the fixture's grouping |
-| `specs/mark-group-read.e2e.ts` | "Mark as read" flips a group's hunks |
+| `specs/mark-group-read.e2e.ts` | "Mark as read" flips a group's hunks, its files go Viewed |
 | `specs/draft-and-submit.e2e.ts` | Comment → draft → `Submit review` → thread |
 | `specs/run-skill-finding.e2e.ts` | `/security` → a real MCP `add_finding` → a finding card |
 
-`specs/helpers.ts` holds the steps shared across all of them (onboarding,
-opening PR #101, switching to the grouped view).
+`specs/helpers.ts` holds the steps shared across all of them: onboarding
+(first launch only — the webview's storage outlives the process), opening
+PR #101 from the Inbox, the grouped view, the AI panel.
 
-## Selector note
+```
+first launch ─▶ Theme ─▶ GitHub ─▶ Agents ─▶ Projects ─▶ Done ─▶ welcome (1.65 s) ─▶ Inbox
+                          │                     └ Skip
+                          └ fixture mode has no token source: paste any token,
+                            the fixture host takes it
+later launches ─▶ the last session's tabs ─▶ sidebar "Inbox"
+```
 
-Every selector here was written by reading the component source
-(`ui/src/ui/*.tsx`), not by running the app — this environment has no
-`tauri-driver` for WKWebView, so nothing here has been confirmed end to end
-against a live window. The structure (ARIA labels, class names like
-`.prrow`/`.grp`/`.draft`/`.thread`/`.finding`, button text) is exactly what
-the current components render, but a first CI run is the real check;
-expect to adjust a selector or a wait if the markup has since moved.
+## Selectors
+
+Roles and ARIA labels first (`listbox "Pull requests"`, `toolbar "PR"`,
+`tablist "How to show changes"`, `textarea "Ask the agent"`), then visible
+text, then a class token only where there's nothing else (`.ln`, `.draft`,
+`.thread`, `.finding`, the decorative `.welcome`). Text matches are XPath
+with `normalize-space(.)`: WebdriverIO's `button=Text` reads only a
+button's own text nodes, and `*=Text` matches links only.
+
+The selectors were checked against the components' rendered DOM under
+jsdom, not against a live window (no `tauri-driver` on macOS); CI is the
+end-to-end check.
