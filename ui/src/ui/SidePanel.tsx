@@ -563,7 +563,7 @@ const FindingCard = observer(function FindingCard({
           {f.fix.status === 'ready' && (
             <div className="fix-actions flex flex-wrap gap-1">
               <Tooltip>
-                <Btn tone="success" icon={<Check />} isDisabled>
+                <Btn tone="primary" icon={<Check />} isDisabled>
                   Apply
                 </Btn>
                 <Tooltip.Content>Not available yet</Tooltip.Content>

@@ -258,7 +258,7 @@ export const MergeDialog = observer(function MergeDialog({
         </Btn>
       )}
       <Btn
-        tone="success"
+        tone="primary"
         icon={<CodeMerge />}
         className="do-merge"
         isDisabled={blocked.length > 0}

@@ -106,8 +106,7 @@ export type Tone =
   | 'ghost'
   | 'outline'
   | 'danger'
-  | 'danger-soft'
-  | 'success';
+  | 'danger-soft';
 
 /** Button whose variant says what it does; its shortcut is printed on it. */
 export function Btn({
@@ -121,12 +120,11 @@ export function Btn({
   ComponentProps<typeof Button>,
   'variant' | 'children'
 > & { children?: ReactNode }) {
-  const success = tone === 'success';
   return (
     <Button
       size="sm"
-      variant={success ? 'primary' : tone}
-      className={`gap-1.5 ${success ? 'bg-success text-success-foreground hover:bg-success-hover' : ''} ${className}`}
+      variant={tone}
+      className={`gap-1.5 ${className}`}
       {...rest}
     >
       {icon}

@@ -528,7 +528,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         {!local && !finished && (
           <Tooltip>
             <Btn
-              tone={mergeBlock ? 'tertiary' : 'success'}
+              tone={mergeBlock ? 'tertiary' : 'primary'}
               icon={<CodeMerge />}
               className="merge-btn shrink-0"
               isIconOnly={compact}

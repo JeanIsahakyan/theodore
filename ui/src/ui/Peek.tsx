@@ -311,7 +311,7 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         </Btn>
         {host.includes('merge') && (
           <Btn
-            tone="success"
+            tone="primary"
             icon={<CodeMerge />}
             onPress={() => setMerging(true)}
           >

@@ -231,7 +231,7 @@ export const TaskRow = observer(function TaskRow({
         {t.status === 'review' && !rejecting && (
           <>
             <Btn
-              tone="success"
+              tone="primary"
               kbd="Y"
               icon={<Check />}
               isPending={busy}
