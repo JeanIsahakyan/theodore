@@ -17,7 +17,7 @@ export const LABS = [
   {
     key: LINEAR_LAB,
     title: 'Linear',
-    text: 'Settings → Integrations for a Linear API key, and the linked issues as chips in Peek and Overview.',
+    text: 'Settings → Integrations for a Linear API key, and the linked issues as chips in the preview and the review Overview tab.',
   },
   {
     key: GITLAB_LAB,
