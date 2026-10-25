@@ -211,8 +211,10 @@ local folder:  Merge locally  ·  Keep as branch
 ### Updates
 - Checks for a new build on launch and every 6 hours: production builds on the stable (or beta)
   channel, staging builds only on the staging one. Releases: GitHub Releases, from v0.1.0.
+- An installed update shows "Restart to update" in the window (over the sign-in too), and a system
+  notification while the window is in the background; a click restarts into it.
 - Restarts only once no agent is running and the outbox is empty.
-- No signed release has shipped yet — see **Not yet**.
+- The first launch of a new version says "Updated to X", with its release notes one click away.
 
 ### Logs, error reports and usage data
 - Everything is logged locally to `<data dir>/logs/theodore.jsonl` (`~/.theodore` in production; JSON
