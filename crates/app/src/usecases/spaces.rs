@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
-use crate::usecases::agents::tool_log_line;
+use crate::usecases::agents::tool_log_line_with;
 use crate::usecases::projects::stable_hash_u32;
 
 /// The `chat_message.pr` key a space's transcript is stored under.
@@ -711,8 +711,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
                             text.push_str(&t);
                             core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text: t });
                         }
-                        AgentEvent::ToolCall { name, .. } => {
-                            core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line(&name) });
+                        AgentEvent::ToolCall { name, input, .. } => {
+                            core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line_with(&name, &input) });
                         }
                         AgentEvent::Stalled => {
                             core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });

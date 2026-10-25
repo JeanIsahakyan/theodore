@@ -75,6 +75,7 @@ import { isAgentEnabled } from './Settings';
 import { SkillsManagerModal } from './Skills';
 import { TaskRow } from './Tasks';
 import { SendToAgent } from './space/SendToAgent';
+import { runningLine, summarizeTools, times, usedLine } from './toolSummary';
 
 export type SideTab = 'ai' | 'tasks' | 'threads';
 
@@ -265,21 +266,44 @@ function Dots() {
   );
 }
 
-/** Collapsible card with the log lines an agent produced for this answer.
- *  Open while the agent works, folds away once it's done — remounted (via
- *  `key`) rather than synced through an effect, so there's no setState in
- *  an effect body to cascade a render. */
+/** Whether a turn's step list is open, by run id — kept across the remount
+ *  when a running turn becomes a finished one. */
+const stepsOpen = new Map<string, boolean>();
+
+/** A turn's tool calls, folded: while the agent works, only the latest step
+ *  and a count; once it's done, one `Used Bash ×12, Edit ×4` line. The full
+ *  list — back-to-back calls of one tool grouped — opens behind
+ *  `Show N steps`. */
 export function ToolCalls({
   tools,
   running,
+  turn,
 }: {
-  tools: string[];
+  tools: readonly string[];
   running: boolean;
+  /** Run id; keeps the list's open state for this turn. */
+  turn?: string;
 }) {
+  const [open, setOpen] = useState(() =>
+    turn ? (stepsOpen.get(turn) ?? false) : false,
+  );
+  const toggle = (next: boolean) => {
+    if (turn) stepsOpen.set(turn, next);
+    setOpen(next);
+  };
+  const s = summarizeTools(tools);
+  const head = running
+    ? s.latest
+      ? runningLine(s.latest)
+      : 'Working…'
+    : usedLine(s) || 'Done';
+  const count = s.steps
+    ? plural(s.steps, 'step', 'steps', 'steps')
+    : plural(s.groups.length, 'line', 'lines', 'lines');
   return (
     <Disclosure
-      key={running ? 'running' : 'done'}
-      defaultExpanded={running}
+      isExpanded={open}
+      onExpandedChange={toggle}
       className="rounded-2xl border border-separator"
     >
       <Disclosure.Heading>
@@ -287,20 +311,42 @@ export function ToolCalls({
           {running ? (
             <Spinner />
           ) : (
-            <CircleCheck className="size-3.5 text-success" />
+            <CircleCheck className="size-3.5 shrink-0 text-success" />
           )}
-          <span className="text-muted">{running ? 'Working:' : 'Done:'}</span>
-          <span className="truncate font-medium">
-            {plural(tools.length, 'log line', 'log lines', 'log lines')}
+          <span className="min-w-0 flex-1 truncate font-medium" title={head}>
+            {head}
+          </span>
+          <span className="shrink-0 text-muted">
+            {open ? 'Hide' : 'Show'} {count}
           </span>
           <Disclosure.Indicator />
         </Disclosure.Trigger>
       </Disclosure.Heading>
       <Disclosure.Content>
         <Disclosure.Body className="runlog flex flex-col gap-1 px-3 pb-2.5 pt-0 font-mono text-xs text-muted">
-          {tools.map((t, i) => (
-            <span key={i}>{t}</span>
-          ))}
+          {s.groups.map((g, i) =>
+            g.kind === 'note' ? (
+              <span key={i} className="italic">
+                {g.text}
+              </span>
+            ) : (
+              <span key={i} className="flex min-w-0 gap-1.5">
+                <span className="shrink-0 text-foreground">
+                  {times(g.tool, g.count)}
+                </span>
+                {g.target && (
+                  <span className="truncate" title={g.target}>
+                    · {g.target}
+                  </span>
+                )}
+                {g.failed > 0 && (
+                  <span className="shrink-0 text-danger">
+                    · {g.failed} failed
+                  </span>
+                )}
+              </span>
+            ),
+          )}
         </Disclosure.Body>
       </Disclosure.Content>
     </Disclosure>
@@ -498,7 +544,7 @@ const SkillRunView = observer(function SkillRunView({
           </div>
         </div>
       )}
-      {log.length > 0 && <ToolCalls tools={log} running={live} />}
+      {log.length > 0 && <ToolCalls tools={log} running={live} turn={run} />}
       {done && all.length > 0 && (
         <div
           role="toolbar"
@@ -1056,6 +1102,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                         <ToolCalls
                           tools={store.ephemeral.runLog.get(pending.run)!}
                           running
+                          turn={pending.run}
                         />
                       )}
                       <div className="flex gap-1.5">
