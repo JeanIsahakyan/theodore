@@ -106,6 +106,7 @@ export class EphemeralStore {
       viewer: observableRef,
       viewerLoading: observable,
       appInfo: observableRef,
+      forcedSyncUntil: observable,
       account: observableRef,
       accountGate: computed,
       sandbox: computed,
@@ -192,6 +193,23 @@ export class EphemeralStore {
     runInAction(() => {
       if (this.appInfo) this.appInfo = { ...this.appInfo, update };
     });
+  }
+
+  /** Sandbox only: the syncing look held on until this time (ms), to see
+   *  it without a slow host (Settings → Sandbox → Show syncing). */
+  forcedSyncUntil = 0;
+
+  forceSyncing(ms: number): void {
+    runInAction(() => {
+      this.forcedSyncUntil = Date.now() + ms;
+    });
+    setTimeout(
+      () =>
+        runInAction(() => {
+          if (Date.now() >= this.forcedSyncUntil) this.forcedSyncUntil = 0;
+        }),
+      ms,
+    );
   }
 
   /** Installed on disk, waiting for a restart into it. */

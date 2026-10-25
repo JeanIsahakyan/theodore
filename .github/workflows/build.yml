@@ -129,6 +129,18 @@ jobs:
             echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
           } >> "$GITHUB_ENV"
 
+      # The Dock icon in this build's colours (staging: orange), generated
+      # from apps/desktop/icons/src/icon.svg with the tauri-cli installed
+      # above; production keeps the committed icons (docs/releasing.md).
+      - name: app icon in this build's colours
+        if: inputs.build-env != 'production'
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+        run: |
+          icons="$PWD/target/icons/$BUILD_ENV"
+          sh scripts/icon-variant.sh "$BUILD_ENV" "$icons"
+          echo "ICON_DIR=$icons" >> "$GITHUB_ENV"
+
       # Builds + ad-hoc codesigns (tauri.conf.json's `bundle.macOS.signingIdentity:
       # "-"`, i.e. `codesign --force --deep -s -`) unless the step above loaded
       # a real Developer ID, in which case tauri-bundler signs and notarizes
@@ -136,6 +148,8 @@ jobs:
       # (`.app.tar.gz` + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY).
       # `--config version` is the version the updater compares against, so a
       # staging build's `-staging.N` must be in the bundle, not only in About.
+      # The bundle is `Theodore Staging.app` for staging; the assets below
+      # keep their `Theodore_<version>_…` names.
       - name: build app, dmg and updater artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -153,9 +167,26 @@ jobs:
           THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
           THEODORE_POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
           THEODORE_POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+        # One --config: the version, and for any build but production its
+        # own names (productName, identifier, URL scheme) from
+        # tauri.<env>.conf.json, so it installs beside production without
+        # sharing its data (docs/releasing.md "One identity per build").
         run: |
+          case "$THEODORE_BUILD_ENV" in
+            production) names='{}' ;;
+            *) names=$(cat "apps/desktop/tauri.$THEODORE_BUILD_ENV.conf.json") ;;
+          esac
+          # Its names, then its version and (outside production) its icon.
+          config=$(jq -nc --argjson names "$names" --arg version "$VERSION" \
+            --arg icons "${ICON_DIR:-}" '
+            $names * { version: $version }
+            * if $icons == "" then {} else
+                { bundle: { icon: [ "32x32.png", "128x128.png", "icon.icns" ]
+                                  | map("\($icons)/\(.)") } }
+              end')
+          echo "config: $config"
           cargo tauri build --target aarch64-apple-darwin --bundles app,dmg \
-            --config "{\"version\":\"$VERSION\"}"
+            --config "$config"
 
       # Versioned names, so a rolling release (channel-staging) never serves
       # a new tarball under an old latest.json's signature mid-upload.

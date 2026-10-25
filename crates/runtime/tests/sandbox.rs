@@ -30,6 +30,7 @@ async fn start() -> (Runtime, tempfile::TempDir) {
         data_dir: tmp.path().join("data"),
         fixtures: None,
         sandbox: Some(scenario_dir),
+        build_env: theodore_runtime::BuildEnv::Dev,
     };
     let rt = theodore_runtime::start(&cfg)
         .await

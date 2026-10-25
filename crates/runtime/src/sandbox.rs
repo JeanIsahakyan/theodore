@@ -12,6 +12,7 @@ use theodore_domain::RepoRef;
 use theodore_ports::{CredentialSource, GitPort, Store, SystemClock};
 use theodore_sandbox::{AgentsMode, Sandbox, SeedProject};
 
+use crate::identity::{self, BuildEnv};
 use crate::{Adapters, Hosts, local_host};
 
 /// `~/.theodore-sandbox`: the sandbox's own default data dir.
@@ -21,12 +22,19 @@ pub fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".theodore-sandbox"))
 }
 
-/// Refuses the real app's data dir (`~/.theodore`), however it's spelled.
+/// Refuses every build's own data dir (`~/.theodore`, `~/.theodore-dev`,
+/// …), however it's spelled.
 pub(crate) fn guard_data_dir(data_dir: &Path) -> anyhow::Result<()> {
     match dirs::home_dir() {
-        Some(home) => guard_against(data_dir, &home.join(".theodore")),
+        Some(home) => guard_builds(data_dir, &home),
         None => Ok(()),
     }
+}
+
+fn guard_builds(data_dir: &Path, home: &Path) -> anyhow::Result<()> {
+    BuildEnv::ALL
+        .into_iter()
+        .try_for_each(|env| guard_against(data_dir, &identity::default_data_dir(env, Some(home))))
 }
 
 fn guard_against(data_dir: &Path, real: &Path) -> anyhow::Result<()> {
@@ -143,5 +151,20 @@ mod tests {
         assert!(guard_against(&real.join("sub/.."), &real).is_err());
         assert!(guard_against(&real.join("sub"), &real).is_err());
         assert!(guard_against(&tmp.path().join(".theodore-sandbox"), &real).is_ok());
+    }
+
+    #[test]
+    fn no_build_data_dir_is_a_sandbox_data_dir() {
+        let home = tempfile::tempdir().unwrap();
+        for dir in [
+            ".theodore",
+            ".theodore-staging",
+            ".theodore-nightly",
+            ".theodore-dev",
+        ] {
+            let err = guard_builds(&home.path().join(dir).join("x"), home.path());
+            assert!(err.is_err(), "{dir}");
+        }
+        assert!(guard_builds(&home.path().join(".theodore-sandbox"), home.path()).is_ok());
     }
 }

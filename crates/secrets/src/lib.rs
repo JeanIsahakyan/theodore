@@ -1,7 +1,9 @@
 //! Secrets in one OS keychain item (macOS via /usr/bin/security).
 //!
 //! All Theodore secrets live in ONE macOS keychain generic-password item:
-//! - Service: `app.theodore.secrets`
+//! - Service: `app.theodore.secrets` (`VAULT_SERVICE`) for production; any
+//!   other build passes its own (`KeychainSecrets::with_service`, e.g.
+//!   `app.theodore.secrets.staging`), so builds never share secrets
 //! - Account: `vault`
 //! - Value: JSON object `{ "<key>": "<secret>", ... }`
 //!
@@ -17,7 +19,8 @@ use std::sync::Mutex;
 use theodore_ports::Secrets;
 use theodore_ports::SecretsError;
 
-const VAULT_SERVICE: &str = "app.theodore.secrets";
+/// The production build's keychain service; other builds suffix it.
+pub const VAULT_SERVICE: &str = "app.theodore.secrets";
 const VAULT_ACCOUNT: &str = "vault";
 
 /// Keys for secrets stored in the vault.
@@ -207,15 +210,23 @@ fn ascii_escape_json(json: &str) -> String {
 /// `cache` is the inner, short-lived lock `load_vault`/`save_vault` use to
 /// touch the cached snapshot; `get` only needs that one.
 pub struct KeychainSecrets {
+    service: String,
     cache: Mutex<Option<HashMap<String, String>>>,
     write_lock: Mutex<()>,
     runner: Box<dyn CommandRunner>,
 }
 
 impl KeychainSecrets {
-    /// Create a new keychain secrets store with the real command runner.
+    /// The production keychain item (`VAULT_SERVICE`), real command runner.
     pub fn new() -> Self {
+        Self::with_service(VAULT_SERVICE)
+    }
+
+    /// The keychain item under `service` (account `vault`), real command
+    /// runner.
+    pub fn with_service(service: impl Into<String>) -> Self {
         Self {
+            service: service.into(),
             cache: Mutex::new(None),
             write_lock: Mutex::new(()),
             runner: Box::new(RealCommandRunner),
@@ -226,6 +237,7 @@ impl KeychainSecrets {
     #[cfg(test)]
     fn with_runner(runner: Box<dyn CommandRunner>) -> Self {
         Self {
+            service: VAULT_SERVICE.into(),
             cache: Mutex::new(None),
             write_lock: Mutex::new(()),
             runner,
@@ -243,7 +255,7 @@ impl KeychainSecrets {
             return Ok(vault.clone());
         }
 
-        let json_str = match self.runner.read_keychain(VAULT_SERVICE, VAULT_ACCOUNT)? {
+        let json_str = match self.runner.read_keychain(&self.service, VAULT_ACCOUNT)? {
             Some(s) => s,
             None => {
                 // No vault yet; return empty map.
@@ -269,7 +281,7 @@ impl KeychainSecrets {
         let json_str = ascii_escape_json(&json_str);
 
         self.runner
-            .write_keychain(VAULT_SERVICE, VAULT_ACCOUNT, &json_str)?;
+            .write_keychain(&self.service, VAULT_ACCOUNT, &json_str)?;
 
         // Update cache.
         let mut cache = self
@@ -462,6 +474,67 @@ mod tests {
         assert_eq!(
             secrets.get(BITBUCKET_TOKEN).unwrap(),
             Some("bb_token".to_string())
+        );
+    }
+
+    /// Records which keychain item each call went to.
+    #[derive(Clone, Default)]
+    struct ItemRecorder(std::sync::Arc<Mutex<Vec<(String, String)>>>);
+
+    impl CommandRunner for ItemRecorder {
+        fn read_keychain(
+            &self,
+            service: &str,
+            account: &str,
+        ) -> Result<Option<String>, SecretsError> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((service.into(), account.into()));
+            Ok(None)
+        }
+
+        fn write_keychain(
+            &self,
+            service: &str,
+            account: &str,
+            _: &str,
+        ) -> Result<(), SecretsError> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((service.into(), account.into()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn each_build_reads_and_writes_its_own_keychain_item() {
+        for (service, expected) in [
+            (None, VAULT_SERVICE),
+            (
+                Some("app.theodore.secrets.staging"),
+                "app.theodore.secrets.staging",
+            ),
+        ] {
+            let calls = ItemRecorder::default();
+            let mut secrets = KeychainSecrets::with_runner(Box::new(calls.clone()));
+            if let Some(s) = service {
+                secrets.service = s.into();
+            }
+            secrets.set("key1", "value1").unwrap();
+            let calls = calls.0.lock().unwrap();
+            assert_eq!(calls.len(), 2, "one read, one write");
+            assert!(
+                calls
+                    .iter()
+                    .all(|(s, a)| s == expected && a == VAULT_ACCOUNT),
+                "{calls:?}"
+            );
+        }
+        assert_eq!(
+            KeychainSecrets::with_service("app.theodore.secrets.dev").service,
+            "app.theodore.secrets.dev"
         );
     }
 

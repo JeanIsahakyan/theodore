@@ -21,6 +21,8 @@ import { FEATURES } from '../features';
 import { useRootStore, useUi, useWorkspaces } from '../stores/context';
 import { Spinner } from './bits';
 import { Logo } from './Logo';
+import { useSyncDisplay } from './shell/SyncStatus';
+import { WelcomeLogo } from './Welcome';
 import { refreshProjectTracked, refreshingProjects } from './project/freshness';
 import { ProjectStatusDot, hostRepoUrl, projectLabel } from './Projects';
 
@@ -94,6 +96,8 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
   const badges = ws.badges;
   const hostUrl = active ? hostRepoUrl(active.repo) : null;
   const refreshing = !!active && refreshingProjects.has(active.id);
+  const sync = useSyncDisplay();
+  const syncing = sync.syncing || refreshing;
 
   return (
     <Dropdown>
@@ -104,8 +108,24 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
         // pick, and a ring around the corner of the window reads as a bug.
         className="workspace-switcher h-8 min-w-0 flex-1 justify-start gap-2 px-1.5 data-[focus-visible=true]:bg-default data-[focus-visible=true]:ring-0 data-[focus-visible=true]:outline-none"
       >
-        <Logo size={22} />
-        <span className="min-w-0 truncate font-semibold">{name}</span>
+        {/* While syncing the lenses' stripes drift, as on the welcome. */}
+        {syncing ? (
+          <span className="grid size-[22px] shrink-0 place-items-center">
+            <WelcomeLogo size={22} glint className="logo-busy" />
+          </span>
+        ) : (
+          <span
+            className={`grid size-[22px] shrink-0 place-items-center ${sync.offline ? 'opacity-50 grayscale' : ''}`}
+            title={sync.offline ? sync.detail : undefined}
+          >
+            <Logo size={22} />
+          </span>
+        )}
+        <span
+          className={`min-w-0 truncate font-semibold ${syncing ? 'text-muted' : ''}`}
+        >
+          {syncing ? 'Syncing…' : name}
+        </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted" />
       </Button>
       <Dropdown.Popover placement="bottom start" className="min-w-64">

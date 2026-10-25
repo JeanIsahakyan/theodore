@@ -26,7 +26,7 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D14 | UI runs only inside Tauri; no browser mode, no fake core — dev and e2e use the real core with fixture adapters | decided |
 | D15 | Agent per task is a setting (grouping, chat, skills, fixes), default Claude | decided |
 | D16 | Auto-update from this repo's GitHub Releases, built in from the first version | decided |
-| D17 | Data lives in `~/.theodore` | decided |
+| D17 | Data lives in `~/.theodore` (other builds: `~/.theodore-<env>`) | decided |
 | D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in itself is D21), Linux and Windows | decided |
 | D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
 | D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
@@ -519,17 +519,24 @@ Settings → Account / Onboarding
 
   | Where the app runs | Redirect | How it gets back |
   | --- | --- | --- |
-  | Installed app (`…/Theodore.app/Contents/MacOS/`) | `theodore://callback` | the browser hands it to macOS ("Open Theodore?"), Theodore comes to the front |
-  | `cargo tauri dev`, a bare `target/release/theodore-app` | `http://127.0.0.1:47823/callback` | the running app's loopback listener; the tab shows "You're signed in" |
+  | Installed production app (`…/Theodore.app/Contents/MacOS/`) | `theodore://callback` | the browser hands it to macOS ("Open Theodore?"), Theodore comes to the front |
+  | Installed staging app (`Theodore Staging.app`) | `theodore-staging://callback` | the same, to the staging app only |
+  | Installed nightly app (`Theodore Nightly.app`) | `theodore-nightly://callback` | the same, to the nightly app only |
+  | `cargo tauri dev`, a bare `target/release/theodore-app`, any dev build | `http://127.0.0.1:47823/callback` | the running app's loopback listener; the tab shows "You're signed in" |
   | A redirect is configured (env or setting) | that one, always | loopback if `http`, else the app scheme |
+
+  Each build has its own scheme, so a redirect never reaches another
+  build installed beside it (docs/releasing.md "One identity per build";
+  `crates/runtime/src/identity.rs`).
 
   - The desktop shell decides: it tells the core
     (`set_account_app_redirect`) when its executable sits inside an app
     bundle, the only place macOS routes the scheme to. The scheme is
     registered in the bundle's `Info.plist` from `tauri.conf.json`
-    (`plugins.deep-link`).
+    (`plugins.deep-link`), with `tauri.<env>.conf.json` merged in for
+    staging and nightly.
   - With the scheme, no port is bound. The deep-link plugin hands
-    `theodore://callback?…` to the running app, which passes it to
+    `theodore[-<env>]://callback?…` to the running app, which passes it to
     `Core::account_sign_in_callback`: same `state` check and code exchange
     as the loopback, same outcome for `account_sign_in_poll`, so the UI has
     one flow. A URL that arrives with no browser sign-in waiting (e.g. the
@@ -619,7 +626,7 @@ desktop  gate.rs             allow-list; every other command asks the gate
 app  usecases/account.rs   config, gate, state check, keychain, refresher, events
 ports  AccountPort          LocalAccount = no provider (fixtures, sandbox, CLI)
 account-workos  WorkosAccount   PKCE, loopback listener, device code, refresh, JWKS
-desktop  deep_link.rs       theodore:// handler, bundle check ─▶ app redirect
+desktop  deep_link.rs       the build's scheme handler, bundle check ─▶ app redirect
 ```
 
 The browser method's outcome is held in core memory. `account_sign_in_poll`
@@ -637,7 +644,7 @@ hide it.
 | What | Env | Setting (scope `user`) | Default |
 | --- | --- | --- | --- |
 | Client id | `THEODORE_WORKOS_CLIENT_ID` | `account.workos.client_id` | the one compiled in, else none: feature hidden |
-| Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | `theodore://callback` in the app bundle, else `http://127.0.0.1:47823/callback` |
+| Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | the build's own in the app bundle (`theodore://callback`, `theodore-staging://…`, `theodore-nightly://…`), else `http://127.0.0.1:47823/callback` |
 | API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
 | Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
 
@@ -650,7 +657,8 @@ present, must be the app's or the one the issuer names.
 
 A configured redirect always wins. An `http` one must be on `127.0.0.1`,
 `[::1]` or `localhost`, with an explicit port; any other scheme is treated as
-the app's URL scheme, so only `theodore://callback` makes sense there. Port
+the app's URL scheme, so only the build's own `theodore[-<env>]://callback`
+makes sense there. Port
 `0` binds any free port. Use it only with a
 wildcard-port redirect registered (`http://127.0.0.1:*/callback`); WorkOS
 documents wildcard ports for loopback, but not yet for `127.0.0.1` in
@@ -661,10 +669,13 @@ production.
 1. **Create the application.** Create or pick the environment (staging first,
    then production). Under Applications, use the AuthKit application and copy
    its **Client ID** (`client_…`). The API key is never needed by the app.
-2. **Redirects** — register **both**:
-   - `theodore://callback`: used by the installed app;
-   - `http://127.0.0.1:47823/callback`: used by `cargo tauri dev` and a bare
-     binary;
+2. **Redirects** — register the app's and the loopback:
+   - production: `theodore://callback`, used by the installed app;
+   - staging: `theodore-staging://callback` and
+     `theodore-nightly://callback`, used by the staging and nightly apps
+     (docs/releasing.md "WorkOS redirects to register");
+   - both: `http://127.0.0.1:47823/callback`, used by `cargo tauri dev`, a
+     bare binary and any dev build;
    - optional: also add `http://127.0.0.1:*/callback`, if you later want
      port `0`;
    - leave the default redirect as-is: a wildcard can't be the default.
@@ -837,9 +848,13 @@ Every component subscribes to the objects it reads, not to the whole state.
 - Tauri 2, one main window, `titleBarStyle: Overlay`.
 - Strict CSP (no remote scripts; Shiki and fonts bundled). Capabilities scoped
   to the commands the UI needs.
-- Deep link `theodore://`, registered in the bundle's `Info.plist`
+- Deep link `theodore://` (`theodore-staging://`, `theodore-nightly://`
+  for those builds), registered in the bundle's `Info.plist`
   (`tauri-plugin-deep-link`). `theodore://callback` carries the account
   sign-in redirect (§6.12); other hosts are free for "open PR in Theodore".
+- One identity per build: staging, nightly and dev builds have their own
+  name, bundle id, data dir, keychain item and scheme, so they run beside
+  production (docs/releasing.md "One identity per build").
 
 ### 11.1 Updates (from the first version)
 

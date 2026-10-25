@@ -1,0 +1,11 @@
+{
+  "productName": "Theodore Nightly",
+  "identifier": "app.theodore.desktop.nightly",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["theodore-nightly"]
+      }
+    }
+  }
+}

@@ -58,6 +58,30 @@ pub fn notify_space(
     )
 }
 
+/// What a click on the update notification does.
+pub trait UpdateWindow: Send + 'static {
+    /// Brings the main window forward.
+    fn focus(&self);
+    /// Restarts into the installed update once nothing is running.
+    fn restart_when_idle(&self);
+}
+
+/// "Theodore 0.1.3 is ready": shown once an update is installed on disk
+/// while the window is in the background (the in-app pill covers the
+/// foreground). A click brings the window up and restarts into it.
+pub fn notify_update(notifier: &dyn Notifier, window: impl UpdateWindow, version: &str) -> bool {
+    notifier.show(
+        Notice {
+            title: format!("Theodore {version} is ready"),
+            body: Some("Click to restart into it.".into()),
+        },
+        Box::new(move || {
+            window.focus();
+            window.restart_when_idle();
+        }),
+    )
+}
+
 /// The real window: the existing focus helper and a Tauri event.
 pub struct MainWindow<R: Runtime>(pub AppHandle<R>);
 
@@ -295,6 +319,29 @@ mod tests {
         assert_eq!(body, None);
         click();
         assert_eq!(*window.0.lock().unwrap(), ["focus", "open sp1"]);
+    }
+
+    impl UpdateWindow for FakeWindow {
+        fn focus(&self) {
+            self.0.lock().unwrap().push("focus".into());
+        }
+        fn restart_when_idle(&self) {
+            self.0.lock().unwrap().push("restart".into());
+        }
+    }
+
+    #[test]
+    fn the_update_notice_names_the_version_and_a_click_restarts() {
+        let notifier = FakeNotifier::default();
+        let window = FakeWindow::default();
+        assert!(notify_update(&notifier, window.clone(), "0.1.3"));
+        assert!(window.0.lock().unwrap().is_empty());
+
+        let (title, body, click) = notifier.shown.lock().unwrap().pop().unwrap();
+        assert_eq!(title, "Theodore 0.1.3 is ready");
+        assert_eq!(body.as_deref(), Some("Click to restart into it."));
+        click();
+        assert_eq!(*window.0.lock().unwrap(), ["focus", "restart"]);
     }
 
     #[test]

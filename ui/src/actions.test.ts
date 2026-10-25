@@ -7,9 +7,11 @@ import { EphemeralStore } from './stores/EphemeralStore';
 import type { RootStore } from './stores/RootStore';
 import {
   assignTask,
+  loadAppInfo,
   loadViewer,
   markDone,
   snoozePrs,
+  updateNotes,
   unsnooze,
 } from './actions';
 
@@ -145,5 +147,49 @@ describe('loadViewer', () => {
     transport.queueResult('viewer', new Error('network'));
     await loadViewer(store);
     expect(store.ephemeral.viewer).toBeNull();
+  });
+});
+
+describe('announcing an update', () => {
+  const info = (version: string, build_env = 'production') => ({
+    version,
+    channel: 'stable',
+    update: null,
+    commit: 'abc',
+    build_env,
+    built_at: 0,
+  });
+
+  it('links the release notes only on the first launch of a new version', () => {
+    expect(updateNotes(null, info('0.1.3'))).toBeNull();
+    expect(updateNotes('0.1.3', info('0.1.3'))).toBeNull();
+    expect(updateNotes('0.1.2', info('0.1.3'))).toBe(
+      'https://github.com/JeanIsahakyan/theodore/releases/tag/v0.1.3',
+    );
+    expect(updateNotes('0.1.2', info('0.1.3-staging.4', 'staging'))).toBe(
+      'https://github.com/JeanIsahakyan/theodore/releases/tag/channel-staging',
+    );
+    expect(updateNotes('0.1.2', info('0.1.3', 'dev'))).toBeNull();
+  });
+
+  it('toasts once after an update, then stays quiet', async () => {
+    localStorage.clear();
+    const first = fakeStore();
+    transport.queueResult('app_info', info('0.1.2'));
+    await loadAppInfo(first);
+    expect(first.ephemeral.toasts).toHaveLength(0);
+
+    const updated = fakeStore();
+    transport.queueResult('app_info', info('0.1.3'));
+    await loadAppInfo(updated);
+    expect(updated.ephemeral.toasts.map((t) => t.text)).toEqual([
+      'Updated to 0.1.3',
+    ]);
+    expect(updated.ephemeral.toasts[0]?.action?.label).toBe("What's new");
+
+    const again = fakeStore();
+    transport.queueResult('app_info', info('0.1.3'));
+    await loadAppInfo(again);
+    expect(again.ephemeral.toasts).toHaveLength(0);
   });
 });

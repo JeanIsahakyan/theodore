@@ -1,3 +1,4 @@
+import { openExternal } from './core/openExternal';
 import { STORAGE_NS } from './stores/UiStore';
 import type { Route } from './stores/UiStore';
 /**
@@ -10,6 +11,7 @@ import { NO_ACCOUNT } from './core/accountGate';
 import { prUrlHost } from './core/prUrl';
 import { isHostOn } from './ui/settings/labs';
 import type {
+  AppInfo,
   AddProjectRequest,
   AgentId,
   Anchor,
@@ -410,10 +412,41 @@ export async function loadAccount(store: RootStore): Promise<void> {
  *  runs against the sandbox host (the SANDBOX badge and Settings page). */
 export async function loadAppInfo(store: RootStore): Promise<void> {
   try {
-    store.ephemeral.setAppInfo(await api.appInfo());
+    const info = await api.appInfo();
+    store.ephemeral.setAppInfo(info);
+    announceUpdate(store, info);
   } catch {
     // Already toasted by `api.ts`; the badge just stays hidden.
   }
+}
+
+const LAST_VERSION = `${STORAGE_NS}theodore-last-version`;
+const RELEASES = 'https://github.com/JeanIsahakyan/theodore/releases';
+
+/** The release notes for a build that just updated to `info.version`, or
+ *  `null` when it didn't (first launch, same version, a dev build). */
+export function updateNotes(
+  previous: string | null,
+  info: Pick<AppInfo, 'version' | 'build_env'>,
+): string | null {
+  if (!previous || previous === info.version) return null;
+  if (info.build_env === 'production')
+    return `${RELEASES}/tag/v${info.version}`;
+  if (info.build_env === 'staging') return `${RELEASES}/tag/channel-staging`;
+  return null;
+}
+
+/** "Updated to 0.1.3 · What's new" once, on the first launch of a new
+ *  version. */
+function announceUpdate(store: RootStore, info: AppInfo): void {
+  const previous = localStorage.getItem(LAST_VERSION);
+  localStorage.setItem(LAST_VERSION, info.version);
+  const notes = updateNotes(previous, info);
+  if (!notes) return;
+  store.ephemeral.toast(`Updated to ${info.version}`, 'info', {
+    label: "What's new",
+    onAction: () => void openExternal(notes),
+  });
 }
 
 // ── opening a PR ─────────────────────────────────────────────────────────────

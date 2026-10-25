@@ -28,7 +28,7 @@ THEODORE_SANDBOX=~/sandbox theodore-desktop
 
 | | normal | sandbox |
 | --- | --- | --- |
-| data dir | `~/.theodore` | `THEODORE_DATA_DIR`, else `~/.theodore-sandbox`; `~/.theodore` is refused |
+| data dir | `~/.theodore` (`~/.theodore-<env>` for other builds) | `THEODORE_DATA_DIR`, else `~/.theodore-sandbox`; every build's data dir is refused |
 | host | GitHub / GitLab / Bitbucket | the sandbox host (GitHub-shaped ids `github:owner/repo#n`) |
 | tokens | keychain, `gh`, env | none: secrets in memory, git gets no credentials |
 | git | `https://` remotes | `file://` bare repos under the data dir |

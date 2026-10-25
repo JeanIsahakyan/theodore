@@ -3638,7 +3638,7 @@ struct SlowLastSyncId(Arc<testkit::FakeStore>);
 /// How long `SlowLastSyncId::last_sync_id` blocks its calling thread for —
 /// comfortably longer than the measurement window below so a stolen async
 /// worker thread shows up unmistakably.
-const SLOW_STORE_BLOCK: Duration = Duration::from_millis(300);
+const SLOW_STORE_BLOCK: Duration = Duration::from_millis(1000);
 
 impl Store for SlowLastSyncId {
     fn apply(
@@ -3723,7 +3723,7 @@ async fn bootstrap_does_not_block_the_executor_on_a_slow_store() {
     let bootstrap = tokio::spawn(async move { core2.bootstrap(BootstrapScope::Global).await });
 
     // 20 x 5ms = 100ms nominal. If the executor's single thread is ever
-    // stolen for `SLOW_STORE_BLOCK` (300ms) by an un-`spawn_blocking`ed
+    // stolen for `SLOW_STORE_BLOCK` (1s) by an un-`spawn_blocking`ed
     // call, this loop's total wall time jumps well past that, regardless
     // of exactly when the stolen call lands relative to this loop.
     let start = std::time::Instant::now();
@@ -3731,8 +3731,10 @@ async fn bootstrap_does_not_block_the_executor_on_a_slow_store() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     let elapsed = start.elapsed();
+    // Well under the 1s block, well over 100ms: a loaded CI runner's timer
+    // slack (seen at 202ms) must not read as a blocked executor.
     assert!(
-        elapsed < Duration::from_millis(200),
+        elapsed < Duration::from_millis(600),
         "20x5ms timers took {elapsed:?}: bootstrap blocked the executor"
     );
 

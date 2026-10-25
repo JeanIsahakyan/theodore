@@ -63,6 +63,7 @@ async fn start_demo() -> (Runtime, tempfile::TempDir) {
         data_dir: data_dir.path().to_path_buf(),
         fixtures: Some(demo_dir()),
         sandbox: None,
+        build_env: theodore_runtime::BuildEnv::Dev,
     };
     let runtime = theodore_runtime::start(&cfg).await.expect("runtime starts");
     (runtime, data_dir)

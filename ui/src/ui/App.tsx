@@ -23,6 +23,7 @@ import { Tasks } from './Tasks';
 import { Onboarding } from './Onboarding';
 import { SignInGate } from './AccountCard';
 import { UpdateReady } from './shell/UpdateReady';
+import { SharingPrompt } from './SharingPrompt';
 import { appView } from '../core/accountGate';
 import { StatusBanners } from './shell/StatusBanners';
 import { isBuildMode } from './space/mode';
@@ -208,6 +209,7 @@ export const App = observer(function App() {
         </Surface>
       </div>
       <Modals />
+      <SharingPrompt />
       <Toasts />
       <ContextMenuHost />
       <ColorPreviewHost />
