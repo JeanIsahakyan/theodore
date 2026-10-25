@@ -27,11 +27,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     // The About panel shows `version (short_version)`: the commit and the
     // build env go in the parentheses, as in Settings → About.
     let about = AboutMetadataBuilder::new()
-        .name(Some("Theodore"))
+        .name(Some(crate::build_info::product_name()))
         .version(Some(crate::build_info::VERSION))
         .short_version(Some(crate::build_info::about_detail()))
         .build();
-    let theodore = SubmenuBuilder::new(app, "Theodore")
+    let theodore = SubmenuBuilder::new(app, crate::build_info::product_name())
         .about(Some(about))
         .item(&i("check-updates", "Check for Updates…", None)?)
         .separator()

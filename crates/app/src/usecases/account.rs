@@ -19,7 +19,7 @@
 //!            └─ task: callback ─▶ state check ─▶ exchange ─▶ keychain ─▶ emit
 //!                       ▲
 //!          loopback listener, or the shell's `account_sign_in_callback`
-//!          (theodore://callback handed to the app by the OS)
+//!          (theodore[-<env>]://callback handed to the app by the OS)
 //! device   start ─▶ user_code ─▶ UI polls ─▶ exchange ─▶ keychain ─▶ emit
 //! session  refresher wakes 60 s before `exp` ─▶ rotate ─▶ keychain
 //!            └─ rejected ─▶ signed out ─▶ emit
@@ -56,11 +56,6 @@ pub const REDIRECT_SETTING: &str = "account.workos.redirect_uri";
 /// run, a bare binary). Must be registered as a redirect URI on the WorkOS
 /// application.
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:47823/callback";
-/// The app's own URL scheme redirect: the OS hands it to the installed app
-/// (`Core::account_sign_in_callback`). The shell opts in with
-/// `Core::set_account_app_redirect` when it can receive it. Must be
-/// registered as a redirect URI on the WorkOS application too.
-pub const APP_REDIRECT_URI: &str = "theodore://callback";
 
 /// Refresh this long before the access token's `exp`.
 pub(crate) const REFRESH_SKEW_MS: i64 = 60_000;
@@ -351,9 +346,11 @@ impl Core {
     }
 
     /// Called by the shell when it receives its URL scheme (an installed app
-    /// bundle): browser sign-ins then return to `uri` (normally
-    /// `APP_REDIRECT_URI`) instead of the loopback, unless a redirect is
-    /// configured. `None` goes back to the loopback.
+    /// bundle): browser sign-ins then return to `uri` (the build's own,
+    /// `theodore://callback` or `theodore-<env>://callback`; each must be
+    /// registered as a redirect URI on the WorkOS application) instead of
+    /// the loopback, unless a redirect is configured. `None` goes back to
+    /// the loopback.
     pub fn set_account_app_redirect(&self, uri: Option<&str>) {
         *self.0.account.app_redirect.lock().expect("account lock") = uri.map(str::to_string);
     }

@@ -2,7 +2,12 @@
 # Local nightly build: a DMG numbered by the commit it was built from.
 #
 #   version = <Cargo.toml version>-nightly.<commits on HEAD>
-#   file    = target/release/bundle/dmg/Theodore_<version>_<sha>_aarch64.dmg
+#   app     = target/release/bundle/macos/Theodore Nightly.app
+#   file    = target/release/bundle/dmg/Theodore_Nightly_<version>_<sha>_aarch64.dmg
+#
+# A nightly is its own app (Theodore Nightly, ~/.theodore-nightly, its own
+# keychain item and URL scheme), installed beside production; staging the
+# same with Staging (docs/releasing.md "One identity per build").
 #
 # The number only grows (one per commit), so newer builds always compare as
 # newer. Nothing is committed, tagged or published; the version files keep
@@ -65,21 +70,37 @@ else
   echo "▶ Theodore $version ($sha, $THEODORE_BUILD_ENV), no account"
 fi
 
-# The Dock icon in this build's colours (purple for a nightly, orange for
-# staging); production keeps the committed icons.
-bundle_config='"createUpdaterArtifacts":false'
+# One --config: the version, no updater artifacts, and for any build but
+# production its own names (productName, identifier, URL scheme) from
+# tauri.<env>.conf.json, so it installs beside production without sharing
+# its data (docs/releasing.md "One identity per build"), and its Dock icon
+# in this build's colours (purple for a nightly, orange for staging).
+command -v jq >/dev/null || { echo "✗ jq is required (brew install jq)" >&2; exit 1; }
+case "$THEODORE_BUILD_ENV" in
+  production) names='{}' ;;
+  staging | nightly) names=$(cat "apps/desktop/tauri.$THEODORE_BUILD_ENV.conf.json") ;;
+  *)
+    echo "✗ THEODORE_BUILD_ENV=$THEODORE_BUILD_ENV: a nightly build is nightly, staging or production" >&2
+    exit 2
+    ;;
+esac
+icons=""
 if [ "$THEODORE_BUILD_ENV" != production ]; then
   icons="$root/target/icons/$THEODORE_BUILD_ENV"
   sh scripts/icon-variant.sh "$THEODORE_BUILD_ENV" "$icons" >/dev/null
-  bundle_config="$bundle_config,\"icon\":[\"$icons/32x32.png\",\"$icons/128x128.png\",\"$icons/icon.icns\"]"
 fi
+config=$(jq -nc --argjson names "$names" --arg version "$version" --arg icons "$icons" '
+  $names * { version: $version, bundle: { createUpdaterArtifacts: false } }
+  * if $icons == "" then {} else
+      { bundle: { icon: [ "32x32.png", "128x128.png", "icon.icns" ] | map("\($icons)/\(.)") } }
+    end')
+name=$(jq -r --argjson c "$config" '$c.productName // .productName' apps/desktop/tauri.conf.json)
 
-(cd apps/desktop && cargo tauri build --bundles app \
-  --config "{\"version\":\"$version\",\"bundle\":{$bundle_config}}")
+(cd apps/desktop && cargo tauri build --bundles app --config "$config")
 
 bundle="$root/target/release/bundle"
-app="$bundle/macos/Theodore.app"
-dmg="$bundle/dmg/Theodore_${version}_${sha}_aarch64.dmg"
+app="$bundle/macos/$name.app"
+dmg="$bundle/dmg/$(printf %s "$name" | tr " " _)_${version}_${sha}_aarch64.dmg"
 mkdir -p "$bundle/dmg"
 
 # hdiutil directly: tauri's DMG script styles the window through Finder
@@ -89,7 +110,7 @@ trap 'rm -rf "$stage"' EXIT
 cp -R "$app" "$stage/"
 ln -s /Applications "$stage/Applications"
 rm -f "$dmg"
-hdiutil create -volname "Theodore $version" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+hdiutil create -volname "$name $version" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
 hdiutil verify "$dmg" >/dev/null
 
 echo "✓ $dmg"

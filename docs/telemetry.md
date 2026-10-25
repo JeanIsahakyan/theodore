@@ -185,8 +185,8 @@ nothing is sent before that.
 
 ## The local log
 
-`<data dir>/logs/theodore.jsonl` (`~/.theodore/logs/` by default, `~/.theodore-sandbox/logs/` in
-sandbox mode): one JSON object per line — `ts`, `level`, `target`, `kind`, `msg`, `spans`, then
+`<data dir>/logs/theodore.jsonl` (`~/.theodore/logs/` in production, `~/.theodore-<env>/logs/` in
+other builds, `~/.theodore-sandbox/logs/` in sandbox mode): one JSON object per line — `ts`, `level`, `target`, `kind`, `msg`, `spans`, then
 the fields (`op_id`, `cmd`, `error.code`, …). Rotated daily and at 10 MB into
 `theodore-<date>-<time>.jsonl`, at most 9 old files and 50 MB in total.
 

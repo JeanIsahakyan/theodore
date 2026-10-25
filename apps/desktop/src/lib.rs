@@ -156,6 +156,20 @@ pub fn export_bindings(out: impl AsRef<Path>) -> Result<(), String> {
     std::fs::write(out, clean).map_err(|e| e.to_string())
 }
 
+/// The prefix the UI puts on its `localStorage` keys (tabs, onboarding,
+/// last-seen heads). Webview storage follows the bundle id, and two runs
+/// can share one: a sandbox run and a real one of the same build, or a dev
+/// build bundled locally (it keeps production's id) and production. Each
+/// of those gets its own prefix, so one never leaks into the other.
+/// Staging and nightly bundles have ids of their own.
+fn storage_namespace(sandbox: bool, env: theodore_runtime::BuildEnv) -> &'static str {
+    match (sandbox, env) {
+        (true, _) => "sandbox:",
+        (false, theodore_runtime::BuildEnv::Dev) => "dev:",
+        (false, _) => "",
+    }
+}
+
 /// Runs the Theodore desktop shell. `core` is the use-case implementation;
 /// `forward` receives the event emitter once the app is up, to pipe the
 /// core's sync and ephemeral streams to the UI. `auto_update` starts the
@@ -168,13 +182,10 @@ pub fn run(
     forward: impl FnOnce(CoreEvents<tauri::Wry>) + Send + 'static,
 ) {
     let builder = specta_builder();
-    // Sandbox and real windows share one webview storage (same app id), so
-    // the UI namespaces its `localStorage` keys by this (tabs, onboarding,
-    // last-seen heads): a sandbox session never leaks into the real one.
     let storage_ns = tauri::plugin::Builder::<tauri::Wry>::new("storage-ns")
         .js_init_script(format!(
             "window.__THEODORE_STORAGE_NS__ = {:?};",
-            if sandbox { "sandbox:" } else { "" }
+            storage_namespace(sandbox, build_info::build_env())
         ))
         .build();
 
@@ -191,7 +202,8 @@ pub fn run(
         // Links out (a PR on its host, the sign-in page): the webview's own
         // `window.open` opens nothing in a desktop window.
         .plugin(tauri_plugin_opener::init())
-        // `theodore://` (the account sign-in redirect in an app bundle).
+        // The build's URL scheme (the account sign-in redirect in an app
+        // bundle; `deep_link`).
         .plugin(tauri_plugin_deep_link::init())
         // A space's turn finished while the window was in the background
         // (`notify`; the plugin is its fallback where clicks can't come back).
@@ -204,6 +216,11 @@ pub fn run(
         .setup(move |app| {
             builder.mount_events(app);
             let handle = app.handle().clone();
+            // `Theodore Dev` and the rest: the title Mission Control and the
+            // Window menu show (`tauri.conf.json` has production's).
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.set_title(&build_info::product_name());
+            }
             app.manage(notify::for_app(&handle));
             forward(emitter(handle.clone()));
             deep_link::listen(&handle, core.clone());
@@ -236,6 +253,17 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_is_namespaced_where_webview_storage_is_shared() {
+        use theodore_runtime::BuildEnv;
+        assert_eq!(storage_namespace(true, BuildEnv::Production), "sandbox:");
+        assert_eq!(storage_namespace(true, BuildEnv::Dev), "sandbox:");
+        assert_eq!(storage_namespace(false, BuildEnv::Dev), "dev:");
+        for env in [BuildEnv::Production, BuildEnv::Staging, BuildEnv::Nightly] {
+            assert_eq!(storage_namespace(false, env), "", "{env:?}");
+        }
+    }
 
     #[test]
     fn export_bindings_writes_a_commands_object() {

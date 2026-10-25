@@ -1,34 +1,45 @@
-//! The app's own URL scheme (`theodore://`), registered in the bundle's
-//! `Info.plist` from `tauri.conf.json` (`plugins.deep-link`). Today it
+//! The app's own URL scheme, one per build (`identity::url_scheme`:
+//! `theodore://` for production, `theodore-staging://`,
+//! `theodore-nightly://`), registered in the bundle's `Info.plist` from the
+//! bundle config (`plugins.deep-link`: `tauri.conf.json`, with
+//! `tauri.<env>.conf.json` merged in for staging and nightly). Today it
 //! carries one thing: the Theodore account sign-in redirect.
 //!
 //! ```text
-//! browser ─▶ theodore://callback?code=…&state=… ─▶ macOS "Open Theodore?"
+//! browser ─▶ theodore[-<env>]://callback?code=…&state=… ─▶ macOS "Open …?"
 //!   ─▶ on_open_url ─▶ core.account_sign_in_callback ─▶ state check, exchange
 //!        └─ handled ─▶ main window to the front
 //! ```
 //!
 //! Only an app bundle can receive the scheme; a dev run or a bare binary
-//! keeps the loopback redirect (`app_redirect`).
+//! keeps the loopback redirect (`app_redirect`), and so does a dev build
+//! even when bundled: it has no scheme of its own.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_deep_link::DeepLinkExt;
+use theodore_runtime::identity;
 use url::Url;
 
 use crate::CoreApi;
+use crate::build_info;
 
-/// Must match `plugins.deep-link.desktop.schemes` in `tauri.conf.json`.
-pub const SCHEME: &str = "theodore";
+/// This build's scheme; `None` for a dev build.
+fn scheme() -> Option<String> {
+    identity::url_scheme(build_info::build_env())
+}
 
-/// The account redirect for this process: the app URL scheme when running
-/// from an app bundle (the only place macOS routes the scheme to), else
-/// `None` (the core uses the loopback).
-pub fn app_redirect() -> Option<&'static str> {
+/// The account redirect for this process: the build's URL scheme
+/// redirect when running from an app bundle (the only place macOS routes
+/// the scheme to), else `None` (the core uses the loopback).
+pub fn app_redirect() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
-    (cfg!(target_os = "macos") && in_app_bundle(&exe)).then_some(theodore_app::APP_REDIRECT_URI)
+    if !(cfg!(target_os = "macos") && in_app_bundle(&exe)) {
+        return None;
+    }
+    identity::app_redirect_uri(build_info::build_env())
 }
 
 /// `…/Name.app/Contents/MacOS/<exe>`.
@@ -65,7 +76,7 @@ pub fn listen<R: Runtime>(app: &AppHandle<R>, core: Arc<dyn CoreApi>) {
 }
 
 fn open<R: Runtime>(app: &AppHandle<R>, core: Arc<dyn CoreApi>, url: Url) {
-    if url.scheme() != SCHEME {
+    if scheme().as_deref() != Some(url.scheme()) {
         return;
     }
     let app = app.clone();
@@ -98,13 +109,63 @@ mod tests {
         }
     }
 
+    /// `base` with `overlay` merged in, as `cargo tauri build --config`
+    /// does (JSON merge patch: objects merge, anything else replaces).
+    fn merged(base: &str, overlay: Option<&str>) -> serde_json::Value {
+        fn merge(a: &mut serde_json::Value, b: serde_json::Value) {
+            match (a, b) {
+                (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
+                    for (k, v) in b {
+                        merge(a.entry(k).or_insert(serde_json::Value::Null), v);
+                    }
+                }
+                (a, b) => *a = b,
+            }
+        }
+        let mut conf: serde_json::Value = serde_json::from_str(base).expect("tauri.conf.json");
+        if let Some(o) = overlay {
+            merge(&mut conf, serde_json::from_str(o).expect("overlay config"));
+        }
+        conf
+    }
+
+    /// Each bundled build's config registers the names `identity` gives
+    /// it: product name, bundle id, and the scheme of its sign-in redirect.
     #[test]
-    fn the_registered_scheme_is_the_account_redirect_scheme() {
-        let conf: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
-        let schemes = &conf["plugins"]["deep-link"]["desktop"]["schemes"];
-        assert_eq!(schemes, &serde_json::json!([SCHEME]));
-        let redirect = Url::parse(theodore_app::APP_REDIRECT_URI).unwrap();
-        assert_eq!(redirect.scheme(), SCHEME);
+    fn each_bundle_config_registers_its_builds_names() {
+        use theodore_runtime::BuildEnv;
+        let base = include_str!("../tauri.conf.json");
+        let prod = merged(base, None);
+        for (env, overlay) in [
+            (BuildEnv::Production, None),
+            (
+                BuildEnv::Staging,
+                Some(include_str!("../tauri.staging.conf.json")),
+            ),
+            (
+                BuildEnv::Nightly,
+                Some(include_str!("../tauri.nightly.conf.json")),
+            ),
+        ] {
+            let conf = merged(base, overlay);
+            assert_eq!(conf["productName"], identity::product_name(env), "{env:?}");
+            assert_eq!(
+                conf["identifier"],
+                identity::bundle_identifier(env),
+                "{env:?}"
+            );
+            let scheme = identity::url_scheme(env).expect("a bundled build has a scheme");
+            assert_eq!(
+                conf["plugins"]["deep-link"]["desktop"]["schemes"],
+                serde_json::json!([scheme]),
+                "{env:?}"
+            );
+            let redirect = identity::app_redirect_uri(env).expect("redirect");
+            assert_eq!(Url::parse(&redirect).unwrap().scheme(), scheme);
+            // Only the names differ: same updater key, windows, CSP.
+            assert_eq!(conf["plugins"]["updater"], prod["plugins"]["updater"]);
+            assert_eq!(conf["app"], prod["app"]);
+            assert_eq!(conf["version"], prod["version"]);
+        }
     }
 }

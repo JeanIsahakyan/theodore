@@ -16,7 +16,8 @@ global ──▶ repo ──▶ local ──▶ effective config
 ```
 
 - **Global** sits in Theodore's data directory (`THEODORE_DATA_DIR`, by
-  default `~/.theodore`). Settings → Spaces → Global config shows its path
+  default `~/.theodore`, `~/.theodore-<env>` in a staging, nightly or dev
+  build). Settings → Spaces → Global config shows its path
   and opens it in your editor, creating it from a commented template if
   it is missing.
 - **Repo** is committed. For a local folder project it is read from the
@@ -374,7 +375,8 @@ Save to… ─┬─ Repo (team)
 | Local (mine) | `<folder>/.theodore/config.local.yaml`, added to the folder's `.gitignore` if no line names it | `~/.theodore/projects/<host>/<owner>/<name>/config.local.yaml` |
 | Global | `~/.theodore/config.yaml` | same |
 
-`~/.theodore` is Theodore's data directory (`THEODORE_DATA_DIR`). A file is
+`~/.theodore` is Theodore's data directory (`THEODORE_DATA_DIR`;
+`~/.theodore-<env>` in other builds). A file is
 written through a temporary file and a rename.
 
 **A host repo, through a PR.**
