@@ -48,14 +48,10 @@ import type {
 import { markDone, refreshInbox, snoozePrs, triage } from '../actions';
 import { api } from '../core/api';
 import { useRootStore, useUi } from '../stores/context';
-import { Avatar, Btn, CheckIcon, Empty, Hints, K } from './bits';
+import { Avatar, Btn, Empty, Hints, K } from './bits';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { Peek } from './Peek';
-import {
-  PrStatusIcon,
-  ReviewDecisionIcon,
-  prStatusLabel,
-} from './StatusIcon';
+import { PrStatusIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
 /** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
@@ -117,19 +113,12 @@ export function ago(ms: number): string {
 // `PrSummary` actually has — no stack/linear/ai/note/team, so those columns
 // and sort/group keys that depended on them (risk) are dropped, not faked.
 
-export type RowProp = 'id' | 'reasons' | 'checks' | 'author' | 'age';
-export const ROW_PROPS: RowProp[] = [
-  'id',
-  'reasons',
-  'checks',
-  'author',
-  'age',
-];
+export type RowProp = 'id' | 'reasons' | 'author' | 'age';
+export const ROW_PROPS: RowProp[] = ['id', 'reasons', 'author', 'age'];
 
 export const PROP_LABEL: Record<RowProp, string> = {
   id: 'Number',
   reasons: 'Reason',
-  checks: 'Checks',
   author: 'Author',
   age: 'Age',
 };
@@ -137,7 +126,6 @@ export const PROP_LABEL: Record<RowProp, string> = {
 export const COL: Record<RowProp, string> = {
   id: '72px',
   reasons: 'minmax(0,150px)',
-  checks: '16px',
   author: '22px',
   age: '40px',
 };
@@ -330,7 +318,6 @@ export const PrRow = observer(function PrRow({
   const cols = [
     '16px',
     '16px',
-    '16px',
     ...(on('id') ? [COL.id] : []),
     'minmax(200px,1.5fr)',
     ...ROW_PROPS.filter((k) => k !== 'id' && on(k)).map((k) => COL[k]),
@@ -355,11 +342,6 @@ export const PrRow = observer(function PrRow({
         </Checkbox.Content>
       </Checkbox>
       <PrStatusIcon summary={p} progress={readProgress(store, id)} />
-      <span className="flex items-center justify-center">
-        {p.state === 'open' && p.review_decision === 'approved' && (
-          <ReviewDecisionIcon decision={p.review_decision} />
-        )}
-      </span>
       {on('id') && (
         <span
           className="flex min-w-0 max-w-36 whitespace-nowrap text-xs tabular-nums text-muted"
@@ -407,7 +389,6 @@ export const PrRow = observer(function PrRow({
           )}
         </span>
       )}
-      {on('checks') && <CheckIcon s={p.checks} />}
       {on('author') && (
         <span className="shrink-0">
           <Avatar person={p.author} size={22} />
@@ -870,18 +851,26 @@ export function PeekToggle({
   fits?: boolean;
 }) {
   return (
-    <Tooltip isDisabled={fits}>
+    <Tooltip>
       <ToggleButton
+        isIconOnly
         size="sm"
-        className="gap-1.5"
+        aria-label="Preview"
         isSelected={on && fits}
         isDisabled={!fits}
         onChange={toggle}
       >
         <LayoutSideContentRight className="size-4" />
-        Peek
       </ToggleButton>
-      <Tooltip.Content>Widen the window to show Peek</Tooltip.Content>
+      <Tooltip.Content>
+        {!fits ? (
+          'Widen the window to show the preview'
+        ) : (
+          <>
+            {on ? 'Hide' : 'Show'} preview <K>Space</K>
+          </>
+        )}
+      </Tooltip.Content>
     </Tooltip>
   );
 }
@@ -1138,8 +1127,8 @@ function ListHints() {
   return (
     <Hints>
       <K>J</K>
-      <K>K</K> navigate <K>⏎</K> open <K>Space</K> peek <K>X</K> select <K>E</K>{' '}
-      done <K>H</K> snooze <K>⌘K</K> everything <K>⌘Z</K> undo
+      <K>K</K> navigate <K>⏎</K> open <K>Space</K> preview <K>X</K> select{' '}
+      <K>E</K> done <K>H</K> snooze <K>⌘K</K> everything <K>⌘Z</K> undo
     </Hints>
   );
 }

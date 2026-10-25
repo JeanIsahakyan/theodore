@@ -13,7 +13,7 @@ import type { PrId } from '../gen/contract';
 import { loadViewer } from '../actions';
 import { ALL } from '../core/workspaces';
 import { useRootStore, useUi } from '../stores/context';
-import { Avatar, CheckIcon, Empty, Hints, K } from './bits';
+import { Avatar, Empty, Hints, K } from './bits';
 import { useContextMenu } from './ContextMenu';
 import {
   PEEK_FITS_FROM,
@@ -37,7 +37,7 @@ import {
   type PrFilter,
 } from './prs/filters';
 import { gatesFor } from './prs/mine';
-import { PrStatusIcon, ReviewDecisionIcon } from './StatusIcon';
+import { PrStatusIcon } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
 const EMPTY: Record<PrFilter, { title: string; text: string }> = {
@@ -73,16 +73,11 @@ const MineRow = observer(function MineRow({
   return (
     <div
       id={`R-${id}`}
-      className={`minerow grid h-12 w-full grid-cols-[16px_16px_minmax(72px,auto)_minmax(140px,1fr)_minmax(0,1.4fr)_22px_16px_40px] items-center gap-3 ${
+      className={`minerow grid h-12 w-full grid-cols-[16px_minmax(72px,auto)_minmax(140px,1fr)_minmax(0,1.4fr)_22px_40px] items-center gap-3 ${
         sel ? 'sel' : ''
       }`}
     >
       <PrStatusIcon summary={p} progress={readProgress(store, id)} />
-      <span className="flex items-center justify-center">
-        {p.state === 'open' && p.review_decision === 'approved' && (
-          <ReviewDecisionIcon decision={p.review_decision} />
-        )}
-      </span>
       <span
         className="flex min-w-0 max-w-36 whitespace-nowrap text-xs tabular-nums text-muted"
         title={`${p.pr.repo.owner}/${p.pr.repo.name}#${p.pr.number}`}
@@ -120,7 +115,6 @@ const MineRow = observer(function MineRow({
         )}
       </span>
       <Avatar person={p.author} size={18} />
-      <CheckIcon s={p.checks} />
       <span className="text-right text-xs text-muted">{ago(p.updated_at)}</span>
     </div>
   );
@@ -326,7 +320,8 @@ export const PullRequests = observer(function PullRequests() {
       </div>
       <Hints>
         <K>J</K>
-        <K>K</K> navigate <K>⏎</K> open <K>Space</K> peek <K>⌘K</K> everything
+        <K>K</K> navigate <K>⏎</K> open <K>Space</K> preview <K>⌘K</K>{' '}
+        everything
       </Hints>
     </div>
   );

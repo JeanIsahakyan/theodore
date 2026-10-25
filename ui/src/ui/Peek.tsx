@@ -49,12 +49,7 @@ import { MergeDialog } from './Merge';
 import { gatesFor as mergeGatesFor } from './prs/mine';
 import { isBranchReview } from './project/sections';
 import { readProgress } from './review/progress';
-import {
-  PrStatusIcon,
-  TaskIcon,
-  prProblems,
-  prStatusLabel,
-} from './StatusIcon';
+import { PrStatusIcon, TaskIcon, prStatus } from './StatusIcon';
 
 const Sec = ({ title, children }: { title: string; children: ReactNode }) => (
   <section className="flex flex-col gap-2">
@@ -245,18 +240,17 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
       <header className="flex flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
           <PrStatusIcon summary={p} progress={readProgress(store, id)} />
-          {prProblems(p).length ? (
-            <span className="min-w-0 truncate text-danger">
-              {prProblems(p).join(' · ')}
-            </span>
-          ) : (
-            <span className="shrink-0">
-              {prStatusLabel[p.state]}
-              {p.state === 'open' && p.review_decision === 'approved' && (
-                <> · approved</>
-              )}
-            </span>
-          )}
+          <span
+            className={`min-w-0 truncate ${
+              prStatus(p).tone === 'problem'
+                ? 'text-danger'
+                : prStatus(p).tone === 'ready'
+                  ? 'text-success'
+                  : ''
+            }`}
+          >
+            {prStatus(p).label}
+          </span>
           <span className="flex-1" />
           <span
             className="min-w-0 truncate font-mono"

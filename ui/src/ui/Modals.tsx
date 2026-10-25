@@ -185,7 +185,7 @@ const KEYS: [string, string][] = [
   ['PR lists', ''],
   ['J / K', 'move through list'],
   ['⏎', 'open PR'],
-  ['Space', 'peek: preview without opening'],
+  ['Space', 'preview without opening'],
   ['X', 'select (bulk actions)'],
   ['E', 'done: leaves Inbox until new activity'],
   ['H', 'snooze: an hour, until next push, until checks pass'],

@@ -4,6 +4,7 @@ import type {
   ReviewDecision,
   TaskStatus,
 } from '../gen/contract';
+import { gatesFor } from './prs/mine';
 
 const R = 5.5;
 const C = 2 * Math.PI * R;
@@ -177,8 +178,28 @@ export function prProblems(
   return out;
 }
 
+export type PrTone =
+  'problem' | 'pending' | 'ready' | 'draft' | 'open' | 'merged' | 'closed';
+
+/** Where a PR stands, in one word and one tone — what the status mark and
+ *  the status chip both show. A problem wins over everything else. */
+export function prStatus(p: PrSummary): { tone: PrTone; label: string } {
+  if (p.state === 'merged') return { tone: 'merged', label: 'Merged' };
+  if (p.state === 'closed') return { tone: 'closed', label: 'Closed' };
+  const problems = prProblems(p);
+  if (problems.length) return { tone: 'problem', label: problems.join(' · ') };
+  if (p.state === 'draft') return { tone: 'draft', label: 'Draft' };
+  if (p.checks === 'pending')
+    return { tone: 'pending', label: 'Checks running' };
+  // Same rule as the "Ready to merge" group in Mine: every gate passes.
+  if (gatesFor(p).every((g) => g.ok)) {
+    return { tone: 'ready', label: 'Ready to merge' };
+  }
+  return { tone: 'open', label: 'Open' };
+}
+
 /** The one status mark for a PR everywhere it shows: a red cross while
- *  something is wrong (`prProblems`), otherwise its state ring, filled
+ *  something is wrong, otherwise a ring coloured by `prStatus` and filled
  *  with how much of it you've read. */
 export function PrStatusIcon({
   summary,
@@ -187,9 +208,35 @@ export function PrStatusIcon({
   summary: PrSummary;
   progress?: number;
 }) {
-  const problems = prProblems(summary);
-  if (problems.length) {
-    return <Ring color="var(--danger)" cross title={problems.join(' · ')} />;
+  const { tone, label } = prStatus(summary);
+  const read = progress ? ` · read ${Math.round(progress * 100)}%` : '';
+  switch (tone) {
+    case 'problem':
+      return <Ring color="var(--danger)" cross title={label} />;
+    case 'merged':
+      return <Ring color="var(--accent)" check title={label} />;
+    case 'closed':
+      return <Ring color="var(--muted)" cross title={label} />;
+    case 'draft':
+      return (
+        <Ring
+          color="var(--muted)"
+          dashed
+          fill={progress}
+          title={label + read}
+        />
+      );
+    case 'pending':
+      return (
+        <Ring color="var(--warning)" fill={progress} title={label + read} />
+      );
+    case 'ready':
+      return (
+        <Ring color="var(--success)" fill={progress} title={label + read} />
+      );
+    case 'open':
+      return (
+        <Ring color="var(--accent)" fill={progress} title={label + read} />
+      );
   }
-  return <PRIcon status={summary.state} progress={progress} />;
 }

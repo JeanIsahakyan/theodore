@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { prProblems } from './StatusIcon';
+import type { PrSummary } from '../gen/contract';
+import { prProblems, prStatus } from './StatusIcon';
 
 const pr = {
   state: 'open' as const,
@@ -34,5 +35,34 @@ describe('prProblems', () => {
     expect(prProblems({ ...pr, state: 'draft', checks: 'fail' })).toEqual([
       'Checks failing',
     ]);
+  });
+});
+
+describe('prStatus', () => {
+  const full = {
+    ...pr,
+    approvals: 0,
+    required_approvals: null,
+  } as unknown as PrSummary;
+
+  it('is ready to merge when every merge gate passes', () => {
+    expect(prStatus(full)).toEqual({ tone: 'ready', label: 'Ready to merge' });
+  });
+
+  it('shows running checks before anything else that is fine', () => {
+    expect(prStatus({ ...full, checks: 'pending' }).tone).toBe('pending');
+  });
+
+  it('stays open while approvals are missing', () => {
+    expect(
+      prStatus({ ...full, approvals: 0, required_approvals: 1 }).tone,
+    ).toBe('open');
+  });
+
+  it('puts a problem above draft and ready', () => {
+    expect(prStatus({ ...full, state: 'draft', conflicts: true })).toEqual({
+      tone: 'problem',
+      label: 'Conflicts with main',
+    });
   });
 });

@@ -15,10 +15,10 @@ import {
 import { Code, CodeCommit, Eye, FileText } from '@gravity-ui/icons';
 import {
   Alert,
+  Separator,
   Spinner,
   Tabs,
   ToggleButton,
-  ToggleButtonGroup,
   Toolbar,
   Tooltip,
   Typography,
@@ -607,22 +607,32 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </Tabs>
         </div>
         {baselineRevision?.status === 'ready' && (
-          <ToggleButtonGroup
-            size="sm"
-            selectionMode="single"
-            disallowEmptySelection
-            selectedKeys={new Set([sinceOnly ? 'since' : 'all'])}
-            onSelectionChange={(k) => setSinceOnly([...k][0] === 'since')}
-            aria-label="What to show"
-          >
-            <ToggleButton id="all">Whole PR</ToggleButton>
-            <ToggleButton id="since" className="gap-1.5">
-              <ToggleButtonGroup.Separator />
-              <ClockArrowRotateLeft className="size-4" />
-              Since last visit
-              <span className="tabular-nums text-muted">{sinceCount}</span>
-            </ToggleButton>
-          </ToggleButtonGroup>
+          <>
+            <Separator orientation="vertical" className="h-5" />
+            <Tabs
+              data-plain
+              selectedKey={sinceOnly ? 'since' : 'all'}
+              onSelectionChange={(k) => setSinceOnly(k === 'since')}
+              className="since-tabs"
+            >
+              <Tabs.ListContainer>
+                <Tabs.List aria-label="What to show">
+                  <Tabs.Tab id="all">
+                    Whole PR
+                    <Tabs.Indicator />
+                  </Tabs.Tab>
+                  <Tabs.Tab id="since" className="gap-1.5">
+                    <ClockArrowRotateLeft className="size-4" />
+                    Since last visit
+                    <span className="tabular-nums text-muted">
+                      {sinceCount}
+                    </span>
+                    <Tabs.Indicator />
+                  </Tabs.Tab>
+                </Tabs.List>
+              </Tabs.ListContainer>
+            </Tabs>
+          </>
         )}
         {tab === 'diff' && (
           <Tabs
