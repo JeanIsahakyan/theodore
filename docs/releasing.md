@@ -6,6 +6,12 @@ is the one-time setup the owner does before the first tag; after that,
 
 ## One-time: updater signing key (required before any release works)
 
+Done on 2026-10-25: the public key is in `tauri.conf.json`, both secrets are
+set, and the private key with its password lives in `~/.tauri/` on the
+owner's Mac (`theodore.key`, `theodore.key.password`). Keep a copy of both
+in a password manager; losing either means no installed build can update
+again. The steps below are how it was done.
+
 Every build, from v0.0.1 onward, carries the updater's public key baked into
 `apps/desktop/tauri.conf.json` (`plugins.updater.pubkey`). **This key is
 never rotated** — rotating it orphans every installed build, since they can

@@ -380,9 +380,9 @@ Git hooks (`lefthook install` once per clone):
 
 ## Not yet
 
-- Signed releases: the updater's signing key is still a placeholder in `tauri.conf.json`; every
-  build so far is ad-hoc signed.
-- Notarization and a Developer ID (the release workflow has the steps, no secrets yet).
+- A first release: the updater key is in place, but nothing has been tagged and published yet.
+- Notarization and a Developer ID (the release workflow has the steps, no secrets yet); builds are
+  ad-hoc signed.
 - Linux and Windows builds — macOS (Apple Silicon) only.
 - GitLab OAuth/PKCE sign-in — personal access token only.
 - Skills on several agents in parallel (they run in sequence; findings still merge).
