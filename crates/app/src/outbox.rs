@@ -337,6 +337,9 @@ async fn do_submit_review(core: &Core, item: &OutboxItem) -> Result<(), Outcome>
     match core.0.deps.host.submit_review(&pr_ref, &submission).await {
         Ok(submitted) => {
             apply_submitted_review(core, &payload, &submitted).await;
+            // The UI reads threads from `pr_detail`: refetch it so the new
+            // threads show now, not on the next poll (same as a reply).
+            refresh_pr_detail(core, &payload.pr, &pr_ref).await;
             Ok(())
         }
         Err(e) => Err(classify_host_error(core, item, e).await),
