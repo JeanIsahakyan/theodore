@@ -39,7 +39,13 @@ import {
 } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { AgentId, Person, SnoozeUntil } from '../gen/contract';
-import { assignTask, refreshInbox, setDraft, snoozePrs } from '../actions';
+import {
+  assignTask,
+  delegateTask,
+  refreshInbox,
+  setDraft,
+  snoozePrs,
+} from '../actions';
 import { api } from '../core/api';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
@@ -300,7 +306,8 @@ export const AssignMenu = observer(function AssignMenu() {
           group: 'Agents — fix it in a worktree',
           label: a,
           icon: <Sparkles className="size-4" />,
-          run: () => assignTask(store, task.id, { kind: 'agent', id: a }),
+          // Same as Delegate: the agent takes the task and starts the fix.
+          run: () => void delegateTask(store, task.id, a),
         })),
         ...dedup.map((p) => ({
           group: 'People',
