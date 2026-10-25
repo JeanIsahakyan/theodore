@@ -57,15 +57,6 @@ import { latinKey, useViewKeys } from './keys';
 /** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
 export type InboxPr = PrSummary & { id: PrId };
 
-const REASON_LABEL: Record<InboxReason, string> = {
-  review_requested: 'review requested',
-  team_review_requested: 'team review requested',
-  assigned: 'assigned',
-  authored: 'authored',
-  mentioned: 'mentioned',
-  updated_after_review: 'updated after your review',
-};
-
 /** A PR belongs in the inbox only while open and with a reason to be there —
  *  project refreshes also store merged/closed PRs and ones with no reason. */
 export function inInbox(p: Pick<PrSummary, 'state' | 'reasons'>): boolean {
@@ -113,19 +104,17 @@ export function ago(ms: number): string {
 // `PrSummary` actually has — no stack/linear/ai/note/team, so those columns
 // and sort/group keys that depended on them (risk) are dropped, not faked.
 
-export type RowProp = 'id' | 'reasons' | 'author' | 'age';
-export const ROW_PROPS: RowProp[] = ['id', 'reasons', 'author', 'age'];
+export type RowProp = 'id' | 'author' | 'age';
+export const ROW_PROPS: RowProp[] = ['id', 'author', 'age'];
 
 export const PROP_LABEL: Record<RowProp, string> = {
   id: 'Number',
-  reasons: 'Reason',
   author: 'Author',
   age: 'Age',
 };
 
 export const COL: Record<RowProp, string> = {
   id: '72px',
-  reasons: 'minmax(0,150px)',
   author: '22px',
   age: '40px',
 };
@@ -371,24 +360,6 @@ export const PrRow = observer(function PrRow({
         </span>
         {p.stack && <StackChips repo={p.pr.repo} stack={p.stack} />}
       </span>
-      {on('reasons') && (
-        <span
-          className="flex min-w-0 gap-1 overflow-hidden"
-          title={p.reasons.map((r) => REASON_LABEL[r]).join(', ')}
-        >
-          {/* One full chip and a count: two half-clipped chips read as noise. */}
-          {p.reasons[0] && (
-            <span className="chip min-w-0 shrink truncate rounded-full bg-default px-2 py-0.5 text-xs">
-              {REASON_LABEL[p.reasons[0]]}
-            </span>
-          )}
-          {p.reasons.length > 1 && (
-            <span className="chip shrink-0 rounded-full bg-default px-1.5 py-0.5 text-xs text-muted">
-              +{p.reasons.length - 1}
-            </span>
-          )}
-        </span>
-      )}
       {on('author') && (
         <span className="shrink-0">
           <Avatar person={p.author} size={22} />
