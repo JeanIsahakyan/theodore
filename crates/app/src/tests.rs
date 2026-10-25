@@ -1,7 +1,6 @@
 //! Integration-style tests against `Core` + `testkit` fakes, per the
 //! coverage list in the agent brief for this slice.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -160,10 +159,6 @@ fn put_task(f: &Fixtures, task: &Task) {
 fn task_row(f: &Fixtures, id: &TaskId) -> Task {
     let row = f.store.get(models::TASK, &id.0).unwrap().unwrap();
     serde_json::from_value(row.data).unwrap()
-}
-
-fn worktree_dir(head: &Sha) -> PathBuf {
-    PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0))
 }
 
 // ── transact / sync frame / de-dup / rejection ──────────────────────────────
@@ -1784,7 +1779,7 @@ async fn list_skills_includes_builtins_and_the_prs_own_claude_skills() {
     let f = fixtures();
     let (core, _recv, pr, head) = open_fixture_pr(&f).await;
 
-    let skill_dir = worktree_dir(&head).join(".claude/skills/demo");
+    let skill_dir = f.git.worktree_path(&head).join(".claude/skills/demo");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
@@ -1811,7 +1806,7 @@ async fn list_skills_includes_builtins_and_the_prs_own_claude_skills() {
 async fn run_skill_inlines_skill_text_for_non_claude_agents_only() {
     let f = fixtures();
     let (core, _recv, pr, head) = open_fixture_pr(&f).await;
-    let skill_dir = worktree_dir(&head).join(".claude/skills/demo");
+    let skill_dir = f.git.worktree_path(&head).join(".claude/skills/demo");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
@@ -1869,7 +1864,7 @@ async fn delegate_task_runs_the_agent_in_edit_mode_and_captures_a_patch() {
     let f = fixtures();
     let (core, _recv, pr, head) = open_fixture_pr(&f).await;
     f.git.put_file(&head, "src/lib.rs", b"before\n");
-    let dir = worktree_dir(&head);
+    let dir = f.git.worktree_path(&head);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/lib.rs"), b"after\n").unwrap();
 
@@ -1968,7 +1963,7 @@ async fn delegate_task_opens_its_pr_after_a_restart() {
 #[tokio::test]
 async fn decide_task_accept_on_own_pr_commits_pushes_and_resolves_thread() {
     let f = fixtures();
-    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
     // `sample_pr_detail`'s author is "author" (plan §4: own PR == viewer == author).
     f.host.push_viewer(Ok(testkit::sample_person("author")));
 
@@ -1992,6 +1987,11 @@ async fn decide_task_accept_on_own_pr_commits_pushes_and_resolves_thread() {
         commit: None,
     });
     put_task(&f, &task);
+    // The worktree as the fix found it (an app restart lost the agent's
+    // edit): accepting re-applies the patch before committing.
+    let file = f.git.worktree_path(&head).join("src/lib.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "before\n").unwrap();
 
     core.decide_task(TaskDecision {
         task: task.id.clone(),
@@ -2000,6 +2000,7 @@ async fn decide_task_accept_on_own_pr_commits_pushes_and_resolves_thread() {
     })
     .await
     .expect("decide_task accept");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "after\n");
 
     let (branch, message) = f.git.last_push.lock().unwrap().clone().expect("pushed");
     assert_eq!(branch, "feature");
@@ -3329,8 +3330,8 @@ async fn commit_suggestions_applies_and_pushes_one_commit_on_the_authors_own_pr(
     f.host.push_viewer(Ok(testkit::sample_person("author")));
     let (core, _recv, pr, head) = open_fixture_pr(&f).await;
 
-    std::fs::create_dir_all(worktree_dir(&head)).unwrap();
-    let note_path = worktree_dir(&head).join("note.txt");
+    std::fs::create_dir_all(f.git.worktree_path(&head)).unwrap();
+    let note_path = f.git.worktree_path(&head).join("note.txt");
     std::fs::write(&note_path, "one\ntwo\nthree\n").unwrap();
 
     let thread = Thread {
