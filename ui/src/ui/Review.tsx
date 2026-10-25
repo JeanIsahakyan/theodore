@@ -22,7 +22,6 @@ import {
 } from '@gravity-ui/icons';
 import {
   Alert,
-  Breadcrumbs,
   Chip,
   Separator,
   Spinner,
@@ -468,16 +467,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
         <div className="rv-title flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           {summary ? (
             <>
-              <Breadcrumbs className="shrink-0 text-sm">
-                {!compact && (
-                  <Breadcrumbs.Item onPress={() => ui.goBack()}>
-                    {summary.pr.repo.owner}/{summary.pr.repo.name}
-                  </Breadcrumbs.Item>
-                )}
-                <Breadcrumbs.Item>
-                  {branchReview ? summary.head_ref : `#${summary.pr.number}`}
-                </Breadcrumbs.Item>
-              </Breadcrumbs>
+              <span className="shrink-0 text-sm text-muted">
+                {branchReview ? summary.head_ref : `#${summary.pr.number}`}
+              </span>
               <Typography.Heading
                 level={6}
                 className="min-w-[12ch] flex-1 truncate"
