@@ -82,6 +82,10 @@ fn setup() -> Fixture {
     git(&source, &["init", "-q", "-b", "main"]);
     git(&source, &["config", "user.email", "a@b.com"]);
     git(&source, &["config", "user.name", "test"]);
+    // Newer git runs maintenance in the background after a commit, writing
+    // `objects/maintenance.lock` into the source while the test snapshots it.
+    git(&source, &["config", "maintenance.auto", "false"]);
+    git(&source, &["config", "gc.auto", "0"]);
     std::fs::write(source.join("a.txt"), "line1\n").unwrap();
     git(&source, &["add", "-A"]);
     git(&source, &["commit", "-q", "-m", "base"]);
