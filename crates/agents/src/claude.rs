@@ -80,17 +80,25 @@ pub fn build_args(
         args.push("--mcp-config".to_string());
         args.push(path.display().to_string());
     }
-    // Only Theodore's own tools, never the user's global MCP servers: a
-    // run shouldn't reach their other services, wait on their auth, or
-    // report on them ("the Linear connector needs authorizing…").
-    args.push("--strict-mcp-config".to_string());
-    // The run's own MCP server, whatever it is named.
-    let mcp_tools = format!(
+    // `agents.user_mcp` off: only Theodore's own tools, never the user's
+    // MCP servers (`~/.claude.json`, `.mcp.json`, claude.ai connectors).
+    // On: those load next to `--mcp-config`, so a run can read the Linear
+    // issue or the GitHub thread the user already connected Claude Code to.
+    if !req.user_mcp {
+        args.push("--strict-mcp-config".to_string());
+    }
+    // The run's own MCP server, whatever it is named; with the user's
+    // servers on, theirs too (`mcp__*`). `--permission-prompts none`
+    // denies whatever isn't pre-approved, so they must be listed to be usable.
+    let mut mcp_tools = format!(
         "mcp__{}__*",
         req.mcp
             .as_ref()
             .map_or(theodore_ports::REVIEW_TOOLS, |m| m.name.as_str())
     );
+    if req.user_mcp {
+        mcp_tools.push_str(",mcp__*");
+    }
     match req.mode {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
@@ -409,6 +417,7 @@ mod read_only_tests {
             model: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -439,6 +448,7 @@ mod mcp_config_tests {
             model: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         }
     }
 
@@ -494,6 +504,45 @@ mod mcp_config_tests {
         assert!(args.iter().any(|a| a == "--strict-mcp-config"));
     }
 
+    /// `agents.user_mcp` off: only Theodore's own server, and only its
+    /// tools pre-approved.
+    #[test]
+    fn user_mcp_off_keeps_the_run_to_theodores_own_server() {
+        let req = req_with_mcp("t");
+        let args = build_args(&req, &Default::default(), None);
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"));
+        let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(args[i + 1], "Read,Grep,Glob,mcp__review-tools__*");
+    }
+
+    /// `agents.user_mcp` on: the user's own MCP servers load next to
+    /// `--mcp-config`, and their tools are pre-approved in every mode that
+    /// has an allowlist; a review run still can't write or run commands.
+    #[test]
+    fn user_mcp_on_loads_and_allows_the_users_servers() {
+        for mode in [AgentMode::ReadOnly, AgentMode::Edit] {
+            let mut req = req_with_mcp("t");
+            req.mode = mode;
+            req.user_mcp = true;
+            let guard = write_mcp_config(&req).unwrap().expect("mcp config file");
+            let args = build_args(&req, &Default::default(), Some(guard.path()));
+            assert!(!args.iter().any(|a| a == "--strict-mcp-config"), "{args:?}");
+            assert!(args.iter().any(|a| a == "--mcp-config"), "{args:?}");
+            let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+            let allowed: Vec<&str> = args[i + 1].split(',').collect();
+            assert!(allowed.contains(&"mcp__review-tools__*"), "{allowed:?}");
+            assert!(allowed.contains(&"mcp__*"), "{allowed:?}");
+        }
+        let mut req = req_with_mcp("t");
+        req.user_mcp = true;
+        let args = build_args(&req, &Default::default(), None);
+        let i = args
+            .iter()
+            .position(|a| a == "--disallowedTools")
+            .expect("denylist");
+        assert!(args[i + 1].contains("Bash") && args[i + 1].contains("Write"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn mcp_config_file_is_readable_only_by_its_owner() {
@@ -525,6 +574,7 @@ mod run_mode_tests {
             model: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -532,5 +582,26 @@ mod run_mode_tests {
                 .any(|w| w == ["--permission-mode", "bypassPermissions"])
         );
         assert!(!args.iter().any(|a| a == "--disallowedTools"));
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"));
+    }
+
+    #[test]
+    fn run_mode_with_user_mcp_skips_strict_mcp_config() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::Run,
+            mcp: None,
+            model: None,
+            stall_after_ms: 1000,
+            env: Vec::new(),
+            user_mcp: true,
+        };
+        let args = build_args(&req, &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
+        // bypassPermissions already allows every tool; no allowlist to widen.
+        assert!(!args.iter().any(|a| a == "--allowedTools"));
     }
 }

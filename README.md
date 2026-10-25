@@ -193,6 +193,8 @@ local folder:  Merge locally  ·  Keep as branch
 - A turn that ends while the window is in the background sends a system notification
   (`spaces.notify`); clicking it opens the space. The dock badge counts spaces waiting on you.
 - Archive any time, or automatically `spaces.auto_archive_days` after shipping.
+- A space's agent also gets your own Claude Code MCP servers (Linear, GitHub…, claude.ai connectors);
+  Settings → Agents → **Allow my Claude MCP servers in spaces** turns that off. Reviews never get them.
 - On for everyone; Settings → Spaces turns them off (the `labs.build_mode` setting). Design:
   `docs/spaces.md`.
 

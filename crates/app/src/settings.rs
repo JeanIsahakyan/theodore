@@ -1,5 +1,6 @@
 //! Settings (plan §8.5): `agents.grouping`, `agents.chat`, `agents.skills`,
-//! `agents.fix`, `updates.channel`, each with a default. Layered scopes:
+//! `agents.fix`, `agents.user_mcp`, `updates.channel`, each with a default.
+//! Layered scopes:
 //! `user` is the baseline; a project's config files (docs/config.md, read
 //! by `load_repo_settings`) set `review.agents.*`, stored as `repo:<slug>`
 //! rows that win over `user` for that repo.
@@ -14,6 +15,8 @@ use crate::core::Core;
 use crate::error::AppResult;
 
 pub const SCOPE_USER: &str = "user";
+/// The setting key behind [`Core::user_mcp_allowed`].
+pub const USER_MCP: &str = "agents.user_mcp";
 
 pub fn defaults() -> Vec<Setting> {
     vec![
@@ -151,6 +154,27 @@ impl Core {
         self.setting_value_scoped(&key, None)
             .await
             .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// `agents.user_mcp`: agent runs may use the user's own MCP servers
+    /// (Claude Code's `~/.claude.json`, `.mcp.json`, claude.ai connectors)
+    /// next to Theodore's tools. `user` scope only — what a run may reach
+    /// beyond the repo is the user's call, not a repo config's. Unset = on.
+    pub async fn user_mcp_allowed(&self) -> bool {
+        let store = self.0.deps.store.clone();
+        let rows =
+            tokio::task::spawn_blocking(move || store.query(models::SETTING, "key", USER_MCP))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+        // Not `pick_setting`: with no user row it falls back to any scope,
+        // and a repo's `review.agents.user_mcp` must not count.
+        rows.into_iter()
+            .filter_map(|r| serde_json::from_value::<Setting>(r.data).ok())
+            .find(|s| s.scope == SCOPE_USER)
+            .and_then(|s| s.value.as_bool())
             .unwrap_or(true)
     }
 

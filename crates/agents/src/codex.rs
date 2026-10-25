@@ -391,6 +391,7 @@ mod run_mode_tests {
             model: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));

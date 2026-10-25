@@ -473,6 +473,12 @@ async fn regroup_after_push(
     let agent = core
         .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
         .await;
+    let agent = crate::deps::GroupingAgent {
+        id: agent,
+        // Grouping never uses the user's MCP servers: starting
+        // them on every chunk would only slow it down.
+        user_mcp: false,
+    };
     let mut ctx = core.grouping_context(worktree, new_rev).await;
     ctx.review = rules;
     let result = match &prev {

@@ -338,6 +338,11 @@ agent ─▶ run_check / start_app ─▶ set? ─no──▶ error: no `spaces.
   `start_app` (owner decision, 2026-10-23: "if it needs to run, it can
   run"). They run the configured commands only, under the same trust.
 
+Your own MCP servers come along unless you turn them off: with Settings →
+Agents → **Allow my Claude MCP servers in spaces** on (the default),
+Claude also loads your Claude Code servers (Linear, GitHub…, claude.ai
+connectors); off, a turn gets `space-tools` only (`--strict-mcp-config`).
+
 Claude and Gemini get the server over HTTP, Codex through its
 `mcp_servers.space-tools` override. A CLI that only speaks stdio MCP uses
 `theodore mcp-bridge`, same as `review-tools`.

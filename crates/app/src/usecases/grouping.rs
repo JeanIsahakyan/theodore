@@ -135,6 +135,12 @@ impl Core {
             .grouping_context(&entry.worktree_path, &entry.revision)
             .await;
         ctx.review = rules;
+        let agent = crate::deps::GroupingAgent {
+            id: agent,
+            // Grouping never uses the user's MCP servers: starting
+            // them on every chunk would only slow it down.
+            user_mcp: false,
+        };
         let grouping = match prev {
             Some(p) => {
                 self.0

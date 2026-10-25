@@ -696,6 +696,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         model,
         stall_after_ms: core.stall_after_ms().await,
         env,
+        user_mcp: core.user_mcp_allowed().await,
     };
     let mut text = String::new();
     let mut error = None;

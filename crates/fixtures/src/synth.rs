@@ -1047,6 +1047,7 @@ mod tests {
             model: None,
             stall_after_ms: 90_000,
             env: Vec::new(),
+            user_mcp: false,
         }
     }
 

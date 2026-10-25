@@ -56,7 +56,7 @@ mod space_turns_tests;
 mod spaces_tests;
 
 pub use core::{Core, Receivers};
-pub use deps::{Deps, Grouper, RunTools, TokenStatus};
+pub use deps::{Deps, Grouper, GroupingAgent, RunTools, TokenStatus};
 pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::account::{AccountGate, resolve_client_id};

@@ -315,6 +315,8 @@ async fn drive_fix_run(
         model: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
+        // Spaces only (issue #16): a fix stays on Theodore's tools.
+        user_mcp: false,
     };
     let _guard = ToolsGuard { core, mcp };
 
