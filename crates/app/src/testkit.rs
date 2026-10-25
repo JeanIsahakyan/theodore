@@ -344,6 +344,10 @@ impl Secrets for FakeSecrets {
 
 pub struct FakeGit {
     pub repo_path: PathBuf,
+    /// Parent of every PR worktree `worktree()` hands out: private to this
+    /// fake, so files a test plants (or an earlier run left) never leak
+    /// into another test.
+    worktree_root: tempfile::TempDir,
     head: Mutex<Sha>,
     revision: Mutex<Revision>,
     files: Mutex<HashMap<(String, String), Vec<u8>>>,
@@ -440,9 +444,15 @@ fn clone_git_result<T: Clone>(r: &GitResult<T>) -> GitResult<T> {
 }
 
 impl FakeGit {
+    /// Where `worktree()` puts the PR worktree at `head`.
+    pub fn worktree_path(&self, head: &Sha) -> PathBuf {
+        self.worktree_root.path().join(format!("wt-{}", head.0))
+    }
+
     pub fn new(head: Sha, revision: Revision) -> Arc<Self> {
         Arc::new(Self {
             repo_path: PathBuf::from("/tmp/theodore-fake-repo"),
+            worktree_root: tempfile::tempdir().expect("tempdir"),
             head: Mutex::new(head),
             revision: Mutex::new(revision),
             files: Mutex::new(HashMap::new()),
@@ -627,7 +637,7 @@ impl GitPort for FakeGit {
     }
     async fn worktree(&self, _pr: &PrRef, head: &Sha) -> GitResult<Worktree> {
         Ok(Worktree {
-            path: PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0)),
+            path: self.worktree_path(head),
             head: head.clone(),
         })
     }

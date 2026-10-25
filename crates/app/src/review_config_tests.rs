@@ -291,15 +291,8 @@ async fn a_pr_adding_hide_everything_does_not_hide_its_own_files() {
     let head = Sha::new("hide-own-head");
     let base = Sha::new("base000");
     f.git.set_head(head.clone());
-    let wt = std::path::PathBuf::from(format!("/tmp/theodore-fake-wt-{}", head.0));
+    let wt = f.git.worktree_path(&head);
     std::fs::create_dir_all(wt.join(".theodore")).unwrap();
-    struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _cleanup = Cleanup(wt.clone());
     std::fs::write(
         wt.join(".theodore/config.yaml"),
         "review:\n  hide: ['**']\n  agents:\n    grouping: codex\n",
