@@ -1,4 +1,5 @@
 import { Logo } from './Logo';
+import { ThemePicker } from './ThemePicker';
 import { useCallback, useEffect, useState } from 'react';
 import {
   CircleCheckFill,
@@ -38,11 +39,12 @@ import { SHARE_ROWS, WhatsCollectedLink } from './Privacy';
 import { TELEMETRY_CLAIM } from './WhatsCollected';
 
 type StepId =
-  'github' | 'account' | 'telemetry' | 'agents' | 'projects' | 'done';
+  'github' | 'account' | 'telemetry' | 'theme' | 'agents' | 'projects' | 'done';
 const STEP_TITLE: Record<StepId, string> = {
   github: 'GitHub',
   account: 'Account',
   telemetry: 'Sharing',
+  theme: 'Theme',
   agents: 'Agents',
   projects: 'Projects',
   done: 'Done',
@@ -58,6 +60,7 @@ export function onboardingSteps(
   return [
     ...(accountRequired ? (['account'] as const) : []),
     ...(telemetryAvailable ? (['telemetry'] as const) : []),
+    'theme',
     'github',
     'agents',
     'projects',
@@ -180,6 +183,7 @@ export const Onboarding = observer(function Onboarding() {
     github: connected || host === 'unready',
     account: !!account?.user,
     telemetry: !saving,
+    theme: true,
     agents: agents != null,
     projects: true,
     done: true,
@@ -352,6 +356,17 @@ export const Onboarding = observer(function Onboarding() {
                 onChange={setShare}
               />
             )}
+
+          {id === 'theme' && (
+            <>
+              <Typography.Heading level={4}>Theme</Typography.Heading>
+              <Typography.Paragraph size="sm" color="muted">
+                System follows macOS as it switches between light and dark.
+                Change it any time in Settings → Appearance.
+              </Typography.Paragraph>
+              <ThemePicker />
+            </>
+          )}
 
           {id === 'agents' && (
             <>

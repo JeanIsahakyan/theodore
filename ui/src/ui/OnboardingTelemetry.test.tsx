@@ -70,7 +70,7 @@ describe('Onboarding: Help improve Theodore', () => {
     await render();
     const host = m!.host;
     expect(host.textContent).toContain('Help improve Theodore');
-    expect(host.textContent).toContain('Step 1 of 5');
+    expect(host.textContent).toContain('Step 1 of 6');
     const usage = host.querySelector<HTMLInputElement>('.share-usage input');
     const errors = host.querySelector<HTMLInputElement>('.share-errors input');
     expect(usage?.checked).toBe(true);
@@ -86,8 +86,8 @@ describe('Onboarding: Help improve Theodore', () => {
 
     finish({ ...status, usage: false, errors: true });
     await settle();
-    expect(host.textContent).toContain('Connect GitHub');
-    expect(tracked()).toEqual(['telemetry', 'github']);
+    expect(host.textContent).toContain('System follows macOS');
+    expect(tracked()).toEqual(['telemetry', 'theme']);
   });
 
   it('is left out when nothing can be sent', async () => {
@@ -97,8 +97,8 @@ describe('Onboarding: Help improve Theodore', () => {
       errors_available: false,
     }));
     await render();
-    expect(m!.host.textContent).toContain('Step 1 of 4');
-    expect(m!.host.textContent).toContain('Connect GitHub');
+    expect(m!.host.textContent).toContain('Step 1 of 5');
+    expect(m!.host.textContent).toContain('System follows macOS');
     expect(m!.host.textContent).not.toContain('Help improve Theodore');
   });
 });

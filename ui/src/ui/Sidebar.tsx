@@ -1,13 +1,14 @@
 import {
+  ArrowRightFromSquare,
   BranchesRight,
+  ChevronDown,
+  CircleExclamation,
   CircleXmark,
   CodePullRequest,
   Gear,
-  Keyboard,
   LayoutSideContentLeft,
   ListCheck,
   Magnifier,
-  Moon,
   Pencil,
   Plus,
   Sparkles,
@@ -15,7 +16,10 @@ import {
 } from '@gravity-ui/icons';
 import {
   Button,
+  Dropdown,
   Header,
+  Kbd,
+  Label,
   ListBox,
   Separator,
   Toolbar,
@@ -24,7 +28,8 @@ import {
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
 import { useRootStore, useUi } from '../stores/context';
-import { sameRoute, toggleTheme, type Route } from '../stores/UiStore';
+import { sameRoute, type Route } from '../stores/UiStore';
+import { api } from '../core/api';
 import { Avatar, K, Spinner } from './bits';
 import { inInbox } from './List';
 import { openPrCount } from './prs/filters';
@@ -299,36 +304,59 @@ export const Sidebar = observer(function Sidebar() {
         aria-label="App"
         className="flex w-full items-center gap-1 px-5 pb-3 pt-1.5"
       >
-        {me ? (
-          <>
-            <Avatar person={me.person} size={24} />
-            <span
-              className="ms-1.5 min-w-0 flex-1 truncate text-sm"
-              title={me.title}
+        <Dropdown>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Account and app"
+            className="account-menu -ms-2 h-9 min-w-0 flex-1 justify-start gap-2 rounded-xl px-2"
+          >
+            {me ? (
+              <>
+                <Avatar person={me.person} size={24} />
+                <span className="min-w-0 truncate text-sm" title={me.title}>
+                  {me.label}
+                </span>
+              </>
+            ) : (
+              <span className="min-w-0 truncate text-sm text-muted">
+                Not signed in
+              </span>
+            )}
+            <ChevronDown className="size-3 shrink-0 text-muted" />
+          </Button>
+          <Dropdown.Popover placement="top start">
+            <Dropdown.Menu
+              aria-label="Account and app"
+              onAction={(k) => {
+                if (k === 'settings')
+                  ui.go({ name: 'settings', page: 'account' });
+                else if (k === 'report') ui.openModal('report-problem');
+                else if (k === 'signout')
+                  void api
+                    .accountSignOut()
+                    .then((st) => store.ephemeral.setAccount(st))
+                    .catch(() => {});
+              }}
             >
-              {me.label}
-            </span>
-          </>
-        ) : (
-          <span className="ms-1.5 min-w-0 flex-1 truncate text-sm text-muted">
-            Not signed in
-          </span>
-        )}
-        <IconBtn
-          label="Settings  G S"
-          onPress={() => ui.go({ name: 'settings', page: 'agents' })}
-        >
-          <Gear className="size-4" />
-        </IconBtn>
-        <IconBtn label="Dark / light theme" onPress={toggleTheme}>
-          <Moon className="size-4" />
-        </IconBtn>
-        <IconBtn
-          label="Keyboard shortcuts"
-          onPress={() => ui.openModal('help')}
-        >
-          <Keyboard className="size-4" />
-        </IconBtn>
+              <Dropdown.Item id="settings" textValue="Settings">
+                <Gear className="size-4" />
+                <Label>Settings</Label>
+                <Kbd className="ms-auto">G S</Kbd>
+              </Dropdown.Item>
+              <Dropdown.Item id="report" textValue="Report a problem">
+                <CircleExclamation className="size-4" />
+                <Label>Report a problem…</Label>
+              </Dropdown.Item>
+              {store.ephemeral.account?.user && (
+                <Dropdown.Item id="signout" textValue="Sign out">
+                  <ArrowRightFromSquare className="size-4" />
+                  <Label>Sign out</Label>
+                </Dropdown.Item>
+              )}
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
         <IconBtn label="Collapse sidebar  [" onPress={() => ui.toggleSidebar()}>
           <LayoutSideContentLeft className="size-4" />
         </IconBtn>

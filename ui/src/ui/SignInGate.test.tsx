@@ -152,7 +152,7 @@ describe('Onboarding behind the account gate', () => {
     await setAccount(signedOut);
     await render();
     expect(host.querySelector('.onboarding')).not.toBeNull();
-    expect(host.textContent).toContain('Step 1 of 5');
+    expect(host.textContent).toContain('Step 1 of 6');
     expect(host.textContent).toContain('Sign in to Theodore');
     const next = host.querySelector<HTMLButtonElement>('.onb-next');
     expect(next?.disabled).toBe(true);
@@ -185,7 +185,7 @@ describe('Onboarding behind the account gate', () => {
       session_ended: false,
     });
     await render();
-    expect(host.textContent).toContain('Step 1 of 4');
-    expect(host.textContent).toContain('Connect GitHub');
+    expect(host.textContent).toContain('Step 1 of 5');
+    expect(host.textContent).toContain('System follows macOS');
   });
 });

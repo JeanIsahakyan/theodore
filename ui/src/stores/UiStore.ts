@@ -26,6 +26,7 @@ import { isPrFilter, type PrFilter } from '../ui/prs/filters';
 
 export type SettingsPage =
   | 'account'
+  | 'appearance'
   | 'agents'
   | 'integrations'
   | 'projects'
@@ -656,15 +657,45 @@ export class UiStore {
   }
 }
 
-export function toggleTheme(): void {
-  const dark = !document.documentElement.classList.contains('dark');
-  document.documentElement.classList.toggle('dark', dark);
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  localStorage.setItem(LS_THEME, dark ? 'dark' : 'light');
+export type ThemePref = 'system' | 'light' | 'dark';
+
+const darkQuery = () =>
+  typeof matchMedia === 'undefined'
+    ? null
+    : matchMedia('(prefers-color-scheme: dark)');
+
+/** The stored choice; no choice yet means follow the system. */
+export function themePref(): ThemePref {
+  const v = localStorage.getItem(LS_THEME);
+  return v === 'light' || v === 'dark' ? v : 'system';
 }
 
+function applyTheme(pref: ThemePref): void {
+  const dark = pref === 'dark' || (pref === 'system' && !!darkQuery()?.matches);
+  document.documentElement.classList.toggle('dark', dark);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+}
+
+export function setThemePref(pref: ThemePref): void {
+  localStorage.setItem(LS_THEME, pref);
+  applyTheme(pref);
+  window.dispatchEvent(new Event(THEME_EVENT));
+}
+
+/** Fired when the choice changes, so a picker elsewhere follows it. */
+export const THEME_EVENT = 'theodore-theme';
+
+/** The menu's "Light / Dark Theme": flips what's on screen and pins it. */
+export function toggleTheme(): void {
+  const dark = document.documentElement.classList.contains('dark');
+  setThemePref(dark ? 'light' : 'dark');
+}
+
+/** On launch: apply the choice, and keep following the system while the
+ *  choice is "system". */
 export function initialTheme(): void {
-  const theme = localStorage.getItem(LS_THEME) ?? 'light';
-  document.documentElement.classList.toggle('dark', theme === 'dark');
-  document.documentElement.dataset.theme = theme;
+  applyTheme(themePref());
+  darkQuery()?.addEventListener('change', () => {
+    if (themePref() === 'system') applyTheme('system');
+  });
 }

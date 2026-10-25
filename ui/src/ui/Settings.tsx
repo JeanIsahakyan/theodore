@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { ThemePicker } from './ThemePicker';
 import {
   ArrowLeft,
   ArrowRotateRight,
@@ -17,6 +18,7 @@ import {
   Person,
   PlugConnection,
   Sparkles,
+  Palette,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -75,6 +77,7 @@ const AI_TITLE: Record<(typeof AI_KEYS)[number], string> = {
 /** Settings pages. */
 const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'account', title: 'Account', icon: <Person /> },
+  { id: 'appearance', title: 'Appearance', icon: <Palette /> },
   { id: 'agents', title: 'Agents', icon: <Cpu /> },
   { id: 'integrations', title: 'Integrations', icon: <PlugConnection /> },
   { id: 'projects', title: 'Projects', icon: <Folder /> },
@@ -87,6 +90,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
 const SUB: Record<Page, string> = {
   account:
     'Your Theodore account and code host sign-ins. Tokens live in the system keychain.',
+  appearance: 'How Theodore looks. System follows macOS.',
   agents: 'Agent CLIs on this computer, and which one handles each task.',
   integrations: 'Other tools Theodore can link PRs to.',
   projects: 'Connected repositories and the settings effective in each.',
@@ -959,6 +963,11 @@ export const SettingsPage = observer(function SettingsPage({
         </div>
         {page === 'account' ? (
           <AccountPage />
+        ) : page === 'appearance' ? (
+          <section className="flex flex-col gap-2">
+            <Typography.Heading level={6}>Theme</Typography.Heading>
+            <ThemePicker />
+          </section>
         ) : page === 'agents' ? (
           <AgentsPage />
         ) : page === 'integrations' ? (

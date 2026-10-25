@@ -5,6 +5,7 @@ describe('onboardingSteps', () => {
   it('starts with the sign-in when it is required', () => {
     expect(onboardingSteps(true)).toEqual([
       'account',
+      'theme',
       'github',
       'agents',
       'projects',
@@ -14,6 +15,7 @@ describe('onboardingSteps', () => {
 
   it('leaves it out when the account feature is hidden', () => {
     expect(onboardingSteps(false)).toEqual([
+      'theme',
       'github',
       'agents',
       'projects',
@@ -27,6 +29,7 @@ describe('onboardingSteps with a sharing choice', () => {
     expect(onboardingSteps(true, true)).toEqual([
       'account',
       'telemetry',
+      'theme',
       'github',
       'agents',
       'projects',
