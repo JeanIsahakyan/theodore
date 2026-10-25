@@ -3,7 +3,10 @@
  *  linear.app; nothing here writes anything back. */
 import { openExternal } from '../../core/openExternal';
 import { Chip, Tooltip } from '@heroui/react';
+import { observer } from 'mobx-react-lite';
 import type { LinearIssue, PrId } from '../../gen/contract';
+import { useRootStore } from '../../stores/context';
+import { isLinearOn } from '../settings/labs';
 import { useLinearIssues } from './useLinearIssues';
 
 /** Linear's `WorkflowState.type` buckets, coarsened to the chip's color. */
@@ -36,9 +39,10 @@ function LinearChip({ issue }: { issue: LinearIssue }) {
   );
 }
 
-export function LinearChips({ pr }: { pr: PrId }) {
-  const issues = useLinearIssues(pr);
-  if (!issues.length) return null;
+export const LinearChips = observer(function LinearChips({ pr }: { pr: PrId }) {
+  const on = isLinearOn(useRootStore());
+  const issues = useLinearIssues(pr, on);
+  if (!on || !issues.length) return null;
   return (
     <>
       {issues.map((issue) => (
@@ -46,4 +50,4 @@ export function LinearChips({ pr }: { pr: PrId }) {
       ))}
     </>
   );
-}
+});

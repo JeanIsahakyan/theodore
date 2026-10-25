@@ -308,6 +308,9 @@ Host ids are opaque strings inside the domain.
 
 ### 6.4 Capabilities by host
 
+GitLab and Bitbucket are behind Settings → Labs (`labs.gitlab`,
+`labs.bitbucket`), off by default; GitHub is always on.
+
 | Feature | GitHub | GitLab | Bitbucket Cloud |
 | --- | --- | --- | --- |
 | Viewed per file on the server | `markFileAsViewed` | no (kept locally) | no (kept locally) |
@@ -401,6 +404,8 @@ token — nothing else about auth changes.
 - Opt-in live smoke test against a sandbox repo.
 
 ### 6.10 Linear (read-only)
+
+Behind Settings → Labs (`labs.linear`), off by default.
 
 A separate integration, not a `HostAdapter`: Linear isn't a code host, and its
 personal API keys authenticate with a bare `Authorization: <key>` header (no

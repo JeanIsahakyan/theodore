@@ -1,18 +1,20 @@
 import { ArrowRight, BranchesRight, CircleCheck, Tag } from '@gravity-ui/icons';
 import { Chip, Tooltip, Typography } from '@heroui/react';
 import type { PrDetail, PrId, PrSummary } from '../../gen/contract';
-import { FEATURES } from '../../features';
+import { observer } from 'mobx-react-lite';
 import { Md } from '../../highlight';
+import { useRootStore } from '../../stores/context';
 import { Avatar } from '../bits';
 import { ReviewerStrip } from '../Checks';
 import { LinearChips } from '../linear/LinearChips';
 import { ago } from '../List';
+import { isLinearOn } from '../settings/labs';
 import { StatusChip } from './StatusChip';
 
 /** The PR at a glance: its number, full title, who opened it, which branch
  *  goes where, labels and the description — the header keeps only a
  *  one-line title. */
-export function Overview({
+export const Overview = observer(function Overview({
   id,
   summary,
   detail,
@@ -30,6 +32,7 @@ export function Overview({
   /** A local or branch review has no host reviewers or approvals. */
   local: boolean;
 }) {
+  const linear = isLinearOn(useRootStore());
   const { pr } = summary;
   const opened = summary.created_at ?? null;
   return (
@@ -101,7 +104,7 @@ export function Overview({
           </div>
         )}
 
-        {((detail?.labels.length ?? 0) > 0 || FEATURES.linear) && (
+        {((detail?.labels.length ?? 0) > 0 || linear) && (
           <div className="flex flex-wrap items-center gap-2">
             {detail?.labels.map((l) => (
               <Chip
@@ -115,7 +118,7 @@ export function Overview({
                 <span className="font-medium">{l}</span>
               </Chip>
             ))}
-            {FEATURES.linear && <LinearChips pr={id} />}
+            {linear && <LinearChips pr={id} />}
           </div>
         )}
 
@@ -133,4 +136,4 @@ export function Overview({
       </div>
     </main>
   );
-}
+});

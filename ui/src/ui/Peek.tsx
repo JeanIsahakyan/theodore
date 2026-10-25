@@ -49,6 +49,7 @@ import { MergeDialog } from './Merge';
 import { gatesFor as mergeGatesFor } from './prs/mine';
 import { isBranchReview } from './project/sections';
 import { readProgress } from './review/progress';
+import { isLinearOn } from './settings/labs';
 import { PrStatusIcon, TaskIcon, prStatus } from './StatusIcon';
 
 const Sec = ({ title, children }: { title: string; children: ReactNode }) => (
@@ -262,7 +263,7 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
         <Typography.Heading level={5} className="peek-title">
           {p.title}
         </Typography.Heading>
-        {FEATURES.linear && (
+        {isLinearOn(store) && (
           <div className="flex flex-wrap items-center gap-1.5">
             <LinearChips pr={id} />
           </div>

@@ -30,6 +30,7 @@ import { useRootStore, useUi } from '../stores/context';
 import { Avatar, Empty, Shell, Spinner } from './bits';
 import { ago, type InboxPr } from './List';
 import { RowsSkeleton } from './Loading';
+import { isHostOn } from './settings/labs';
 
 // ── pure helpers (tested) ───────────────────────────────────────────────
 
@@ -206,8 +207,14 @@ export const ProjectPicker = observer(function ProjectPicker({
     store.models.projects.all().map((p) => repoKey(p.repo)),
   );
   const prItems = store.models.prSummaries.all();
+  // Repos of a host that is off in Settings → Labs stay out of the picker.
   const shown =
-    repos === null || repos === 'unready' ? [] : filterHostRepos(repos, q);
+    repos === null || repos === 'unready'
+      ? []
+      : filterHostRepos(
+          repos.filter((r) => isHostOn(store, r.repo.host)),
+          q,
+        );
   const groups = groupByOwner(shown);
 
   const addLocalFolder = () => {

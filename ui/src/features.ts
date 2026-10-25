@@ -24,7 +24,8 @@ export const FEATURES = {
    *  not a real language server. */
   symbolPeek: true,
   /** `set_linear_token` / `linear_status` / `linear_issues` — Settings →
-   *  Integrations, and issue chips in Peek/Review. */
+   *  Integrations, and issue chips in Peek/Review. Shown only once the
+   *  `labs.linear` setting is on too (Settings → Labs, `isLinearOn`). */
   linear: true,
   /** `reply_thread` / `resolve_thread` send to the host; the comment lands
    *  back in `pr_detail.threads` on the next sync frame. */
