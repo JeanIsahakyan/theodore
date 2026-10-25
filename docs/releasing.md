@@ -135,6 +135,39 @@ THEODORE_WORKOS_CLIENT_ID=client_… scripts/nightly-build.sh
 scripts/nightly-build.sh --no-account   # no account, no sign-in
 ```
 
+## Build stamp: version, commit, environment
+
+Every build bakes in its version, commit and build environment
+(`apps/desktop/build.rs`); Settings → About shows them as
+`0.0.1 · a1b2c3d · staging` (full sha and build date on hover, **Copy**
+for bug reports), and the problem report and telemetry carry them too.
+
+| Build | `THEODORE_BUILD_ENV` | Set by |
+| --- | --- | --- |
+| Release (tag) | `production` | `release.yml`, with `THEODORE_GIT_SHA=${{ github.sha }}` |
+| Staging | `staging` | by hand, below |
+| Nightly | `nightly` | `scripts/nightly-build.sh` (default) |
+| Local `cargo` / `cargo tauri dev` | `dev` | nothing set |
+
+The commit is `THEODORE_GIT_SHA` when set, else `git rev-parse HEAD`, else
+`unknown`; a `dev` build from uncommitted changes says `-dirty`. Any other
+`THEODORE_BUILD_ENV` value fails the build. `THEODORE_VERSION` overrides
+the version (the nightly script sets `-nightly.N`).
+
+### A staging build
+
+The nightly script with the staging environment and the staging WorkOS
+client id (the repository variable `THEODORE_WORKOS_CLIENT_ID_STAGING`):
+
+```sh
+THEODORE_BUILD_ENV=staging \
+THEODORE_WORKOS_CLIENT_ID=$(gh variable get THEODORE_WORKOS_CLIENT_ID_STAGING) \
+scripts/nightly-build.sh
+```
+
+Same DMG as a nightly (`<version>-nightly.<n>`), labelled `staging` in
+About and in telemetry (`deployment.environment.name`).
+
 ## First launch on a clean Mac (ad-hoc signed builds)
 
 Without a Developer ID, Gatekeeper blocks the first launch of a downloaded

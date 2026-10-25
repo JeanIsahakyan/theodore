@@ -5,6 +5,11 @@
 //! only if the real build hasn't put one there yet — never overwrite it.
 
 use std::path::Path;
+use std::process::Command;
+
+#[allow(dead_code)]
+#[path = "src/build_stamp.rs"]
+mod build_stamp;
 
 fn main() {
     let dist = Path::new("../../ui/dist");
@@ -18,35 +23,82 @@ fn main() {
         .expect("write ui/dist placeholder index.html");
     }
 
-    commit();
+    stamp();
     tauri_build::build();
 }
 
-/// `THEODORE_COMMIT` for the problem report and remote records: the
-/// release scripts' value, else `git rev-parse --short HEAD`, else
-/// `unknown`.
-fn commit() {
-    println!("cargo:rerun-if-env-changed=THEODORE_COMMIT");
-    let commit = std::env::var("THEODORE_COMMIT")
-        .ok()
-        .filter(|c| !c.trim().is_empty())
-        .or_else(|| {
-            let out = std::process::Command::new("git")
-                .args(["rev-parse", "--short=12", "HEAD"])
-                .output()
-                .ok()?;
-            let head = String::from_utf8(out.stdout).ok()?.trim().to_string();
-            (out.status.success() && !head.is_empty()).then_some(head)
-        })
-        .unwrap_or_else(|| "unknown".into());
-    // Rebuild when HEAD moves (a worktree's HEAD lives in its own git dir).
-    if let Ok(out) = std::process::Command::new("git")
-        .args(["rev-parse", "--git-path", "HEAD"])
-        .output()
-        && out.status.success()
-    {
-        let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        println!("cargo:rerun-if-changed={head}");
+/// The build stamp (`src/build_info.rs`), baked in as `THEODORE_*` env:
+///
+/// - `THEODORE_VERSION`: from the env (a nightly's `-nightly.N`), else the
+///   crate version.
+/// - `THEODORE_BUILD_ENV`: `production` | `staging` | `nightly` | `dev`
+///   (unset: `dev`; anything else fails the build).
+/// - `THEODORE_COMMIT`: the full sha from `THEODORE_GIT_SHA`, else
+///   `git rev-parse HEAD`, else `unknown`; dev builds from a dirty tree
+///   get `-dirty`.
+/// - `THEODORE_BUILT_AT`: unix millis when this script last ran.
+///
+/// Reruns when those env vars, HEAD or the branch it points to change —
+/// not on every edit, so a dev build's `-dirty` and date are as of the
+/// last rerun (a commit, a checkout, a clean build).
+fn stamp() {
+    for var in ["THEODORE_VERSION", "THEODORE_BUILD_ENV", "THEODORE_GIT_SHA"] {
+        println!("cargo:rerun-if-env-changed={var}");
     }
+    let version = std::env::var("THEODORE_VERSION")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").unwrap_or_default());
+    let env = build_stamp::build_env(std::env::var("THEODORE_BUILD_ENV").ok().as_deref())
+        .unwrap_or_else(|e| panic!("{e}"));
+    let given = std::env::var("THEODORE_GIT_SHA").ok();
+    let given = given.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let (sha, dirty) = match given {
+        Some(sha) => (Some(sha.to_string()), false),
+        None => {
+            let sha = git(&["rev-parse", "HEAD"]);
+            // Only a dev build can be dirty; skip `git status` otherwise.
+            let dirty = sha.is_some()
+                && env == "dev"
+                && git(&["status", "--porcelain", "--untracked-files=no"]).is_some();
+            (sha, dirty)
+        }
+    };
+    let commit = build_stamp::commit(sha.as_deref(), dirty, env);
+    let built_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    rerun_on_head();
+    println!("cargo:rustc-env=THEODORE_VERSION={version}");
+    println!("cargo:rustc-env=THEODORE_BUILD_ENV={env}");
     println!("cargo:rustc-env=THEODORE_COMMIT={commit}");
+    println!("cargo:rustc-env=THEODORE_BUILT_AT={built_at}");
+}
+
+/// Rebuild when HEAD moves: `HEAD` itself (a checkout), the branch it
+/// points to (a commit) and `packed-refs` (a branch that isn't loose).
+/// `--git-path` resolves each for worktrees too. Only existing files are
+/// watched: cargo reruns every build for a missing one.
+fn rerun_on_head() {
+    let mut paths = vec!["HEAD".to_string(), "packed-refs".to_string()];
+    if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        paths.push(branch);
+    }
+    for p in paths {
+        if let Some(path) = git(&["rev-parse", "--git-path", &p])
+            && Path::new(&path).exists()
+        {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+}
+
+/// A git command's trimmed stdout; `None` when git is missing, fails or
+/// prints nothing.
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git").args(args).output().ok()?;
+    let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    (out.status.success() && !s.is_empty()).then_some(s)
 }

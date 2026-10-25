@@ -73,8 +73,9 @@ fixed set — never code, paths, titles or comment text. The wire shape is pinne
 | `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`) |
 | `config_saved` | `where` (`global`, `repo`, `local`) |
 
-Every PostHog event also carries `app_version`, `os`, `channel`. The UI can report only
-`onboarding_step` (`track_ui`), and the core drops values it doesn't know.
+Every PostHog event also carries `app_version`, `os`, `channel` (the update channel), `commit`
+and `build_env` (`production`, `staging`, `nightly`, `dev`; docs/releasing.md "Build stamp").
+The UI can report only `onboarding_step` (`track_ui`), and the core drops values it doesn't know.
 
 ## Error codes
 
@@ -156,7 +157,9 @@ cargo run -p theodore-desktop
 ```
 
 EU accounts use `https://otlp.eu01.nr-data.net`. Logs arrive with `service.name=theodore`,
-`service.instance.id=<install id>` and correlate with traces by trace id.
+`service.instance.id=<install id>`, `service.version`, `vcs.ref.head.revision` (the commit),
+`deployment.environment.name` (the build environment), `theodore.update_channel` and `os.type`,
+and correlate with traces by trace id.
 
 ### PostHog
 
@@ -189,8 +192,8 @@ tail -f theodore.jsonl | jq -c '{ts, level, msg, "error.code"}'
 ## Report a problem
 
 Settings → About & updates, Help → Report a Problem…, or the "Something went wrong" screen. Builds
-`<tmp>/theodore-reports/theodore-report-<stamp>.zip` with `app-info.json` (version, commit, OS,
-agent CLI versions) and the newest logs up to 20 MB, redacted again with the remote rules
+`<tmp>/theodore-reports/theodore-report-<stamp>.zip` with `app-info.json` (version, commit, build
+environment and date, OS, agent CLI versions) and the newest logs up to 20 MB, redacted again with the remote rules
 (repository names and paths hashed). The dialog lists the files for review, then **Reveal in
 Finder** or **Copy summary**. Nothing is uploaded.
 

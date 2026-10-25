@@ -87,7 +87,8 @@ fn resource(meta: &AppMeta) -> Resource {
         .with_attributes([
             KeyValue::new("service.version", meta.version.clone()),
             KeyValue::new("service.instance.id", meta.install_id.clone()),
-            KeyValue::new("deployment.environment.name", meta.channel.clone()),
+            KeyValue::new("deployment.environment.name", meta.build_env.clone()),
+            KeyValue::new("theodore.update_channel", meta.channel.clone()),
             KeyValue::new("os.type", meta.os.clone()),
             KeyValue::new("vcs.ref.head.revision", meta.commit.clone()),
         ])
@@ -268,8 +269,19 @@ mod tests {
             channel: "stable".into(),
             os: "macos".into(),
             commit: "abc".into(),
+            build_env: "staging".into(),
             install_id: "install-1".into(),
         }
+    }
+
+    #[test]
+    fn the_resource_names_version_commit_and_build_env() {
+        let r = resource(&meta());
+        let get = |k: &'static str| r.get(&opentelemetry::Key::from_static_str(k));
+        assert_eq!(get("service.version"), Some("1.0.0".into()));
+        assert_eq!(get("vcs.ref.head.revision"), Some("abc".into()));
+        assert_eq!(get("deployment.environment.name"), Some("staging".into()));
+        assert_eq!(get("theodore.update_channel"), Some("stable".into()));
     }
 
     #[test]

@@ -18,6 +18,7 @@ use theodore_contract::{
 };
 use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
 
+use crate::build_info;
 use crate::core_api::CoreApi;
 
 pub struct AppCore {
@@ -216,7 +217,10 @@ impl CoreApi for AppCore {
     }
     async fn app_info(&self) -> Result<AppInfo, CommandError> {
         Ok(AppInfo {
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: build_info::VERSION.into(),
+            commit: build_info::COMMIT.into(),
+            build_env: build_info::BUILD_ENV.into(),
+            built_at: build_info::built_at(),
             channel: self.update_channel().await,
             update: None,
             sandbox: self.sandbox.as_ref().map(|s| s.info()),
@@ -423,6 +427,8 @@ impl CoreApi for AppCore {
         info.insert("version".into(), meta.version.clone().into());
         info.insert("channel".into(), meta.channel.clone().into());
         info.insert("commit".into(), meta.commit.clone().into());
+        info.insert("build_env".into(), meta.build_env.clone().into());
+        info.insert("built_at".into(), build_info::built_at().into());
         info.insert("os".into(), os.clone().into());
         info.insert("arch".into(), std::env::consts::ARCH.into());
         info.insert("sandbox".into(), self.sandbox.is_some().into());
@@ -441,9 +447,11 @@ impl CoreApi for AppCore {
         );
         let summary = vec![
             format!(
-                "Theodore {} ({}, {})",
-                meta.version, meta.channel, meta.commit
+                "Theodore {} ({} channel)",
+                build_info::label(),
+                meta.channel
             ),
+            format!("Commit {}", meta.commit),
             format!("{os} ({})", std::env::consts::ARCH),
             format!("Agents: {agent_line}"),
         ];

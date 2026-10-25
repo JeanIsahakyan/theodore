@@ -50,6 +50,7 @@ import { useRootStore, useUi, useWorkspaces } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
 import { AccountCard } from './AccountCard';
+import { buildLabel, buildReport, builtAtIso } from './buildStamp';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
 import { projectLabel } from './Projects';
@@ -861,6 +862,7 @@ const ProjectsPage = observer(function ProjectsPage() {
 const AboutPage = observer(function AboutPage() {
   const ui = useUi();
   const [info, setInfo] = useState<AppInfo | null>(null);
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     void api
       .appInfo()
@@ -868,13 +870,36 @@ const AboutPage = observer(function AboutPage() {
       .catch(() => setInfo(null));
   }, []);
   if (!info) return <Spinner />;
+  const built = builtAtIso(info);
   return (
     <section className="flex flex-col gap-2">
-      <Card variant="secondary" className="flex flex-col gap-3 p-4 text-sm">
+      <Card variant="secondary" className="flex flex-col gap-1 p-4 text-sm">
         <div className="flex items-center gap-2">
           <Gear className="size-4 text-muted" />
-          <span className="font-medium">Theodore {info.version}</span>
+          <span className="build-label flex-1 font-medium">
+            Theodore {buildLabel(info)}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="build-copy"
+            onPress={() =>
+              void navigator.clipboard
+                .writeText(buildReport(info))
+                .then(() => setCopied(true))
+                .catch(() => {})
+            }
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
         </div>
+        <span
+          className="build-details pl-6 font-mono text-xs break-all text-muted"
+          title={built ?? undefined}
+        >
+          {info.commit}
+          {built ? ` · built ${new Date(built).toLocaleString()}` : ''}
+        </span>
       </Card>
       <UpdatesPage />
       <PrivacyCard />

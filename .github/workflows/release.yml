@@ -102,6 +102,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The build stamp Settings → About shows (docs/releasing.md).
+          THEODORE_BUILD_ENV: production
+          THEODORE_GIT_SHA: ${{ github.sha }}
           # Compiled in as the lowest-priority client id (docs/releasing.md).
           THEODORE_WORKOS_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
           # Remote telemetry sinks, compiled in as the lowest-priority source
