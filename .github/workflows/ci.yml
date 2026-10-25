@@ -61,6 +61,8 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         if: steps.ui.outputs.present == 'true'
+        with:
+          version: 10
 
       - uses: actions/setup-node@v4
         if: steps.ui.outputs.present == 'true'
@@ -107,6 +109,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
