@@ -65,12 +65,15 @@ async fn opened_in_an_earlier_session(f: &Fixtures) -> PrId {
     resp.pr
 }
 
-/// A new session with the host unreachable for every read.
+/// A new session with the host unreachable for every read — the inbox
+/// poller's `changed_since` included: left to its default `Ok`, it would
+/// flip host health back online whenever it ran after the PR open.
 fn start_offline(f: &Fixtures) -> Core {
     f.host.push_get_pr(Err(offline()));
     for _ in 0..8 {
         f.host.push_search(Err(offline()));
     }
+    f.host.push_changed_since(Err(offline()));
     Core::start(f.deps()).0
 }
 
