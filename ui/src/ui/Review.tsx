@@ -24,7 +24,6 @@ import {
   Alert,
   Breadcrumbs,
   Chip,
-  Disclosure,
   Separator,
   Spinner,
   Tabs,
@@ -39,7 +38,6 @@ import type { HunkId, PrId } from '../gen/contract';
 import { api } from '../core/api';
 import { markGroupRead, setDraft, setFileViewed } from '../actions';
 import { FEATURES } from '../features';
-import { Md } from '../highlight';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, Hints, K } from './bits';
 import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
@@ -54,6 +52,7 @@ import { sinceHunks, type SinceKind } from './diff';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
 import { LinearChips } from './linear/LinearChips';
 import { MergeDialog } from './Merge';
+import { Overview } from './review/Overview';
 import { closeBranchReview } from './project/closeReview';
 import { isBranchReview } from './project/sections';
 import { reviewTitle } from './space/mode';
@@ -69,7 +68,7 @@ import { SidePanel } from './SidePanel';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
-type PrTab = 'diff' | 'checks' | 'commits';
+type PrTab = 'overview' | 'diff' | 'checks' | 'commits';
 
 const lastSeenKey = (pr: PrId) => `${STORAGE_NS}theodore-lastseen:${pr}`;
 
@@ -479,7 +478,10 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   {branchReview ? summary.head_ref : `#${summary.pr.number}`}
                 </Breadcrumbs.Item>
               </Breadcrumbs>
-              <Typography.Heading level={6} className="min-w-0 flex-1 truncate">
+              <Typography.Heading
+                level={6}
+                className="min-w-[12ch] flex-1 truncate"
+              >
                 {reviewTitle(store, pr, summary.title)}
               </Typography.Heading>
               <Chip size="sm" variant="secondary" className="shrink-0 gap-1.5">
@@ -618,6 +620,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 </span>
                 <Tabs.Indicator />
               </Tabs.Tab>
+              <Tabs.Tab id="overview" className="gap-1.5">
+                <FileText className="size-4" />
+                Overview
+                <Tabs.Indicator />
+              </Tabs.Tab>
             </Tabs.List>
           </Tabs.ListContainer>
         </Tabs>
@@ -718,22 +725,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </Alert>
         )}
 
-      {detail?.body && (
-        <Disclosure className="description border-b border-separator px-4">
-          <Disclosure.Heading>
-            <Disclosure.Trigger className="flex items-center gap-1.5 py-2 text-sm text-muted">
-              Description
-              <Disclosure.Indicator />
-            </Disclosure.Trigger>
-          </Disclosure.Heading>
-          <Disclosure.Content>
-            <Disclosure.Body className="max-h-[40vh] max-w-[78ch] overflow-y-auto pb-3">
-              <Md text={detail.body} />
-            </Disclosure.Body>
-          </Disclosure.Content>
-        </Disclosure>
-      )}
-
       {!revision || revision.status === 'loading' ? (
         <div className="min-h-0 flex-1 overflow-hidden">
           <DiffSkeleton />
@@ -768,7 +759,16 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   onOpenFile={onOpenFile}
                 />
               )}
-              {tab === 'checks' ? (
+              {tab === 'overview' && summary ? (
+                <Overview
+                  id={pr}
+                  summary={summary}
+                  detail={detail}
+                  title={reviewTitle(store, pr, summary.title)}
+                  progress={progressOf(store, pr)}
+                  branchReview={branchReview}
+                />
+              ) : tab === 'checks' ? (
                 <Checks pr={pr} checks={checks} />
               ) : tab === 'commits' ? (
                 <Commits commits={detail?.commits ?? []} />
