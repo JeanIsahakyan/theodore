@@ -111,7 +111,7 @@ export const WorkspaceSwitcher = observer(function WorkspaceSwitcher() {
         {/* While syncing the lenses' stripes drift, as on the welcome. */}
         {syncing ? (
           <span className="grid size-[22px] shrink-0 place-items-center">
-            <WelcomeLogo size={22} />
+            <WelcomeLogo size={22} glint className="logo-busy" />
           </span>
         ) : (
           <span

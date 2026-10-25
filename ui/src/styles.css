@@ -536,6 +536,21 @@ body.cmd .lines .src span:hover {
     filter: blur(8px);
   }
 }
+/* The switcher's logo while syncing: small, so the motion is louder than
+ * the welcome's — faster stripes and a band of light crossing the lenses
+ * in a loop. The tile itself stays still. */
+.logo-busy .welcome-stripes {
+  animation-duration: 1.2s;
+}
+.logo-busy .welcome-stripes-late {
+  animation-delay: -0.6s;
+}
+.logo-busy .welcome-glint {
+  animation: welcome-glint 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.logo-busy .welcome-glint-late {
+  animation-delay: 0.15s;
+}
 @media (prefers-reduced-motion: reduce) {
   .welcome-stripes,
   .welcome-glint,
