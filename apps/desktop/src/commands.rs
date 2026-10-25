@@ -1057,6 +1057,38 @@ pub async fn report_problem(
     op.run(async move { core.report_problem().await }).await
 }
 
+/// "Report a problem" as a GitHub issue: the repo, the login, or why not.
+#[tauri::command]
+#[specta::specta]
+pub async fn issue_target(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::IssueTarget, CommandError> {
+    op.run(async move { core.issue_target().await }).await
+}
+
+/// The exact issue body `submit_issue` would post.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_issue(
+    op: crate::op::Op,
+    req: theodore_contract::IssueRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::IssuePreview, CommandError> {
+    op.run(async move { core.preview_issue(req).await }).await
+}
+
+/// Posts the report as a public issue with the user's GitHub token.
+#[tauri::command]
+#[specta::specta]
+pub async fn submit_issue(
+    op: crate::op::Op,
+    req: theodore_contract::IssueRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ReportedIssue, CommandError> {
+    op.run(async move { core.submit_issue(req).await }).await
+}
+
 /// Shows a problem report in Finder. Only paths inside the reports folder.
 #[tauri::command]
 #[specta::specta]

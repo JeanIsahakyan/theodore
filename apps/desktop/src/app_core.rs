@@ -1,5 +1,7 @@
 //! `CoreApi` over the real core (`theodore-app`).
 
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use theodore_app::{AppError, Core};
 use theodore_contract::{
@@ -17,6 +19,8 @@ use theodore_contract::{
     SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
+use theodore_ports::{HostError, IssueTracker, NewIssue};
+use theodore_telemetry::issue;
 
 use crate::build_info;
 use crate::core_api::CoreApi;
@@ -26,6 +30,19 @@ pub struct AppCore {
     sandbox: Option<theodore_sandbox::Sandbox>,
     /// Remote telemetry sinks may exist (off in sandbox and fixture runs).
     remote_telemetry: bool,
+    /// Posts "Report a problem" issues; `None` in sandbox and fixture runs.
+    issues: Option<Arc<dyn IssueTracker>>,
+    /// The last issue preview's app info and log lines, so the post sends
+    /// exactly what the preview showed.
+    issue_draft: Mutex<Option<IssueDraft>>,
+}
+
+#[derive(Clone)]
+struct IssueDraft {
+    id: String,
+    info: Vec<(String, String)>,
+    /// Collected only once logs were asked for.
+    logs: Option<theodore_telemetry::report::LogTail>,
 }
 
 impl AppCore {
@@ -34,7 +51,15 @@ impl AppCore {
             core,
             sandbox: None,
             remote_telemetry: false,
+            issues: None,
+            issue_draft: Mutex::new(None),
         }
+    }
+
+    /// Lets "Report a problem" open GitHub issues (real runs only).
+    pub fn with_issues(mut self, issues: Option<Arc<dyn IssueTracker>>) -> Self {
+        self.issues = issues;
+        self
     }
 
     /// Lets this run point telemetry at remote sinks (env, settings, the
@@ -71,6 +96,125 @@ impl AppCore {
             code: "invalid".into(),
             message: "not running in sandbox mode".into(),
         })
+    }
+
+    /// `owner/name` for report issues: the setting, the build, the default.
+    async fn report_repo(&self) -> (String, String) {
+        let setting = self
+            .core
+            .setting_string(theodore_telemetry::config::SETTING_REPORT_REPO, "")
+            .await;
+        issue::target_repo(Some(&setting))
+    }
+
+    /// The app-info table of a report issue: what the zip's
+    /// `app-info.json` says about the build, minus agent CLIs.
+    async fn issue_info(&self) -> Vec<(String, String)> {
+        let row = |k: &str, v: String| (k.to_string(), v);
+        vec![
+            row("Version", build_info::VERSION.into()),
+            row("Channel", self.update_channel().await),
+            row("Commit", build_info::COMMIT.into()),
+            row("Build", build_info::BUILD_ENV.into()),
+            row("Built", issue::built_at(build_info::built_at())),
+            row("OS", os_version().await),
+            row("Arch", std::env::consts::ARCH.into()),
+        ]
+    }
+
+    /// The draft `req` names when it still has what `req` needs; else a
+    /// fresh one (logs read and redacted only when asked for).
+    async fn issue_draft(
+        &self,
+        req: &theodore_contract::IssueRequest,
+    ) -> Result<IssueDraft, CommandError> {
+        let lock = || self.issue_draft.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(d) = lock().as_ref()
+            && req.draft.as_deref() == Some(d.id.as_str())
+            && (d.logs.is_some() || !req.with_logs)
+        {
+            return Ok(d.clone());
+        }
+        let logs = if req.with_logs {
+            let t = theodore_telemetry::global().ok_or_else(|| CommandError {
+                code: "internal".into(),
+                message: "logging isn't set up in this run".into(),
+            })?;
+            t.flush(std::time::Duration::from_secs(2));
+            let (dir, redactor) = (t.logs_dir().to_path_buf(), t.redactor().clone());
+            let tail = tokio::task::spawn_blocking(move || {
+                theodore_telemetry::report::log_tail(&dir, &redactor, issue::MAX_BODY)
+            })
+            .await
+            .map_err(|e| internal(e.to_string()))?
+            .map_err(|e| internal(e.to_string()))?;
+            Some(tail)
+        } else {
+            None
+        };
+        let draft = IssueDraft {
+            id: uuid::Uuid::new_v4().simple().to_string(),
+            info: self.issue_info().await,
+            logs,
+        };
+        *lock() = Some(draft.clone());
+        Ok(draft)
+    }
+
+    /// The title and body `req` would post, from `draft`.
+    fn issue_body(
+        req: &theodore_contract::IssueRequest,
+        draft: &IssueDraft,
+    ) -> Result<(String, issue::IssueBody), CommandError> {
+        let invalid = |e: issue::IssueError| CommandError {
+            code: "invalid".into(),
+            message: e.to_string(),
+        };
+        let title = issue::title(&req.title).map_err(invalid)?;
+        let body = issue::build(issue::IssueInput {
+            comment: &req.comment,
+            info: &draft.info,
+            logs: draft.logs.as_ref().filter(|_| req.with_logs),
+        })
+        .map_err(invalid)?;
+        Ok((title, body))
+    }
+}
+
+fn internal(message: String) -> CommandError {
+    CommandError {
+        code: "internal".into(),
+        message,
+    }
+}
+
+/// A failed issue post, in words the dialog shows as they are.
+fn issue_err(e: HostError) -> CommandError {
+    tracing::warn!(error.code = e.code(), error = %e, "problem report issue failed");
+    let (code, message) = match e {
+        HostError::Auth => (
+            "github_auth",
+            "GitHub sign-in expired or can't open issues there. Sign in again in Settings → GitHub."
+                .to_string(),
+        ),
+        HostError::NotFound(_) => (
+            "not_found",
+            "GitHub can't find that repository for this account.".to_string(),
+        ),
+        HostError::RateLimited { .. } => (
+            "rate_limited",
+            "GitHub's rate limit was hit. Try again in a few minutes.".to_string(),
+        ),
+        HostError::Network(_) => (
+            "network",
+            "Couldn't reach GitHub. Check the connection and try again.".to_string(),
+        ),
+        HostError::Validation(m) => ("invalid", format!("GitHub refused the issue: {m}")),
+        other => ("internal", other.to_string()),
+    };
+    CommandError {
+        code: code.into(),
+        message,
     }
 }
 
@@ -475,7 +619,92 @@ impl CoreApi for AppCore {
         .map_err(|e| internal(e.to_string()))?
         .map_err(|e| internal(e.to_string()))?;
         tracing::info!(files = report.files.len(), "problem report built");
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::ProblemReported {
+            mode: "logs_only".into(),
+        });
         Ok(report)
+    }
+    async fn issue_target(&self) -> Result<theodore_contract::IssueTarget, CommandError> {
+        let (owner, name) = self.report_repo().await;
+        let repo = format!("{owner}/{name}");
+        let (login, unavailable) = match &self.issues {
+            None if self.sandbox.is_some() => (None, Some("Sandbox mode never posts to GitHub.")),
+            None => (None, Some("Fixture mode never posts to GitHub.")),
+            Some(t) if !t.has_token() => (None, Some("Sign in to GitHub to open an issue.")),
+            Some(t) => match t.login().await {
+                Ok(login) => (Some(login), None),
+                Err(HostError::Auth) => (
+                    None,
+                    Some("GitHub sign-in expired. Sign in again in Settings → GitHub."),
+                ),
+                Err(_) => (None, Some("Couldn't reach GitHub right now.")),
+            },
+        };
+        Ok(theodore_contract::IssueTarget {
+            url: format!("https://github.com/{repo}"),
+            repo,
+            login,
+            unavailable: unavailable.map(str::to_string),
+        })
+    }
+    async fn preview_issue(
+        &self,
+        req: theodore_contract::IssueRequest,
+    ) -> Result<theodore_contract::IssuePreview, CommandError> {
+        let draft = self.issue_draft(&req).await?;
+        let (title, body) = Self::issue_body(&req, &draft)?;
+        Ok(theodore_contract::IssuePreview {
+            draft: draft.id,
+            title,
+            body: body.body,
+            logs: body.logs,
+            log_lines: body.log_lines as u32,
+            cut_lines: body.cut_lines as u32,
+        })
+    }
+    async fn submit_issue(
+        &self,
+        req: theodore_contract::IssueRequest,
+    ) -> Result<theodore_contract::ReportedIssue, CommandError> {
+        // Never reaches GitHub without a real tracker: sandbox and fixture
+        // runs have none.
+        let tracker = self.issues.clone().ok_or_else(|| CommandError {
+            code: "unavailable".into(),
+            message: "This run never posts to GitHub.".into(),
+        })?;
+        let draft = self.issue_draft(&req).await?;
+        let (title, body) = Self::issue_body(&req, &draft)?;
+        let (owner, name) = self.report_repo().await;
+        let created = tracker
+            .create_issue(
+                &owner,
+                &name,
+                &NewIssue {
+                    title,
+                    body: body.body,
+                    labels: vec![issue::LABEL.to_string()],
+                },
+            )
+            .await
+            .map_err(issue_err)?;
+        *self.issue_draft.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        tracing::info!(
+            number = created.number,
+            with_logs = req.with_logs,
+            "problem report issue opened"
+        );
+        let mode = if req.with_logs {
+            "issue_with_logs"
+        } else {
+            "issue"
+        };
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::ProblemReported {
+            mode: mode.into(),
+        });
+        Ok(theodore_contract::ReportedIssue {
+            number: created.number,
+            url: created.url,
+        })
     }
     async fn sandbox_status(
         &self,
@@ -674,5 +903,159 @@ mod tests {
         );
         let c = remote_config(true, &s);
         assert!(c.otlp.is_some() && c.posthog.is_some());
+    }
+
+    // ── report a problem as an issue ─────────────────────────────────────
+
+    /// Records posts instead of reaching GitHub.
+    #[derive(Default)]
+    struct FakeTracker {
+        signed_out: bool,
+        expired: bool,
+        posted: Mutex<Vec<(String, String, NewIssue)>>,
+    }
+
+    #[async_trait]
+    impl IssueTracker for FakeTracker {
+        fn has_token(&self) -> bool {
+            !self.signed_out
+        }
+        async fn login(&self) -> theodore_ports::HostResult<String> {
+            if self.expired {
+                return Err(HostError::Auth);
+            }
+            Ok("octocat".into())
+        }
+        async fn create_issue(
+            &self,
+            owner: &str,
+            name: &str,
+            issue: &NewIssue,
+        ) -> theodore_ports::HostResult<theodore_ports::CreatedIssue> {
+            if self.expired {
+                return Err(HostError::Auth);
+            }
+            self.posted
+                .lock()
+                .unwrap()
+                .push((owner.into(), name.into(), issue.clone()));
+            Ok(theodore_ports::CreatedIssue {
+                number: 7,
+                url: format!("https://github.com/{owner}/{name}/issues/7"),
+            })
+        }
+    }
+
+    fn app(issues: Option<Arc<FakeTracker>>) -> (AppCore, theodore_app::Receivers) {
+        let f = theodore_app::testkit::fixtures();
+        let (core, rx) = Core::start(f.deps());
+        let issues = issues.map(|t| t as Arc<dyn IssueTracker>);
+        (AppCore::new(core).with_issues(issues), rx)
+    }
+
+    fn request(draft: Option<String>) -> theodore_contract::IssueRequest {
+        theodore_contract::IssueRequest {
+            title: "  Diff pane is blank ".into(),
+            comment: "It shows nothing after a push.".into(),
+            with_logs: false,
+            draft,
+        }
+    }
+
+    #[tokio::test]
+    async fn without_a_tracker_nothing_is_ever_posted() {
+        let (app, _rx) = app(None);
+        let target = app.issue_target().await.unwrap();
+        assert_eq!(target.login, None);
+        assert_eq!(
+            target.unavailable.as_deref(),
+            Some("Fixture mode never posts to GitHub.")
+        );
+        let e = app.submit_issue(request(None)).await.unwrap_err();
+        assert_eq!(e.code, "unavailable");
+    }
+
+    #[tokio::test]
+    async fn the_target_names_the_repo_and_the_login() {
+        let (app, _rx) = app(Some(Arc::new(FakeTracker::default())));
+        let t = app.issue_target().await.unwrap();
+        let (owner, name) = issue::target_repo(None);
+        assert_eq!(t.repo, format!("{owner}/{name}"));
+        assert_eq!(t.url, format!("https://github.com/{owner}/{name}"));
+        assert_eq!((t.login.as_deref(), t.unavailable), (Some("octocat"), None));
+    }
+
+    #[tokio::test]
+    async fn signed_out_or_expired_github_says_why() {
+        let signed_out = Arc::new(FakeTracker {
+            signed_out: true,
+            ..Default::default()
+        });
+        let (a, _rx) = app(Some(signed_out));
+        let t = a.issue_target().await.unwrap();
+        assert_eq!(
+            t.unavailable.as_deref(),
+            Some("Sign in to GitHub to open an issue.")
+        );
+
+        let expired = Arc::new(FakeTracker {
+            expired: true,
+            ..Default::default()
+        });
+        let (a, _rx) = app(Some(expired));
+        let t = a.issue_target().await.unwrap();
+        assert!(t.unavailable.unwrap().contains("sign-in expired"));
+        let e = a.submit_issue(request(None)).await.unwrap_err();
+        assert_eq!(e.code, "github_auth");
+        assert!(e.message.starts_with("GitHub sign-in expired"), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn the_posted_issue_is_exactly_the_preview() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx) = app(Some(tracker.clone()));
+        let preview = app.preview_issue(request(None)).await.unwrap();
+        assert_eq!(preview.title, "Diff pane is blank");
+        assert!(
+            preview
+                .body
+                .starts_with("It shows nothing after a push.\n\n| App info | |")
+        );
+        assert!(
+            preview
+                .body
+                .contains(&format!("| Version | {} |", build_info::VERSION))
+        );
+        assert_eq!((preview.logs, preview.log_lines), (None, 0));
+
+        let issue = app
+            .submit_issue(request(Some(preview.draft.clone())))
+            .await
+            .unwrap();
+        assert_eq!(issue.number, 7);
+        let posted = tracker.posted.lock().unwrap();
+        let (owner, name, sent) = &posted[0];
+        assert_eq!((owner.clone(), name.clone()), issue::target_repo(None));
+        assert_eq!(sent.title, preview.title);
+        assert_eq!(sent.body, preview.body);
+        assert_eq!(sent.labels, ["from-app"]);
+    }
+
+    #[tokio::test]
+    async fn title_and_comment_are_required() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx) = app(Some(tracker.clone()));
+        let mut no_title = request(None);
+        no_title.title = " ".into();
+        let e = app.submit_issue(no_title).await.unwrap_err();
+        assert_eq!(
+            (e.code.as_str(), e.message.as_str()),
+            ("invalid", "a title is required")
+        );
+        let mut no_comment = request(None);
+        no_comment.comment = String::new();
+        let e = app.preview_issue(no_comment).await.unwrap_err();
+        assert_eq!(e.message, "a comment is required");
+        assert!(tracker.posted.lock().unwrap().is_empty());
     }
 }

@@ -172,6 +172,12 @@ export const commands = {
 	reportProblem: () => typedError<ProblemReport, CommandError>(__TAURI_INVOKE("report_problem")),
 	/**  Shows a problem report in Finder. Only paths inside the reports folder. */
 	revealReport: (path: string) => typedError<null, CommandError>(__TAURI_INVOKE("reveal_report", { path })),
+	/**  "Report a problem" as a GitHub issue: the repo, the login, or why not. */
+	issueTarget: () => typedError<IssueTarget, CommandError>(__TAURI_INVOKE("issue_target")),
+	/**  The exact issue body `submit_issue` would post. */
+	previewIssue: (req: IssueRequest) => typedError<IssuePreview, CommandError>(__TAURI_INVOKE("preview_issue", { req })),
+	/**  Posts the report as a public issue with the user's GitHub token. */
+	submitIssue: (req: IssueRequest) => typedError<ReportedIssue, CommandError>(__TAURI_INVOKE("submit_issue", { req })),
 };
 
 /* Types */
@@ -701,6 +707,43 @@ export type InterdiffWordSpan = {
 	text: string,
 };
 
+/**  Exactly what `submit_issue` would post for the same request. */
+export type IssuePreview = {
+	/**  Pass back in `IssueRequest::draft`. */
+	draft: string,
+	title: string,
+	body: string,
+	/**  The logs block `body` ends with (folded in the preview). */
+	logs: string | null,
+	log_lines: number,
+	/**  Older log lines left out to stay under GitHub's size limit. */
+	cut_lines: number,
+};
+
+export type IssueRequest = {
+	title: string,
+	comment: string,
+	with_logs: boolean,
+	/**
+	 *  The draft a preview came from: its app info and log lines are the
+	 *  ones posted, so the preview is exactly what's sent. `None` (or one
+	 *  that expired) collects them afresh.
+	 */
+	draft?: string | null,
+};
+
+/**  Where a report issue would go and whether it can be posted now. */
+export type IssueTarget = {
+	/**  `owner/name`. */
+	repo: string,
+	/**  `https://github.com/owner/name`. */
+	url: string,
+	/**  The GitHub login it would be posted as. */
+	login: string | null,
+	/**  Why issues can't be posted (signed out, sandbox); `None`: they can. */
+	unavailable: string | null,
+};
+
 export type LineKind = "ctx" | "add" | "del";
 
 /**
@@ -915,6 +958,11 @@ export type RepoRef = {
 export type ReportFile = {
 	name: string,
 	bytes: number,
+};
+
+export type ReportedIssue = {
+	number: number,
+	url: string,
 };
 
 export type RerunCheckRequest = {

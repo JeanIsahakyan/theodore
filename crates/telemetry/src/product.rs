@@ -80,6 +80,11 @@ pub enum ProductEvent {
     ConfigSaved {
         r#where: String,
     },
+    /// "Report a problem" went through: `issue`, `issue_with_logs`,
+    /// `logs_only`. Never the title, the comment or the issue.
+    ProblemReported {
+        mode: String,
+    },
 }
 
 impl ProductEvent {
@@ -101,6 +106,7 @@ impl ProductEvent {
             ProductEvent::SpaceTurn { .. } => "space_turn",
             ProductEvent::SpaceShipped { .. } => "space_shipped",
             ProductEvent::ConfigSaved { .. } => "config_saved",
+            ProductEvent::ProblemReported { .. } => "problem_reported",
         }
     }
 
@@ -169,6 +175,7 @@ impl ProductEvent {
             },
             ProductEvent::SpaceShipped { how: s() },
             ProductEvent::ConfigSaved { r#where: s() },
+            ProductEvent::ProblemReported { mode: s() },
         ]
     }
 

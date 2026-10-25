@@ -204,8 +204,9 @@ local folder:  Merge locally  ·  Keep as branch
   "Help improve Theodore", or Settings → About & updates): error reports over OTLP (e.g. New
   Relic) and typed product events to PostHog.
 - Both use a random install id, not your account; repository names are hashed.
-- **Report a problem** (Help menu, Settings, the error screen) zips the redacted logs and app info
-  for you to attach; nothing is uploaded. Events, codes, rules and settings: `docs/telemetry.md`.
+- **Report a problem** (Help menu, Settings, the error screen) opens a public GitHub issue as you —
+  your comment plus app info, optionally the newest redacted logs, previewed first — or just zips
+  the logs locally. Events, codes, rules and settings: `docs/telemetry.md`.
 
 ## How it works
 

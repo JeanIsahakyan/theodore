@@ -100,6 +100,8 @@ pub(crate) fn adapters(data_dir: &Path, scenario: &Path) -> anyhow::Result<(Adap
         device_login: Arc::new(theodore_ports::NoDeviceLogin),
         // Sandbox mode never talks to a real identity provider.
         account: Arc::new(theodore_ports::LocalAccount),
+        // Nor posts a problem report to real GitHub.
+        issues: None,
     };
     Ok((adapters, sandbox))
 }

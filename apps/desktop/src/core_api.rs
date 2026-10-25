@@ -153,6 +153,24 @@ pub trait CoreApi: Send + Sync {
     async fn report_problem(&self) -> Result<theodore_contract::ProblemReport, CommandError> {
         Err(not_ready())
     }
+    /// Where a problem report issue would go, as whom, or why it can't.
+    async fn issue_target(&self) -> Result<theodore_contract::IssueTarget, CommandError> {
+        Err(not_ready())
+    }
+    /// Exactly the issue `submit_issue` would post for `req`.
+    async fn preview_issue(
+        &self,
+        _req: theodore_contract::IssueRequest,
+    ) -> Result<theodore_contract::IssuePreview, CommandError> {
+        Err(not_ready())
+    }
+    /// Posts the problem report as a public GitHub issue.
+    async fn submit_issue(
+        &self,
+        _req: theodore_contract::IssueRequest,
+    ) -> Result<theodore_contract::ReportedIssue, CommandError> {
+        Err(not_ready())
+    }
 
     /// Settings → Sandbox (docs/sandbox.md); `None` outside sandbox mode.
     async fn sandbox_status(&self) -> Result<Option<SandboxStatus>, CommandError> {

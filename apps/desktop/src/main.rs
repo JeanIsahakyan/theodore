@@ -62,6 +62,7 @@ fn main() {
         core,
         receivers,
         sandbox,
+        issues,
         ..
     } = rt;
     let is_sandbox = sandbox.is_some();
@@ -72,6 +73,7 @@ fn main() {
     let remote = !is_sandbox && cfg.fixtures.is_none();
     let app_core = AppCore::new(core)
         .with_sandbox(sandbox)
+        .with_issues(issues)
         .with_remote_telemetry(remote);
     tauri::async_runtime::block_on(app_core.apply_telemetry());
     theodore_telemetry::product(theodore_telemetry::ProductEvent::AppStarted {

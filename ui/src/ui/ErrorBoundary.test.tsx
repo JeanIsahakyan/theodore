@@ -50,12 +50,20 @@ describe('ErrorBoundary', () => {
       files: [{ name: 'app.log', bytes: 2048 }],
       summary: 'Theodore 1.0',
     }));
+    transport.onCall('issue_target', () => ({
+      repo: 'acme/theodore',
+      url: 'https://github.com/acme/theodore',
+      login: null,
+      unavailable: 'Sign in to GitHub to open an issue.',
+    }));
     m = await mount(
       <ErrorBoundary>
         <Boom />
       </ErrorBoundary>,
     );
     await click(m.host.querySelector('.error-report'));
+    await settle();
+    await click(m.host.querySelector('.report-save'));
     await settle();
     expect(m.host.textContent).toContain('app.log');
     expect(m.host.textContent).toContain('2.0 KB');

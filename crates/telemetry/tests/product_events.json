@@ -73,5 +73,9 @@
   {
     "event": "config_saved",
     "where": ""
+  },
+  {
+    "event": "problem_reported",
+    "mode": ""
   }
 ]

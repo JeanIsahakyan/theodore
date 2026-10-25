@@ -1,6 +1,8 @@
 //! "Report a problem": a zip of the newest logs (redacted again for
 //! sharing: repository names and paths hashed) plus app info, built in a
-//! temp folder for the user to review. Nothing is uploaded.
+//! temp folder for the user to review. Nothing is uploaded. An issue body
+//! (`issue.rs`) takes its log lines from `log_tail`: the same redaction,
+//! only the newest lines.
 //!
 //! ```text
 //! <tmp>/theodore-reports/theodore-report-<stamp>/
@@ -45,9 +47,8 @@ pub struct ReportInput<'a> {
     pub redactor: &'a Redactor,
 }
 
-/// The log files, newest first, as many as fit in `max` bytes (the oldest
-/// one that doesn't fit is left out).
-fn pick_logs(dir: &Path, max: u64) -> Vec<(PathBuf, u64)> {
+/// Every log file with its size, newest first.
+fn newest_first(dir: &Path) -> Vec<(PathBuf, u64)> {
     let mut all: Vec<(PathBuf, u64)> = Vec::new();
     let current = dir.join(FILE_NAME);
     if let Ok(m) = std::fs::metadata(&current) {
@@ -56,13 +57,65 @@ fn pick_logs(dir: &Path, max: u64) -> Vec<(PathBuf, u64)> {
     let mut rotated = rotated_files(dir);
     rotated.reverse();
     all.extend(rotated);
+    all
+}
+
+/// The log files, newest first, as many as fit in `max` bytes (the oldest
+/// one that doesn't fit is left out).
+fn pick_logs(dir: &Path, max: u64) -> Vec<(PathBuf, u64)> {
     let mut total = 0;
-    all.into_iter()
+    newest_first(dir)
+        .into_iter()
         .take_while(|(_, n)| {
             total += n;
             total <= max || total == *n
         })
         .collect()
+}
+
+/// The newest log lines, redacted for sharing exactly like the zip's: what
+/// an issue body has room for (`issue::build`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogTail {
+    /// Oldest first.
+    pub lines: Vec<String>,
+    /// Older lines in the files read that didn't fit.
+    pub older: usize,
+}
+
+/// As many of the newest lines as fit in `max_bytes` (a newline each
+/// counted), reading back from the current file into rotated ones. Only
+/// the files it needs are read.
+pub fn log_tail(dir: &Path, redactor: &Redactor, max_bytes: usize) -> std::io::Result<LogTail> {
+    let mut newest: Vec<String> = Vec::new();
+    let mut used = 0;
+    let mut older = 0;
+    'files: for (path, _) in newest_first(dir) {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            // Rotated away between listing and reading.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        let mut lines = text.lines().rev();
+        while let Some(raw) = lines.next() {
+            let Some(line) = share_line(redactor, raw) else {
+                continue;
+            };
+            if used + line.len() + 1 > max_bytes {
+                older = 1 + lines.filter(|l| !l.trim().is_empty()).count();
+                break 'files;
+            }
+            used += line.len() + 1;
+            newest.push(line);
+        }
+    }
+    newest.reverse();
+    Ok(LogTail {
+        lines: newest,
+        older,
+    })
 }
 
 /// Re-redacts one JSON log line for sharing.
@@ -230,6 +283,42 @@ mod tests {
             picked,
             ["theodore.jsonl", "theodore-20261002-000000000.jsonl"]
         );
+    }
+
+    #[test]
+    fn the_log_tail_is_the_newest_redacted_lines_that_fit() {
+        let logs = tempfile::tempdir().unwrap();
+        let line = |n: u32| {
+            Record::new(tracing::Level::INFO, "theodore_app", "synced")
+                .with_field("repo", "acme/app")
+                .with_field("n", n)
+                .to_line()
+        };
+        let older: Vec<String> = (0..3).map(line).collect();
+        std::fs::write(
+            logs.path().join("theodore-20261001-000000000.jsonl"),
+            older.join("\n") + "\n",
+        )
+        .unwrap();
+        let current: Vec<String> = (3..5).map(line).collect();
+        std::fs::write(
+            logs.path().join(FILE_NAME),
+            current.join("\n") + "\ntorn {\n",
+        )
+        .unwrap();
+        let redactor = Redactor::new(None, "s");
+
+        let all = log_tail(logs.path(), &redactor, usize::MAX).unwrap();
+        assert_eq!(all.lines.len(), 5, "both files, the torn line left out");
+        assert_eq!(all.older, 0);
+        assert!(all.lines[0].contains(r#""n":0"#), "oldest first");
+        assert!(all.lines[4].contains(r#""n":4"#));
+        assert!(all.lines.iter().all(|l| !l.contains("acme")));
+
+        let three: usize = all.lines[2..].iter().map(|l| l.len() + 1).sum();
+        let tail = log_tail(logs.path(), &redactor, three).unwrap();
+        assert_eq!(tail.lines, all.lines[2..].to_vec());
+        assert_eq!(tail.older, 2, "the two lines left in the older file");
     }
 
     #[test]
