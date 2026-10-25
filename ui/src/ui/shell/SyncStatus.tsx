@@ -1,8 +1,7 @@
-/** Small sync indicator for the sidebar footer: synced, syncing (n pending
- *  transactions), or offline — the same three states Linear's own client
- *  shows in its sidebar. */
-import { observer } from 'mobx-react-lite';
-import { Tooltip } from '@heroui/react';
+/** Sync state: synced, syncing (n pending transactions), or offline. The
+ *  sidebar shows it in the workspace switcher — the logo's stripes move
+ *  and the name reads "Syncing…" — rather than in a footer line. */
+import { useEffect, useState } from 'react';
 import type { HostStatus } from '../../stores/EphemeralStore';
 import type { SyncStatus as SyncClientStatus } from '../../sync/SyncClient';
 import { useRootStore } from '../../stores/context';
@@ -39,28 +38,36 @@ export function syncIndicator(
   return { label: 'Synced', dot: 'success', detail: 'Up to date.' };
 }
 
-const DOT_CLASS: Record<SyncIndicator['dot'], string> = {
-  success: 'bg-success',
-  warning: 'bg-warning',
-  danger: 'bg-danger',
-};
+/** Show "syncing" only once it has lasted a beat, and keep it up for a
+ *  moment: a send that takes a few milliseconds would otherwise flicker
+ *  the switcher's name. */
+const SHOW_AFTER_MS = 400;
+const HOLD_MS = 900;
 
-export const SyncStatus = observer(function SyncStatus() {
+/** What the sidebar's workspace switcher shows instead of a footer line:
+ *  the syncing logo and label while a sync is visibly under way, a dimmed
+ *  logo while offline (the offline banner says the rest). */
+export function useSyncDisplay(): {
+  syncing: boolean;
+  offline: boolean;
+  detail: string;
+} {
   const store = useRootStore();
   const info = syncIndicator(
     store.sync.status,
     store.ephemeral.hostStatus,
     store.sync.queue.pending.length,
   );
-  return (
-    <Tooltip>
-      <span className="sync-status flex items-center gap-1.5 text-xs text-muted">
-        <span
-          className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[info.dot]}`}
-        />
-        {info.label}
-      </span>
-      <Tooltip.Content>{info.detail}</Tooltip.Content>
-    </Tooltip>
-  );
-});
+  const busy = info.dot === 'warning';
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (busy === shown) return;
+    const t = setTimeout(() => setShown(busy), busy ? SHOW_AFTER_MS : HOLD_MS);
+    return () => clearTimeout(t);
+  }, [busy, shown]);
+  return {
+    syncing: shown,
+    offline: info.dot === 'danger',
+    detail: info.detail,
+  };
+}
