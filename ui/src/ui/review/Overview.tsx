@@ -1,9 +1,10 @@
-import { ArrowRight, BranchesRight, Tag } from '@gravity-ui/icons';
-import { Chip, Typography } from '@heroui/react';
+import { ArrowRight, BranchesRight, CircleCheck, Tag } from '@gravity-ui/icons';
+import { Chip, Tooltip, Typography } from '@heroui/react';
 import type { PrDetail, PrId, PrSummary } from '../../gen/contract';
 import { FEATURES } from '../../features';
 import { Md } from '../../highlight';
 import { Avatar } from '../bits';
+import { ReviewerStrip } from '../Checks';
 import { LinearChips } from '../linear/LinearChips';
 import { ago } from '../List';
 import { PRIcon, prStatusLabel } from '../StatusIcon';
@@ -18,6 +19,7 @@ export function Overview({
   title,
   progress,
   branchReview,
+  local,
 }: {
   id: PrId;
   summary: PrSummary;
@@ -25,6 +27,8 @@ export function Overview({
   title: string;
   progress: number;
   branchReview: boolean;
+  /** A local or branch review has no host reviewers or approvals. */
+  local: boolean;
 }) {
   const { pr } = summary;
   const opened = summary.created_at ?? null;
@@ -70,6 +74,35 @@ export function Overview({
             <span className="text-muted">opened {ago(opened)} ago</span>
           )}
         </div>
+
+        {!local && (
+          <div className="flex flex-wrap items-center gap-2">
+            {detail && <ReviewerStrip reviewers={detail.reviewers} />}
+            <Tooltip>
+              <Chip
+                size="sm"
+                variant="soft"
+                color={
+                  summary.approvals >= (summary.required_approvals ?? 0)
+                    ? 'success'
+                    : 'default'
+                }
+                className="approvals shrink-0 gap-1.5 tabular-nums"
+              >
+                <CircleCheck className="size-3.5" />
+                {summary.required_approvals != null
+                  ? `${summary.approvals}/${summary.required_approvals}`
+                  : summary.approvals}{' '}
+                {summary.approvals === 1 ? 'approval' : 'approvals'}
+              </Chip>
+              <Tooltip.Content>
+                {summary.required_approvals != null
+                  ? `Requires ${summary.required_approvals} approval${summary.required_approvals === 1 ? '' : 's'}`
+                  : 'No required approvals'}
+              </Tooltip.Content>
+            </Tooltip>
+          </div>
+        )}
 
         {((detail?.labels.length ?? 0) > 0 || FEATURES.linear) && (
           <div className="flex flex-wrap items-center gap-2">

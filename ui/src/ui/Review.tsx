@@ -12,17 +12,10 @@ import {
   LayoutSplitColumns,
   Xmark,
 } from '@gravity-ui/icons';
-import {
-  CircleCheck,
-  Code,
-  CodeCommit,
-  Eye,
-  FileText,
-} from '@gravity-ui/icons';
+import { Code, CodeCommit, Eye, FileText } from '@gravity-ui/icons';
 import {
   Alert,
   Chip,
-  Separator,
   Spinner,
   Tabs,
   ToggleButton,
@@ -38,7 +31,7 @@ import { markGroupRead, setDraft, setFileViewed } from '../actions';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, Hints, K } from './bits';
-import { Checks, Commits, ReviewerPicker, ReviewerStrip } from './Checks';
+import { Checks, Commits, ReviewerPicker } from './Checks';
 import {
   DiffPane,
   pendingJump,
@@ -649,37 +642,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             </ToggleButton>
           </ToggleButtonGroup>
         )}
-        <span className="flex-1" />
-        {!local && detail && detail.reviewers.length > 0 && (
-          <>
-            <ReviewerStrip reviewers={detail.reviewers} />
-            <Separator orientation="vertical" className="h-5" />
-          </>
-        )}
-        {summary && (
-          <Tooltip>
-            <Chip
-              size="sm"
-              variant="soft"
-              color={
-                summary.approvals >= (summary.required_approvals ?? 0)
-                  ? 'success'
-                  : 'default'
-              }
-              className="approvals shrink-0 gap-1.5 tabular-nums"
-            >
-              <CircleCheck className="size-3.5" />
-              {summary.required_approvals != null
-                ? `${summary.approvals}/${summary.required_approvals}`
-                : summary.approvals}
-            </Chip>
-            <Tooltip.Content>
-              {summary.required_approvals != null
-                ? `Requires ${summary.required_approvals} approval${summary.required_approvals === 1 ? '' : 's'}`
-                : 'No required approvals'}
-            </Tooltip.Content>
-          </Tooltip>
-        )}
       </Toolbar>
 
       {sinceOnly &&
@@ -743,6 +705,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   title={reviewTitle(store, pr, summary.title)}
                   progress={progressOf(store, pr)}
                   branchReview={branchReview}
+                  local={local}
                 />
               ) : tab === 'checks' ? (
                 <Checks pr={pr} checks={checks} />
