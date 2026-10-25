@@ -89,17 +89,43 @@ impl Op {
             "op",
             op_id = %self.id,
             cmd = self.cmd,
-            trace = !CHATTY.contains(&self.cmd)
+            trace = !self.chatty(),
+            ok = tracing::field::Empty,
+            error_code = tracing::field::Empty,
+            ms = tracing::field::Empty,
         )
     }
 
-    /// Runs `fut` in this operation's span.
+    fn chatty(&self) -> bool {
+        CHATTY.contains(&self.cmd)
+    }
+
+    /// Runs `fut` in this operation's span, then records how it went: on
+    /// the span (`ok`, `error_code`, `ms`, so the exported trace says it)
+    /// and as one "command done" line — info for a command that matters,
+    /// debug for a chatty one. Why it failed is logged where the error is
+    /// mapped (`app_core::err`), once.
     pub async fn run<T>(
         self,
         fut: impl Future<Output = Result<T, CommandError>>,
     ) -> Result<T, CommandError> {
         let span = self.span();
-        fut.instrument(span).await
+        let started = std::time::Instant::now();
+        let out = fut.instrument(span.clone()).await;
+        let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        span.record("ms", ms);
+        span.record("ok", out.is_ok());
+        if let Err(e) = &out {
+            span.record("error_code", e.code.as_str());
+        }
+        let ok = out.is_ok();
+        let _g = span.enter();
+        if self.chatty() {
+            tracing::debug!(ok, ms, "command done");
+        } else {
+            tracing::info!(ok, ms, "command done");
+        }
+        out
     }
 }
 
@@ -217,5 +243,62 @@ mod tests {
         assert_eq!(rec.op_id(), Some("op-from-ui"));
         assert_eq!(rec.field_str("cmd"), Some("run_skill"));
         assert!(!rec.fields.contains_key("trace"));
+    }
+
+    #[test]
+    fn every_command_ends_with_one_line_saying_how_it_went() {
+        let (cap, _, sub) = theodore_telemetry::layer::capture();
+        let _g = tracing::subscriber::set_default(sub);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let ok: Result<(), CommandError> =
+            rt.block_on(Op::from_header("regroup", None).run(async { Ok(()) }));
+        ok.unwrap();
+        let failed: Result<(), CommandError> =
+            rt.block_on(Op::from_header("regroup", None).run(async {
+                Err(CommandError {
+                    code: "host.rate_limited".into(),
+                    message: "secret details stay out".into(),
+                })
+            }));
+        assert!(failed.is_err());
+        let recs = cap.records();
+        let done: Vec<_> = recs
+            .iter()
+            .filter(|r| r.message == "command done")
+            .collect();
+        assert_eq!(done.len(), 2);
+        for r in &done {
+            assert_eq!(r.level, tracing::Level::INFO);
+            assert_eq!(r.field_str("cmd"), Some("regroup"));
+            assert!(r.fields.contains_key("ms"));
+        }
+        assert_eq!(done[0].fields.get("ok"), Some(&serde_json::json!(true)));
+        assert_eq!(done[1].fields.get("ok"), Some(&serde_json::json!(false)));
+        assert_eq!(done[1].field_str("error_code"), Some("host.rate_limited"));
+        assert!(
+            !serde_json::to_string(&done[1].fields)
+                .unwrap()
+                .contains("secret details")
+        );
+    }
+
+    #[test]
+    fn a_chatty_command_finishing_well_logs_at_debug() {
+        let (cap, _, sub) = theodore_telemetry::layer::capture();
+        let _g = tracing::subscriber::set_default(sub);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let r: Result<(), CommandError> =
+            rt.block_on(Op::from_header("catch_up", None).run(async { Ok(()) }));
+        r.unwrap();
+        let recs = cap.records();
+        if let Some(done) = recs.iter().find(|r| r.message == "command done") {
+            assert_eq!(done.level, tracing::Level::DEBUG);
+        }
     }
 }

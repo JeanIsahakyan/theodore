@@ -517,7 +517,7 @@ export const Onboarding = observer(function Onboarding() {
   );
 });
 
-function TelemetryStep({
+export function TelemetryStep({
   status,
   value,
   onChange,
