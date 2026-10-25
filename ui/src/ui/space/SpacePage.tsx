@@ -1055,8 +1055,10 @@ export const LabsPage = observer(function LabsPage() {
   const on = isBuildMode(store);
   return (
     <section className="flex flex-col gap-2">
-      <Typography.Heading level={6}>Spaces</Typography.Heading>
-      <Card className="flex flex-row items-center gap-3 px-4 py-3">
+      <Card
+        variant="secondary"
+        className="flex flex-row items-center gap-3 px-4 py-3"
+      >
         <Switch
           size="sm"
           aria-label="Spaces"
