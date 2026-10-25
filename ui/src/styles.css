@@ -638,3 +638,33 @@ body.cmd .lines .src span:hover {
   height: 26px;
   border-radius: 9999px;
 }
+
+/* A line someone just asked the agent about, while the answer runs. */
+.ln.ln-asking {
+  box-shadow: inset 3px 0 0 var(--accent);
+  animation: ln-asking 1.6s ease-in-out infinite;
+}
+@keyframes ln-asking {
+  0%,
+  100% {
+    box-shadow:
+      inset 3px 0 0 var(--accent),
+      inset 0 0 0 999px color-mix(in oklab, var(--accent) 5%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 3px 0 0 var(--accent),
+      inset 0 0 0 999px color-mix(in oklab, var(--accent) 16%, transparent);
+  }
+}
+/* The chat brings a line's question/answer into view with a short glow. */
+.chat .ask-flash {
+  animation: flash 1.6s ease-out;
+  border-radius: 1rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ln.ln-asking,
+  .chat .ask-flash {
+    animation: none;
+  }
+}
