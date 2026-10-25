@@ -436,6 +436,71 @@ body.cmd .lines .src span:hover {
   }
 }
 
+/* The logo's refraction stripes drift through the lenses (see Welcome.tsx):
+ * one stripe pitch per loop, so it never jumps. */
+.welcome-stripes {
+  animation: welcome-drift 3.2s linear infinite;
+}
+.welcome-stripes-late {
+  animation-delay: -1.6s;
+}
+@keyframes welcome-drift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(110px);
+  }
+}
+
+/* The welcome after onboarding, 1.4 s in all (WELCOME_MS):
+ *   0–0.3 s    logo settles in on a blank page
+ *   0.3–0.9 s  holds, stripes drifting
+ *   0.9–1.4 s  logo zooms through and fades, the page clears,
+ *              the app scales up into place under it */
+.welcome {
+  animation: welcome-clear 450ms ease-in 950ms forwards;
+}
+.welcome-zoom {
+  animation:
+    welcome-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both,
+    welcome-zoom 500ms cubic-bezier(0.55, 0, 0.75, 0.2) 900ms forwards;
+}
+.app-enter {
+  animation: app-enter 500ms cubic-bezier(0.2, 0.8, 0.2, 1) 900ms both;
+}
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+@keyframes welcome-zoom {
+  to {
+    opacity: 0;
+    transform: scale(9);
+  }
+}
+@keyframes welcome-clear {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes app-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .welcome-stripes,
+  .welcome,
+  .welcome-zoom,
+  .app-enter {
+    animation: none;
+  }
+}
+
 /* Rendered markdown diff */
 .md-diff .md-block {
   border-radius: 0.5rem;
