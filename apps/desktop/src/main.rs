@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use theodore_desktop::app_core::AppCore;
+use theodore_desktop::build_info;
 use theodore_desktop::{export_bindings, run};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -36,13 +37,15 @@ fn main() {
             .filter(|l| !l.trim().is_empty()),
         stderr: cfg!(debug_assertions)
             || std::env::var_os(theodore_telemetry::config::ENV_LOG_STDERR).is_some(),
-        version: env!("CARGO_PKG_VERSION").into(),
+        version: build_info::VERSION.into(),
         channel: String::new(),
-        commit: env!("THEODORE_COMMIT").into(),
+        commit: build_info::COMMIT.into(),
+        build_env: build_info::BUILD_ENV.into(),
     });
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        commit = env!("THEODORE_COMMIT"),
+        version = build_info::VERSION,
+        commit = build_info::COMMIT,
+        build_env = build_info::BUILD_ENV,
         sandbox = cfg.sandbox.is_some(),
         fixtures = cfg.fixtures.is_some(),
         "Theodore starting"
@@ -72,7 +75,7 @@ fn main() {
         .with_remote_telemetry(remote);
     tauri::async_runtime::block_on(app_core.apply_telemetry());
     theodore_telemetry::product(theodore_telemetry::ProductEvent::AppStarted {
-        version: env!("CARGO_PKG_VERSION").into(),
+        version: build_info::VERSION.into(),
         channel: telemetry.meta().channel,
     });
     let api = Arc::new(app_core);

@@ -14,6 +14,7 @@
 #
 # Usage: THEODORE_WORKOS_CLIENT_ID=client_… scripts/nightly-build.sh
 #        scripts/nightly-build.sh --no-account
+#        THEODORE_BUILD_ENV=staging THEODORE_WORKOS_CLIENT_ID=client_… scripts/nightly-build.sh
 set -eu
 
 account=1
@@ -52,10 +53,16 @@ base=$(awk '
 count=$(git rev-list --count HEAD)
 sha=$(git rev-parse --short HEAD)
 version="$base-nightly.$count"
+# The build stamp Settings → About shows: version, commit, environment.
+# THEODORE_BUILD_ENV=staging makes a staging build (docs/releasing.md).
+THEODORE_VERSION="$version"
+THEODORE_GIT_SHA=$(git rev-parse HEAD)
+THEODORE_BUILD_ENV="${THEODORE_BUILD_ENV:-nightly}"
+export THEODORE_VERSION THEODORE_GIT_SHA THEODORE_BUILD_ENV
 if [ "$account" = 1 ]; then
-  echo "▶ Theodore $version ($sha), account sign-in required"
+  echo "▶ Theodore $version ($sha, $THEODORE_BUILD_ENV), account sign-in required"
 else
-  echo "▶ Theodore $version ($sha), no account"
+  echo "▶ Theodore $version ($sha, $THEODORE_BUILD_ENV), no account"
 fi
 
 (cd apps/desktop && cargo tauri build --bundles app \

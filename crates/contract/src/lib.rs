@@ -243,6 +243,14 @@ pub struct AgentStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct AppInfo {
     pub version: String,
+    /// The full commit sha the build came from; `-dirty` for a dev build
+    /// with uncommitted changes, `unknown` without git.
+    pub commit: String,
+    /// `production` | `staging` | `nightly` | `dev`.
+    pub build_env: String,
+    /// When the build was made (unix millis).
+    pub built_at: Millis,
+    /// The update channel (`updates.channel`), not the build environment.
     pub channel: String,
     pub update: Option<UpdateInfo>,
     /// Set only when running against the sandbox host (docs/sandbox.md).

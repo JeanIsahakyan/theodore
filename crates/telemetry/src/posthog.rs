@@ -130,6 +130,8 @@ impl PosthogSink {
         props.insert("app_version".into(), json!(self.meta.version));
         props.insert("os".into(), json!(self.meta.os));
         props.insert("channel".into(), json!(self.meta.channel));
+        props.insert("commit".into(), json!(self.meta.commit));
+        props.insert("build_env".into(), json!(self.meta.build_env));
         props.insert("$lib".into(), json!("theodore"));
         props.insert("$process_person_profile".into(), json!(false));
         props.insert("$geoip_disable".into(), json!(true));
@@ -254,6 +256,7 @@ mod tests {
             channel: "nightly".into(),
             os: "macos".into(),
             commit: "abc".into(),
+            build_env: "staging".into(),
             install_id: "install-uuid".into(),
         }
     }
@@ -308,6 +311,8 @@ mod tests {
         assert_eq!(p["app_version"], "1.2.3");
         assert_eq!(p["os"], "macos");
         assert_eq!(p["channel"], "nightly");
+        assert_eq!(p["commit"], "abc");
+        assert_eq!(p["build_env"], "staging");
         assert_eq!(p["$process_person_profile"], false);
         assert!(p.get("event").is_none());
         s.shutdown(false);

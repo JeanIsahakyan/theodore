@@ -33,6 +33,7 @@ async fn rig() -> Rig {
         channel: "stable".into(),
         os: "macos".into(),
         commit: "abc".into(),
+        build_env: "dev".into(),
         install_id: "11111111-2222-4333-8444-555555555555".into(),
     };
     let t = Arc::new(Telemetry::detached(

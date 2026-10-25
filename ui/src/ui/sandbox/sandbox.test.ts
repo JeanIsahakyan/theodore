@@ -23,6 +23,9 @@ const info: SandboxInfo = {
 
 const appInfo = (sandbox: SandboxInfo | null): AppInfo => ({
   version: '0.0.1',
+  commit: 'a1b2c3d4e5f6',
+  build_env: 'dev',
+  built_at: 0,
   channel: 'stable',
   update: null,
   sandbox,
@@ -126,7 +129,8 @@ describe('EphemeralStore.sandbox', () => {
 
   it('treats a missing sandbox field as not in sandbox mode', () => {
     const e = new EphemeralStore();
-    e.setAppInfo({ version: '0.0.1', channel: 'stable', update: null });
+    const { sandbox: _, ...noSandbox } = appInfo(null);
+    e.setAppInfo(noSandbox);
     expect(e.sandbox).toBeNull();
   });
 });

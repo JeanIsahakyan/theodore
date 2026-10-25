@@ -261,6 +261,16 @@ export type Anchor = {
 
 export type AppInfo = {
 	version: string,
+	/**
+	 *  The full commit sha the build came from; `-dirty` for a dev build
+	 *  with uncommitted changes, `unknown` without git.
+	 */
+	commit: string,
+	/**  `production` | `staging` | `nightly` | `dev`. */
+	build_env: string,
+	/**  When the build was made (unix millis). */
+	built_at: number,
+	/**  The update channel (`updates.channel`), not the build environment. */
 	channel: string,
 	update: UpdateInfo | null,
 	/**  Set only when running against the sandbox host (docs/sandbox.md). */

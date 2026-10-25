@@ -47,13 +47,16 @@ use crate::layer::{Shared, TelemetryLayer};
 use crate::sink::Sink;
 
 /// What every remote record says about the app (and nothing about the
-/// person): version, channel, OS, commit, and the random install id.
+/// person): version, channel, OS, commit, build environment, and the
+/// random install id.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AppMeta {
     pub version: String,
     pub channel: String,
     pub os: String,
     pub commit: String,
+    /// `production` | `staging` | `nightly` | `dev` (the build stamp).
+    pub build_env: String,
     /// A random UUID kept in the data dir: the only id remote sinks see.
     pub install_id: String,
 }
@@ -68,6 +71,7 @@ pub struct InitConfig {
     pub version: String,
     pub channel: String,
     pub commit: String,
+    pub build_env: String,
 }
 
 type FilterHandle = reload::Handle<EnvFilter, tracing_subscriber::Registry>;
@@ -142,6 +146,7 @@ pub fn init(cfg: InitConfig) -> &'static Telemetry {
         channel: cfg.channel,
         os: std::env::consts::OS.to_string(),
         commit: cfg.commit,
+        build_env: cfg.build_env,
         install_id: install.clone(),
     };
     let logs_dir = cfg.data_dir.join("logs");

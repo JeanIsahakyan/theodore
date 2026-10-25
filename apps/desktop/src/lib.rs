@@ -2,6 +2,8 @@
 //! command/event wiring; delegates all behaviour to `State<Arc<dyn CoreApi>>`.
 
 pub mod app_core;
+pub mod build_info;
+pub mod build_stamp;
 pub mod commands;
 pub mod core_api;
 pub mod deep_link;
