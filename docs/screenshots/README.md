@@ -7,7 +7,7 @@ Retina, macOS window shadow, WebP.
 
 | | |
 | --- | --- |
-| ![Inbox](01-inbox.webp) **Inbox** — review requests, assignments and mentions in sections; Peek previews a PR with its actions. | ![Pull requests](02-pull-requests.webp) **Pull requests** — every PR of the workspace, filtered All / Mine / Drafts / Merged; Merge shows when its gates pass. |
+| ![Inbox](01-inbox.webp) **Inbox** — review requests, assignments and mentions in sections; the preview shows a PR with its actions. | ![Pull requests](02-pull-requests.webp) **Pull requests** — every PR of the workspace, filtered All / Mine / Drafts / Merged; Merge shows when its gates pass. |
 | ![Grouped review](03-review-grouped.webp) **Review, grouped by meaning** — titled groups with a why, a risk and a checklist, read in order; a progress line counts the groups read. | ![AI panel](04-ai-panel.webp) **AI panel** — ask about the change; the agent reads the diff through the review tools. |
 | ![Split diff with a thread](05-split-diff-draft.webp) **Split diff and a thread** — reply or resolve; it goes back to the host. | ![Command palette](06-command-palette.webp) **⌘K** — every action and PR, with its key. |
 | ![Workspace switcher](07-workspace-switcher.webp) **Workspaces** — All projects or one project, ⌃0 / ⌃1…9; each keeps its own tabs. | ![Branches](08-branches.webp) **Branches** — ahead / behind, the PR a branch belongs to, a local review of any branch. |

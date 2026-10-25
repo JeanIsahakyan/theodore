@@ -87,7 +87,17 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 - Markdown diffs get a rendered Preview; image diffs show side by side, swipe or onion skin.
 - ⌘-click an identifier for definitions and references across the worktree (`git grep` plus
   per-language patterns, not a language server).
-- Narrow windows: Peek hides itself beside lists, the review header goes icon-only.
+- The header is two rows: number, title, status and actions, then the Overview / Checks / Commits /
+  Code tabs. Overview holds the full title, branches, reviewers and approvals, labels and the
+  description.
+- After a push, Whole PR / Since last visit: the baseline holds until you've read what changed.
+- Colour literals in code get a swatch; hover it for the colour in hex, rgb and hsl.
+- Narrow windows: the preview hides itself beside lists, the review header goes icon-only.
+
+### Status at a glance
+- One status mark per PR in tabs, lists, the preview and the header: a red cross while checks fail,
+  it conflicts with its base or changes are requested; otherwise a ring coloured by state (draft,
+  checks running, ready to merge, open) and filled with how much you've read.
 
 ### Comments, suggestions and reactions
 - Threads: reply and resolve, written back to the host.
@@ -132,11 +142,15 @@ Add project and its PR links stay hidden. Projects and reviews you already added
 
 ### Linear (read-only)
 - Behind Settings → Labs, off by default; with it off there is no Integrations page and no chips.
-- Issue keys in a PR's title, branch name or body show as chips in Peek and the review's Overview tab.
+- Issue keys in a PR's title, branch name or body show as chips in the preview and the review's Overview tab.
 - No token stored means an empty list, never an error. No write-back.
 
 ### Settings
 - Sign-in per host.
+- Appearance: System (follows macOS, the default), Light or Dark; also an onboarding step.
+- About: version, commit and build (`production`, `staging`, `nightly`, `dev`), with Copy for bug
+  reports.
+- The account menu under your name in the sidebar: Settings, Report a problem, Sign out.
 - Labs: per-machine switches for features in progress (Linear, GitLab, Bitbucket), all off by
   default. They may change or go away.
 - Agent per task: grouping, chat, skills, fix — Claude by default for each.

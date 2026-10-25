@@ -16,7 +16,7 @@ global ──▶ repo ──▶ local ──▶ effective config
 ```
 
 - **Global** sits in Theodore's data directory (`THEODORE_DATA_DIR`, by
-  default `~/.theodore`). Settings → Labs → Global config shows its path
+  default `~/.theodore`). Settings → Spaces → Global config shows its path
   and opens it in your editor, creating it from a commented template if
   it is missing.
 - **Repo** is committed. For a local folder project it is read from the
@@ -35,7 +35,7 @@ global ──▶ repo ──▶ local ──▶ effective config
   checkout, so its local file lives in Theodore's data directory:
   `~/.theodore/projects/<host>/<owner>/<name>/config.local.yaml`.
 
-Settings → Labs → Global config also shows each project's effective config
+Settings → Spaces → Global config also shows each project's effective config
 read-only: every value and the file it came from, unknown keys, and whether
 the repo's commands are allowed.
 
@@ -361,7 +361,7 @@ Save to… ─┬─ Repo (team)
   generated from your settings. The preview shows the project's effective
   config with the editor's text in place of that layer (generated text is
   previewed as the repo file), each value with the file it comes from —
-  the same view as Settings → Labs.
+  the same view as Settings → Spaces.
 - **Problems.** The text is checked by the same parser that reads the file.
   Invalid YAML, a top level that isn't a mapping and a value of the wrong
   type (`ports: lots`) are errors, at their line; an unknown key is a
