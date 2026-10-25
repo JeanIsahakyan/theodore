@@ -45,6 +45,9 @@ export const config: Options.Testrunner & Capabilities.WithRequestedTestrunnerCa
     } as Capabilities.RequestedStandaloneCapabilities,
   ],
   logLevel: 'warn',
+  // `waitFor*` and `expect(...)` retries alike. A cold debug build in CI
+  // takes a while to load a PR, its grouping and a three-agent skill run.
+  waitforTimeout: 15_000,
   framework: 'mocha',
   mochaOpts: {
     ui: 'bdd',

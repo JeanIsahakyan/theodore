@@ -1,44 +1,67 @@
 import { $, expect } from '@wdio/globals';
-import { completeOnboardingIfPresent, openDemoPr } from './helpers';
+import {
+  button,
+  completeOnboardingIfPresent,
+  hasClass,
+  openDemoPr,
+} from './helpers';
 
 const COMMENT_TEXT = 'Consider logging which branch this retry takes.';
+
+/** The diff line of `src/webhooks/deliver.ts` that reads `if (res.ok)
+ *  return;` (`ui/src/ui/DiffPane.tsx`'s `Line`, class `ln`). Unique in the
+ *  diff — the removed `if (!res.ok) throw …` line also contains `res.ok`. */
+const LINE = `//div[${hasClass('ln')}][contains(., "if (res.ok) return;")]`;
+const DRAFT = `//*[${hasClass('draft')}][contains(., "${COMMENT_TEXT}")]`;
+const THREAD = `//*[${hasClass('thread')}][contains(., "${COMMENT_TEXT}")]`;
 
 describe('commenting and submitting a review', () => {
   it('adds a draft on a commentable line, then submits it', async () => {
     await completeOnboardingIfPresent();
-    // Default mode is "files" with the first file selected
-    // (`src/webhooks/deliver.ts`, per `crates/fixtures/examples/gen.rs`'s
-    // file order) — no tab switch needed to see its lines.
-    await openDemoPr('webhooks #101');
+    // Opens grouped, on the first group ("Retry with backoff"), whose
+    // hunks include all of `deliver.ts`.
+    await openDemoPr();
 
-    // The line `if (res.ok) return;` is unique text within the diff
-    // (`ui/src/ui/DiffPane.tsx`'s per-line "+" opens the `Composer`).
-    const commentButton = await $(
-      '//div[contains(@class,"ln") and contains(.,"res.ok")]//button[@aria-label="comment"]',
-    );
-    await commentButton.waitForClickable();
-    await commentButton.click();
+    const line = await $(LINE);
+    await line.waitForDisplayed({ timeout: 15_000 });
+    await line.scrollIntoView();
+    // The line's "+" (comment) only shows while the line is hovered
+    // (`.ln:hover .ln-act` in `ui/src/styles.css`).
+    await line.moveTo();
+    const comment = await line.$('.//button[@aria-label="comment"]');
+    await comment.waitForClickable();
+    await comment.click();
 
     const composer = await $('//textarea[@aria-label="comment"]');
     await composer.waitForDisplayed();
     await composer.setValue(COMMENT_TEXT);
-    await (await $('//button[contains(.,"Add to review")]')).click();
+    const add = await $(
+      '//button[contains(normalize-space(.), "Add to review")]',
+    );
+    await add.waitForEnabled();
+    await add.click();
 
-    await expect(
-      $('//div[contains(@class,"draft")][contains(.,"pending draft")]'),
-    ).toBeDisplayed();
+    await expect($(DRAFT)).toBeDisplayed();
 
-    await (await $('//button[contains(.,"Submit review")]')).click();
-    const dialog = await $('[aria-label="Submit review"]');
+    // "Submit" alone on a narrow review header (`Review.tsx`).
+    await (
+      await $(
+        '//*[@role="toolbar"][@aria-label="PR"]' +
+          '//button[normalize-space(.)="Submit review" or normalize-space(.)="Submit"]',
+      )
+    ).click();
+    // `Modals.tsx`'s `SubmitReviewModal`, titled "Review · <pr>".
+    const dialog = await $('[role="dialog"][aria-label^="Review"]');
     await dialog.waitForDisplayed();
-    await (await $('button=Submit')).click();
+    await (await dialog.$(`.${button('Submit')}`)).click();
     await dialog.waitForDisplayed({ reverse: true });
 
-    // The outbox round trip through `FixtureHost::submit_review` replaces
-    // the pending draft with a real thread (plan §6.7).
-    await expect(
-      $('//div[contains(@class,"draft")][contains(.,"pending draft")]'),
-    ).not.toBeDisplayed();
-    await expect($('//div[contains(@class,"thread")]')).toBeDisplayed();
+    // Submitting goes back to where the PR was opened from (the inbox);
+    // reopen it to see the result. The outbox round trip through
+    // `FixtureHost::submit_review` replaces the pending draft with a real
+    // thread on the same line (plan §6.7).
+    await openDemoPr();
+    await $(THREAD).waitForDisplayed({ timeout: 15_000 });
+    await expect($(DRAFT)).not.toBeExisting();
   });
 });

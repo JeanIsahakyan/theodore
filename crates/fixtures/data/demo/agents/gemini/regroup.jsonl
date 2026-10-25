@@ -1,0 +1,2 @@
+{"type":"text","text":"gemini: placing the changed backoff hunk...","delay_ms":40}
+{"type":"done","final_text":"{\"assignments\":[{\"group\":\"g1\",\"hunk\":\"299c547d8e70c961\"}],\"new_groups\":[]}","usage":{"input_tokens":300,"output_tokens":60,"usd":0.00108},"delay_ms":0}

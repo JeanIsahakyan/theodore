@@ -466,7 +466,14 @@ fn main() {
         usd: (input + output) as f64 * 0.000_003,
     };
 
-    for (agent, prefix) in [(AgentId::Claude, "claude"), (AgentId::Codex, "codex")] {
+    // Every agent `ReplayAgents::detect` reports as installed gets the same
+    // scripts: the app runs a skill on each installed agent in turn, so one
+    // with no `skill` script would fail the whole run.
+    for (agent, prefix) in [
+        (AgentId::Claude, "claude"),
+        (AgentId::Codex, "codex"),
+        (AgentId::Gemini, "gemini"),
+    ] {
         write_script(
             &dir,
             agent,
