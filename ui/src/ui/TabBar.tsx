@@ -27,6 +27,7 @@ import { isBranchReview } from './project/sections';
 import { reviewTitle } from './space/mode';
 import { spaceTitle } from './space/spaces';
 import { PRIcon } from './StatusIcon';
+import { readProgress } from './review/progress';
 
 function useLabel(r: Route): {
   icon: ReactNode;
@@ -57,7 +58,12 @@ function useLabel(r: Route): {
       const p = store.models.prSummaries.get(r.pr);
       const drafts = store.models.drafts.byPr(r.pr).length;
       return {
-        icon: <PRIcon status={p?.state ?? 'open'} />,
+        icon: (
+          <PRIcon
+            status={p?.state ?? 'open'}
+            progress={readProgress(store, r.pr)}
+          />
+        ),
         title: !p
           ? r.pr
           : isBranchReview(p)

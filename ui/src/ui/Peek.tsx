@@ -48,6 +48,7 @@ import { prIdFor } from './List';
 import { MergeDialog } from './Merge';
 import { gatesFor as mergeGatesFor } from './prs/mine';
 import { isBranchReview } from './project/sections';
+import { readProgress } from './review/progress';
 import {
   ConflictsIcon,
   PRIcon,
@@ -69,17 +70,6 @@ function ago(ms: number): string {
   if (s < 3600) return `${Math.round(s / 60)}m`;
   if (s < 86400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
-}
-
-/** Fraction of this PR's loaded (non-hidden) hunks already read — same
- *  computation `Review.tsx` keeps locally for its own header chip. */
-function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
-  const reads = store.models.hunkReads.byPr(pr);
-  const groups = store.models.groupsOf(pr).filter((g) => g.kind !== 'hidden');
-  const hunks = groups.flatMap((g) => g.hunks);
-  if (!hunks.length) return 0;
-  const readSet = new Set(reads.map((r) => r.hunk));
-  return hunks.filter((h) => readSet.has(h)).length / hunks.length;
 }
 
 /** "stacked on #n" / "n stacked" chips (plan "Stack"): same relation List's
@@ -255,7 +245,7 @@ export const Peek = observer(function Peek({ id }: { id: PrId }) {
     <Surface className="peek flex w-[clamp(280px,32vw,384px)] shrink-0 flex-col gap-5 overflow-auto rounded-none border-l border-separator p-6 pb-20">
       <header className="flex flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
-          <PRIcon status={p.state} progress={progressOf(store, id)} />
+          <PRIcon status={p.state} progress={readProgress(store, id)} />
           <span className="shrink-0">{prStatusLabel[p.state]}</span>
           {p.state === 'open' && p.conflicts && (
             <span className="flex shrink-0 items-center gap-1 text-danger">

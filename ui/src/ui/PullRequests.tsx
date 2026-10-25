@@ -4,6 +4,7 @@
  * projects it spans every repo and each row names its repo. The filter is
  * saved per workspace (`UiStore.prsFilter`).
  */
+import { readProgress } from './review/progress';
 import { useEffect, useRef, useState } from 'react';
 import { BranchesRight, CodePullRequest, Xmark } from '@gravity-ui/icons';
 import { Button, Chip, Tabs, Tooltip } from '@heroui/react';
@@ -76,7 +77,7 @@ const MineRow = observer(function MineRow({
         sel ? 'sel' : ''
       }`}
     >
-      <PRIcon status={p.state} />
+      <PRIcon status={p.state} progress={readProgress(store, id)} />
       <span className="flex items-center justify-center">
         {p.state === 'open' && p.review_decision && (
           <ReviewDecisionIcon decision={p.review_decision} />

@@ -55,6 +55,7 @@ import {
 } from './review/groups';
 import { hunksInScope, moveHunkFocus } from './review/hunks';
 import { SidePanel } from './SidePanel';
+import { readProgress } from './review/progress';
 import { PRIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
 
@@ -85,15 +86,6 @@ export function layoutFor(width: number): ReviewLayout {
     aside: width < ASIDE_BREAKPOINT ? 'drawer' : 'column',
     header: width < HEADER_BREAKPOINT ? 'compact' : 'full',
   };
-}
-
-function progressOf(store: ReturnType<typeof useRootStore>, pr: PrId): number {
-  const reads = store.models.hunkReads.byPr(pr);
-  const groups = store.models.groupsOf(pr).filter((g) => g.kind !== 'hidden');
-  const hunks = groups.flatMap((g) => g.hunks);
-  if (!hunks.length) return 0;
-  const readSet = new Set(reads.map((r) => r.hunk));
-  return hunks.filter((h) => readSet.has(h)).length / hunks.length;
 }
 
 export const Review = observer(function Review({ pr }: { pr: PrId }) {
@@ -469,7 +461,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               <Chip size="sm" variant="secondary" className="shrink-0 gap-1.5">
                 <PRIcon
                   status={summary.state}
-                  progress={progressOf(store, pr)}
+                  progress={readProgress(store, pr)}
                 />
                 {prStatusLabel[summary.state]}
               </Chip>
@@ -623,25 +615,30 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </ToggleButtonGroup>
         )}
         {tab === 'diff' && (
-          <ToggleButtonGroup
-            size="sm"
-            selectionMode="single"
-            disallowEmptySelection
-            selectedKeys={new Set([ui.diffView])}
-            onSelectionChange={(k) =>
-              [...k][0] !== ui.diffView && ui.toggleDiffView()
-            }
-            aria-label="Diff view"
-            className="ms-auto"
+          <Tabs
+            selectedKey={ui.diffView}
+            onSelectionChange={(k) => k !== ui.diffView && ui.toggleDiffView()}
+            data-plain
+            className="diff-view-tabs ms-auto"
           >
-            <ToggleButton id="unified" isIconOnly aria-label="Unified">
-              <LayoutRows className="size-4" />
-            </ToggleButton>
-            <ToggleButton id="split" isIconOnly aria-label="Side by side">
-              <ToggleButtonGroup.Separator />
-              <LayoutSplitColumns className="size-4" />
-            </ToggleButton>
-          </ToggleButtonGroup>
+            <Tabs.ListContainer>
+              <Tabs.List aria-label="Diff view">
+                <Tabs.Tab id="unified" aria-label="Unified" className="px-2.5">
+                  <LayoutRows className="size-4" />
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+                <Tabs.Tab
+                  id="split"
+                  aria-label="Side by side"
+                  className="px-2.5"
+                >
+                  <Tabs.Separator />
+                  <LayoutSplitColumns className="size-4" />
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              </Tabs.List>
+            </Tabs.ListContainer>
+          </Tabs>
         )}
       </Toolbar>
 
@@ -704,7 +701,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                   summary={summary}
                   detail={detail}
                   title={reviewTitle(store, pr, summary.title)}
-                  progress={progressOf(store, pr)}
+                  progress={readProgress(store, pr)}
                   branchReview={branchReview}
                   local={local}
                 />

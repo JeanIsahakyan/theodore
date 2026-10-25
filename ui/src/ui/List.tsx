@@ -1,4 +1,5 @@
 import { useElementWidth } from './useElementWidth';
+import { readProgress } from './review/progress';
 import { RowsSkeleton } from './Loading';
 import { useEffect, useRef, useState } from 'react';
 import type { ComponentProps, Key, ReactNode } from 'react';
@@ -354,7 +355,7 @@ export const PrRow = observer(function PrRow({
           </Checkbox.Control>
         </Checkbox.Content>
       </Checkbox>
-      <PRIcon status={p.state} />
+      <PRIcon status={p.state} progress={readProgress(store, id)} />
       <span className="flex items-center justify-center">
         {p.state === 'open' && p.conflicts ? (
           <ConflictsIcon />
