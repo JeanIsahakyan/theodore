@@ -348,12 +348,16 @@ export const Sidebar = observer(function Sidebar() {
                 <CircleExclamation className="size-4" />
                 <Label>Report a problem…</Label>
               </Dropdown.Item>
-              {store.ephemeral.account?.user && (
-                <Dropdown.Item id="signout" textValue="Sign out">
-                  <ArrowRightFromSquare className="size-4" />
-                  <Label>Sign out</Label>
-                </Dropdown.Item>
-              )}
+              {/* Always listed; a build without a Theodore account (sandbox,
+                  fixtures, a dev build) has no one to sign out. */}
+              <Dropdown.Item
+                id="signout"
+                textValue="Sign out"
+                isDisabled={!store.ephemeral.account?.user}
+              >
+                <ArrowRightFromSquare className="size-4" />
+                <Label>Sign out</Label>
+              </Dropdown.Item>
             </Dropdown.Menu>
           </Dropdown.Popover>
         </Dropdown>
