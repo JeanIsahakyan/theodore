@@ -1,8 +1,11 @@
 name: CI
 
+# Both long-lived branches (docs/releasing.md "Branch flow"): pushes to
+# them, and every PR, whichever branch it targets — into staging, into
+# main, or stacked on another PR.
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
 
 concurrency:

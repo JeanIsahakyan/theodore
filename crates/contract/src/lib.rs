@@ -250,7 +250,8 @@ pub struct AppInfo {
     pub build_env: String,
     /// When the build was made (unix millis).
     pub built_at: Millis,
-    /// The update channel (`updates.channel`), not the build environment.
+    /// The channel the updater polls: `updates.channel`, or `staging` in
+    /// a staging build.
     pub channel: String,
     pub update: Option<UpdateInfo>,
     /// Set only when running against the sandbox host (docs/sandbox.md).

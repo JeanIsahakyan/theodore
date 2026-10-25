@@ -839,7 +839,8 @@ Every component subscribes to the objects it reads, not to the whole state.
 The updater ships in M0, so every build ever released can update itself.
 
 ```
-git tag v0.3.0 ──▶ CI release workflow
+merge to main @ 0.3.0 (no v0.3.0 yet)
+               ──▶ CI release workflow
                     build .app ─▶ sign ─▶ [notarize] ─▶ DMG ─▶ sign ─▶ [notarize]
                     .app.tar.gz + .sig (updater key)
                     latest.json {version, notes, url, signature}
@@ -856,7 +857,7 @@ app ──▶ on launch + every 6 h
 | --- | --- |
 | Mechanism | `tauri-plugin-updater` + `tauri-plugin-process`; manifest from GitHub Releases, no server |
 | Signing key | generated once, private key + password in CI secrets, public key in `tauri.conf.json`. **Never rotated**: a new key orphans every installed build |
-| Channels | `stable` = `/releases/latest/` (GitHub skips pre-releases there); `beta` = a fixed pre-release tag `channel-beta` whose `latest.json` is overwritten. Setting `updates.channel` |
+| Channels | `stable` = `/releases/latest/` (GitHub skips pre-releases there); `beta` = a fixed pre-release tag `channel-beta` whose `latest.json` is overwritten. Setting `updates.channel`. `staging` = pre-release `channel-staging`, rebuilt on every push to `staging`: the only channel of a staging build, never offered to any other |
 | Versioning | semver; the tag must equal the version in `Cargo.toml` and `tauri.conf.json` (CI check) |
 | Tags | never re-tag a published release; ship a new patch instead |
 | Data | SQLite migrations forward-only; DB copied to `theodore.db.bak-<version>` before migrating; downgrade not supported |

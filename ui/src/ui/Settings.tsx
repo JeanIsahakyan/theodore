@@ -628,6 +628,8 @@ const UpdatesPage = observer(function UpdatesPage() {
   >(null);
   const channel =
     (settingValue(store, 'user', 'updates.channel') as string) ?? 'stable';
+  // A staging build updates from staging builds only; nothing to pick.
+  const staging = store.ephemeral.appInfo?.build_env === 'staging';
   const check = () => {
     setChecking(true);
     void api
@@ -654,33 +656,39 @@ const UpdatesPage = observer(function UpdatesPage() {
           className="flex-row items-center gap-4 px-4 py-3"
         >
           <span className="flex-1 text-sm text-muted">
-            Which build to update to
+            {staging
+              ? 'A staging build updates to staging builds only'
+              : 'Which build to update to'}
           </span>
-          <Select
-            aria-label="Update channel"
-            value={channel}
-            onChange={(v) =>
-              v && setSetting(store, 'user', 'updates.channel', v)
-            }
-            className="w-40"
-          >
-            <Select.Trigger>
-              <Select.Value />
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox selectionMode="single">
-                <ListBox.Item id="stable" textValue="Stable">
-                  Stable
-                  <ListBox.ItemIndicator />
-                </ListBox.Item>
-                <ListBox.Item id="beta" textValue="Beta">
-                  Beta
-                  <ListBox.ItemIndicator />
-                </ListBox.Item>
-              </ListBox>
-            </Select.Popover>
-          </Select>
+          {staging ? (
+            <span className="text-sm">Staging</span>
+          ) : (
+            <Select
+              aria-label="Update channel"
+              value={channel}
+              onChange={(v) =>
+                v && setSetting(store, 'user', 'updates.channel', v)
+              }
+              className="w-40"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox selectionMode="single">
+                  <ListBox.Item id="stable" textValue="Stable">
+                    Stable
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                  <ListBox.Item id="beta" textValue="Beta">
+                    Beta
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                </ListBox>
+              </Select.Popover>
+            </Select>
+          )}
         </Card>
       </section>
       <section className="flex flex-col gap-2">

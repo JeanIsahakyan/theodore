@@ -94,7 +94,10 @@ export type AppInfo = {
 	build_env: string,
 	/**  When the build was made (unix millis). */
 	built_at: number,
-	/**  The update channel (`updates.channel`), not the build environment. */
+	/**
+	 *  The channel the updater polls: `updates.channel`, or `staging` in
+	 *  a staging build.
+	 */
 	channel: string,
 	update: UpdateInfo | null,
 	/**  Set only when running against the sandbox host (docs/sandbox.md). */

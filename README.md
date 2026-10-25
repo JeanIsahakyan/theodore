@@ -330,6 +330,9 @@ simulated host with its own data in `~/.theodore-sandbox` — faults, offline, s
 Local nightly: `scripts/nightly-build.sh` builds a DMG numbered by commit count
 (`docs/releasing.md`).
 
+Releases: a push to `staging` publishes a staging build; a version bump merged to `main` publishes
+a production release (`docs/releasing.md`).
+
 CLI:
 
 ```sh

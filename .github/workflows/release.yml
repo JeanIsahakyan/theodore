@@ -1,161 +1,81 @@
 name: Release
 
-# Plan §11.1/§11.2. Builds the macOS (aarch64) app, signs it (ad-hoc by
-# default; Developer ID + notarization when the secrets below are set),
-# packages a DMG, and publishes the updater manifest the app polls.
+# Plan §11.1. The production build, on every push to main (a merge from
+# staging). build.yml builds it; the publish job below releases it only
+# when the version files carry a version with no `v<version>` tag yet:
 #
-# One-time setup for all of this to work: docs/releasing.md.
+#   main @ 0.3.0, no v0.3.0  ──▶ build ──▶ tag v0.3.0 + GitHub release
+#   main @ 0.3.0, v0.3.0 set ──▶ build ──▶ workflow artifact only
 #
-# Secrets:
-#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  (required)
-#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-#   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID  (optional)
-# Variables:
-#   THEODORE_WORKOS_CLIENT_ID  the account's client id, baked into the build;
-#                              signing in is then required (unset: no account)
-#   THEODORE_OTLP_ENDPOINT, THEODORE_POSTHOG_HOST, THEODORE_POSTHOG_KEY
-#                              remote telemetry sinks (optional, docs/telemetry.md)
-# Secrets (telemetry, optional):
-#   THEODORE_OTLP_HEADERS      e.g. `api-key=<New Relic license key>`
+# Cutting a release is bumping the version and merging it to main; a merge
+# that doesn't bump still proves main builds. Tags are made here, never
+# pushed by hand (docs/releasing.md "Cutting a production release").
+#
+# Variables: THEODORE_WORKOS_CLIENT_ID, the production account's client id,
+# baked into the build (unset: no account). Secrets and the telemetry
+# variables: build.yml.
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
+# One at a time and never cancelled: a second merge waits, then sees the
+# tag the first one made and builds only.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: macos-14
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      build-env: production
+      workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
+    secrets: inherit
+
+  publish:
+    needs: build
+    # A dispatch from another branch builds, never releases.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
-      # `secrets` can't be read in a step `if`; expose presence as a flag.
-      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: verify tag == Cargo.toml version == tauri.conf.json version
+      - name: is v${{ needs.build.outputs.version }} already tagged?
+        id: tag
         run: |
-          tag_ver="${GITHUB_REF#refs/tags/v}"
-          cargo_ver=$(awk '
-            /^\[workspace\.package\]/ { in_block = 1; next }
-            /^\[/ { in_block = 0 }
-            in_block && /^version = "/ { gsub(/version = "|"/, ""); print; exit }
-          ' Cargo.toml)
-          tauri_ver=$(jq -r .version apps/desktop/tauri.conf.json)
-          echo "tag=$tag_ver cargo=$cargo_ver tauri=$tauri_ver"
-          if [ "$tag_ver" != "$cargo_ver" ] || [ "$tag_ver" != "$tauri_ver" ]; then
-            echo "✗ version mismatch: tag v$tag_ver, Cargo.toml $cargo_ver, tauri.conf.json $tauri_ver" >&2
-            echo "  run scripts/bump-version.sh $tag_ver, commit, then re-tag." >&2
-            exit 1
-          fi
-          echo "VERSION=$tag_ver" >> "$GITHUB_ENV"
+          # --exit-code: 0 found, 2 not found, anything else is an error.
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null || rc=$?
+          case "$rc" in
+            0) echo "v$VERSION is already released: built only, nothing published."
+               echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "v$VERSION is new: releasing."
+               echo "release=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "✗ git ls-remote failed ($rc)" >&2; exit 1 ;;
+          esac
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        if: steps.tag.outputs.release == 'true'
         with:
-          targets: aarch64-apple-darwin
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: install tauri-cli
-        run: cargo install tauri-cli --version "^2" --locked
-
-      - uses: pnpm/action-setup@v4
-        if: hashFiles('ui/package.json') != ''
-
-      - uses: actions/setup-node@v4
-        if: hashFiles('ui/package.json') != ''
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: ui/pnpm-lock.yaml
-
-      - name: build ui
-        if: hashFiles('ui/package.json') != ''
-        run: |
-          pnpm -C ui install --frozen-lockfile
-          pnpm -C ui build
-
-      # Developer ID signing + notarization (tauri-bundler reads these env
-      # vars itself — see crates/tauri-bundler/src/bundle/macos/sign.rs).
-      # Loaded only when the secret exists, so an absent secret never leaks
-      # an empty APPLE_CERTIFICATE into the build step below (which would
-      # make tauri-bundler try, and fail, to import an empty certificate).
-      - name: load Developer ID secrets
-        if: env.HAS_APPLE_CERT == 'true'
-        run: |
-          echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}" >> "$GITHUB_ENV"
-          echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_ENV"
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> "$GITHUB_ENV"
-          echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> "$GITHUB_ENV"
-
-      # Builds + ad-hoc codesigns (tauri.conf.json's `bundle.macOS.signingIdentity:
-      # "-"`, i.e. `codesign --force --deep -s -`) unless the step above loaded
-      # a real Developer ID, in which case tauri-bundler signs and notarizes
-      # with that instead. Also produces the DMG and the updater artifacts
-      # (`.app.tar.gz` + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY).
-      - name: build app, dmg and updater artifacts
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # The build stamp Settings → About shows (docs/releasing.md).
-          THEODORE_BUILD_ENV: production
-          THEODORE_GIT_SHA: ${{ github.sha }}
-          # Compiled in as the lowest-priority client id (docs/releasing.md).
-          THEODORE_WORKOS_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
-          # Remote telemetry sinks, compiled in as the lowest-priority source
-          # (docs/telemetry.md); unset: the build has none. Nothing is sent
-          # until the user chooses during onboarding or in Settings.
-          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
-          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
-          THEODORE_POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
-          THEODORE_POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
-        run: cargo tauri build --target aarch64-apple-darwin --bundles app,dmg
-
-      - name: locate bundle artifacts
-        id: artifacts
-        run: |
-          bundle="target/aarch64-apple-darwin/release/bundle"
-          dmg=$(find "$bundle/dmg" -name '*.dmg' | head -n1)
-          tarball=$(find "$bundle/macos" -name '*.app.tar.gz' | head -n1)
-          sig="$tarball.sig"
-          test -f "$dmg" && test -f "$tarball" && test -f "$sig"
-          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-          echo "sig=$sig" >> "$GITHUB_OUTPUT"
-
-      - name: build latest.json
-        run: |
-          tarball_name=$(basename "${{ steps.artifacts.outputs.tarball }}")
-          signature=$(cat "${{ steps.artifacts.outputs.sig }}")
-          pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          jq -n \
-            --arg version "$VERSION" \
-            --arg pub_date "$pub_date" \
-            --arg signature "$signature" \
-            --arg url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/$tarball_name" \
-            '{
-              version: $version,
-              notes: "See the GitHub release notes.",
-              pub_date: $pub_date,
-              platforms: {
-                "darwin-aarch64": { signature: $signature, url: $url }
-              }
-            }' > latest.json
-
+      # Creates the tag at this commit. A tag made with GITHUB_TOKEN starts
+      # no other workflow.
       - name: publish GitHub release
+        if: steps.tag.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v$VERSION" \
             --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
             --title "v$VERSION" \
             --generate-notes \
-            "${{ steps.artifacts.outputs.dmg }}" \
-            "${{ steps.artifacts.outputs.tarball }}" \
-            "${{ steps.artifacts.outputs.sig }}" \
-            latest.json
+            dist/*

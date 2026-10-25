@@ -11,6 +11,7 @@ use tauri_plugin_updater::UpdaterExt;
 use theodore_contract::UpdateInfo;
 use url::Url;
 
+use crate::build_info;
 use crate::core_api::CoreApi;
 use crate::events;
 
@@ -18,6 +19,8 @@ const STABLE_ENDPOINT: &str =
     "https://github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json";
 const BETA_ENDPOINT: &str =
     "https://github.com/JeanIsahakyan/theodore/releases/download/channel-beta/latest.json";
+const STAGING_ENDPOINT: &str =
+    "https://github.com/JeanIsahakyan/theodore/releases/download/channel-staging/latest.json";
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Last update this process downloaded and installed on disk (macOS/Linux
@@ -31,11 +34,23 @@ impl UpdateState {
     }
 }
 
+/// The channel a build updates from: a staging build only ever from
+/// `staging`, whatever the setting says; any other build from the
+/// `updates.channel` setting, `stable` or `beta`, never `staging`
+/// (docs/releasing.md "Staging channel").
+pub fn effective_channel(build_env: &str, setting: &str) -> &'static str {
+    match (build_env, setting) {
+        ("staging", _) => "staging",
+        (_, "beta") => "beta",
+        _ => "stable",
+    }
+}
+
 fn endpoint_for_channel(channel: &str) -> Url {
-    let url = if channel == "beta" {
-        BETA_ENDPOINT
-    } else {
-        STABLE_ENDPOINT
+    let url = match channel {
+        "beta" => BETA_ENDPOINT,
+        "staging" => STAGING_ENDPOINT,
+        _ => STABLE_ENDPOINT,
     };
     Url::parse(url).expect("static updater endpoint is valid")
 }
@@ -66,8 +81,10 @@ pub async fn check<R: Runtime>(
     if !core.updates_enabled().await {
         return Ok(None);
     }
-    let channel = core.update_channel().await;
-    let endpoint = endpoint_for_channel(&channel);
+    // Resolved again here, so no `CoreApi` can point a build at another
+    // environment's releases.
+    let channel = effective_channel(build_info::BUILD_ENV, &core.update_channel().await);
+    let endpoint = endpoint_for_channel(channel);
     let updater = app
         .updater_builder()
         .endpoints(vec![endpoint])
@@ -126,5 +143,32 @@ mod tests {
     #[test]
     fn unknown_channel_falls_back_to_stable() {
         assert_eq!(endpoint_for_channel("nope"), endpoint_for_channel("stable"));
+    }
+
+    #[test]
+    fn a_staging_build_updates_from_staging_only() {
+        for setting in ["stable", "beta", "staging", ""] {
+            let channel = effective_channel("staging", setting);
+            assert_eq!(channel, "staging");
+            assert!(
+                endpoint_for_channel(channel)
+                    .as_str()
+                    .ends_with("/releases/download/channel-staging/latest.json")
+            );
+        }
+    }
+
+    #[test]
+    fn other_builds_never_see_the_staging_channel() {
+        for env in ["production", "nightly", "dev"] {
+            assert_eq!(effective_channel(env, "stable"), "stable");
+            assert_eq!(effective_channel(env, "beta"), "beta");
+            assert_eq!(effective_channel(env, "staging"), "stable");
+            assert_eq!(effective_channel(env, "nope"), "stable");
+            for setting in ["stable", "beta", "staging", ""] {
+                let url = endpoint_for_channel(effective_channel(env, setting));
+                assert!(!url.as_str().contains("channel-staging"), "{env}/{setting}");
+            }
+        }
     }
 }

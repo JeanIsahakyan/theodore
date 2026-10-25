@@ -1,7 +1,8 @@
 #!/bin/sh
 # Bumps the workspace version everywhere it's duplicated: Cargo.toml
-# [workspace.package] and apps/desktop/tauri.conf.json. Run once per release,
-# before tagging (plan §11.1: tag == Cargo.toml version == tauri.conf version).
+# [workspace.package] and apps/desktop/tauri.conf.json. Run once per release;
+# merging the bump to main makes release.yml tag v<version> and publish it
+# (plan §11.1: tag == Cargo.toml version == tauri.conf version).
 #
 # Usage: scripts/bump-version.sh 0.3.0
 set -eu
@@ -42,4 +43,4 @@ sed 's/"version": "[^"]*"/"version": "'"$ver"'"/' "$tauri_conf" > "$tmp"
 mv "$tmp" "$tauri_conf"
 
 echo "✓ bumped to $ver in Cargo.toml and apps/desktop/tauri.conf.json"
-echo "  next: git commit, then git tag v$ver && git push --tags"
+echo "  next: commit, PR into staging, then staging → main; main tags v$ver itself"
