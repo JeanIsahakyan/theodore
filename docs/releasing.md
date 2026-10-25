@@ -53,6 +53,21 @@ compiled in, from `THEODORE_WORKOS_CLIENT_ID` in the build's environment:
 - At run time the same env var or the `account.workos.client_id` setting
   still wins over the compiled-in id (staging, a test environment).
 
+## Error reports: New Relic
+
+Error reports go over OTLP/HTTP to New Relic, set at build time and sent
+only when the user opts in (`docs/telemetry.md`):
+
+| Where | Name | Value |
+| --- | --- | --- |
+| Variables | `THEODORE_OTLP_ENDPOINT` | `https://otlp.nr-data.net` (EU account: `https://otlp.eu01.nr-data.net`) |
+| Secrets | `THEODORE_OTLP_HEADERS` | `api-key=<New Relic ingest license key>` |
+
+Both are set in the repo. The key ships inside the app, so anyone can pull
+it out and send data to the account: it can only ingest, never read. Rotate
+it in New Relic if it is abused. A local nightly bakes them in only when
+they are exported in the shell that runs `scripts/nightly-build.sh`.
+
 ## Optional: Developer ID signing + notarization
 
 Without this, every release is **ad-hoc signed** (`tauri.conf.json`'s
