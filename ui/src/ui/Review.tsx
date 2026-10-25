@@ -632,6 +632,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               [...k][0] !== ui.diffView && ui.toggleDiffView()
             }
             aria-label="Diff view"
+            className="ms-auto"
           >
             <ToggleButton id="unified" isIconOnly aria-label="Unified">
               <LayoutRows className="size-4" />
