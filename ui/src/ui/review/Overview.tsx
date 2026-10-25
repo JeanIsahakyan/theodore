@@ -33,7 +33,7 @@ export function Overview({
   const { pr } = summary;
   const opened = summary.created_at ?? null;
   return (
-    <main className="diff overview min-w-0 overflow-auto bg-surface px-8 pb-20 pt-6">
+    <main className="diff overview min-w-0 overflow-auto bg-surface px-6 pb-20 pt-6">
       <div className="flex max-w-[860px] flex-col gap-5">
         <div className="flex flex-col gap-1.5">
           <span className="text-sm text-muted">

@@ -401,7 +401,7 @@ const SpaceHeader = observer(function SpaceHeader({
     // Just what you act on: the name, and the stage only once it says
     // something (in review, done). Branch, base and agent are in the
     // name's tooltip.
-    <header className="flex flex-nowrap items-center gap-2 border-b border-separator px-5 py-3 [&>button]:shrink-0">
+    <header className="flex min-h-14 flex-nowrap items-center gap-2 border-b border-separator px-6 py-2 [&>button]:shrink-0">
       <Typography.Heading
         level={6}
         className="min-w-0 shrink truncate"
