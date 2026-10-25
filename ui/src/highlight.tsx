@@ -1,7 +1,12 @@
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useSyncExternalStore, type ReactNode } from 'react';
+import {
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import type { HighlighterCore } from 'shiki/core';
+import { findColors, type ColorHit } from './colors';
 
 export type Lang =
   | 'ts'
@@ -444,10 +449,69 @@ export function useShikiVersion(): number {
   return useSyncExternalStore(subscribe, () => version);
 }
 
+/** Languages (and markdown fence names) where `#` opens a comment, so a
+ *  `#` after whitespace isn't read as a hex colour (see `findColors`).
+ *  Plain text is in: unknown files are mostly configs with `#` comments. */
+const HASH_COMMENTS = new Set([
+  'python',
+  'py',
+  'shell',
+  'sh',
+  'bash',
+  'zsh',
+  'ruby',
+  'rb',
+  'yaml',
+  'yml',
+  'toml',
+  'dockerfile',
+  'makefile',
+  'perl',
+  'r',
+  'plain',
+]);
+
+/** The colour literals in `s`, code in `lang` (a `Lang` or a fence name). */
+export function colorsIn(s: string, lang = ''): ColorHit[] {
+  return findColors(s, HASH_COMMENTS.has(lang.toLowerCase()));
+}
+
+/** A small square of the literal's colour, drawn just before it. Pure
+ *  decoration: no text (so a copy never includes it), not selectable,
+ *  hidden from assistive tech; `ColorPreviewHost` shows the big preview on
+ *  hover, from `data-color`. */
+function Swatch({ color }: { color: string }) {
+  return (
+    <span
+      className="cswatch"
+      aria-hidden
+      data-color={color}
+      style={{ '--sw': color } as CSSProperties}
+    />
+  );
+}
+
+/** `text` with a swatch before each colour literal — for code that isn't
+ *  tokenized (markdown code spans and fenced blocks). */
+export function withSwatches(text: string, lang?: string): ReactNode {
+  const hits = colorsIn(text, lang);
+  if (!hits.length) return text;
+  const out: ReactNode[] = [];
+  let pos = 0;
+  hits.forEach((h, i) => {
+    out.push(text.slice(pos, h.start), <Swatch key={i} color={h.text} />);
+    pos = h.start;
+  });
+  out.push(text.slice(pos));
+  return out;
+}
+
 /** One line of code, highlighted; `marks` are character ranges changed
  *  within the line. `toks`, when given, are used instead of tokenizing `s`
  *  alone — pass a hunk's (or a gap's) per-line block tokens here so
- *  multi-line grammar state (a comment, a string) is right. */
+ *  multi-line grammar state (a comment, a string) is right. Colour
+ *  literals get a swatch in front, found on the whole line rather than per
+ *  token: a grammar splits `rgb(…)` into several tokens. */
 export function Code({
   s,
   lang,
@@ -460,9 +524,11 @@ export function Code({
   toks?: Tok[];
 }) {
   useShikiVersion();
+  const colors = colorsIn(s, lang);
   const out: ReactNode[] = [];
   let pos = 0;
   let k = 0;
+  let ci = 0;
   for (const t of toks ?? tokens(s, lang)) {
     const end = pos + t.s.length;
     const cuts = [pos, end];
@@ -470,11 +536,16 @@ export function Code({
       if (a > pos && a < end) cuts.push(a);
       if (b > pos && b < end) cuts.push(b);
     }
+    for (const c of colors)
+      if (c.start > pos && c.start < end) cuts.push(c.start);
     cuts.sort((a, b) => a - b);
     for (let n = 0; n < cuts.length - 1; n++) {
       const a = cuts[n]!;
       const b = cuts[n + 1]!;
       if (a === b) continue;
+      // Every literal's start is a cut, so pieces meet them in order.
+      if (colors[ci]?.start === a)
+        out.push(<Swatch key={k++} color={colors[ci++]!.text} />);
       const hit = marks?.some(([x, y]) => a >= x && a < y);
       const text = s.slice(a, b);
       out.push(
@@ -502,7 +573,7 @@ export function rich(text: string): ReactNode[] {
     .split(/(`[^`]+`|\*\*[^*]+\*\*|@[\w-]+(?:\/[\w-]+)?)/g)
     .map((p, i) =>
       p.startsWith('`') ? (
-        <code key={i}>{p.slice(1, -1)}</code>
+        <code key={i}>{withSwatches(p.slice(1, -1))}</code>
       ) : p.startsWith('**') ? (
         <b key={i}>{p.slice(2, -2)}</b>
       ) : p.startsWith('@') && p.length > 1 ? (
@@ -537,6 +608,14 @@ const mdComponents: Components = {
     <pre className="my-2 overflow-x-auto rounded-xl bg-default px-3 py-2 font-mono text-xs">
       {children}
     </pre>
+  ),
+  // Inline spans and fenced blocks alike; a block's fence names its language.
+  code: ({ className, children }) => (
+    <code className={className}>
+      {typeof children === 'string'
+        ? withSwatches(children, /language-(\S+)/.exec(className ?? '')?.[1])
+        : children}
+    </code>
   ),
   table: ({ children }) => (
     <div className="my-2 overflow-x-auto">

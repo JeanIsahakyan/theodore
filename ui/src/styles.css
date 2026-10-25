@@ -208,6 +208,33 @@ body.cmd .lines .src span:hover {
   padding: 0 4px;
   border-radius: 4px;
 }
+/* A colour literal's swatch (`Swatch` in highlight.tsx): its colour over a
+   checkerboard, so a translucent one reads as such. The ring is a shadow,
+   not a border, and the box is shorter than a line: neither moves text. */
+.cswatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin: 0 0.3em 0 0.1em;
+  vertical-align: -0.05em;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 35%, transparent);
+  background:
+    linear-gradient(var(--sw), var(--sw)),
+    repeating-conic-gradient(#d4d4d4 0 25%, #fff 0 50%) 0 0 / 50% 50%;
+  user-select: none;
+  cursor: default;
+}
+.cswatch.cswatch-lg {
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background-size:
+    auto,
+    25% 25%;
+}
 
 /* A hunk scrolled to its top clears its file's sticky header */
 [id^='H-'] {

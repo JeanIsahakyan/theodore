@@ -7,6 +7,7 @@ import { Surface, Toast, toast } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { useRootStore, useUi } from '../stores/context';
 import { ask } from '../actions';
+import { ColorPreviewHost } from './ColorPreview';
 import { ContextMenuHost, useContextMenu } from './ContextMenu';
 import { Inbox } from './List';
 import { GateModals, Modals } from './Modals';
@@ -202,6 +203,7 @@ export const App = observer(function App() {
       <Modals />
       <Toasts />
       <ContextMenuHost />
+      <ColorPreviewHost />
       <Toast.Provider placement="bottom end" maxVisibleToasts={3} />
     </div>
   );
