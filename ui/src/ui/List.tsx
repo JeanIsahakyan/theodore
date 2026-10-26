@@ -318,21 +318,18 @@ export const PrRow = observer(function PrRow({
       style={{ gridTemplateColumns: cols }}
       onContextMenu={rowMenu}
     >
-      {/* Picking a row never opens it: the row doesn't see the press. */}
-      <span className="flex" onPointerDown={(e) => e.stopPropagation()}>
-        <Checkbox
-          aria-label="select"
-          isSelected={picked}
-          onChange={() => ui.togglePick(id)}
-          className={`pickbox ${picked ? '' : 'opacity-0 group-hover:opacity-100'}`}
-        >
-          <Checkbox.Content>
-            <Checkbox.Control>
-              <Checkbox.Indicator />
-            </Checkbox.Control>
-          </Checkbox.Content>
-        </Checkbox>
-      </span>
+      <Checkbox
+        aria-label="select"
+        isSelected={picked}
+        onChange={() => ui.togglePick(id)}
+        className={`pickbox ${picked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+      >
+        <Checkbox.Content>
+          <Checkbox.Control>
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+        </Checkbox.Content>
+      </Checkbox>
       <PrStatusIcon summary={p} progress={readProgress(store, id)} />
       {on('id') && (
         <span
@@ -386,11 +383,8 @@ function StackChips({ repo, stack }: { repo: RepoRef; stack: StackInfo }) {
     ui.go({ name: 'review', pr: prIdFor(repo, number) });
   if (stack.base_pr == null && stack.children.length === 0) return null;
   return (
-    // A chip opens its own PR: the row under it never sees the press, so
-    // it doesn't also open (or select) the row's PR.
     <span
       className="stack-chips flex shrink-0 items-center gap-1"
-      onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       {stack.base_pr != null && (
@@ -478,27 +472,7 @@ export function SectionHeader({
   );
 }
 
-/** Whether a press on a row opens it: a plain left click does. ⌘ / Shift /
- *  Ctrl / Alt clicks only select (Ctrl-click is the macOS context menu),
- *  and keyboard, touch and virtual presses already reach `onAction`. */
-export function pressOpens(e: {
-  pointerType: string;
-  shiftKey: boolean;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-}): boolean {
-  return (
-    e.pointerType === 'mouse' &&
-    !e.shiftKey &&
-    !e.metaKey &&
-    !e.ctrlKey &&
-    !e.altKey
-  );
-}
-
-/** A Linear-style list as one HeroUI ListBox: sections, single selection;
- *  a click or ⏎ opens, J / K / arrows move the selection. */
+/** A Linear-style list as one HeroUI ListBox: sections, single selection, ⏎ / double-click opens. */
 export function RowList({
   groups,
   sel,
@@ -552,9 +526,6 @@ export function RowList({
               id={p.id}
               textValue={p.title}
               className="min-h-0 rounded-none border-b border-separator px-6 py-0"
-              onPress={(e) => {
-                if (pressOpens(e)) onOpen(p.id);
-              }}
             >
               {row(p.id)}
             </ListBox.Item>
