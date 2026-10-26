@@ -419,6 +419,7 @@ async fn drive_skill_run(
             env: Vec::new(),
             user_mcp,
             attachments: vec![],
+            resume: None,
         };
         let _guard = ToolsGuard { core, mcp };
         match core.0.deps.agents.run(req).await {
@@ -441,7 +442,7 @@ async fn drive_skill_run(
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: "stalled".into() });
                                 core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                             }
-                            AgentEvent::Usage { .. } => {}
+                            AgentEvent::Usage { .. } | AgentEvent::Session { .. } => {}
                             AgentEvent::Done { .. } => break,
                             AgentEvent::Error { message, .. } => {
                                 error = Some(message);
@@ -715,6 +716,7 @@ async fn drive_ask(
         // Spaces only (issue #16): a chat answer stays on Theodore's tools.
         user_mcp: false,
         attachments: question.attachments,
+        resume: None,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();

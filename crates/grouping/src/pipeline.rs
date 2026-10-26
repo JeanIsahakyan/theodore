@@ -428,6 +428,7 @@ pub(crate) async fn call_agent(
         env: Vec::new(),
         user_mcp: opts.user_mcp,
         attachments: vec![],
+        resume: None,
     };
     let mut run = agent.run(req).await?;
     let mut usage = Usage::default();

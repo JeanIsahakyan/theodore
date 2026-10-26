@@ -30,8 +30,8 @@ pub fn space_chat_key(space: &str) -> PrId {
     PrId(format!("space:{space}"))
 }
 
-/// Messages of history replayed into each turn (the CLIs are spawned fresh
-/// per turn; docs/spaces.md §5 "Resume").
+/// Messages of history replayed into a turn that starts a new agent session
+/// (docs/spaces.md §5 "One session per space").
 const HISTORY_MESSAGES: usize = 12;
 /// Per replayed message.
 const HISTORY_CHARS: usize = 2_000;
@@ -166,6 +166,7 @@ impl Core {
             setup,
             process: None,
             commands_denied: false,
+            agent_session: None,
             created_at: now,
             updated_at: now,
         };
@@ -318,6 +319,18 @@ impl Core {
         let ask = expand_skill(&text, |id| space_skill_content(id, &wt.path, claude_home))
             .unwrap_or_else(|| text.clone());
         let ask = with_attachments(ask, &attachments);
+        let ultracode = agent == AgentId::Claude
+            && self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE;
+        let wrap = |prompt: String| with_ultracode(with_failed_check(&space, prompt), ultracode);
+        // The same agent in the same worktree continues its session and
+        // hears only the new turn; anything else starts a new session from
+        // the replayed transcript.
+        let resume = resumable_session(&space, agent, &wt.path);
+        let replay = wrap(turn_prompt(&history, &ask));
+        let (prompt, replay) = match &resume {
+            Some(_) => (wrap(ask), Some(replay)),
+            None => (replay, None),
+        };
         let turn = Turn {
             run_id,
             message: message_id.clone(),
@@ -325,11 +338,9 @@ impl Core {
             agent,
             model,
             mode,
-            prompt: with_ultracode(
-                with_failed_check(&space, turn_prompt(&history, &ask)),
-                agent == AgentId::Claude
-                    && self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE,
-            ),
+            prompt,
+            resume,
+            replay,
             system: self
                 .space_review_rules(&space, &project, &wt.path)
                 .await
@@ -470,6 +481,9 @@ impl Core {
                 "head_sha": turn.before,
                 "error": null,
                 "turn_log": log,
+                // The agent's session still holds the undone turn: the next
+                // one starts over from the transcript, which leaves it out.
+                "agent_session": null,
                 "updated_at": self.0.deps.clock.now(),
             })),
         }])
@@ -531,6 +545,8 @@ impl Core {
                 "the checkpoints were gone; the space restarted from {}",
                 space.base
             ));
+            // Its session talks about work that is no longer there.
+            patch["agent_session"] = serde_json::Value::Null;
         }
         if space.done_at.is_some() {
             patch["done_at"] = serde_json::json!(now);
@@ -670,11 +686,96 @@ struct Turn {
     model: Option<String>,
     mode: SpaceMode,
     prompt: String,
+    /// The agent session this turn continues; `prompt` is then only the
+    /// new turn.
+    resume: Option<String>,
+    /// With `resume`: the transcript-replaying prompt, for when the
+    /// session turns out to be gone.
+    replay: Option<String>,
     system: String,
     env: Vec<(String, String)>,
     attachments: Vec<AgentAttachment>,
     cwd: PathBuf,
     cancel: CancellationToken,
+}
+
+/// The stored session the next turn continues: same agent, same worktree.
+fn resumable_session(space: &Space, agent: AgentId, cwd: &Path) -> Option<String> {
+    space
+        .agent_session
+        .as_ref()
+        .filter(|s| s.agent == agent && Path::new(&s.cwd) == cwd)
+        .map(|s| s.id.clone())
+}
+
+/// What a resumed run fails with when its session no longer exists:
+/// Claude Code's result `errors`, Codex's stderr.
+const SESSION_GONE: [&str; 2] = ["no conversation found", "no rollout found"];
+
+/// One agent run of a turn, streamed to the UI.
+#[derive(Default)]
+struct Streamed {
+    text: String,
+    error: Option<String>,
+    /// `error` says the resumed session is gone.
+    session_gone: bool,
+    /// The last session id the run reported.
+    session: Option<String>,
+}
+
+async fn stream_run(
+    core: &Core,
+    req: AgentRequest,
+    cancel: &CancellationToken,
+    run_id: &str,
+) -> Streamed {
+    let agent = req.agent;
+    let resumed = req.resume.is_some();
+    let mut out = Streamed::default();
+    let mut run = match core.0.deps.agents.run(req).await {
+        Ok(run) => run,
+        Err(e) => {
+            out.error = Some(e.to_string());
+            return out;
+        }
+    };
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => { run.cancel.cancel(); break; }
+            event = run.events.recv() => {
+                let Some(event) = event else { break };
+                match event {
+                    AgentEvent::Text { text: t } => {
+                        out.text.push_str(&t);
+                        core.emit(Ephemeral::AgentDelta { run: run_id.to_string(), agent, text: t });
+                    }
+                    AgentEvent::ToolCall { name, input, .. } => {
+                        core.emit(Ephemeral::RunLog { run: run_id.to_string(), agent, line: tool_log_line_with(&name, &input) });
+                    }
+                    AgentEvent::Stalled => {
+                        core.emit(Ephemeral::RunStalled { run: run_id.to_string(), agent });
+                    }
+                    AgentEvent::Session { id } => out.session = Some(id),
+                    AgentEvent::Done { final_text, .. } => {
+                        if !final_text.is_empty() {
+                            out.text = final_text;
+                        }
+                        break;
+                    }
+                    AgentEvent::Error { message, stderr_tail } => {
+                        let said = format!("{message}\n{stderr_tail}").to_lowercase();
+                        out.session_gone = resumed && SESSION_GONE.iter().any(|m| said.contains(m));
+                        out.error = Some(message);
+                        break;
+                    }
+                    AgentEvent::Thinking { .. }
+                    | AgentEvent::ToolResult { .. }
+                    | AgentEvent::Usage { .. } => {}
+                }
+            }
+        }
+    }
+    out
 }
 
 async fn drive_turn(core: &Core, turn: Turn) {
@@ -686,6 +787,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         model,
         mode,
         prompt,
+        resume,
+        replay,
         system,
         env,
         attachments,
@@ -703,7 +806,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         core,
         mcp: mcp.clone(),
     };
-    let req = AgentRequest {
+    let resumed = resume.is_some();
+    let mut req = AgentRequest {
         agent,
         prompt,
         system: Some(system),
@@ -720,46 +824,41 @@ async fn drive_turn(core: &Core, turn: Turn) {
         env,
         user_mcp: core.user_mcp_allowed().await,
         attachments,
+        resume,
     };
-    let mut text = String::new();
-    let mut error = None;
     let started = std::time::Instant::now();
-    match core.0.deps.agents.run(req).await {
-        Ok(mut run) => loop {
-            tokio::select! {
-                _ = cancel.cancelled() => { run.cancel.cancel(); break; }
-                event = run.events.recv() => {
-                    let Some(event) = event else { break };
-                    match event {
-                        AgentEvent::Text { text: t } => {
-                            text.push_str(&t);
-                            core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text: t });
-                        }
-                        AgentEvent::ToolCall { name, input, .. } => {
-                            core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line_with(&name, &input) });
-                        }
-                        AgentEvent::Stalled => {
-                            core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
-                        }
-                        AgentEvent::Done { final_text, .. } => {
-                            if !final_text.is_empty() {
-                                text = final_text;
-                            }
-                            break;
-                        }
-                        AgentEvent::Error { message, .. } => {
-                            error = Some(message);
-                            break;
-                        }
-                        AgentEvent::Thinking { .. }
-                        | AgentEvent::ToolResult { .. }
-                        | AgentEvent::Usage { .. } => {}
-                    }
-                }
-            }
-        },
-        Err(e) => error = Some(e.to_string()),
+    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id).await;
+    let session_gone = streamed.session_gone && !cancel.is_cancelled();
+    if session_gone && let Some(replay) = replay {
+        // The CLI lost it (cleaned up, another machine): once more as a new
+        // session that hears the transcript.
+        tracing::info!(
+            space = %space.id,
+            agent = agent.as_str(),
+            "agent session gone, replaying the transcript"
+        );
+        req.resume = None;
+        req.prompt = replay;
+        streamed = stream_run(core, req, &cancel, &run_id).await;
     }
+    let Streamed {
+        text,
+        mut error,
+        session,
+        ..
+    } = streamed;
+    // The session this turn ran in is the one the next turn continues. A
+    // resumed run that reported none (it failed to start) leaves it as is;
+    // a new one that reported none (Gemini) means there is none to continue.
+    let agent_session = match session {
+        Some(id) => Some(theodore_contract::AgentSession {
+            agent,
+            id,
+            cwd: cwd.display().to_string(),
+        }),
+        None if resumed && !session_gone => space.agent_session.clone(),
+        None => None,
+    };
     // The agent is done: its token goes before the after-turn check.
     drop(tools_guard);
     let cancelled = cancel.is_cancelled();
@@ -835,6 +934,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         "run": if checking { Some(run_id.clone()) } else { None },
         "turns": turn_no,
         "error": if cancelled { None } else { error.clone() },
+        "agent_session": agent_session,
         "updated_at": core.0.deps.clock.now(),
     });
     if let Some(head) = &head {

@@ -106,6 +106,7 @@ mod tests {
             env: Vec::new(),
             user_mcp: false,
             attachments: vec![],
+            resume: None,
         }
     }
 

@@ -72,6 +72,13 @@ pub fn build_args(
         "--permission-prompts".to_string(),
         "none".to_string(),
     ];
+    // The space's session, continued: everything it read, ran and planned
+    // is still there, and `-p` is only the new turn. The flags below are
+    // per process, so they still go on every turn.
+    if let Some(session) = &req.resume {
+        args.push("--resume".to_string());
+        args.push(session.clone());
+    }
     if let Some(system) = &req.system {
         args.push("--append-system-prompt".to_string());
         args.push(system.clone());
@@ -197,8 +204,28 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
     match v.get("type").and_then(Value::as_str) {
         Some("assistant") => content_blocks(&v),
         Some("user") => tool_results(&v),
-        Some("result") => vec![result_event(&v)],
-        _ => vec![], // system/rate_limit_event/init/etc: not user-visible stream content
+        Some("result") => result_events(&v),
+        // `init` opens every run with the session id `--resume` takes.
+        Some("system") if v.get("subtype").and_then(Value::as_str) == Some("init") => {
+            session_event(&v).into_iter().collect()
+        }
+        _ => vec![], // system/rate_limit_event/etc: not user-visible stream content
+    }
+}
+
+fn session_event(v: &Value) -> Option<AgentEvent> {
+    let id = v.get("session_id").and_then(Value::as_str)?;
+    (!id.is_empty()).then(|| AgentEvent::Session { id: id.to_string() })
+}
+
+/// A successful result repeats the session id (in case `init` was missed)
+/// before `Done`. A failed one doesn't: a `--resume` of a session that is
+/// gone fails carrying the id it was given.
+fn result_events(v: &Value) -> Vec<AgentEvent> {
+    let done = result_event(v);
+    match (&done, session_event(v)) {
+        (AgentEvent::Done { .. }, Some(session)) => vec![session, done],
+        _ => vec![done],
     }
 }
 
@@ -280,11 +307,24 @@ fn stringify_tool_content(content: Option<&Value>) -> String {
 fn result_event(v: &Value) -> AgentEvent {
     let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
     if is_error {
+        // `errors` when it failed before a turn started (`--resume` of a
+        // session that is gone: "No conversation found with session ID: …").
+        let errors = v
+            .get("errors")
+            .and_then(Value::as_array)
+            .map(|e| {
+                e.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .filter(|e| !e.is_empty());
         let message = v
             .get("result")
             .and_then(Value::as_str)
-            .unwrap_or("claude reported an error")
-            .to_string();
+            .map(str::to_string)
+            .or(errors)
+            .unwrap_or_else(|| "claude reported an error".to_string());
         return AgentEvent::Error {
             message,
             stderr_tail: String::new(),
@@ -425,6 +465,39 @@ mod tests {
     fn system_lines_are_ignored() {
         let line = r#"{"type":"system","subtype":"init","cwd":"/tmp"}"#;
         assert_eq!(parse_line(line), vec![]);
+        let line = r#"{"type":"system","subtype":"session_state_changed","state":"idle","session_id":"s1"}"#;
+        assert_eq!(parse_line(line), vec![]);
+    }
+
+    #[test]
+    fn init_reports_the_session() {
+        let line = r#"{"type":"system","subtype":"init","cwd":"/tmp","session_id":"8f1c"}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::Session { id: "8f1c".into() }]
+        );
+    }
+
+    #[test]
+    fn a_successful_result_repeats_the_session_before_done() {
+        let line = r#"{"type":"result","is_error":false,"result":"ok","session_id":"8f1c"}"#;
+        let events = parse_line(line);
+        assert_eq!(events[0], AgentEvent::Session { id: "8f1c".into() });
+        assert!(matches!(events[1], AgentEvent::Done { .. }));
+    }
+
+    /// Recorded from `claude -p … --resume <unknown id>` (2.1.310): no
+    /// `init`, no `result` text, the reason in `errors`.
+    #[test]
+    fn a_gone_session_fails_with_its_reason_and_no_session() {
+        let line = r#"{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"session_id":"0000","total_cost_usd":0,"errors":["No conversation found with session ID: 0000"]}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::Error {
+                message: "No conversation found with session ID: 0000".into(),
+                stderr_tail: String::new()
+            }]
+        );
     }
 
     #[test]
@@ -466,6 +539,7 @@ mod read_only_tests {
             env: Vec::new(),
             user_mcp: false,
             attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -499,6 +573,7 @@ mod mcp_config_tests {
             env: Vec::new(),
             user_mcp: false,
             attachments: vec![],
+            resume: None,
         }
     }
 
@@ -648,6 +723,7 @@ mod run_mode_tests {
             env: Vec::new(),
             user_mcp: false,
             attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -673,6 +749,7 @@ mod run_mode_tests {
             env: Vec::new(),
             user_mcp: true,
             attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -699,6 +776,7 @@ mod model_and_effort_tests {
             env: Vec::new(),
             user_mcp: false,
             attachments: vec![],
+            resume: None,
         }
     }
 
@@ -712,6 +790,28 @@ mod model_and_effort_tests {
         let args = build_args(&req(Some("opus"), Some("high")), &Default::default(), None);
         assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
         assert_eq!(flag(&args, "--effort").as_deref(), Some("high"));
+    }
+
+    /// A resumed turn keeps every per-process flag: the system prompt,
+    /// permissions, model.
+    #[test]
+    fn a_resumed_turn_passes_the_session_and_still_the_per_process_flags() {
+        let mut r = req(Some("opus"), None);
+        r.system = Some("rules".into());
+        r.resume = Some("8f1c".into());
+        let args = build_args(&r, &Default::default(), None);
+        assert_eq!(flag(&args, "--resume").as_deref(), Some("8f1c"));
+        assert_eq!(flag(&args, "-p").as_deref(), Some("p"));
+        assert_eq!(
+            flag(&args, "--append-system-prompt").as_deref(),
+            Some("rules")
+        );
+        assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
+        assert!(args.iter().any(|a| a == "--disallowedTools"));
+
+        r.resume = None;
+        let args = build_args(&r, &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--resume"));
     }
 
     #[test]

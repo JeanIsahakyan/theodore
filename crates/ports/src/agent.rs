@@ -77,6 +77,13 @@ pub struct AgentRequest {
     /// (Claude Code: `--add-dir`, Codex: `-i` for images).
     #[serde(default)]
     pub attachments: Vec<AgentAttachment>,
+    /// Continue this CLI session — an id an earlier run reported as
+    /// [`AgentEvent::Session`] — instead of starting a new one, so the agent
+    /// keeps what it read, ran and planned. `prompt` is then only the new
+    /// turn. Claude Code: `--resume`; Codex: `exec resume`; Gemini has no
+    /// resume and ignores it.
+    #[serde(default)]
+    pub resume: Option<String>,
 }
 
 /// One file the agent should read, outside `cwd`.
@@ -109,6 +116,12 @@ pub enum AgentEvent {
         usage: Usage,
     },
     Stalled,
+    /// The CLI's session id for this run (Claude Code's `session_id`,
+    /// Codex's `thread_id`): what [`AgentRequest::resume`] takes to continue
+    /// it. May come more than once; the last one counts.
+    Session {
+        id: String,
+    },
     Done {
         final_text: String,
         usage: Usage,

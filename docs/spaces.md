@@ -339,10 +339,10 @@ remaining prompts and limits.
 
 - **Stop** cancels the run (SIGTERM → 5 s → SIGKILL, existing lifecycle), then
   checkpoints whatever was edited as "turn N (stopped)". Nothing is lost.
-- **Resume** = send another message. Each turn gets the goal and the recent
-  transcript, so a crash, a stop, or a different agent picks up where the
-  last one left off. v2: native session resume when the agent stays the same
-  (session id stored per run).
+- **Resume** = send another message. The space keeps one agent session and
+  each turn continues it (below), so the agent still has the files it read,
+  the commands it ran and its todo list; a different agent picks up from the
+  replayed transcript.
 - **Switch agent or model** per message (picker in the header).
 - **Context**: `@path` mentions (stored as refs), paste a PR link to attach
   its description and diff stats, `/skill` runs a skill as the turn's
@@ -365,6 +365,38 @@ remaining prompts and limits.
   - Not an OS sandbox: a CLI with shell access can still leave its directory.
     Later: run agents under a macOS sandbox profile that only allows writes
     inside the space (open question 4).
+
+### One session per space
+
+Each run reports its CLI session id (Claude Code's `session_id`, Codex's
+`thread_id`); the space stores it as `agent_session` (agent, id, worktree).
+The next turn continues it and sends only the new message: skill expansion,
+attachments, a failed `check` and the `ultracode` keyword wrap it as before,
+but no transcript.
+
+```
+turn 1 ─▶ claude -p "<goal>"                         ─▶ session S ─▶ stored
+turn 2 ─▶ claude -p "<message>" --resume S           ─▶ session S
+          codex exec … resume S "<message>"
+gone?  ─▶ "No conversation found" / "no rollout found"
+          └─▶ once more, new session + replayed transcript ─▶ session S'
+```
+
+| Next turn | Continues the session? |
+| --- | --- |
+| same agent, same worktree | yes; the model and mode may change (flags are per run) |
+| another agent | no: new session from the replayed transcript (last 12 messages) |
+| Gemini | never: it has no resume, every turn replays the transcript |
+| after Undo last turn | no: the session holds the undone turn; the replay leaves it out |
+| after unarchive | yes (the worktree path is the same); no if the checkpoints were gone |
+| the resumed run failed for another reason | the session stays for the next turn |
+
+- Claude Code's system prompt (`--append-system-prompt`) and permissions go
+  on every turn. Codex's thread already opens with the system prompt (folded
+  into its first message), so a resumed turn doesn't repeat it.
+- A turn that ran without a session (Gemini, or a switch) clears the stored
+  one: the conversation moved on without it.
+- Review runs (AI panel, grouping, skills, fixes) don't keep sessions.
 
 ### Tools the agent gets
 
@@ -556,9 +588,9 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel` |
-| **Later** | native session resume per CLI; OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
+| **Later** | OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
 ## 12. Decisions (owner, 2026-10-21)
 

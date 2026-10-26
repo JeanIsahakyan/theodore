@@ -775,6 +775,7 @@ pub fn types() -> specta::Types {
         .register::<ShipAction>()
         .register::<ShipSpaceRequest>()
         .register::<SpaceTurn>()
+        .register::<AgentSession>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
         .register::<ConfigLayer>()

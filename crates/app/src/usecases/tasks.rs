@@ -319,6 +319,7 @@ async fn drive_fix_run(
         // Spaces only (issue #16): a fix stays on Theodore's tools.
         user_mcp: false,
         attachments: vec![],
+        resume: None,
     };
     let _guard = ToolsGuard { core, mcp };
 

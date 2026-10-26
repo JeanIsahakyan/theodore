@@ -1,5 +1,6 @@
 //! The second slice of spaces (docs/spaces.md): undo last turn, unarchive,
-//! "Send to agent" from a review, and names from non-Latin goals — against
+//! "Send to agent" from a review, names from non-Latin goals and the agent
+//! session a space's turns continue — against
 //! `Core` + `testkit` fakes.
 
 use std::time::Duration;
@@ -9,7 +10,7 @@ use theodore_contract::{
     AddProjectRequest, ChatMessage, CreateSpaceRequest, Project, ShipAction, ShipSpaceRequest,
     Space, SpaceFeedback, SpaceFeedbackRequest, SpaceSendRequest, SpaceStatus, models,
 };
-use theodore_domain::{Author, PrId, Sha, Usage};
+use theodore_domain::{AgentId, Author, PrId, Sha, Usage};
 use theodore_ports::{AgentEvent, NewAction, Store, SyncActionCode};
 
 use crate::testkit::{Fixtures, fixtures};
@@ -526,4 +527,228 @@ async fn a_cyrillic_goal_names_the_space_and_repeats_get_a_number() {
         .await
         .unwrap();
     assert_eq!(d.name, "ispravit-login-2");
+}
+
+// ── agent sessions ──────────────────────────────────────────────────────────
+
+/// A run that reports session `id`, then answers `reply`.
+fn in_session(id: &str, reply: &str) -> Vec<AgentEvent> {
+    let mut events = vec![AgentEvent::Session { id: id.into() }];
+    events.extend(done(reply));
+    events
+}
+
+async fn send(f: &Fixtures, core: &Core, id: &str, text: &str, agent: Option<AgentId>) -> Space {
+    core.space_send(SpaceSendRequest {
+        space: id.into(),
+        text: text.into(),
+        agent,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    idle(f, id).await
+}
+
+/// A space whose first turn ran in Claude Code session `s1`.
+async fn space_in_session(f: &Fixtures, core: &Core, project: &Project) -> Space {
+    f.agents.push_script(in_session("s1", "Added the guard."));
+    let s = core
+        .create_space(request(project, "Add a guard"))
+        .await
+        .unwrap();
+    idle(f, &s.id).await
+}
+
+#[tokio::test]
+async fn the_next_turn_continues_the_session_with_only_the_new_message() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    let session = s.agent_session.clone().expect("the first turn's session");
+    assert_eq!(session.agent, AgentId::Claude);
+    assert_eq!(session.id, "s1");
+    assert_eq!(session.cwd, s.worktree);
+    assert_eq!(f.agents.last_request().unwrap().resume, None);
+
+    f.agents.push_script(in_session("s1", "Logged it."));
+    let s = send(&f, &core, &s.id, "Also log it", None).await;
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(req.resume.as_deref(), Some("s1"));
+    assert_eq!(req.prompt, "Also log it");
+    assert!(req.system.is_some(), "the system prompt goes on every turn");
+    assert_eq!(s.agent_session.unwrap().id, "s1");
+    assert!(transcript(&f, &s.id).iter().any(|m| m.text == "Logged it."));
+}
+
+#[tokio::test]
+async fn another_agent_starts_over_from_the_transcript() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+
+    // Gemini reports no session: none is left to continue afterwards.
+    f.agents.push_script(done("Reviewed."));
+    let s = send(&f, &core, &s.id, "Have a look", Some(AgentId::Gemini)).await;
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(req.resume, None);
+    assert!(
+        req.prompt.contains("Conversation so far:"),
+        "{}",
+        req.prompt
+    );
+    assert!(req.prompt.contains("Added the guard."));
+    assert_eq!(s.agent_session, None);
+
+    // Back on Claude: a new session, since s1 never heard Gemini's turn.
+    f.agents.push_script(in_session("s2", "ok"));
+    let s = send(&f, &core, &s.id, "Go on", Some(AgentId::Claude)).await;
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(req.resume, None);
+    assert!(req.prompt.contains("Reviewed."));
+    assert_eq!(s.agent_session.unwrap().id, "s2");
+}
+
+#[tokio::test]
+async fn undo_drops_the_session_that_heard_the_undone_turn() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.git.push_checkpoint(Sha::new("turn1"));
+    let s = space_in_session(&f, &core, &project).await;
+    f.agents.push_script(in_session("s1", "Logged it."));
+    f.git.push_checkpoint(Sha::new("turn2"));
+    send(&f, &core, &s.id, "Also log it", None).await;
+
+    let s = core.undo_space_turn(&s.id).await.unwrap();
+    assert_eq!(s.agent_session, None);
+
+    f.agents.push_script(in_session("s2", "ok"));
+    let s = send(&f, &core, &s.id, "Log differently", None).await;
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(req.resume, None);
+    assert!(req.prompt.contains("Added the guard."));
+    assert!(!req.prompt.contains("Also log it"), "{}", req.prompt);
+    assert_eq!(s.agent_session.unwrap().id, "s2");
+}
+
+#[tokio::test]
+async fn a_gone_session_is_retried_once_from_the_transcript() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    let before = f.agents.requests().len();
+
+    // As `claude -p … --resume s1` fails once the session is deleted.
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "No conversation found with session ID: s1".into(),
+        stderr_tail: String::new(),
+    }]);
+    f.agents.push_script(in_session("s2", "Logged it."));
+    let s = send(&f, &core, &s.id, "Also log it", None).await;
+
+    let reqs = f.agents.requests();
+    assert_eq!(reqs.len(), before + 2, "one resume, one retry");
+    let (resumed, retried) = (&reqs[before], &reqs[before + 1]);
+    assert_eq!(resumed.resume.as_deref(), Some("s1"));
+    assert_eq!(resumed.prompt, "Also log it");
+    assert_eq!(retried.resume, None);
+    assert!(retried.prompt.contains("Conversation so far:"));
+    assert!(
+        retried
+            .prompt
+            .ends_with("New message from the user:\nAlso log it")
+    );
+
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.error, None);
+    assert_eq!(s.agent_session.unwrap().id, "s2");
+    assert!(transcript(&f, &s.id).iter().any(|m| m.text == "Logged it."));
+}
+
+#[tokio::test]
+async fn codex_reports_a_gone_thread_on_stderr() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(in_session("t1", "one"));
+    let mut req = request(&project, "Codex it");
+    req.agent = Some(AgentId::Codex);
+    let s = core.create_space(req).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.agent_session.as_ref().unwrap().agent, AgentId::Codex);
+
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "codex exited with a non-zero status".into(),
+        stderr_tail:
+            "Error: thread/resume: thread/resume failed: no rollout found for thread id t1".into(),
+    }]);
+    f.agents.push_script(in_session("t2", "two"));
+    let s = send(&f, &core, &s.id, "more", None).await;
+    assert_eq!(f.agents.last_request().unwrap().resume, None);
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.agent_session.unwrap().id, "t2");
+}
+
+#[tokio::test]
+async fn a_resumed_turn_that_fails_otherwise_keeps_the_session() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    let before = f.agents.requests().len();
+
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "rate limited".into(),
+        stderr_tail: String::new(),
+    }]);
+    let s = send(&f, &core, &s.id, "Also log it", None).await;
+    assert_eq!(f.agents.requests().len(), before + 1, "no retry");
+    assert_eq!(s.status, SpaceStatus::Failed);
+    assert_eq!(s.agent_session.as_ref().unwrap().id, "s1");
+
+    f.agents.push_script(in_session("s1", "ok"));
+    send(&f, &core, &s.id, "Try again", None).await;
+    assert_eq!(
+        f.agents.last_request().unwrap().resume.as_deref(),
+        Some("s1")
+    );
+}
+
+#[tokio::test]
+async fn a_session_from_another_worktree_is_not_resumed() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    patch_space(
+        &f,
+        &s.id,
+        json!({ "agent_session": { "agent": "claude", "id": "s1", "cwd": "/elsewhere" } }),
+    );
+    f.agents.push_script(in_session("s2", "ok"));
+    let s = send(&f, &core, &s.id, "Go on", None).await;
+    assert_eq!(f.agents.last_request().unwrap().resume, None);
+    assert_eq!(s.agent_session.unwrap().id, "s2");
+}
+
+#[tokio::test]
+async fn unarchive_keeps_the_session_unless_the_checkpoints_are_gone() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.git.push_checkpoint(Sha::new("turn1"));
+    let s = space_in_session(&f, &core, &project).await;
+    core.archive_space(&s.id).await.unwrap();
+    let s = core.unarchive_space(&s.id).await.unwrap();
+    assert_eq!(
+        s.agent_session.as_ref().unwrap().id,
+        "s1",
+        "same worktree path"
+    );
+
+    core.archive_space(&s.id).await.unwrap();
+    f.git.set_resolve(
+        &format!("refs/theodore/spaces/{}", s.id),
+        Sha::new("base000"),
+    );
+    let s = core.unarchive_space(&s.id).await.unwrap();
+    assert_eq!(s.agent_session, None);
 }

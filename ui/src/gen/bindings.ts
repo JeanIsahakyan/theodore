@@ -266,6 +266,20 @@ export type AgentModel = {
 	older: boolean,
 };
 
+/**
+ *  One agent CLI session a space's turns continue (docs/spaces.md §5
+ *  "One session per space"): Claude Code's session id, Codex's thread id.
+ */
+export type AgentSession = {
+	agent: AgentId,
+	id: string,
+	/**
+	 *  The worktree it ran in. Claude Code keeps sessions per directory, so
+	 *  one from another path can't be resumed.
+	 */
+	cwd: string,
+};
+
 export type AgentStatus = {
 	id: AgentId,
 	installed: boolean,
@@ -1270,6 +1284,11 @@ export type Space = {
 	process?: SpaceProcess | null,
 	/**  "Not now" to the repo's commands: they are skipped in this space. */
 	commands_denied?: boolean,
+	/**
+	 *  The agent session the last turn ran in: the next turn with the same
+	 *  agent continues it instead of replaying the transcript.
+	 */
+	agent_session?: AgentSession | null,
 	created_at: number,
 	updated_at: number,
 };
