@@ -106,6 +106,7 @@ pub async fn check<R: Runtime>(
         .map_err(|e| format!("download or signature check failed: {e}"))?;
     // On disk now; this process keeps running the old build until a restart.
     tracing::info!(version = %update.version, "updater: installed, restart to apply");
+    notify_installed(app, core, &update.version);
 
     let info = UpdateInfo {
         version: update.version.clone(),
@@ -119,6 +120,51 @@ pub async fn check<R: Runtime>(
         .replace(info.clone());
     events::emitter(app.clone()).update(info.clone());
     Ok(Some(info))
+}
+
+/// A system notification for an installed update, only while the window is
+/// in the background: in front, the "Restart to update" pill says it.
+fn notify_installed<R: Runtime>(app: &AppHandle<R>, core: &Arc<dyn CoreApi>, version: &str) {
+    let focused = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    if focused {
+        return;
+    }
+    let Some(notifier) = app.try_state::<Arc<dyn crate::notify::Notifier>>() else {
+        return;
+    };
+    crate::notify::notify_update(
+        notifier.inner().as_ref(),
+        UpdateWindow {
+            app: app.clone(),
+            core: core.clone(),
+        },
+        version,
+    );
+}
+
+struct UpdateWindow<R: Runtime> {
+    app: AppHandle<R>,
+    core: Arc<dyn CoreApi>,
+}
+
+impl<R: Runtime> crate::notify::UpdateWindow for UpdateWindow<R> {
+    fn focus(&self) {
+        if let Err(err) = crate::commands::focus_main(&self.app) {
+            tracing::warn!(?err, "failed to focus the window after an update click");
+        }
+    }
+
+    fn restart_when_idle(&self) {
+        let (app, core) = (self.app.clone(), self.core.clone());
+        tauri::async_runtime::spawn(async move {
+            if core.is_idle().await {
+                app.request_restart();
+            }
+        });
+    }
 }
 
 /// Runs `check_and_install` on launch and every 6 hours for the app's lifetime.
