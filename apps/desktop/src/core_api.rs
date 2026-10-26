@@ -41,6 +41,14 @@ pub trait CoreApi: Send + Sync {
     async fn regroup(&self, pr: PrId) -> Result<(), CommandError>;
     async fn run_skill(&self, req: RunSkillRequest) -> Result<String, CommandError>;
     async fn ask(&self, req: AskRequest) -> Result<String, CommandError>;
+    /// Saves a file sent with a chat message; its id goes in
+    /// `SpaceSendRequest.attachments` / `AskRequest.attachments`.
+    async fn save_attachment(
+        &self,
+        req: theodore_contract::SaveAttachmentRequest,
+    ) -> Result<theodore_contract::Attachment, CommandError>;
+    /// A saved attachment as a `data:<mime>;base64,…` URL.
+    async fn attachment_data(&self, id: String) -> Result<String, CommandError>;
     async fn cancel_run(&self, run: String) -> Result<(), CommandError>;
     async fn submit_review(&self, req: SubmitReviewRequest) -> Result<(), CommandError>;
     async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError>;
@@ -399,6 +407,15 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn ask(&self, _req: AskRequest) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    async fn save_attachment(
+        &self,
+        _req: theodore_contract::SaveAttachmentRequest,
+    ) -> Result<theodore_contract::Attachment, CommandError> {
+        Err(not_ready())
+    }
+    async fn attachment_data(&self, _id: String) -> Result<String, CommandError> {
         Err(not_ready())
     }
     async fn cancel_run(&self, _run: String) -> Result<(), CommandError> {

@@ -97,6 +97,7 @@ async fn turn(f: &Fixtures, core: &Core, id: &str, text: &str, reply: &str, head
         agent: None,
         model: None,
         mode: None,
+        attachments: None,
     })
     .await
     .unwrap();
@@ -227,6 +228,7 @@ async fn undo_is_refused_while_running_and_when_archived() {
         agent: None,
         model: None,
         mode: None,
+        attachments: None,
     })
     .await
     .unwrap();

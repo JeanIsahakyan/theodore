@@ -179,6 +179,9 @@ pub struct SpaceSendRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub mode: Option<SpaceMode>,
+    /// `save_attachment` ids sent with the message.
+    #[serde(default)]
+    pub attachments: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

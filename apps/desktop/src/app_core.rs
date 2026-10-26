@@ -338,6 +338,15 @@ impl CoreApi for AppCore {
     async fn ask(&self, req: AskRequest) -> Result<String, CommandError> {
         self.core.ask(req).await.map_err(err)
     }
+    async fn save_attachment(
+        &self,
+        req: theodore_contract::SaveAttachmentRequest,
+    ) -> Result<theodore_contract::Attachment, CommandError> {
+        self.core.save_attachment(req).await.map_err(err)
+    }
+    async fn attachment_data(&self, id: String) -> Result<String, CommandError> {
+        self.core.attachment_data(id).await.map_err(err)
+    }
     async fn cancel_run(&self, run: String) -> Result<(), CommandError> {
         self.core.cancel_run(run).await.map_err(err)
     }

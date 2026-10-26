@@ -87,6 +87,12 @@ pub fn build_args(
     if !req.user_mcp {
         args.push("--strict-mcp-config".to_string());
     }
+    // Chat attachments live outside `cwd`; Claude Code's Read only opens
+    // them (images and PDFs included) in a directory it was given.
+    for dir in attachment_dirs(req) {
+        args.push("--add-dir".to_string());
+        args.push(dir.display().to_string());
+    }
     // The run's own MCP server, whatever it is named; with the user's
     // servers on, theirs too (`mcp__*`). `--permission-prompts none`
     // denies whatever isn't pre-approved, so they must be listed to be usable.
@@ -143,6 +149,19 @@ pub fn build_args(
     }
     args.extend(cfg.extra_args.iter().cloned());
     args
+}
+
+/// Each attachment's directory, once, in order.
+fn attachment_dirs(req: &AgentRequest) -> Vec<&Path> {
+    let mut dirs: Vec<&Path> = Vec::new();
+    for a in &req.attachments {
+        if let Some(dir) = a.path.parent()
+            && !dirs.contains(&dir)
+        {
+            dirs.push(dir);
+        }
+    }
+    dirs
 }
 
 /// `--effort <level>` values, as `claude --help` lists them (2.1.310).
@@ -441,6 +460,7 @@ mod read_only_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -473,6 +493,7 @@ mod mcp_config_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         }
     }
 
@@ -600,6 +621,7 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -624,6 +646,7 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: true,
+            attachments: vec![],
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -649,6 +672,7 @@ mod model_and_effort_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         }
     }
 
@@ -699,5 +723,30 @@ mod model_and_effort_tests {
         let args = build_args(&req(None, Some(ULTRACODE)), &Default::default(), None);
         let at = args.iter().position(|a| a == "--effort").unwrap();
         assert_eq!(args[at + 1], "max");
+    }
+
+    fn attachment(path: &str, mime: &str) -> theodore_ports::AgentAttachment {
+        theodore_ports::AgentAttachment {
+            path: path.into(),
+            mime: mime.into(),
+        }
+    }
+
+    #[test]
+    fn each_attachment_directory_is_added_once() {
+        let mut r = req(None, None);
+        assert!(!build_args(&r, &Default::default(), None).contains(&"--add-dir".to_string()));
+        r.attachments = vec![
+            attachment("/data/attachments/a/shot.png", "image/png"),
+            attachment("/data/attachments/b/spec.pdf", "application/pdf"),
+            attachment("/data/attachments/a/shot.png", "image/png"),
+        ];
+        let args = build_args(&r, &Default::default(), None);
+        let dirs: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "--add-dir")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(dirs, ["/data/attachments/a", "/data/attachments/b"]);
     }
 }

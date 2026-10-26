@@ -126,9 +126,21 @@ export type AskRequest = {
 	about: Anchor | null,
 	group: string | null,
 	agent: AgentId | null,
+	/**  `save_attachment` ids sent with the question. */
+	attachments?: string[] | null,
 };
 
 export type Assignee = { kind: "human"; id: string } | { kind: "agent"; id: AgentId };
+
+/**  A saved file. `path` is absolute: the agent reads it from there. */
+export type Attachment = {
+	id: string,
+	name: string,
+	mime: string,
+	/**  Bytes on disk. */
+	size: number,
+	path: string,
+};
 
 export type Author = { kind: "me" } | { kind: "agent"; agent: AgentId };
 
@@ -172,6 +184,8 @@ export type ChatMessage = {
 	 *  "stopped" card with Retry instead of as a normal agent reply.
 	 */
 	failed?: string | null,
+	/**  Files sent with your message; empty on replies and older rows. */
+	attachments?: Attachment[],
 };
 
 export type Check = {
@@ -1148,6 +1162,16 @@ export type SandboxStatus = {
 	prs: number,
 };
 
+/**  `save_attachment`: one file's bytes. Over 25 MB decoded is refused. */
+export type SaveAttachmentRequest = {
+	/**  The file's name; only its last component is kept. */
+	name: string,
+	/**  Empty = guessed from the name's extension. */
+	mime: string,
+	/**  The file's bytes, base64 (standard alphabet). */
+	data: string,
+};
+
 export type SaveConfigRequest = {
 	project: string,
 	layer: ConfigLayer,
@@ -1457,6 +1481,8 @@ export type SpaceSendRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+	/**  `save_attachment` ids sent with the message. */
+	attachments?: string[] | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

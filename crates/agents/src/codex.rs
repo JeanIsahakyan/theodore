@@ -26,6 +26,17 @@ use crate::process::LineParser;
 
 pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     let mut args = vec!["exec".to_string(), "--json".to_string()];
+    // Images go to the model with the prompt; other attachments are only
+    // listed in it (the sandbox reads outside the workspace). Before `-C`:
+    // `-i` takes several values, so a flag must follow it, never the prompt.
+    // It also splits on `,`, so a path with one is left to the prompt.
+    for a in &req.attachments {
+        let path = a.path.display().to_string();
+        if a.mime.starts_with("image/") && !path.contains(',') {
+            args.push("-i".to_string());
+            args.push(path);
+        }
+    }
     args.push("-C".to_string());
     args.push(req.cwd.display().to_string());
     args.push("-s".to_string());
@@ -410,6 +421,7 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
@@ -437,6 +449,7 @@ mod model_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         }
     }
 
@@ -472,5 +485,35 @@ mod model_tests {
                 "{bad}: {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn image_attachments_go_to_dash_i_before_the_other_flags() {
+        let mut r = req(None, None);
+        r.attachments = vec![
+            theodore_ports::AgentAttachment {
+                path: "/data/attachments/a/shot.png".into(),
+                mime: "image/png".into(),
+            },
+            theodore_ports::AgentAttachment {
+                path: "/data/attachments/b/spec.pdf".into(),
+                mime: "application/pdf".into(),
+            },
+            theodore_ports::AgentAttachment {
+                path: "/data/attachments/c/a,b.png".into(),
+                mime: "image/png".into(),
+            },
+        ];
+        let args = build_args(&r, &Default::default());
+        let images: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "-i")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(images, ["/data/attachments/a/shot.png"]);
+        // `-i` is variadic: what follows it must be a flag, not the prompt.
+        let at = args.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(args[at + 2], "-C");
+        assert_eq!(args.last().map(String::as_str), Some("p"));
     }
 }

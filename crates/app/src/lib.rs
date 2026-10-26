@@ -27,6 +27,8 @@ mod tests;
 mod account_gate_tests;
 #[cfg(test)]
 mod account_tests;
+#[cfg(test)]
+mod attachments_tests;
 
 #[cfg(test)]
 mod git_integration_tests;

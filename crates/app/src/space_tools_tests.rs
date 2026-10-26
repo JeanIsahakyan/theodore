@@ -305,6 +305,7 @@ async fn review_runs_get_the_space_reads_only_on_a_spaces_pr() {
             about: None,
             group: None,
             agent: None,
+            attachments: None,
         })
         .await
         .expect("ask");

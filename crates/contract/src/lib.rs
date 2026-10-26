@@ -33,6 +33,8 @@ mod config;
 pub use config::*;
 mod account;
 pub use account::*;
+mod attachments;
+pub use attachments::*;
 mod telemetry;
 pub use telemetry::*;
 
@@ -223,6 +225,9 @@ pub struct AskRequest {
     pub about: Option<Anchor>,
     pub group: Option<String>,
     pub agent: Option<AgentId>,
+    /// `save_attachment` ids sent with the question.
+    #[serde(default)]
+    pub attachments: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -660,6 +665,9 @@ pub struct ChatMessage {
     /// "stopped" card with Retry instead of as a normal agent reply.
     #[serde(default)]
     pub failed: Option<String>,
+    /// Files sent with your message; empty on replies and older rows.
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -697,6 +705,8 @@ pub fn types() -> specta::Types {
         .register::<FileViewedRow>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
+        .register::<Attachment>()
+        .register::<SaveAttachmentRequest>()
         .register::<Setting>()
         .register::<PrSummary>()
         .register::<PrDetail>()

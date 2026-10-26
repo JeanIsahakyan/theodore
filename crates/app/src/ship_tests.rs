@@ -156,6 +156,7 @@ async fn turn(f: &Fixtures, core: &Core, s: &Space, text: &str, head: &str) -> S
         agent: None,
         model: None,
         mode: None,
+        attachments: None,
     })
     .await
     .unwrap();
@@ -624,6 +625,7 @@ async fn run_mode_reaches_the_agent() {
         agent: None,
         model: None,
         mode: Some(SpaceMode::Run),
+        attachments: None,
     })
     .await
     .unwrap();

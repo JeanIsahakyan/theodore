@@ -168,6 +168,30 @@ rest of the message as the task (none → "apply it to the work in this
 space"); the chat keeps the text as typed. Same id in both places → yours
 runs. An unknown `/word` is sent as is.
 
+**Attachments**: a message can carry files — images, PDFs, anything up to
+25 MB each. `save_attachment` stores one under
+`<data dir>/attachments/<id>/<name>` and returns its id; `space_send` (and
+the AI panel's `ask`) take the ids. Your message keeps them
+(`ChatMessage.attachments`, its text as typed); `attachment_data` gives an
+image back as a `data:` URL for the transcript.
+
+```
+save_attachment ──▶ id ──▶ space_send { attachments: [id] }
+                              ├─ your message: text as typed + attachments
+                              └─ prompt: <text or skill expansion>
+                                         Attached files (read them; …):
+                                         - <abs path> (<mime>, <name>)
+```
+
+| Agent | Can open them by |
+| --- | --- |
+| Claude Code | `--add-dir <attachment dir>`, then its Read tool (images, PDFs) |
+| Codex | images as `-i <path>`; other files by path (its sandbox reads anywhere) |
+| Gemini | the path in the prompt only |
+
+Later turns name an earlier message's files — `(attached: shot.png)` — but
+don't send them again.
+
 **Undo last turn**: the Undo button on the agent's last reply (and ⌘K "Undo
 last turn") moves the worktree and the checkpoint ref back to where that
 turn started. The turn stays in the chat, dimmed and marked *undone*, and the
@@ -506,6 +530,7 @@ Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 | `list_spaces` | rows of one project or all (the UI reads the synced rows) |
 | `space_send` | chat row, then an Edit-mode turn in the worktree; checkpoint; refresh the diff |
 | `space_stop` | cancels the running turn |
+| `save_attachment` | stores a file (≤ 25 MB) for a message; `attachment_data` reads it back as a `data:` URL |
 | `space_skills` | skills `/<id>` can run: `~/.claude/skills` plus the worktree's `.claude/skills`, no built-ins |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |
 | `archive_space` | checkpoint, remove the worktree, keep the ref |

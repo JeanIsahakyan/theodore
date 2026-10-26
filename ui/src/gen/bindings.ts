@@ -13,6 +13,8 @@ export const commands = {
 	regroup: (pr: PrId) => typedError<null, CommandError>(__TAURI_INVOKE("regroup", { pr })),
 	runSkill: (req: RunSkillRequest) => typedError<string, CommandError>(__TAURI_INVOKE("run_skill", { req })),
 	ask: (req: AskRequest) => typedError<string, CommandError>(__TAURI_INVOKE("ask", { req })),
+	saveAttachment: (req: SaveAttachmentRequest) => typedError<Attachment, CommandError>(__TAURI_INVOKE("save_attachment", { req })),
+	attachmentData: (id: string) => typedError<string, CommandError>(__TAURI_INVOKE("attachment_data", { id })),
 	cancelRun: (run: string) => typedError<null, CommandError>(__TAURI_INVOKE("cancel_run", { run })),
 	submitReview: (req: SubmitReviewRequest) => typedError<null, CommandError>(__TAURI_INVOKE("submit_review", { req })),
 	detectAgents: () => typedError<AgentStatus[], CommandError>(__TAURI_INVOKE("detect_agents")),
@@ -310,6 +312,18 @@ export type AskRequest = {
 	about: Anchor | null,
 	group: string | null,
 	agent: AgentId | null,
+	/**  `save_attachment` ids sent with the question. */
+	attachments?: string[] | null,
+};
+
+/**  A saved file. `path` is absolute: the agent reads it from there. */
+export type Attachment = {
+	id: string,
+	name: string,
+	mime: string,
+	/**  Bytes on disk. */
+	size: number,
+	path: string,
 };
 
 /**
@@ -1073,6 +1087,16 @@ export type SandboxStatus = {
 	prs: number,
 };
 
+/**  `save_attachment`: one file's bytes. Over 25 MB decoded is refused. */
+export type SaveAttachmentRequest = {
+	/**  The file's name; only its last component is kept. */
+	name: string,
+	/**  Empty = guessed from the name's extension. */
+	mime: string,
+	/**  The file's bytes, base64 (standard alphabet). */
+	data: string,
+};
+
 export type SaveConfigRequest = {
 	project: string,
 	layer: ConfigLayer,
@@ -1353,6 +1377,8 @@ export type SpaceSendRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+	/**  `save_attachment` ids sent with the message. */
+	attachments?: string[] | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

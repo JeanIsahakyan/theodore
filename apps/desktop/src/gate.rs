@@ -195,6 +195,7 @@ mod tests {
             // agents
             "run_skill",
             "ask",
+            "save_attachment",
             "delegate_task",
             "detect_agents",
             "agent_models",

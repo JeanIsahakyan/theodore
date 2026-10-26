@@ -72,6 +72,18 @@ pub struct AgentRequest {
     /// to `mcp`: the `agents.user_mcp` setting. `false` = only `mcp`.
     #[serde(default)]
     pub user_mcp: bool,
+    /// Files sent with this turn (chat attachments). The prompt already
+    /// lists their paths; each runner adds what its CLI needs to open them
+    /// (Claude Code: `--add-dir`, Codex: `-i` for images).
+    #[serde(default)]
+    pub attachments: Vec<AgentAttachment>,
+}
+
+/// One file the agent should read, outside `cwd`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentAttachment {
+    pub path: PathBuf,
+    pub mime: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

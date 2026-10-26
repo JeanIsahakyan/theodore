@@ -13,13 +13,15 @@ use theodore_contract::{
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
-    AgentEvent, AgentMode, AgentRequest, NewAction, SPACE_REF_PREFIX, SyncActionCode, space_ref,
+    AgentAttachment, AgentEvent, AgentMode, AgentRequest, NewAction, SPACE_REF_PREFIX,
+    SyncActionCode, space_ref,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
 use crate::usecases::agents::tool_log_line_with;
+use crate::usecases::attachments::{agent_attachments, with_attachments};
 use crate::usecases::projects::stable_hash_u32;
 use crate::usecases::skills::{expand_skill, space_skill_content};
 
@@ -197,6 +199,7 @@ impl Core {
                 agent: None,
                 model: None,
                 mode: None,
+                attachments: None,
             })
             .await?;
         }
@@ -242,7 +245,9 @@ impl Core {
             return Err(AppError::Invalid("the space is still setting up".into()));
         }
         let text = req.text.trim().to_string();
-        if text.is_empty() {
+        // Checked before anything is stored: an unknown id fails the send.
+        let attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
+        if text.is_empty() && attachments.is_empty() {
             return Err(AppError::Invalid("empty message".into()));
         }
         let project = self.space_project(&space).await?;
@@ -272,6 +277,7 @@ impl Core {
             refs: vec![],
             at: now,
             failed: None,
+            attachments: attachments.clone(),
         };
         let run_id = format!("space:{}:{message_id}", space.id);
         self.apply(vec![
@@ -306,10 +312,12 @@ impl Core {
             },
         );
         // `/<skill> task` runs one of your or the repo's skills as this
-        // turn's instructions; the transcript keeps the text as typed.
+        // turn's instructions, and the attached files are listed after it;
+        // the transcript keeps the text as typed.
         let claude_home = &self.0.deps.claude_home;
         let ask = expand_skill(&text, |id| space_skill_content(id, &wt.path, claude_home))
             .unwrap_or_else(|| text.clone());
+        let ask = with_attachments(ask, &attachments);
         let turn = Turn {
             run_id,
             message: message_id.clone(),
@@ -328,6 +336,7 @@ impl Core {
                 .with_system(Some(system_prompt(&space, self.0.deps.tools.is_some())))
                 .unwrap_or_default(),
             env: self.space_agent_env(&space).await,
+            attachments: agent_attachments(&attachments),
             cwd: wt.path,
             cancel,
         };
@@ -663,6 +672,7 @@ struct Turn {
     prompt: String,
     system: String,
     env: Vec<(String, String)>,
+    attachments: Vec<AgentAttachment>,
     cwd: PathBuf,
     cancel: CancellationToken,
 }
@@ -678,6 +688,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         prompt,
         system,
         env,
+        attachments,
         cwd,
         cancel,
     } = turn;
@@ -708,6 +719,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         stall_after_ms: core.stall_after_ms().await,
         env,
         user_mcp: core.user_mcp_allowed().await,
+        attachments,
     };
     let mut text = String::new();
     let mut error = None;
@@ -807,6 +819,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         refs: vec![],
         at: core.0.deps.clock.now(),
         failed: error.clone(),
+        attachments: vec![],
     };
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
     // `check` (docs/config.md) is part of the turn: the space stays
@@ -1172,6 +1185,11 @@ fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
         };
         let body: String = m.text.chars().take(HISTORY_CHARS).collect();
         out.push_str(&format!("\n[{who}]\n{body}\n"));
+        // Named only: the files went with that turn, not this one.
+        if !m.attachments.is_empty() {
+            let names: Vec<&str> = m.attachments.iter().map(|a| a.name.as_str()).collect();
+            out.push_str(&format!("(attached: {})\n", names.join(", ")));
+        }
     }
     out.push_str(&format!("\n---\n\nNew message from the user:\n{text}"));
     out
@@ -1249,6 +1267,7 @@ mod tests {
             refs: vec![],
             at,
             failed: None,
+            attachments: vec![],
         }
     }
 
@@ -1269,5 +1288,20 @@ mod tests {
         assert!(p.contains("[user]\nm19"));
         assert!(p.contains("[codex]\ndone"));
         assert!(p.ends_with("New message from the user:\nnext"));
+    }
+
+    #[test]
+    fn earlier_attachments_are_named_not_attached_again() {
+        let mut first = msg(Author::Me, "see the screenshot", 1);
+        first.attachments = vec![theodore_contract::Attachment {
+            id: "a1".into(),
+            name: "shot.png".into(),
+            mime: "image/png".into(),
+            size: 3,
+            path: "/data/attachments/a1/shot.png".into(),
+        }];
+        let p = turn_prompt(&[first], "next");
+        assert!(p.contains("[user]\nsee the screenshot\n(attached: shot.png)\n"));
+        assert!(!p.contains("/data/attachments"));
     }
 }

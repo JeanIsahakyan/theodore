@@ -352,6 +352,7 @@ async fn chat_and_skill_runs_carry_the_repo_instructions() {
         about: None,
         group: None,
         agent: Some(theodore_domain::AgentId::Claude),
+        attachments: None,
     })
     .await
     .expect("ask");

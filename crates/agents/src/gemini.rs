@@ -353,6 +353,7 @@ mod tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         }
     }
 }
@@ -375,6 +376,7 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["--approval-mode", "yolo"]));
@@ -400,6 +402,7 @@ mod model_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
         };
         let args = build_args(&req, &Default::default());
         assert!(

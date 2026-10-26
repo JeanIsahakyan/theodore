@@ -813,6 +813,9 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 - A skill can run on several agents in parallel; findings merge (§4).
 - Chat: questions about the PR, a group, or a line; replies stream as ephemeral
   events and are stored when complete.
+- Attachments: a question can carry files (images, PDFs, anything), same as
+  a space's chat (docs/spaces.md "Attachments"). The stored question keeps
+  them; the agent gets their paths listed after the question.
 - Cost: the app neither shows nor limits what agent runs cost (budgets and
   the spend display were dropped by the owner, 2026-10-22). The eval
   harness (`theodore eval`) still reports cost per grouping run.
