@@ -60,21 +60,28 @@ export function Composer({
   const empty = !value.trim();
   const own = useRef<HTMLTextAreaElement | null>(null);
   const matches = skills ? matchSkills(skills, value) : null;
-  const [hi, setHi] = useState(0);
-  useEffect(() => setHi(0), [value]);
+  // The highlighted skill, back to the first whenever the text changes.
+  const [hiAt, setHiAt] = useState({ text: '', i: 0 });
+  const hi = hiAt.text === value ? hiAt.i : 0;
+  const setHi = (f: (n: number) => number) =>
+    setHiAt({ text: value, i: f(hi) });
   const pick = (s: SkillInfo) => {
     onChange(`/${s.id} `);
     own.current?.focus();
   };
   const ref = (el: HTMLTextAreaElement | null) => {
     own.current = el;
-    if (typeof inputRef === 'function') inputRef(el);
-    else if (inputRef) inputRef.current = el;
+    assignRef(inputRef, el);
   };
   return (
     <div className="flex w-full flex-col gap-2">
       {matches && matches.length > 0 && (
-        <SkillMenu matches={matches} hi={hi} onHover={setHi} onPick={pick} />
+        <SkillMenu
+          matches={matches}
+          hi={hi}
+          onHover={(i) => setHi(() => i)}
+          onPick={pick}
+        />
       )}
       <TextField
         fullWidth
@@ -179,6 +186,12 @@ export function Composer({
       </TextField>
     </div>
   );
+}
+
+/** Hands `el` to a caller's ref, object or callback. */
+function assignRef<T>(ref: Ref<T> | undefined, el: T | null): void {
+  if (typeof ref === 'function') ref(el);
+  else if (ref) (ref as { current: T | null }).current = el;
 }
 
 /** A footer chip that opens a menu: label, chevron. */

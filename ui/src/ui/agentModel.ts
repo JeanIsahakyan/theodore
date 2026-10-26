@@ -13,7 +13,8 @@ export type Choice = { id: string; label: string; hint?: string };
 
 /** Claude Code's `--model` aliases (latest model of each family). */
 export const CLAUDE_MODELS: Choice[] = [
-  { id: 'opus', label: 'Opus', hint: 'Most capable' },
+  { id: 'fable', label: 'Fable', hint: 'Newest' },
+  { id: 'opus', label: 'Opus', hint: 'Deep reasoning' },
   { id: 'sonnet', label: 'Sonnet', hint: 'Balanced' },
   { id: 'haiku', label: 'Haiku', hint: 'Fastest, cheapest' },
 ];

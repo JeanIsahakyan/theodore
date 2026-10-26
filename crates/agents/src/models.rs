@@ -19,10 +19,12 @@ use crate::claude::EFFORT_LEVELS;
 /// picker forever.
 const CODEX_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Claude Code's `--model` aliases, most capable first.
+/// Claude Code's `--model` aliases (each the latest of its family), newest
+/// family first.
 pub fn claude_models() -> Vec<ModelInfo> {
     [
-        ("opus", "Opus", "Most capable"),
+        ("fable", "Fable", "Newest"),
+        ("opus", "Opus", "Deep reasoning"),
         ("sonnet", "Sonnet", "Balanced"),
         ("haiku", "Haiku", "Fastest, cheapest"),
     ]
@@ -213,7 +215,7 @@ mod tests {
     fn claude_aliases_in_order_with_every_effort() {
         let models = claude_models();
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["opus", "sonnet", "haiku"]);
+        assert_eq!(ids, ["fable", "opus", "sonnet", "haiku"]);
         for m in &models {
             assert_eq!(m.efforts, ["low", "medium", "high", "xhigh", "max"]);
             assert_eq!(m.default_effort, None);

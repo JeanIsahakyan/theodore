@@ -25,6 +25,10 @@ function load(agent: AgentId): Promise<AgentModel[]> {
   if (!p) {
     p = Promise.resolve()
       .then(() => api.agentModels(agent))
+      // The sandbox's fake agents list nothing: Claude's aliases still work.
+      .then((list) =>
+        !list.length && agent === 'claude' ? CLAUDE_FALLBACK : list,
+      )
       .catch(() => {
         cache.delete(agent);
         return agent === 'claude' ? CLAUDE_FALLBACK : [];
