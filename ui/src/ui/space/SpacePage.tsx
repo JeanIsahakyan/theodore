@@ -55,7 +55,7 @@ import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../SidePanel';
-import { rich } from '../../highlight';
+import { Md } from '../../highlight';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
 import { agentEffort, agentLabel, agentModel } from '../agentModel';
@@ -801,8 +801,10 @@ const SpaceChat = observer(function SpaceChat({
                   {m.failed}
                 </span>
               ) : (
-                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                  {m.author.kind === 'me' ? m.text : rich(m.text)}
+                <div
+                  className={`text-sm leading-relaxed ${m.author.kind === 'me' ? 'whitespace-pre-wrap' : ''}`}
+                >
+                  {m.author.kind === 'me' ? m.text : <Md text={m.text} />}
                 </div>
               )}
               {m.author.kind === 'agent' && turnTools(m.id)}
@@ -826,8 +828,8 @@ const SpaceChat = observer(function SpaceChat({
                 <ToolCalls tools={tools} running turn={run} />
               )}
               {streaming && (
-                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                  {rich(streaming)}
+                <div className="text-sm leading-relaxed">
+                  <Md text={streaming} />
                 </div>
               )}
             </div>

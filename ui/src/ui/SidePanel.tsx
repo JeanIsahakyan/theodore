@@ -63,7 +63,7 @@ import {
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import type { LineAsk } from '../stores/EphemeralStore';
-import { rich } from '../highlight';
+import { Md, rich } from '../highlight';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
 import { AgentMenu } from './AgentMenu';
@@ -190,8 +190,8 @@ const LineAskBubble = observer(function LineAskBubble({
             </Alert.Content>
           </Alert>
         ) : text ? (
-          <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-            {rich(text)}
+          <div className="text-sm leading-relaxed">
+            <Md text={text} />
           </div>
         ) : (
           <Dots />
@@ -424,11 +424,13 @@ export function feedOf(
 ): FeedItem[] {
   return [
     ...runs.map((run): FeedItem => ({ kind: 'run', at: run.started_at, run })),
-    ...messages.map((message): FeedItem => ({
-      kind: 'message',
-      at: message.at,
-      message,
-    })),
+    ...messages.map(
+      (message): FeedItem => ({
+        kind: 'message',
+        at: message.at,
+        message,
+      }),
+    ),
   ].sort((a, b) => a.at - b.at);
 }
 
@@ -505,8 +507,8 @@ const SkillRunView = observer(function SkillRunView({
         )}
       </div>
       {live && liveText && (
-        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-          {rich(liveText)}
+        <div className="text-sm leading-relaxed">
+          <Md text={liveText} />
         </div>
       )}
       {(r.status === 'failed' || r.status === 'stalled') && (
@@ -1026,8 +1028,8 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                           <AgentFailedCard pr={pr} m={m} messages={messages} />
                         ) : (
                           <>
-                            <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                              {rich(m.text)}
+                            <div className="text-sm leading-relaxed">
+                              <Md text={m.text} />
                             </div>
                             {m.refs.length > 0 && (
                               <div className="flex flex-wrap gap-1.5">
@@ -1081,8 +1083,10 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                           </Alert.Content>
                         </Alert>
                       ) : store.ephemeral.agentText.get(pending.run) ? (
-                        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                          {rich(store.ephemeral.agentText.get(pending.run)!)}
+                        <div className="text-sm leading-relaxed">
+                          <Md
+                            text={store.ephemeral.agentText.get(pending.run)!}
+                          />
                         </div>
                       ) : (
                         <Dots />
