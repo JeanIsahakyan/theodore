@@ -9,6 +9,7 @@
 // only).
 
 import { $, browser } from '@wdio/globals';
+import { Key } from 'webdriverio';
 
 /** The demo PR most specs open: `octo/webhooks` #101, the
  *  push-and-regroup PR. Matches the id cell's `title` in the inbox row. */
@@ -148,8 +149,9 @@ export async function openDemoPr(pr = DEMO_PR): Promise<void> {
   await goToInbox();
   const row = await $(prRowSelector(pr));
   await row.waitForDisplayed({ timeout: 15_000 });
-  // A click on a row opens its PR (`RowList`'s `onPress`).
   await row.click();
+  // The list's `onAction` (`RowList`) opens the selected PR on Enter.
+  await browser.keys(Key.Enter);
   const number = pr.slice(pr.indexOf('#'));
   await $(
     `//*[@role="toolbar"][@aria-label="PR"][.//*[normalize-space(.)=${lit(number)}]]`,
