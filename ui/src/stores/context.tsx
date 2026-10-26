@@ -23,6 +23,12 @@ export function useRootStore(): RootStore {
   return store;
 }
 
+/** The store, or null outside a provider: for leaf art (the logo) that has
+ *  a sensible default and renders in isolation too. */
+export function useRootStoreOrNull(): RootStore | null {
+  return useContext(RootStoreContext);
+}
+
 export const useUi = () => useRootStore().ui;
 export const useModels = () => useRootStore().models;
 export const useEphemeral = () => useRootStore().ephemeral;

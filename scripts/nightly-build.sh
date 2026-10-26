@@ -65,8 +65,17 @@ else
   echo "▶ Theodore $version ($sha, $THEODORE_BUILD_ENV), no account"
 fi
 
+# The Dock icon in this build's colours (purple for a nightly, orange for
+# staging); production keeps the committed icons.
+bundle_config='"createUpdaterArtifacts":false'
+if [ "$THEODORE_BUILD_ENV" != production ]; then
+  icons="$root/target/icons/$THEODORE_BUILD_ENV"
+  sh scripts/icon-variant.sh "$THEODORE_BUILD_ENV" "$icons" >/dev/null
+  bundle_config="$bundle_config,\"icon\":[\"$icons/32x32.png\",\"$icons/128x128.png\",\"$icons/icon.icns\"]"
+fi
+
 (cd apps/desktop && cargo tauri build --bundles app \
-  --config "{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":false}}")
+  --config "{\"version\":\"$version\",\"bundle\":{$bundle_config}}")
 
 bundle="$root/target/release/bundle"
 app="$bundle/macos/Theodore.app"

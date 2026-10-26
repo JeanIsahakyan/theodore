@@ -436,7 +436,7 @@ body.cmd .lines .src span:hover {
   }
 }
 
-/* The logo's refraction stripes drift through the lenses (see Welcome.tsx):
+/* The logo's refraction stripes drift through the lenses (see Logo.tsx):
  * one stripe pitch per loop, so it never jumps. */
 .welcome-stripes {
   animation: welcome-drift 4.2s linear infinite;
