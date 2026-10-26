@@ -55,7 +55,10 @@ env:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macOS 26's SDK: apps linked against an older one run in compatibility
+    # mode on macOS 26, with the old small window controls whatever the
+    # window does (apps/desktop/src/chrome.rs).
+    runs-on: macos-26
     outputs:
       version: ${{ steps.version.outputs.version }}
       artifact: theodore-${{ inputs.build-env }}

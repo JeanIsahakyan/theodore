@@ -19,8 +19,9 @@ jobs:
   rust:
     # Every crate (incl. the Tauri shell) targets macOS; run the whole
     # workspace there rather than installing Linux GTK/WebKit dev packages
-    # just to compile a macOS-only app.
-    runs-on: macos-14
+    # just to compile a macOS-only app. The release builds' runner
+    # (build.yml), so CI compiles against the same SDK.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
