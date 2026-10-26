@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use theodore_contract::{Ephemeral, SaveSkillRequest, SkillBody, SkillInfo, ToastLevel};
-use theodore_domain::PrId;
+use theodore_domain::{HostKind, PrId};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
@@ -168,6 +168,48 @@ pub(crate) fn resolve_skill_content(
     builtin_content(id).map(str::to_string)
 }
 
+/// A space's `SKILL.md` for `id`: yours (`claude_home`) first, then the
+/// space worktree's own `.claude/skills`. No built-ins — they are review
+/// skills that report through Theodore's review tools.
+pub(crate) fn space_skill_content(id: &str, worktree: &Path, claude_home: &Path) -> Option<String> {
+    if !is_valid_skill_id(id) {
+        return None;
+    }
+    std::fs::read_to_string(claude_home.join(id).join("SKILL.md"))
+        .or_else(|_| {
+            std::fs::read_to_string(worktree.join(".claude/skills").join(id).join("SKILL.md"))
+        })
+        .ok()
+}
+
+/// `/<id> [task]` at the start of a space message → that turn's prompt
+/// with the skill's `SKILL.md` inlined. `None` (send the text as typed)
+/// when the text doesn't start with a valid id or `lookup` has no such
+/// skill.
+pub(crate) fn expand_skill(
+    text: &str,
+    lookup: impl FnOnce(&str) -> Option<String>,
+) -> Option<String> {
+    let body = text.trim().strip_prefix('/')?;
+    let (id, rest) = match body.find(char::is_whitespace) {
+        Some(i) => (&body[..i], body[i..].trim()),
+        None => (body, ""),
+    };
+    if !is_valid_skill_id(id) {
+        return None;
+    }
+    let content = lookup(id)?;
+    let task = if rest.is_empty() {
+        "Apply it to the work in this space.".to_string()
+    } else {
+        format!("Task: {rest}")
+    };
+    Some(format!(
+        "Use the `{id}` skill. Its instructions (SKILL.md):\n\n{}\n\n{task}",
+        content.trim_end()
+    ))
+}
+
 impl Core {
     pub async fn list_skills(&self, pr: Option<PrId>) -> AppResult<Vec<SkillInfo>> {
         let mut out: Vec<SkillInfo> = BUILTINS
@@ -204,6 +246,27 @@ impl Core {
             .map(|s| s.id.clone())
             .collect();
         out.retain(|s| s.source != "built-in" || !forked.contains(&s.id));
+        Ok(out)
+    }
+
+    /// Skills a space's chat can run with `/<id>`: yours
+    /// (`~/.claude/skills`) and the space worktree's `.claude/skills`. No
+    /// built-ins. A repo skill sharing an id with yours is listed too, but
+    /// `/<id>` runs yours (`space_skill_content`). A worktree that isn't
+    /// there (yet) just has no repo skills.
+    pub async fn space_skills(&self, space: &str) -> AppResult<Vec<SkillInfo>> {
+        let space = self.space_row(space).await?;
+        let project = self.space_project(&space).await?;
+        let mut out = skills_in_dir(&self.0.deps.claude_home, "~/.claude/skills");
+        let label = if project.repo.host == HostKind::Local {
+            project.repo.name.clone()
+        } else {
+            project.repo.slug()
+        };
+        out.extend(skills_in_dir(
+            &Path::new(&space.worktree).join(".claude/skills"),
+            &format!("{label} · .claude/skills"),
+        ));
         Ok(out)
     }
 
@@ -353,5 +416,88 @@ mod skill_id_tests {
         for ok in ["bugs", "security-review", "my_skill.v2"] {
             assert!(is_valid_skill_id(ok), "{ok}");
         }
+    }
+}
+
+#[cfg(test)]
+mod expand_skill_tests {
+    use super::{expand_skill, space_skill_content};
+
+    fn lookup(id: &str) -> Option<String> {
+        (id == "polish").then(|| "---\nname: polish\n---\nTighten the code.\n".to_string())
+    }
+
+    #[test]
+    fn inlines_the_skill_with_the_task() {
+        assert_eq!(
+            expand_skill("/polish  the login form ", lookup).as_deref(),
+            Some(
+                "Use the `polish` skill. Its instructions (SKILL.md):\n\n\
+                 ---\nname: polish\n---\nTighten the code.\n\n\
+                 Task: the login form"
+            )
+        );
+        assert!(
+            expand_skill("/polish\nline two", lookup)
+                .unwrap()
+                .ends_with("\n\nTask: line two")
+        );
+    }
+
+    #[test]
+    fn without_a_task_it_applies_to_the_space() {
+        assert!(
+            expand_skill("/polish", lookup)
+                .unwrap()
+                .ends_with("Tighten the code.\n\nApply it to the work in this space.")
+        );
+        assert!(expand_skill("  /polish  ", lookup).is_some());
+    }
+
+    #[test]
+    fn anything_else_is_sent_as_typed() {
+        for text in [
+            "/unknown do it",
+            "/",
+            "/ polish",
+            "please /polish this",
+            "polish",
+            "/polishing",
+            "/polish/x",
+            "//polish",
+        ] {
+            assert_eq!(expand_skill(text, lookup), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_ids_never_reach_the_lookup() {
+        for text in ["/../polish x", "/.polish", "/a/b x", "/a\\b"] {
+            let looked_up = std::cell::Cell::new(false);
+            let probe = |_: &str| {
+                looked_up.set(true);
+                Some(String::new())
+            };
+            assert_eq!(expand_skill(text, probe), None, "{text:?}");
+            assert!(!looked_up.get(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn yours_wins_over_the_repo_and_built_ins_are_not_offered() {
+        let home = tempfile::tempdir().unwrap();
+        let wt = tempfile::tempdir().unwrap();
+        let put = |root: &std::path::Path, id: &str, body: &str| {
+            std::fs::create_dir_all(root.join(id)).unwrap();
+            std::fs::write(root.join(id).join("SKILL.md"), body).unwrap();
+        };
+        put(home.path(), "both", "mine");
+        put(&wt.path().join(".claude/skills"), "both", "repo's");
+        put(&wt.path().join(".claude/skills"), "repo-only", "repo's");
+        let get = |id| space_skill_content(id, wt.path(), home.path());
+        assert_eq!(get("both").as_deref(), Some("mine"));
+        assert_eq!(get("repo-only").as_deref(), Some("repo's"));
+        assert_eq!(get("bugs"), None);
+        assert_eq!(get("../x"), None);
     }
 }

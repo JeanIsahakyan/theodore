@@ -147,7 +147,10 @@ export const SettingsNav = observer(function SettingsNav({
   );
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
-      <div data-tauri-drag-region className="px-3 pb-2 pt-11">
+      <div
+        data-tauri-drag-region
+        className="px-3 pb-2 pt-[calc(var(--controls-bottom)+0.75rem)]"
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -597,8 +600,9 @@ const AgentsPage = observer(function AgentsPage() {
         <span className="text-xs text-muted">
           Used by every run of that agent: grouping, chat, skills, fixes and
           spaces. Default leaves it to the CLI. Effort is Claude Code&apos;s{' '}
-          <code className="font-mono">--effort</code>; the other CLIs have no
-          such flag.
+          <code className="font-mono">--effort</code> and Codex&apos;s{' '}
+          <code className="font-mono">model_reasoning_effort</code>; Gemini CLI
+          has no such setting.
         </span>
       </section>
       <Separator />

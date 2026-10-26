@@ -8,6 +8,9 @@ on:
     branches: [main, staging]
   pull_request:
 
+# Rust caches are saved from staging only and every PR reads them: a ~1 GB
+# cache per PR pushed staging's out of the repo's 10 GB, so clippy rebuilt
+# the dependencies on most runs.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -19,8 +22,9 @@ jobs:
   rust:
     # Every crate (incl. the Tauri shell) targets macOS; run the whole
     # workspace there rather than installing Linux GTK/WebKit dev packages
-    # just to compile a macOS-only app.
-    runs-on: macos-14
+    # just to compile a macOS-only app. The release builds' runner
+    # (build.yml), so CI compiles against the same SDK.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -29,12 +33,27 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/staging' }}
 
       - name: fmt
         run: cargo fmt --all --check
 
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Tests next to clippy, not after it: the two compile separately anyway
+  # (clippy only checks), so the PR waits for the slower one, not both.
+  rust-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/staging' }}
 
       - name: test
         run: cargo test --workspace
@@ -108,6 +127,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/staging' }}
 
       - uses: pnpm/action-setup@v4
         with:

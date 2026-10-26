@@ -7,6 +7,8 @@ import type {
   AccountSignInState,
   AccountStatus,
   AddProjectRequest,
+  AgentId,
+  AgentModel,
   AgentStatus,
   AppInfo,
   AskRequest,
@@ -186,6 +188,8 @@ export const api = {
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),
   detectAgents: () => call<AgentStatus[]>('detect_agents'),
+  agentModels: (agent: AgentId) =>
+    call<AgentModel[]>('agent_models', { agent }),
   appInfo: () => call<AppInfo>('app_info'),
   checkUpdate: () => call<UpdateInfo | null>('check_update'),
   installUpdate: () => call<null>('install_update'),
@@ -262,6 +266,7 @@ export const api = {
     call<Space[]>('list_spaces', { project }),
   spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
+  spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
   spaceReview: (req: SpaceReviewRequest) =>
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),

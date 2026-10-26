@@ -227,7 +227,7 @@ export const Sidebar = observer(function Sidebar() {
       <Toolbar
         aria-label="Workspace"
         data-tauri-drag-region
-        className="flex w-full items-center gap-1.5 pb-3 pe-4 ps-3.5 pt-11"
+        className="flex w-full items-center gap-1.5 pb-3 pe-4 ps-3.5 pt-[calc(var(--controls-bottom)+0.75rem)]"
       >
         <WorkspaceSwitcher />
         <Tooltip>

@@ -197,12 +197,14 @@ mod tests {
             "ask",
             "delegate_task",
             "detect_agents",
+            "agent_models",
             // projects and spaces
             "add_project",
             "remove_project",
             "list_spaces",
             "create_space",
             "space_send",
+            "space_skills",
             "space_run",
             // shell-side
             "pick_folder",

@@ -6,17 +6,18 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 use theodore_contract::{
-    AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
-    CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
-    DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
-    HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
-    LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
-    OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
-    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
-    SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
-    SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
+    AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
+    BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
+    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
-use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
+use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 
 use crate::core_api::CoreApi;
 use crate::updater;
@@ -138,6 +139,16 @@ pub async fn detect_agents(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Vec<AgentStatus>, CommandError> {
     op.run(async move { core.detect_agents().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_models(
+    op: crate::op::Op,
+    agent: AgentId,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<AgentModel>, CommandError> {
+    op.run(async move { core.agent_models(agent).await }).await
 }
 
 #[tauri::command]
@@ -694,6 +705,16 @@ pub async fn space_stop(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<(), CommandError> {
     op.run(async move { core.space_stop(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_skills(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<SkillInfo>, CommandError> {
+    op.run(async move { core.space_skills(space).await }).await
 }
 
 #[tauri::command]

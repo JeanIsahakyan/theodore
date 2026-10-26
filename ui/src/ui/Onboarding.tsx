@@ -190,7 +190,9 @@ export const Onboarding = observer(function Onboarding() {
   };
 
   return (
-    <div className="onboarding flex h-full items-center-safe justify-center-safe overflow-auto bg-background p-6">
+    <div className="onboarding relative flex h-full items-center-safe justify-center-safe overflow-auto bg-background p-6">
+      {/* The title bar is an overlay: keep the window draggable. */}
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-10" />
       <Card className="w-full max-w-[600px] gap-0 p-0">
         <div className="flex flex-col gap-4 px-8 pb-6 pt-8">
           <div className="flex items-center gap-2.5">
@@ -241,16 +243,14 @@ export const Onboarding = observer(function Onboarding() {
               <Spinner />
             </div>
           )}
-          {stepsKnown && step === 0 && (
-            <div className="onb-welcome flex items-center gap-4 pb-2">
-              <WelcomeLogo size={56} />
-              <span className="flex flex-col gap-0.5">
-                <span className="text-lg font-semibold">
-                  Welcome to Theodore
-                </span>
-                <span className="text-sm text-muted">
-                  A few steps, then straight to your reviews.
-                </span>
+          {/* The sign-in is its own first step: no pitch above it. */}
+          {stepsKnown && step === 0 && id !== 'account' && (
+            <div className="onb-welcome flex flex-col gap-0.5 pb-2">
+              <span className="text-lg font-semibold">
+                Review pull requests by meaning, not by file order.
+              </span>
+              <span className="text-sm text-muted">
+                A few steps, then straight to your reviews.
               </span>
             </div>
           )}

@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use theodore_domain::{AgentId, Usage};
 use theodore_ports::{
     AgentError, AgentEvent, AgentInfo, AgentMode, AgentPort, AgentRequest, AgentRun, McpEndpoint,
+    ModelInfo,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -892,6 +893,43 @@ impl AgentPort for SynthAgents {
                 installed: true,
             })
             .collect()
+    }
+
+    /// A demo catalog shaped like the real CLIs' (current models, earlier
+    /// versions, per-model effort levels), so the sandbox shows the picker.
+    async fn models(&self, agent: AgentId) -> Vec<ModelInfo> {
+        let m = |id: &str, label: &str, efforts: &[&str], default: &str, older: bool| ModelInfo {
+            id: id.into(),
+            label: label.into(),
+            description: None,
+            efforts: efforts.iter().map(|e| e.to_string()).collect(),
+            default_effort: Some(default.into()),
+            older,
+        };
+        const CLAUDE: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+        const CODEX: &[&str] = &["low", "medium", "high", "xhigh", "max", "ultra"];
+        match agent {
+            AgentId::Claude => vec![
+                m("claude-opus-5-5", "Opus 5.5", CLAUDE, "medium", false),
+                m("claude-fable-5-1", "Fable 5.1", CLAUDE, "high", false),
+                m("claude-sonnet-5-5", "Sonnet 5.5", CLAUDE, "medium", false),
+                m("claude-haiku-5-5", "Haiku 5.5", CLAUDE, "medium", false),
+                m("claude-opus-5", "Opus 5", CLAUDE, "high", true),
+                m(
+                    "claude-opus-4-6",
+                    "Opus 4.6",
+                    &["low", "medium", "high", "max"],
+                    "high",
+                    true,
+                ),
+            ],
+            AgentId::Codex => vec![
+                m("gpt-6-astra", "GPT-6-Astra", CODEX, "low", false),
+                m("gpt-6-sol", "GPT-6-Sol", CODEX, "medium", false),
+                m("gpt-6-luna", "GPT-6-Luna", &CODEX[..5], "medium", false),
+            ],
+            AgentId::Gemini => vec![],
+        }
     }
 
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {

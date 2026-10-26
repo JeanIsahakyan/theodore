@@ -67,6 +67,7 @@ import { rich } from '../highlight';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
 import { AgentMenu } from './AgentMenu';
+import { SkillMenu, matchSkills, skillMenuKey } from './SkillMenu';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
 import { isAgentEnabled } from './Settings';
@@ -744,15 +745,6 @@ const FindingCard = observer(function FindingCard({
   );
 });
 
-/** Skills matching what's typed after `/`, nothing once a space ends the name. */
-function matchSkills(skills: SkillInfo[], text: string): SkillInfo[] | null {
-  if (!text.startsWith('/') || /\s/.test(text)) return null;
-  const q = text.slice(1).toLowerCase();
-  return skills.filter(
-    (s) => s.id.toLowerCase().includes(q) || s.title.toLowerCase().includes(q),
-  );
-}
-
 /** "2 findings hidden by config" for a run whose findings on
  *  `review.ignore_findings` paths were dropped; `null` when none were. */
 export function hiddenFindingsNote(
@@ -1158,54 +1150,28 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
 
       <div className="chat-input flex flex-col gap-2.5 px-4 pb-3 pt-1">
         {matches && matches.length > 0 && (
-          <Card className="slash-menu min-w-0 gap-0 p-1.5 shadow-overlay">
-            <ListBox
-              aria-label="Skills"
-              selectionMode="none"
-              onAction={(k) => {
-                const s = matches.find((x) => x.id === String(k));
-                if (s) runMatch(s);
-              }}
-              className="max-h-72 overflow-y-auto p-0"
-            >
-              {matches.map((s, i) => (
-                <ListBox.Item
-                  key={s.id}
-                  id={s.id}
-                  textValue={s.title}
-                  onHoverStart={() => setHi(i)}
-                  className={`min-w-0 flex-col items-start gap-0.5 rounded-2xl px-3 py-2 ${i === Math.min(hi, matches.length - 1) ? 'bg-default' : ''}`}
+          <SkillMenu
+            matches={matches}
+            hi={hi}
+            onHover={setHi}
+            onPick={runMatch}
+            footer={
+              <div className="flex items-center gap-1 ps-3 pt-1 text-xs text-muted">
+                <span className="min-w-0 truncate">
+                  Runs on {skillAgents.join(' + ')}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="manage-skills ms-auto shrink-0 gap-1.5 text-xs text-muted"
+                  onPress={() => setManaging(true)}
                 >
-                  <span className="flex w-full min-w-0 items-center gap-2">
-                    <span className="truncate font-mono text-sm">/{s.id}</span>
-                    <span className="ms-auto max-w-40 shrink-0 truncate text-xs text-muted">
-                      {s.source}
-                    </span>
-                  </span>
-                  <span
-                    className="line-clamp-2 w-full text-xs text-muted"
-                    title={s.description}
-                  >
-                    {s.description}
-                  </span>
-                </ListBox.Item>
-              ))}
-            </ListBox>
-            <div className="flex items-center gap-1 ps-3 pt-1 text-xs text-muted">
-              <span className="min-w-0 truncate">
-                Runs on {skillAgents.join(' + ')}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="manage-skills ms-auto shrink-0 gap-1.5 text-xs text-muted"
-                onPress={() => setManaging(true)}
-              >
-                <Pencil className="size-3.5" />
-                Manage skills…
-              </Button>
-            </div>
-          </Card>
+                  <Pencil className="size-3.5" />
+                  Manage skills…
+                </Button>
+              </div>
+            }
+          />
         )}
         <TextField
           fullWidth
@@ -1223,29 +1189,12 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
               className="w-full resize-none px-4 py-0"
               placeholder="Ask about the code, or / to run a skill"
               onKeyDown={(e) => {
-                if (matches && e.key === 'Escape') {
-                  // Esc closes the skills list, not the page.
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setText('');
+                if (
+                  skillMenuKey(e, matches, hi, setHi, runMatch, () =>
+                    setText(''),
+                  )
+                ) {
                   return;
-                }
-                if (matches && matches.length > 0) {
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    setHi((n) => Math.min(matches.length - 1, n + 1));
-                    return;
-                  }
-                  if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    setHi((n) => Math.max(0, n - 1));
-                    return;
-                  }
-                  if (e.key === 'Tab' || e.key === 'Enter') {
-                    e.preventDefault();
-                    runMatch(matches[Math.min(hi, matches.length - 1)]!);
-                    return;
-                  }
                 }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();

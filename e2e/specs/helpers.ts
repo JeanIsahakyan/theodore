@@ -58,7 +58,7 @@ export async function completeOnboardingIfPresent(): Promise<void> {
 
   // Step 1's welcome only renders once the step list is final (account
   // and sharing status known), so the steps can't shift under a click.
-  await $('//*[normalize-space(text())="Welcome to Theodore"]').waitForExist({
+  await $('//*[normalize-space(text())="Review pull requests by meaning, not by file order."]').waitForExist({
     timeout: 10_000,
   });
 

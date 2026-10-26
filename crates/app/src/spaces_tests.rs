@@ -177,6 +177,129 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     assert_eq!(f.grouper.last_agent(), None);
 }
 
+fn put_skill(root: &std::path::Path, id: &str, body: &str) {
+    std::fs::create_dir_all(root.join(id)).unwrap();
+    std::fs::write(root.join(id).join("SKILL.md"), body).unwrap();
+}
+
+#[tokio::test]
+async fn a_slash_skill_runs_as_the_turns_instructions_and_is_stored_as_typed() {
+    let f = fixtures();
+    let spaces = tempfile::tempdir().unwrap();
+    f.git.set_space_root(spaces.path());
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("First pass.", 0.0));
+    let s = core
+        .create_space(request(&project, "Add CSV export"))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+
+    let repo_skills = std::path::Path::new(&s.worktree).join(".claude/skills");
+    put_skill(
+        f.claude_home.path(),
+        "polish",
+        "---\nname: Polish\ndescription: Tidy up\n---\nMine.",
+    );
+    put_skill(&repo_skills, "polish", "Repo's polish.");
+    put_skill(&repo_skills, "release", "---\nname: Release\n---\nCut it.");
+
+    let mut skills = core.space_skills(&s.id).await.unwrap();
+    skills.sort_by(|a, b| (&a.id, &a.source).cmp(&(&b.id, &b.source)));
+    let listed: Vec<(&str, &str, &str)> = skills
+        .iter()
+        .map(|k| (k.id.as_str(), k.title.as_str(), k.source.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("polish", "polish", "my-folder · .claude/skills"),
+            ("polish", "Polish", "~/.claude/skills"),
+            ("release", "Release", "my-folder · .claude/skills"),
+        ],
+        "no built-ins; both copies of a shared id are listed"
+    );
+
+    let send = |text: &str| SpaceSendRequest {
+        space: s.id.clone(),
+        text: text.into(),
+        agent: None,
+        model: None,
+        mode: None,
+    };
+    f.agents.push_script(done("Polished.", 0.0));
+    core.space_send(send("/polish the export  ")).await.unwrap();
+    idle(&f, &s.id).await;
+    let prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.ends_with(
+            "New message from the user:\nUse the `polish` skill. Its instructions \
+             (SKILL.md):\n\n---\nname: Polish\ndescription: Tidy up\n---\nMine.\n\n\
+             Task: the export"
+        ),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("Repo's polish."), "yours wins");
+
+    f.agents.push_script(done("Released.", 0.0));
+    core.space_send(send("/release")).await.unwrap();
+    idle(&f, &s.id).await;
+    let prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.ends_with("Cut it.\n\nApply it to the work in this space."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("[user]\n/polish the export\n"),
+        "earlier turns replay as typed"
+    );
+
+    f.agents.push_script(done("Hm.", 0.0));
+    core.space_send(send("/bugs please")).await.unwrap();
+    idle(&f, &s.id).await;
+    let prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.ends_with("New message from the user:\n/bugs please"),
+        "a review built-in isn't a space skill: {prompt}"
+    );
+
+    // The fake clock doesn't move, so compare as a set.
+    let mut mine: Vec<String> = transcript(&f, &s.id)
+        .into_iter()
+        .filter(|m| m.author == Author::Me)
+        .map(|m| m.text)
+        .collect();
+    mine.sort();
+    assert_eq!(
+        mine,
+        vec![
+            "/bugs please",
+            "/polish the export",
+            "/release",
+            "Add CSV export"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn space_skills_without_a_worktree_are_just_yours() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("First pass.", 0.0));
+    let s = core
+        .create_space(request(&project, "Add CSV export"))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+    put_skill(f.claude_home.path(), "polish", "Mine.");
+    let skills = core.space_skills(&s.id).await.unwrap();
+    let ids: Vec<(&str, &str)> = skills
+        .iter()
+        .map(|k| (k.id.as_str(), k.source.as_str()))
+        .collect();
+    assert_eq!(ids, vec![("polish", "~/.claude/skills")]);
+}
+
 #[tokio::test]
 async fn later_turns_replay_the_transcript_and_can_switch_agent() {
     let f = fixtures();

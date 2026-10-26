@@ -55,6 +55,16 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         args.push("-m".to_string());
         args.push(model.clone());
     }
+    match req.effort.as_deref() {
+        // Levels differ per model (`codex debug models`), so no fixed list;
+        // only the shape is checked, as it goes inside a TOML string.
+        Some(effort) if is_effort_token(effort) => {
+            args.push("-c".to_string());
+            args.push(format!("model_reasoning_effort=\"{effort}\""));
+        }
+        Some(effort) => tracing::warn!(effort, "malformed codex effort level, left out"),
+        None => {}
+    }
     args.extend(cfg.extra_args.iter().cloned());
     // Codex exec has no --append-system-prompt; fold it into the prompt text.
     let prompt = match &req.system {
@@ -63,6 +73,13 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     };
     args.push(prompt);
     args
+}
+
+/// `low`, `xhigh`, …: a bare word, safe inside `"…"` in a `-c` override.
+fn is_effort_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Env var Codex reads the MCP bearer token from, per `bearer_token_env_var`
@@ -407,26 +424,53 @@ mod run_mode_tests {
 mod model_tests {
     use super::*;
 
-    #[test]
-    fn model_goes_to_dash_m_and_effort_is_not_passed() {
-        let req = AgentRequest {
+    fn req(model: Option<&str>, effort: Option<&str>) -> AgentRequest {
+        AgentRequest {
             agent: theodore_domain::AgentId::Codex,
             prompt: "p".into(),
             system: None,
             cwd: "/tmp".into(),
             mode: AgentMode::ReadOnly,
             mcp: None,
-            model: Some("some-model".into()),
-            effort: Some("high".into()),
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
-        };
-        let args = build_args(&req, &Default::default());
+        }
+    }
+
+    #[test]
+    fn model_goes_to_dash_m_and_effort_to_model_reasoning_effort() {
+        let args = build_args(&req(Some("some-model"), Some("high")), &Default::default());
         assert!(
             args.windows(2).any(|w| w == ["-m", "some-model"]),
             "{args:?}"
         );
-        assert!(!args.iter().any(|a| a.contains("effort") || a == "high"));
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["-c", "model_reasoning_effort=\"high\""]),
+            "{args:?}"
+        );
+        // Flags come before the prompt, which stays last.
+        assert_eq!(args.last().map(String::as_str), Some("p"));
+    }
+
+    #[test]
+    fn no_effort_no_override() {
+        let args = build_args(&req(None, None), &Default::default());
+        assert!(!args.iter().any(|a| a.contains("effort")), "{args:?}");
+        assert!(!args.iter().any(|a| a == "-m"), "{args:?}");
+    }
+
+    #[test]
+    fn a_malformed_effort_is_left_out() {
+        for bad in ["", "high\" -c x=\"y", "a b"] {
+            let args = build_args(&req(None, Some(bad)), &Default::default());
+            assert!(
+                !args.iter().any(|a| a.contains("effort")),
+                "{bad}: {args:?}"
+            );
+        }
     }
 }

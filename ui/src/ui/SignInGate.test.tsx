@@ -185,7 +185,9 @@ describe('Onboarding behind the account gate', () => {
     await render();
     expect(host.querySelector('.onboarding')).not.toBeNull();
     expect(host.textContent).toContain('Step 1 of 6');
-    expect(host.textContent).toContain('Sign in to Theodore');
+    // The header already names the app: the step just says "Sign in".
+    expect(host.textContent).toContain('Sign in');
+    expect(host.textContent).not.toContain('Sign in to Theodore');
     const next = host.querySelector<HTMLButtonElement>('.onb-next');
     expect(next?.disabled).toBe(true);
     expect(next?.textContent).toBe('Next');

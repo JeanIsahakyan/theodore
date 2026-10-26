@@ -1,7 +1,7 @@
 {
   "productName": "Theodore",
   "mainBinaryName": "theodore-app",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "app.theodore.desktop",
   "build": {
     "frontendDist": "../../ui/dist",
@@ -19,7 +19,6 @@
         "minWidth": 900,
         "minHeight": 600,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 20, "y": 24 },
         "hiddenTitle": true,
         "acceptFirstMouse": true,
         "dragDropEnabled": false

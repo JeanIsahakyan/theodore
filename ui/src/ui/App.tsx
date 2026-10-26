@@ -175,7 +175,8 @@ export const App = observer(function App() {
           ui.sidebar && <Sidebar />
         )}
         <Surface className="relative flex min-w-0 flex-1 flex-col rounded-none">
-          <TabBar showOpen={!ui.sidebar} />
+          {/* Settings shows its own nav in the sidebar's place. */}
+          <TabBar showOpen={!ui.sidebar && r.name !== 'settings'} />
           <div className="flex min-h-0 flex-1">
             {r.name === 'inbox' ? (
               <Inbox />

@@ -13,7 +13,8 @@ export type Choice = { id: string; label: string; hint?: string };
 
 /** Claude Code's `--model` aliases (latest model of each family). */
 export const CLAUDE_MODELS: Choice[] = [
-  { id: 'opus', label: 'Opus', hint: 'Most capable' },
+  { id: 'fable', label: 'Fable', hint: 'Newest' },
+  { id: 'opus', label: 'Opus', hint: 'Deep reasoning' },
   { id: 'sonnet', label: 'Sonnet', hint: 'Balanced' },
   { id: 'haiku', label: 'Haiku', hint: 'Fastest, cheapest' },
 ];
@@ -34,8 +35,17 @@ export const CLI_NAME: Record<AgentId, string> = {
   gemini: 'Gemini CLI',
 };
 
-/** Only Claude Code takes an effort level (`--effort`). */
-export const takesEffort = (agent: AgentId): boolean => agent === 'claude';
+/** The agent as the model chip names it. */
+export const AGENT_NAME: Record<AgentId, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  gemini: 'Gemini',
+};
+
+/** Claude Code (`--effort`) and Codex (`model_reasoning_effort`) take an
+ *  effort level; Gemini CLI doesn't. */
+export const takesEffort = (agent: AgentId): boolean =>
+  agent === 'claude' || agent === 'codex';
 
 /** Claude picks from its aliases; the others take a model name as typed. */
 export const hasModelAliases = (agent: AgentId): boolean => agent === 'claude';
@@ -55,7 +65,11 @@ export function agentModel(store: Store, agent: AgentId): string | null {
 export function agentEffort(store: Store, agent: AgentId): string | null {
   if (!takesEffort(agent)) return null;
   const e = text(store, effortKey(agent));
-  return e && EFFORTS.some((x) => x.id === e) ? e : null;
+  // Codex's levels come from its model catalog (`agent_models`), so any
+  // name it gave is fine; Claude's are the fixed `--effort` set.
+  if (agent === 'codex') return e;
+  // `ultracode`: Claude's multi-agent mode, past Max (spaces).
+  return e && (e === 'ultracode' || EFFORTS.some((x) => x.id === e)) ? e : null;
 }
 
 export function setAgentModel(
@@ -81,7 +95,12 @@ export function modelLabel(agent: AgentId, model: string | null): string {
 }
 
 export function effortLabel(effort: string): string {
-  return EFFORTS.find((e) => e.id === effort)?.label ?? effort;
+  if (effort === 'ultra') return 'Ultra';
+  if (effort === 'ultracode') return 'Ultracode';
+  return (
+    EFFORTS.find((e) => e.id === effort)?.label ??
+    effort.charAt(0).toUpperCase() + effort.slice(1)
+  );
 }
 
 /** The chip text: `claude · Opus · High`, `codex · default model`. */
@@ -98,4 +117,14 @@ export function agentLabel(
 /** `agentLabel` with the agent's current settings. */
 export function agentLabelOf(store: Store, agent: AgentId): string {
   return agentLabel(agent, agentModel(store, agent), agentEffort(store, agent));
+}
+
+/** ⌘⇧/: the next of `levels` after `effort`, round to the first. */
+export function nextEffort(
+  effort: string | null,
+  levels: string[] = EFFORTS.map((e) => e.id),
+): string | null {
+  if (!levels.length) return null;
+  const i = effort ? levels.indexOf(effort) : -1;
+  return levels[(i + 1) % levels.length]!;
 }

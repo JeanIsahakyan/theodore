@@ -39,6 +39,7 @@ import type {
   AgentId,
   HunkId,
   ShipAction,
+  SkillInfo,
   Space,
   SpaceConfigView,
   SpaceMode,
@@ -726,6 +727,21 @@ const SpaceChat = observer(function SpaceChat({
   const [mode, setMode] = useState<SpaceMode>(space.mode);
   useEffect(() => setMode(space.mode), [space.mode]);
   const locked = !!run || space.status === 'archived';
+  // `/skill` in the box: your Claude skills and the repo's.
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  useEffect(() => {
+    let live = true;
+    void api
+      .spaceSkills(space.id)
+      .then((list) => live && setSkills(list))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [space.id]);
+  // The agent for the next turn, with its model and effort (the chip).
+  const [agent, setAgent] = useState<AgentId>(space.agent);
+  useEffect(() => setAgent(space.agent), [space.agent]);
   handle.current = {
     focus: () => input.current?.focus(),
     cycleMode: () => !locked && setMode((m) => nextMode(m)),
@@ -739,8 +755,9 @@ const SpaceChat = observer(function SpaceChat({
       .spaceSend({
         space: space.id,
         text: t,
-        agent: null,
-        model: null,
+        agent: agent === space.agent ? null : agent,
+        // The chip's model, so a change there reaches the next turn.
+        model: agentModel(store, agent),
         mode: mode === space.mode ? null : mode,
       })
       .catch(() => setText(t));
@@ -843,15 +860,23 @@ const SpaceChat = observer(function SpaceChat({
             disabled={space.status === 'archived' || settingUp(space)}
             running={!!run}
             onStop={() => void api.spaceStop(space.id).catch(() => {})}
+            skills={skills}
             chips={
-              <ChipMenu
-                ariaLabel="Mode"
-                label={MODES.find((m) => m.id === mode)?.label ?? mode}
-                items={MODES}
-                selected={mode}
-                onSelect={setMode}
-                isDisabled={locked}
-              />
+              <>
+                <AgentChip
+                  value={agent}
+                  onChange={setAgent}
+                  isDisabled={locked}
+                />
+                <ChipMenu
+                  ariaLabel="Mode"
+                  label={MODES.find((m) => m.id === mode)?.label ?? mode}
+                  items={MODES}
+                  selected={mode}
+                  onSelect={setMode}
+                  isDisabled={locked}
+                />
+              </>
             }
           />
         </div>

@@ -32,6 +32,7 @@ const CHATTY: &[&str] = &[
     "space_config",
     "list_spaces",
     "list_skills",
+    "space_skills",
     "login_poll",
     "account_sign_in_poll",
     "account_status",
@@ -49,6 +50,7 @@ const CHATTY: &[&str] = &[
     "conflicts",
     "sandbox_status",
     "detect_agents",
+    "agent_models",
     "viewer",
 ];
 
