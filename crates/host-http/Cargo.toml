@@ -1,0 +1,26 @@
+[package]
+name = "theodore-host-http"
+description = "Shared HTTP client for host adapters: auth, ETag cache, rate limits, retry, redaction."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-ports.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+url.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+# Not in [workspace.dependencies]: only host-http needs jittered backoff.
+rand = "0.10"
+
+[dev-dependencies]
+wiremock.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,55 @@
+{
+  "productName": "Theodore",
+  "mainBinaryName": "theodore-app",
+  "version": "0.1.0",
+  "identifier": "app.theodore.desktop",
+  "build": {
+    "frontendDist": "../../ui/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm -C ../ui dev",
+    "beforeBuildCommand": "pnpm -C ../ui build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Theodore",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 20, "y": 24 },
+        "hiddenTitle": true,
+        "acceptFirstMouse": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: ipc: http://ipc.localhost https:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.icns"],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["theodore"]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMzM0VDMDhBMDRCRDBDRDgKUldUWURMMEVpc0ErTXphMHl2OEVwRHlQdFdHVlFIVmFoT3JxeUFia3pnQWlQbGlONVpsc2FrTEIK",
+      "endpoints": [
+        "https://github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

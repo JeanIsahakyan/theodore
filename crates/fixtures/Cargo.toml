@@ -1,0 +1,35 @@
+[package]
+name = "theodore-fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-contract.workspace = true
+
+async-trait.workspace = true
+tokio = { workspace = true, features = ["time", "rt"] }
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+rmcp = { workspace = true, features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+] }
+
+[dev-dependencies]
+theodore-grouping.workspace = true
+theodore-mcp.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }

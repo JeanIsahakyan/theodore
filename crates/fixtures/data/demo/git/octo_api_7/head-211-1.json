@@ -1,0 +1,72 @@
+{
+  "base": "base-main-api",
+  "head": "head-211-1",
+  "files": [
+    {
+      "path": "src/api/paginate.ts",
+      "old_path": null,
+      "status": "modified",
+      "similarity": null,
+      "old_mode": null,
+      "new_mode": null,
+      "flags": [],
+      "additions": 3,
+      "deletions": 2,
+      "hunks": [
+        {
+          "id": "652fcfce4089bbaa",
+          "path": "src/api/paginate.ts",
+          "old_start": 1,
+          "old_lines": 4,
+          "new_start": 1,
+          "new_lines": 5,
+          "header": "function paginate",
+          "lines": [
+            {
+              "kind": "ctx",
+              "text": "export function paginate(items: Item[], cursor: number, limit: number) {",
+              "old_no": 1,
+              "new_no": 1
+            },
+            {
+              "kind": "del",
+              "text": "  const page = items.slice(cursor, cursor + limit);",
+              "old_no": 2,
+              "new_no": null
+            },
+            {
+              "kind": "del",
+              "text": "  return { page, next: cursor + limit };",
+              "old_no": 3,
+              "new_no": null
+            },
+            {
+              "kind": "add",
+              "text": "  const page = items.slice(cursor, cursor + limit);",
+              "old_no": null,
+              "new_no": 2
+            },
+            {
+              "kind": "add",
+              "text": "  const next = cursor + limit;",
+              "old_no": null,
+              "new_no": 3
+            },
+            {
+              "kind": "add",
+              "text": "  return { page, next: next < items.length ? next : null };",
+              "old_no": null,
+              "new_no": 4
+            },
+            {
+              "kind": "ctx",
+              "text": "}",
+              "old_no": 4,
+              "new_no": 5
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

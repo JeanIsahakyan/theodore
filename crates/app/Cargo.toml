@@ -1,0 +1,44 @@
+[package]
+name = "theodore-app"
+description = "Use cases, sync engine, outbox, scheduler."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# The fakes outside this crate's own tests (the desktop shell's).
+testkit = ["dep:tempfile"]
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-contract.workspace = true
+theodore-telemetry.workspace = true
+theodore-secrets.workspace = true
+# Not in [workspace.dependencies]: only `app`'s Linear usecase needs it.
+theodore-linear = { path = "../linear" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+url.workspace = true
+serde_yaml = "0.9"
+sha2.workspace = true
+hex.workspace = true
+base64 = "0.22"
+tracing.workspace = true
+tempfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+theodore-git.workspace = true
+theodore-store.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

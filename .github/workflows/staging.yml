@@ -1,0 +1,116 @@
+name: Staging
+
+# The staging build, on every push to staging (a merged feature PR).
+# build.yml builds it as `<version>-staging.<run number>`, which only grows,
+# so every build reads as newer to the updater; the publish job replaces
+# the assets of one rolling pre-release, tagged `channel-staging`:
+#
+#   push staging ──▶ build 0.3.0-staging.57 ──▶ channel-staging:
+#                                                 dmg, .app.tar.gz + .sig,
+#                                                 latest.json (→ this tarball)
+#
+# A staging build polls only channel-staging/latest.json (apps/desktop/src/
+# updater.rs); production builds never see it. Being a pre-release, it is
+# never `releases/latest`. No `v*` tag or release is touched here.
+#
+# Variables: THEODORE_WORKOS_CLIENT_ID_STAGING, the staging account's
+# client id, baked into the build. Secrets and the telemetry variables:
+# build.yml.
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+# One at a time and never cancelled mid-publish; pushes that land during a
+# build collapse into one queued run of the newest.
+concurrency:
+  group: staging-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CHANNEL_TAG: channel-staging
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      build-env: staging
+      version-suffix: -staging.${{ github.run_number }}
+      release-tag: channel-staging
+      workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID_STAGING }}
+    secrets: inherit
+
+  publish:
+    needs: build
+    # A dispatch from another branch builds, never publishes.
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+
+      # Made once, on the first run; the tag stays where it was created
+      # (the url is all the updater needs), the notes name the commit.
+      - name: ensure the channel-staging pre-release exists
+        run: |
+          if ! gh release view "$CHANNEL_TAG" >/dev/null 2>&1; then
+            gh release create "$CHANNEL_TAG" \
+              --target "${{ github.sha }}" \
+              --title "Staging" \
+              --notes "Rolling staging build." \
+              --prerelease \
+              --latest=false
+          fi
+
+      # A re-run of an older run must not replace a newer build.
+      - name: is this build newer than the published one?
+        id: newer
+        run: |
+          current=$(gh release download "$CHANNEL_TAG" -p latest.json -O - 2>/dev/null |
+            jq -r '.version // ""' || true)
+          this_n=${VERSION##*-staging.}
+          current_n=${current##*-staging.}
+          echo "published: ${current:-none}, this: $VERSION"
+          case "$current_n" in
+            ''|*[!0-9]*) current_n=0 ;;
+          esac
+          if [ "$current_n" -gt "$this_n" ]; then
+            echo "run $current_n is already published: skipping run $this_n."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Versioned assets first, latest.json last, then the previous build's
+      # assets go: an updater polling mid-run sees the old manifest with
+      # its own tarball, or the new one with its.
+      - name: replace the assets
+        if: steps.newer.outputs.publish == 'true'
+        run: |
+          gh release upload "$CHANNEL_TAG" --clobber \
+            dist/*.dmg dist/*.app.tar.gz dist/*.app.tar.gz.sig
+          gh release upload "$CHANNEL_TAG" --clobber dist/latest.json
+          keep=$(cd dist && ls)
+          gh release view "$CHANNEL_TAG" --json assets --jq '.assets[].name' |
+            while read -r name; do
+              if ! printf '%s\n' "$keep" | grep -qxF "$name"; then
+                gh release delete-asset "$CHANNEL_TAG" "$name" --yes
+              fi
+            done
+
+      - name: name this build in the notes
+        if: steps.newer.outputs.publish == 'true'
+        run: |
+          gh release edit "$CHANNEL_TAG" \
+            --prerelease \
+            --latest=false \
+            --notes "Staging build $VERSION from ${{ github.sha }} (\`staging\`, run ${{ github.run_number }}). Replaced on every push to \`staging\`; staging builds update from here, production builds never do."

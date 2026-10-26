@@ -1,0 +1,625 @@
+@import 'tailwindcss';
+@import '@heroui/styles';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* Only HeroUI's own tokens. One radius drives HeroUI's whole scale (sm…4xl). */
+:root {
+  --radius: 0.25rem;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, Menlo, monospace;
+  --diff-add: color-mix(in oklab, var(--success) 9%, transparent);
+  --diff-del: color-mix(in oklab, var(--danger) 9%, transparent);
+  --tk-k: var(--accent);
+  --tk-s: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --tk-c: var(--muted);
+  --tk-n: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+  --tk-t: color-mix(in oklab, var(--accent) 45%, var(--foreground));
+  --tk-f: var(--foreground);
+  --tk-d: var(--warning);
+  /* Shiki's css-variables theme, mapped onto the same token colors */
+  --shiki-foreground: var(--foreground);
+  --shiki-background: transparent;
+  --shiki-token-keyword: var(--tk-k);
+  --shiki-token-string: var(--tk-s);
+  --shiki-token-string-expression: var(--tk-s);
+  --shiki-token-comment: var(--tk-c);
+  --shiki-token-constant: var(--tk-n);
+  --shiki-token-function: var(--tk-t);
+  --shiki-token-parameter: var(--foreground);
+  --shiki-token-punctuation: color-mix(
+    in oklab,
+    var(--muted) 70%,
+    var(--foreground)
+  );
+  --shiki-token-link: var(--accent);
+  --diff-add-word: color-mix(in oklab, var(--success) 26%, transparent);
+  --diff-del-word: color-mix(in oklab, var(--danger) 24%, transparent);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  /* The window never scrolls; panes scroll themselves. */
+  overflow: hidden;
+}
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01', 'tnum';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── code / diff: domain-specific, kept as plain CSS ───────────── */
+.lines {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+.ln {
+  display: grid;
+  grid-template-columns: 44px 44px 20px minmax(0, 1fr) auto;
+  position: relative;
+}
+.ln:hover {
+  filter: brightness(0.97);
+}
+.dark .ln:hover {
+  filter: brightness(1.18);
+}
+.ln.t-add {
+  background: var(--diff-add);
+}
+.ln.t-del {
+  background: var(--diff-del);
+}
+.ln .no {
+  text-align: right;
+  padding-right: 8px;
+  color: var(--muted);
+  opacity: 0.7;
+  user-select: none;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.ln .mark {
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+  white-space: nowrap;
+}
+.ln .src {
+  /* Real code has long lines: wrap them instead of hiding the tail. */
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 4;
+}
+.ln-act {
+  display: none;
+  gap: 2px;
+  padding-right: 6px;
+  align-items: center;
+}
+.ln:hover .ln-act {
+  display: flex;
+}
+.ln .wd {
+  border-radius: 3px;
+}
+.ln.t-add .wd,
+.side.t-add .wd {
+  background: var(--diff-add-word);
+}
+.ln.t-del .wd,
+.side.t-del .wd {
+  background: var(--diff-del-word);
+}
+.ln.in-range {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--accent) 10%, transparent),
+    color-mix(in oklab, var(--accent) 10%, transparent)
+  );
+}
+.ln.expanded {
+  background: color-mix(in oklab, var(--default) 35%, transparent);
+}
+.ln.expanded .src {
+  opacity: 0.85;
+}
+/* side by side: two halves, each with its own number, mark and code */
+.ln.split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.ln.split > .side {
+  display: grid;
+  grid-template-columns: 44px 20px minmax(0, 1fr) auto;
+  min-width: 0;
+}
+.ln.split > .side + .side {
+  border-left: 1px solid var(--separator);
+}
+.ln.split.t-add,
+.ln.split.t-del {
+  background: none;
+}
+.side.t-add {
+  background: var(--diff-add);
+}
+.side.t-del {
+  background: var(--diff-del);
+}
+.side.t-none {
+  background: color-mix(in oklab, var(--default) 40%, transparent);
+}
+.ln.split:hover .ln-act {
+  display: none;
+}
+.ln.split .side:hover .ln-act {
+  display: flex;
+}
+body.cmd .lines .src span:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ln.flash {
+  animation: flash 1.6s ease-out;
+}
+@keyframes flash {
+  0%,
+  40% {
+    box-shadow: inset 0 0 0 999px
+      color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 999px transparent;
+  }
+}
+.suggestion .ln {
+  grid-template-columns: 20px 1fr;
+}
+.tk-k {
+  color: var(--tk-k);
+}
+.tk-s {
+  color: var(--tk-s);
+}
+.tk-c {
+  color: var(--tk-c);
+  font-style: italic;
+}
+.tk-n {
+  color: var(--tk-n);
+}
+.tk-t {
+  color: var(--tk-t);
+}
+.tk-f {
+  color: var(--tk-f);
+}
+.tk-d {
+  color: var(--tk-d);
+}
+.rich code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--default);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+/* A colour literal's swatch (`Swatch` in highlight.tsx): its colour over a
+   checkerboard, so a translucent one reads as such. The ring is a shadow,
+   not a border, and the box is shorter than a line: neither moves text. */
+.cswatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin: 0 0.3em 0 0.1em;
+  vertical-align: -0.05em;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 35%, transparent);
+  background:
+    linear-gradient(var(--sw), var(--sw)),
+    repeating-conic-gradient(#d4d4d4 0 25%, #fff 0 50%) 0 0 / 50% 50%;
+  user-select: none;
+  cursor: default;
+}
+.cswatch.cswatch-lg {
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background-size:
+    auto,
+    25% 25%;
+}
+
+/* A hunk scrolled to its top clears its file's sticky header */
+[id^='H-'] {
+  scroll-margin-top: 56px;
+}
+
+/* big PRs: the browser skips layout and paint for file cards off screen */
+.file {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
+/* Tabs on a white surface: no grey track, the selected tab is a soft grey pill */
+[data-plain] .tabs__list-container,
+[data-plain] .tabs__list {
+  background: transparent;
+}
+[data-plain] .tabs__indicator {
+  background: var(--default);
+  box-shadow: none;
+}
+[data-plain] .tabs__separator {
+  display: none;
+}
+
+/* Hovered tabs brighten their text instead of dimming to 70% opacity: in
+ * WebKit an opacity change moves the tab onto its own compositing layer,
+ * which re-snaps it to the pixel grid and makes the icon jump. */
+.tabs__tab:not([data-selected='true']):not([data-disabled='true']):hover,
+.tabs__tab[data-hovered='true']:not([data-selected='true']):not(
+    [data-disabled='true']
+  ) {
+  opacity: 1;
+  color: var(--foreground);
+}
+
+/* Tab bar: a scrolled-off edge fades out instead of cutting a tab in half,
+ * and the keyboard focus ring sits inside the tab where the scroll
+ * container can't clip it. */
+.tabbar .fade-l {
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+.tabbar .fade-r {
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+.tabbar .fade-l.fade-r {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+}
+.tabbar .tabs__tab:focus-visible,
+.tabbar .tabs__tab[data-focus-visible='true'] {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+/* Closing tab: collapses to nothing before it leaves (UiStore.requestCloseTab,
+ * TAB_CLOSE_MS). Its measured width is pinned inline first, hence !important. */
+.tabs__tab.tab-closing {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding-inline: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    width 180ms var(--ease-out, ease-out),
+    padding 180ms var(--ease-out, ease-out),
+    opacity 120ms ease-out;
+}
+
+/* Add project: rows are spaced by the list, not by the checkbox group's
+ * own mt-4 per checkbox (which made checkbox rows sit lower than "Added"). */
+.repo-list [data-slot='checkbox'] {
+  margin-top: 0;
+}
+
+/* Toasts: long messages (a raw host error) wrap inside the window instead
+ * of running off its right edge. */
+.toast-region {
+  max-width: min(420px, calc(100vw - 2rem));
+}
+.toast__title,
+.toast__description {
+  overflow-wrap: anywhere;
+}
+
+/* Markdown (PR descriptions, comments) */
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 600;
+  margin: 0.9em 0 0.4em;
+  line-height: 1.3;
+}
+.md h1 {
+  font-size: 1.25em;
+}
+.md h2 {
+  font-size: 1.12em;
+}
+.md h3,
+.md h4 {
+  font-size: 1em;
+}
+.md p {
+  margin: 0.45em 0;
+}
+.md ul,
+.md ol {
+  margin: 0.35em 0;
+  padding-inline-start: 1.4em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li {
+  margin: 0.15em 0;
+}
+.md li > ul,
+.md li > ol {
+  margin: 0.1em 0;
+}
+.md blockquote {
+  border-inline-start: 2px solid var(--separator);
+  padding-inline-start: 0.75em;
+  color: var(--muted);
+}
+.md :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--default);
+  border-radius: 0.3rem;
+  padding: 0.08em 0.35em;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--separator);
+  margin: 0.8em 0;
+}
+.md .md-table {
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.md .md-table th,
+.md .md-table td {
+  border: 1px solid var(--separator);
+  padding: 0.3em 0.6em;
+  text-align: start;
+}
+.md .md-table th {
+  background: var(--default);
+  font-weight: 600;
+}
+.md input[type='checkbox'] {
+  margin-inline-end: 0.4em;
+}
+
+/* Text that shimmers while an agent works. */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--foreground) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 1.8s linear infinite;
+}
+@keyframes shimmer-text {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text {
+    animation: none;
+    color: var(--muted);
+  }
+}
+
+/* The logo's refraction stripes drift through the lenses (see Welcome.tsx):
+ * one stripe pitch per loop, so it never jumps. */
+.welcome-stripes {
+  animation: welcome-drift 4.2s linear infinite;
+}
+.welcome-stripes-late {
+  animation-delay: -2.1s;
+}
+@keyframes welcome-drift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(110px);
+  }
+}
+/* A band of light crossing each lens once, left lens first. */
+.welcome-glint {
+  opacity: 0;
+  animation: welcome-glint 700ms cubic-bezier(0.4, 0, 0.2, 1) 350ms forwards;
+}
+.welcome-glint-late {
+  animation-delay: 470ms;
+}
+@keyframes welcome-glint {
+  0% {
+    opacity: 0;
+    translate: 0 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    translate: 520px 0;
+  }
+}
+
+/* The welcome after onboarding, 1.65 s in all (WELCOME_MS):
+ *   0–0.4 s     logo rises in out of a blur, a soft glow behind it
+ *   0.35–1.1 s  light sweeps across the glass, stripes drifting
+ *   1.05–1.65 s it zooms through the bridge of the glasses, the page
+ *               clears, the app sharpens into place under it */
+.welcome {
+  animation: welcome-clear 500ms ease-in 1150ms forwards;
+}
+.welcome-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in oklab, var(--accent) 22%, transparent) 0,
+    transparent 22rem
+  );
+  animation: welcome-glow 900ms ease-out both;
+}
+.welcome-zoom {
+  transform-origin: 50% 45%;
+  animation:
+    welcome-in 400ms cubic-bezier(0.2, 0.8, 0.2, 1) both,
+    welcome-zoom 600ms cubic-bezier(0.7, 0, 0.84, 0) 1050ms forwards;
+}
+.app-enter {
+  animation: app-enter 550ms cubic-bezier(0.2, 0.8, 0.2, 1) 1100ms both;
+}
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.92);
+    filter: blur(6px);
+  }
+}
+@keyframes welcome-glow {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@keyframes welcome-zoom {
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: scale(14);
+    filter: blur(4px);
+  }
+}
+@keyframes welcome-clear {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes app-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+    filter: blur(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .welcome-stripes,
+  .welcome-glint,
+  .welcome-glow,
+  .welcome,
+  .welcome-zoom,
+  .app-enter {
+    animation: none;
+  }
+}
+
+/* Rendered markdown diff */
+.md-diff .md-block {
+  border-radius: 0.5rem;
+  padding: 0.15rem 0.6rem;
+  border-inline-start: 3px solid transparent;
+}
+.md-diff .md-add {
+  background: var(--diff-add);
+  border-inline-start-color: var(--success);
+}
+.md-diff .md-del {
+  background: var(--diff-del);
+  border-inline-start-color: var(--danger);
+}
+.md-diff .md-del .md {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--danger) 60%, transparent);
+  opacity: 0.75;
+}
+
+/* Switches on a grey card: the off track is the card's own grey and
+ * vanished. A darker off track (light) / lighter (dark) keeps it a switch. */
+.card .switch__control:not([data-selected='true']),
+[data-slot='card'] .switch__control:not([data-selected='true']) {
+  --switch-control-bg: color-mix(in oklab, var(--foreground) 16%, transparent);
+}
+
+/* PR and task lists: the row you're on (J/K, click) is marked, like the
+ * sidebar's current page — the HeroUI list has no selected background. */
+.list .list-box-item[data-selected='true'] {
+  background-color: var(--default);
+}
+.list .list-box-item[data-selected='true'][data-focus-visible='true'] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.list .list-box-item[data-selected='true'] .chip {
+  background-color: var(--background);
+}
+
+/* Status banners (offline, sign-in, rate limit): a slim pill floating
+ * above the hint bar, so the page never moves when one appears. */
+.status-banner.alert {
+  width: max-content;
+  max-width: min(760px, 100%);
+  align-items: center;
+  gap: calc(var(--spacing) * 2.5);
+  padding-block: 4px;
+  padding-inline: 14px 6px;
+  min-height: 0;
+  border-radius: 9999px;
+  border: 1px solid var(--separator);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
+}
+.status-banner .alert__content {
+  flex-direction: row;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+}
+.status-banner .alert__title {
+  flex-shrink: 0;
+}
+.status-banner .alert__description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-banner .alert__indicator svg {
+  width: 16px;
+  height: 16px;
+}
+.status-banner .button {
+  height: 26px;
+  border-radius: 9999px;
+}

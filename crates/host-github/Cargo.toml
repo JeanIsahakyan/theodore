@@ -1,0 +1,31 @@
+[package]
+name = "theodore-host-github"
+description = "GitHub HostAdapter: GraphQL (cynic) + REST, notifications polling."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-host-http.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+url.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+cynic-codegen.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+pretty_assertions.workspace = true
+# Test-only: proves the registered schema drives a real cynic query (see
+# graphql.rs module docs for why the PR/review queries are hand-written).
+cynic.workspace = true
+
+[lints]
+workspace = true

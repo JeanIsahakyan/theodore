@@ -1,0 +1,1 @@
+{"type":"error","message":"agent exited with status 1","stderr_tail":"panic: fixture failure","delay_ms":50}

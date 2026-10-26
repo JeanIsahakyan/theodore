@@ -1,0 +1,610 @@
+//! Spaces (docs/spaces.md) against `Core` + `testkit` fakes: a turn runs in
+//! the space's worktree in Edit mode and ends in a checkpoint, the live diff
+//! follows it ungrouped, Review groups it, and stop / failure /
+//! archive / restart leave the space in a sane state.
+
+use std::time::Duration;
+
+use serde_json::json;
+use theodore_contract::{
+    AddProjectRequest, BootstrapScope, ChatMessage, CreateSpaceRequest, Project, Setting, Space,
+    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, models,
+};
+use theodore_domain::{AgentId, Author, PrSummary, Sha, Usage};
+use theodore_ports::{AgentEvent, AgentMode, NewAction, Store, SyncActionCode};
+
+use crate::testkit::{Fixtures, fixtures};
+use crate::usecases::spaces::space_chat_key;
+use crate::{AppError, Core, Receivers};
+
+async fn wait_until(mut cond: impl FnMut() -> bool) {
+    for _ in 0..400 {
+        if cond() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("condition not met in time");
+}
+
+async fn started(f: &Fixtures) -> (Core, Receivers, Project) {
+    let (core, recv) = Core::start(f.deps());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let project = core
+        .add_project(AddProjectRequest {
+            repo: None,
+            path: Some("/tmp/my-folder".into()),
+        })
+        .await
+        .expect("add_project");
+    wait_until(|| {
+        f.store
+            .get(models::PROJECT, &project.id)
+            .unwrap()
+            .is_some_and(|r| r.data["status"] == json!("ready"))
+    })
+    .await;
+    f.git.set_resolve("main", Sha::new("base000"));
+    (core, recv, project)
+}
+
+fn space(f: &Fixtures, id: &str) -> Space {
+    serde_json::from_value(f.store.get(models::SPACE, id).unwrap().unwrap().data).unwrap()
+}
+
+fn transcript(f: &Fixtures, id: &str) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = f
+        .store
+        .query(models::CHAT_MESSAGE, "pr", &space_chat_key(id).0)
+        .unwrap()
+        .into_iter()
+        .map(|r| serde_json::from_value(r.data).unwrap())
+        .collect();
+    out.sort_by_key(|m| (m.at, matches!(m.author, Author::Agent(_))));
+    out
+}
+
+fn put_setting(f: &Fixtures, key: &str, value: serde_json::Value) {
+    let setting = Setting {
+        key: key.into(),
+        scope: "user".into(),
+        value,
+    };
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: format!("user:{key}"),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(&setting).unwrap()),
+        }])
+        .unwrap();
+}
+
+fn request(project: &Project, goal: &str) -> CreateSpaceRequest {
+    CreateSpaceRequest {
+        project: project.id.clone(),
+        goal: goal.into(),
+        name: None,
+        branch: None,
+        base: None,
+        agent: None,
+        model: None,
+    }
+}
+
+fn done(text: &str, usd: f64) -> Vec<AgentEvent> {
+    vec![
+        AgentEvent::Text {
+            text: "working…".into(),
+        },
+        AgentEvent::Done {
+            final_text: text.into(),
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+                usd,
+            },
+        },
+    ]
+}
+
+async fn idle(f: &Fixtures, id: &str) -> Space {
+    wait_until(|| space(f, id).status != SpaceStatus::Running).await;
+    space(f, id)
+}
+
+#[tokio::test]
+async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("Added a redirect guard.", 0.25));
+    f.git.push_checkpoint(Sha::new("turn111"));
+
+    let created = core
+        .create_space(request(&project, "Fix the login redirect"))
+        .await
+        .expect("create_space");
+    let s = idle(&f, &created.id).await;
+
+    assert_eq!(s.name, "fix-the-login-redirect");
+    assert_eq!(s.branch, "space/fix-the-login-redirect");
+    assert_eq!(s.base, "main");
+    assert_eq!(s.base_sha, Sha::new("base000"));
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.turns, 1);
+    assert_eq!(s.head_sha, Sha::new("turn111"));
+    assert_eq!(s.run, None);
+
+    let req = f.agents.last_request().expect("agent ran");
+    assert_eq!(req.mode, AgentMode::Edit);
+    assert_eq!(
+        req.cwd.display().to_string(),
+        format!("/tmp/theodore-fake-space-{}", s.id)
+    );
+    assert_eq!(req.prompt, "Fix the login redirect");
+    assert!(req.system.unwrap().contains("Do not push"));
+
+    let chat = transcript(&f, &s.id);
+    assert_eq!(chat.len(), 2);
+    assert_eq!(chat[0].author, Author::Me);
+    assert_eq!(chat[1].author, Author::Agent(AgentId::Claude));
+    assert_eq!(chat[1].text, "Added a redirect guard.");
+
+    let checkpoints = f.git.checkpoints.lock().unwrap().clone();
+    assert_eq!(
+        checkpoints,
+        vec![(s.id.clone(), "fix-the-login-redirect: turn 1".to_string())]
+    );
+
+    // The live diff follows the checkpoint, named after the space, and is
+    // not grouped (that costs an agent run per turn).
+    let review = s.review_pr.clone().expect("review pr");
+    wait_until(|| {
+        f.store
+            .get(models::PR, &review.0)
+            .unwrap()
+            .is_some_and(|r| r.data["head_sha"] == json!("turn111"))
+    })
+    .await;
+    let pr: PrSummary =
+        serde_json::from_value(f.store.get(models::PR, &review.0).unwrap().unwrap().data).unwrap();
+    assert_eq!(pr.title, "fix-the-login-redirect");
+    assert_eq!(pr.head_ref, "space/fix-the-login-redirect");
+    assert_eq!(pr.base_ref, "main");
+    assert!(pr.url.is_empty());
+    assert_eq!(f.grouper.last_agent(), None);
+}
+
+#[tokio::test]
+async fn later_turns_replay_the_transcript_and_can_switch_agent() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("First pass.", 0.0));
+    let s = core
+        .create_space(request(&project, "Add CSV export"))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+
+    f.agents.push_script(done("Quoted fields.", 0.0));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "Quote fields with commas".into(),
+        agent: Some(AgentId::Codex),
+        model: None,
+        mode: None,
+    })
+    .await
+    .unwrap();
+    let s = idle(&f, &s.id).await;
+
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(req.agent, AgentId::Codex);
+    assert!(req.prompt.contains("[user]\nAdd CSV export"));
+    assert!(req.prompt.contains("[claude]\nFirst pass."));
+    assert!(req.prompt.ends_with("Quote fields with commas"));
+    assert_eq!(s.agent, AgentId::Codex);
+    assert_eq!(s.turns, 2);
+}
+
+#[tokio::test]
+async fn a_running_space_refuses_a_second_message_and_stops_cleanly() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.hang_next_run();
+    let s = core
+        .create_space(request(&project, "Long job"))
+        .await
+        .unwrap();
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Running);
+
+    let err = core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "and another".into(),
+            agent: None,
+            model: None,
+            mode: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+
+    core.space_stop(&s.id).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.error, None);
+    let chat = transcript(&f, &s.id);
+    assert_eq!(chat.last().unwrap().failed.as_deref(), Some("stopped"));
+    // Edits made before the stop are still checkpointed.
+    assert!(
+        f.git.checkpoints.lock().unwrap()[0]
+            .1
+            .ends_with("turn 1 (stopped)")
+    );
+}
+
+#[tokio::test]
+async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "boom".into(),
+        stderr_tail: String::new(),
+    }]);
+    let s = core.create_space(request(&project, "Try")).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.status, SpaceStatus::Failed);
+    assert_eq!(s.error.as_deref(), Some("boom"));
+    assert_eq!(
+        transcript(&f, &s.id).last().unwrap().failed.as_deref(),
+        Some("boom")
+    );
+
+    f.agents.push_script(done("ok now", 0.0));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "retry".into(),
+        agent: None,
+        model: None,
+        mode: None,
+    })
+    .await
+    .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.error, None);
+    // The failed placeholder isn't replayed as conversation.
+    assert!(!f.agents.last_request().unwrap().prompt.contains("boom"));
+}
+
+/// Budgets were dropped (owner, 2026-10-22): an old
+/// `budget.per_space_usd` row, already exceeded, never blocks a turn.
+#[tokio::test]
+async fn a_leftover_space_budget_no_longer_stops_turns() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "budget.per_space_usd", json!(0.2));
+    f.agents.push_script(done("spent", 0.25));
+    let s = core.create_space(request(&project, "Spend")).await.unwrap();
+    idle(&f, &s.id).await;
+
+    f.agents.push_script(done("more", 0.25));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "more".into(),
+        agent: None,
+        model: None,
+        mode: None,
+    })
+    .await
+    .expect("over an old budget, the turn still starts");
+    assert_eq!(idle(&f, &s.id).await.turns, 2);
+}
+
+#[tokio::test]
+async fn review_groups_the_space_diff() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    assert_eq!(space(&f, &s.id).turns, 0, "no goal, no turn");
+
+    let opened = core
+        .space_review(SpaceReviewRequest {
+            space: s.id.clone(),
+            group: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(Some(opened.pr), space(&f, &s.id).review_pr);
+    wait_until(|| f.grouper.last_agent().is_some()).await;
+}
+
+#[tokio::test]
+async fn archive_removes_the_worktree_and_review_but_keeps_the_transcript() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("done", 0.0));
+    let s = core
+        .create_space(request(&project, "Archive me"))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    let review = s.review_pr.clone().unwrap();
+
+    core.archive_space(&s.id).await.unwrap();
+
+    let s = space(&f, &s.id);
+    assert_eq!(s.status, SpaceStatus::Archived);
+    assert_eq!(s.review_pr, None);
+    assert_eq!(f.git.removed_spaces(), vec![s.id.clone()]);
+    assert!(f.store.get(models::PR, &review.0).unwrap().is_none());
+    assert_eq!(transcript(&f, &s.id).len(), 2);
+    assert!(
+        core.space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "x".into(),
+            agent: None,
+            model: None,
+            mode: None,
+        })
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        core.list_spaces(Some(project.id.clone()))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        core.list_spaces(Some("other".into()))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_turn_left_running_by_a_crash_is_failed_on_start() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    core.shutdown();
+    f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: s.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(json!({ "status": "running", "run": "space:x:y" })),
+        }])
+        .unwrap();
+
+    let (_core, _recv) = Core::start(f.deps());
+    wait_until(|| space(&f, &s.id).status == SpaceStatus::Failed).await;
+    let s = space(&f, &s.id);
+    assert_eq!(s.run, None);
+    assert!(s.error.unwrap().starts_with("interrupted"));
+}
+
+#[tokio::test]
+async fn bootstrap_returns_spaces_and_a_space_transcript_without_opening_anything() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("hi", 0.0));
+    let s = core.create_space(request(&project, "Hello")).await.unwrap();
+    idle(&f, &s.id).await;
+
+    let global = core.bootstrap(BootstrapScope::Global).await.unwrap();
+    assert!(
+        global
+            .rows
+            .iter()
+            .any(|r| r.model == models::SPACE && r.id == s.id)
+    );
+    let scoped = core
+        .bootstrap(BootstrapScope::Pr(space_chat_key(&s.id)))
+        .await
+        .unwrap();
+    assert_eq!(scoped.rows.len(), 2);
+    assert!(scoped.rows.iter().all(|r| r.model == models::CHAT_MESSAGE));
+}
+
+// ── real git ────────────────────────────────────────────────────────────────
+
+mod real_git {
+    use std::path::Path;
+    use std::process::Command;
+    use std::sync::Arc;
+
+    use theodore_contract::RevisionRequest;
+    use theodore_domain::RepoRef;
+    use theodore_ports::CredentialSource;
+
+    use super::*;
+
+    struct NoAuth;
+    impl CredentialSource for NoAuth {
+        fn token_for(&self, _repo: &RepoRef) -> Option<String> {
+            None
+        }
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git installed");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A local folder project on real git: the space's worktree and
+    /// checkpoints land in Theodore's cache, the folder is never touched, a
+    /// project refresh still works with a space checked out, and archive
+    /// keeps the checkpoint ref.
+    #[tokio::test]
+    async fn a_space_lives_in_the_cache_and_never_touches_the_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("app");
+        std::fs::create_dir_all(&folder).unwrap();
+        run(&folder, &["init", "-q", "-b", "main"]);
+        run(&folder, &["config", "user.email", "a@b.com"]);
+        run(&folder, &["config", "user.name", "test"]);
+        std::fs::write(folder.join("readme.md"), "hello\n").unwrap();
+        run(&folder, &["add", "-A"]);
+        run(
+            &folder,
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        );
+        let folder_head = run(&folder, &["rev-parse", "HEAD"]);
+
+        let root = tmp.path().join("theodore");
+        std::fs::create_dir_all(&root).unwrap();
+        let f = fixtures();
+        let deps = crate::Deps {
+            git: Arc::new(theodore_git::GitCli::new(root.clone(), Arc::new(NoAuth))),
+            ..f.deps()
+        };
+        let (core, _recv) = Core::start(deps);
+        let project = core
+            .add_project(AddProjectRequest {
+                repo: None,
+                path: Some(folder.display().to_string()),
+            })
+            .await
+            .unwrap();
+        wait_until(|| {
+            f.store
+                .get(models::PROJECT, &project.id)
+                .unwrap()
+                .is_some_and(|r| r.data["status"] == json!("ready"))
+        })
+        .await;
+
+        let s = core
+            .create_space(request(&project, ""))
+            .await
+            .expect("create_space");
+        let wt = Path::new(&s.worktree).to_path_buf();
+        assert!(wt.starts_with(root.join("spaces")));
+        assert_eq!(s.head_sha.as_str(), folder_head);
+
+        // What the agent would have written during its turn.
+        std::fs::write(wt.join("export.csv"), "a,b\n").unwrap();
+        f.agents.push_script(done("Added export.csv", 0.0));
+        core.space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "add an export".into(),
+            agent: None,
+            model: None,
+            mode: None,
+        })
+        .await
+        .unwrap();
+        let s = idle(&f, &s.id).await;
+        assert_eq!(s.status, SpaceStatus::Idle, "{:?}", s.error);
+        assert_ne!(s.head_sha.as_str(), folder_head);
+
+        let mirror = root.join("repos/local/local/app.git");
+        let refname = format!("refs/theodore/spaces/{}", s.id);
+        assert_eq!(run(&mirror, &["rev-parse", &refname]), s.head_sha.as_str());
+        assert_eq!(
+            run(&mirror, &["show", &format!("{}:export.csv", s.head_sha)]),
+            "a,b"
+        );
+
+        // The live diff is base...checkpoint.
+        let review = s.review_pr.clone().unwrap();
+        wait_until(|| {
+            f.store
+                .get(models::PR, &review.0)
+                .unwrap()
+                .is_some_and(|r| r.data["head_sha"] == json!(s.head_sha))
+        })
+        .await;
+        let rev = core
+            .get_revision(RevisionRequest {
+                pr: review,
+                head: s.head_sha.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            rev.files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["export.csv"]
+        );
+
+        // The cache still refreshes with a space checked out.
+        core.refresh_project(&project.id).await.expect("refresh");
+
+        // The user's folder: same HEAD, same branches, clean.
+        assert_eq!(run(&folder, &["rev-parse", "HEAD"]), folder_head);
+        assert_eq!(
+            run(&folder, &["branch", "--format=%(refname:short)"]),
+            "main"
+        );
+        assert_eq!(run(&folder, &["status", "--porcelain"]), "");
+
+        // Merge locally is the one action that writes into the folder: a
+        // dirty tree is refused untouched, a clean one gets the squashed
+        // commit on its checked-out branch.
+        std::fs::write(folder.join("scratch.txt"), "wip\n").unwrap();
+        let err = core
+            .ship_space(theodore_contract::ShipSpaceRequest {
+                space: s.id.clone(),
+                action: theodore_contract::ShipAction::MergeLocally,
+                title: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("uncommitted"), "{err}");
+        assert_eq!(run(&folder, &["rev-parse", "HEAD"]), folder_head);
+        std::fs::remove_file(folder.join("scratch.txt")).unwrap();
+
+        let shipped = core
+            .ship_space(theodore_contract::ShipSpaceRequest {
+                space: s.id.clone(),
+                action: theodore_contract::ShipAction::MergeLocally,
+                title: Some("Add an export".into()),
+            })
+            .await
+            .expect("merge locally");
+        assert_eq!(shipped.shipped.as_ref().unwrap().branch, "main");
+        assert_eq!(
+            run(&folder, &["log", "-1", "--format=%s|%an"]),
+            "Add an export|test"
+        );
+        assert_eq!(
+            run(&folder, &["rev-parse", "HEAD~1"]),
+            folder_head,
+            "one commit on top"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("export.csv")).unwrap(),
+            "a,b\n"
+        );
+        assert_eq!(run(&folder, &["status", "--porcelain"]), "");
+
+        core.archive_space(&s.id).await.unwrap();
+        assert!(!wt.exists());
+        assert_eq!(run(&mirror, &["rev-parse", &refname]), s.head_sha.as_str());
+        assert_eq!(space(&f, &s.id).status, SpaceStatus::Archived);
+    }
+}

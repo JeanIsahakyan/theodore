@@ -1,0 +1,1537 @@
+{
+  "pr": {
+    "title": "Fixed #37409 -- Removed ambiguous \"Overview\" link text from the docs home page.",
+    "body": "#### Trac ticket number\n<!-- Replace XXXXX with the corresponding Trac ticket number. -->\n<!-- Or delete the line and write \"N/A - typo\" for typo fixes. -->\n\nticket-37409\n\n#### Branch description\nSee 3 commit messages.\n\n#### AI Assistance Disclosure (REQUIRED)\n<!-- Select exactly ONE of the following: -->\n- [ ] **No AI tools were used** in preparing this PR.\n- [X] **If AI tools were used**, I have disclosed which ones, and fully reviewed and verified their output.\n<!-- If AI tools were used, provide which tools were used here. -->\n\nClaude code was used to ensure consistency of the changes.\n\n#### Checklist\n- [X] This PR follows the [contribution guidelines](https://docs.djangoproject.com/en/stable/internals/contributing/writing-code/submitting-patches/).\n- [X] This PR **does not** disclose a security vulnerability (see [vulnerability reporting](https://docs.djangoproject.com/en/stable/internals/security/)).\n- [X] This PR targets the `main` branch. <!-- Backports will be evaluated and done by mergers, when necessary. -->\n- [X] The commit message is written in past tense, mentions the ticket number (if applicable), and ends with a period (see [guidelines](https://docs.djangoproject.com/en/dev/internals/contributing/committing-code/#committing-guidelines)).\n- [X] I have not requested, and will not request, an automated AI review for this PR. <!-- You are welcome to do so in your own fork. -->\n\n<!-- Leave the following items unchecked if not applicable. -->\n- [X] I have checked the \"Has patch\" ticket flag in the Trac system.\n",
+    "commits": [
+      "Fixed #37409 -- Removed ambiguous \"Overview\" link text from the docs …",
+      "Refs #37409 -- Regrouped single-link entries on the docs home page.",
+      "Refs #37051 -- Clarified the description of topic guides in docs home…",
+      "Refs #37409 -- Corrected docs home links whose text did not match the…"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": "docs/faq/troubleshooting.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "8524a466865602da",
+            "path": "docs/faq/troubleshooting.txt",
+            "old_start": 53,
+            "old_lines": 5,
+            "new_start": 53,
+            "new_lines": 5,
+            "header": "pitfalls producing this error:",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 53,
+                "new_no": 53
+              },
+              {
+                "kind": "ctx",
+                "text": "Related resources:",
+                "old_no": 54,
+                "new_no": 54
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 55,
+                "new_no": 55
+              },
+              {
+                "kind": "del",
+                "text": "* :doc:`Unicode in Django </ref/unicode>`",
+                "old_no": 56,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "* :doc:`/ref/unicode`",
+                "old_no": null,
+                "new_no": 56
+              },
+              {
+                "kind": "ctx",
+                "text": "* https://wiki.python.org/moin/UnicodeDecodeError",
+                "old_no": 57,
+                "new_no": 57
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "docs/index.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 32,
+        "deletions": 40,
+        "hunks": [
+          {
+            "id": "401d65bf2e05d37a",
+            "path": "docs/index.txt",
+            "old_start": 10,
+            "old_lines": 8,
+            "new_start": 10,
+            "new_lines": 9,
+            "header": "First steps",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "===========",
+                "old_no": 10,
+                "new_no": 10
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 11,
+                "new_no": 11
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Getting started**:",
+                "old_no": 12,
+                "new_no": 12
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </intro/overview>` |",
+                "old_no": 13,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Installation </intro/install>`",
+                "old_no": 14,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/intro/overview` |",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Installation </intro/install>` |",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Third-party distributions </misc/distributions>`",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 15,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": "The tutorial takes you by the hand through a series of steps to create a",
+                "old_no": 16,
+                "new_no": 17
+              },
+              {
+                "kind": "ctx",
+                "text": "web application.",
+                "old_no": 17,
+                "new_no": 18
+              }
+            ]
+          },
+          {
+            "id": "c33adecd14484203",
+            "path": "docs/index.txt",
+            "old_start": 96,
+            "old_lines": 7,
+            "new_start": 97,
+            "new_lines": 7,
+            "header": "processing a user's request and for returning the response.",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  :doc:`TemplateResponse objects </ref/template-response>`",
+                "old_no": 96,
+                "new_no": 97
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 97,
+                "new_no": 98
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Class-based views**:",
+                "old_no": 98,
+                "new_no": 99
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/class-based-views/index>` |",
+                "old_no": 99,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Introduction to class-based views </topics/class-based-views/index>` |",
+                "old_no": null,
+                "new_no": 100
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Built-in display views </topics/class-based-views/generic-display>` |",
+                "old_no": 100,
+                "new_no": 101
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Built-in editing views </topics/class-based-views/generic-editing>` |",
+                "old_no": 101,
+                "new_no": 102
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Using mixins </topics/class-based-views/mixins>` |",
+                "old_no": 102,
+                "new_no": 103
+              }
+            ]
+          },
+          {
+            "id": "f2b18f0417bcf82a",
+            "path": "docs/index.txt",
+            "old_start": 104,
+            "old_lines": 7,
+            "new_start": 105,
+            "new_lines": 7,
+            "header": "processing a user's request and for returning the response.",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Flattened index </ref/class-based-views/flattened-index>`",
+                "old_no": 104,
+                "new_no": 105
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 105,
+                "new_no": 106
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Middleware**:",
+                "old_no": 106,
+                "new_no": 107
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/http/middleware>` |",
+                "old_no": 107,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Introduction to middleware </topics/http/middleware>` |",
+                "old_no": null,
+                "new_no": 108
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Built-in middleware classes </ref/middleware>`",
+                "old_no": 108,
+                "new_no": 109
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 109,
+                "new_no": 110
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Other output formats**:",
+                "old_no": 110,
+                "new_no": 111
+              }
+            ]
+          },
+          {
+            "id": "eb459ac661aa2868",
+            "path": "docs/index.txt",
+            "old_start": 119,
+            "old_lines": 7,
+            "new_start": 120,
+            "new_lines": 7,
+            "header": "information to be presented to the user. Template functionality can also be",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "customized.",
+                "old_no": 119,
+                "new_no": 120
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 120,
+                "new_no": 121
+              },
+              {
+                "kind": "ctx",
+                "text": "* **The basics**:",
+                "old_no": 121,
+                "new_no": 122
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/templates>` |",
+                "old_no": 122,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/templates` |",
+                "old_no": null,
+                "new_no": 123
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Language overview </ref/templates/language>` |",
+                "old_no": 123,
+                "new_no": 124
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Built-in tags and filters </ref/templates/builtins>` |",
+                "old_no": 124,
+                "new_no": 125
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Humanization </ref/contrib/humanize>` |",
+                "old_no": 125,
+                "new_no": 126
+              }
+            ]
+          },
+          {
+            "id": "2f43f488a7ff877e",
+            "path": "docs/index.txt",
+            "old_start": 132,
+            "old_lines": 18,
+            "new_start": 133,
+            "new_lines": 16,
+            "header": "customized.",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "Other core functionality",
+                "old_no": 132,
+                "new_no": 133
+              },
+              {
+                "kind": "ctx",
+                "text": "========================",
+                "old_no": 133,
+                "new_no": 134
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 134,
+                "new_no": 135
+              },
+              {
+                "kind": "del",
+                "text": "* **Settings**:",
+                "old_no": 135,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/settings>` |",
+                "old_no": 136,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Full list of settings </ref/settings>`",
+                "old_no": 137,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 138,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "* **Applications**:",
+                "old_no": 139,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </ref/applications>`",
+                "old_no": 140,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "* **Configuration**:",
+                "old_no": null,
+                "new_no": 136
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/settings` |",
+                "old_no": null,
+                "new_no": 137
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Full list of settings </ref/settings>` |",
+                "old_no": null,
+                "new_no": 138
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Applications </ref/applications>`",
+                "old_no": null,
+                "new_no": 139
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 141,
+                "new_no": 140
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Exceptions**:",
+                "old_no": 142,
+                "new_no": 141
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </ref/exceptions>`",
+                "old_no": 143,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/ref/exceptions`",
+                "old_no": null,
+                "new_no": 142
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 144,
+                "new_no": 143
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Management commands**:",
+                "old_no": 145,
+                "new_no": 144
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </ref/django-admin>` |",
+                "old_no": 146,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/ref/django-admin` |",
+                "old_no": null,
+                "new_no": 145
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Adding custom commands </howto/custom-management-commands>`",
+                "old_no": 147,
+                "new_no": 146
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 148,
+                "new_no": 147
+              },
+              {
+                "kind": "ctx",
+                "text": "User-facing features",
+                "old_no": 149,
+                "new_no": 148
+              }
+            ]
+          },
+          {
+            "id": "3d462b7dbb3feb67",
+            "path": "docs/index.txt",
+            "old_start": 157,
+            "old_lines": 13,
+            "new_start": 156,
+            "new_lines": 12,
+            "header": "User-facing features",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "* **Content**:",
+                "old_no": 157,
+                "new_no": 156
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Flatpages </ref/contrib/flatpages>` |",
+                "old_no": 158,
+                "new_no": 157
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Redirects </ref/contrib/redirects>` |",
+                "old_no": 159,
+                "new_no": 158
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Unicode in Django </ref/unicode>` |",
+                "old_no": 160,
+                "new_no": null
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Pagination </topics/pagination>` |",
+                "old_no": 161,
+                "new_no": 159
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Messages framework </ref/contrib/messages>`",
+                "old_no": 162,
+                "new_no": 160
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 163,
+                "new_no": 161
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Forms**:",
+                "old_no": 164,
+                "new_no": 162
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/forms/index>` |",
+                "old_no": 165,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Form API </ref/forms/api>` |",
+                "old_no": 166,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/forms/index` |",
+                "old_no": null,
+                "new_no": 163
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/ref/forms/api` |",
+                "old_no": null,
+                "new_no": 164
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Built-in fields </ref/forms/fields>` |",
+                "old_no": 167,
+                "new_no": 165
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Built-in widgets </ref/forms/widgets>` |",
+                "old_no": 168,
+                "new_no": 166
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Forms for models </topics/forms/modelforms>` |",
+                "old_no": 169,
+                "new_no": 167
+              }
+            ]
+          },
+          {
+            "id": "829d7a6c49478275",
+            "path": "docs/index.txt",
+            "old_start": 172,
+            "old_lines": 17,
+            "new_start": 170,
+            "new_lines": 17,
+            "header": "User-facing features",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Customizing validation </ref/forms/validation>`",
+                "old_no": 172,
+                "new_no": 170
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 173,
+                "new_no": 171
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Internationalization and localization**:",
+                "old_no": 174,
+                "new_no": 172
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/i18n/index>` |",
+                "old_no": 175,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Internationalization </topics/i18n/translation>` |",
+                "old_no": 176,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :ref:`Localization <how-to-create-language-files>` |",
+                "old_no": 177,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Localized web UI formatting and form input </topics/i18n/formatting>` |",
+                "old_no": 178,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Time zones </topics/i18n/timezones>`",
+                "old_no": 179,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Introduction to internationalization </topics/i18n/index>` |",
+                "old_no": null,
+                "new_no": 173
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/i18n/translation` |",
+                "old_no": null,
+                "new_no": 174
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/i18n/formatting` |",
+                "old_no": null,
+                "new_no": 175
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/i18n/timezones` |",
+                "old_no": null,
+                "new_no": 176
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/ref/unicode`",
+                "old_no": null,
+                "new_no": 177
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 180,
+                "new_no": 178
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Authentication**:",
+                "old_no": 181,
+                "new_no": 179
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/auth/index>` |",
+                "old_no": 182,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/auth/index` |",
+                "old_no": null,
+                "new_no": 180
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Using the authentication system </topics/auth/default>` |",
+                "old_no": 183,
+                "new_no": 181
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Password management </topics/auth/passwords>` |",
+                "old_no": 184,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Customizing authentication </topics/auth/customizing>` |",
+                "old_no": 185,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/auth/passwords` |",
+                "old_no": null,
+                "new_no": 182
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/auth/customizing` |",
+                "old_no": null,
+                "new_no": 183
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`API Reference </ref/contrib/auth>`",
+                "old_no": 186,
+                "new_no": 184
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 187,
+                "new_no": 185
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Geographic data and representation**:",
+                "old_no": 188,
+                "new_no": 186
+              }
+            ]
+          },
+          {
+            "id": "2a411ec40699945b",
+            "path": "docs/index.txt",
+            "old_start": 221,
+            "old_lines": 14,
+            "new_start": 219,
+            "new_lines": 14,
+            "header": "Resources and interfaces",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Legacy databases </howto/legacy-databases>`",
+                "old_no": 221,
+                "new_no": 219
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 222,
+                "new_no": 220
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Storage**:",
+                "old_no": 223,
+                "new_no": 221
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </topics/http/file-uploads>` |",
+                "old_no": 224,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/topics/http/file-uploads` |",
+                "old_no": null,
+                "new_no": 222
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`File objects </ref/files/file>` |",
+                "old_no": 225,
+                "new_no": 223
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Storage API </ref/files/storage>` |",
+                "old_no": 226,
+                "new_no": 224
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Managing files </topics/files>` |",
+                "old_no": 227,
+                "new_no": 225
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Custom storage </howto/custom-file-storage>`",
+                "old_no": 228,
+                "new_no": 226
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 229,
+                "new_no": 227
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Deployment**:",
+                "old_no": 230,
+                "new_no": 228
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </howto/deployment/index>` |",
+                "old_no": 231,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`/howto/deployment/index` |",
+                "old_no": null,
+                "new_no": 229
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`WSGI servers </howto/deployment/wsgi/index>` |",
+                "old_no": 232,
+                "new_no": 230
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`ASGI servers </howto/deployment/asgi/index>` |",
+                "old_no": 233,
+                "new_no": 231
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Deploying static files </howto/static-files/deployment>` |",
+                "old_no": 234,
+                "new_no": 232
+              }
+            ]
+          },
+          {
+            "id": "498aa7ebb9b6b0c4",
+            "path": "docs/index.txt",
+            "old_start": 241,
+            "old_lines": 8,
+            "new_start": 239,
+            "new_lines": 9,
+            "header": "Resources and interfaces",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "Quality and dependability",
+                "old_no": 241,
+                "new_no": 239
+              },
+              {
+                "kind": "ctx",
+                "text": "=========================",
+                "old_no": 242,
+                "new_no": 240
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 243,
+                "new_no": 241
+              },
+              {
+                "kind": "del",
+                "text": "A key concern in Django's design philosophy is to make it easier to build",
+                "old_no": 244,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "applications that work safely and efficiently, in the real world.",
+                "old_no": 245,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "A key concern in :doc:`Django's design philosophy </misc/design-philosophies>`",
+                "old_no": null,
+                "new_no": 242
+              },
+              {
+                "kind": "add",
+                "text": "is to make it easier to build applications that work safely and efficiently,",
+                "old_no": null,
+                "new_no": 243
+              },
+              {
+                "kind": "add",
+                "text": "in the real world.",
+                "old_no": null,
+                "new_no": 244
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 246,
+                "new_no": 245
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Testing**:",
+                "old_no": 247,
+                "new_no": 246
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`Introduction </topics/testing/index>` |",
+                "old_no": 248,
+                "new_no": 247
+              }
+            ]
+          },
+          {
+            "id": "d97a82d4b2c9f091",
+            "path": "docs/index.txt",
+            "old_start": 277,
+            "old_lines": 16,
+            "new_start": 276,
+            "new_lines": 8,
+            "header": "supportive community that welcomes new contributors:",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 277,
+                "new_no": 276
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Processes and policies**:",
+                "old_no": 278,
+                "new_no": 277
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`The release process </internals/release-process>` |",
+                "old_no": 279,
+                "new_no": 278
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Security policies </internals/security>`",
+                "old_no": 280,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 281,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "* **Design philosophies**:",
+                "old_no": 282,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </misc/design-philosophies>`",
+                "old_no": 283,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 284,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "* **Documentation**:",
+                "old_no": 285,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`About this documentation </internals/contributing/writing-documentation>`",
+                "old_no": 286,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 287,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "* **Third-party distributions**:",
+                "old_no": 288,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  :doc:`Overview </misc/distributions>`",
+                "old_no": 289,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Security policies </internals/security>` |",
+                "old_no": null,
+                "new_no": 279
+              },
+              {
+                "kind": "add",
+                "text": "  :doc:`Design philosophies </misc/design-philosophies>`",
+                "old_no": null,
+                "new_no": 280
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 290,
+                "new_no": 281
+              },
+              {
+                "kind": "ctx",
+                "text": "* **Django over time**:",
+                "old_no": 291,
+                "new_no": 282
+              },
+              {
+                "kind": "ctx",
+                "text": "  :doc:`API stability </misc/api-stability>` |",
+                "old_no": 292,
+                "new_no": 283
+              }
+            ]
+          },
+          {
+            "id": "52c34649c21bc240",
+            "path": "docs/index.txt",
+            "old_start": 321,
+            "old_lines": 8,
+            "new_start": 312,
+            "new_lines": 9,
+            "header": "help navigate the site:",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "  steps to create a web application. Start here if you're new to Django or web",
+                "old_no": 321,
+                "new_no": 312
+              },
+              {
+                "kind": "ctx",
+                "text": "  application development.",
+                "old_no": 322,
+                "new_no": 313
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 323,
+                "new_no": 314
+              },
+              {
+                "kind": "del",
+                "text": "* :doc:`Topic guides </topics/index>` explain Django's functionality in detail,",
+                "old_no": 324,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "  and provide an overview of key topics and concepts.",
+                "old_no": 325,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "* :doc:`Topic guides </topics/index>` explain Django's functionality in detail",
+                "old_no": null,
+                "new_no": 315
+              },
+              {
+                "kind": "add",
+                "text": "  and provide an overview of key concepts and how individual parts of Django",
+                "old_no": null,
+                "new_no": 316
+              },
+              {
+                "kind": "add",
+                "text": "  can be used.",
+                "old_no": null,
+                "new_no": 317
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 326,
+                "new_no": 318
+              },
+              {
+                "kind": "ctx",
+                "text": "* :doc:`Reference guides </ref/index>` contain technical reference for APIs and",
+                "old_no": 327,
+                "new_no": 319
+              },
+              {
+                "kind": "ctx",
+                "text": "  other aspects of Django's machinery.",
+                "old_no": 328,
+                "new_no": 320
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "docs/ref/exceptions.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "17276fa80a62914c",
+            "path": "docs/ref/exceptions.txt",
+            "old_start": 1,
+            "old_lines": 5,
+            "new_start": 1,
+            "new_lines": 5,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "=================",
+                "old_no": 1,
+                "new_no": 1
+              },
+              {
+                "kind": "del",
+                "text": "Django Exceptions",
+                "old_no": 2,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "Django exceptions",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "ctx",
+                "text": "=================",
+                "old_no": 3,
+                "new_no": 3
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": "Django raises some of its own exceptions as well as standard Python exceptions.",
+                "old_no": 5,
+                "new_no": 5
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "docs/topics/auth/customizing.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 3,
+        "deletions": 3,
+        "hunks": [
+          {
+            "id": "f9f27dde21fbcfec",
+            "path": "docs/topics/auth/customizing.txt",
+            "old_start": 1,
+            "old_lines": 6,
+            "new_start": 1,
+            "new_lines": 6,
+            "header": "",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "====================================",
+                "old_no": 1,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "Customizing authentication in Django",
+                "old_no": 2,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "====================================",
+                "old_no": 3,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "==========================",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "Customizing authentication",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "==========================",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": "The authentication that comes with Django is good enough for most common cases,",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": "but you may have needs not met by the out-of-the-box defaults. Customizing",
+                "old_no": 6,
+                "new_no": 6
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "docs/topics/auth/index.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 4,
+        "deletions": 4,
+        "hunks": [
+          {
+            "id": "b0054db29fc953f5",
+            "path": "docs/topics/auth/index.txt",
+            "old_start": 1,
+            "old_lines": 6,
+            "new_start": 1,
+            "new_lines": 6,
+            "header": "",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "=============================",
+                "old_no": 1,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "User authentication in Django",
+                "old_no": 2,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "=============================",
+                "old_no": 3,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "===================",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "User authentication",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "===================",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": ".. toctree::",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": "   :hidden:",
+                "old_no": 6,
+                "new_no": 6
+              }
+            ]
+          },
+          {
+            "id": "287f924dec66310d",
+            "path": "docs/topics/auth/index.txt",
+            "old_start": 86,
+            "old_lines": 4,
+            "new_start": 86,
+            "new_lines": 4,
+            "header": "Usage",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 86,
+                "new_no": 86
+              },
+              {
+                "kind": "ctx",
+                "text": ":doc:`Customizing Users and authentication </topics/auth/customizing>`",
+                "old_no": 87,
+                "new_no": 87
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 88,
+                "new_no": 88
+              },
+              {
+                "kind": "del",
+                "text": ":doc:`Password management in Django </topics/auth/passwords>`",
+                "old_no": 89,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": ":doc:`/topics/auth/passwords`",
+                "old_no": null,
+                "new_no": 89
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "docs/topics/auth/passwords.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 3,
+        "deletions": 3,
+        "hunks": [
+          {
+            "id": "190c46dee36c3473",
+            "path": "docs/topics/auth/passwords.txt",
+            "old_start": 1,
+            "old_lines": 6,
+            "new_start": 1,
+            "new_lines": 6,
+            "header": "",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "=============================",
+                "old_no": 1,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "Password management in Django",
+                "old_no": 2,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "=============================",
+                "old_no": 3,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "===================",
+                "old_no": null,
+                "new_no": 1
+              },
+              {
+                "kind": "add",
+                "text": "Password management",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "add",
+                "text": "===================",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": "Password management is something that should generally not be reinvented",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": "unnecessarily, and Django endeavors to provide a secure and flexible set of",
+                "old_no": 6,
+                "new_no": 6
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "docs/topics/http/file-uploads.txt",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 1,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "9d9b0f99927420b1",
+            "path": "docs/topics/http/file-uploads.txt",
+            "old_start": 1,
+            "old_lines": 5,
+            "new_start": 1,
+            "new_lines": 5,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "============",
+                "old_no": 1,
+                "new_no": 1
+              },
+              {
+                "kind": "del",
+                "text": "File Uploads",
+                "old_no": 2,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "File uploads",
+                "old_no": null,
+                "new_no": 2
+              },
+              {
+                "kind": "ctx",
+                "text": "============",
+                "old_no": 3,
+                "new_no": 3
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": ".. currentmodule:: django.core.files.uploadedfile",
+                "old_no": 5,
+                "new_no": 5
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

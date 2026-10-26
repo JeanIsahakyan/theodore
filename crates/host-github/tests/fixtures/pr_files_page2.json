@@ -1,0 +1,12 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "files": {
+          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "nodes": [{ "path": "src/main.rs", "viewerViewedState": "UNVIEWED" }]
+        }
+      }
+    }
+  }
+}

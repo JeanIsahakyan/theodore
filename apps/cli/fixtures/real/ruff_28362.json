@@ -1,0 +1,1600 @@
+{
+  "pr": {
+    "title": "Avoid syntax errors for type variables with starred constraints (`UP040`, `UP046`, `UP047`, `RUF053`)",
+    "body": "fixes #26954.\r\n\r\nAdds the missing tuple comma so starred contraints produce valid pep 695 fixes. Existing single element constraint tuples also keep their comma.\r\n\r\nTests cover aliases, classes and function type paramters across all four rules. All 2828 linter tests, clippy and hooks passed. checked the fixed code on python 3.12 and 3.14.",
+    "commits": [
+      "Preserve starred constraints in PEP 695 fixes (UP040, UP046, UP047, R…",
+      "Mark starred constraint alias fixes unsafe outside stubs (UP040)",
+      "Merge branch 'main' into fix/pep695-starred-constraints",
+      "simplify display",
+      "trim tests",
+      "move new tests to end",
+      "clippy"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": "crates/ruff_linter/resources/test/fixtures/pyupgrade/UP040.py",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 7,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "322bb5f7502b3611",
+            "path": "crates/ruff_linter/resources/test/fixtures/pyupgrade/UP040.py",
+            "old_start": 149,
+            "old_lines": 3,
+            "new_start": 149,
+            "new_lines": 10,
+            "header": "class Foo:",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        | str",
+                "old_no": 149,
+                "new_no": 149
+              },
+              {
+                "kind": "ctx",
+                "text": "    ),",
+                "old_no": 150,
+                "new_no": 150
+              },
+              {
+                "kind": "ctx",
+                "text": ")",
+                "old_no": 151,
+                "new_no": 151
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 152
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 153
+              },
+              {
+                "kind": "add",
+                "text": "# A sole starred constraint needs a trailing comma in the PEP 695 constraint tuple.",
+                "old_no": null,
+                "new_no": 154
+              },
+              {
+                "kind": "add",
+                "text": "constraints = (int, str)",
+                "old_no": null,
+                "new_no": 155
+              },
+              {
+                "kind": "add",
+                "text": "T_starred = TypeVar(\"T_starred\", *constraints)",
+                "old_no": null,
+                "new_no": 156
+              },
+              {
+                "kind": "add",
+                "text": "StarredList: TypeAlias = list[T_starred]",
+                "old_no": null,
+                "new_no": 157
+              },
+              {
+                "kind": "add",
+                "text": "StarredAlias = TypeAliasType(\"StarredAlias\", list[T_starred], type_params=(T_starred,))",
+                "old_no": null,
+                "new_no": 158
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/resources/test/fixtures/pyupgrade/UP046_0.py",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 17,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "bd72ce4cada6efe0",
+            "path": "crates/ruff_linter/resources/test/fixtures/pyupgrade/UP046_0.py",
+            "old_start": 142,
+            "old_lines": 3,
+            "new_start": 142,
+            "new_lines": 20,
+            "header": "class DefaultOnlyTypeVar(Generic[W]):  # -> [W = int]",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "class Outer:",
+                "old_no": 142,
+                "new_no": 142
+              },
+              {
+                "kind": "ctx",
+                "text": "    class Inner(Generic[T]):",
+                "old_no": 143,
+                "new_no": 143
+              },
+              {
+                "kind": "ctx",
+                "text": "        var: T",
+                "old_no": 144,
+                "new_no": 144
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 145
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 146
+              },
+              {
+                "kind": "add",
+                "text": "# A sole starred constraint needs a trailing comma in the PEP 695 constraint tuple.",
+                "old_no": null,
+                "new_no": 147
+              },
+              {
+                "kind": "add",
+                "text": "constraints = (int, str)",
+                "old_no": null,
+                "new_no": 148
+              },
+              {
+                "kind": "add",
+                "text": "U = TypeVar(\"U\", *constraints)",
+                "old_no": null,
+                "new_no": 149
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 150
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 151
+              },
+              {
+                "kind": "add",
+                "text": "class StarredConstraints(Generic[U]):",
+                "old_no": null,
+                "new_no": 152
+              },
+              {
+                "kind": "add",
+                "text": "    var: U",
+                "old_no": null,
+                "new_no": 153
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 154
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 155
+              },
+              {
+                "kind": "add",
+                "text": "# Mixed constraints retain both the explicit and unpacked types.",
+                "old_no": null,
+                "new_no": 156
+              },
+              {
+                "kind": "add",
+                "text": "V = TypeVar(\"V\", bool, *constraints)",
+                "old_no": null,
+                "new_no": 157
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 158
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 159
+              },
+              {
+                "kind": "add",
+                "text": "class MixedConstraints(Generic[V]):",
+                "old_no": null,
+                "new_no": 160
+              },
+              {
+                "kind": "add",
+                "text": "    var: V",
+                "old_no": null,
+                "new_no": 161
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/resources/test/fixtures/pyupgrade/UP047_0.py",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 9,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "f3111108b1fd3877",
+            "path": "crates/ruff_linter/resources/test/fixtures/pyupgrade/UP047_0.py",
+            "old_start": 63,
+            "old_lines": 3,
+            "new_start": 63,
+            "new_lines": 12,
+            "header": "def multi_param(t: list[T], c: Callable[[T], None]) -> T:",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "def outer():",
+                "old_no": 63,
+                "new_no": 63
+              },
+              {
+                "kind": "ctx",
+                "text": "    def inner(t: T) -> T:",
+                "old_no": 64,
+                "new_no": 64
+              },
+              {
+                "kind": "ctx",
+                "text": "        return t",
+                "old_no": 65,
+                "new_no": 65
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 66
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 67
+              },
+              {
+                "kind": "add",
+                "text": "# A sole starred constraint needs a trailing comma in the PEP 695 constraint tuple.",
+                "old_no": null,
+                "new_no": 68
+              },
+              {
+                "kind": "add",
+                "text": "constraints = (int, str)",
+                "old_no": null,
+                "new_no": 69
+              },
+              {
+                "kind": "add",
+                "text": "U = TypeVar(\"U\", *constraints)",
+                "old_no": null,
+                "new_no": 70
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 71
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 72
+              },
+              {
+                "kind": "add",
+                "text": "def starred_constraints(var: U) -> U:",
+                "old_no": null,
+                "new_no": 73
+              },
+              {
+                "kind": "add",
+                "text": "    return var",
+                "old_no": null,
+                "new_no": 74
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/resources/test/fixtures/ruff/RUF053.py",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 10,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "2a26860ac626a669",
+            "path": "crates/ruff_linter/resources/test/fixtures/ruff/RUF053.py",
+            "old_start": 98,
+            "old_lines": 7,
+            "new_start": 98,
+            "new_lines": 16,
+            "header": "class C[T: [a]](Generic[_A]): ...",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 98,
+                "new_no": 98
+              },
+              {
+                "kind": "ctx",
+                "text": "# Existing bounds should not be deparenthesized.",
+                "old_no": 99,
+                "new_no": 99
+              },
+              {
+                "kind": "ctx",
+                "text": "# class C[T: (_Y := int)](Generic[_A]): ...  # TODO: Uncomment this",
+                "old_no": 100,
+                "new_no": 100
+              },
+              {
+                "kind": "del",
+                "text": "# class C[T: (*a,)](Generic[_A]): ...        # TODO: Uncomment this",
+                "old_no": 101,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 101
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 102
+              },
+              {
+                "kind": "add",
+                "text": "# A sole starred constraint needs a trailing comma in the PEP 695 constraint tuple.",
+                "old_no": null,
+                "new_no": 103
+              },
+              {
+                "kind": "add",
+                "text": "constraints = (str, bytes)",
+                "old_no": null,
+                "new_no": 104
+              },
+              {
+                "kind": "add",
+                "text": "_H = TypeVar('_H', *constraints)",
+                "old_no": null,
+                "new_no": 105
+              },
+              {
+                "kind": "add",
+                "text": "class C[T](Generic[_H]): ...",
+                "old_no": null,
+                "new_no": 106
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 107
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 108
+              },
+              {
+                "kind": "add",
+                "text": "# Existing starred constraint tuples retain their trailing comma.",
+                "old_no": null,
+                "new_no": 109
+              },
+              {
+                "kind": "add",
+                "text": "class C[T: (*constraints,)](Generic[_A]): ...",
+                "old_no": null,
+                "new_no": 110
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 102,
+                "new_no": 111
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 103,
+                "new_no": 112
+              },
+              {
+                "kind": "ctx",
+                "text": "### No errors",
+                "old_no": 104,
+                "new_no": 113
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/pyupgrade/rules/pep695/mod.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 13,
+        "deletions": 7,
+        "hunks": [
+          {
+            "id": "2057ce202c63e46f",
+            "path": "crates/ruff_linter/src/rules/pyupgrade/rules/pep695/mod.rs",
+            "old_start": 119,
+            "old_lines": 15,
+            "new_start": 119,
+            "new_lines": 21,
+            "header": "impl Display for DisplayTypeVar<'_> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "                }",
+                "old_no": 119,
+                "new_no": 119
+              },
+              {
+                "kind": "ctx",
+                "text": "                TypeVarRestriction::AnyStr => f.write_str(\"(bytes, str)\")?,",
+                "old_no": 120,
+                "new_no": 120
+              },
+              {
+                "kind": "ctx",
+                "text": "                TypeVarRestriction::Constraint(vec) => {",
+                "old_no": 121,
+                "new_no": 121
+              },
+              {
+                "kind": "del",
+                "text": "                    let len = vec.len();",
+                "old_no": 122,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "                    f.write_str(\"(\")?;",
+                "old_no": 123,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "                    for (i, v) in vec.iter().enumerate() {",
+                "old_no": 124,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "                        f.write_str(&self.source[v.range()])?;",
+                "old_no": 125,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "                        if i < len - 1 {",
+                "old_no": 126,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "                            f.write_str(\", \")?;",
+                "old_no": 127,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "                    match vec.as_slice() {",
+                "old_no": null,
+                "new_no": 122
+              },
+              {
+                "kind": "add",
+                "text": "                        // A single starred expression needs a comma to form a constraint tuple:",
+                "old_no": null,
+                "new_no": 123
+              },
+              {
+                "kind": "add",
+                "text": "                        // `TypeVar(\"T\", *constraints)` becomes `T: (*constraints,)`.",
+                "old_no": null,
+                "new_no": 124
+              },
+              {
+                "kind": "add",
+                "text": "                        [element] => {",
+                "old_no": null,
+                "new_no": 125
+              },
+              {
+                "kind": "add",
+                "text": "                            write!(f, \"({element},)\", element = &self.source[element.range()])?;",
+                "old_no": null,
+                "new_no": 126
+              },
+              {
+                "kind": "add",
+                "text": "                        }",
+                "old_no": null,
+                "new_no": 127
+              },
+              {
+                "kind": "add",
+                "text": "                        _ => {",
+                "old_no": null,
+                "new_no": 128
+              },
+              {
+                "kind": "add",
+                "text": "                            write!(",
+                "old_no": null,
+                "new_no": 129
+              },
+              {
+                "kind": "add",
+                "text": "                                f,",
+                "old_no": null,
+                "new_no": 130
+              },
+              {
+                "kind": "add",
+                "text": "                                \"({})\",",
+                "old_no": null,
+                "new_no": 131
+              },
+              {
+                "kind": "add",
+                "text": "                                vec.iter()",
+                "old_no": null,
+                "new_no": 132
+              },
+              {
+                "kind": "add",
+                "text": "                                    .format_with(\", \", |expr, f| f(&&self.source[expr.range()])),",
+                "old_no": null,
+                "new_no": 133
+              },
+              {
+                "kind": "add",
+                "text": "                            )?;",
+                "old_no": null,
+                "new_no": 134
+              },
+              {
+                "kind": "ctx",
+                "text": "                        }",
+                "old_no": 128,
+                "new_no": 135
+              },
+              {
+                "kind": "ctx",
+                "text": "                    }",
+                "old_no": 129,
+                "new_no": 136
+              },
+              {
+                "kind": "del",
+                "text": "                    f.write_str(\")\")?;",
+                "old_no": 130,
+                "new_no": null
+              },
+              {
+                "kind": "ctx",
+                "text": "                }",
+                "old_no": 131,
+                "new_no": 137
+              },
+              {
+                "kind": "ctx",
+                "text": "            }",
+                "old_no": 132,
+                "new_no": 138
+              },
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 133,
+                "new_no": 139
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/pyupgrade/snapshots/ruff_linter__rules__pyupgrade__tests__UP040.py.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 34,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "b9c470c1ea254959",
+            "path": "crates/ruff_linter/src/rules/pyupgrade/snapshots/ruff_linter__rules__pyupgrade__tests__UP040.py.snap",
+            "old_start": 497,
+            "old_lines": 5,
+            "new_start": 497,
+            "new_lines": 39,
+            "header": "help: Use the `type` keyword",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    -     ),",
+                "old_no": 497,
+                "new_no": 497
+              },
+              {
+                "kind": "ctx",
+                "text": "    - )",
+                "old_no": 498,
+                "new_no": 498
+              },
+              {
+                "kind": "ctx",
+                "text": "148 +     )",
+                "old_no": 499,
+                "new_no": 499
+              },
+              {
+                "kind": "add",
+                "text": "149 |",
+                "old_no": null,
+                "new_no": 500
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 501
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 502
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 503
+              },
+              {
+                "kind": "add",
+                "text": "UP040 [*] Type alias `StarredList` uses `TypeAlias` annotation instead of the `type` keyword",
+                "old_no": null,
+                "new_no": 504
+              },
+              {
+                "kind": "add",
+                "text": "   --> UP040.py:157:1",
+                "old_no": null,
+                "new_no": 505
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 506
+              },
+              {
+                "kind": "add",
+                "text": "155 | constraints = (int, str)",
+                "old_no": null,
+                "new_no": 507
+              },
+              {
+                "kind": "add",
+                "text": "156 | T_starred = TypeVar(\"T_starred\", *constraints)",
+                "old_no": null,
+                "new_no": 508
+              },
+              {
+                "kind": "add",
+                "text": "157 | StarredList: TypeAlias = list[T_starred]",
+                "old_no": null,
+                "new_no": 509
+              },
+              {
+                "kind": "add",
+                "text": "    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 510
+              },
+              {
+                "kind": "add",
+                "text": "158 | StarredAlias = TypeAliasType(\"StarredAlias\", list[T_starred], type_params=(T_starred,))",
+                "old_no": null,
+                "new_no": 511
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 512
+              },
+              {
+                "kind": "add",
+                "text": "help: Use the `type` keyword",
+                "old_no": null,
+                "new_no": 513
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 514
+              },
+              {
+                "kind": "add",
+                "text": "156 | T_starred = TypeVar(\"T_starred\", *constraints)",
+                "old_no": null,
+                "new_no": 515
+              },
+              {
+                "kind": "add",
+                "text": "    - StarredList: TypeAlias = list[T_starred]",
+                "old_no": null,
+                "new_no": 516
+              },
+              {
+                "kind": "add",
+                "text": "157 + type StarredList[T_starred: (*constraints,)] = list[T_starred]",
+                "old_no": null,
+                "new_no": 517
+              },
+              {
+                "kind": "add",
+                "text": "158 | StarredAlias = TypeAliasType(\"StarredAlias\", list[T_starred], type_params=(T_starred,))",
+                "old_no": null,
+                "new_no": 518
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 519
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 520
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 521
+              },
+              {
+                "kind": "add",
+                "text": "UP040 [*] Type alias `StarredAlias` uses `TypeAliasType` assignment instead of the `type` keyword",
+                "old_no": null,
+                "new_no": 522
+              },
+              {
+                "kind": "add",
+                "text": "   --> UP040.py:158:1",
+                "old_no": null,
+                "new_no": 523
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 524
+              },
+              {
+                "kind": "add",
+                "text": "156 | T_starred = TypeVar(\"T_starred\", *constraints)",
+                "old_no": null,
+                "new_no": 525
+              },
+              {
+                "kind": "add",
+                "text": "157 | StarredList: TypeAlias = list[T_starred]",
+                "old_no": null,
+                "new_no": 526
+              },
+              {
+                "kind": "add",
+                "text": "158 | StarredAlias = TypeAliasType(\"StarredAlias\", list[T_starred], type_params=(T_starred,))",
+                "old_no": null,
+                "new_no": 527
+              },
+              {
+                "kind": "add",
+                "text": "    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 528
+              },
+              {
+                "kind": "add",
+                "text": "help: Use the `type` keyword",
+                "old_no": null,
+                "new_no": 529
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 530
+              },
+              {
+                "kind": "add",
+                "text": "157 | StarredList: TypeAlias = list[T_starred]",
+                "old_no": null,
+                "new_no": 531
+              },
+              {
+                "kind": "add",
+                "text": "    - StarredAlias = TypeAliasType(\"StarredAlias\", list[T_starred], type_params=(T_starred,))",
+                "old_no": null,
+                "new_no": 532
+              },
+              {
+                "kind": "add",
+                "text": "158 + type StarredAlias[T_starred: (*constraints,)] = list[T_starred]",
+                "old_no": null,
+                "new_no": 533
+              },
+              {
+                "kind": "ctx",
+                "text": "    |",
+                "old_no": 500,
+                "new_no": 534
+              },
+              {
+                "kind": "ctx",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": 501,
+                "new_no": 535
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/pyupgrade/snapshots/ruff_linter__rules__pyupgrade__tests__UP046_0.py.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 32,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "a500fa850c427405",
+            "path": "crates/ruff_linter/src/rules/pyupgrade/snapshots/ruff_linter__rules__pyupgrade__tests__UP046_0.py.snap",
+            "old_start": 253,
+            "old_lines": 3,
+            "new_start": 253,
+            "new_lines": 35,
+            "header": "UP046 Generic class `TooManyGenerics` uses `Generic` subclass instead of type pa",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "100 |     var: S",
+                "old_no": 253,
+                "new_no": 253
+              },
+              {
+                "kind": "ctx",
+                "text": "    |",
+                "old_no": 254,
+                "new_no": 254
+              },
+              {
+                "kind": "ctx",
+                "text": "help: Use type parameters",
+                "old_no": 255,
+                "new_no": 255
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 256
+              },
+              {
+                "kind": "add",
+                "text": "UP046 [*] Generic class `StarredConstraints` uses `Generic` subclass instead of type parameters",
+                "old_no": null,
+                "new_no": 257
+              },
+              {
+                "kind": "add",
+                "text": "   --> UP046_0.py:152:26",
+                "old_no": null,
+                "new_no": 258
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 259
+              },
+              {
+                "kind": "add",
+                "text": "152 | class StarredConstraints(Generic[U]):",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "    |                          ^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "153 |     var: U",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "help: Use type parameters",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "151 |",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "    - class StarredConstraints(Generic[U]):",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "152 + class StarredConstraints[U: (*constraints,)]:",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "153 |     var: U",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 271
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 272
+              },
+              {
+                "kind": "add",
+                "text": "UP046 [*] Generic class `MixedConstraints` uses `Generic` subclass instead of type parameters",
+                "old_no": null,
+                "new_no": 273
+              },
+              {
+                "kind": "add",
+                "text": "   --> UP046_0.py:160:24",
+                "old_no": null,
+                "new_no": 274
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 275
+              },
+              {
+                "kind": "add",
+                "text": "160 | class MixedConstraints(Generic[V]):",
+                "old_no": null,
+                "new_no": 276
+              },
+              {
+                "kind": "add",
+                "text": "    |                        ^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 277
+              },
+              {
+                "kind": "add",
+                "text": "161 |     var: V",
+                "old_no": null,
+                "new_no": 278
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 279
+              },
+              {
+                "kind": "add",
+                "text": "help: Use type parameters",
+                "old_no": null,
+                "new_no": 280
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 281
+              },
+              {
+                "kind": "add",
+                "text": "159 |",
+                "old_no": null,
+                "new_no": 282
+              },
+              {
+                "kind": "add",
+                "text": "    - class MixedConstraints(Generic[V]):",
+                "old_no": null,
+                "new_no": 283
+              },
+              {
+                "kind": "add",
+                "text": "160 + class MixedConstraints[V: (bool, *constraints)]:",
+                "old_no": null,
+                "new_no": 284
+              },
+              {
+                "kind": "add",
+                "text": "161 |     var: V",
+                "old_no": null,
+                "new_no": 285
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 286
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 287
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/pyupgrade/snapshots/ruff_linter__rules__pyupgrade__tests__UP047_0.py.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 16,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "ee029244db166f8f",
+            "path": "crates/ruff_linter/src/rules/pyupgrade/snapshots/ruff_linter__rules__pyupgrade__tests__UP047_0.py.snap",
+            "old_start": 122,
+            "old_lines": 3,
+            "new_start": 122,
+            "new_lines": 19,
+            "header": "help: Use type parameters",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "57 |     c(t[0])",
+                "old_no": 122,
+                "new_no": 122
+              },
+              {
+                "kind": "ctx",
+                "text": "   |",
+                "old_no": 123,
+                "new_no": 123
+              },
+              {
+                "kind": "ctx",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": 124,
+                "new_no": 124
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 125
+              },
+              {
+                "kind": "add",
+                "text": "UP047 [*] Generic function `starred_constraints` should use type parameters",
+                "old_no": null,
+                "new_no": 126
+              },
+              {
+                "kind": "add",
+                "text": "  --> UP047_0.py:73:5",
+                "old_no": null,
+                "new_no": 127
+              },
+              {
+                "kind": "add",
+                "text": "   |",
+                "old_no": null,
+                "new_no": 128
+              },
+              {
+                "kind": "add",
+                "text": "73 | def starred_constraints(var: U) -> U:",
+                "old_no": null,
+                "new_no": 129
+              },
+              {
+                "kind": "add",
+                "text": "   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 130
+              },
+              {
+                "kind": "add",
+                "text": "74 |     return var",
+                "old_no": null,
+                "new_no": 131
+              },
+              {
+                "kind": "add",
+                "text": "   |",
+                "old_no": null,
+                "new_no": 132
+              },
+              {
+                "kind": "add",
+                "text": "help: Use type parameters",
+                "old_no": null,
+                "new_no": 133
+              },
+              {
+                "kind": "add",
+                "text": "   |",
+                "old_no": null,
+                "new_no": 134
+              },
+              {
+                "kind": "add",
+                "text": "72 |",
+                "old_no": null,
+                "new_no": 135
+              },
+              {
+                "kind": "add",
+                "text": "   - def starred_constraints(var: U) -> U:",
+                "old_no": null,
+                "new_no": 136
+              },
+              {
+                "kind": "add",
+                "text": "73 + def starred_constraints[U: (*constraints,)](var: U) -> U:",
+                "old_no": null,
+                "new_no": 137
+              },
+              {
+                "kind": "add",
+                "text": "74 |     return var",
+                "old_no": null,
+                "new_no": 138
+              },
+              {
+                "kind": "add",
+                "text": "   |",
+                "old_no": null,
+                "new_no": 139
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 140
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/ruff/snapshots/ruff_linter__rules__ruff__tests__class-with-mixed-type-vars_RUF053.py.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 32,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "7e5188b98102216e",
+            "path": "crates/ruff_linter/src/rules/ruff/snapshots/ruff_linter__rules__ruff__tests__class-with-mixed-type-vars_RUF053.py.snap",
+            "old_start": 429,
+            "old_lines": 7,
+            "new_start": 429,
+            "new_lines": 7,
+            "header": "help: Remove `Generic` base class",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "   |",
+                "old_no": 429,
+                "new_no": 429
+              },
+              {
+                "kind": "ctx",
+                "text": "94 | # Single-element constraints should not be converted to a bound.",
+                "old_no": 430,
+                "new_no": 430
+              },
+              {
+                "kind": "ctx",
+                "text": "   - class C[T: (str,)](Generic[_A]): ...",
+                "old_no": 431,
+                "new_no": 431
+              },
+              {
+                "kind": "del",
+                "text": "95 + class C[T: (str), _A]: ...",
+                "old_no": 432,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "95 + class C[T: (str,), _A]: ...",
+                "old_no": null,
+                "new_no": 432
+              },
+              {
+                "kind": "ctx",
+                "text": "96 | class C[T: [a]](Generic[_A]): ...",
+                "old_no": 433,
+                "new_no": 433
+              },
+              {
+                "kind": "ctx",
+                "text": "   |",
+                "old_no": 434,
+                "new_no": 434
+              },
+              {
+                "kind": "ctx",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": 435,
+                "new_no": 435
+              }
+            ]
+          },
+          {
+            "id": "7eec10cad564067b",
+            "path": "crates/ruff_linter/src/rules/ruff/snapshots/ruff_linter__rules__ruff__tests__class-with-mixed-type-vars_RUF053.py.snap",
+            "old_start": 449,
+            "old_lines": 3,
+            "new_start": 449,
+            "new_lines": 34,
+            "header": "help: Remove `Generic` base class",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "97 |",
+                "old_no": 449,
+                "new_no": 449
+              },
+              {
+                "kind": "ctx",
+                "text": "   |",
+                "old_no": 450,
+                "new_no": 450
+              },
+              {
+                "kind": "ctx",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": 451,
+                "new_no": 451
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 452
+              },
+              {
+                "kind": "add",
+                "text": "RUF053 [*] Class with type parameter list inherits from `Generic`",
+                "old_no": null,
+                "new_no": 453
+              },
+              {
+                "kind": "add",
+                "text": "   --> RUF053.py:106:12",
+                "old_no": null,
+                "new_no": 454
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 455
+              },
+              {
+                "kind": "add",
+                "text": "104 | constraints = (str, bytes)",
+                "old_no": null,
+                "new_no": 456
+              },
+              {
+                "kind": "add",
+                "text": "105 | _H = TypeVar('_H', *constraints)",
+                "old_no": null,
+                "new_no": 457
+              },
+              {
+                "kind": "add",
+                "text": "106 | class C[T](Generic[_H]): ...",
+                "old_no": null,
+                "new_no": 458
+              },
+              {
+                "kind": "add",
+                "text": "    |            ^^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 459
+              },
+              {
+                "kind": "add",
+                "text": "help: Remove `Generic` base class",
+                "old_no": null,
+                "new_no": 460
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 461
+              },
+              {
+                "kind": "add",
+                "text": "105 | _H = TypeVar('_H', *constraints)",
+                "old_no": null,
+                "new_no": 462
+              },
+              {
+                "kind": "add",
+                "text": "    - class C[T](Generic[_H]): ...",
+                "old_no": null,
+                "new_no": 463
+              },
+              {
+                "kind": "add",
+                "text": "106 + class C[T, _H: (*constraints,)]: ...",
+                "old_no": null,
+                "new_no": 464
+              },
+              {
+                "kind": "add",
+                "text": "107 |",
+                "old_no": null,
+                "new_no": 465
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 466
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 467
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 468
+              },
+              {
+                "kind": "add",
+                "text": "RUF053 [*] Class with type parameter list inherits from `Generic`",
+                "old_no": null,
+                "new_no": 469
+              },
+              {
+                "kind": "add",
+                "text": "   --> RUF053.py:110:29",
+                "old_no": null,
+                "new_no": 470
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 471
+              },
+              {
+                "kind": "add",
+                "text": "109 | # Existing starred constraint tuples retain their trailing comma.",
+                "old_no": null,
+                "new_no": 472
+              },
+              {
+                "kind": "add",
+                "text": "110 | class C[T: (*constraints,)](Generic[_A]): ...",
+                "old_no": null,
+                "new_no": 473
+              },
+              {
+                "kind": "add",
+                "text": "    |                             ^^^^^^^^^^^",
+                "old_no": null,
+                "new_no": 474
+              },
+              {
+                "kind": "add",
+                "text": "help: Remove `Generic` base class",
+                "old_no": null,
+                "new_no": 475
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 476
+              },
+              {
+                "kind": "add",
+                "text": "109 | # Existing starred constraint tuples retain their trailing comma.",
+                "old_no": null,
+                "new_no": 477
+              },
+              {
+                "kind": "add",
+                "text": "    - class C[T: (*constraints,)](Generic[_A]): ...",
+                "old_no": null,
+                "new_no": 478
+              },
+              {
+                "kind": "add",
+                "text": "110 + class C[T: (*constraints,), _A]: ...",
+                "old_no": null,
+                "new_no": 479
+              },
+              {
+                "kind": "add",
+                "text": "111 |",
+                "old_no": null,
+                "new_no": 480
+              },
+              {
+                "kind": "add",
+                "text": "    |",
+                "old_no": null,
+                "new_no": 481
+              },
+              {
+                "kind": "add",
+                "text": "note: This is an unsafe fix and may change runtime behavior",
+                "old_no": null,
+                "new_no": 482
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

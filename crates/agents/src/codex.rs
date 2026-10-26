@@ -1,0 +1,402 @@
+//! Codex runner (`codex` 0.15x): `codex exec --json`.
+//!
+//! Flags verified against `codex exec --help` / `codex mcp --help` on the
+//! installed 0.156.1 binary. HTTP MCP needs no stdio bridge: `codex exec`
+//! accepts `-c mcp_servers.<name>.url=...` / `.bearer_token_env_var=...`
+//! overrides without touching `~/.codex/config.toml` (confirmed by
+//! `codex mcp add --help`, which documents the same keys for the persisted
+//! form).
+//!
+//! The event schema below (`thread.started`, `turn.started/completed/failed`,
+//! `item.started/completed` with `agent_message` / `reasoning` /
+//! `command_execution` / `mcp_tool_call` / `file_change` / `web_search`
+//! items) matches OpenAI's published non-interactive-mode reference. Only the
+//! `error`/`turn.failed` path was exercised live here — this sandbox's Codex
+//! has no OpenAI auth, so a real `turn.completed` was never observed; see
+//! `tests/fixtures/codex_auth_error.jsonl` (real, redacted) vs
+//! `tests/fixtures/codex_success.jsonl` (built from the documented schema,
+//! marked untested).
+
+use serde_json::Value;
+use theodore_domain::Usage;
+use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
+
+use crate::config::AgentBinaryConfig;
+use crate::process::LineParser;
+
+pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
+    let mut args = vec!["exec".to_string(), "--json".to_string()];
+    args.push("-C".to_string());
+    args.push(req.cwd.display().to_string());
+    args.push("-s".to_string());
+    args.push(
+        match req.mode {
+            AgentMode::ReadOnly => "read-only",
+            AgentMode::Edit | AgentMode::Run => "workspace-write",
+        }
+        .to_string(),
+    );
+    if req.mode == AgentMode::Run {
+        // Writes stay inside the workspace; commands may reach the network
+        // (installs). Codex's own sandbox, nothing added by Theodore.
+        args.push("-c".to_string());
+        args.push("sandbox_workspace_write.network_access=true".to_string());
+    }
+    if let Some(mcp) = &req.mcp {
+        args.push("-c".to_string());
+        args.push(format!("mcp_servers.{}.url=\"{}\"", mcp.name, mcp.url));
+        args.push("-c".to_string());
+        args.push(format!(
+            "mcp_servers.{}.bearer_token_env_var=\"{MCP_TOKEN_ENV_VAR}\"",
+            mcp.name
+        ));
+    }
+    if let Some(model) = req.model.as_ref().or(cfg.model.as_ref()) {
+        args.push("-m".to_string());
+        args.push(model.clone());
+    }
+    args.extend(cfg.extra_args.iter().cloned());
+    // Codex exec has no --append-system-prompt; fold it into the prompt text.
+    let prompt = match &req.system {
+        Some(system) => format!("{system}\n\n{}", req.prompt),
+        None => req.prompt.clone(),
+    };
+    args.push(prompt);
+    args
+}
+
+/// Env var Codex reads the MCP bearer token from, per `bearer_token_env_var`
+/// above. Named without a `THEODORE_` prefix so the generic env filter in
+/// `env.rs` (which strips Theodore's own secrets) never touches it; the
+/// caller sets it explicitly alongside the filtered parent env.
+pub const MCP_TOKEN_ENV_VAR: &str = "REVIEW_TOOLS_TOKEN";
+
+#[derive(Debug, Default)]
+pub struct CodexParser {
+    last_agent_message: String,
+}
+
+impl CodexParser {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Pure: one `--json` line in, zero or more normalized events out, plus the
+/// running `last_agent_message` an eventual `turn.completed` needs for `Done`.
+pub fn parse_line(line: &str, last_agent_message: &mut String) -> Vec<AgentEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return vec![];
+    }
+    let Ok(v) = serde_json::from_str::<Value>(line) else {
+        return vec![];
+    };
+    match v.get("type").and_then(Value::as_str) {
+        Some("item.started") => item_started(v.get("item")),
+        Some("item.completed") => item_completed(v.get("item"), last_agent_message),
+        Some("turn.completed") => {
+            vec![AgentEvent::Done {
+                final_text: last_agent_message.clone(),
+                usage: v.get("usage").map(codex_usage).unwrap_or_default(),
+            }]
+        }
+        Some("turn.failed") => {
+            let message = v
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("codex turn failed")
+                .to_string();
+            vec![AgentEvent::Error {
+                message,
+                stderr_tail: String::new(),
+            }]
+        }
+        // Top-level `error` events are transport-level retries (seen live:
+        // repeated reconnect attempts before the real `turn.failed`); never
+        // terminal on their own.
+        Some("thread.started") | Some("turn.started") | Some("error") => vec![],
+        _ => vec![],
+    }
+}
+
+fn item_started(item: Option<&Value>) -> Vec<AgentEvent> {
+    let Some(item) = item else { return vec![] };
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    match item.get("type").and_then(Value::as_str) {
+        Some("command_execution") => {
+            let command = item
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            vec![AgentEvent::ToolCall {
+                id,
+                name: "shell".to_string(),
+                input: serde_json::json!({ "command": command }),
+            }]
+        }
+        Some("mcp_tool_call") => {
+            let server = item
+                .get("server")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let tool = item.get("tool").and_then(Value::as_str).unwrap_or_default();
+            vec![AgentEvent::ToolCall {
+                id,
+                name: format!("{server}__{tool}"),
+                input: item.get("arguments").cloned().unwrap_or(Value::Null),
+            }]
+        }
+        _ => vec![],
+    }
+}
+
+fn item_completed(item: Option<&Value>, last_agent_message: &mut String) -> Vec<AgentEvent> {
+    let Some(item) = item else { return vec![] };
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    match item.get("type").and_then(Value::as_str) {
+        Some("agent_message") => {
+            let text = item
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            last_agent_message.clone_from(&text);
+            if text.is_empty() {
+                vec![]
+            } else {
+                vec![AgentEvent::Text { text }]
+            }
+        }
+        Some("reasoning") => {
+            let text = item.get("text").and_then(Value::as_str).unwrap_or_default();
+            (!text.is_empty())
+                .then(|| AgentEvent::Thinking {
+                    text: text.to_string(),
+                })
+                .into_iter()
+                .collect()
+        }
+        Some("command_execution") => {
+            let exit_code = item.get("exit_code").and_then(Value::as_i64);
+            let output = item
+                .get("aggregated_output")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            vec![AgentEvent::ToolResult {
+                id,
+                ok: exit_code == Some(0),
+                output: output.to_string(),
+            }]
+        }
+        Some("mcp_tool_call") => {
+            let ok = item.get("status").and_then(Value::as_str) == Some("completed")
+                && item.get("error").is_none_or(Value::is_null);
+            let output = if let Some(err) = item.pointer("/error/message").and_then(Value::as_str) {
+                err.to_string()
+            } else {
+                item.get("result")
+                    .map(|r| r.to_string())
+                    .unwrap_or_default()
+            };
+            vec![AgentEvent::ToolResult { id, ok, output }]
+        }
+        Some("file_change") => {
+            let ok = item.get("status").and_then(Value::as_str) == Some("completed");
+            let changes = item.get("changes").cloned().unwrap_or(Value::Null);
+            vec![AgentEvent::ToolResult {
+                id,
+                ok,
+                output: changes.to_string(),
+            }]
+        }
+        Some("web_search") => {
+            let query = item
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            vec![
+                AgentEvent::ToolCall {
+                    id: id.clone(),
+                    name: "web_search".to_string(),
+                    input: serde_json::json!({ "query": query }),
+                },
+                AgentEvent::ToolResult {
+                    id,
+                    ok: true,
+                    output: String::new(),
+                },
+            ]
+        }
+        // item-level `error`: non-fatal warning, no AgentEvent vocabulary for it.
+        _ => vec![],
+    }
+}
+
+fn codex_usage(u: &Value) -> Usage {
+    let field = |name: &str| u.get(name).and_then(Value::as_u64).unwrap_or(0);
+    Usage {
+        input_tokens: field("input_tokens") + field("cached_input_tokens"),
+        output_tokens: field("output_tokens"),
+        usd: 0.0, // Codex's `--json` usage carries no cost field
+    }
+}
+
+impl LineParser for CodexParser {
+    fn on_line(&mut self, line: &str) -> Vec<AgentEvent> {
+        parse_line(line, &mut self.last_agent_message)
+    }
+
+    fn on_exit(&mut self, success: bool, stderr_tail: &str) -> AgentEvent {
+        AgentEvent::Error {
+            message: if success {
+                "codex exited without a turn.completed event".to_string()
+            } else {
+                "codex exited with a non-zero status".to_string()
+            },
+            stderr_tail: stderr_tail.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(s: &str) -> Vec<AgentEvent> {
+        let mut last = String::new();
+        parse_line(s, &mut last)
+    }
+
+    #[test]
+    fn thread_and_turn_started_are_ignored() {
+        assert_eq!(
+            line(r#"{"type":"thread.started","thread_id":"abc"}"#),
+            vec![]
+        );
+        assert_eq!(line(r#"{"type":"turn.started"}"#), vec![]);
+    }
+
+    #[test]
+    fn transport_error_is_not_terminal() {
+        assert_eq!(
+            line(r#"{"type":"error","message":"Reconnecting... 1/5"}"#),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn command_execution_started_then_completed() {
+        let started = r#"{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"ls","status":"in_progress"}}"#;
+        assert_eq!(
+            line(started),
+            vec![AgentEvent::ToolCall {
+                id: "c1".into(),
+                name: "shell".into(),
+                input: serde_json::json!({"command": "ls"}),
+            }]
+        );
+        let completed = r#"{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"ls","aggregated_output":"a.rs\n","exit_code":0,"status":"completed"}}"#;
+        assert_eq!(
+            line(completed),
+            vec![AgentEvent::ToolResult {
+                id: "c1".into(),
+                ok: true,
+                output: "a.rs\n".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn agent_message_completed_becomes_text_and_tracks_last() {
+        let mut last = String::new();
+        let events = parse_line(
+            r#"{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"ok"}}"#,
+            &mut last,
+        );
+        assert_eq!(events, vec![AgentEvent::Text { text: "ok".into() }]);
+        assert_eq!(last, "ok");
+    }
+
+    #[test]
+    fn turn_completed_uses_last_agent_message_and_usage() {
+        let mut last = "ok".to_string();
+        let events = parse_line(
+            r#"{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":3}}"#,
+            &mut last,
+        );
+        assert_eq!(
+            events,
+            vec![AgentEvent::Done {
+                final_text: "ok".into(),
+                usage: Usage {
+                    input_tokens: 15,
+                    output_tokens: 3,
+                    usd: 0.0
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn turn_failed_becomes_error() {
+        assert_eq!(
+            line(
+                r#"{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}"#
+            ),
+            vec![AgentEvent::Error {
+                message: "unexpected status 401 Unauthorized".into(),
+                stderr_tail: String::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn real_auth_failure_fixture_ends_in_exactly_one_terminal_event() {
+        let fixture = include_str!("../tests/fixtures/codex_auth_error.jsonl");
+        let mut last = String::new();
+        let mut terminals = 0;
+        for l in fixture.lines().filter(|l| !l.trim().is_empty()) {
+            for ev in parse_line(l, &mut last) {
+                if matches!(ev, AgentEvent::Done { .. } | AgentEvent::Error { .. }) {
+                    terminals += 1;
+                }
+            }
+        }
+        assert_eq!(terminals, 1);
+    }
+}
+
+#[cfg(test)]
+mod run_mode_tests {
+    use super::*;
+
+    #[test]
+    fn run_mode_may_edit_and_run_commands() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Codex,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::Run,
+            mcp: None,
+            model: None,
+            stall_after_ms: 1000,
+            env: Vec::new(),
+        };
+        let args = build_args(&req, &Default::default());
+        assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
+        assert!(
+            args.iter()
+                .any(|a| a == "sandbox_workspace_write.network_access=true")
+        );
+    }
+}

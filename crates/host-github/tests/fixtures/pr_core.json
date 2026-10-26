@@ -1,0 +1,94 @@
+{
+  "data": {
+    "viewer": { "login": "carol" },
+    "repository": {
+      "pullRequest": {
+        "id": "PR_node_42",
+        "title": "Add feature X",
+        "body": "This PR adds feature X.",
+        "url": "https://github.com/acme/widgets/pull/42",
+        "state": "OPEN",
+        "isDraft": false,
+        "additions": 10,
+        "deletions": 2,
+        "changedFiles": 1,
+        "baseRefName": "main",
+        "headRefName": "feature-x",
+        "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "createdAt": "2024-01-01T09:00:00Z",
+        "updatedAt": "2024-01-02T03:04:05Z",
+        "reviewDecision": "APPROVED",
+        "mergeable": "MERGEABLE",
+        "author": { "login": "alice", "avatarUrl": "https://avatars/alice.png", "name": "Alice" },
+        "labels": {
+          "nodes": [{ "name": "bug" }],
+          "pageInfo": { "hasNextPage": false, "endCursor": null }
+        },
+        "assignees": {
+          "nodes": [{ "login": "bob", "name": "Bob", "avatarUrl": null }],
+          "pageInfo": { "hasNextPage": false, "endCursor": null }
+        },
+        "reviewRequests": {
+          "nodes": [
+            { "requestedReviewer": { "__typename": "User", "login": "carol", "name": "Carol", "avatarUrl": null } },
+            { "requestedReviewer": { "__typename": "Team", "login": null, "name": "reviewers-team", "avatarUrl": null } }
+          ],
+          "pageInfo": { "hasNextPage": false, "endCursor": null }
+        },
+        "latestReviews": {
+          "nodes": [{ "state": "APPROVED", "submittedAt": "2024-01-02T02:00:00Z", "author": { "login": "carol", "avatarUrl": null, "name": "Carol" } }],
+          "pageInfo": { "hasNextPage": false, "endCursor": null }
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "message": "feat: add feature X\n\nDetails here.",
+                "committedDate": "2024-01-02T03:00:00Z",
+                "author": { "name": "Alice", "user": { "login": "alice", "avatarUrl": null } }
+              }
+            }
+          ],
+          "pageInfo": { "hasNextPage": false, "endCursor": null }
+        },
+        "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+            "nodes": [
+              {
+                "__typename": "CheckRun",
+                "id": "cr1",
+                "databaseId": 900001,
+                "name": "build",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": "https://ci.example/1",
+                "startedAt": "2024-01-02T03:01:00Z",
+                "completedAt": "2024-01-02T03:02:00Z",
+                "context": null,
+                "state": null,
+                "targetUrl": null
+              },
+              {
+                "__typename": "StatusContext",
+                "id": "sc1",
+                "name": null,
+                "status": null,
+                "conclusion": null,
+                "detailsUrl": null,
+                "startedAt": null,
+                "completedAt": null,
+                "context": "ci/legacy",
+                "state": "SUCCESS",
+                "targetUrl": "https://ci.example/legacy"
+              }
+            ],
+            "pageInfo": { "hasNextPage": false, "endCursor": null }
+          }
+        }
+      }
+    }
+  }
+}

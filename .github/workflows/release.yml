@@ -1,0 +1,81 @@
+name: Release
+
+# Plan §11.1. The production build, on every push to main (a merge from
+# staging). build.yml builds it; the publish job below releases it only
+# when the version files carry a version with no `v<version>` tag yet:
+#
+#   main @ 0.3.0, no v0.3.0  ──▶ build ──▶ tag v0.3.0 + GitHub release
+#   main @ 0.3.0, v0.3.0 set ──▶ build ──▶ workflow artifact only
+#
+# Cutting a release is bumping the version and merging it to main; a merge
+# that doesn't bump still proves main builds. Tags are made here, never
+# pushed by hand (docs/releasing.md "Cutting a production release").
+#
+# Variables: THEODORE_WORKOS_CLIENT_ID, the production account's client id,
+# baked into the build (unset: no account). Secrets and the telemetry
+# variables: build.yml.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One at a time and never cancelled: a second merge waits, then sees the
+# tag the first one made and builds only.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      build-env: production
+      workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
+    secrets: inherit
+
+  publish:
+    needs: build
+    # A dispatch from another branch builds, never releases.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: is v${{ needs.build.outputs.version }} already tagged?
+        id: tag
+        run: |
+          # --exit-code: 0 found, 2 not found, anything else is an error.
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null || rc=$?
+          case "$rc" in
+            0) echo "v$VERSION is already released: built only, nothing published."
+               echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "v$VERSION is new: releasing."
+               echo "release=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "✗ git ls-remote failed ($rc)" >&2; exit 1 ;;
+          esac
+
+      - uses: actions/download-artifact@v4
+        if: steps.tag.outputs.release == 'true'
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+
+      # Creates the tag at this commit. A tag made with GITHUB_TOKEN starts
+      # no other workflow.
+      - name: publish GitHub release
+        if: steps.tag.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "v$VERSION" \
+            --generate-notes \
+            dist/*

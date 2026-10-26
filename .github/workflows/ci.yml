@@ -1,0 +1,165 @@
+name: CI
+
+# Both long-lived branches (docs/releasing.md "Branch flow"): pushes to
+# them, and every PR, whichever branch it targets — into staging, into
+# main, or stacked on another PR.
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    # Every crate (incl. the Tauri shell) targets macOS; run the whole
+    # workspace there rather than installing Linux GTK/WebKit dev packages
+    # just to compile a macOS-only app.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: contract + bindings TS up to date
+        run: |
+          cargo run -p theodore-contract --bin export-ts
+          cargo run -p theodore-desktop -- --export-bindings
+          git diff --exit-code -- ui/src/gen
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ui
+        name: check for ui/ package
+        run: |
+          if [ -f ui/package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.ui.outputs.present == 'true'
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        if: steps.ui.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: install
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui install --frozen-lockfile
+
+      - name: typecheck
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui typecheck
+
+      - name: lint
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui lint
+
+      - name: test
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui test
+
+      - name: build
+        if: steps.ui.outputs.present == 'true'
+        run: pnpm -C ui build
+
+      - name: skipped (no ui/package.json yet)
+        if: steps.ui.outputs.present != 'true'
+        run: echo "ui/ not scaffolded yet, skipping"
+
+  ui-e2e:
+    # `tauri-driver` only speaks WebDriver to WebKitWebDriver (Linux) or
+    # Edge WebDriver (Windows) — there is no WKWebView (macOS) backend, so
+    # this is the one job that builds and drives the Tauri app on Linux
+    # (plan §12, §12.1). See `e2e/README.md` for the equivalent local steps.
+    # Pinned: package names (webkit2gtk-driver) differ between Ubuntu releases.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            ui/pnpm-lock.yaml
+            e2e/pnpm-lock.yaml
+
+      - name: apt packages (webkit2gtk + its WebDriver, xvfb, tauri build deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            webkit2gtk-driver \
+            xvfb \
+            patchelf
+
+      - name: install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: build the ui bundle
+        run: |
+          pnpm -C ui install --frozen-lockfile
+          pnpm -C ui build
+
+      - name: build the debug app
+        # Picks up `ui/dist` (just built above) via `tauri.conf.json`'s
+        # `frontendDist` — no `cargo tauri` CLI needed for a plain binary.
+        # `custom-protocol` makes a debug binary serve that bundle; without
+        # it, it loads `devUrl` (the Vite dev server) and the window is blank.
+        run: cargo build -p theodore-desktop --features tauri/custom-protocol
+
+      - name: e2e dependencies
+        run: pnpm -C e2e install --frozen-lockfile
+
+      - name: e2e typecheck
+        run: pnpm -C e2e typecheck
+
+      - name: run the specs
+        # A screen bigger than the 1400×900 window (`tauri.conf.json`), so
+        # it opens at full size and the review lays out the same each run.
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm -C e2e test
+        env:
+          TAURI_APP_BINARY: ${{ github.workspace }}/target/debug/theodore-app
+          THEODORE_FIXTURES: ${{ github.workspace }}/crates/fixtures/data/demo

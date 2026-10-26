@@ -1,0 +1,4955 @@
+{
+  "pr": {
+    "title": "io: add `AsyncFd::register` and deprecate `AsyncFd::new`",
+    "body": "Tokio's `AsyncFd` was added before the concept of I/O safety was stabilized, so for historical reasons it requires `T: AsRawFd` instead of `T: AsFd`. However, Tokio's IO driver tracks per-IO resource information in an allocated object, and the user data given to epoll is a pointer to said object. This means that if epoll returns a readiness event for an fd after its object is removed, that leads to use-after-free.\r\n\r\nUnfortunately, this situation can happen if `AsyncFd` is misused in safe code. For example, if the underlying fd is closed while the `AsyncFd` exists. We recently merged #8540, which avoids the UAF in common cases, but it's not a perfect mitigation, and as seen in #8539 it's still possible to trigger UAF today.\r\n\r\nThere are only really two ways to fix this issue:\r\n\r\n1. Stop storing pointers in the epoll user data, and instead store a key into a hash map or similar data structure, so that UAF can be detected safely.\r\n2. Adopt I/O safety for `AsyncFd`.\r\n\r\nThis PR takes the second approach. Specifically, `AsyncFd::new` is deprecated, and a new, unsafe `AsyncFd::register` is added to replace it.\r\n\r\nNote that `AsyncFd::register` has to be an unsafe constructor. It's not enough to just accept `T: AsFd` instead of `T: AsRawFd` because the `AsFd` trait does not promise that every call to `as_fd()` returns the *same* file descriptor.\r\n\r\nI also considered the option of defining a new `unsafe trait AsyncFdSafe` with a safety requirement that every call to `as_fd()` returns the same file descriptor. However, that's not enough either because of `AsyncFd::get_mut()`, which lets the end-user `mem::swap` the I/O resource for another one. And we can't get rid of `get_mut()`-like methods on `AsyncFd`, because `AsyncFd` fundamentally relies on the user manually invoking `read()` and `write()` directly on the inner I/O resource.\r\n\r\nFixes: #8539",
+    "commits": [
+      "io: add `AsyncFd::register` and deprecate `AsyncFd::new`",
+      "io: mention unsoundness and PR #8587 in AsyncFd deprecation notes",
+      "Merge branch 'tokio-1.51.x' into f01",
+      "tests: add AsyncFdRegisterError to async_send_sync",
+      "Merge branch 'tokio-1.51.x' into f01"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": "tokio/src/io/async_fd.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 145,
+        "deletions": 98,
+        "hunks": [
+          {
+            "id": "2235c537d8c29e7a",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 30,
+            "old_lines": 11,
+            "new_start": 30,
+            "new_lines": 11,
+            "header": "use std::task::{ready, Context, Poll};",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "/// drop.",
+                "old_no": 30,
+                "new_no": 30
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 31,
+                "new_no": 31
+              },
+              {
+                "kind": "ctx",
+                "text": "/// The inner object is required to implement [`AsRawFd`]. This file descriptor",
+                "old_no": 32,
+                "new_no": 32
+              },
+              {
+                "kind": "del",
+                "text": "/// must not change while [`AsyncFd`] owns the inner object, i.e. the",
+                "old_no": 33,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// [`AsRawFd::as_raw_fd`] method on the inner type must always return the same",
+                "old_no": 34,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// file descriptor when called multiple times. Failure to uphold this results",
+                "old_no": 35,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// in unspecified behavior in the IO driver, which may include breaking",
+                "old_no": 36,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// notifications for other sockets/etc.",
+                "old_no": 37,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// must remain open and must not change while [`AsyncFd`] owns the inner",
+                "old_no": null,
+                "new_no": 33
+              },
+              {
+                "kind": "add",
+                "text": "/// object, i.e. the [`AsRawFd::as_raw_fd`] method on the inner type must always",
+                "old_no": null,
+                "new_no": 34
+              },
+              {
+                "kind": "add",
+                "text": "/// return the same valid file descriptor referring to the same underlying file",
+                "old_no": null,
+                "new_no": 35
+              },
+              {
+                "kind": "add",
+                "text": "/// description when called multiple times. Violating this requirement leads to",
+                "old_no": null,
+                "new_no": 36
+              },
+              {
+                "kind": "add",
+                "text": "/// undefined behavior.",
+                "old_no": null,
+                "new_no": 37
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 38,
+                "new_no": 38
+              },
+              {
+                "kind": "ctx",
+                "text": "/// Polling for readiness is done by calling the async functions [`readable`]",
+                "old_no": 39,
+                "new_no": 39
+              },
+              {
+                "kind": "ctx",
+                "text": "/// and [`writable`]. These functions complete when the associated readiness",
+                "old_no": 40,
+                "new_no": 40
+              }
+            ]
+          },
+          {
+            "id": "6802b8d28bde752e",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 87,
+            "old_lines": 8,
+            "new_start": 87,
+            "new_lines": 10,
+            "header": "use std::task::{ready, Context, Poll};",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "/// impl AsyncTcpStream {",
+                "old_no": 87,
+                "new_no": 87
+              },
+              {
+                "kind": "ctx",
+                "text": "///     pub fn new(tcp: TcpStream) -> io::Result<Self> {",
+                "old_no": 88,
+                "new_no": 88
+              },
+              {
+                "kind": "ctx",
+                "text": "///         tcp.set_nonblocking(true)?;",
+                "old_no": 89,
+                "new_no": 89
+              },
+              {
+                "kind": "add",
+                "text": "///         // SAFETY: `TcpStream` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 90
+              },
+              {
+                "kind": "add",
+                "text": "///         // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 91
+              },
+              {
+                "kind": "ctx",
+                "text": "///         Ok(Self {",
+                "old_no": 90,
+                "new_no": 92
+              },
+              {
+                "kind": "del",
+                "text": "///             inner: AsyncFd::new(tcp)?,",
+                "old_no": 91,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "///             inner: unsafe { AsyncFd::register(tcp)? },",
+                "old_no": null,
+                "new_no": 93
+              },
+              {
+                "kind": "ctx",
+                "text": "///         })",
+                "old_no": 92,
+                "new_no": 94
+              },
+              {
+                "kind": "ctx",
+                "text": "///     }",
+                "old_no": 93,
+                "new_no": 95
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 94,
+                "new_no": 96
+              }
+            ]
+          },
+          {
+            "id": "bec508f14abf904a",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 208,
+            "old_lines": 31,
+            "new_start": 210,
+            "new_lines": 25,
+            "header": "pub struct AsyncFdReadyMutGuard<'a, T: AsRawFd> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 208,
+                "new_no": 210
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 209,
+                "new_no": 211
+              },
+              {
+                "kind": "ctx",
+                "text": "impl<T: AsRawFd> AsyncFd<T> {",
+                "old_no": 210,
+                "new_no": 212
+              },
+              {
+                "kind": "del",
+                "text": "    /// Creates an [`AsyncFd`] backed by (and taking ownership of) an object",
+                "old_no": 211,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// implementing [`AsRawFd`]. The backing file descriptor is cached at the",
+                "old_no": 212,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// time of creation.",
+                "old_no": 213,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// Creates an `AsyncFd` backed by (and taking ownership of) an object",
+                "old_no": null,
+                "new_no": 213
+              },
+              {
+                "kind": "add",
+                "text": "    /// implementing [`AsRawFd`].",
+                "old_no": null,
+                "new_no": 214
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 214,
+                "new_no": 215
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// Only configures the [`Interest::READABLE`] and [`Interest::WRITABLE`] interests. For more",
+                "old_no": 215,
+                "new_no": 216
+              },
+              {
+                "kind": "del",
+                "text": "    /// control, use [`AsyncFd::with_interest`].",
+                "old_no": 216,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// control, use [`AsyncFd::register_with_interest`].",
+                "old_no": null,
+                "new_no": 217
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 217,
+                "new_no": 218
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// This method must be called in the context of a tokio runtime.",
+                "old_no": 218,
+                "new_no": 219
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 219,
+                "new_no": 220
+              },
+              {
+                "kind": "del",
+                "text": "    /// # Panics",
+                "old_no": 220,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// In the case of failure, it returns an [`AsyncFdRegisterError`] that contains the original",
+                "old_no": null,
+                "new_no": 221
+              },
+              {
+                "kind": "add",
+                "text": "    /// object passed to this function.",
+                "old_no": null,
+                "new_no": 222
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 221,
+                "new_no": 223
+              },
+              {
+                "kind": "del",
+                "text": "    /// This function panics if there is no current reactor set, or if the `rt`",
+                "old_no": 222,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// feature flag is not enabled.",
+                "old_no": 223,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    #[inline]",
+                "old_no": 224,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    #[track_caller]",
+                "old_no": 225,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    pub fn new(inner: T) -> io::Result<Self>",
+                "old_no": 226,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    where",
+                "old_no": 227,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        T: AsRawFd,",
+                "old_no": 228,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    {",
+                "old_no": 229,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        Self::with_interest(inner, Interest::READABLE | Interest::WRITABLE)",
+                "old_no": 230,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    }",
+                "old_no": 231,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 232,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// Creates an [`AsyncFd`] backed by (and taking ownership of) an object",
+                "old_no": 233,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// implementing [`AsRawFd`], with a specific [`Interest`]. The backing",
+                "old_no": 234,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// file descriptor is cached at the time of creation.",
+                "old_no": 235,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// # Safety",
+                "old_no": null,
+                "new_no": 224
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 225
+              },
+              {
+                "kind": "add",
+                "text": "    /// The file descriptor returned by [`inner.as_raw_fd()`](AsRawFd::as_raw_fd) must be a valid,",
+                "old_no": null,
+                "new_no": 226
+              },
+              {
+                "kind": "add",
+                "text": "    /// open file descriptor, and it must remain open and refer to the same underlying file",
+                "old_no": null,
+                "new_no": 227
+              },
+              {
+                "kind": "add",
+                "text": "    /// description for the entire lifetime of the `AsyncFd` (i.e., until the `AsyncFd` is",
+                "old_no": null,
+                "new_no": 228
+              },
+              {
+                "kind": "add",
+                "text": "    /// dropped, or [`AsyncFd::into_inner`] is called, or the `AsyncFd` is",
+                "old_no": null,
+                "new_no": 229
+              },
+              {
+                "kind": "add",
+                "text": "    /// [forgotten](std::mem::forget)). While owned by this `AsyncFd`, every call to",
+                "old_no": null,
+                "new_no": 230
+              },
+              {
+                "kind": "add",
+                "text": "    /// [`inner.as_raw_fd()`](AsRawFd::as_raw_fd) must return that same file descriptor.",
+                "old_no": null,
+                "new_no": 231
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 236,
+                "new_no": 232
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// # Panics",
+                "old_no": 237,
+                "new_no": 233
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 238,
+                "new_no": 234
+              }
+            ]
+          },
+          {
+            "id": "a6c129f3fd11195c",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 240,
+            "old_lines": 53,
+            "new_start": 236,
+            "new_lines": 27,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// feature flag is not enabled.",
+                "old_no": 240,
+                "new_no": 236
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[inline]",
+                "old_no": 241,
+                "new_no": 237
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[track_caller]",
+                "old_no": 242,
+                "new_no": 238
+              },
+              {
+                "kind": "del",
+                "text": "    pub fn with_interest(inner: T, interest: Interest) -> io::Result<Self>",
+                "old_no": 243,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    where",
+                "old_no": 244,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        T: AsRawFd,",
+                "old_no": 245,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    {",
+                "old_no": 246,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        Self::new_with_handle_and_interest(inner, scheduler::Handle::current(), interest)",
+                "old_no": 247,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    }",
+                "old_no": 248,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 249,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    #[track_caller]",
+                "old_no": 250,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    pub(crate) fn new_with_handle_and_interest(",
+                "old_no": 251,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        inner: T,",
+                "old_no": 252,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        handle: scheduler::Handle,",
+                "old_no": 253,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        interest: Interest,",
+                "old_no": 254,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    ) -> io::Result<Self> {",
+                "old_no": 255,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        Self::try_new_with_handle_and_interest(inner, handle, interest).map_err(Into::into)",
+                "old_no": 256,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    pub unsafe fn register(inner: T) -> Result<Self, AsyncFdRegisterError<T>> {",
+                "old_no": null,
+                "new_no": 239
+              },
+              {
+                "kind": "add",
+                "text": "        // SAFETY: Upheld by the caller.",
+                "old_no": null,
+                "new_no": 240
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { Self::register_with_interest(inner, Interest::READABLE | Interest::WRITABLE) }",
+                "old_no": null,
+                "new_no": 241
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 257,
+                "new_no": 242
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 258,
+                "new_no": 243
+              },
+              {
+                "kind": "del",
+                "text": "    /// Creates an [`AsyncFd`] backed by (and taking ownership of) an object",
+                "old_no": 259,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// implementing [`AsRawFd`]. The backing file descriptor is cached at the",
+                "old_no": 260,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// time of creation.",
+                "old_no": 261,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    ///",
+                "old_no": 262,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// Only configures the [`Interest::READABLE`] and [`Interest::WRITABLE`] interests. For more",
+                "old_no": 263,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// control, use [`AsyncFd::try_with_interest`].",
+                "old_no": 264,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// Creates an `AsyncFd` backed by (and taking ownership of) an object",
+                "old_no": null,
+                "new_no": 244
+              },
+              {
+                "kind": "add",
+                "text": "    /// implementing [`AsRawFd`], with a specific [`Interest`].",
+                "old_no": null,
+                "new_no": 245
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 265,
+                "new_no": 246
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// This method must be called in the context of a tokio runtime.",
+                "old_no": 266,
+                "new_no": 247
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 267,
+                "new_no": 248
+              },
+              {
+                "kind": "del",
+                "text": "    /// In the case of failure, it returns [`AsyncFdTryNewError`] that contains the original object",
+                "old_no": 268,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// passed to this function.",
+                "old_no": 269,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// In the case of failure, it returns an [`AsyncFdRegisterError`] that contains the original",
+                "old_no": null,
+                "new_no": 249
+              },
+              {
+                "kind": "add",
+                "text": "    /// object passed to this function.",
+                "old_no": null,
+                "new_no": 250
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 270,
+                "new_no": 251
+              },
+              {
+                "kind": "del",
+                "text": "    /// # Panics",
+                "old_no": 271,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// # Safety",
+                "old_no": null,
+                "new_no": 252
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 272,
+                "new_no": 253
+              },
+              {
+                "kind": "del",
+                "text": "    /// This function panics if there is no current reactor set, or if the `rt`",
+                "old_no": 273,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// feature flag is not enabled.",
+                "old_no": 274,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    #[inline]",
+                "old_no": 275,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    #[track_caller]",
+                "old_no": 276,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    pub fn try_new(inner: T) -> Result<Self, AsyncFdTryNewError<T>>",
+                "old_no": 277,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    where",
+                "old_no": 278,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        T: AsRawFd,",
+                "old_no": 279,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    {",
+                "old_no": 280,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        Self::try_with_interest(inner, Interest::READABLE | Interest::WRITABLE)",
+                "old_no": 281,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    }",
+                "old_no": 282,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 283,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// Creates an [`AsyncFd`] backed by (and taking ownership of) an object",
+                "old_no": 284,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// implementing [`AsRawFd`], with a specific [`Interest`]. The backing",
+                "old_no": 285,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// file descriptor is cached at the time of creation.",
+                "old_no": 286,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    ///",
+                "old_no": 287,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// In the case of failure, it returns [`AsyncFdTryNewError`] that contains the original object",
+                "old_no": 288,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// passed to this function.",
+                "old_no": 289,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// The file descriptor returned by [`inner.as_raw_fd()`](AsRawFd::as_raw_fd) must be a valid,",
+                "old_no": null,
+                "new_no": 254
+              },
+              {
+                "kind": "add",
+                "text": "    /// open file descriptor, and it must remain open and refer to the same underlying file",
+                "old_no": null,
+                "new_no": 255
+              },
+              {
+                "kind": "add",
+                "text": "    /// description for the entire lifetime of the `AsyncFd` (i.e., until the `AsyncFd` is",
+                "old_no": null,
+                "new_no": 256
+              },
+              {
+                "kind": "add",
+                "text": "    /// dropped, or [`AsyncFd::into_inner`] is called, or the `AsyncFd` is",
+                "old_no": null,
+                "new_no": 257
+              },
+              {
+                "kind": "add",
+                "text": "    /// [forgotten](std::mem::forget)). While owned by this `AsyncFd`, every call to",
+                "old_no": null,
+                "new_no": 258
+              },
+              {
+                "kind": "add",
+                "text": "    /// [`inner.as_raw_fd()`](AsRawFd::as_raw_fd) must return that same file descriptor.",
+                "old_no": null,
+                "new_no": 259
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 290,
+                "new_no": 260
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// # Panics",
+                "old_no": 291,
+                "new_no": 261
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 292,
+                "new_no": 262
+              }
+            ]
+          },
+          {
+            "id": "f19c1ba6c58f3775",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 294,
+            "old_lines": 27,
+            "new_start": 264,
+            "new_lines": 22,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// feature flag is not enabled.",
+                "old_no": 294,
+                "new_no": 264
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[inline]",
+                "old_no": 295,
+                "new_no": 265
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[track_caller]",
+                "old_no": 296,
+                "new_no": 266
+              },
+              {
+                "kind": "del",
+                "text": "    pub fn try_with_interest(inner: T, interest: Interest) -> Result<Self, AsyncFdTryNewError<T>>",
+                "old_no": 297,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    where",
+                "old_no": 298,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        T: AsRawFd,",
+                "old_no": 299,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    {",
+                "old_no": 300,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        Self::try_new_with_handle_and_interest(inner, scheduler::Handle::current(), interest)",
+                "old_no": 301,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    }",
+                "old_no": 302,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "",
+                "old_no": 303,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    #[track_caller]",
+                "old_no": 304,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    pub(crate) fn try_new_with_handle_and_interest(",
+                "old_no": 305,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    pub unsafe fn register_with_interest(",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "ctx",
+                "text": "        inner: T,",
+                "old_no": 306,
+                "new_no": 268
+              },
+              {
+                "kind": "del",
+                "text": "        handle: scheduler::Handle,",
+                "old_no": 307,
+                "new_no": null
+              },
+              {
+                "kind": "ctx",
+                "text": "        interest: Interest,",
+                "old_no": 308,
+                "new_no": 269
+              },
+              {
+                "kind": "del",
+                "text": "    ) -> Result<Self, AsyncFdTryNewError<T>> {",
+                "old_no": 309,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ) -> Result<Self, AsyncFdRegisterError<T>> {",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "ctx",
+                "text": "        let fd = inner.as_raw_fd();",
+                "old_no": 310,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 311,
+                "new_no": 272
+              },
+              {
+                "kind": "del",
+                "text": "        match Registration::new_with_interest_and_handle(&mut SourceFd(&fd), interest, handle) {",
+                "old_no": 312,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        match Registration::new_with_interest_and_handle(",
+                "old_no": null,
+                "new_no": 273
+              },
+              {
+                "kind": "add",
+                "text": "            &mut SourceFd(&fd),",
+                "old_no": null,
+                "new_no": 274
+              },
+              {
+                "kind": "add",
+                "text": "            interest,",
+                "old_no": null,
+                "new_no": 275
+              },
+              {
+                "kind": "add",
+                "text": "            scheduler::Handle::current(),",
+                "old_no": null,
+                "new_no": 276
+              },
+              {
+                "kind": "add",
+                "text": "        ) {",
+                "old_no": null,
+                "new_no": 277
+              },
+              {
+                "kind": "ctx",
+                "text": "            Ok(registration) => Ok(AsyncFd {",
+                "old_no": 313,
+                "new_no": 278
+              },
+              {
+                "kind": "ctx",
+                "text": "                registration,",
+                "old_no": 314,
+                "new_no": 279
+              },
+              {
+                "kind": "ctx",
+                "text": "                inner: Some(inner),",
+                "old_no": 315,
+                "new_no": 280
+              },
+              {
+                "kind": "ctx",
+                "text": "            }),",
+                "old_no": 316,
+                "new_no": 281
+              },
+              {
+                "kind": "del",
+                "text": "            Err(cause) => Err(AsyncFdTryNewError { inner, cause }),",
+                "old_no": 317,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "            Err(cause) => Err(AsyncFdRegisterError { inner, cause }),",
+                "old_no": null,
+                "new_no": 282
+              },
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 318,
+                "new_no": 283
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 319,
+                "new_no": 284
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 320,
+                "new_no": 285
+              }
+            ]
+          },
+          {
+            "id": "3eedb13e32eb4638",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 324,
+            "old_lines": 7,
+            "new_start": 289,
+            "new_lines": 13,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        self.inner.as_ref().unwrap()",
+                "old_no": 324,
+                "new_no": 289
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 325,
+                "new_no": 290
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 326,
+                "new_no": 291
+              },
+              {
+                "kind": "del",
+                "text": "    /// Returns a mutable reference to the backing object of this [`AsyncFd`].",
+                "old_no": 327,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// Returns a mutable reference to the backing object of this `AsyncFd`.",
+                "old_no": null,
+                "new_no": 292
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 293
+              },
+              {
+                "kind": "add",
+                "text": "    /// This may be used to bypass the readiness of the IO resource, so that you",
+                "old_no": null,
+                "new_no": 294
+              },
+              {
+                "kind": "add",
+                "text": "    /// can read or write to it even if the fd is not ready. Be aware that this",
+                "old_no": null,
+                "new_no": 295
+              },
+              {
+                "kind": "add",
+                "text": "    /// method must not be used to exchange the underlying IO resource for a",
+                "old_no": null,
+                "new_no": 296
+              },
+              {
+                "kind": "add",
+                "text": "    /// different one. Doing so is a violation of the safety requirements on",
+                "old_no": null,
+                "new_no": 297
+              },
+              {
+                "kind": "add",
+                "text": "    /// [`AsyncFd::register`].",
+                "old_no": null,
+                "new_no": 298
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[inline]",
+                "old_no": 328,
+                "new_no": 299
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub fn get_mut(&mut self) -> &mut T {",
+                "old_no": 329,
+                "new_no": 300
+              },
+              {
+                "kind": "ctx",
+                "text": "        self.inner.as_mut().unwrap()",
+                "old_no": 330,
+                "new_no": 301
+              }
+            ]
+          },
+          {
+            "id": "70d4397d3dd437c2",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 538,
+            "old_lines": 7,
+            "new_start": 509,
+            "new_lines": 9,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// async fn main() -> Result<(), Box<dyn Error>> {",
+                "old_no": 538,
+                "new_no": 509
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let stream = TcpStream::connect(\"127.0.0.1:8080\")?;",
+                "old_no": 539,
+                "new_no": 510
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     stream.set_nonblocking(true)?;",
+                "old_no": 540,
+                "new_no": 511
+              },
+              {
+                "kind": "del",
+                "text": "    ///     let stream = AsyncFd::new(stream)?;",
+                "old_no": 541,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // SAFETY: `TcpStream` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 512
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 513
+              },
+              {
+                "kind": "add",
+                "text": "    ///     let stream = unsafe { AsyncFd::register(stream)? };",
+                "old_no": null,
+                "new_no": 514
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 542,
+                "new_no": 515
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     loop {",
+                "old_no": 543,
+                "new_no": 516
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///         let mut guard = stream",
+                "old_no": 544,
+                "new_no": 517
+              }
+            ]
+          },
+          {
+            "id": "bb51867164fa8514",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 634,
+            "old_lines": 7,
+            "new_start": 607,
+            "new_lines": 9,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// async fn main() -> Result<(), Box<dyn Error>> {",
+                "old_no": 634,
+                "new_no": 607
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let stream = TcpStream::connect(\"127.0.0.1:8080\")?;",
+                "old_no": 635,
+                "new_no": 608
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     stream.set_nonblocking(true)?;",
+                "old_no": 636,
+                "new_no": 609
+              },
+              {
+                "kind": "del",
+                "text": "    ///     let mut stream = AsyncFd::new(stream)?;",
+                "old_no": 637,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // SAFETY: `TcpStream` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 610
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 611
+              },
+              {
+                "kind": "add",
+                "text": "    ///     let mut stream = unsafe { AsyncFd::register(stream)? };",
+                "old_no": null,
+                "new_no": 612
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 638,
+                "new_no": 613
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     loop {",
+                "old_no": 639,
+                "new_no": 614
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///         let mut guard = stream",
+                "old_no": 640,
+                "new_no": 615
+              }
+            ]
+          },
+          {
+            "id": "c0549577f6520e9e",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 833,
+            "old_lines": 7,
+            "new_start": 808,
+            "new_lines": 9,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// async fn main() -> io::Result<()> {",
+                "old_no": 833,
+                "new_no": 808
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let socket = UdpSocket::bind(\"0.0.0.0:8080\")?;",
+                "old_no": 834,
+                "new_no": 809
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     socket.set_nonblocking(true)?;",
+                "old_no": 835,
+                "new_no": 810
+              },
+              {
+                "kind": "del",
+                "text": "    ///     let async_fd = AsyncFd::new(socket)?;",
+                "old_no": 836,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // SAFETY: `UdpSocket` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 811
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 812
+              },
+              {
+                "kind": "add",
+                "text": "    ///     let async_fd = unsafe { AsyncFd::register(socket)? };",
+                "old_no": null,
+                "new_no": 813
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 837,
+                "new_no": 814
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let written = async_fd",
+                "old_no": 838,
+                "new_no": 815
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///         .async_io(Interest::WRITABLE, |inner| inner.send(&[1, 2]))",
+                "old_no": 839,
+                "new_no": 816
+              }
+            ]
+          },
+          {
+            "id": "e39fc270d78d6434",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 922,
+            "old_lines": 6,
+            "new_start": 899,
+            "new_lines": 57,
+            "header": "impl<T: AsRawFd> AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        self.registration",
+                "old_no": 922,
+                "new_no": 899
+              },
+              {
+                "kind": "ctx",
+                "text": "            .try_io(interest, || f(self.inner.as_mut().unwrap()))",
+                "old_no": 923,
+                "new_no": 900
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 924,
+                "new_no": 901
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 902
+              },
+              {
+                "kind": "add",
+                "text": "    /// Deprecated. Use [`AsyncFd::register`] instead. See [#8587] for more information.",
+                "old_no": null,
+                "new_no": 903
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 904
+              },
+              {
+                "kind": "add",
+                "text": "    /// [#8587]: https://github.com/tokio-rs/tokio/pull/8587",
+                "old_no": null,
+                "new_no": 905
+              },
+              {
+                "kind": "add",
+                "text": "    #[inline]",
+                "old_no": null,
+                "new_no": 906
+              },
+              {
+                "kind": "add",
+                "text": "    #[track_caller]",
+                "old_no": null,
+                "new_no": 907
+              },
+              {
+                "kind": "add",
+                "text": "    #[deprecated(",
+                "old_no": null,
+                "new_no": 908
+              },
+              {
+                "kind": "add",
+                "text": "        note = \"unsound due to lack of I/O safety; use `AsyncFd::register` instead (see https://github.com/tokio-rs/tokio/pull/8587)\"",
+                "old_no": null,
+                "new_no": 909
+              },
+              {
+                "kind": "add",
+                "text": "    )]",
+                "old_no": null,
+                "new_no": 910
+              },
+              {
+                "kind": "add",
+                "text": "    pub fn new(inner: T) -> io::Result<Self> {",
+                "old_no": null,
+                "new_no": 911
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { Ok(Self::register(inner)?) }",
+                "old_no": null,
+                "new_no": 912
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 913
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 914
+              },
+              {
+                "kind": "add",
+                "text": "    /// Deprecated. Use [`AsyncFd::register_with_interest`] instead. See [#8587] for more information.",
+                "old_no": null,
+                "new_no": 915
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 916
+              },
+              {
+                "kind": "add",
+                "text": "    /// [#8587]: https://github.com/tokio-rs/tokio/pull/8587",
+                "old_no": null,
+                "new_no": 917
+              },
+              {
+                "kind": "add",
+                "text": "    #[inline]",
+                "old_no": null,
+                "new_no": 918
+              },
+              {
+                "kind": "add",
+                "text": "    #[track_caller]",
+                "old_no": null,
+                "new_no": 919
+              },
+              {
+                "kind": "add",
+                "text": "    #[deprecated(",
+                "old_no": null,
+                "new_no": 920
+              },
+              {
+                "kind": "add",
+                "text": "        note = \"unsound due to lack of I/O safety; use `AsyncFd::register_with_interest` instead (see https://github.com/tokio-rs/tokio/pull/8587)\"",
+                "old_no": null,
+                "new_no": 921
+              },
+              {
+                "kind": "add",
+                "text": "    )]",
+                "old_no": null,
+                "new_no": 922
+              },
+              {
+                "kind": "add",
+                "text": "    pub fn with_interest(inner: T, interest: Interest) -> io::Result<Self> {",
+                "old_no": null,
+                "new_no": 923
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { Ok(Self::register_with_interest(inner, interest)?) }",
+                "old_no": null,
+                "new_no": 924
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 925
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 926
+              },
+              {
+                "kind": "add",
+                "text": "    /// Deprecated. Use [`AsyncFd::register`] instead. See [#8587] for more information.",
+                "old_no": null,
+                "new_no": 927
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 928
+              },
+              {
+                "kind": "add",
+                "text": "    /// [#8587]: https://github.com/tokio-rs/tokio/pull/8587",
+                "old_no": null,
+                "new_no": 929
+              },
+              {
+                "kind": "add",
+                "text": "    #[inline]",
+                "old_no": null,
+                "new_no": 930
+              },
+              {
+                "kind": "add",
+                "text": "    #[track_caller]",
+                "old_no": null,
+                "new_no": 931
+              },
+              {
+                "kind": "add",
+                "text": "    #[deprecated(",
+                "old_no": null,
+                "new_no": 932
+              },
+              {
+                "kind": "add",
+                "text": "        note = \"unsound due to lack of I/O safety; use `AsyncFd::register` instead (see https://github.com/tokio-rs/tokio/pull/8587)\"",
+                "old_no": null,
+                "new_no": 933
+              },
+              {
+                "kind": "add",
+                "text": "    )]",
+                "old_no": null,
+                "new_no": 934
+              },
+              {
+                "kind": "add",
+                "text": "    pub fn try_new(inner: T) -> Result<Self, AsyncFdRegisterError<T>> {",
+                "old_no": null,
+                "new_no": 935
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { Self::register(inner) }",
+                "old_no": null,
+                "new_no": 936
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 937
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 938
+              },
+              {
+                "kind": "add",
+                "text": "    /// Deprecated. Use [`AsyncFd::register_with_interest`] instead. See [#8587] for more information.",
+                "old_no": null,
+                "new_no": 939
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 940
+              },
+              {
+                "kind": "add",
+                "text": "    /// [#8587]: https://github.com/tokio-rs/tokio/pull/8587",
+                "old_no": null,
+                "new_no": 941
+              },
+              {
+                "kind": "add",
+                "text": "    #[inline]",
+                "old_no": null,
+                "new_no": 942
+              },
+              {
+                "kind": "add",
+                "text": "    #[track_caller]",
+                "old_no": null,
+                "new_no": 943
+              },
+              {
+                "kind": "add",
+                "text": "    #[deprecated(",
+                "old_no": null,
+                "new_no": 944
+              },
+              {
+                "kind": "add",
+                "text": "        note = \"unsound due to lack of I/O safety; use `AsyncFd::register_with_interest` instead (see https://github.com/tokio-rs/tokio/pull/8587)\"",
+                "old_no": null,
+                "new_no": 945
+              },
+              {
+                "kind": "add",
+                "text": "    )]",
+                "old_no": null,
+                "new_no": 946
+              },
+              {
+                "kind": "add",
+                "text": "    pub fn try_with_interest(",
+                "old_no": null,
+                "new_no": 947
+              },
+              {
+                "kind": "add",
+                "text": "        inner: T,",
+                "old_no": null,
+                "new_no": 948
+              },
+              {
+                "kind": "add",
+                "text": "        interest: Interest,",
+                "old_no": null,
+                "new_no": 949
+              },
+              {
+                "kind": "add",
+                "text": "    ) -> Result<Self, AsyncFdRegisterError<T>> {",
+                "old_no": null,
+                "new_no": 950
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { Self::register_with_interest(inner, interest) }",
+                "old_no": null,
+                "new_no": 951
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 952
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 925,
+                "new_no": 953
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 926,
+                "new_no": 954
+              },
+              {
+                "kind": "ctx",
+                "text": "impl<T: AsRawFd> AsRawFd for AsyncFd<T> {",
+                "old_no": 927,
+                "new_no": 955
+              }
+            ]
+          },
+          {
+            "id": "219bd30e1b6d0762",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 932,
+            "old_lines": 6,
+            "new_start": 960,
+            "new_lines": 9,
+            "header": "impl<T: AsRawFd> AsRawFd for AsyncFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 932,
+                "new_no": 960
+              },
+              {
+                "kind": "ctx",
+                "text": "impl<T: AsRawFd> std::os::unix::io::AsFd for AsyncFd<T> {",
+                "old_no": 933,
+                "new_no": 961
+              },
+              {
+                "kind": "ctx",
+                "text": "    fn as_fd(&self) -> std::os::unix::io::BorrowedFd<'_> {",
+                "old_no": 934,
+                "new_no": 962
+              },
+              {
+                "kind": "add",
+                "text": "        // SAFETY: By the safety requirements of `AsyncFd::register` and",
+                "old_no": null,
+                "new_no": 963
+              },
+              {
+                "kind": "add",
+                "text": "        // `AsyncFd::register_with_interest`, the file descriptor returned by",
+                "old_no": null,
+                "new_no": 964
+              },
+              {
+                "kind": "add",
+                "text": "        // `as_raw_fd()` is valid and remains open for the lifetime of `self`.",
+                "old_no": null,
+                "new_no": 965
+              },
+              {
+                "kind": "ctx",
+                "text": "        unsafe { std::os::unix::io::BorrowedFd::borrow_raw(self.as_raw_fd()) }",
+                "old_no": 935,
+                "new_no": 966
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 936,
+                "new_no": 967
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 937,
+                "new_no": 968
+              }
+            ]
+          },
+          {
+            "id": "70d4397d3dd437c2",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 1007,
+            "old_lines": 7,
+            "new_start": 1038,
+            "new_lines": 9,
+            "header": "impl<'a, Inner: AsRawFd> AsyncFdReadyGuard<'a, Inner> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// async fn main() -> Result<(), Box<dyn Error>> {",
+                "old_no": 1007,
+                "new_no": 1038
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let stream = TcpStream::connect(\"127.0.0.1:8080\")?;",
+                "old_no": 1008,
+                "new_no": 1039
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     stream.set_nonblocking(true)?;",
+                "old_no": 1009,
+                "new_no": 1040
+              },
+              {
+                "kind": "del",
+                "text": "    ///     let stream = AsyncFd::new(stream)?;",
+                "old_no": 1010,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // SAFETY: `TcpStream` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 1041
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 1042
+              },
+              {
+                "kind": "add",
+                "text": "    ///     let stream = unsafe { AsyncFd::register(stream)? };",
+                "old_no": null,
+                "new_no": 1043
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 1011,
+                "new_no": 1044
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     loop {",
+                "old_no": 1012,
+                "new_no": 1045
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///         let mut guard = stream",
+                "old_no": 1013,
+                "new_no": 1046
+              }
+            ]
+          },
+          {
+            "id": "c0549577f6520e9e",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 1124,
+            "old_lines": 7,
+            "new_start": 1157,
+            "new_lines": 9,
+            "header": "impl<'a, Inner: AsRawFd> AsyncFdReadyGuard<'a, Inner> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// async fn main() -> io::Result<()> {",
+                "old_no": 1124,
+                "new_no": 1157
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let socket = UdpSocket::bind(\"0.0.0.0:8080\")?;",
+                "old_no": 1125,
+                "new_no": 1158
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     socket.set_nonblocking(true)?;",
+                "old_no": 1126,
+                "new_no": 1159
+              },
+              {
+                "kind": "del",
+                "text": "    ///     let async_fd = AsyncFd::new(socket)?;",
+                "old_no": 1127,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // SAFETY: `UdpSocket` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 1160
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 1161
+              },
+              {
+                "kind": "add",
+                "text": "    ///     let async_fd = unsafe { AsyncFd::register(socket)? };",
+                "old_no": null,
+                "new_no": 1162
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 1128,
+                "new_no": 1163
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let written = loop {",
+                "old_no": 1129,
+                "new_no": 1164
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///         let mut guard = async_fd.writable().await?;",
+                "old_no": 1130,
+                "new_no": 1165
+              }
+            ]
+          },
+          {
+            "id": "bb51867164fa8514",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 1231,
+            "old_lines": 7,
+            "new_start": 1266,
+            "new_lines": 9,
+            "header": "impl<'a, Inner: AsRawFd> AsyncFdReadyMutGuard<'a, Inner> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    /// async fn main() -> Result<(), Box<dyn Error>> {",
+                "old_no": 1231,
+                "new_no": 1266
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     let stream = TcpStream::connect(\"127.0.0.1:8080\")?;",
+                "old_no": 1232,
+                "new_no": 1267
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     stream.set_nonblocking(true)?;",
+                "old_no": 1233,
+                "new_no": 1268
+              },
+              {
+                "kind": "del",
+                "text": "    ///     let mut stream = AsyncFd::new(stream)?;",
+                "old_no": 1234,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // SAFETY: `TcpStream` owns a valid file descriptor and we do not",
+                "old_no": null,
+                "new_no": 1269
+              },
+              {
+                "kind": "add",
+                "text": "    ///     // replace or close it while owned by `AsyncFd`.",
+                "old_no": null,
+                "new_no": 1270
+              },
+              {
+                "kind": "add",
+                "text": "    ///     let mut stream = unsafe { AsyncFd::register(stream)? };",
+                "old_no": null,
+                "new_no": 1271
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 1235,
+                "new_no": 1272
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///     loop {",
+                "old_no": 1236,
+                "new_no": 1273
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///         let mut guard = stream",
+                "old_no": 1237,
+                "new_no": 1274
+              }
+            ]
+          },
+          {
+            "id": "160bea2f7d819448",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 1364,
+            "old_lines": 6,
+            "new_start": 1401,
+            "new_lines": 11,
+            "header": "impl<'a, Inner: AsRawFd> AsyncFdReadyMutGuard<'a, Inner> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1364,
+                "new_no": 1401
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1365,
+                "new_no": 1402
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// Returns a mutable reference to the backing object of the inner [`AsyncFd`].",
+                "old_no": 1366,
+                "new_no": 1403
+              },
+              {
+                "kind": "add",
+                "text": "    ///",
+                "old_no": null,
+                "new_no": 1404
+              },
+              {
+                "kind": "add",
+                "text": "    /// This may be used to interact with the underlying file. Be aware that this",
+                "old_no": null,
+                "new_no": 1405
+              },
+              {
+                "kind": "add",
+                "text": "    /// method must not be used to exchange the underlying IO resource for a",
+                "old_no": null,
+                "new_no": 1406
+              },
+              {
+                "kind": "add",
+                "text": "    /// different one. Doing so is a violation of the safety requirements on",
+                "old_no": null,
+                "new_no": 1407
+              },
+              {
+                "kind": "add",
+                "text": "    /// [`AsyncFd::register`].",
+                "old_no": null,
+                "new_no": 1408
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub fn get_inner_mut(&mut self) -> &mut Inner {",
+                "old_no": 1367,
+                "new_no": 1409
+              },
+              {
+                "kind": "ctx",
+                "text": "        self.get_mut().get_mut()",
+                "old_no": 1368,
+                "new_no": 1410
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1369,
+                "new_no": 1411
+              }
+            ]
+          },
+          {
+            "id": "053e322975e8036d",
+            "path": "tokio/src/io/async_fd.rs",
+            "old_start": 1394,
+            "old_lines": 46,
+            "new_start": 1436,
+            "new_lines": 51,
+            "header": "impl<'a, T: std::fmt::Debug + AsRawFd> std::fmt::Debug for AsyncFdReadyMutGuard<",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "#[derive(Debug)]",
+                "old_no": 1394,
+                "new_no": 1436
+              },
+              {
+                "kind": "ctx",
+                "text": "pub struct TryIoError(());",
+                "old_no": 1395,
+                "new_no": 1437
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1396,
+                "new_no": 1438
+              },
+              {
+                "kind": "del",
+                "text": "/// Error returned by [`try_new`] or [`try_with_interest`].",
+                "old_no": 1397,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// Error returned by [`register`] or [`register_with_interest`].",
+                "old_no": null,
+                "new_no": 1439
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 1398,
+                "new_no": 1440
+              },
+              {
+                "kind": "del",
+                "text": "/// [`try_new`]: AsyncFd::try_new",
+                "old_no": 1399,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// [`try_with_interest`]: AsyncFd::try_with_interest",
+                "old_no": 1400,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "pub struct AsyncFdTryNewError<T> {",
+                "old_no": 1401,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// [`register`]: AsyncFd::register",
+                "old_no": null,
+                "new_no": 1441
+              },
+              {
+                "kind": "add",
+                "text": "/// [`register_with_interest`]: AsyncFd::register_with_interest",
+                "old_no": null,
+                "new_no": 1442
+              },
+              {
+                "kind": "add",
+                "text": "pub struct AsyncFdRegisterError<T> {",
+                "old_no": null,
+                "new_no": 1443
+              },
+              {
+                "kind": "ctx",
+                "text": "    inner: T,",
+                "old_no": 1402,
+                "new_no": 1444
+              },
+              {
+                "kind": "ctx",
+                "text": "    cause: io::Error,",
+                "old_no": 1403,
+                "new_no": 1445
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 1404,
+                "new_no": 1446
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1405,
+                "new_no": 1447
+              },
+              {
+                "kind": "del",
+                "text": "impl<T> AsyncFdTryNewError<T> {",
+                "old_no": 1406,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// Returns the original object passed to [`try_new`] or [`try_with_interest`]",
+                "old_no": 1407,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// Deprecated. Use [`AsyncFdRegisterError`] instead.",
+                "old_no": null,
+                "new_no": 1448
+              },
+              {
+                "kind": "add",
+                "text": "#[doc(hidden)]",
+                "old_no": null,
+                "new_no": 1449
+              },
+              {
+                "kind": "add",
+                "text": "#[deprecated(note = \"use `AsyncFdRegisterError` instead\")]",
+                "old_no": null,
+                "new_no": 1450
+              },
+              {
+                "kind": "add",
+                "text": "pub type AsyncFdTryNewError<T> = AsyncFdRegisterError<T>;",
+                "old_no": null,
+                "new_no": 1451
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 1452
+              },
+              {
+                "kind": "add",
+                "text": "impl<T> AsyncFdRegisterError<T> {",
+                "old_no": null,
+                "new_no": 1453
+              },
+              {
+                "kind": "add",
+                "text": "    /// Returns the original object passed to [`register`] or [`register_with_interest`]",
+                "old_no": null,
+                "new_no": 1454
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// alongside the error that caused these functions to fail.",
+                "old_no": 1408,
+                "new_no": 1455
+              },
+              {
+                "kind": "ctx",
+                "text": "    ///",
+                "old_no": 1409,
+                "new_no": 1456
+              },
+              {
+                "kind": "del",
+                "text": "    /// [`try_new`]: AsyncFd::try_new",
+                "old_no": 1410,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    /// [`try_with_interest`]: AsyncFd::try_with_interest",
+                "old_no": 1411,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    /// [`register`]: AsyncFd::register",
+                "old_no": null,
+                "new_no": 1457
+              },
+              {
+                "kind": "add",
+                "text": "    /// [`register_with_interest`]: AsyncFd::register_with_interest",
+                "old_no": null,
+                "new_no": 1458
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub fn into_parts(self) -> (T, io::Error) {",
+                "old_no": 1412,
+                "new_no": 1459
+              },
+              {
+                "kind": "ctx",
+                "text": "        (self.inner, self.cause)",
+                "old_no": 1413,
+                "new_no": 1460
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1414,
+                "new_no": 1461
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 1415,
+                "new_no": 1462
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1416,
+                "new_no": 1463
+              },
+              {
+                "kind": "del",
+                "text": "impl<T> fmt::Display for AsyncFdTryNewError<T> {",
+                "old_no": 1417,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "impl<T> fmt::Display for AsyncFdRegisterError<T> {",
+                "old_no": null,
+                "new_no": 1464
+              },
+              {
+                "kind": "ctx",
+                "text": "    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {",
+                "old_no": 1418,
+                "new_no": 1465
+              },
+              {
+                "kind": "ctx",
+                "text": "        fmt::Display::fmt(&self.cause, f)",
+                "old_no": 1419,
+                "new_no": 1466
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1420,
+                "new_no": 1467
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 1421,
+                "new_no": 1468
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1422,
+                "new_no": 1469
+              },
+              {
+                "kind": "del",
+                "text": "impl<T> fmt::Debug for AsyncFdTryNewError<T> {",
+                "old_no": 1423,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "impl<T> fmt::Debug for AsyncFdRegisterError<T> {",
+                "old_no": null,
+                "new_no": 1470
+              },
+              {
+                "kind": "ctx",
+                "text": "    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {",
+                "old_no": 1424,
+                "new_no": 1471
+              },
+              {
+                "kind": "ctx",
+                "text": "        fmt::Debug::fmt(&self.cause, f)",
+                "old_no": 1425,
+                "new_no": 1472
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1426,
+                "new_no": 1473
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 1427,
+                "new_no": 1474
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1428,
+                "new_no": 1475
+              },
+              {
+                "kind": "del",
+                "text": "impl<T> Error for AsyncFdTryNewError<T> {",
+                "old_no": 1429,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "impl<T> Error for AsyncFdRegisterError<T> {",
+                "old_no": null,
+                "new_no": 1476
+              },
+              {
+                "kind": "ctx",
+                "text": "    fn source(&self) -> Option<&(dyn Error + 'static)> {",
+                "old_no": 1430,
+                "new_no": 1477
+              },
+              {
+                "kind": "ctx",
+                "text": "        Some(&self.cause)",
+                "old_no": 1431,
+                "new_no": 1478
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1432,
+                "new_no": 1479
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 1433,
+                "new_no": 1480
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 1434,
+                "new_no": 1481
+              },
+              {
+                "kind": "del",
+                "text": "impl<T> From<AsyncFdTryNewError<T>> for io::Error {",
+                "old_no": 1435,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    fn from(value: AsyncFdTryNewError<T>) -> Self {",
+                "old_no": 1436,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "impl<T> From<AsyncFdRegisterError<T>> for io::Error {",
+                "old_no": null,
+                "new_no": 1482
+              },
+              {
+                "kind": "add",
+                "text": "    fn from(value: AsyncFdRegisterError<T>) -> Self {",
+                "old_no": null,
+                "new_no": 1483
+              },
+              {
+                "kind": "ctx",
+                "text": "        value.cause",
+                "old_no": 1437,
+                "new_no": 1484
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 1438,
+                "new_no": 1485
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 1439,
+                "new_no": 1486
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "tokio/src/io/mod.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 4,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "82e6447df4c5080b",
+            "path": "tokio/src/io/mod.rs",
+            "old_start": 257,
+            "old_lines": 7,
+            "new_start": 257,
+            "new_lines": 10,
+            "header": "cfg_net_unix! {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 257,
+                "new_no": 257
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub mod unix {",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "        //! Asynchronous IO structures specific to Unix-like operating systems.",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "del",
+                "text": "        pub use super::async_fd::{AsyncFd, AsyncFdTryNewError, AsyncFdReadyGuard, AsyncFdReadyMutGuard, TryIoError};",
+                "old_no": 260,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        pub use super::async_fd::{AsyncFd, AsyncFdRegisterError, AsyncFdReadyGuard, AsyncFdReadyMutGuard, TryIoError};",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "        #[doc(hidden)]",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "        #[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "        pub use super::async_fd::AsyncFdTryNewError;",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 261,
+                "new_no": 264
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 262,
+                "new_no": 265
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 263,
+                "new_no": 266
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "tokio/tests/async_send_sync.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 3,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "2da3469e7dc8260f",
+            "path": "tokio/tests/async_send_sync.rs",
+            "old_start": 754,
+            "old_lines": 6,
+            "new_start": 754,
+            "new_lines": 9,
+            "header": "mod unix_asyncfd {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    assert_value!(AsyncFdReadyMutGuard<'_, ImplsFd<YY>>: Send & Sync & Unpin);",
+                "old_no": 754,
+                "new_no": 754
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_value!(AsyncFdReadyMutGuard<'_, ImplsFd<YN>>: Send & !Sync & Unpin);",
+                "old_no": 755,
+                "new_no": 755
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_value!(AsyncFdReadyMutGuard<'_, ImplsFd<NN>>: !Send & !Sync & Unpin);",
+                "old_no": 756,
+                "new_no": 756
+              },
+              {
+                "kind": "add",
+                "text": "    assert_value!(AsyncFdRegisterError<ImplsFd<YY>>: Send & Sync & Unpin);",
+                "old_no": null,
+                "new_no": 757
+              },
+              {
+                "kind": "add",
+                "text": "    assert_value!(AsyncFdRegisterError<ImplsFd<YN>>: Send & !Sync & Unpin);",
+                "old_no": null,
+                "new_no": 758
+              },
+              {
+                "kind": "add",
+                "text": "    assert_value!(AsyncFdRegisterError<ImplsFd<NN>>: !Send & !Sync & Unpin);",
+                "old_no": null,
+                "new_no": 759
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_value!(TryIoError: Send & Sync & Unpin);",
+                "old_no": 757,
+                "new_no": 760
+              },
+              {
+                "kind": "ctx",
+                "text": "    async_assert_fn!(AsyncFd<ImplsFd<YY>>::readable(_): Send & Sync & !Unpin);",
+                "old_no": 758,
+                "new_no": 761
+              },
+              {
+                "kind": "ctx",
+                "text": "    async_assert_fn!(AsyncFd<ImplsFd<YY>>::readable_mut(_): Send & Sync & !Unpin);",
+                "old_no": 759,
+                "new_no": 762
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "tokio/tests/io_async_fd.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 51,
+        "deletions": 27,
+        "hunks": [
+          {
+            "id": "4cb1f0a365125d59",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 151,
+            "old_lines": 8,
+            "new_start": 151,
+            "new_lines": 8,
+            "header": "fn drain(mut fd: &FileDescriptor, mut amt: usize) {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "async fn initially_writable() {",
+                "old_no": 151,
+                "new_no": 151
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, b) = socketpair();",
+                "old_no": 152,
+                "new_no": 152
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 153,
+                "new_no": 153
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 154,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_b = AsyncFd::new(b).unwrap();",
+                "old_no": 155,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 154
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_b = unsafe { AsyncFd::register(b) }.unwrap();",
+                "old_no": null,
+                "new_no": 155
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 156,
+                "new_no": 156
+              },
+              {
+                "kind": "ctx",
+                "text": "    afd_a.writable().await.unwrap().clear_ready();",
+                "old_no": 157,
+                "new_no": 157
+              },
+              {
+                "kind": "ctx",
+                "text": "    afd_b.writable().await.unwrap().clear_ready();",
+                "old_no": 158,
+                "new_no": 158
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 169,
+            "old_lines": 7,
+            "new_start": 169,
+            "new_lines": 7,
+            "header": "async fn initially_writable() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "async fn reset_readable() {",
+                "old_no": 169,
+                "new_no": 169
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 170,
+                "new_no": 170
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 171,
+                "new_no": 171
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 172,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 172
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 173,
+                "new_no": 173
+              },
+              {
+                "kind": "ctx",
+                "text": "    let readable = afd_a.readable();",
+                "old_no": 174,
+                "new_no": 174
+              },
+              {
+                "kind": "ctx",
+                "text": "    tokio::pin!(readable);",
+                "old_no": 175,
+                "new_no": 175
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 213,
+            "old_lines": 7,
+            "new_start": 213,
+            "new_lines": 7,
+            "header": "async fn reset_readable() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "async fn reset_writable() {",
+                "old_no": 213,
+                "new_no": 213
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, b) = socketpair();",
+                "old_no": 214,
+                "new_no": 214
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 215,
+                "new_no": 215
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 216,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 216
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 217,
+                "new_no": 217
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut guard = afd_a.writable().await.unwrap();",
+                "old_no": 218,
+                "new_no": 218
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 219,
+                "new_no": 219
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 250,
+            "old_lines": 7,
+            "new_start": 250,
+            "new_lines": 7,
+            "header": "impl<T: AsRawFd> AsRawFd for ArcFd<T> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "async fn drop_closes() {",
+                "old_no": 250,
+                "new_no": 250
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 251,
+                "new_no": 251
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 252,
+                "new_no": 252
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 253,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 253
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 254,
+                "new_no": 254
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_eq!(",
+                "old_no": 255,
+                "new_no": 255
+              },
+              {
+                "kind": "ctx",
+                "text": "        ErrorKind::WouldBlock,",
+                "old_no": 256,
+                "new_no": 256
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 264,
+            "old_lines": 7,
+            "new_start": 264,
+            "new_lines": 7,
+            "header": "async fn drop_closes() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    // into_inner does not close the fd",
+                "old_no": 264,
+                "new_no": 264
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 265,
+                "new_no": 265
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 266,
+                "new_no": 266
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 267,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "ctx",
+                "text": "    let _a: FileDescriptor = afd_a.into_inner();",
+                "old_no": 268,
+                "new_no": 268
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 269,
+                "new_no": 269
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_eq!(",
+                "old_no": 270,
+                "new_no": 270
+              }
+            ]
+          },
+          {
+            "id": "0cf1aec184415ae1",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 275,
+            "old_lines": 7,
+            "new_start": 275,
+            "new_lines": 7,
+            "header": "async fn drop_closes() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    // Drop closure behavior is delegated to the inner object",
+                "old_no": 275,
+                "new_no": 275
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 276,
+                "new_no": 276
+              },
+              {
+                "kind": "ctx",
+                "text": "    let arc_fd = Arc::new(a);",
+                "old_no": 277,
+                "new_no": 277
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(ArcFd(arc_fd.clone())).unwrap();",
+                "old_no": 278,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(ArcFd(arc_fd.clone())) }.unwrap();",
+                "old_no": null,
+                "new_no": 278
+              },
+              {
+                "kind": "ctx",
+                "text": "    std::mem::drop(afd_a);",
+                "old_no": 279,
+                "new_no": 279
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 280,
+                "new_no": 280
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_eq!(",
+                "old_no": 281,
+                "new_no": 281
+              }
+            ]
+          },
+          {
+            "id": "3294a3addeef2475",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 290,
+            "old_lines": 9,
+            "new_start": 290,
+            "new_lines": 9,
+            "header": "async fn drop_closes() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "async fn reregister() {",
+                "old_no": 290,
+                "new_no": 290
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 291,
+                "new_no": 291
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 292,
+                "new_no": 292
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 293,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 293
+              },
+              {
+                "kind": "ctx",
+                "text": "    let a = afd_a.into_inner();",
+                "old_no": 294,
+                "new_no": 294
+              },
+              {
+                "kind": "del",
+                "text": "    AsyncFd::new(a).unwrap();",
+                "old_no": 295,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 295
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 296,
+                "new_no": 296
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 297,
+                "new_no": 297
+              },
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 298,
+                "new_no": 298
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 301,
+            "old_lines": 7,
+            "new_start": 301,
+            "new_lines": 7,
+            "header": "async fn guard_try_io() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 301,
+                "new_no": 301
+              },
+              {
+                "kind": "ctx",
+                "text": "    b.write_all(b\"0\").unwrap();",
+                "old_no": 302,
+                "new_no": 302
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 303,
+                "new_no": 303
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 304,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 304
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 305,
+                "new_no": 305
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut guard = afd_a.readable().await.unwrap();",
+                "old_no": 306,
+                "new_no": 306
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 307,
+                "new_no": 307
+              }
+            ]
+          },
+          {
+            "id": "f5ccf6f13eca64d5",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 333,
+            "old_lines": 7,
+            "new_start": 333,
+            "new_lines": 7,
+            "header": "async fn guard_try_io() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 333,
+                "new_no": 333
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn try_io_readable() {",
+                "old_no": 334,
+                "new_no": 334
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 335,
+                "new_no": 335
+              },
+              {
+                "kind": "del",
+                "text": "    let mut afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 336,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let mut afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 336
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 337,
+                "new_no": 337
+              },
+              {
+                "kind": "ctx",
+                "text": "    // Give the runtime some time to update bookkeeping.",
+                "old_no": 338,
+                "new_no": 338
+              },
+              {
+                "kind": "ctx",
+                "text": "    tokio::task::yield_now().await;",
+                "old_no": 339,
+                "new_no": 339
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 392,
+            "old_lines": 7,
+            "new_start": 392,
+            "new_lines": 7,
+            "header": "async fn try_io_readable() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 392,
+                "new_no": 392
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn try_io_writable() {",
+                "old_no": 393,
+                "new_no": 393
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 394,
+                "new_no": 394
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 395,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 395
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 396,
+                "new_no": 396
+              },
+              {
+                "kind": "ctx",
+                "text": "    // Give the runtime some time to update bookkeeping.",
+                "old_no": 397,
+                "new_no": 397
+              },
+              {
+                "kind": "ctx",
+                "text": "    tokio::task::yield_now().await;",
+                "old_no": 398,
+                "new_no": 398
+              }
+            ]
+          },
+          {
+            "id": "0d49cb8e8a108500",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 433,
+            "old_lines": 7,
+            "new_start": 433,
+            "new_lines": 7,
+            "header": "async fn try_io_writable() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 433,
+                "new_no": 433
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn multiple_waiters() {",
+                "old_no": 434,
+                "new_no": 434
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 435,
+                "new_no": 435
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = Arc::new(AsyncFd::new(a).unwrap());",
+                "old_no": 436,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = Arc::new(unsafe { AsyncFd::register(a) }.unwrap());",
+                "old_no": null,
+                "new_no": 436
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 437,
+                "new_no": 437
+              },
+              {
+                "kind": "ctx",
+                "text": "    let barrier = Arc::new(tokio::sync::Barrier::new(11));",
+                "old_no": 438,
+                "new_no": 438
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 439,
+                "new_no": 439
+              }
+            ]
+          },
+          {
+            "id": "e410c70f14adee22",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 481,
+            "old_lines": 8,
+            "new_start": 481,
+            "new_lines": 8,
+            "header": "async fn multiple_waiters() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 481,
+                "new_no": 481
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn poll_fns() {",
+                "old_no": 482,
+                "new_no": 482
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, b) = socketpair();",
+                "old_no": 483,
+                "new_no": 483
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = Arc::new(AsyncFd::new(a).unwrap());",
+                "old_no": 484,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_b = Arc::new(AsyncFd::new(b).unwrap());",
+                "old_no": 485,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = Arc::new(unsafe { AsyncFd::register(a) }.unwrap());",
+                "old_no": null,
+                "new_no": 484
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_b = Arc::new(unsafe { AsyncFd::register(b) }.unwrap());",
+                "old_no": null,
+                "new_no": 485
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 486,
+                "new_no": 486
+              },
+              {
+                "kind": "ctx",
+                "text": "    // Fill up the write side of A",
+                "old_no": 487,
+                "new_no": 487
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut bytes = 0;",
+                "old_no": 488,
+                "new_no": 488
+              }
+            ]
+          },
+          {
+            "id": "4f8e882d252e0601",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 578,
+            "old_lines": 7,
+            "new_start": 578,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_wakes_currently_pending() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 578,
+                "new_no": 578
+              },
+              {
+                "kind": "ctx",
+                "text": "    let afd_a = {",
+                "old_no": 579,
+                "new_no": 579
+              },
+              {
+                "kind": "ctx",
+                "text": "        let _enter = rt.enter();",
+                "old_no": 580,
+                "new_no": 580
+              },
+              {
+                "kind": "del",
+                "text": "        AsyncFd::new(a).unwrap()",
+                "old_no": 581,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 581
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 582,
+                "new_no": 582
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 583,
+                "new_no": 583
+              },
+              {
+                "kind": "ctx",
+                "text": "    let readable = assert_pending(afd_a.readable());",
+                "old_no": 584,
+                "new_no": 584
+              }
+            ]
+          },
+          {
+            "id": "4f8e882d252e0601",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 599,
+            "old_lines": 7,
+            "new_start": 599,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_wakes_future_pending() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 599,
+                "new_no": 599
+              },
+              {
+                "kind": "ctx",
+                "text": "    let afd_a = {",
+                "old_no": 600,
+                "new_no": 600
+              },
+              {
+                "kind": "ctx",
+                "text": "        let _enter = rt.enter();",
+                "old_no": 601,
+                "new_no": 601
+              },
+              {
+                "kind": "del",
+                "text": "        AsyncFd::new(a).unwrap()",
+                "old_no": 602,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 602
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 603,
+                "new_no": 603
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 604,
+                "new_no": 604
+              },
+              {
+                "kind": "ctx",
+                "text": "    std::mem::drop(rt);",
+                "old_no": 605,
+                "new_no": 605
+              }
+            ]
+          },
+          {
+            "id": "17fa69e0749f0165",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 616,
+            "old_lines": 7,
+            "new_start": 616,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_wakes_pending_race() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        let (a, _b) = socketpair();",
+                "old_no": 616,
+                "new_no": 616
+              },
+              {
+                "kind": "ctx",
+                "text": "        let afd_a = {",
+                "old_no": 617,
+                "new_no": 617
+              },
+              {
+                "kind": "ctx",
+                "text": "            let _enter = rt.enter();",
+                "old_no": 618,
+                "new_no": 618
+              },
+              {
+                "kind": "del",
+                "text": "            AsyncFd::new(a).unwrap()",
+                "old_no": 619,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "            unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 619
+              },
+              {
+                "kind": "ctx",
+                "text": "        };",
+                "old_no": 620,
+                "new_no": 620
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 621,
+                "new_no": 621
+              },
+              {
+                "kind": "ctx",
+                "text": "        let _ = std::thread::spawn(move || std::mem::drop(rt));",
+                "old_no": 622,
+                "new_no": 622
+              }
+            ]
+          },
+          {
+            "id": "4f8e882d252e0601",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 644,
+            "old_lines": 7,
+            "new_start": 644,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_wakes_currently_pending_polls() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 644,
+                "new_no": 644
+              },
+              {
+                "kind": "ctx",
+                "text": "    let afd_a = {",
+                "old_no": 645,
+                "new_no": 645
+              },
+              {
+                "kind": "ctx",
+                "text": "        let _enter = rt.enter();",
+                "old_no": 646,
+                "new_no": 646
+              },
+              {
+                "kind": "del",
+                "text": "        AsyncFd::new(a).unwrap()",
+                "old_no": 647,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 647
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 648,
+                "new_no": 648
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 649,
+                "new_no": 649
+              },
+              {
+                "kind": "ctx",
+                "text": "    while afd_a.get_ref().write(&[0; 512]).is_ok() {} // make not writable",
+                "old_no": 650,
+                "new_no": 650
+              }
+            ]
+          },
+          {
+            "id": "4f8e882d252e0601",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 666,
+            "old_lines": 7,
+            "new_start": 666,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_wakes_poll() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 666,
+                "new_no": 666
+              },
+              {
+                "kind": "ctx",
+                "text": "    let afd_a = {",
+                "old_no": 667,
+                "new_no": 667
+              },
+              {
+                "kind": "ctx",
+                "text": "        let _enter = rt.enter();",
+                "old_no": 668,
+                "new_no": 668
+              },
+              {
+                "kind": "del",
+                "text": "        AsyncFd::new(a).unwrap()",
+                "old_no": 669,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 669
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 670,
+                "new_no": 670
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 671,
+                "new_no": 671
+              },
+              {
+                "kind": "ctx",
+                "text": "    std::mem::drop(rt);",
+                "old_no": 672,
+                "new_no": 672
+              }
+            ]
+          },
+          {
+            "id": "4f8e882d252e0601",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 682,
+            "old_lines": 7,
+            "new_start": 682,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_then_clear_readiness() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let (a, _b) = socketpair();",
+                "old_no": 682,
+                "new_no": 682
+              },
+              {
+                "kind": "ctx",
+                "text": "    let afd_a = {",
+                "old_no": 683,
+                "new_no": 683
+              },
+              {
+                "kind": "ctx",
+                "text": "        let _enter = rt.enter();",
+                "old_no": 684,
+                "new_no": 684
+              },
+              {
+                "kind": "del",
+                "text": "        AsyncFd::new(a).unwrap()",
+                "old_no": 685,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 685
+              },
+              {
+                "kind": "ctx",
+                "text": "    };",
+                "old_no": 686,
+                "new_no": 686
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 687,
+                "new_no": 687
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut write_ready = rt.block_on(afd_a.writable()).unwrap();",
+                "old_no": 688,
+                "new_no": 688
+              }
+            ]
+          },
+          {
+            "id": "17fa69e0749f0165",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 701,
+            "old_lines": 7,
+            "new_start": 701,
+            "new_lines": 7,
+            "header": "fn driver_shutdown_wakes_poll_race() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        let (a, _b) = socketpair();",
+                "old_no": 701,
+                "new_no": 701
+              },
+              {
+                "kind": "ctx",
+                "text": "        let afd_a = {",
+                "old_no": 702,
+                "new_no": 702
+              },
+              {
+                "kind": "ctx",
+                "text": "            let _enter = rt.enter();",
+                "old_no": 703,
+                "new_no": 703
+              },
+              {
+                "kind": "del",
+                "text": "            AsyncFd::new(a).unwrap()",
+                "old_no": 704,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "            unsafe { AsyncFd::register(a) }.unwrap()",
+                "old_no": null,
+                "new_no": 704
+              },
+              {
+                "kind": "ctx",
+                "text": "        };",
+                "old_no": 705,
+                "new_no": 705
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 706,
+                "new_no": 706
+              },
+              {
+                "kind": "ctx",
+                "text": "        while afd_a.get_ref().write(&[0; 512]).is_ok() {} // make not writable",
+                "old_no": 707,
+                "new_no": 707
+              }
+            ]
+          },
+          {
+            "id": "3fc985733c1776ef",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 728,
+            "old_lines": 7,
+            "new_start": 728,
+            "new_lines": 7,
+            "header": "async fn priority_event_on_oob_data() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let addr = listener.local_addr().unwrap();",
+                "old_no": 728,
+                "new_no": 728
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 729,
+                "new_no": 729
+              },
+              {
+                "kind": "ctx",
+                "text": "    let client = std::net::TcpStream::connect(addr).unwrap();",
+                "old_no": 730,
+                "new_no": 730
+              },
+              {
+                "kind": "del",
+                "text": "    let client = AsyncFd::with_interest(client, Interest::PRIORITY).unwrap();",
+                "old_no": 731,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let client = unsafe { AsyncFd::register_with_interest(client, Interest::PRIORITY) }.unwrap();",
+                "old_no": null,
+                "new_no": 731
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 732,
+                "new_no": 732
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (stream, _) = listener.accept().unwrap();",
+                "old_no": 733,
+                "new_no": 733
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 734,
+                "new_no": 734
+              }
+            ]
+          },
+          {
+            "id": "d9d2ab2b14fae381",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 761,
+            "old_lines": 7,
+            "new_start": 761,
+            "new_lines": 7,
+            "header": "async fn clear_ready_matching_clears_ready() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 761,
+                "new_no": 761
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 762,
+                "new_no": 762
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 763,
+                "new_no": 763
+              },
+              {
+                "kind": "del",
+                "text": "    let afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 764,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 764
+              },
+              {
+                "kind": "ctx",
+                "text": "    b.write_all(b\"0\").unwrap();",
+                "old_no": 765,
+                "new_no": 765
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 766,
+                "new_no": 766
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut guard = afd_a",
+                "old_no": 767,
+                "new_no": 767
+              }
+            ]
+          },
+          {
+            "id": "f5ccf6f13eca64d5",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 784,
+            "old_lines": 7,
+            "new_start": 784,
+            "new_lines": 7,
+            "header": "async fn clear_ready_matching_clears_ready_mut() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 784,
+                "new_no": 784
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (a, mut b) = socketpair();",
+                "old_no": 785,
+                "new_no": 785
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 786,
+                "new_no": 786
+              },
+              {
+                "kind": "del",
+                "text": "    let mut afd_a = AsyncFd::new(a).unwrap();",
+                "old_no": 787,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let mut afd_a = unsafe { AsyncFd::register(a) }.unwrap();",
+                "old_no": null,
+                "new_no": 787
+              },
+              {
+                "kind": "ctx",
+                "text": "    b.write_all(b\"0\").unwrap();",
+                "old_no": 788,
+                "new_no": 788
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 789,
+                "new_no": 789
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut guard = afd_a",
+                "old_no": 790,
+                "new_no": 790
+              }
+            ]
+          },
+          {
+            "id": "6211e17173a86a4b",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 821,
+            "old_lines": 7,
+            "new_start": 821,
+            "new_lines": 7,
+            "header": "async fn await_error_readiness_timestamping() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 821,
+                "new_no": 821
+              },
+              {
+                "kind": "ctx",
+                "text": "    socket.connect(address_b).unwrap();",
+                "old_no": 822,
+                "new_no": 822
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 823,
+                "new_no": 823
+              },
+              {
+                "kind": "del",
+                "text": "    let fd = AsyncFd::new(socket).unwrap();",
+                "old_no": 824,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let fd = unsafe { AsyncFd::register(socket) }.unwrap();",
+                "old_no": null,
+                "new_no": 824
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 825,
+                "new_no": 825
+              },
+              {
+                "kind": "ctx",
+                "text": "    tokio::select! {",
+                "old_no": 826,
+                "new_no": 826
+              },
+              {
+                "kind": "ctx",
+                "text": "        _ = fd.ready(Interest::ERROR) => panic!(),",
+                "old_no": 827,
+                "new_no": 827
+              }
+            ]
+          },
+          {
+            "id": "6211e17173a86a4b",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 922,
+            "old_lines": 7,
+            "new_start": 922,
+            "new_lines": 7,
+            "header": "async fn await_error_readiness_invalid_address() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 922,
+                "new_no": 922
+              },
+              {
+                "kind": "ctx",
+                "text": "    });",
+                "old_no": 923,
+                "new_no": 923
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 924,
+                "new_no": 924
+              },
+              {
+                "kind": "del",
+                "text": "    let fd = AsyncFd::new(socket).unwrap();",
+                "old_no": 925,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    let fd = unsafe { AsyncFd::register(socket) }.unwrap();",
+                "old_no": null,
+                "new_no": 925
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 926,
+                "new_no": 926
+              },
+              {
+                "kind": "ctx",
+                "text": "    let guard = fd.ready(Interest::ERROR).await.unwrap();",
+                "old_no": 927,
+                "new_no": 927
+              },
+              {
+                "kind": "ctx",
+                "text": "    assert_eq!(guard.ready(), Ready::ERROR);",
+                "old_no": 928,
+                "new_no": 928
+              }
+            ]
+          },
+          {
+            "id": "768f7dd18a9b2374",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 938,
+            "old_lines": 6,
+            "new_start": 938,
+            "new_lines": 28,
+            "header": "impl AsRawFd for InvalidSource {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 938,
+                "new_no": 938
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 939,
+                "new_no": 939
+              },
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 940,
+                "new_no": 940
+              },
+              {
+                "kind": "add",
+                "text": "async fn register_error() {",
+                "old_no": null,
+                "new_no": 941
+              },
+              {
+                "kind": "add",
+                "text": "    let original = Arc::new(InvalidSource);",
+                "old_no": null,
+                "new_no": 942
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 943
+              },
+              {
+                "kind": "add",
+                "text": "    let error = unsafe { AsyncFd::register(original.clone()) }.unwrap_err();",
+                "old_no": null,
+                "new_no": 944
+              },
+              {
+                "kind": "add",
+                "text": "    let (returned, _cause) = error.into_parts();",
+                "old_no": null,
+                "new_no": 945
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 946
+              },
+              {
+                "kind": "add",
+                "text": "    assert!(Arc::ptr_eq(&original, &returned));",
+                "old_no": null,
+                "new_no": 947
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 948
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 949
+              },
+              {
+                "kind": "add",
+                "text": "#[tokio::test]",
+                "old_no": null,
+                "new_no": 950
+              },
+              {
+                "kind": "add",
+                "text": "async fn register_with_interest_error() {",
+                "old_no": null,
+                "new_no": 951
+              },
+              {
+                "kind": "add",
+                "text": "    let original = Arc::new(InvalidSource);",
+                "old_no": null,
+                "new_no": 952
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 953
+              },
+              {
+                "kind": "add",
+                "text": "    let error = unsafe { AsyncFd::register_with_interest(original.clone(), Interest::READABLE) }",
+                "old_no": null,
+                "new_no": 954
+              },
+              {
+                "kind": "add",
+                "text": "        .unwrap_err();",
+                "old_no": null,
+                "new_no": 955
+              },
+              {
+                "kind": "add",
+                "text": "    let (returned, _cause) = error.into_parts();",
+                "old_no": null,
+                "new_no": 956
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 957
+              },
+              {
+                "kind": "add",
+                "text": "    assert!(Arc::ptr_eq(&original, &returned));",
+                "old_no": null,
+                "new_no": 958
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 959
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 960
+              },
+              {
+                "kind": "add",
+                "text": "#[tokio::test]",
+                "old_no": null,
+                "new_no": 961
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 962
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn try_new() {",
+                "old_no": 941,
+                "new_no": 963
+              },
+              {
+                "kind": "ctx",
+                "text": "    let original = Arc::new(InvalidSource);",
+                "old_no": 942,
+                "new_no": 964
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 943,
+                "new_no": 965
+              }
+            ]
+          },
+          {
+            "id": "3bfe5fde7f89ea92",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 948,
+            "old_lines": 6,
+            "new_start": 970,
+            "new_lines": 7,
+            "header": "async fn try_new() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 948,
+                "new_no": 970
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 949,
+                "new_no": 971
+              },
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 950,
+                "new_no": 972
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 973
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn try_with_interest() {",
+                "old_no": 951,
+                "new_no": 974
+              },
+              {
+                "kind": "ctx",
+                "text": "    let original = Arc::new(InvalidSource);",
+                "old_no": 952,
+                "new_no": 975
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 953,
+                "new_no": 976
+              }
+            ]
+          },
+          {
+            "id": "3bfe5fde7f89ea92",
+            "path": "tokio/tests/io_async_fd.rs",
+            "old_start": 958,
+            "old_lines": 6,
+            "new_start": 981,
+            "new_lines": 7,
+            "header": "async fn try_with_interest() {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 958,
+                "new_no": 981
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 959,
+                "new_no": 982
+              },
+              {
+                "kind": "ctx",
+                "text": "#[tokio::test]",
+                "old_no": 960,
+                "new_no": 983
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 984
+              },
+              {
+                "kind": "ctx",
+                "text": "async fn drop_after_closing_raw_fd_with_live_duplicate() {",
+                "old_no": 961,
+                "new_no": 985
+              },
+              {
+                "kind": "ctx",
+                "text": "    let (original, mut peer) = socketpair();",
+                "old_no": 962,
+                "new_no": 986
+              },
+              {
+                "kind": "ctx",
+                "text": "    let duplicate = original.fd.try_clone().unwrap();",
+                "old_no": 963,
+                "new_no": 987
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "tokio/tests/io_panic.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 49,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "e82218ea153b44f3",
+            "path": "tokio/tests/io_panic.rs",
+            "old_start": 133,
+            "old_lines": 6,
+            "new_start": 133,
+            "new_lines": 52,
+            "header": "fn unsplit_panic_caller() -> Result<(), Box<dyn Error>> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 133,
+                "new_no": 133
+              },
+              {
+                "kind": "ctx",
+                "text": "#[test]",
+                "old_no": 134,
+                "new_no": 134
+              },
+              {
+                "kind": "ctx",
+                "text": "#[cfg(unix)]",
+                "old_no": 135,
+                "new_no": 135
+              },
+              {
+                "kind": "add",
+                "text": "fn async_fd_register_panic_caller() -> Result<(), Box<dyn Error>> {",
+                "old_no": null,
+                "new_no": 136
+              },
+              {
+                "kind": "add",
+                "text": "    use tokio::io::unix::AsyncFd;",
+                "old_no": null,
+                "new_no": 137
+              },
+              {
+                "kind": "add",
+                "text": "    use tokio::runtime::Builder;",
+                "old_no": null,
+                "new_no": 138
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 139
+              },
+              {
+                "kind": "add",
+                "text": "    let panic_location_file = test_panic(|| {",
+                "old_no": null,
+                "new_no": 140
+              },
+              {
+                "kind": "add",
+                "text": "        // Runtime without `enable_io` so it has no IO driver set.",
+                "old_no": null,
+                "new_no": 141
+              },
+              {
+                "kind": "add",
+                "text": "        let rt = Builder::new_current_thread().build().unwrap();",
+                "old_no": null,
+                "new_no": 142
+              },
+              {
+                "kind": "add",
+                "text": "        rt.block_on(async {",
+                "old_no": null,
+                "new_no": 143
+              },
+              {
+                "kind": "add",
+                "text": "            let fd = unix::MockFd;",
+                "old_no": null,
+                "new_no": 144
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 145
+              },
+              {
+                "kind": "add",
+                "text": "            let _ = unsafe { AsyncFd::register(fd) };",
+                "old_no": null,
+                "new_no": 146
+              },
+              {
+                "kind": "add",
+                "text": "        });",
+                "old_no": null,
+                "new_no": 147
+              },
+              {
+                "kind": "add",
+                "text": "    });",
+                "old_no": null,
+                "new_no": 148
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 149
+              },
+              {
+                "kind": "add",
+                "text": "    // The panic location should be in this file",
+                "old_no": null,
+                "new_no": 150
+              },
+              {
+                "kind": "add",
+                "text": "    assert_eq!(&panic_location_file.unwrap(), file!());",
+                "old_no": null,
+                "new_no": 151
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 152
+              },
+              {
+                "kind": "add",
+                "text": "    Ok(())",
+                "old_no": null,
+                "new_no": 153
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 154
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 155
+              },
+              {
+                "kind": "add",
+                "text": "#[test]",
+                "old_no": null,
+                "new_no": 156
+              },
+              {
+                "kind": "add",
+                "text": "#[cfg(unix)]",
+                "old_no": null,
+                "new_no": 157
+              },
+              {
+                "kind": "add",
+                "text": "fn async_fd_register_with_interest_panic_caller() -> Result<(), Box<dyn Error>> {",
+                "old_no": null,
+                "new_no": 158
+              },
+              {
+                "kind": "add",
+                "text": "    use tokio::io::unix::AsyncFd;",
+                "old_no": null,
+                "new_no": 159
+              },
+              {
+                "kind": "add",
+                "text": "    use tokio::io::Interest;",
+                "old_no": null,
+                "new_no": 160
+              },
+              {
+                "kind": "add",
+                "text": "    use tokio::runtime::Builder;",
+                "old_no": null,
+                "new_no": 161
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 162
+              },
+              {
+                "kind": "add",
+                "text": "    let panic_location_file = test_panic(|| {",
+                "old_no": null,
+                "new_no": 163
+              },
+              {
+                "kind": "add",
+                "text": "        // Runtime without `enable_io` so it has no IO driver set.",
+                "old_no": null,
+                "new_no": 164
+              },
+              {
+                "kind": "add",
+                "text": "        let rt = Builder::new_current_thread().build().unwrap();",
+                "old_no": null,
+                "new_no": 165
+              },
+              {
+                "kind": "add",
+                "text": "        rt.block_on(async {",
+                "old_no": null,
+                "new_no": 166
+              },
+              {
+                "kind": "add",
+                "text": "            let fd = unix::MockFd;",
+                "old_no": null,
+                "new_no": 167
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 168
+              },
+              {
+                "kind": "add",
+                "text": "            let _ = unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE) };",
+                "old_no": null,
+                "new_no": 169
+              },
+              {
+                "kind": "add",
+                "text": "        });",
+                "old_no": null,
+                "new_no": 170
+              },
+              {
+                "kind": "add",
+                "text": "    });",
+                "old_no": null,
+                "new_no": 171
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 172
+              },
+              {
+                "kind": "add",
+                "text": "    // The panic location should be in this file",
+                "old_no": null,
+                "new_no": 173
+              },
+              {
+                "kind": "add",
+                "text": "    assert_eq!(&panic_location_file.unwrap(), file!());",
+                "old_no": null,
+                "new_no": 174
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 175
+              },
+              {
+                "kind": "add",
+                "text": "    Ok(())",
+                "old_no": null,
+                "new_no": 176
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 177
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 178
+              },
+              {
+                "kind": "add",
+                "text": "#[test]",
+                "old_no": null,
+                "new_no": 179
+              },
+              {
+                "kind": "add",
+                "text": "#[cfg(unix)]",
+                "old_no": null,
+                "new_no": 180
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 181
+              },
+              {
+                "kind": "ctx",
+                "text": "fn async_fd_new_panic_caller() -> Result<(), Box<dyn Error>> {",
+                "old_no": 136,
+                "new_no": 182
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::io::unix::AsyncFd;",
+                "old_no": 137,
+                "new_no": 183
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::runtime::Builder;",
+                "old_no": 138,
+                "new_no": 184
+              }
+            ]
+          },
+          {
+            "id": "65ccdefc30fe92e2",
+            "path": "tokio/tests/io_panic.rs",
+            "old_start": 155,
+            "old_lines": 6,
+            "new_start": 201,
+            "new_lines": 7,
+            "header": "fn async_fd_new_panic_caller() -> Result<(), Box<dyn Error>> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 155,
+                "new_no": 201
+              },
+              {
+                "kind": "ctx",
+                "text": "#[test]",
+                "old_no": 156,
+                "new_no": 202
+              },
+              {
+                "kind": "ctx",
+                "text": "#[cfg(unix)]",
+                "old_no": 157,
+                "new_no": 203
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 204
+              },
+              {
+                "kind": "ctx",
+                "text": "fn async_fd_with_interest_panic_caller() -> Result<(), Box<dyn Error>> {",
+                "old_no": 158,
+                "new_no": 205
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::io::unix::AsyncFd;",
+                "old_no": 159,
+                "new_no": 206
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::io::Interest;",
+                "old_no": 160,
+                "new_no": 207
+              }
+            ]
+          },
+          {
+            "id": "65ccdefc30fe92e2",
+            "path": "tokio/tests/io_panic.rs",
+            "old_start": 178,
+            "old_lines": 6,
+            "new_start": 225,
+            "new_lines": 7,
+            "header": "fn async_fd_with_interest_panic_caller() -> Result<(), Box<dyn Error>> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 178,
+                "new_no": 225
+              },
+              {
+                "kind": "ctx",
+                "text": "#[test]",
+                "old_no": 179,
+                "new_no": 226
+              },
+              {
+                "kind": "ctx",
+                "text": "#[cfg(unix)]",
+                "old_no": 180,
+                "new_no": 227
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 228
+              },
+              {
+                "kind": "ctx",
+                "text": "fn async_fd_try_new_panic_caller() -> Result<(), Box<dyn Error>> {",
+                "old_no": 181,
+                "new_no": 229
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::io::unix::AsyncFd;",
+                "old_no": 182,
+                "new_no": 230
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::runtime::Builder;",
+                "old_no": 183,
+                "new_no": 231
+              }
+            ]
+          },
+          {
+            "id": "65ccdefc30fe92e2",
+            "path": "tokio/tests/io_panic.rs",
+            "old_start": 200,
+            "old_lines": 6,
+            "new_start": 248,
+            "new_lines": 7,
+            "header": "fn async_fd_try_new_panic_caller() -> Result<(), Box<dyn Error>> {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 200,
+                "new_no": 248
+              },
+              {
+                "kind": "ctx",
+                "text": "#[test]",
+                "old_no": 201,
+                "new_no": 249
+              },
+              {
+                "kind": "ctx",
+                "text": "#[cfg(unix)]",
+                "old_no": 202,
+                "new_no": 250
+              },
+              {
+                "kind": "add",
+                "text": "#[allow(deprecated)]",
+                "old_no": null,
+                "new_no": 251
+              },
+              {
+                "kind": "ctx",
+                "text": "fn async_fd_try_with_interest_panic_caller() -> Result<(), Box<dyn Error>> {",
+                "old_no": 203,
+                "new_no": 252
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::io::unix::AsyncFd;",
+                "old_no": 204,
+                "new_no": 253
+              },
+              {
+                "kind": "ctx",
+                "text": "    use tokio::io::Interest;",
+                "old_no": 205,
+                "new_no": 254
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

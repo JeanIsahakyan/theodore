@@ -1,0 +1,29 @@
+{
+  "id": 42,
+  "title": "Add feature X",
+  "state": "MERGED",
+  "draft": false,
+  "author": {
+    "type": "user",
+    "uuid": "{22222222-2222-2222-2222-222222222222}",
+    "nickname": "alice",
+    "display_name": "Alice Author"
+  },
+  "source": {
+    "branch": { "name": "feature-x" },
+    "commit": { "hash": "bbbbbbbbbbbb" },
+    "repository": { "full_name": "acme/widgets" }
+  },
+  "destination": {
+    "branch": { "name": "main" },
+    "commit": { "hash": "aaaaaaaaaaaa" },
+    "repository": { "full_name": "acme/widgets" }
+  },
+  "reviewers": [],
+  "participants": [],
+  "updated_on": "2024-01-16T10:00:00.000000+00:00",
+  "links": {
+    "html": { "href": "https://bitbucket.org/acme/widgets/pull-requests/42" }
+  },
+  "merge_commit": { "hash": "dddddddddddd" }
+}

@@ -1,0 +1,29 @@
+{
+  "data": {
+    "search": {
+      "pageInfo": { "hasNextPage": false, "endCursor": null },
+      "nodes": [
+        {
+          "__typename": "PullRequest",
+          "number": 99,
+          "title": "Fix the thing",
+          "url": "https://github.com/acme/widgets/pull/99",
+          "state": "OPEN",
+          "isDraft": false,
+          "additions": 5,
+          "deletions": 1,
+          "changedFiles": 1,
+          "baseRefName": "main",
+          "headRefName": "fix-thing",
+          "headRefOid": "cccccccccccccccccccccccccccccccccccccccc",
+          "createdAt": "2024-01-28T00:00:00Z",
+          "updatedAt": "2024-02-01T00:00:00Z",
+          "repository": { "name": "widgets", "owner": { "login": "acme" } },
+          "author": { "login": "dave", "avatarUrl": null, "name": "Dave" },
+          "latestReviews": { "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+          "statusCheckRollup": { "state": "PENDING", "contexts": { "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } } }
+        }
+      ]
+    }
+  }
+}

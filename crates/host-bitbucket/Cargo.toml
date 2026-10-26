@@ -1,0 +1,27 @@
+[package]
+name = "theodore-host-bitbucket"
+description = "Bitbucket Cloud HostAdapter: REST API 2.0 (pull requests, inline comments, statuses)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-domain.workspace = true
+theodore-ports.workspace = true
+theodore-host-http.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+url.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+theodore-host-github.workspace = true
+wiremock.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

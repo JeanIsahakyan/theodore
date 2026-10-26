@@ -1,0 +1,4087 @@
+{
+  "pr": {
+    "title": "[`pylint`] Add a configurable allowlist for `magic-value-comparison` (`PLR2004`)",
+    "body": "<!--\r\nThank you for contributing to Ruff/ty! To help us out with reviewing, please consider the following:\r\n\r\n- Does this pull request include a summary of the change? (See below.)\r\n- Does this pull request include a descriptive title? (Please prefix with `[ty]` for ty pull\r\n  requests.)\r\n- Does this pull request include references to any relevant issues?\r\n-->\r\n\r\n## Summary\r\n\r\nThis PR allows users to specify a custom set of whitelisted values for magic value comparisons in PLR2004. The setting is named `pylint.allow_magic_values`, which is consistent with a similar setting `pylint.allow_magic_value_types`\r\nThe previous hard-coded allow-list was moved to the default for `pylint.allow_magic_values`, giving users full control over what is and what is not a whitelisted value. This setting is added in addition to the `pylint.allow_magic_value_types` and does not replace it. Any value that is whitelisted due to either of these settings is not considered a linting violation.\r\n\r\nNote that as far as I could tell, no other setting allows floats or complex numbers as inputs, so I created a few helper methods to deal with these properly (mainly relating to floating point variation).\r\n\r\n\r\n## Test Plan\r\n\r\nI have tested the settings with a number of cases manually in a repository I work on regularly. I have not added any extensive (combinatorial) tests to the test suite.\r\n\r\n## Note\r\n\r\nI don't know whether you have any policy on using or disclosing the use of code generators, but I definitely relied heavily on this to solve some of the issues I ran into during development. Ultimately, all code was reviewed by me before pushing.\r\n\r\nfix: #10009 ",
+    "commits": [
+      "allow magic values",
+      "move allowed list to defaults",
+      "clarify documentation of PLR2004",
+      "configurations",
+      "update defaults",
+      "only allow strings and numbers as magic value exceptions",
+      "create AllowedFloatValue struct",
+      "snapshots & schema",
+      "use matches_literal",
+      "allow matching whole number floats against ints",
+      "setting to extend default allow list",
+      "clippy suppression using expect",
+      "remove excess documentation",
+      "refactor allowed magic value matching to per-value literal checks",
+      "simplify ignoring `None`, `Bool`, and `Ellipsis`",
+      "simplify comparing floats to ints",
+      "extend custom allowlists",
+      "remove obsolete functionality",
+      "fix negatives bug",
+      "refactor `matches_value`",
+      "remove obsolete comment",
+      "Revert \"simplify comparing floats to ints\"",
+      "Revert \"allow matching whole number floats against ints\"",
+      "remove obsolete functions",
+      "update schema",
+      "Merge branch 'main' into allow_magic_values",
+      "add mdtests and a few small simplifications"
+    ]
+  },
+  "revision": {
+    "base": "base",
+    "head": "head",
+    "files": [
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_extend_from_shared_config.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "a7742309fefca40b",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_extend_from_shared_config.snap",
+            "old_start": 257,
+            "old_lines": 6,
+            "new_start": 257,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 257,
+                "new_no": 257
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 260,
+                "new_no": 270
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 261,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 262,
+                "new_no": 272
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_no_tool.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "a1eae875b3e00ab9",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_no_tool.snap",
+            "old_start": 259,
+            "old_lines": 6,
+            "new_start": 259,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 260,
+                "new_no": 260
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 261,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 262,
+                "new_no": 272
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 263,
+                "new_no": 273
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 264,
+                "new_no": 274
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_no_tool_preview_enabled.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "d9d2bc1f2149a5c8",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_no_tool_preview_enabled.snap",
+            "old_start": 265,
+            "old_lines": 6,
+            "new_start": 265,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 265,
+                "new_no": 265
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 266,
+                "new_no": 266
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 267,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 271
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 272
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 273
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 274
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 275
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 276
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 277
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 268,
+                "new_no": 278
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 269,
+                "new_no": 279
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 270,
+                "new_no": 280
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_no_tool_target_version_override.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "93f36ef60d7e053a",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_no_tool_target_version_override.snap",
+            "old_start": 261,
+            "old_lines": 6,
+            "new_start": 261,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 261,
+                "new_no": 261
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 262,
+                "new_no": 262
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 263,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 271
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 272
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 273
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 264,
+                "new_no": 274
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 265,
+                "new_no": 275
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 266,
+                "new_no": 276
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_pyproject_toml_above.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "9c6ac673725533cf",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_pyproject_toml_above.snap",
+            "old_start": 258,
+            "old_lines": 6,
+            "new_start": 258,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 260,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 261,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 262,
+                "new_no": 272
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 263,
+                "new_no": 273
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_pyproject_toml_above_with_tool.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "915a06be4af47373",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_pyproject_toml_above_with_tool.snap",
+            "old_start": 259,
+            "old_lines": 6,
+            "new_start": 259,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 260,
+                "new_no": 260
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 261,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 270
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 262,
+                "new_no": 272
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 263,
+                "new_no": 273
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 264,
+                "new_no": 274
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_ruff_toml_above-2.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "45c86a115106dbca",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_ruff_toml_above-2.snap",
+            "old_start": 257,
+            "old_lines": 6,
+            "new_start": 257,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 257,
+                "new_no": 257
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 260,
+                "new_no": 270
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 261,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 262,
+                "new_no": 272
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_ruff_toml_above.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "87f693dd40e13847",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_ruff_toml_above.snap",
+            "old_start": 257,
+            "old_lines": 6,
+            "new_start": 257,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 257,
+                "new_no": 257
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 260,
+                "new_no": 270
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 261,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 262,
+                "new_no": 272
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_ruff_toml_no_target_fallback.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "67e4284bd8309030",
+            "path": "crates/ruff/tests/cli/snapshots/cli__lint__requires_python_ruff_toml_no_target_fallback.snap",
+            "old_start": 257,
+            "old_lines": 6,
+            "new_start": 257,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 257,
+                "new_no": 257
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 258,
+                "new_no": 258
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 259,
+                "new_no": 259
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 260
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 261
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 262
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 263
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 264
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 265
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 266
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 267
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 268
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 269
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 260,
+                "new_no": 270
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 261,
+                "new_no": 271
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 262,
+                "new_no": 272
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__show_settings__display_default_settings.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "e93b8e9dae35c221",
+            "path": "crates/ruff/tests/cli/snapshots/cli__show_settings__display_default_settings.snap",
+            "old_start": 1066,
+            "old_lines": 6,
+            "new_start": 1066,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 1066,
+                "new_no": 1066
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 1067,
+                "new_no": 1067
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 1068,
+                "new_no": 1068
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 1069
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 1070
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 1071
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 1072
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 1073
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 1074
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 1075
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 1076
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 1077
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 1078
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 1069,
+                "new_no": 1079
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 1070,
+                "new_no": 1080
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 1071,
+                "new_no": 1081
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff/tests/cli/snapshots/cli__show_settings__display_settings_from_nested_directory.snap",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [
+          {
+            "kind": "generated",
+            "reason": "snapshot fixture"
+          }
+        ],
+        "additions": 10,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "a181bef70b1a2648",
+            "path": "crates/ruff/tests/cli/snapshots/cli__show_settings__display_settings_from_nested_directory.snap",
+            "old_start": 378,
+            "old_lines": 6,
+            "new_start": 378,
+            "new_lines": 16,
+            "header": "linter.pylint.allow_magic_value_types = [",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "\tstr,",
+                "old_no": 378,
+                "new_no": 378
+              },
+              {
+                "kind": "ctx",
+                "text": "\tbytes,",
+                "old_no": 379,
+                "new_no": 379
+              },
+              {
+                "kind": "ctx",
+                "text": "]",
+                "old_no": 380,
+                "new_no": 380
+              },
+              {
+                "kind": "add",
+                "text": "linter.pylint.allow_magic_values = [",
+                "old_no": null,
+                "new_no": 381
+              },
+              {
+                "kind": "add",
+                "text": "\t0,",
+                "old_no": null,
+                "new_no": 382
+              },
+              {
+                "kind": "add",
+                "text": "\t1,",
+                "old_no": null,
+                "new_no": 383
+              },
+              {
+                "kind": "add",
+                "text": "\t-1,",
+                "old_no": null,
+                "new_no": 384
+              },
+              {
+                "kind": "add",
+                "text": "\t0.0,",
+                "old_no": null,
+                "new_no": 385
+              },
+              {
+                "kind": "add",
+                "text": "\t1.0,",
+                "old_no": null,
+                "new_no": 386
+              },
+              {
+                "kind": "add",
+                "text": "\t-1.0,",
+                "old_no": null,
+                "new_no": 387
+              },
+              {
+                "kind": "add",
+                "text": "\t\"\",",
+                "old_no": null,
+                "new_no": 388
+              },
+              {
+                "kind": "add",
+                "text": "\t\"__main__\",",
+                "old_no": null,
+                "new_no": 389
+              },
+              {
+                "kind": "add",
+                "text": "]",
+                "old_no": null,
+                "new_no": 390
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.allow_dunder_method_names = []",
+                "old_no": 381,
+                "new_no": 391
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_args = 5",
+                "old_no": 382,
+                "new_no": 392
+              },
+              {
+                "kind": "ctx",
+                "text": "linter.pylint.max_positional_args = 5",
+                "old_no": 383,
+                "new_no": 393
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/resources/mdtest/pylint/magic-value-comparison.md",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 43,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "5bcdce12725635d2",
+            "path": "crates/ruff_linter/resources/mdtest/pylint/magic-value-comparison.md",
+            "old_start": 5,
+            "old_lines": 6,
+            "new_start": 5,
+            "new_lines": 15,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "select = [\"PLR2004\"]",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": "```",
+                "old_no": 6,
+                "new_no": 6
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 7,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "## Bitwise inversion",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 9
+              },
+              {
+                "kind": "add",
+                "text": "```py",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "x = 0",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "x == ~0  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "add",
+                "text": "x == ~1  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "x == ~2  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "```",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": "## `sys.version` family",
+                "old_no": 8,
+                "new_no": 17
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 9,
+                "new_no": 18
+              },
+              {
+                "kind": "ctx",
+                "text": "Comparisons against `sys.version`, `sys.version_info`, and",
+                "old_no": 10,
+                "new_no": 19
+              }
+            ]
+          },
+          {
+            "id": "2d8b9964f1daac3d",
+            "path": "crates/ruff_linter/resources/mdtest/pylint/magic-value-comparison.md",
+            "old_start": 53,
+            "old_lines": 3,
+            "new_start": 62,
+            "new_lines": 37,
+            "header": "x = 3",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "if x >= 3:  # error: [magic-value-comparison]",
+                "old_no": 53,
+                "new_no": 62
+              },
+              {
+                "kind": "ctx",
+                "text": "    pass",
+                "old_no": 54,
+                "new_no": 63
+              },
+              {
+                "kind": "ctx",
+                "text": "```",
+                "old_no": 55,
+                "new_no": 64
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 65
+              },
+              {
+                "kind": "add",
+                "text": "## Allowed values",
+                "old_no": null,
+                "new_no": 66
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 67
+              },
+              {
+                "kind": "add",
+                "text": "```toml",
+                "old_no": null,
+                "new_no": 68
+              },
+              {
+                "kind": "add",
+                "text": "[lint]",
+                "old_no": null,
+                "new_no": 69
+              },
+              {
+                "kind": "add",
+                "text": "select = [\"PLR2004\"]",
+                "old_no": null,
+                "new_no": 70
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 71
+              },
+              {
+                "kind": "add",
+                "text": "[lint.pylint]",
+                "old_no": null,
+                "new_no": 72
+              },
+              {
+                "kind": "add",
+                "text": "allow-magic-value-types = []",
+                "old_no": null,
+                "new_no": 73
+              },
+              {
+                "kind": "add",
+                "text": "allow-magic-values = [\"allowed\", -2.5, 2147483648, -2147483648]",
+                "old_no": null,
+                "new_no": 74
+              },
+              {
+                "kind": "add",
+                "text": "extend-allow-magic-values = [3.5]",
+                "old_no": null,
+                "new_no": 75
+              },
+              {
+                "kind": "add",
+                "text": "```",
+                "old_no": null,
+                "new_no": 76
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 77
+              },
+              {
+                "kind": "add",
+                "text": "```py",
+                "old_no": null,
+                "new_no": 78
+              },
+              {
+                "kind": "add",
+                "text": "x = 0",
+                "old_no": null,
+                "new_no": 79
+              },
+              {
+                "kind": "add",
+                "text": "x == \"allowed\"  # no diagnostic",
+                "old_no": null,
+                "new_no": 80
+              },
+              {
+                "kind": "add",
+                "text": "x == \"other\"  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 81
+              },
+              {
+                "kind": "add",
+                "text": "x == -2.5  # no diagnostic",
+                "old_no": null,
+                "new_no": 82
+              },
+              {
+                "kind": "add",
+                "text": "x == +2.5  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 83
+              },
+              {
+                "kind": "add",
+                "text": "x == +3.5  # no diagnostic",
+                "old_no": null,
+                "new_no": 84
+              },
+              {
+                "kind": "add",
+                "text": "x == 1  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 85
+              },
+              {
+                "kind": "add",
+                "text": "```",
+                "old_no": null,
+                "new_no": 86
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 87
+              },
+              {
+                "kind": "add",
+                "text": "Large integers work too. Allowing `2147483648` doesn't also allow `2147483648.0`.",
+                "old_no": null,
+                "new_no": 88
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 89
+              },
+              {
+                "kind": "add",
+                "text": "```py",
+                "old_no": null,
+                "new_no": 90
+              },
+              {
+                "kind": "add",
+                "text": "x == 2147483648  # no diagnostic",
+                "old_no": null,
+                "new_no": 91
+              },
+              {
+                "kind": "add",
+                "text": "x == -2147483648  # no diagnostic",
+                "old_no": null,
+                "new_no": 92
+              },
+              {
+                "kind": "add",
+                "text": "x == +2147483648  # no diagnostic",
+                "old_no": null,
+                "new_no": 93
+              },
+              {
+                "kind": "add",
+                "text": "x == ~2147483648  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 94
+              },
+              {
+                "kind": "add",
+                "text": "x == 2147483649  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 95
+              },
+              {
+                "kind": "add",
+                "text": "x == -2147483649  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 96
+              },
+              {
+                "kind": "add",
+                "text": "x == 2147483648.0  # error: [magic-value-comparison]",
+                "old_no": null,
+                "new_no": 97
+              },
+              {
+                "kind": "add",
+                "text": "```",
+                "old_no": null,
+                "new_no": 98
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/pylint/rules/magic_value_comparison.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 45,
+        "deletions": 38,
+        "hunks": [
+          {
+            "id": "2cd40667dd4021c2",
+            "path": "crates/ruff_linter/src/rules/pylint/rules/magic_value_comparison.rs",
+            "old_start": 1,
+            "old_lines": 6,
+            "new_start": 1,
+            "new_lines": 6,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "use itertools::Itertools;",
+                "old_no": 1,
+                "new_no": 1
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_python_ast::helpers::map_subscript;",
+                "old_no": 2,
+                "new_no": 2
+              },
+              {
+                "kind": "del",
+                "text": "use ruff_python_ast::{self as ast, Expr, Int, LiteralExpressionRef, UnaryOp};",
+                "old_no": 3,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "use ruff_python_ast::{self as ast, Expr, LiteralExpressionRef, UnaryOp};",
+                "old_no": null,
+                "new_no": 3
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_python_semantic::SemanticModel;",
+                "old_no": 4,
+                "new_no": 4
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_macros::{ViolationMetadata, derive_message_formats};",
+                "old_no": 6,
+                "new_no": 6
+              }
+            ]
+          },
+          {
+            "id": "3770784b87c79202",
+            "path": "crates/ruff_linter/src/rules/pylint/rules/magic_value_comparison.rs",
+            "old_start": 9,
+            "old_lines": 21,
+            "new_start": 9,
+            "new_lines": 21,
+            "header": "use ruff_text_size::Ranged;",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "use crate::Violation;",
+                "old_no": 9,
+                "new_no": 9
+              },
+              {
+                "kind": "ctx",
+                "text": "use crate::checkers::ast::Checker;",
+                "old_no": 10,
+                "new_no": 10
+              },
+              {
+                "kind": "ctx",
+                "text": "use crate::codes::Category;",
+                "old_no": 11,
+                "new_no": 11
+              },
+              {
+                "kind": "del",
+                "text": "use crate::rules::pylint::settings::ConstantType;",
+                "old_no": 12,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "use crate::rules::pylint::settings::{ConstantType, Settings};",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 13,
+                "new_no": 13
+              },
+              {
+                "kind": "ctx",
+                "text": "/// ## What it does",
+                "old_no": 14,
+                "new_no": 14
+              },
+              {
+                "kind": "del",
+                "text": "/// Checks for the use of unnamed numerical constants (\"magic\") values in",
+                "old_no": 15,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// comparisons.",
+                "old_no": 16,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// Checks for the use of unnamed hard-coded (\"magic\") values in comparisons.",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 17,
+                "new_no": 16
+              },
+              {
+                "kind": "ctx",
+                "text": "/// ## Why is this bad?",
+                "old_no": 18,
+                "new_no": 17
+              },
+              {
+                "kind": "del",
+                "text": "/// The use of \"magic\" values can make code harder to read and maintain, as",
+                "old_no": 19,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// The use of magic values can make code harder to read and maintain, as",
+                "old_no": null,
+                "new_no": 18
+              },
+              {
+                "kind": "ctx",
+                "text": "/// readers will have to infer the meaning of the value from the context.",
+                "old_no": 20,
+                "new_no": 19
+              },
+              {
+                "kind": "del",
+                "text": "/// Such values are discouraged by [PEP 8].",
+                "old_no": 21,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// Such values are discouraged by [PEP 8] and should be replaced with variables",
+                "old_no": null,
+                "new_no": 20
+              },
+              {
+                "kind": "add",
+                "text": "/// or named constants.",
+                "old_no": null,
+                "new_no": 21
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 22,
+                "new_no": 22
+              },
+              {
+                "kind": "del",
+                "text": "/// For convenience, this rule excludes a variety of common values from the",
+                "old_no": 23,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// \"magic\" value definition, such as `0`, `1`, `\"\"`, and `\"__main__\"`. It",
+                "old_no": 24,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// also exempts comparisons against `sys.version`, `sys.version_info`, and",
+                "old_no": 25,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "/// `sys.implementation.version`.",
+                "old_no": 26,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// By default, this rule excludes a variety of common values from the",
+                "old_no": null,
+                "new_no": 23
+              },
+              {
+                "kind": "add",
+                "text": "/// magic value definition, namely `0`, `1`, `-1`, `0.0`, `1.0`, `-1.0`, `\"\"`, and",
+                "old_no": null,
+                "new_no": 24
+              },
+              {
+                "kind": "add",
+                "text": "/// `\"__main__\"`. It also exempts comparisons against `sys.version`,",
+                "old_no": null,
+                "new_no": 25
+              },
+              {
+                "kind": "add",
+                "text": "/// `sys.version_info`, and `sys.implementation.version`.",
+                "old_no": null,
+                "new_no": 26
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 27,
+                "new_no": 27
+              },
+              {
+                "kind": "ctx",
+                "text": "/// ## Example",
+                "old_no": 28,
+                "new_no": 28
+              },
+              {
+                "kind": "ctx",
+                "text": "/// ```python",
+                "old_no": 29,
+                "new_no": 29
+              }
+            ]
+          },
+          {
+            "id": "bf20fbbcfa4c62c7",
+            "path": "crates/ruff_linter/src/rules/pylint/rules/magic_value_comparison.rs",
+            "old_start": 48,
+            "old_lines": 6,
+            "new_start": 48,
+            "new_lines": 8,
+            "header": "use crate::rules::pylint::settings::ConstantType;",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 48,
+                "new_no": 48
+              },
+              {
+                "kind": "ctx",
+                "text": "/// ## Options",
+                "old_no": 49,
+                "new_no": 49
+              },
+              {
+                "kind": "ctx",
+                "text": "/// - `lint.pylint.allow-magic-value-types`",
+                "old_no": 50,
+                "new_no": 50
+              },
+              {
+                "kind": "add",
+                "text": "/// - `lint.pylint.allow-magic-values`",
+                "old_no": null,
+                "new_no": 51
+              },
+              {
+                "kind": "add",
+                "text": "/// - `lint.pylint.extend-allow-magic-values`",
+                "old_no": null,
+                "new_no": 52
+              },
+              {
+                "kind": "ctx",
+                "text": "///",
+                "old_no": 51,
+                "new_no": 53
+              },
+              {
+                "kind": "ctx",
+                "text": "/// [PEP 8]: https://peps.python.org/pep-0008/#constants",
+                "old_no": 52,
+                "new_no": 54
+              },
+              {
+                "kind": "ctx",
+                "text": "#[derive(ViolationMetadata)]",
+                "old_no": 53,
+                "new_no": 55
+              }
+            ]
+          },
+          {
+            "id": "d2ef818ed68c9f6d",
+            "path": "crates/ruff_linter/src/rules/pylint/rules/magic_value_comparison.rs",
+            "old_start": 66,
+            "old_lines": 42,
+            "new_start": 68,
+            "new_lines": 47,
+            "header": "impl Violation for MagicValueComparison {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 66,
+                "new_no": 68
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 67,
+                "new_no": 69
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 68,
+                "new_no": 70
+              },
+              {
+                "kind": "del",
+                "text": "/// If an [`Expr`] is a literal (or unary operation on a literal), return the [`LiteralExpressionRef`].",
+                "old_no": 69,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "fn as_literal(expr: &Expr) -> Option<LiteralExpressionRef<'_>> {",
+                "old_no": 70,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "/// If an [`Expr`] is a literal (or unary operation on a literal), return the [`LiteralExpressionRef`]",
+                "old_no": null,
+                "new_no": 71
+              },
+              {
+                "kind": "add",
+                "text": "/// and its unary operator, if any.",
+                "old_no": null,
+                "new_no": 72
+              },
+              {
+                "kind": "add",
+                "text": "fn as_literal(expr: &Expr) -> Option<(LiteralExpressionRef<'_>, Option<&UnaryOp>)> {",
+                "old_no": null,
+                "new_no": 73
+              },
+              {
+                "kind": "ctx",
+                "text": "    match expr {",
+                "old_no": 71,
+                "new_no": 74
+              },
+              {
+                "kind": "del",
+                "text": "        Expr::UnaryOp(ast::ExprUnaryOp {",
+                "old_no": 72,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            op: UnaryOp::UAdd | UnaryOp::USub | UnaryOp::Invert,",
+                "old_no": 73,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            operand,",
+                "old_no": 74,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            ..",
+                "old_no": 75,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        }) => operand.as_literal_expr(),",
+                "old_no": 76,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        _ => expr.as_literal_expr(),",
+                "old_no": 77,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        Expr::UnaryOp(ast::ExprUnaryOp { op, operand, .. })",
+                "old_no": null,
+                "new_no": 75
+              },
+              {
+                "kind": "add",
+                "text": "            if matches!(op, UnaryOp::UAdd | UnaryOp::USub | UnaryOp::Invert) =>",
+                "old_no": null,
+                "new_no": 76
+              },
+              {
+                "kind": "add",
+                "text": "        {",
+                "old_no": null,
+                "new_no": 77
+              },
+              {
+                "kind": "add",
+                "text": "            operand.as_literal_expr().map(|literal| (literal, Some(op)))",
+                "old_no": null,
+                "new_no": 78
+              },
+              {
+                "kind": "add",
+                "text": "        }",
+                "old_no": null,
+                "new_no": 79
+              },
+              {
+                "kind": "add",
+                "text": "        _ => expr.as_literal_expr().map(|literal| (literal, None)),",
+                "old_no": null,
+                "new_no": 80
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 78,
+                "new_no": 81
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 79,
+                "new_no": 82
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 80,
+                "new_no": 83
+              },
+              {
+                "kind": "del",
+                "text": "fn is_magic_value(literal_expr: LiteralExpressionRef, allowed_types: &[ConstantType]) -> bool {",
+                "old_no": 81,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "fn is_magic_value(",
+                "old_no": null,
+                "new_no": 84
+              },
+              {
+                "kind": "add",
+                "text": "    literal_expr: LiteralExpressionRef,",
+                "old_no": null,
+                "new_no": 85
+              },
+              {
+                "kind": "add",
+                "text": "    unary_op: Option<&UnaryOp>,",
+                "old_no": null,
+                "new_no": 86
+              },
+              {
+                "kind": "add",
+                "text": "    settings: &Settings,",
+                "old_no": null,
+                "new_no": 87
+              },
+              {
+                "kind": "add",
+                "text": ") -> bool {",
+                "old_no": null,
+                "new_no": 88
+              },
+              {
+                "kind": "add",
+                "text": "    // Check if the literal type is in the allowed types list",
+                "old_no": null,
+                "new_no": 89
+              },
+              {
+                "kind": "ctx",
+                "text": "    if let Some(constant_type) = ConstantType::try_from_literal_expr(literal_expr) {",
+                "old_no": 82,
+                "new_no": 90
+              },
+              {
+                "kind": "del",
+                "text": "        if allowed_types.contains(&constant_type) {",
+                "old_no": 83,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        if settings.allow_magic_value_types.contains(&constant_type) {",
+                "old_no": null,
+                "new_no": 91
+              },
+              {
+                "kind": "ctx",
+                "text": "            return false;",
+                "old_no": 84,
+                "new_no": 92
+              },
+              {
+                "kind": "ctx",
+                "text": "        }",
+                "old_no": 85,
+                "new_no": 93
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 86,
+                "new_no": 94
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 87,
+                "new_no": 95
+              },
+              {
+                "kind": "del",
+                "text": "    match literal_expr {",
+                "old_no": 88,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        // Ignore `None`, `Bool`, and `Ellipsis` constants.",
+                "old_no": 89,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        LiteralExpressionRef::NoneLiteral(_)",
+                "old_no": 90,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        | LiteralExpressionRef::BooleanLiteral(_)",
+                "old_no": 91,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        | LiteralExpressionRef::EllipsisLiteral(_) => false,",
+                "old_no": 92,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        // Special-case some common string and integer types.",
+                "old_no": 93,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        LiteralExpressionRef::StringLiteral(ast::ExprStringLiteral { value, .. }) => {",
+                "old_no": 94,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            !matches!(value.to_str(), \"\" | \"__main__\")",
+                "old_no": 95,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        }",
+                "old_no": 96,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        LiteralExpressionRef::NumberLiteral(ast::ExprNumberLiteral { value, .. }) => match value {",
+                "old_no": 97,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            #[expect(clippy::float_cmp)]",
+                "old_no": 98,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            ast::Number::Float(value) => !(*value == 0.0 || *value == 1.0),",
+                "old_no": 99,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            ast::Number::Int(value) => !matches!(*value, Int::ZERO | Int::ONE),",
+                "old_no": 100,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            ast::Number::Complex { .. } => true,",
+                "old_no": 101,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        },",
+                "old_no": 102,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "        LiteralExpressionRef::BytesLiteral(_) => true,",
+                "old_no": 103,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "    // Check if the literal value is in the allowed values list",
+                "old_no": null,
+                "new_no": 96
+              },
+              {
+                "kind": "add",
+                "text": "    if settings",
+                "old_no": null,
+                "new_no": 97
+              },
+              {
+                "kind": "add",
+                "text": "        .allow_magic_values",
+                "old_no": null,
+                "new_no": 98
+              },
+              {
+                "kind": "add",
+                "text": "        .iter()",
+                "old_no": null,
+                "new_no": 99
+              },
+              {
+                "kind": "add",
+                "text": "        .any(|value| value.matches_value(literal_expr, unary_op))",
+                "old_no": null,
+                "new_no": 100
+              },
+              {
+                "kind": "add",
+                "text": "    {",
+                "old_no": null,
+                "new_no": 101
+              },
+              {
+                "kind": "add",
+                "text": "        return false;",
+                "old_no": null,
+                "new_no": 102
+              },
+              {
+                "kind": "ctx",
+                "text": "    }",
+                "old_no": 104,
+                "new_no": 103
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 104
+              },
+              {
+                "kind": "add",
+                "text": "    // Ignore `None`, `Bool`, and `Ellipsis` constants.",
+                "old_no": null,
+                "new_no": 105
+              },
+              {
+                "kind": "add",
+                "text": "    !matches!(",
+                "old_no": null,
+                "new_no": 106
+              },
+              {
+                "kind": "add",
+                "text": "        literal_expr,",
+                "old_no": null,
+                "new_no": 107
+              },
+              {
+                "kind": "add",
+                "text": "        LiteralExpressionRef::NoneLiteral(_)",
+                "old_no": null,
+                "new_no": 108
+              },
+              {
+                "kind": "add",
+                "text": "            | LiteralExpressionRef::BooleanLiteral(_)",
+                "old_no": null,
+                "new_no": 109
+              },
+              {
+                "kind": "add",
+                "text": "            | LiteralExpressionRef::EllipsisLiteral(_)",
+                "old_no": null,
+                "new_no": 110
+              },
+              {
+                "kind": "add",
+                "text": "    )",
+                "old_no": null,
+                "new_no": 111
+              },
+              {
+                "kind": "ctx",
+                "text": "}",
+                "old_no": 105,
+                "new_no": 112
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 106,
+                "new_no": 113
+              },
+              {
+                "kind": "ctx",
+                "text": "/// Returns `true` if `expr` is a comparand whose value is derived from the",
+                "old_no": 107,
+                "new_no": 114
+              }
+            ]
+          },
+          {
+            "id": "211a4dfcfb8b520b",
+            "path": "crates/ruff_linter/src/rules/pylint/rules/magic_value_comparison.rs",
+            "old_start": 132,
+            "old_lines": 8,
+            "new_start": 139,
+            "new_lines": 8,
+            "header": "pub(crate) fn magic_value_comparison(checker: &Checker, operands: &[Expr]) {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    let mut previous = None;",
+                "old_no": 132,
+                "new_no": 139
+              },
+              {
+                "kind": "ctx",
+                "text": "    let mut operands = operands.iter().peekable();",
+                "old_no": 133,
+                "new_no": 140
+              },
+              {
+                "kind": "ctx",
+                "text": "    while let Some(comparison_expr) = operands.next() {",
+                "old_no": 134,
+                "new_no": 141
+              },
+              {
+                "kind": "del",
+                "text": "        if let Some(value) = as_literal(comparison_expr)",
+                "old_no": 135,
+                "new_no": null
+              },
+              {
+                "kind": "del",
+                "text": "            && is_magic_value(value, &checker.settings().pylint.allow_magic_value_types)",
+                "old_no": 136,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "        if let Some((value, unary_op)) = as_literal(comparison_expr)",
+                "old_no": null,
+                "new_no": 142
+              },
+              {
+                "kind": "add",
+                "text": "            && is_magic_value(value, unary_op, &checker.settings().pylint)",
+                "old_no": null,
+                "new_no": 143
+              },
+              {
+                "kind": "ctx",
+                "text": "            && !previous.is_some_and(|expr| is_sys_version_comparand(expr, checker.semantic()))",
+                "old_no": 137,
+                "new_no": 144
+              },
+              {
+                "kind": "ctx",
+                "text": "            && !operands",
+                "old_no": 138,
+                "new_no": 145
+              },
+              {
+                "kind": "ctx",
+                "text": "                .peek()",
+                "old_no": 139,
+                "new_no": 146
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_linter/src/rules/pylint/settings.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 97,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "a941b14106ce2301",
+            "path": "crates/ruff_linter/src/rules/pylint/settings.rs",
+            "old_start": 5,
+            "old_lines": 8,
+            "new_start": 5,
+            "new_lines": 92,
+            "header": "use serde::{Deserialize, Serialize};",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "use std::fmt;",
+                "old_no": 5,
+                "new_no": 5
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 6,
+                "new_no": 6
+              },
+              {
+                "kind": "ctx",
+                "text": "use crate::display_settings;",
+                "old_no": 7,
+                "new_no": 7
+              },
+              {
+                "kind": "add",
+                "text": "use ruff_cache::{CacheKey, CacheKeyHasher};",
+                "old_no": null,
+                "new_no": 8
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_macros::CacheKey;",
+                "old_no": 8,
+                "new_no": 9
+              },
+              {
+                "kind": "del",
+                "text": "use ruff_python_ast::{ExprNumberLiteral, LiteralExpressionRef, Number};",
+                "old_no": 9,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "use ruff_python_ast::{ExprNumberLiteral, LiteralExpressionRef, Number, UnaryOp};",
+                "old_no": null,
+                "new_no": 10
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 11
+              },
+              {
+                "kind": "add",
+                "text": "#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, CacheKey)]",
+                "old_no": null,
+                "new_no": 12
+              },
+              {
+                "kind": "add",
+                "text": "#[serde(untagged)]",
+                "old_no": null,
+                "new_no": 13
+              },
+              {
+                "kind": "add",
+                "text": "#[cfg_attr(feature = \"schemars\", derive(schemars::JsonSchema))]",
+                "old_no": null,
+                "new_no": 14
+              },
+              {
+                "kind": "add",
+                "text": "pub enum AllowedValue {",
+                "old_no": null,
+                "new_no": 15
+              },
+              {
+                "kind": "add",
+                "text": "    String(String),",
+                "old_no": null,
+                "new_no": 16
+              },
+              {
+                "kind": "add",
+                "text": "    Int(i64),",
+                "old_no": null,
+                "new_no": 17
+              },
+              {
+                "kind": "add",
+                "text": "    Float(AllowedFloatValue),",
+                "old_no": null,
+                "new_no": 18
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 19
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 20
+              },
+              {
+                "kind": "add",
+                "text": "impl AllowedValue {",
+                "old_no": null,
+                "new_no": 21
+              },
+              {
+                "kind": "add",
+                "text": "    pub(crate) fn matches_value(",
+                "old_no": null,
+                "new_no": 22
+              },
+              {
+                "kind": "add",
+                "text": "        &self,",
+                "old_no": null,
+                "new_no": 23
+              },
+              {
+                "kind": "add",
+                "text": "        literal_expr: LiteralExpressionRef<'_>,",
+                "old_no": null,
+                "new_no": 24
+              },
+              {
+                "kind": "add",
+                "text": "        unary_op: Option<&UnaryOp>,",
+                "old_no": null,
+                "new_no": 25
+              },
+              {
+                "kind": "add",
+                "text": "    ) -> bool {",
+                "old_no": null,
+                "new_no": 26
+              },
+              {
+                "kind": "add",
+                "text": "        match (self, literal_expr) {",
+                "old_no": null,
+                "new_no": 27
+              },
+              {
+                "kind": "add",
+                "text": "            (Self::String(allowed), LiteralExpressionRef::StringLiteral(string)) => {",
+                "old_no": null,
+                "new_no": 28
+              },
+              {
+                "kind": "add",
+                "text": "                unary_op.is_none() && allowed == string.value.to_str()",
+                "old_no": null,
+                "new_no": 29
+              },
+              {
+                "kind": "add",
+                "text": "            }",
+                "old_no": null,
+                "new_no": 30
+              },
+              {
+                "kind": "add",
+                "text": "            (",
+                "old_no": null,
+                "new_no": 31
+              },
+              {
+                "kind": "add",
+                "text": "                Self::Int(allowed),",
+                "old_no": null,
+                "new_no": 32
+              },
+              {
+                "kind": "add",
+                "text": "                LiteralExpressionRef::NumberLiteral(ExprNumberLiteral {",
+                "old_no": null,
+                "new_no": 33
+              },
+              {
+                "kind": "add",
+                "text": "                    value: Number::Int(value),",
+                "old_no": null,
+                "new_no": 34
+              },
+              {
+                "kind": "add",
+                "text": "                    ..",
+                "old_no": null,
+                "new_no": 35
+              },
+              {
+                "kind": "add",
+                "text": "                }),",
+                "old_no": null,
+                "new_no": 36
+              },
+              {
+                "kind": "add",
+                "text": "            ) => {",
+                "old_no": null,
+                "new_no": 37
+              },
+              {
+                "kind": "add",
+                "text": "                let Some(value) = value.as_i64() else {",
+                "old_no": null,
+                "new_no": 38
+              },
+              {
+                "kind": "add",
+                "text": "                    return false;",
+                "old_no": null,
+                "new_no": 39
+              },
+              {
+                "kind": "add",
+                "text": "                };",
+                "old_no": null,
+                "new_no": 40
+              },
+              {
+                "kind": "add",
+                "text": "                let value = match unary_op {",
+                "old_no": null,
+                "new_no": 41
+              },
+              {
+                "kind": "add",
+                "text": "                    None | Some(UnaryOp::UAdd) => value,",
+                "old_no": null,
+                "new_no": 42
+              },
+              {
+                "kind": "add",
+                "text": "                    Some(UnaryOp::USub) => -value,",
+                "old_no": null,
+                "new_no": 43
+              },
+              {
+                "kind": "add",
+                "text": "                    Some(UnaryOp::Invert | UnaryOp::Not) => return false,",
+                "old_no": null,
+                "new_no": 44
+              },
+              {
+                "kind": "add",
+                "text": "                };",
+                "old_no": null,
+                "new_no": 45
+              },
+              {
+                "kind": "add",
+                "text": "                value == *allowed",
+                "old_no": null,
+                "new_no": 46
+              },
+              {
+                "kind": "add",
+                "text": "            }",
+                "old_no": null,
+                "new_no": 47
+              },
+              {
+                "kind": "add",
+                "text": "            (",
+                "old_no": null,
+                "new_no": 48
+              },
+              {
+                "kind": "add",
+                "text": "                Self::Float(allowed),",
+                "old_no": null,
+                "new_no": 49
+              },
+              {
+                "kind": "add",
+                "text": "                LiteralExpressionRef::NumberLiteral(ExprNumberLiteral {",
+                "old_no": null,
+                "new_no": 50
+              },
+              {
+                "kind": "add",
+                "text": "                    value: Number::Float(value),",
+                "old_no": null,
+                "new_no": 51
+              },
+              {
+                "kind": "add",
+                "text": "                    ..",
+                "old_no": null,
+                "new_no": 52
+              },
+              {
+                "kind": "add",
+                "text": "                }),",
+                "old_no": null,
+                "new_no": 53
+              },
+              {
+                "kind": "add",
+                "text": "            ) => {",
+                "old_no": null,
+                "new_no": 54
+              },
+              {
+                "kind": "add",
+                "text": "                let value = match unary_op {",
+                "old_no": null,
+                "new_no": 55
+              },
+              {
+                "kind": "add",
+                "text": "                    None | Some(UnaryOp::UAdd) => *value,",
+                "old_no": null,
+                "new_no": 56
+              },
+              {
+                "kind": "add",
+                "text": "                    Some(UnaryOp::USub) => -value,",
+                "old_no": null,
+                "new_no": 57
+              },
+              {
+                "kind": "add",
+                "text": "                    Some(UnaryOp::Invert | UnaryOp::Not) => return false,",
+                "old_no": null,
+                "new_no": 58
+              },
+              {
+                "kind": "add",
+                "text": "                };",
+                "old_no": null,
+                "new_no": 59
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedFloatValue(value) == *allowed",
+                "old_no": null,
+                "new_no": 60
+              },
+              {
+                "kind": "add",
+                "text": "            }",
+                "old_no": null,
+                "new_no": 61
+              },
+              {
+                "kind": "add",
+                "text": "            _ => false,",
+                "old_no": null,
+                "new_no": 62
+              },
+              {
+                "kind": "add",
+                "text": "        }",
+                "old_no": null,
+                "new_no": 63
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 64
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 65
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 66
+              },
+              {
+                "kind": "add",
+                "text": "impl fmt::Display for AllowedValue {",
+                "old_no": null,
+                "new_no": 67
+              },
+              {
+                "kind": "add",
+                "text": "    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {",
+                "old_no": null,
+                "new_no": 68
+              },
+              {
+                "kind": "add",
+                "text": "        match self {",
+                "old_no": null,
+                "new_no": 69
+              },
+              {
+                "kind": "add",
+                "text": "            Self::String(value) => write!(f, \"{value:?}\"),",
+                "old_no": null,
+                "new_no": 70
+              },
+              {
+                "kind": "add",
+                "text": "            Self::Int(value) => write!(f, \"{value}\"),",
+                "old_no": null,
+                "new_no": 71
+              },
+              {
+                "kind": "add",
+                "text": "            Self::Float(value) => write!(f, \"{:?}\", value.0),",
+                "old_no": null,
+                "new_no": 72
+              },
+              {
+                "kind": "add",
+                "text": "        }",
+                "old_no": null,
+                "new_no": 73
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 74
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 75
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 76
+              },
+              {
+                "kind": "add",
+                "text": "#[derive(Debug, Clone, Serialize, Deserialize)]",
+                "old_no": null,
+                "new_no": 77
+              },
+              {
+                "kind": "add",
+                "text": "#[cfg_attr(feature = \"schemars\", derive(schemars::JsonSchema))]",
+                "old_no": null,
+                "new_no": 78
+              },
+              {
+                "kind": "add",
+                "text": "pub struct AllowedFloatValue(f64);",
+                "old_no": null,
+                "new_no": 79
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 80
+              },
+              {
+                "kind": "add",
+                "text": "impl PartialEq for AllowedFloatValue {",
+                "old_no": null,
+                "new_no": 81
+              },
+              {
+                "kind": "add",
+                "text": "    fn eq(&self, other: &Self) -> bool {",
+                "old_no": null,
+                "new_no": 82
+              },
+              {
+                "kind": "add",
+                "text": "        self.0.to_bits() == other.0.to_bits()",
+                "old_no": null,
+                "new_no": 83
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 84
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 85
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 86
+              },
+              {
+                "kind": "add",
+                "text": "impl Eq for AllowedFloatValue {}",
+                "old_no": null,
+                "new_no": 87
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 88
+              },
+              {
+                "kind": "add",
+                "text": "impl CacheKey for AllowedFloatValue {",
+                "old_no": null,
+                "new_no": 89
+              },
+              {
+                "kind": "add",
+                "text": "    fn cache_key(&self, state: &mut CacheKeyHasher) {",
+                "old_no": null,
+                "new_no": 90
+              },
+              {
+                "kind": "add",
+                "text": "        self.0.to_bits().cache_key(state);",
+                "old_no": null,
+                "new_no": 91
+              },
+              {
+                "kind": "add",
+                "text": "    }",
+                "old_no": null,
+                "new_no": 92
+              },
+              {
+                "kind": "add",
+                "text": "}",
+                "old_no": null,
+                "new_no": 93
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 10,
+                "new_no": 94
+              },
+              {
+                "kind": "ctx",
+                "text": "#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, CacheKey)]",
+                "old_no": 11,
+                "new_no": 95
+              },
+              {
+                "kind": "ctx",
+                "text": "#[serde(deny_unknown_fields, rename_all = \"kebab-case\")]",
+                "old_no": 12,
+                "new_no": 96
+              }
+            ]
+          },
+          {
+            "id": "534dc42941e972f1",
+            "path": "crates/ruff_linter/src/rules/pylint/settings.rs",
+            "old_start": 51,
+            "old_lines": 6,
+            "new_start": 135,
+            "new_lines": 7,
+            "header": "impl fmt::Display for ConstantType {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "#[derive(Debug, Clone, CacheKey)]",
+                "old_no": 51,
+                "new_no": 135
+              },
+              {
+                "kind": "ctx",
+                "text": "pub struct Settings {",
+                "old_no": 52,
+                "new_no": 136
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub allow_magic_value_types: Vec<ConstantType>,",
+                "old_no": 53,
+                "new_no": 137
+              },
+              {
+                "kind": "add",
+                "text": "    pub allow_magic_values: Vec<AllowedValue>,",
+                "old_no": null,
+                "new_no": 138
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub allow_dunder_method_names: FxHashSet<String>,",
+                "old_no": 54,
+                "new_no": 139
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub max_args: usize,",
+                "old_no": 55,
+                "new_no": 140
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub max_positional_args: usize,",
+                "old_no": 56,
+                "new_no": 141
+              }
+            ]
+          },
+          {
+            "id": "5351e623d70d8735",
+            "path": "crates/ruff_linter/src/rules/pylint/settings.rs",
+            "old_start": 68,
+            "old_lines": 6,
+            "new_start": 153,
+            "new_lines": 16,
+            "header": "impl Default for Settings {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    fn default() -> Self {",
+                "old_no": 68,
+                "new_no": 153
+              },
+              {
+                "kind": "ctx",
+                "text": "        Self {",
+                "old_no": 69,
+                "new_no": 154
+              },
+              {
+                "kind": "ctx",
+                "text": "            allow_magic_value_types: vec![ConstantType::Str, ConstantType::Bytes],",
+                "old_no": 70,
+                "new_no": 155
+              },
+              {
+                "kind": "add",
+                "text": "            allow_magic_values: vec![",
+                "old_no": null,
+                "new_no": 156
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::Int(0),",
+                "old_no": null,
+                "new_no": 157
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::Int(1),",
+                "old_no": null,
+                "new_no": 158
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::Int(-1),",
+                "old_no": null,
+                "new_no": 159
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::Float(AllowedFloatValue(0.0)),",
+                "old_no": null,
+                "new_no": 160
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::Float(AllowedFloatValue(1.0)),",
+                "old_no": null,
+                "new_no": 161
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::Float(AllowedFloatValue(-1.0)),",
+                "old_no": null,
+                "new_no": 162
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::String(String::new()),",
+                "old_no": null,
+                "new_no": 163
+              },
+              {
+                "kind": "add",
+                "text": "                AllowedValue::String(\"__main__\".to_string()),",
+                "old_no": null,
+                "new_no": 164
+              },
+              {
+                "kind": "add",
+                "text": "            ],",
+                "old_no": null,
+                "new_no": 165
+              },
+              {
+                "kind": "ctx",
+                "text": "            allow_dunder_method_names: FxHashSet::default(),",
+                "old_no": 71,
+                "new_no": 166
+              },
+              {
+                "kind": "ctx",
+                "text": "            max_args: 5,",
+                "old_no": 72,
+                "new_no": 167
+              },
+              {
+                "kind": "ctx",
+                "text": "            max_positional_args: 5,",
+                "old_no": 73,
+                "new_no": 168
+              }
+            ]
+          },
+          {
+            "id": "011a0fa4976cbab3",
+            "path": "crates/ruff_linter/src/rules/pylint/settings.rs",
+            "old_start": 90,
+            "old_lines": 6,
+            "new_start": 185,
+            "new_lines": 7,
+            "header": "impl fmt::Display for Settings {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            namespace = \"linter.pylint\",",
+                "old_no": 90,
+                "new_no": 185
+              },
+              {
+                "kind": "ctx",
+                "text": "            fields = [",
+                "old_no": 91,
+                "new_no": 186
+              },
+              {
+                "kind": "ctx",
+                "text": "                self.allow_magic_value_types | array,",
+                "old_no": 92,
+                "new_no": 187
+              },
+              {
+                "kind": "add",
+                "text": "                self.allow_magic_values | array,",
+                "old_no": null,
+                "new_no": 188
+              },
+              {
+                "kind": "ctx",
+                "text": "                self.allow_dunder_method_names | set,",
+                "old_no": 93,
+                "new_no": 189
+              },
+              {
+                "kind": "ctx",
+                "text": "                self.max_args,",
+                "old_no": 94,
+                "new_no": 190
+              },
+              {
+                "kind": "ctx",
+                "text": "                self.max_positional_args,",
+                "old_no": 95,
+                "new_no": 191
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "crates/ruff_workspace/src/options.rs",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 29,
+        "deletions": 1,
+        "hunks": [
+          {
+            "id": "6189ea156eeca59d",
+            "path": "crates/ruff_workspace/src/options.rs",
+            "old_start": 27,
+            "old_lines": 7,
+            "new_start": 27,
+            "new_lines": 7,
+            "header": "use ruff_linter::rules::isort::settings::RelativeImportsOrder;",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "use ruff_linter::rules::isort::{ImportSection, ImportType};",
+                "old_no": 27,
+                "new_no": 27
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_linter::rules::pep8_naming::settings::IgnoreNames;",
+                "old_no": 28,
+                "new_no": 28
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_linter::rules::pydocstyle::settings::Convention;",
+                "old_no": 29,
+                "new_no": 29
+              },
+              {
+                "kind": "del",
+                "text": "use ruff_linter::rules::pylint::settings::ConstantType;",
+                "old_no": 30,
+                "new_no": null
+              },
+              {
+                "kind": "add",
+                "text": "use ruff_linter::rules::pylint::settings::{AllowedValue, ConstantType};",
+                "old_no": null,
+                "new_no": 30
+              },
+              {
+                "kind": "ctx",
+                "text": "use ruff_linter::rules::{",
+                "old_no": 31,
+                "new_no": 31
+              },
+              {
+                "kind": "ctx",
+                "text": "    flake8_copyright, flake8_errmsg, flake8_gettext, flake8_implicit_str_concat,",
+                "old_no": 32,
+                "new_no": 32
+              },
+              {
+                "kind": "ctx",
+                "text": "    flake8_import_conventions, flake8_pytest_style, flake8_quotes, flake8_self,",
+                "old_no": 33,
+                "new_no": 33
+              }
+            ]
+          },
+          {
+            "id": "672a44bb72d89203",
+            "path": "crates/ruff_workspace/src/options.rs",
+            "old_start": 3708,
+            "old_lines": 6,
+            "new_start": 3708,
+            "new_lines": 27,
+            "header": "pub struct PylintOptions {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "    )]",
+                "old_no": 3708,
+                "new_no": 3708
+              },
+              {
+                "kind": "ctx",
+                "text": "    allow_magic_value_types: Option<Vec<ConstantType>>,",
+                "old_no": 3709,
+                "new_no": 3709
+              },
+              {
+                "kind": "ctx",
+                "text": "",
+                "old_no": 3710,
+                "new_no": 3710
+              },
+              {
+                "kind": "add",
+                "text": "    /// Specific literal values to ignore when used as \"magic values\" (see `PLR2004`).",
+                "old_no": null,
+                "new_no": 3711
+              },
+              {
+                "kind": "add",
+                "text": "    #[option(",
+                "old_no": null,
+                "new_no": 3712
+              },
+              {
+                "kind": "add",
+                "text": "        default = r#\"[0, 1, -1, 0.0, 1.0, -1.0, \"\", \"__main__\"]\"#,",
+                "old_no": null,
+                "new_no": 3713
+              },
+              {
+                "kind": "add",
+                "text": "        value_type = r#\"list[str | int | float]\"#,",
+                "old_no": null,
+                "new_no": 3714
+              },
+              {
+                "kind": "add",
+                "text": "        example = r#\"",
+                "old_no": null,
+                "new_no": 3715
+              },
+              {
+                "kind": "add",
+                "text": "            allow-magic-values = [42, 3.14, \"special\"]",
+                "old_no": null,
+                "new_no": 3716
+              },
+              {
+                "kind": "add",
+                "text": "        \"#",
+                "old_no": null,
+                "new_no": 3717
+              },
+              {
+                "kind": "add",
+                "text": "    )]",
+                "old_no": null,
+                "new_no": 3718
+              },
+              {
+                "kind": "add",
+                "text": "    allow_magic_values: Option<Vec<AllowedValue>>,",
+                "old_no": null,
+                "new_no": 3719
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 3720
+              },
+              {
+                "kind": "add",
+                "text": "    /// Literal values to ignore when used as \"magic values\" (see `PLR2004`),",
+                "old_no": null,
+                "new_no": 3721
+              },
+              {
+                "kind": "add",
+                "text": "    /// in addition to those included in [`allow-magic-values`](#lint_pylint_allow-magic-values).",
+                "old_no": null,
+                "new_no": 3722
+              },
+              {
+                "kind": "add",
+                "text": "    #[option(",
+                "old_no": null,
+                "new_no": 3723
+              },
+              {
+                "kind": "add",
+                "text": "        default = r#\"[]\"#,",
+                "old_no": null,
+                "new_no": 3724
+              },
+              {
+                "kind": "add",
+                "text": "        value_type = r#\"list[str | int | float]\"#,",
+                "old_no": null,
+                "new_no": 3725
+              },
+              {
+                "kind": "add",
+                "text": "        example = r#\"",
+                "old_no": null,
+                "new_no": 3726
+              },
+              {
+                "kind": "add",
+                "text": "            extend-allow-magic-values = [42, 3.14, \"magic\"]",
+                "old_no": null,
+                "new_no": 3727
+              },
+              {
+                "kind": "add",
+                "text": "        \"#",
+                "old_no": null,
+                "new_no": 3728
+              },
+              {
+                "kind": "add",
+                "text": "    )]",
+                "old_no": null,
+                "new_no": 3729
+              },
+              {
+                "kind": "add",
+                "text": "    extend_allow_magic_values: Option<Vec<AllowedValue>>,",
+                "old_no": null,
+                "new_no": 3730
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "old_no": null,
+                "new_no": 3731
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// Dunder methods name to allow, in addition to the default set from the",
+                "old_no": 3711,
+                "new_no": 3732
+              },
+              {
+                "kind": "ctx",
+                "text": "    /// Python standard library (see `PLW3201`).",
+                "old_no": 3712,
+                "new_no": 3733
+              },
+              {
+                "kind": "ctx",
+                "text": "    #[option(",
+                "old_no": 3713,
+                "new_no": 3734
+              }
+            ]
+          },
+          {
+            "id": "a2d61c30327024cc",
+            "path": "crates/ruff_workspace/src/options.rs",
+            "old_start": 3786,
+            "old_lines": 10,
+            "new_start": 3807,
+            "new_lines": 17,
+            "header": "pub struct PylintOptions {",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "impl PylintOptions {",
+                "old_no": 3786,
+                "new_no": 3807
+              },
+              {
+                "kind": "ctx",
+                "text": "    pub(crate) fn into_settings(self) -> pylint::settings::Settings {",
+                "old_no": 3787,
+                "new_no": 3808
+              },
+              {
+                "kind": "ctx",
+                "text": "        let defaults = pylint::settings::Settings::default();",
+                "old_no": 3788,
+                "new_no": 3809
+              },
+              {
+                "kind": "add",
+                "text": "        let mut allow_magic_values = self",
+                "old_no": null,
+                "new_no": 3810
+              },
+              {
+                "kind": "add",
+                "text": "            .allow_magic_values",
+                "old_no": null,
+                "new_no": 3811
+              },
+              {
+                "kind": "add",
+                "text": "            .unwrap_or(defaults.allow_magic_values);",
+                "old_no": null,
+                "new_no": 3812
+              },
+              {
+                "kind": "add",
+                "text": "        if let Some(extend) = self.extend_allow_magic_values {",
+                "old_no": null,
+                "new_no": 3813
+              },
+              {
+                "kind": "add",
+                "text": "            allow_magic_values.extend(extend);",
+                "old_no": null,
+                "new_no": 3814
+              },
+              {
+                "kind": "add",
+                "text": "        }",
+                "old_no": null,
+                "new_no": 3815
+              },
+              {
+                "kind": "ctx",
+                "text": "        pylint::settings::Settings {",
+                "old_no": 3789,
+                "new_no": 3816
+              },
+              {
+                "kind": "ctx",
+                "text": "            allow_magic_value_types: self",
+                "old_no": 3790,
+                "new_no": 3817
+              },
+              {
+                "kind": "ctx",
+                "text": "                .allow_magic_value_types",
+                "old_no": 3791,
+                "new_no": 3818
+              },
+              {
+                "kind": "ctx",
+                "text": "                .unwrap_or(defaults.allow_magic_value_types),",
+                "old_no": 3792,
+                "new_no": 3819
+              },
+              {
+                "kind": "add",
+                "text": "            allow_magic_values,",
+                "old_no": null,
+                "new_no": 3820
+              },
+              {
+                "kind": "ctx",
+                "text": "            allow_dunder_method_names: self.allow_dunder_method_names.unwrap_or_default(),",
+                "old_no": 3793,
+                "new_no": 3821
+              },
+              {
+                "kind": "ctx",
+                "text": "            max_args: self.max_args.unwrap_or(defaults.max_args),",
+                "old_no": 3794,
+                "new_no": 3822
+              },
+              {
+                "kind": "ctx",
+                "text": "            max_positional_args: self",
+                "old_no": 3795,
+                "new_no": 3823
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": "ruff.schema.json",
+        "old_path": null,
+        "status": "modified",
+        "similarity": null,
+        "old_mode": null,
+        "new_mode": null,
+        "flags": [],
+        "additions": 38,
+        "deletions": 0,
+        "hunks": [
+          {
+            "id": "e7f2aab6aeff48fc",
+            "path": "ruff.schema.json",
+            "old_start": 781,
+            "old_lines": 6,
+            "new_start": 781,
+            "new_lines": 24,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "        \"all\"",
+                "old_no": 781,
+                "new_no": 781
+              },
+              {
+                "kind": "ctx",
+                "text": "      ]",
+                "old_no": 782,
+                "new_no": 782
+              },
+              {
+                "kind": "ctx",
+                "text": "    },",
+                "old_no": 783,
+                "new_no": 783
+              },
+              {
+                "kind": "add",
+                "text": "    \"AllowedFloatValue\": {",
+                "old_no": null,
+                "new_no": 784
+              },
+              {
+                "kind": "add",
+                "text": "      \"type\": \"number\",",
+                "old_no": null,
+                "new_no": 785
+              },
+              {
+                "kind": "add",
+                "text": "      \"format\": \"double\"",
+                "old_no": null,
+                "new_no": 786
+              },
+              {
+                "kind": "add",
+                "text": "    },",
+                "old_no": null,
+                "new_no": 787
+              },
+              {
+                "kind": "add",
+                "text": "    \"AllowedValue\": {",
+                "old_no": null,
+                "new_no": 788
+              },
+              {
+                "kind": "add",
+                "text": "      \"anyOf\": [",
+                "old_no": null,
+                "new_no": 789
+              },
+              {
+                "kind": "add",
+                "text": "        {",
+                "old_no": null,
+                "new_no": 790
+              },
+              {
+                "kind": "add",
+                "text": "          \"type\": \"string\"",
+                "old_no": null,
+                "new_no": 791
+              },
+              {
+                "kind": "add",
+                "text": "        },",
+                "old_no": null,
+                "new_no": 792
+              },
+              {
+                "kind": "add",
+                "text": "        {",
+                "old_no": null,
+                "new_no": 793
+              },
+              {
+                "kind": "add",
+                "text": "          \"type\": \"integer\",",
+                "old_no": null,
+                "new_no": 794
+              },
+              {
+                "kind": "add",
+                "text": "          \"format\": \"int64\"",
+                "old_no": null,
+                "new_no": 795
+              },
+              {
+                "kind": "add",
+                "text": "        },",
+                "old_no": null,
+                "new_no": 796
+              },
+              {
+                "kind": "add",
+                "text": "        {",
+                "old_no": null,
+                "new_no": 797
+              },
+              {
+                "kind": "add",
+                "text": "          \"$ref\": \"#/definitions/AllowedFloatValue\"",
+                "old_no": null,
+                "new_no": 798
+              },
+              {
+                "kind": "add",
+                "text": "        }",
+                "old_no": null,
+                "new_no": 799
+              },
+              {
+                "kind": "add",
+                "text": "      ]",
+                "old_no": null,
+                "new_no": 800
+              },
+              {
+                "kind": "add",
+                "text": "    },",
+                "old_no": null,
+                "new_no": 801
+              },
+              {
+                "kind": "ctx",
+                "text": "    \"AnalyzeOptions\": {",
+                "old_no": 784,
+                "new_no": 802
+              },
+              {
+                "kind": "ctx",
+                "text": "      \"description\": \"Configures Ruff's `analyze` command.\",",
+                "old_no": 785,
+                "new_no": 803
+              },
+              {
+                "kind": "ctx",
+                "text": "      \"type\": \"object\",",
+                "old_no": 786,
+                "new_no": 804
+              }
+            ]
+          },
+          {
+            "id": "456b4f721794cc94",
+            "path": "ruff.schema.json",
+            "old_start": 2963,
+            "old_lines": 6,
+            "new_start": 2981,
+            "new_lines": 26,
+            "header": "",
+            "lines": [
+              {
+                "kind": "ctx",
+                "text": "            \"$ref\": \"#/definitions/ConstantType\"",
+                "old_no": 2963,
+                "new_no": 2981
+              },
+              {
+                "kind": "ctx",
+                "text": "          }",
+                "old_no": 2964,
+                "new_no": 2982
+              },
+              {
+                "kind": "ctx",
+                "text": "        },",
+                "old_no": 2965,
+                "new_no": 2983
+              },
+              {
+                "kind": "add",
+                "text": "        \"allow-magic-values\": {",
+                "old_no": null,
+                "new_no": 2984
+              },
+              {
+                "kind": "add",
+                "text": "          \"description\": \"Specific literal values to ignore when used as \\\"magic values\\\" (see `PLR2004`).\",",
+                "old_no": null,
+                "new_no": 2985
+              },
+              {
+                "kind": "add",
+                "text": "          \"type\": [",
+                "old_no": null,
+                "new_no": 2986
+              },
+              {
+                "kind": "add",
+                "text": "            \"array\",",
+                "old_no": null,
+                "new_no": 2987
+              },
+              {
+                "kind": "add",
+                "text": "            \"null\"",
+                "old_no": null,
+                "new_no": 2988
+              },
+              {
+                "kind": "add",
+                "text": "          ],",
+                "old_no": null,
+                "new_no": 2989
+              },
+              {
+                "kind": "add",
+                "text": "          \"items\": {",
+                "old_no": null,
+                "new_no": 2990
+              },
+              {
+                "kind": "add",
+                "text": "            \"$ref\": \"#/definitions/AllowedValue\"",
+                "old_no": null,
+                "new_no": 2991
+              },
+              {
+                "kind": "add",
+                "text": "          }",
+                "old_no": null,
+                "new_no": 2992
+              },
+              {
+                "kind": "add",
+                "text": "        },",
+                "old_no": null,
+                "new_no": 2993
+              },
+              {
+                "kind": "add",
+                "text": "        \"extend-allow-magic-values\": {",
+                "old_no": null,
+                "new_no": 2994
+              },
+              {
+                "kind": "add",
+                "text": "          \"description\": \"Literal values to ignore when used as \\\"magic values\\\" (see `PLR2004`),\\nin addition to those included in [`allow-magic-values`](#lint_pylint_allow-magic-values).\",",
+                "old_no": null,
+                "new_no": 2995
+              },
+              {
+                "kind": "add",
+                "text": "          \"type\": [",
+                "old_no": null,
+                "new_no": 2996
+              },
+              {
+                "kind": "add",
+                "text": "            \"array\",",
+                "old_no": null,
+                "new_no": 2997
+              },
+              {
+                "kind": "add",
+                "text": "            \"null\"",
+                "old_no": null,
+                "new_no": 2998
+              },
+              {
+                "kind": "add",
+                "text": "          ],",
+                "old_no": null,
+                "new_no": 2999
+              },
+              {
+                "kind": "add",
+                "text": "          \"items\": {",
+                "old_no": null,
+                "new_no": 3000
+              },
+              {
+                "kind": "add",
+                "text": "            \"$ref\": \"#/definitions/AllowedValue\"",
+                "old_no": null,
+                "new_no": 3001
+              },
+              {
+                "kind": "add",
+                "text": "          }",
+                "old_no": null,
+                "new_no": 3002
+              },
+              {
+                "kind": "add",
+                "text": "        },",
+                "old_no": null,
+                "new_no": 3003
+              },
+              {
+                "kind": "ctx",
+                "text": "        \"max-args\": {",
+                "old_no": 2966,
+                "new_no": 3004
+              },
+              {
+                "kind": "ctx",
+                "text": "          \"description\": \"Maximum number of arguments allowed for a function or method definition\\n(see `PLR0913`).\",",
+                "old_no": 2967,
+                "new_no": 3005
+              },
+              {
+                "kind": "ctx",
+                "text": "          \"type\": [",
+                "old_no": 2968,
+                "new_no": 3006
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

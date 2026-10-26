@@ -1,0 +1,51 @@
+{
+  "id": 42,
+  "title": "Add feature X",
+  "description": "This PR adds feature X.",
+  "state": "OPEN",
+  "draft": false,
+  "author": {
+    "type": "user",
+    "uuid": "{22222222-2222-2222-2222-222222222222}",
+    "nickname": "alice",
+    "display_name": "Alice Author",
+    "links": { "avatar": { "href": "https://example.com/alice.png" } }
+  },
+  "source": {
+    "branch": { "name": "feature-x" },
+    "commit": { "hash": "bbbbbbbbbbbb" },
+    "repository": { "full_name": "acme/widgets" }
+  },
+  "destination": {
+    "branch": { "name": "main" },
+    "commit": { "hash": "aaaaaaaaaaaa" },
+    "repository": { "full_name": "acme/widgets" }
+  },
+  "reviewers": [
+    {
+      "type": "user",
+      "uuid": "{33333333-3333-3333-3333-333333333333}",
+      "nickname": "carol",
+      "display_name": "Carol Reviewer"
+    }
+  ],
+  "participants": [
+    {
+      "user": {
+        "type": "user",
+        "uuid": "{33333333-3333-3333-3333-333333333333}",
+        "nickname": "carol",
+        "display_name": "Carol Reviewer"
+      },
+      "role": "REVIEWER",
+      "approved": true,
+      "state": "approved"
+    }
+  ],
+  "created_on": "2024-01-10T09:00:00.000000+00:00",
+  "updated_on": "2024-01-15T10:00:00.123456+00:00",
+  "links": {
+    "html": { "href": "https://bitbucket.org/acme/widgets/pull-requests/42" }
+  },
+  "merge_commit": null
+}

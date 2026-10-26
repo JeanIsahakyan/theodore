@@ -1,0 +1,240 @@
+{
+  "base": "base-main",
+  "head": "head-479-2",
+  "files": [
+    {
+      "path": "src/webhooks/deliver.ts",
+      "old_path": null,
+      "status": "modified",
+      "similarity": null,
+      "old_mode": null,
+      "new_mode": null,
+      "flags": [],
+      "additions": 7,
+      "deletions": 2,
+      "hunks": [
+        {
+          "id": "1443083b5def4ff9",
+          "path": "src/webhooks/deliver.ts",
+          "old_start": 1,
+          "old_lines": 4,
+          "new_start": 1,
+          "new_lines": 9,
+          "header": "function deliver",
+          "lines": [
+            {
+              "kind": "ctx",
+              "text": "export async function deliver(hook: Webhook, event: Event) {",
+              "old_no": 1,
+              "new_no": 1
+            },
+            {
+              "kind": "del",
+              "text": "  const res = await fetch(hook.url, { method: 'POST', body: JSON.stringify(event) });",
+              "old_no": 2,
+              "new_no": null
+            },
+            {
+              "kind": "del",
+              "text": "  if (!res.ok) throw new Error(`webhook ${hook.id}: ${res.status}`);",
+              "old_no": 3,
+              "new_no": null
+            },
+            {
+              "kind": "add",
+              "text": "  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {",
+              "old_no": null,
+              "new_no": 2
+            },
+            {
+              "kind": "add",
+              "text": "    const res = await fetch(hook.url, { method: 'POST', body: JSON.stringify(event) });",
+              "old_no": null,
+              "new_no": 3
+            },
+            {
+              "kind": "add",
+              "text": "    if (res.ok) return;",
+              "old_no": null,
+              "new_no": 4
+            },
+            {
+              "kind": "add",
+              "text": "    if (res.status < 500 && res.status !== 429) break;",
+              "old_no": null,
+              "new_no": 5
+            },
+            {
+              "kind": "add",
+              "text": "    await sleep(backoff(attempt));",
+              "old_no": null,
+              "new_no": 6
+            },
+            {
+              "kind": "add",
+              "text": "  }",
+              "old_no": null,
+              "new_no": 7
+            },
+            {
+              "kind": "add",
+              "text": "  await deadLetter.push(hook, event);",
+              "old_no": null,
+              "new_no": 8
+            },
+            {
+              "kind": "ctx",
+              "text": "}",
+              "old_no": 4,
+              "new_no": 9
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/webhooks/backoff.ts",
+      "old_path": null,
+      "status": "added",
+      "similarity": null,
+      "old_mode": null,
+      "new_mode": null,
+      "flags": [],
+      "additions": 8,
+      "deletions": 0,
+      "hunks": [
+        {
+          "id": "299c547d8e70c961",
+          "path": "src/webhooks/backoff.ts",
+          "old_start": 0,
+          "old_lines": 0,
+          "new_start": 1,
+          "new_lines": 8,
+          "header": "",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "export const MAX_ATTEMPTS = 5;",
+              "old_no": null,
+              "new_no": 1
+            },
+            {
+              "kind": "add",
+              "text": "export const MAX_BACKOFF_MS = 30_000;",
+              "old_no": null,
+              "new_no": 2
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "old_no": null,
+              "new_no": 3
+            },
+            {
+              "kind": "add",
+              "text": "export function backoff(attempt: number) {",
+              "old_no": null,
+              "new_no": 4
+            },
+            {
+              "kind": "add",
+              "text": "  const base = 500 * 2 ** attempt;",
+              "old_no": null,
+              "new_no": 5
+            },
+            {
+              "kind": "add",
+              "text": "  const capped = Math.min(base, MAX_BACKOFF_MS);",
+              "old_no": null,
+              "new_no": 6
+            },
+            {
+              "kind": "add",
+              "text": "  return capped + Math.random() * capped * 0.2;",
+              "old_no": null,
+              "new_no": 7
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "old_no": null,
+              "new_no": 8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "test/webhooks/deliver.test.ts",
+      "old_path": null,
+      "status": "added",
+      "similarity": null,
+      "old_mode": null,
+      "new_mode": null,
+      "flags": [],
+      "additions": 8,
+      "deletions": 0,
+      "hunks": [
+        {
+          "id": "aca3d6e37ea345d7",
+          "path": "test/webhooks/deliver.test.ts",
+          "old_start": 0,
+          "old_lines": 0,
+          "new_start": 1,
+          "new_lines": 8,
+          "header": "",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "import { it, expect } from 'vitest';",
+              "old_no": null,
+              "new_no": 1
+            },
+            {
+              "kind": "add",
+              "text": "import { deliver } from '../../src/webhooks/deliver';",
+              "old_no": null,
+              "new_no": 2
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "old_no": null,
+              "new_no": 3
+            },
+            {
+              "kind": "add",
+              "text": "it('retries 5xx and dead-letters after MAX_ATTEMPTS', async () => {",
+              "old_no": null,
+              "new_no": 4
+            },
+            {
+              "kind": "add",
+              "text": "  const fetch = mockFetch([503, 503, 503, 503, 503]);",
+              "old_no": null,
+              "new_no": 5
+            },
+            {
+              "kind": "add",
+              "text": "  await deliver(hook, event);",
+              "old_no": null,
+              "new_no": 6
+            },
+            {
+              "kind": "add",
+              "text": "  expect(fetch).toHaveBeenCalledTimes(5);",
+              "old_no": null,
+              "new_no": 7
+            },
+            {
+              "kind": "add",
+              "text": "});",
+              "old_no": null,
+              "new_no": 8
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

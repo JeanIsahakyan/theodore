@@ -1,0 +1,19 @@
+{
+  "values": [
+    {
+      "key": "build",
+      "name": "CI build",
+      "state": "SUCCESSFUL",
+      "url": "https://ci.example.com/build/1"
+    },
+    {
+      "key": "lint",
+      "name": "Lint",
+      "state": "FAILED",
+      "url": "https://ci.example.com/build/2"
+    }
+  ],
+  "page": 1,
+  "pagelen": 50,
+  "next": null
+}

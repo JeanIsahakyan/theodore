@@ -1,0 +1,17 @@
+[package]
+name = "theodore-store"
+description = "Store over SQLite (rusqlite): model rows, sync log, outbox, kv."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+theodore-ports.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

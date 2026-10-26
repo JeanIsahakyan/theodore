@@ -1,0 +1,62 @@
+[package]
+name = "theodore-desktop"
+description = "Tauri 2 desktop shell: windows, commands, events, updater."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "theodore_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+# Not "Theodore": on macOS's case-insensitive disk that is the same file as
+# the CLI's `theodore` in target/, and each build would overwrite the other
+# (`mainBinaryName` in tauri.conf.json matches). Menu bar and Dock show the
+# bundle's name, "Theodore", not this one.
+name = "theodore-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { workspace = true, features = ["codegen"] }
+
+[dependencies]
+theodore-app.workspace = true
+theodore-ports.workspace = true
+theodore-runtime = { path = "../../crates/runtime" }
+theodore-sandbox = { path = "../../crates/sandbox" }
+theodore-contract.workspace = true
+theodore-telemetry.workspace = true
+theodore-domain = { workspace = true, features = ["specta"] }
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+specta = { workspace = true, features = ["function"] }
+specta-typescript.workspace = true
+tauri = { workspace = true, features = ["devtools", "specta"] }
+tauri-plugin-updater.workspace = true
+tauri-plugin-process.workspace = true
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
+# "Turn finished" notifications for spaces (docs/spaces.md §3).
+tauri-plugin-notification = "2"
+tauri-specta = { workspace = true, features = ["derive", "typescript"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The click on a space's notification (src/notify.rs); the plugin's own
+# backend, called directly so it waits for the click.
+mac-notification-sys = "0.6"
+
+[dev-dependencies]
+tempfile.workspace = true
+# `tauri::test`: the mock runtime the account gate's IPC test runs on.
+tauri = { workspace = true, features = ["test"] }
+# In-memory ports: `AppCore` over a real `Core` in its own tests.
+theodore-app = { workspace = true, features = ["testkit"] }
+
+[lints]
+workspace = true

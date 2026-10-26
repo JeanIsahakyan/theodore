@@ -1,0 +1,9 @@
+[
+  {
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "title": "feat: add feature X",
+    "author_name": "Alice",
+    "author_email": "alice@example.com",
+    "committed_date": "2024-01-02T03:00:00.000Z"
+  }
+]
