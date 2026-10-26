@@ -1,61 +1,40 @@
 /**
- * The agent chip: which agent, and the model and effort it runs with, in
- * one menu (Agent / Model / Effort sections). The agent is the caller's
- * choice; model and effort are the agent's settings, shared everywhere.
+ * The model chip: one row per agent, its models in a submenu (Claude's
+ * Opus / Sonnet / Haiku, Codex's own catalog), the effort the chosen model
+ * takes in another, and ⌘⇧/ to cycle the effort from the box the chip sits
+ * in. The agent is the caller's choice; model and effort are the agent's
+ * settings, shared everywhere.
  */
-import { ChevronDown } from '@gravity-ui/icons';
-import { Button, Dropdown, Header, Label } from '@heroui/react';
+import { useEffect, useMemo, useRef } from 'react';
+import { ChevronDown, Gear } from '@gravity-ui/icons';
+import { Button, Dropdown, Separator } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { Selection } from 'react-aria-components';
-import type { AgentId } from '../gen/contract';
-import { useRootStore } from '../stores/context';
+import type { AgentId, AgentModel } from '../gen/contract';
+import { useRootStore, useUi } from '../stores/context';
 import {
-  CLAUDE_MODELS,
-  CLI_NAME,
-  EFFORTS,
+  AGENT_NAME,
   agentEffort,
-  agentLabelOf,
   agentModel,
-  hasModelAliases,
+  effortLabel,
+  nextEffort,
   setAgentEffort,
   setAgentModel,
   takesEffort,
-  type Choice,
 } from './agentModel';
+import { useAgentModels } from './useAgentModels';
+import { K } from './bits';
 
-const DEFAULT = '__default';
-
-/** The model choices for `agent`: Claude's aliases, or the name set in
- *  Settings → Agents for the others. */
-function modelChoices(agent: AgentId, current: string | null): Choice[] {
-  const own = {
-    id: DEFAULT,
-    label: 'Default',
-    hint: `${CLI_NAME[agent]}'s own`,
-  };
-  if (hasModelAliases(agent)) {
-    const extra =
-      current && !CLAUDE_MODELS.some((m) => m.id === current)
-        ? [{ id: current, label: current }]
-        : [];
-    return [own, ...CLAUDE_MODELS, ...extra];
-  }
-  return current ? [own, { id: current, label: current }] : [];
+/** The current model's name: its catalog label, else the id as set. */
+function modelName(models: AgentModel[] | undefined, id: string | null) {
+  if (!id) return null;
+  return models?.find((m) => m.id === id)?.label ?? id;
 }
 
-const first = (keys: Selection): string | null =>
-  keys === 'all' ? null : ((keys.values().next().value as string) ?? null);
-
-function Items({ prefix, items }: { prefix: string; items: Choice[] }) {
-  return items.map((it) => (
-    <Dropdown.Item key={it.id} id={`${prefix}${it.id}`} textValue={it.label}>
-      <span className="flex flex-col">
-        <Label>{it.label}</Label>
-        {it.hint && <span className="text-xs text-muted">{it.hint}</span>}
-      </span>
-      <Dropdown.ItemIndicator />
-    </Dropdown.Item>
-  ));
+/** The levels the current model takes: its own list, else the agent's
+ *  first model's (Claude's are the same for every alias). */
+function effortsOf(models: AgentModel[] | undefined, id: string | null) {
+  const own = models?.find((m) => m.id === id);
+  return own?.efforts ?? models?.[0]?.efforts ?? [];
 }
 
 export const AgentMenu = observer(function AgentMenu({
@@ -67,109 +46,271 @@ export const AgentMenu = observer(function AgentMenu({
 }: {
   /** Offered: installed and enabled. */
   agents: AgentId[];
+  /** The first runs chat turns; all of them run skills (`multiple`). */
   selected: AgentId[];
   onSelect: (next: AgentId[]) => void;
-  /** Several agents at once (skills in the AI panel). */
+  /** Skills may run on several agents at once (the AI panel). */
   multiple?: boolean;
   isDisabled?: boolean;
 }) {
   const store = useRootStore();
-  const label = selected.map((a) => agentLabelOf(store, a)).join(' + ');
-  const titled = selected.length > 1;
+  const ui = useUi();
+  const chip = useRef<HTMLSpanElement>(null);
+  const catalog = useAgentModels(agents);
+  const primary = selected[0] ?? agents[0] ?? null;
+  const others = selected.slice(1);
+  const model = primary ? agentModel(store, primary) : null;
+  const effort = primary ? agentEffort(store, primary) : null;
+  const levels = useMemo(
+    () => (primary ? effortsOf(catalog[primary], model) : []),
+    [catalog, primary, model],
+  );
+  const canEffort = !!primary && takesEffort(primary) && levels.length > 0;
+
+  // ⌘⇧/ in the box this chip sits in: the next effort.
+  useEffect(() => {
+    if (!primary || !canEffort || isDisabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey && e.shiftKey && e.code === 'Slash')) return;
+      const active = document.activeElement;
+      if (!active || active === document.body) return;
+      let scope = chip.current?.parentElement ?? null;
+      for (let i = 0; scope && i < 4; i++, scope = scope.parentElement) {
+        if (scope.contains(active)) {
+          e.preventDefault();
+          setAgentEffort(
+            store,
+            primary,
+            nextEffort(agentEffort(store, primary), levels),
+          );
+          return;
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [store, primary, canEffort, isDisabled, levels]);
+
+  const pick = (agent: AgentId, id: string) => {
+    setAgentModel(store, agent, id);
+    // A level the new model doesn't take falls back to its default.
+    const e = agentEffort(store, agent);
+    if (e && !effortsOf(catalog[agent], id).includes(e)) {
+      setAgentEffort(store, agent, null);
+    }
+    if (agent !== primary) {
+      onSelect([agent, ...others.filter((a) => a !== agent)]);
+    }
+  };
+
+  const name = primary
+    ? (modelName(catalog[primary], model) ?? AGENT_NAME[primary])
+    : 'agent';
+  const extra = others.map((a) => AGENT_NAME[a]).join(' + ');
+
   return (
-    <Dropdown>
-      <Button
-        size="sm"
-        variant="tertiary"
-        aria-label="Agent"
-        isDisabled={isDisabled}
-        className="min-w-0 shrink gap-1.5 rounded-full px-3 text-xs"
-      >
-        <span className="min-w-0 truncate">{label || 'agent'}</span>
-        <ChevronDown className="size-3 shrink-0 text-muted" />
-      </Button>
-      <Dropdown.Popover placement="top start">
-        <Dropdown.Menu aria-label="Agent, model and effort">
-          <Dropdown.Section
-            id="agent"
-            selectionMode={multiple ? 'multiple' : 'single'}
-            disallowEmptySelection
-            selectedKeys={new Set(selected.map((a) => `agent:${a}`))}
-            onSelectionChange={(keys) => {
-              const ids =
-                keys === 'all'
-                  ? agents
-                  : agents.filter((a) => keys.has(`agent:${a}`));
-              if (ids.length) onSelect(ids);
+    <span ref={chip} className="flex min-w-0 shrink">
+      <Dropdown>
+        <Button
+          size="sm"
+          variant="tertiary"
+          aria-label="Model"
+          isDisabled={isDisabled}
+          className="min-w-0 shrink gap-1.5 rounded-full px-3 text-xs"
+        >
+          <span className="min-w-0 truncate">
+            {name}
+            {effort && canEffort && (
+              <span className="text-muted"> {effortLabel(effort)}</span>
+            )}
+            {extra && <span className="text-muted"> + {extra}</span>}
+          </span>
+          <ChevronDown className="size-3 shrink-0 text-muted" />
+        </Button>
+        <Dropdown.Popover placement="top start" className="min-w-60">
+          <Dropdown.Menu
+            aria-label="Model and effort"
+            onAction={(key) => {
+              if (String(key) === 'settings') {
+                ui.go({ name: 'settings', page: 'agents' });
+              }
             }}
           >
-            <Header className="px-2 pt-1 text-xs text-muted">Agent</Header>
-            <Items
-              prefix="agent:"
-              items={agents.map((a) => ({ id: a, label: a }))}
-            />
-          </Dropdown.Section>
-          {selected.flatMap((a) => {
-            const model = agentModel(store, a);
-            const models = modelChoices(a, model);
-            const effort = agentEffort(store, a);
-            const sections = [];
-            if (models.length) {
-              sections.push(
-                <Dropdown.Section
-                  key={`model:${a}`}
-                  id={`model:${a}`}
-                  selectionMode="single"
-                  disallowEmptySelection
-                  selectedKeys={new Set([`model:${a}:${model ?? DEFAULT}`])}
-                  onSelectionChange={(keys) => {
-                    const k = first(keys)?.slice(`model:${a}:`.length);
-                    if (k == null) return;
-                    setAgentModel(store, a, k === DEFAULT ? null : k);
-                  }}
-                >
-                  <Header className="px-2 pt-1 text-xs text-muted">
-                    {titled ? `${a} model` : 'Model'}
-                  </Header>
-                  <Items prefix={`model:${a}:`} items={models} />
-                </Dropdown.Section>,
+            {agents.map((a) => {
+              const list = catalog[a] ?? [];
+              const current = agentModel(store, a);
+              const on = a === primary;
+              return (
+                <Dropdown.SubmenuTrigger key={a}>
+                  <Dropdown.Item
+                    id={`agent:${a}`}
+                    textValue={AGENT_NAME[a]}
+                    className="gap-2"
+                  >
+                    <span className={`flex-1 ${on ? 'font-medium' : ''}`}>
+                      {AGENT_NAME[a]}
+                    </span>
+                    <span className="max-w-32 truncate text-xs text-muted">
+                      {modelName(list, current) ?? ''}
+                    </span>
+                    <Dropdown.SubmenuIndicator />
+                  </Dropdown.Item>
+                  <Dropdown.Popover placement="right top" className="min-w-56">
+                    <Dropdown.Menu
+                      aria-label={`${AGENT_NAME[a]} models`}
+                      selectionMode="single"
+                      selectedKeys={
+                        on && current ? new Set([current]) : new Set()
+                      }
+                      onAction={(k) => {
+                        if (String(k) === 'settings') {
+                          ui.go({ name: 'settings', page: 'agents' });
+                        } else pick(a, String(k));
+                      }}
+                    >
+                      {list.length
+                        ? list.map((m) => (
+                            <Dropdown.Item
+                              key={m.id}
+                              id={m.id}
+                              textValue={m.label}
+                            >
+                              <span className="flex min-w-0 flex-1 flex-col">
+                                <span className="truncate">{m.label}</span>
+                                {m.description && (
+                                  <span className="truncate text-xs text-muted">
+                                    {m.description}
+                                  </span>
+                                )}
+                              </span>
+                              <Dropdown.ItemIndicator />
+                            </Dropdown.Item>
+                          ))
+                        : [
+                            current ? (
+                              <Dropdown.Item
+                                key={current}
+                                id={current}
+                                textValue={current}
+                              >
+                                <span className="flex-1">{current}</span>
+                                <Dropdown.ItemIndicator />
+                              </Dropdown.Item>
+                            ) : null,
+                            <Dropdown.Item
+                              key="settings"
+                              id="settings"
+                              textValue="Set a model in Settings"
+                            >
+                              <span className="flex-1 text-muted">
+                                Set a model in Settings…
+                              </span>
+                            </Dropdown.Item>,
+                          ].filter(Boolean)}
+                    </Dropdown.Menu>
+                  </Dropdown.Popover>
+                </Dropdown.SubmenuTrigger>
               );
-            }
-            if (takesEffort(a)) {
-              sections.push(
-                <Dropdown.Section
-                  key={`effort:${a}`}
-                  id={`effort:${a}`}
-                  selectionMode="single"
-                  disallowEmptySelection
-                  selectedKeys={new Set([`effort:${a}:${effort ?? DEFAULT}`])}
-                  onSelectionChange={(keys) => {
-                    const k = first(keys)?.slice(`effort:${a}:`.length);
-                    if (k == null) return;
-                    setAgentEffort(store, a, k === DEFAULT ? null : k);
-                  }}
-                >
-                  <Header className="px-2 pt-1 text-xs text-muted">
-                    {titled ? `${a} effort` : 'Effort'}
-                  </Header>
-                  <Items
-                    prefix={`effort:${a}:`}
-                    items={[
-                      {
-                        id: DEFAULT,
-                        label: 'Default',
-                        hint: `${CLI_NAME[a]}'s own`,
-                      },
-                      ...EFFORTS,
-                    ]}
-                  />
-                </Dropdown.Section>,
-              );
-            }
-            return sections;
-          })}
-        </Dropdown.Menu>
-      </Dropdown.Popover>
-    </Dropdown>
+            })}
+            <Dropdown.Section id="tune">
+              <Separator className="my-1" />
+              {canEffort ? (
+                <Dropdown.SubmenuTrigger>
+                  <Dropdown.Item
+                    id="effort"
+                    textValue="Effort"
+                    className="gap-2"
+                  >
+                    <span className="flex-1">Effort</span>
+                    <span className="text-xs text-muted">
+                      {effort ? effortLabel(effort) : 'Default'}
+                    </span>
+                    <Dropdown.SubmenuIndicator />
+                  </Dropdown.Item>
+                  <Dropdown.Popover placement="right top">
+                    <Dropdown.Menu
+                      aria-label="Effort"
+                      selectionMode="single"
+                      selectedKeys={effort ? new Set([effort]) : new Set()}
+                      onAction={(k) =>
+                        setAgentEffort(store, primary, String(k))
+                      }
+                    >
+                      {levels.map((l) => (
+                        <Dropdown.Item
+                          key={l}
+                          id={l}
+                          textValue={effortLabel(l)}
+                        >
+                          <span className="flex-1">{effortLabel(l)}</span>
+                          <Dropdown.ItemIndicator />
+                        </Dropdown.Item>
+                      ))}
+                    </Dropdown.Menu>
+                  </Dropdown.Popover>
+                </Dropdown.SubmenuTrigger>
+              ) : null}
+              {multiple && primary && agents.length > 1 ? (
+                <Dropdown.SubmenuTrigger>
+                  <Dropdown.Item
+                    id="also"
+                    textValue="Skills also run on"
+                    className="gap-2"
+                  >
+                    <span className="flex-1">Skills also run on</span>
+                    <span className="text-xs text-muted">
+                      {others.length
+                        ? others.map((a) => AGENT_NAME[a]).join(', ')
+                        : 'None'}
+                    </span>
+                    <Dropdown.SubmenuIndicator />
+                  </Dropdown.Item>
+                  <Dropdown.Popover placement="right top">
+                    <Dropdown.Menu
+                      aria-label="Skills also run on"
+                      selectionMode="multiple"
+                      selectedKeys={new Set(others)}
+                      onSelectionChange={(keys) => {
+                        const also = agents.filter(
+                          (a) =>
+                            a !== primary && (keys === 'all' || keys.has(a)),
+                        );
+                        onSelect([primary, ...also]);
+                      }}
+                    >
+                      {agents
+                        .filter((a) => a !== primary)
+                        .map((a) => (
+                          <Dropdown.Item
+                            key={a}
+                            id={a}
+                            textValue={AGENT_NAME[a]}
+                          >
+                            <span className="flex-1">{AGENT_NAME[a]}</span>
+                            <Dropdown.ItemIndicator />
+                          </Dropdown.Item>
+                        ))}
+                    </Dropdown.Menu>
+                  </Dropdown.Popover>
+                </Dropdown.SubmenuTrigger>
+              ) : null}
+              <Dropdown.Item
+                id="settings"
+                textValue="Settings"
+                className="gap-2"
+              >
+                <Gear className="size-3.5 text-muted" />
+                <span className="flex-1 text-muted">Settings</span>
+                {canEffort && (
+                  <span className="flex items-center gap-1.5 text-xs text-muted">
+                    <K>⌘⇧/</K> effort
+                  </span>
+                )}
+              </Dropdown.Item>
+            </Dropdown.Section>
+          </Dropdown.Menu>
+        </Dropdown.Popover>
+      </Dropdown>
+    </span>
   );
 });

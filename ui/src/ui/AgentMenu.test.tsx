@@ -12,9 +12,11 @@ import {
   agentLabel,
   agentLabelOf,
   agentModel,
+  nextEffort,
   setAgentEffort,
   setAgentModel,
 } from './agentModel';
+import { resetAgentModels } from './useAgentModels';
 
 let m: Mounted | null = null;
 
@@ -52,7 +54,7 @@ describe('agentLabel', () => {
   });
 
   it('never shows an effort for an agent without the flag', () => {
-    expect(agentLabel('codex', null, 'high')).toBe('codex · default model');
+    expect(agentLabel('gemini', null, 'high')).toBe('gemini · default model');
   });
 });
 
@@ -81,58 +83,175 @@ describe('agent model and effort settings', () => {
   });
 });
 
+const CLAUDE = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CATALOG: Record<string, unknown[]> = {
+  claude: [
+    {
+      id: 'opus',
+      label: 'Opus',
+      description: 'Most capable',
+      efforts: CLAUDE,
+      default_effort: null,
+    },
+    {
+      id: 'sonnet',
+      label: 'Sonnet',
+      description: 'Balanced',
+      efforts: CLAUDE,
+      default_effort: null,
+    },
+    {
+      id: 'haiku',
+      label: 'Haiku',
+      description: null,
+      efforts: CLAUDE,
+      default_effort: null,
+    },
+  ],
+  codex: [
+    {
+      id: 'gpt-6-sol',
+      label: 'GPT-6-Sol',
+      description: 'Workhorse',
+      efforts: ['low', 'medium', 'ultra'],
+      default_effort: 'medium',
+    },
+    {
+      id: 'gpt-6-luna',
+      label: 'GPT-6-Luna',
+      description: null,
+      efforts: ['low', 'medium'],
+      default_effort: 'medium',
+    },
+  ],
+};
+
+describe('nextEffort', () => {
+  it('cycles through the levels and wraps round', () => {
+    expect(nextEffort(null)).toBe('low');
+    expect(nextEffort('high')).toBe('xhigh');
+    expect(nextEffort('max')).toBe('low');
+    expect(nextEffort('medium', ['low', 'medium', 'ultra'])).toBe('ultra');
+    expect(nextEffort('ultra', ['low', 'medium', 'ultra'])).toBe('low');
+    expect(nextEffort('x', [])).toBeNull();
+  });
+});
+
 describe('AgentMenu', () => {
+  let picked: AgentId[] = [];
+
+  beforeEach(() => {
+    resetAgentModels();
+    picked = [];
+    const transport = new FakeTransport();
+    setTransport(transport);
+    transport.onCall('transact', () => ({ status: 'ok', last_sync_id: 1 }));
+    transport.onCall('agent_models', (a) => CATALOG[String(a?.agent)] ?? []);
+  });
+
   async function render(store: RootStore, selected: AgentId[]) {
     m = await mount(
       <RootStoreProvider store={store}>
-        <AgentMenu
-          agents={['claude', 'codex']}
-          selected={selected}
-          onSelect={() => {}}
-          multiple
-        />
+        <div>
+          <textarea aria-label="box" />
+          <AgentMenu
+            agents={['claude', 'codex']}
+            selected={selected}
+            onSelect={(next) => (picked = next)}
+            multiple
+          />
+        </div>
       </RootStoreProvider>,
     );
     await settle();
-    return m.host.querySelector('button[aria-label="Agent"]')!;
+    return m.host.querySelector('button[aria-label="Model"]')!;
   }
 
-  it('says which model and effort the chip runs with', async () => {
+  const item = (name: string) =>
+    [...document.querySelectorAll('[role^="menuitem"]')].find((el) =>
+      el.textContent?.startsWith(name),
+    ) as HTMLElement | undefined;
+
+  it('names the model from the catalog, with its effort', async () => {
     const store = new RootStore();
     setAgentModel(store, 'claude', 'opus');
     setAgentEffort(store, 'claude', 'high');
     const chip = await render(store, ['claude']);
-    expect(chip.textContent).toBe('claude · Opus · High');
+    expect(chip.textContent).toBe('Opus High');
   });
 
-  it('says "default model" when none is set, for each agent', async () => {
+  it('names the agent when no model is set, and the extra skill agents', async () => {
     const store = new RootStore();
     const chip = await render(store, ['claude', 'codex']);
-    expect(chip.textContent).toBe(
-      'claude · default model + codex · default model',
-    );
+    expect(chip.textContent).toBe('Claude + Codex');
   });
 
-  it('picking a model and an effort writes the agent settings', async () => {
+  it('lists one row per agent, models in its submenu, no Default', async () => {
     const store = new RootStore();
     const chip = await render(store, ['claude']);
-    const item = (name: string) =>
-      [...document.querySelectorAll('[role^="menuitem"]')].find((el) =>
-        el.textContent?.startsWith(name),
+    await click(chip);
+    await settle();
+    expect(item('Claude')).toBeTruthy();
+    expect(item('Codex')).toBeTruthy();
+    await click(item('Codex')!);
+    await settle();
+    expect(item('GPT-6-Sol')).toBeTruthy();
+    expect(item('Default')).toBeUndefined();
+    await click(item('GPT-6-Sol')!);
+    await settle();
+    expect(agentModel(store, 'codex')).toBe('gpt-6-sol');
+    expect(picked).toEqual(['codex']);
+  });
+
+  it("offers the chosen model's own effort levels", async () => {
+    const store = new RootStore();
+    setAgentModel(store, 'codex', 'gpt-6-sol');
+    const chip = await render(store, ['codex']);
+    await click(chip);
+    await settle();
+    await click(item('Effort')!);
+    await settle();
+    expect(item('Ultra')).toBeTruthy();
+    expect(item('Max')).toBeUndefined();
+    await click(item('Ultra')!);
+    await settle();
+    expect(agentEffort(store, 'codex')).toBe('ultra');
+  });
+
+  it('drops an effort the new model does not take', async () => {
+    const store = new RootStore();
+    setAgentModel(store, 'codex', 'gpt-6-sol');
+    setAgentEffort(store, 'codex', 'ultra');
+    const chip = await render(store, ['codex']);
+    await click(chip);
+    await settle();
+    await click(item('Codex')!);
+    await settle();
+    await click(item('GPT-6-Luna')!);
+    await settle();
+    expect(agentEffort(store, 'codex')).toBeNull();
+  });
+
+  it('⌘⇧/ in its box cycles the effort', async () => {
+    const store = new RootStore();
+    setAgentModel(store, 'claude', 'opus');
+    setAgentEffort(store, 'claude', 'high');
+    await render(store, ['claude']);
+    const box = m!.host.querySelector('textarea')!;
+    const press = () =>
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          code: 'Slash',
+          key: '?',
+          metaKey: true,
+          shiftKey: true,
+        }),
       );
-    await click(chip);
+    press(); // focus elsewhere: nothing
+    expect(agentEffort(store, 'claude')).toBe('high');
+    box.focus();
+    press();
     await settle();
-    expect(item('Opus')).toBeTruthy();
-    // codex isn't selected: no model or effort section for it.
-    expect(document.body.textContent).not.toContain('codex model');
-    await click(item('Opus'));
-    await settle();
-    expect(agentModel(store, 'claude')).toBe('opus');
-    await click(chip);
-    await settle();
-    await click(item('Max'));
-    await settle();
-    expect(agentEffort(store, 'claude')).toBe('max');
-    expect(chip.textContent).toBe('claude · Opus · Max');
+    expect(agentEffort(store, 'claude')).toBe('xhigh');
   });
 });
