@@ -764,7 +764,7 @@ Model and effort (§8.5 `agents.<id>.model` / `.effort`) per CLI:
 
 | Agent | Model | Effort | Picker list |
 | --- | --- | --- | --- |
-| Claude Code | `--model <alias>` | `--effort low…max` | static: `opus`, `sonnet`, `haiku` |
+| Claude Code | `--model <id>` | `--effort low…max`; `ultracode` = `max`, and in a space the turn's prompt opens with `ultracode` (Claude Code's multi-agent mode) | Claude Code's own catalog cache (`~/.claude/cache/model-catalog/*-cc.json`: every version, older ones under "Earlier versions", each with its levels); else the aliases `fable`, `opus`, `sonnet`, `haiku` |
 | Codex | `-m <slug>` | `-c model_reasoning_effort="<level>"` | `codex debug models`, `visibility: list`, by `priority` |
 | Gemini CLI | `-m <name>` | — | none |
 
@@ -827,7 +827,7 @@ Which agent does what is a setting, layered user → repo:
 | `agents.chat` | `claude` | switchable per message in the UI |
 | `agents.skills` | `[claude]` | a list: skills can run on several agents at once |
 | `agents.fix` | `claude` | one agent; edits only in the PR worktree |
-| `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort override. Effort: Claude `--effort`, Codex `-c model_reasoning_effort="…"`, Gemini none. The picker's models (`agent_models`): Claude's `--model` aliases (`opus`, `sonnet`, `haiku`), Codex's from `codex debug models` (listed ones, by priority; read once per run of the app), none for Gemini |
+| `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort override. Effort: Claude `--effort`, Codex `-c model_reasoning_effort="…"`, Gemini none. The picker shows no "default": an agent without a model or effort set gets, and keeps, the one shown. Its models (`agent_models`): Claude Code's catalog cache (else its aliases), Codex's from `codex debug models` (listed ones, by priority; read once per run of the app), none for Gemini |
 | `agents.user_mcp` | `true` | user scope only: Claude runs may use the user's own MCP servers (§8.2) |
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the

@@ -293,6 +293,7 @@ export const AgentChip = observer(function AgentChip({
       selected={[current]}
       onSelect={(next) => next[0] && onChange(next[0])}
       isDisabled={isDisabled}
+      ultracode
     />
   );
 });

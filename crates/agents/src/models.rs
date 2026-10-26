@@ -51,7 +51,7 @@ pub fn claude_catalog(dir: &Path) -> Option<Vec<ModelInfo>> {
         })
         .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
         .collect();
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|a| std::cmp::Reverse(a.0));
     files.into_iter().find_map(|(_, p)| {
         let text = std::fs::read_to_string(p).ok()?;
         parse_claude_catalog(&text).filter(|m| !m.is_empty())

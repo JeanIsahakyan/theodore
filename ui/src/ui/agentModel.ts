@@ -68,7 +68,8 @@ export function agentEffort(store: Store, agent: AgentId): string | null {
   // Codex's levels come from its model catalog (`agent_models`), so any
   // name it gave is fine; Claude's are the fixed `--effort` set.
   if (agent === 'codex') return e;
-  return e && EFFORTS.some((x) => x.id === e) ? e : null;
+  // `ultracode`: Claude's multi-agent mode, past Max (spaces).
+  return e && (e === 'ultracode' || EFFORTS.some((x) => x.id === e)) ? e : null;
 }
 
 export function setAgentModel(
@@ -95,6 +96,7 @@ export function modelLabel(agent: AgentId, model: string | null): string {
 
 export function effortLabel(effort: string): string {
   if (effort === 'ultra') return 'Ultra';
+  if (effort === 'ultracode') return 'Ultracode';
   return (
     EFFORTS.find((e) => e.id === effort)?.label ??
     effort.charAt(0).toUpperCase() + effort.slice(1)

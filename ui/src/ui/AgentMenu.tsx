@@ -24,6 +24,9 @@ import {
   takesEffort,
 } from './agentModel';
 import { useAgentModels } from './useAgentModels';
+
+/** Claude Code's multi-agent mode, past Max: spaces only (`spaces.rs`). */
+export const ULTRACODE = 'ultracode';
 import { K } from './bits';
 
 /** What an agent runs: its model, the levels that model takes, and the
@@ -73,6 +76,10 @@ export function running(
   const model = listedModel ?? typed ?? null;
   const efforts = takesEffort(agent) ? (model?.efforts ?? []) : [];
   const set = rawEffort(store, agent);
+  // Picked in a space, kept everywhere (it runs at max outside spaces).
+  if (agent === 'claude' && set === ULTRACODE && efforts.length) {
+    return { model, listed: !!listedModel, efforts, effort: set };
+  }
   const own = model?.default_effort;
   const effort =
     set && efforts.includes(set)
@@ -118,6 +125,7 @@ export const AgentMenu = observer(function AgentMenu({
   onSelect,
   multiple,
   isDisabled,
+  ultracode,
 }: {
   /** Offered: installed and enabled. */
   agents: AgentId[];
@@ -127,6 +135,8 @@ export const AgentMenu = observer(function AgentMenu({
   /** Skills may run on several agents at once (the AI panel). */
   multiple?: boolean;
   isDisabled?: boolean;
+  /** A space's box: Claude also offers Ultracode, past Max. */
+  ultracode?: boolean;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -137,7 +147,13 @@ export const AgentMenu = observer(function AgentMenu({
   const now: Partial<Record<AgentId, Running>> = {};
   for (const a of agents) now[a] = running(store, a, catalog[a]);
   const cur = primary ? now[primary] : undefined;
-  const levels = useMemo(() => cur?.efforts ?? [], [cur?.efforts]);
+  const levels = useMemo(
+    () =>
+      ultracode && primary === 'claude' && cur?.efforts.length
+        ? [...cur.efforts, ULTRACODE]
+        : (cur?.efforts ?? []),
+    [cur?.efforts, primary, ultracode],
+  );
 
   // What's shown is what runs: once its catalog is in, an agent with no
   // model or effort set gets the one shown.
@@ -325,7 +341,14 @@ export const AgentMenu = observer(function AgentMenu({
                         textValue={effortLabel(l)}
                         className="gap-2"
                       >
-                        <span className="flex-1">{effortLabel(l)}</span>
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span>{effortLabel(l)}</span>
+                          {l === ULTRACODE && (
+                            <span className="text-xs text-muted">
+                              Several agents · uses far more
+                            </span>
+                          )}
+                        </span>
                         {l === cur?.effort && (
                           <Check className="size-3.5 shrink-0" />
                         )}

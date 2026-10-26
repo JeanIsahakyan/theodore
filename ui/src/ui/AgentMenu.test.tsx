@@ -235,6 +235,40 @@ describe('AgentMenu', () => {
     expect(agentEffort(store, 'codex')).toBe('ultra');
   });
 
+  it('Ultracode is offered in a space and kept everywhere else', async () => {
+    const store = new RootStore();
+    setAgentModel(store, 'claude', 'claude-opus-5-5');
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <AgentMenu
+          agents={['claude']}
+          selected={['claude']}
+          onSelect={() => {}}
+          ultracode
+        />
+      </RootStoreProvider>,
+    );
+    await settle();
+    await settle();
+    await click(m.host.querySelector('button[aria-label="Model"]'));
+    await settle();
+    await click(item('Effort')!);
+    await settle();
+    await click(item('Ultracode')!);
+    await settle();
+    expect(agentEffort(store, 'claude')).toBe('ultracode');
+    m.unmount();
+    // Outside a space: not offered, but not reset either.
+    const chip = await render(store, ['claude']);
+    expect(chip.textContent).toBe('Opus 5.5 Ultracode');
+    await click(chip);
+    await settle();
+    await click(item('Effort')!);
+    await settle();
+    expect(item('Ultracode')).toBeUndefined();
+    expect(agentEffort(store, 'claude')).toBe('ultracode');
+  });
+
   it('⌘⇧/ in its box cycles the effort', async () => {
     const store = new RootStore();
     setAgentModel(store, 'claude', 'claude-opus-5-5');
