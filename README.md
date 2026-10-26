@@ -162,7 +162,8 @@ Add project and its PR links stay hidden. Projects and reviews you already added
 - Your email opens the hosted sign-in page on its code step; Theodore picks the sign-in up when you
   finish. A device code covers signing in from another machine.
 - Client-only (PKCE, no secret in the app). The installed app gets the sign-in back through
-  `theodore://callback`, a dev run through a loopback redirect. Session in the keychain.
+  `theodore://callback` (`theodore-staging://` / `theodore-nightly://` for those builds), a dev
+  run through a loopback redirect. Session in the keychain.
 - Offline is fine: a stored session keeps the app usable; only a definitive rejection signs you out
   ("Your session ended — sign in again"). Signing out (Settings → Account) never deletes local data.
 - The client id comes from `THEODORE_WORKOS_CLIENT_ID` (env, or compiled into release and nightly
@@ -212,7 +213,8 @@ local folder:  Merge locally  ·  Keep as branch
 - No signed release has shipped yet — see **Not yet**.
 
 ### Logs, error reports and usage data
-- Everything is logged locally to `~/.theodore/logs/theodore.jsonl` (JSON lines, rotated, ≤ 50 MB).
+- Everything is logged locally to `<data dir>/logs/theodore.jsonl` (`~/.theodore` in production; JSON
+  lines, rotated, ≤ 50 MB).
 - Redacted first: tokens, emails, the home directory; diff, file and comment text are never logged.
   `THEODORE_LOG=debug` for more; `jq` recipes in `docs/telemetry.md`.
 - Two remote sinks, off unless the build or settings configure them *and* you opt in (onboarding's
@@ -300,6 +302,12 @@ cd apps/desktop
 cargo tauri dev --no-watch
 ```
 
+A dev build keeps its own data in `~/.theodore-dev` and its own keychain item, never production's
+`~/.theodore`; its first launch starts empty (onboarding). Staging and nightly builds are separate
+apps too (`Theodore Staging`, `Theodore Nightly`, `~/.theodore-staging`, `~/.theodore-nightly`),
+installed beside production; nothing is copied between them (`docs/releasing.md`, "One identity per
+build"). `THEODORE_DATA_DIR` overrides the data dir in any build.
+
 Release build:
 
 ```sh
@@ -313,7 +321,7 @@ Auth:
 - GitLab and Bitbucket (once on in Settings → Labs) take a pasted token or app password
   (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`); no device flow for those yet.
 
-Data lives in `~/.theodore`:
+Data lives in `~/.theodore` (production; the CLI too):
 
 ```
 ~/.theodore/

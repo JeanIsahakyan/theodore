@@ -136,6 +136,8 @@ jobs:
       # (`.app.tar.gz` + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY).
       # `--config version` is the version the updater compares against, so a
       # staging build's `-staging.N` must be in the bundle, not only in About.
+      # The bundle is `Theodore Staging.app` for staging; the assets below
+      # keep their `Theodore_<version>_…` names.
       - name: build app, dmg and updater artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -153,9 +155,20 @@ jobs:
           THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
           THEODORE_POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
           THEODORE_POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+        # One --config: the version, and for any build but production its
+        # own names (productName, identifier, URL scheme) from
+        # tauri.<env>.conf.json, so it installs beside production without
+        # sharing its data (docs/releasing.md "One identity per build").
         run: |
+          case "$THEODORE_BUILD_ENV" in
+            production) names='{}' ;;
+            *) names=$(cat "apps/desktop/tauri.$THEODORE_BUILD_ENV.conf.json") ;;
+          esac
+          config=$(jq -nc --argjson names "$names" --arg version "$VERSION" \
+            '$names * { version: $version }')
+          echo "config: $config"
           cargo tauri build --target aarch64-apple-darwin --bundles app,dmg \
-            --config "{\"version\":\"$VERSION\"}"
+            --config "$config"
 
       # Versioned names, so a rolling release (channel-staging) never serves
       # a new tarball under an old latest.json's signature mid-upload.

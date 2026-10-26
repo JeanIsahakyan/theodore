@@ -3,6 +3,7 @@
 
 mod grouper;
 mod hosts;
+pub mod identity;
 mod local_host;
 mod sandbox;
 mod token;
@@ -22,6 +23,7 @@ use theodore_ports::{
 
 pub use grouper::GroupingGrouper;
 pub use hosts::Hosts;
+pub use identity::BuildEnv;
 pub use local_host::LocalHostAdapter;
 pub use token::HostToken;
 pub use tools::{CoreTools, McpRunTools};
@@ -43,7 +45,8 @@ pub const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("THEODORE_WORKOS_CLIENT
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
-    /// `~/.theodore` by default.
+    /// The build's own data dir by default (`identity::default_data_dir`):
+    /// `~/.theodore` for production, `~/.theodore-<env>` for the others.
     pub data_dir: PathBuf,
     /// Run on fixture adapters from this directory instead of GitHub, git
     /// and real agents (dev and e2e, plan §12.1).
@@ -51,28 +54,36 @@ pub struct RuntimeConfig {
     /// Run against the sandbox host built from this scenario directory
     /// (docs/sandbox.md): real git and agents, a simulated host.
     pub sandbox: Option<PathBuf>,
+    /// Picks the keychain item the real adapters keep secrets in
+    /// (`identity::keychain_service`); fixture and sandbox modes keep them
+    /// in memory.
+    pub build_env: BuildEnv,
 }
 
 impl RuntimeConfig {
-    pub fn from_env() -> Self {
+    /// `THEODORE_SANDBOX` → sandbox mode; else `THEODORE_DATA_DIR`, else
+    /// `env`'s own data dir. The CLI has no build env: it passes
+    /// `Production` and shares the production app's data.
+    pub fn from_env(env: BuildEnv) -> Self {
         if let Some(dir) = std::env::var_os("THEODORE_SANDBOX") {
-            return Self::sandbox(PathBuf::from(dir));
+            return Self::sandbox(PathBuf::from(dir), env);
         }
         let data_dir = std::env::var_os("THEODORE_DATA_DIR")
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".theodore")))
-            .unwrap_or_else(|| PathBuf::from(".theodore"));
+            .unwrap_or_else(|| identity::default_data_dir(env, dirs::home_dir().as_deref()));
         let fixtures = std::env::var_os("THEODORE_FIXTURES").map(PathBuf::from);
         Self {
             data_dir,
             fixtures,
             sandbox: None,
+            build_env: env,
         }
     }
 
     /// Sandbox mode on `scenario`: `THEODORE_DATA_DIR` or
-    /// `~/.theodore-sandbox`, never `~/.theodore` (`start` refuses it).
-    pub fn sandbox(scenario: PathBuf) -> Self {
+    /// `~/.theodore-sandbox`, never a build's own data dir (`start`
+    /// refuses those).
+    pub fn sandbox(scenario: PathBuf, env: BuildEnv) -> Self {
         let data_dir = std::env::var_os("THEODORE_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(sandbox::default_data_dir);
@@ -80,6 +91,7 @@ impl RuntimeConfig {
             data_dir,
             fixtures: None,
             sandbox: Some(scenario),
+            build_env: env,
         }
     }
 }
@@ -133,7 +145,9 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("creating {}", cfg.data_dir.display()))?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let secrets: Arc<dyn Secrets> = Arc::new(theodore_secrets::KeychainSecrets::new());
+    let secrets: Arc<dyn Secrets> = Arc::new(theodore_secrets::KeychainSecrets::with_service(
+        identity::keychain_service(cfg.build_env),
+    ));
     let token = Arc::new(HostToken::new(secrets.clone()));
     let github = Arc::new(theodore_host_github::GithubAdapter::new(
         token.clone(),

@@ -1,0 +1,11 @@
+{
+  "productName": "Theodore Staging",
+  "identifier": "app.theodore.desktop.staging",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["theodore-staging"]
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@ use anyhow::Context;
 use theodore_domain::{PrRef, Revision};
 use theodore_grouping::PrMeta;
 use theodore_ports::{AgentPort, DiffOptions, Fetched, GitPort, HostAdapter, SystemClock};
-use theodore_runtime::{HostToken, RuntimeConfig};
+use theodore_runtime::{BuildEnv, HostToken, RuntimeConfig};
 
 pub struct Deps {
     pub git: Arc<dyn GitPort>,
@@ -16,8 +16,12 @@ pub struct Deps {
 }
 
 pub fn real_deps() -> Deps {
-    let cfg = RuntimeConfig::from_env();
-    let secrets = Arc::new(theodore_secrets::KeychainSecrets::new());
+    // The CLI carries no build env: it works on the production app's data
+    // dir and keychain item, as it always has (`THEODORE_DATA_DIR` wins).
+    let cfg = RuntimeConfig::from_env(BuildEnv::Production);
+    let secrets = Arc::new(theodore_secrets::KeychainSecrets::with_service(
+        theodore_runtime::identity::keychain_service(cfg.build_env),
+    ));
     let token = Arc::new(HostToken::new(secrets));
     Deps {
         git: Arc::new(theodore_git::GitCli::new(cfg.data_dir, token.clone())),

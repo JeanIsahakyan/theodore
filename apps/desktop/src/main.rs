@@ -13,8 +13,9 @@ use tokio::sync::broadcast::error::RecvError;
 ///
 /// `THEODORE_FIXTURES=<dir>` runs on fixture adapters (plan §12.1);
 /// `THEODORE_SANDBOX=<dir>` or `--sandbox <dir>` runs against the sandbox
-/// host (docs/sandbox.md); `THEODORE_DATA_DIR` overrides `~/.theodore`
-/// (`~/.theodore-sandbox` in sandbox mode).
+/// host (docs/sandbox.md); `THEODORE_DATA_DIR` overrides the build's own
+/// data dir (`~/.theodore` for production, `~/.theodore-<env>` otherwise;
+/// `~/.theodore-sandbox` in sandbox mode).
 fn main() {
     if std::env::args().any(|a| a == "--export-bindings") {
         let out = "ui/src/gen/bindings.ts";
@@ -24,9 +25,10 @@ fn main() {
     }
 
     theodore_desktop::shell_path::inherit_login_path();
+    let env = build_info::build_env();
     let cfg = match sandbox_arg(std::env::args().skip(1)) {
-        Some(dir) => theodore_runtime::RuntimeConfig::sandbox(dir),
-        None => theodore_runtime::RuntimeConfig::from_env(),
+        Some(dir) => theodore_runtime::RuntimeConfig::sandbox(dir, env),
+        None => theodore_runtime::RuntimeConfig::from_env(env),
     };
     // Before anything else logs: the file sink under the data dir, stderr
     // in dev, the panic hook. Remote sinks wait for settings and consent.
@@ -46,6 +48,7 @@ fn main() {
         version = build_info::VERSION,
         commit = build_info::COMMIT,
         build_env = build_info::BUILD_ENV,
+        data_dir = %cfg.data_dir.display(),
         sandbox = cfg.sandbox.is_some(),
         fixtures = cfg.fixtures.is_some(),
         "Theodore starting"
@@ -66,9 +69,10 @@ fn main() {
         ..
     } = rt;
     let is_sandbox = sandbox.is_some();
-    // An app bundle receives `theodore://`: the account sign-in returns
-    // there instead of the loopback (unless a redirect is configured).
-    core.set_account_app_redirect(theodore_desktop::deep_link::app_redirect());
+    // An app bundle receives its build's URL scheme: the account sign-in
+    // returns there instead of the loopback (unless a redirect is
+    // configured).
+    core.set_account_app_redirect(theodore_desktop::deep_link::app_redirect().as_deref());
     // No remote sinks in sandbox or fixture runs, whatever is configured.
     let remote = !is_sandbox && cfg.fixtures.is_none();
     let app_core = AppCore::new(core)

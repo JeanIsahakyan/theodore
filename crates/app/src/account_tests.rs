@@ -16,10 +16,14 @@ use theodore_ports::{
 
 use crate::testkit::{FAKE_ACCOUNT_STATE, Fixtures, fixtures, sample_account_session};
 use crate::usecases::account::{
-    APP_REDIRECT_URI, CLIENT_ID_ENV, CallbackCheck, DEFAULT_REDIRECT_URI, REDIRECT_ENV,
-    app_callback_params, check_callback, choose_redirect,
+    CLIENT_ID_ENV, CallbackCheck, DEFAULT_REDIRECT_URI, REDIRECT_ENV, app_callback_params,
+    check_callback, choose_redirect,
 };
 use crate::{AppError, Core, Receivers};
+
+/// A production bundle's redirect (the shell derives it per build,
+/// `theodore_runtime::identity::app_redirect_uri`).
+const APP_REDIRECT_URI: &str = "theodore://callback";
 
 async fn set_setting(core: &Core, key: &str, value: &str) {
     let setting = Setting {

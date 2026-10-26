@@ -203,10 +203,11 @@ or `beta` and never to staging (`effective_channel` in
 
 `scripts/nightly-build.sh` builds a DMG from the current commit, numbered by
 it: `<version>-nightly.<commits on HEAD>` (e.g. `0.0.1-nightly.340`), file
-`target/release/bundle/dmg/Theodore_<version>_<sha>_aarch64.dmg`. The number
-only grows, one per commit. Nothing is tagged or published, and the version
-files keep the release version; a dirty tree is refused, so every nightly
-maps to exactly one commit.
+`target/release/bundle/dmg/Theodore_Nightly_<version>_<sha>_aarch64.dmg`,
+holding `Theodore Nightly.app` (its own app and data, see "One identity
+per build" below). The number only grows, one per commit. Nothing is
+tagged or published, and the version files keep the release version; a
+dirty tree is refused, so every nightly maps to exactly one commit.
 
 It bakes in the account's client id like a release, so it needs
 `THEODORE_WORKOS_CLIENT_ID` set and stops with a message when it isn't:
@@ -252,6 +253,72 @@ Same DMG as a nightly (`<version>-nightly.<n>`), labelled `staging` in
 About and in telemetry (`deployment.environment.name`). Like any staging
 build it updates from `channel-staging` only, so the next CI staging build
 of the same version (`-staging.N` sorts after `-nightly.N`) replaces it.
+It is `Theodore Staging.app`, the same app as the CI staging build.
+
+## One identity per build
+
+Every build environment is its own app: it installs and runs beside
+production and never reads or writes production's data. A dev build
+applying a new migration to production's database is what this prevents
+(production then fails with "downgrade is not supported").
+
+| | production | staging | nightly | dev |
+| --- | --- | --- | --- | --- |
+| App (`productName`) | `Theodore` | `Theodore Staging` | `Theodore Nightly` | not bundled (window: `Theodore Dev`) |
+| Bundle id | `app.theodore.desktop` | `app.theodore.desktop.staging` | `app.theodore.desktop.nightly` | (`app.theodore.desktop.dev`, unused) |
+| Data dir | `~/.theodore` | `~/.theodore-staging` | `~/.theodore-nightly` | `~/.theodore-dev` |
+| Keychain item (service; account `vault`) | `app.theodore.secrets` | `app.theodore.secrets.staging` | `app.theodore.secrets.nightly` | `app.theodore.secrets.dev` |
+| URL scheme | `theodore` | `theodore-staging` | `theodore-nightly` | none |
+| Sign-in redirect (bundle) | `theodore://callback` | `theodore-staging://callback` | `theodore-nightly://callback` | `http://127.0.0.1:47823/callback` |
+
+The data dir holds everything else per build: `theodore.db`, `repos/`,
+`wt/`, `spaces/`, `config.yaml`, `logs/` and the telemetry install id.
+
+```
+THEODORE_BUILD_ENV ──▶ build.rs bakes it ──▶ identity.rs (crates/runtime)
+                                               data dir, keychain item,
+                                               URL scheme, sign-in redirect
+                   ──▶ build.yml / nightly-build.sh ──▶ cargo tauri build
+                         --config tauri.conf.json ⊕ tauri.<env>.conf.json
+                         (productName, identifier, deep-link scheme)
+```
+
+- Production builds with `tauri.conf.json` as is. Staging and nightly
+  merge `apps/desktop/tauri.staging.conf.json` /
+  `tauri.nightly.conf.json` over it in the one `--config` the build
+  passes. A desktop test checks those files against `identity.rs`.
+- `THEODORE_DATA_DIR` still wins over the build's data dir, in every
+  build. The sandbox keeps `~/.theodore-sandbox` and refuses every build's
+  data dir. Fixture runs keep everything in memory.
+- The CLI (`theodore`) has no build env: it keeps `~/.theodore` and
+  production's keychain item.
+- **No data is copied or migrated between builds.** The first launch of a
+  staging, nightly or dev build starts empty: onboarding, sign-in, GitHub
+  token, projects, all from scratch.
+- A dev build run bare (`cargo tauri dev`, `cargo run`) uses the loopback
+  redirect. A dev build bundled by hand (`cargo tauri build` without
+  `THEODORE_BUILD_ENV`) still carries production's bundle id and scheme
+  from `tauri.conf.json`, but keeps `~/.theodore-dev`, the `.dev` keychain
+  item and the loopback; build an installable copy with
+  `scripts/nightly-build.sh` instead.
+- A staging build installed before this change updates in place: it keeps
+  its old location (e.g. `/Applications/Theodore.app`) but starts empty
+  in `~/.theodore-staging`. Install `Theodore Staging.app` from the
+  staging DMG once and delete the old copy.
+
+### WorkOS redirects to register
+
+Each environment's WorkOS application needs the redirects of the builds
+that sign in to it (plan §6.12), else sign-in fails on the AuthKit page
+with an invalid redirect error:
+
+| WorkOS environment | Redirects |
+| --- | --- |
+| Production (`THEODORE_WORKOS_CLIENT_ID`) | `theodore://callback`, `http://127.0.0.1:47823/callback` |
+| Staging (`THEODORE_WORKOS_CLIENT_ID_STAGING`) | `theodore-staging://callback`, `theodore-nightly://callback`, `http://127.0.0.1:47823/callback` |
+
+A nightly bakes in whichever client id the shell exported; register
+`theodore-nightly://callback` on the environment it uses.
 
 ## First launch on a clean Mac (ad-hoc signed builds)
 
@@ -260,7 +327,8 @@ Without a Developer ID, Gatekeeper blocks the first launch of a downloaded
 
 - System Settings → Privacy & Security → scroll down → "Open Anyway" next to
   the blocked-app notice, then open Theodore.app again and confirm, **or**
-- `xattr -dr com.apple.quarantine /Applications/Theodore.app`
+- `xattr -dr com.apple.quarantine /Applications/Theodore.app` (or
+  `Theodore Staging.app`, `Theodore Nightly.app`)
 
 After that first launch, the app updates itself normally — downloads happen
 outside the browser, so no quarantine flag is ever attached, and the updater
