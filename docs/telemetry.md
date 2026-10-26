@@ -43,6 +43,9 @@ you can turn this off any time in Settings.*
   "Share anonymous usage data" and "Send error reports" — and a "What's collected" link (the event
   list and what's never sent, from the core's own catalog). The step only appears when the build
   has at least one remote sink; the choice is saved before Next advances.
+- **Once, after sign-in**, for an install that onboarded before its build could send anything
+  (so it never saw that step): the same choice in a dialog, Save or Don't share. It shows only
+  while an available sink has no recorded choice, and never in sandbox mode.
 - **Settings → About & updates → Privacy**: the same two switches, each independent.
 - Stored as settings `telemetry.usage` and `telemetry.errors` (absent = no choice yet). Turning one
   off stops its sink at once and drops what it had queued.
@@ -106,6 +109,11 @@ Every IPC call carries an `op_id` (16 hex chars made in `ui/src/core/api.ts`, se
 runs, grouping and host requests it starts stay in that span, so one failure stitches together
 from UI to core to agent to host. `CommandFailure.opId` in the UI is the same id. Outbox writes run
 later, in their own `outbox_item` span.
+
+Every command ends with one `command done` line carrying `ok` and `ms` (and `error_code` when it
+failed); the same fields land on the exported trace, so New Relic shows each command's duration
+and outcome. Info level, debug for the chatty ones (sync, polls, passive reads); a chatty command
+isn't exported as a trace either. Why a command failed is logged once, where its error is mapped.
 
 ## Redaction
 
