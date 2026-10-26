@@ -5546,6 +5546,8 @@ version = "0.1.4"
 dependencies = [
  "async-trait",
  "mac-notification-sys",
+ "objc2",
+ "objc2-app-kit",
  "serde_json",
  "specta",
  "specta-typescript",

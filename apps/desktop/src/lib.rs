@@ -4,6 +4,7 @@
 pub mod app_core;
 pub mod build_info;
 pub mod build_stamp;
+mod chrome;
 pub mod commands;
 pub mod core_api;
 pub mod deep_link;
@@ -213,6 +214,14 @@ pub fn run(
         .invoke_handler(gate::guard_core(core.clone(), builder.invoke_handler()))
         .manage(core.clone())
         .manage(updater::UpdateState::default())
+        // The title bar's size reaches the page as CSS variables (`chrome`).
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && let Some(window) = webview.app_handle().get_webview_window(webview.label())
+            {
+                chrome::sync_insets(&window);
+            }
+        })
         .setup(move |app| {
             builder.mount_events(app);
             let handle = app.handle().clone();
@@ -220,6 +229,13 @@ pub fn run(
             // Window menu show (`tauri.conf.json` has production's).
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.set_title(&build_info::product_name());
+                chrome::unified_toolbar(&main);
+                let window = main.clone();
+                main.on_window_event(move |e| {
+                    if let tauri::WindowEvent::Resized(_) = e {
+                        chrome::sync_insets(&window);
+                    }
+                });
             }
             app.manage(notify::for_app(&handle));
             forward(emitter(handle.clone()));

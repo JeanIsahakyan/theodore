@@ -50,6 +50,9 @@ tauri-specta = { workspace = true, features = ["derive", "typescript"] }
 # The click on a space's notification (src/notify.rs); the plugin's own
 # backend, called directly so it waits for the click.
 mac-notification-sys = "0.6"
+# An empty unified toolbar on the main window (src/chrome.rs).
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSButton", "NSControl", "NSResponder", "NSToolbar", "NSView", "NSWindow"] }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -58,5 +61,10 @@ tauri = { workspace = true, features = ["test"] }
 # In-memory ports: `AppCore` over a real `Core` in its own tests.
 theodore-app = { workspace = true, features = ["testkit"] }
 
-[lints]
-workspace = true
+# The workspace's lints, except `unsafe_code` is `deny`, not `forbid`: the
+# AppKit calls in src/chrome.rs opt in one function at a time.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

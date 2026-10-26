@@ -147,7 +147,10 @@ export const SettingsNav = observer(function SettingsNav({
   );
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
-      <div data-tauri-drag-region className="px-3 pb-2 pt-11">
+      <div
+        data-tauri-drag-region
+        className="px-3 pb-2 pt-[calc(var(--controls-bottom)+0.75rem)]"
+      >
         <Button
           variant="ghost"
           size="sm"
