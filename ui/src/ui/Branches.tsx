@@ -100,12 +100,12 @@ const BranchList = observer(function BranchList({
     );
   }
   return (
-    <div className="branches flex min-h-0 min-w-0 flex-1 flex-col overflow-auto px-6 pb-20">
+    <div className="branches flex min-h-0 min-w-0 flex-1 flex-col overflow-auto pb-20">
       {reviews.length > 0 && (
         // Reviews of a branch with no host PR: the only list of them a local
         // folder has (it has no Pull requests page).
         <section aria-label="Branch reviews" className="flex flex-col pb-4">
-          <h3 className="flex items-center gap-2 border-b border-separator py-2 text-xs text-muted">
+          <h3 className="flex items-center gap-2 border-b border-separator px-6 py-2 text-xs text-muted">
             Branch reviews
             <span className="tabular-nums">{reviews.length}</span>
           </h3>
@@ -114,7 +114,7 @@ const BranchList = observer(function BranchList({
               key={p.id}
               role="link"
               tabIndex={0}
-              className="cursor-default border-b border-separator hover:bg-default/40"
+              className="cursor-default border-b border-separator px-6 hover:bg-default/40"
               onClick={() => ui.go({ name: 'review', pr: p.id })}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') ui.go({ name: 'review', pr: p.id });
@@ -126,7 +126,7 @@ const BranchList = observer(function BranchList({
         </section>
       )}
       <div
-        className={`${cols} sticky top-0 z-[1] border-b border-separator bg-background py-2 text-xs text-muted`}
+        className={`${cols} sticky top-0 z-[1] border-b border-separator bg-surface px-6 py-2 text-xs text-muted`}
       >
         <span>branch</span>
         <span>last commit</span>
@@ -145,7 +145,7 @@ const BranchList = observer(function BranchList({
         return (
           <div
             key={b.name}
-            className={`${cols} border-b border-separator py-2.5 last:border-b-0`}
+            className={`${cols} border-b border-separator px-6 py-2.5 last:border-b-0`}
           >
             <span
               className="flex min-w-0 items-center gap-1.5 font-mono text-sm"
@@ -264,12 +264,11 @@ export const Branches = observer(function Branches() {
     );
   }
 
+  // The default branch already carries a "default" chip in the list; this
+  // line is only for what the list can't say (a folder's path and working
+  // state, a stale fetch).
   const meta = [
-    ...(local
-      ? workingStateParts(working, project.default_branch)
-      : project.default_branch
-        ? [`default ${project.default_branch}`]
-        : []),
+    ...(local ? workingStateParts(working, project.default_branch) : []),
     staleFetchedLabel(project.last_fetched_at, Date.now()),
   ].filter((s): s is string => !!s);
 
