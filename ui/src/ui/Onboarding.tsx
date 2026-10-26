@@ -244,15 +244,12 @@ export const Onboarding = observer(function Onboarding() {
             </div>
           )}
           {stepsKnown && step === 0 && (
-            <div className="onb-welcome flex items-center gap-4 pb-2">
-              <WelcomeLogo size={56} />
-              <span className="flex flex-col gap-0.5">
-                <span className="text-lg font-semibold">
-                  Welcome to Theodore
-                </span>
-                <span className="text-sm text-muted">
-                  A few steps, then straight to your reviews.
-                </span>
+            <div className="onb-welcome flex flex-col gap-0.5 pb-2">
+              <span className="text-lg font-semibold">
+                Review pull requests by meaning, not by file order.
+              </span>
+              <span className="text-sm text-muted">
+                A few steps, then straight to your reviews.
               </span>
             </div>
           )}
