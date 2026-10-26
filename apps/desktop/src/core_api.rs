@@ -7,18 +7,19 @@ use theodore_contract::{
     AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus,
 };
 use theodore_contract::{
-    AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
-    CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
-    DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
-    HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
-    LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
-    OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
-    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
-    SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
-    SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
+    AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
+    BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
+    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
 use theodore_contract::{SandboxFaultRequest, SandboxStatus};
-use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
+use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 
 fn not_ready() -> CommandError {
     CommandError {
@@ -43,6 +44,9 @@ pub trait CoreApi: Send + Sync {
     async fn cancel_run(&self, run: String) -> Result<(), CommandError>;
     async fn submit_review(&self, req: SubmitReviewRequest) -> Result<(), CommandError>;
     async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError>;
+    /// The models `agent` can run, for the model picker; `[]` when it
+    /// can't list them, never an error.
+    async fn agent_models(&self, agent: AgentId) -> Result<Vec<AgentModel>, CommandError>;
     async fn app_info(&self) -> Result<AppInfo, CommandError>;
     async fn check_update(&self) -> Result<Option<UpdateInfo>, CommandError>;
     async fn install_update(&self) -> Result<(), CommandError>;
@@ -405,6 +409,9 @@ impl CoreApi for NotReadyCoreApi {
     }
     async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError> {
         Err(not_ready())
+    }
+    async fn agent_models(&self, _agent: AgentId) -> Result<Vec<AgentModel>, CommandError> {
+        Ok(Vec::new())
     }
     async fn app_info(&self) -> Result<AppInfo, CommandError> {
         Err(not_ready())

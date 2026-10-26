@@ -50,6 +50,7 @@ const CHATTY: &[&str] = &[
     "conflicts",
     "sandbox_status",
     "detect_agents",
+    "agent_models",
     "viewer",
 ];
 

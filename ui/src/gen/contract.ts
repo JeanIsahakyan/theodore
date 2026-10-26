@@ -64,6 +64,20 @@ export type AddProjectRequest = {
 
 export type AgentId = "claude" | "codex" | "gemini";
 
+/**
+ *  One model an agent CLI can run, for the model picker (`agent_models`).
+ *  `id` is what `agents.<id>.model` stores; `efforts` what
+ *  `agents.<id>.effort` may hold for it (empty = no effort choice).
+ */
+export type AgentModel = {
+	id: string,
+	label: string,
+	description: string | null,
+	efforts: string[],
+	/**  The effort the CLI uses when none is set, if it names one. */
+	default_effort: string | null,
+};
+
 export type AgentStatus = {
 	id: AgentId,
 	installed: boolean,

@@ -197,6 +197,7 @@ mod tests {
             "ask",
             "delegate_task",
             "detect_agents",
+            "agent_models",
             // projects and spaces
             "add_project",
             "remove_project",

@@ -56,8 +56,8 @@ pub struct AgentRequest {
     pub mode: AgentMode,
     pub mcp: Option<McpEndpoint>,
     pub model: Option<String>,
-    /// How hard the agent thinks (`low` … `max`). Only Claude Code takes it
-    /// (`--effort`); the other runners ignore it.
+    /// How hard the agent thinks (`low` … `max`). Claude Code takes it as
+    /// `--effort`, Codex as `-c model_reasoning_effort=…`; Gemini ignores it.
     #[serde(default)]
     pub effort: Option<String>,
     /// No output for this long → `AgentEvent::Stalled`.
@@ -131,8 +131,26 @@ pub struct AgentRun {
     pub cancel: CancellationToken,
 }
 
+/// One model an agent CLI can run, and the effort levels it takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// What the CLI's model flag takes (`opus`, `gpt-5.5`).
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    /// Effort levels the model takes, in the CLI's order; empty = none.
+    pub efforts: Vec<String>,
+    /// The effort the CLI uses when none is passed, when it says.
+    pub default_effort: Option<String>,
+}
+
 #[async_trait]
 pub trait AgentPort: Send + Sync {
     async fn detect(&self) -> Vec<AgentInfo>;
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError>;
+    /// The models `agent` can run, for the model picker. Never fails: an
+    /// agent that can't list them (not installed, no listing) gives `[]`.
+    async fn models(&self, _agent: AgentId) -> Vec<ModelInfo> {
+        Vec::new()
+    }
 }

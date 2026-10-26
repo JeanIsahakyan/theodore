@@ -7,6 +7,8 @@ import type {
   AccountSignInState,
   AccountStatus,
   AddProjectRequest,
+  AgentId,
+  AgentModel,
   AgentStatus,
   AppInfo,
   AskRequest,
@@ -186,6 +188,8 @@ export const api = {
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),
   detectAgents: () => call<AgentStatus[]>('detect_agents'),
+  agentModels: (agent: AgentId) =>
+    call<AgentModel[]>('agent_models', { agent }),
   appInfo: () => call<AppInfo>('app_info'),
   checkUpdate: () => call<UpdateInfo | null>('check_update'),
   installUpdate: () => call<null>('install_update'),

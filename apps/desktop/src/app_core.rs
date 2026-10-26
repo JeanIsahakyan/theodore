@@ -8,17 +8,18 @@ use theodore_contract::{
     AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus,
 };
 use theodore_contract::{
-    AddProjectRequest, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap, BootstrapScope,
-    CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest, DeviceLogin,
-    DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest, GetBlobRequest,
-    HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue, LinearIssuesRequest,
-    LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest, OpenBranchRequest,
-    OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest, RerunCheckRequest,
-    ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest, SaveSkillRequest,
-    SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit,
-    SyncFrame, TaskDecision, Transaction, TransactionResult, TriageRequest, UpdateInfo,
+    AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
+    BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
+    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
+    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
+    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
+    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
+    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
+    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
+    TriageRequest, UpdateInfo,
 };
-use theodore_domain::{HostKind, HostRepo, Person, PrId, Revision};
+use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 use theodore_ports::{HostError, IssueTracker, NewIssue};
 use theodore_telemetry::issue;
 
@@ -356,6 +357,23 @@ impl CoreApi for AppCore {
                 installed: a.installed,
                 version: a.version,
                 path: a.path.map(|p| p.display().to_string()),
+            })
+            .collect())
+    }
+    async fn agent_models(&self, agent: AgentId) -> Result<Vec<AgentModel>, CommandError> {
+        Ok(self
+            .core
+            .deps()
+            .agents
+            .models(agent)
+            .await
+            .into_iter()
+            .map(|m| AgentModel {
+                id: m.id,
+                label: m.label,
+                description: m.description,
+                efforts: m.efforts,
+                default_effort: m.default_effort,
             })
             .collect())
     }

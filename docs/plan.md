@@ -760,6 +760,14 @@ binary as a stdio→HTTP proxy.
 Each runner normalizes its stream into one event type:
 `Text · Thinking · ToolCall · ToolResult · Usage · Done · Error`.
 
+Model and effort (§8.5 `agents.<id>.model` / `.effort`) per CLI:
+
+| Agent | Model | Effort | Picker list |
+| --- | --- | --- | --- |
+| Claude Code | `--model <alias>` | `--effort low…max` | static: `opus`, `sonnet`, `haiku` |
+| Codex | `-m <slug>` | `-c model_reasoning_effort="<level>"` | `codex debug models`, `visibility: list`, by `priority` |
+| Gemini CLI | `-m <name>` | — | none |
+
 ### 8.2 Lifecycle
 
 ```
@@ -819,7 +827,7 @@ Which agent does what is a setting, layered user → repo:
 | `agents.chat` | `claude` | switchable per message in the UI |
 | `agents.skills` | `[claude]` | a list: skills can run on several agents at once |
 | `agents.fix` | `claude` | one agent; edits only in the PR worktree |
-| `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort (Claude: `--effort`) override |
+| `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort override. Effort: Claude `--effort`, Codex `-c model_reasoning_effort="…"`, Gemini none. The picker's models (`agent_models`): Claude's `--model` aliases (`opus`, `sonnet`, `haiku`), Codex's from `codex debug models` (listed ones, by priority; read once per run of the app), none for Gemini |
 | `agents.user_mcp` | `true` | user scope only: Claude runs may use the user's own MCP servers (§8.2) |
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the

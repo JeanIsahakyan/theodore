@@ -42,6 +42,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::cancel_run,
             commands::submit_review,
             commands::detect_agents,
+            commands::agent_models,
             commands::app_info,
             commands::check_update,
             commands::install_update,
