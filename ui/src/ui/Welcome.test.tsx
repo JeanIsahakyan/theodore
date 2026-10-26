@@ -56,7 +56,7 @@ async function toLastStep() {
     </RootStoreProvider>,
   );
   await settle();
-  expect(m.host.textContent).toContain('Welcome to Theodore');
+  expect(m.host.textContent).toContain('Review pull requests by meaning');
   while (m.host.querySelector('.onb-next')) {
     await click(m.host.querySelector('.onb-next'));
     await settle();

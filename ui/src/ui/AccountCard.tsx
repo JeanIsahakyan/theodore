@@ -119,7 +119,8 @@ export function SignInView({
 }: {
   signIn: AccountSignIn;
   user: AccountUser | null;
-  /** Off where the logo is already on screen (Onboarding's header). */
+  /** Off where the logo is already on screen (Onboarding's header); the
+   *  title then drops the name too. */
   logo?: boolean;
   /** The provider ended the last session: say so on the first stage. */
   ended?: boolean;
@@ -294,7 +295,11 @@ export function SignInView({
     <Stage
       mark={logo ? <Logo size={44} /> : null}
       title={
-        ended ? 'Your session ended — sign in again' : 'Sign in to Theodore'
+        ended
+          ? 'Your session ended — sign in again'
+          : logo
+            ? 'Sign in to Theodore'
+            : 'Sign in'
       }
       text={
         ended
