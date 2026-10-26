@@ -2,7 +2,9 @@
 //! model picker (`AgentPort::models`).
 //!
 //! ```text
-//! claude ─▶ static: Claude Code's `--model` aliases × `--effort` levels
+//! claude ─▶ Claude Code's own model catalog cache
+//!            (`~/.claude/cache/model-catalog/*-cc.json`), else its
+//!            `--model` aliases × `--effort` levels
 //! codex  ─▶ `codex debug models` (JSON) ─▶ visibility "list", by priority
 //! gemini ─▶ []
 //! ```
@@ -19,9 +21,109 @@ use crate::claude::EFFORT_LEVELS;
 /// picker forever.
 const CODEX_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Claude Code's models: the catalog it caches from Anthropic (every version
+/// it runs, each with its own effort levels), else its aliases.
+pub fn claude_models() -> Vec<ModelInfo> {
+    claude_config_dir()
+        .and_then(|dir| claude_catalog(&dir.join("cache/model-catalog")))
+        .unwrap_or_else(claude_aliases)
+}
+
+/// `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+fn claude_config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".claude")))
+}
+
+/// The newest `*-cc.json` (Claude Code's surface) in `dir` that parses to at
+/// least one model. Its format is Claude Code's own and may change: any
+/// surprise is `None`, and the aliases stand in.
+pub fn claude_catalog(dir: &Path) -> Option<Vec<ModelInfo>> {
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("-cc.json"))
+        })
+        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.into_iter().find_map(|(_, p)| {
+        let text = std::fs::read_to_string(p).ok()?;
+        parse_claude_catalog(&text).filter(|m| !m.is_empty())
+    })
+}
+
+#[derive(Deserialize)]
+struct ClaudeCatalogFile {
+    catalog: ClaudeCatalog,
+}
+
+#[derive(Deserialize)]
+struct ClaudeCatalog {
+    config: ClaudeCatalogConfig,
+}
+
+#[derive(Deserialize)]
+struct ClaudeCatalogConfig {
+    models: Vec<ClaudeCatalogModel>,
+}
+
+#[derive(Deserialize)]
+struct ClaudeCatalogModel {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    section: Option<String>,
+    #[serde(default)]
+    runtime: Option<ClaudeRuntime>,
+}
+
+#[derive(Deserialize, Default)]
+struct ClaudeRuntime {
+    #[serde(default)]
+    effort_levels: Vec<String>,
+    #[serde(default)]
+    default_effort: Option<String>,
+}
+
+/// Pure: a catalog file → models, in its order. `section: "main"` are the
+/// current ones; the rest are earlier versions (`older`).
+pub fn parse_claude_catalog(json: &str) -> Option<Vec<ModelInfo>> {
+    let file: ClaudeCatalogFile = serde_json::from_str(json).ok()?;
+    Some(
+        file.catalog
+            .config
+            .models
+            .into_iter()
+            .map(|m| {
+                let runtime = m.runtime.unwrap_or_default();
+                ModelInfo {
+                    label: m
+                        .name
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| m.id.clone()),
+                    id: m.id,
+                    description: m.description.filter(|s| !s.trim().is_empty()),
+                    efforts: runtime.effort_levels,
+                    default_effort: runtime.default_effort,
+                    older: m.section.as_deref() != Some("main"),
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Claude Code's `--model` aliases (each the latest of its family), newest
 /// family first.
-pub fn claude_models() -> Vec<ModelInfo> {
+pub fn claude_aliases() -> Vec<ModelInfo> {
     [
         ("fable", "Fable", "Newest"),
         ("opus", "Opus", "Deep reasoning"),
@@ -35,6 +137,7 @@ pub fn claude_models() -> Vec<ModelInfo> {
         description: Some(description.to_string()),
         efforts: EFFORT_LEVELS.iter().map(|e| e.to_string()).collect(),
         default_effort: None,
+        older: false,
     })
     .collect()
 }
@@ -92,6 +195,7 @@ pub fn parse_codex_models(json: &str) -> Result<Vec<ModelInfo>, serde_json::Erro
                 .map(|l| l.effort)
                 .collect(),
             default_effort: m.default_reasoning_level,
+            older: false,
         })
         .collect())
 }
@@ -177,6 +281,7 @@ mod tests {
                     description: Some("First.".into()),
                     efforts: vec!["low".into(), "medium".into(), "xhigh".into()],
                     default_effort: Some("medium".into()),
+                    older: false,
                 },
                 ModelInfo {
                     id: "gpt-b".into(),
@@ -184,6 +289,7 @@ mod tests {
                     description: Some("Second.".into()),
                     efforts: vec!["low".into(), "high".into()],
                     default_effort: Some("low".into()),
+                    older: false,
                 },
             ]
         );
@@ -201,6 +307,7 @@ mod tests {
                 description: None,
                 efforts: vec![],
                 default_effort: None,
+                older: false,
             }]
         );
     }
@@ -211,9 +318,70 @@ mod tests {
         assert!(parse_codex_models(r#"{"other":[]}"#).is_err());
     }
 
+    const CLAUDE_CATALOG: &str = r#"{
+      "version": 2,
+      "catalog": {"surface": "cc", "config": {"id": "cc", "models": [
+        {"id": "claude-opus-5-5", "name": "Opus 5.5", "description": "For complex work",
+         "section": "main",
+         "runtime": {"effort_levels": ["low", "medium", "high"], "default_effort": "medium"}},
+        {"id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5", "section": "overflow"},
+        {"id": "claude-opus-4-6", "name": "", "section": "overflow",
+         "runtime": {"effort_levels": ["low", "max"], "default_effort": "high"}}
+      ]}}
+    }"#;
+
+    #[test]
+    fn claude_catalog_lists_every_version_older_ones_marked() {
+        let models = parse_claude_catalog(CLAUDE_CATALOG).unwrap();
+        assert_eq!(
+            models,
+            vec![
+                ModelInfo {
+                    id: "claude-opus-5-5".into(),
+                    label: "Opus 5.5".into(),
+                    description: Some("For complex work".into()),
+                    efforts: vec!["low".into(), "medium".into(), "high".into()],
+                    default_effort: Some("medium".into()),
+                    older: false,
+                },
+                ModelInfo {
+                    id: "claude-haiku-4-5-20251001".into(),
+                    label: "Haiku 4.5".into(),
+                    description: None,
+                    efforts: vec![],
+                    default_effort: None,
+                    older: true,
+                },
+                ModelInfo {
+                    id: "claude-opus-4-6".into(),
+                    label: "claude-opus-4-6".into(),
+                    description: None,
+                    efforts: vec!["low".into(), "max".into()],
+                    default_effort: Some("high".into()),
+                    older: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_catalog_takes_the_newest_cc_file_that_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        // Not Claude Code's surface: ignored.
+        std::fs::write(dir.path().join("published-x.json"), CLAUDE_CATALOG).unwrap();
+        assert_eq!(claude_catalog(dir.path()), None);
+        std::fs::write(dir.path().join("a-cc.json"), CLAUDE_CATALOG).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // Newer but unreadable: the older good one still counts.
+        std::fs::write(dir.path().join("b-cc.json"), "{not json").unwrap();
+        let models = claude_catalog(dir.path()).unwrap();
+        assert_eq!(models[0].id, "claude-opus-5-5");
+        assert_eq!(claude_catalog(&dir.path().join("missing")), None);
+    }
+
     #[test]
     fn claude_aliases_in_order_with_every_effort() {
-        let models = claude_models();
+        let models = claude_aliases();
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["fable", "opus", "sonnet", "haiku"]);
         for m in &models {

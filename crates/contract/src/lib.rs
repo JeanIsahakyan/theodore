@@ -251,6 +251,8 @@ pub struct AgentModel {
     pub efforts: Vec<String>,
     /// The effort the CLI uses when none is set, if it names one.
     pub default_effort: Option<String>,
+    /// An earlier version the CLI still runs: under "More models".
+    pub older: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

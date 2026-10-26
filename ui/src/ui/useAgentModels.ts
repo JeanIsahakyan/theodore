@@ -18,6 +18,7 @@ const CLAUDE_FALLBACK: AgentModel[] = CLAUDE_MODELS.map((m) => ({
   description: m.hint ?? null,
   efforts: EFFORTS.map((e) => e.id),
   default_effort: null,
+  older: false,
 }));
 
 function load(agent: AgentId): Promise<AgentModel[]> {

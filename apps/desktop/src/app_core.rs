@@ -374,6 +374,7 @@ impl CoreApi for AppCore {
                 description: m.description,
                 efforts: m.efforts,
                 default_effort: m.default_effort,
+                older: m.older,
             })
             .collect())
     }

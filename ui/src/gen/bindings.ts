@@ -260,6 +260,8 @@ export type AgentModel = {
 	efforts: string[],
 	/**  The effort the CLI uses when none is set, if it names one. */
 	default_effort: string | null,
+	/**  An earlier version the CLI still runs: under "More models". */
+	older: boolean,
 };
 
 export type AgentStatus = {

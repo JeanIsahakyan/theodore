@@ -142,6 +142,9 @@ pub struct ModelInfo {
     pub efforts: Vec<String>,
     /// The effort the CLI uses when none is passed, when it says.
     pub default_effort: Option<String>,
+    /// An earlier version the CLI still runs: listed under "More models".
+    #[serde(default)]
+    pub older: bool,
 }
 
 #[async_trait]
