@@ -537,11 +537,8 @@ body.cmd .lines .src span:hover {
   }
 }
 /* The switcher's logo while syncing: small, so the motion is louder than
- * the welcome's — faster stripes, a band of light crossing the lenses in
- * a loop, and the tile breathing. */
-.logo-busy {
-  animation: logo-breathe 1.6s ease-in-out infinite;
-}
+ * the welcome's — faster stripes and a band of light crossing the lenses
+ * in a loop. The tile itself stays still. */
 .logo-busy .welcome-stripes {
   animation-duration: 1.2s;
 }
@@ -554,14 +551,7 @@ body.cmd .lines .src span:hover {
 .logo-busy .welcome-glint-late {
   animation-delay: 0.15s;
 }
-@keyframes logo-breathe {
-  50% {
-    transform: scale(0.88);
-    opacity: 0.85;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
-  .logo-busy,
   .welcome-stripes,
   .welcome-glint,
   .welcome-glow,
