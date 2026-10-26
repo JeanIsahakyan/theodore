@@ -1045,8 +1045,10 @@ mod tests {
             mode,
             mcp,
             model: None,
+            effort: None,
             stall_after_ms: 90_000,
             env: Vec::new(),
+            user_mcp: false,
         }
     }
 

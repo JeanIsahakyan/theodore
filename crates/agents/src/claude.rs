@@ -80,17 +80,25 @@ pub fn build_args(
         args.push("--mcp-config".to_string());
         args.push(path.display().to_string());
     }
-    // Only Theodore's own tools, never the user's global MCP servers: a
-    // run shouldn't reach their other services, wait on their auth, or
-    // report on them ("the Linear connector needs authorizing…").
-    args.push("--strict-mcp-config".to_string());
-    // The run's own MCP server, whatever it is named.
-    let mcp_tools = format!(
+    // `agents.user_mcp` off: only Theodore's own tools, never the user's
+    // MCP servers (`~/.claude.json`, `.mcp.json`, claude.ai connectors).
+    // On: those load next to `--mcp-config`, so a run can read the Linear
+    // issue or the GitHub thread the user already connected Claude Code to.
+    if !req.user_mcp {
+        args.push("--strict-mcp-config".to_string());
+    }
+    // The run's own MCP server, whatever it is named; with the user's
+    // servers on, theirs too (`mcp__*`). `--permission-prompts none`
+    // denies whatever isn't pre-approved, so they must be listed to be usable.
+    let mut mcp_tools = format!(
         "mcp__{}__*",
         req.mcp
             .as_ref()
             .map_or(theodore_ports::REVIEW_TOOLS, |m| m.name.as_str())
     );
+    if req.user_mcp {
+        mcp_tools.push_str(",mcp__*");
+    }
     match req.mode {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
@@ -118,9 +126,21 @@ pub fn build_args(
         args.push("--model".to_string());
         args.push(model.clone());
     }
+    match req.effort.as_deref() {
+        Some(effort) if EFFORT_LEVELS.contains(&effort) => {
+            args.push("--effort".to_string());
+            args.push(effort.to_string());
+        }
+        // Anything else would fail the whole run on an unknown value.
+        Some(effort) => tracing::warn!(effort, "unknown claude effort level, left out"),
+        None => {}
+    }
     args.extend(cfg.extra_args.iter().cloned());
     args
 }
+
+/// `--effort <level>` values, as `claude --help` lists them (2.1.310).
+pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 #[derive(Debug, Default)]
 pub struct ClaudeParser;
@@ -407,8 +427,10 @@ mod read_only_tests {
             mode: AgentMode::ReadOnly,
             mcp: None,
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -437,8 +459,10 @@ mod mcp_config_tests {
                 name: theodore_ports::REVIEW_TOOLS.into(),
             }),
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         }
     }
 
@@ -494,6 +518,45 @@ mod mcp_config_tests {
         assert!(args.iter().any(|a| a == "--strict-mcp-config"));
     }
 
+    /// `agents.user_mcp` off: only Theodore's own server, and only its
+    /// tools pre-approved.
+    #[test]
+    fn user_mcp_off_keeps_the_run_to_theodores_own_server() {
+        let req = req_with_mcp("t");
+        let args = build_args(&req, &Default::default(), None);
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"));
+        let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(args[i + 1], "Read,Grep,Glob,mcp__review-tools__*");
+    }
+
+    /// `agents.user_mcp` on: the user's own MCP servers load next to
+    /// `--mcp-config`, and their tools are pre-approved in every mode that
+    /// has an allowlist; a review run still can't write or run commands.
+    #[test]
+    fn user_mcp_on_loads_and_allows_the_users_servers() {
+        for mode in [AgentMode::ReadOnly, AgentMode::Edit] {
+            let mut req = req_with_mcp("t");
+            req.mode = mode;
+            req.user_mcp = true;
+            let guard = write_mcp_config(&req).unwrap().expect("mcp config file");
+            let args = build_args(&req, &Default::default(), Some(guard.path()));
+            assert!(!args.iter().any(|a| a == "--strict-mcp-config"), "{args:?}");
+            assert!(args.iter().any(|a| a == "--mcp-config"), "{args:?}");
+            let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+            let allowed: Vec<&str> = args[i + 1].split(',').collect();
+            assert!(allowed.contains(&"mcp__review-tools__*"), "{allowed:?}");
+            assert!(allowed.contains(&"mcp__*"), "{allowed:?}");
+        }
+        let mut req = req_with_mcp("t");
+        req.user_mcp = true;
+        let args = build_args(&req, &Default::default(), None);
+        let i = args
+            .iter()
+            .position(|a| a == "--disallowedTools")
+            .expect("denylist");
+        assert!(args[i + 1].contains("Bash") && args[i + 1].contains("Write"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn mcp_config_file_is_readable_only_by_its_owner() {
@@ -523,8 +586,10 @@ mod run_mode_tests {
             mode: AgentMode::Run,
             mcp: None,
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
+            user_mcp: false,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -532,5 +597,90 @@ mod run_mode_tests {
                 .any(|w| w == ["--permission-mode", "bypassPermissions"])
         );
         assert!(!args.iter().any(|a| a == "--disallowedTools"));
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"));
+    }
+
+    #[test]
+    fn run_mode_with_user_mcp_skips_strict_mcp_config() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::Run,
+            mcp: None,
+            model: None,
+            effort: None,
+            stall_after_ms: 1000,
+            env: Vec::new(),
+            user_mcp: true,
+        };
+        let args = build_args(&req, &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
+        // bypassPermissions already allows every tool; no allowlist to widen.
+        assert!(!args.iter().any(|a| a == "--allowedTools"));
+    }
+}
+
+#[cfg(test)]
+mod model_and_effort_tests {
+    use super::*;
+
+    fn req(model: Option<&str>, effort: Option<&str>) -> AgentRequest {
+        AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::ReadOnly,
+            mcp: None,
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+            stall_after_ms: 1000,
+            env: Vec::new(),
+            user_mcp: false,
+        }
+    }
+
+    fn flag(args: &[String], name: &str) -> Option<String> {
+        let i = args.iter().position(|a| a == name)?;
+        args.get(i + 1).cloned()
+    }
+
+    #[test]
+    fn model_and_effort_reach_their_flags() {
+        let args = build_args(&req(Some("opus"), Some("high")), &Default::default(), None);
+        assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
+        assert_eq!(flag(&args, "--effort").as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn unset_means_the_cli_defaults() {
+        let args = build_args(&req(None, None), &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--model" || a == "--effort"));
+    }
+
+    #[test]
+    fn every_listed_level_is_passed() {
+        for level in EFFORT_LEVELS {
+            let args = build_args(&req(None, Some(level)), &Default::default(), None);
+            assert_eq!(flag(&args, "--effort").as_deref(), Some(level));
+        }
+    }
+
+    #[test]
+    fn an_unknown_level_is_left_out() {
+        let args = build_args(&req(None, Some("ultra")), &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--effort"));
+    }
+
+    #[test]
+    fn the_request_model_wins_over_the_config_one() {
+        let cfg = AgentBinaryConfig {
+            model: Some("haiku".into()),
+            ..Default::default()
+        };
+        let args = build_args(&req(Some("sonnet"), None), &cfg, None);
+        assert_eq!(flag(&args, "--model").as_deref(), Some("sonnet"));
     }
 }

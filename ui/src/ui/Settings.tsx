@@ -52,6 +52,16 @@ import { useDeviceLogin } from '../core/deviceLogin';
 import { useRootStore, useUi, useWorkspaces } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
+import {
+  CLAUDE_MODELS,
+  EFFORTS,
+  agentEffort,
+  agentModel,
+  hasModelAliases,
+  setAgentEffort,
+  setAgentModel,
+  takesEffort,
+} from './agentModel';
 import { AccountCard } from './AccountCard';
 import { buildLabel, buildReport, builtAtIso } from './buildStamp';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
@@ -201,6 +211,16 @@ export function isAgentEnabled(
 ): boolean {
   const v = settingValue(store, 'user', `agents.${agent}.enabled`);
   return v !== false;
+}
+
+/** `agents.user_mcp`, `user` scope, default `true` (issue #16): agent runs
+ *  may use the user's own Claude Code MCP servers next to Theodore's tools. */
+export const USER_MCP_KEY = 'agents.user_mcp';
+
+export function isUserMcpAllowed(
+  store: ReturnType<typeof useRootStore>,
+): boolean {
+  return settingValue(store, 'user', USER_MCP_KEY) !== false;
 }
 
 /** A host connected by a pasted token (GitLab, Bitbucket): no device-flow
@@ -568,6 +588,21 @@ const AgentsPage = observer(function AgentsPage() {
       </section>
       <Separator />
       <section className="flex flex-col gap-2">
+        <Typography.Heading level={6}>Model and effort</Typography.Heading>
+        <Card variant="secondary" className="gap-0 p-0">
+          {AGENTS.map((a) => (
+            <AgentModelRow key={a} agent={a} />
+          ))}
+        </Card>
+        <span className="text-xs text-muted">
+          Used by every run of that agent: grouping, chat, skills, fixes and
+          spaces. Default leaves it to the CLI. Effort is Claude Code&apos;s{' '}
+          <code className="font-mono">--effort</code>; the other CLIs have no
+          such flag.
+        </span>
+      </section>
+      <Separator />
+      <section className="flex flex-col gap-2">
         <Typography.Heading level={6}>Which agent does what</Typography.Heading>
         <Card variant="secondary" className="gap-0 p-0">
           {AI_KEYS.map((key) => {
@@ -614,7 +649,134 @@ const AgentsPage = observer(function AgentsPage() {
           })}
         </Card>
       </section>
+      <Separator />
+      <section className="flex flex-col gap-2">
+        <Typography.Heading level={6}>MCP servers</Typography.Heading>
+        <Card
+          variant="secondary"
+          className="set-row flex-row items-center gap-4 px-4 py-3"
+        >
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-sm font-medium">
+              Allow my Claude MCP servers in spaces
+            </span>
+            <span className="text-xs text-muted">
+              A space's agent can use your Claude Code MCP servers (Linear,
+              GitHub…). Reviews always stay on Theodore's own tools.
+            </span>
+          </div>
+          <Switch
+            size="sm"
+            aria-label="Allow my Claude MCP servers in spaces"
+            isSelected={isUserMcpAllowed(store)}
+            onChange={(v) => setSetting(store, 'user', USER_MCP_KEY, v)}
+          >
+            <Switch.Content>
+              <Switch.Control>
+                <Switch.Thumb />
+              </Switch.Control>
+            </Switch.Content>
+          </Switch>
+        </Card>
+      </section>
     </>
+  );
+});
+
+const DEFAULT_CHOICE = '__default';
+
+/** One `<Select>` over `choices` plus "Default" (= unset). */
+function ChoiceSelect({
+  label,
+  value,
+  choices,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  choices: { id: string; label: string }[];
+  onChange: (v: string | null) => void;
+}) {
+  return (
+    <Select
+      aria-label={label}
+      value={value ?? DEFAULT_CHOICE}
+      onChange={(v) => {
+        if (v == null) return;
+        const k = String(v);
+        onChange(k === DEFAULT_CHOICE ? null : k);
+      }}
+      className="w-36"
+    >
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
+        <ListBox selectionMode="single">
+          {[{ id: DEFAULT_CHOICE, label: 'Default' }, ...choices].map((c) => (
+            <ListBox.Item key={c.id} id={c.id} textValue={c.label}>
+              {c.label}
+              <ListBox.ItemIndicator />
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  );
+}
+
+/** Settings → Agents: an agent's default model and effort. Claude picks
+ *  from its aliases; Codex and Gemini take a model name as typed. */
+const AgentModelRow = observer(function AgentModelRow({
+  agent,
+}: {
+  agent: AgentId;
+}) {
+  const store = useRootStore();
+  const model = agentModel(store, agent);
+  const [draft, setDraft] = useState(model ?? '');
+  useEffect(() => setDraft(model ?? ''), [model]);
+  const save = () => {
+    if ((draft.trim() || null) !== model) setAgentModel(store, agent, draft);
+  };
+  // A full model name typed elsewhere stays editable as text.
+  const alias = !model || CLAUDE_MODELS.some((m) => m.id === model);
+  return (
+    <div className="set-row flex items-center gap-3 border-b border-separator px-4 py-2.5 last:border-b-0">
+      <span className="min-w-0 flex-1">
+        <AgentTag id={agent} />
+      </span>
+      {hasModelAliases(agent) && alias ? (
+        <ChoiceSelect
+          label={`${agent} model`}
+          value={model}
+          choices={CLAUDE_MODELS}
+          onChange={(v) => setAgentModel(store, agent, v)}
+        />
+      ) : (
+        <TextField
+          value={draft}
+          onChange={setDraft}
+          onBlur={save}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+          className="w-36"
+        >
+          <Label className="sr-only">{agent} model</Label>
+          <Input placeholder="default model" className="font-mono text-xs" />
+        </TextField>
+      )}
+      {takesEffort(agent) ? (
+        <ChoiceSelect
+          label={`${agent} effort`}
+          value={agentEffort(store, agent)}
+          choices={EFFORTS}
+          onChange={(v) => setAgentEffort(store, agent, v)}
+        />
+      ) : (
+        <span className="w-36 text-xs text-muted">no effort flag</span>
+      )}
+    </div>
   );
 });
 

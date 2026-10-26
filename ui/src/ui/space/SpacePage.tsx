@@ -36,6 +36,7 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
+  AgentId,
   HunkId,
   ShipAction,
   Space,
@@ -55,13 +56,8 @@ import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../SidePanel';
 import { rich } from '../../highlight';
 import { latinKey, useViewKeys } from '../keys';
-import {
-  AgentChip,
-  ChipMenu,
-  Composer,
-  parseAgentChoice,
-  type AgentChoice,
-} from './Composer';
+import { AgentChip, ChipMenu, Composer } from './Composer';
+import { agentEffort, agentLabel, agentModel } from '../agentModel';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
 import {
@@ -712,9 +708,12 @@ const SpaceChat = observer(function SpaceChat({
   const turnRuns = runsByReply(space.id, space.turn_log);
   // A finished turn's tool calls, kept for this session; the turn still
   // running (its check) shows them below instead.
-  const turnTools = (reply: string): string[] => {
+  const turnTools = (reply: string) => {
     const r = turnRuns.get(reply);
-    return r && r !== run ? (store.ephemeral.runLog.get(r) ?? []) : [];
+    const tools = r && r !== run ? (store.ephemeral.runLog.get(r) ?? []) : [];
+    return r && tools.length > 0 ? (
+      <ToolCalls tools={tools} running={false} turn={r} />
+    ) : null;
   };
   const setupStage = setupView(space) === 'stage';
   const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
@@ -789,9 +788,7 @@ const SpaceChat = observer(function SpaceChat({
                   {m.author.kind === 'me' ? m.text : rich(m.text)}
                 </div>
               )}
-              {m.author.kind === 'agent' && turnTools(m.id).length > 0 && (
-                <ToolCalls tools={turnTools(m.id)} running={false} />
-              )}
+              {m.author.kind === 'agent' && turnTools(m.id)}
               {m.author.kind === 'agent' && checks.has(m.id) && (
                 <CheckChip check={checks.get(m.id)!} />
               )}
@@ -800,10 +797,17 @@ const SpaceChat = observer(function SpaceChat({
           {run && (
             <div className="flex flex-col gap-1">
               <span className="flex items-center gap-2 text-xs text-muted">
-                <Spinner /> {space.agent} is working
-                {tools.length ? ` · ${tools.length} tool calls` : ''}
+                <Spinner />{' '}
+                {agentLabel(
+                  space.agent,
+                  space.model ?? agentModel(store, space.agent),
+                  agentEffort(store, space.agent),
+                )}{' '}
+                is working
               </span>
-              {tools.length > 0 && <ToolCalls tools={tools} running />}
+              {tools.length > 0 && (
+                <ToolCalls tools={tools} running turn={run} />
+              )}
               {streaming && (
                 <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
                   {rich(streaming)}
@@ -961,22 +965,22 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
       : (ready[0]?.id ?? null),
   );
   const [goal, setGoal] = useState('');
-  const [agent, setAgent] = useState<AgentChoice>('');
+  const [agent, setAgent] = useState<AgentId | null>(null);
   const [busy, setBusy] = useState(false);
   const chosen = ready.find((p) => p.id === project);
   const start = async () => {
     if (!project || !goal.trim() || busy) return;
     setBusy(true);
     try {
-      const { agent: a, model } = parseAgentChoice(agent);
       const s = await api.createSpace({
         project,
         goal: goal.trim(),
         name: null,
         branch: null,
         base: null,
-        agent: a,
-        model,
+        agent,
+        // The agent's model setting applies at each turn.
+        model: null,
       });
       ui.closeModal();
       ui.go({ name: 'space', id: s.id });

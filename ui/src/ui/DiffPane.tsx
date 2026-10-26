@@ -16,6 +16,7 @@ import {
 import {
   ArrowRight,
   Check,
+  CircleExclamation,
   ChevronsDown,
   ChevronsUp,
   CircleCheckFill,
@@ -24,6 +25,7 @@ import {
   Plus,
   Sparkles,
   TriangleExclamation,
+  Xmark,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -60,10 +62,19 @@ import type {
   Severity,
   Side,
 } from '../gen/contract';
-import { ask, markGroupRead, markHunkRead, setFileViewed } from '../actions';
+import {
+  ask,
+  askAboutLine,
+  dismissLineAsk,
+  markGroupRead,
+  markHunkRead,
+  openLineAnswer,
+  setFileViewed,
+} from '../actions';
 import { useRootStore, useUi } from '../stores/context';
+import { lineAskKey, type LineAsk } from '../stores/EphemeralStore';
 import type { ModelRows } from '../sync/types';
-import { Btn } from './bits';
+import { Btn, Spinner } from './bits';
 import { Composer, DraftView, plural, ThreadView } from './Comments';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import {
@@ -1372,6 +1383,9 @@ function lineSlice(
     findings: a
       ? store.models.findings.shownAt(pr, path, a.side, a.line)
       : NO_FINDINGS,
+    lineAsk: a
+      ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
+      : undefined,
     composer:
       a &&
       composer &&
@@ -1611,14 +1625,10 @@ function openLineMenu(
         id: 'ask-agent',
         label: 'Ask agent',
         onAction: () =>
-          void ask(store, {
+          void askAboutLine(store, {
             pr,
             question: `about ${path}:${lineNo}`,
-            about: anchor,
-            group: null,
-            agent: null,
-          }).catch(() => {
-            // toasted by api.ts
+            anchor,
           }),
       },
       {
@@ -1655,6 +1665,8 @@ interface LineProps {
   threads: readonly string[];
   drafts: readonly DraftRow[];
   findings: readonly FindingRow[];
+  /** A question asked about this very line, until opened or dismissed. */
+  lineAsk: LineAsk | undefined;
   /** Only set when the composer is open on this very line. */
   composer: ComposerState | null;
   /** Only set when the symbol peek is pinned to this very line. */
@@ -1677,6 +1689,7 @@ const Line = memo(function Line(props: LineProps) {
     threads,
     drafts,
     findings,
+    lineAsk,
     composer,
     peek,
     actions,
@@ -1689,7 +1702,7 @@ const Line = memo(function Line(props: LineProps) {
   return (
     <>
       <div
-        className={`ln t-${l.kind}`}
+        className={`ln t-${l.kind}${lineAsk?.status === 'asking' ? ' ln-asking' : ''}`}
         onClick={(e) => {
           if (!(e.metaKey || e.ctrlKey)) return;
           const name = symbolAt(e);
@@ -1765,13 +1778,11 @@ const Line = memo(function Line(props: LineProps) {
                 aria-label="ask AI about this line"
                 className="h-5 min-w-5 w-5 rounded-xl text-xs"
                 onPress={() =>
-                  void ask(store, {
+                  void askAboutLine(store, {
                     pr,
                     question: `explain ${path}:${lineNo}`,
-                    about: anchor,
-                    group: null,
-                    agent: null,
-                  }).catch(() => {})
+                    anchor,
+                  })
                 }
               >
                 <Sparkles className="size-3" />
@@ -1780,7 +1791,11 @@ const Line = memo(function Line(props: LineProps) {
           )}
         </span>
       </div>
-      {(threads.length > 0 || drafts.length > 0 || composer || peek) && (
+      {(threads.length > 0 ||
+        drafts.length > 0 ||
+        lineAsk ||
+        composer ||
+        peek) && (
         <div className="flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
           {peek && (
             <SymbolPeek
@@ -1793,6 +1808,17 @@ const Line = memo(function Line(props: LineProps) {
               diffPaths={actions.diffPaths}
               findHunk={actions.findHunk}
               onClose={() => actions.setPeek(null)}
+            />
+          )}
+          {lineAsk && (
+            <LineAskChip
+              askKey={lineAskKey(
+                pr,
+                path,
+                lineAsk.anchor.side,
+                lineAsk.anchor.line,
+              )}
+              a={lineAsk}
             />
           )}
           {threads.map((id) => (
@@ -1815,6 +1841,67 @@ const Line = memo(function Line(props: LineProps) {
     </>
   );
 });
+
+/** A line ask's progress on the line itself: "Asking…" while it runs,
+ *  then "Answered · View" or "Failed · Retry" until opened or dismissed. */
+function LineAskChip({ askKey, a }: { askKey: string; a: LineAsk }) {
+  const store = useRootStore();
+  const tone =
+    a.status === 'failed'
+      ? 'border-danger/40 text-danger'
+      : a.status === 'answered'
+        ? 'border-success/40 text-success'
+        : 'border-accent/40 text-accent';
+  return (
+    <div
+      className={`line-ask line-ask-${a.status} inline-flex h-7 w-fit items-center gap-1 rounded-full border bg-surface pl-2.5 pr-1 text-xs ${tone}`}
+      role="status"
+    >
+      {a.status === 'asking' ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5"
+          onClick={() => openLineAnswer(store, askKey)}
+        >
+          <Spinner />
+          <span className="shimmer-text">
+            Asking <span className="font-mono">{a.agent}</span>…
+          </span>
+        </button>
+      ) : a.status === 'answered' ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5"
+          onClick={() => openLineAnswer(store, askKey)}
+        >
+          <Check className="size-3.5" />
+          <span>
+            Answered · <span className="underline">View</span>
+          </span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5"
+          onClick={() => void askAboutLine(store, a)}
+        >
+          <CircleExclamation className="size-3.5" />
+          <span>
+            Failed · <span className="underline">Retry</span>
+          </span>
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label={a.status === 'asking' ? 'Stop' : 'Dismiss'}
+        className="grid size-5 place-items-center rounded-full text-muted hover:bg-default"
+        onClick={() => dismissLineAsk(store, askKey)}
+      >
+        <Xmark className="size-3" />
+      </button>
+    </div>
+  );
+}
 
 const NextGroup = observer(NextGroupInner);
 const FileBlock = observer(FileBlockInner);

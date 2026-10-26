@@ -56,6 +56,10 @@ pub struct AgentRequest {
     pub mode: AgentMode,
     pub mcp: Option<McpEndpoint>,
     pub model: Option<String>,
+    /// How hard the agent thinks (`low` … `max`). Only Claude Code takes it
+    /// (`--effort`); the other runners ignore it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// No output for this long → `AgentEvent::Stalled`.
     pub stall_after_ms: u64,
     /// Added to the child's environment after Theodore's own `THEODORE_*`
@@ -63,6 +67,11 @@ pub struct AgentRequest {
     /// variables (docs/config.md).
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// The CLI may also load the user's own MCP servers (Claude Code's
+    /// `~/.claude.json`, the repo's `.mcp.json`, claude.ai connectors) next
+    /// to `mcp`: the `agents.user_mcp` setting. `false` = only `mcp`.
+    #[serde(default)]
+    pub user_mcp: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -313,8 +313,11 @@ async fn drive_fix_run(
         mode: AgentMode::Edit,
         mcp: mcp.clone(),
         model: None,
+        effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
+        // Spaces only (issue #16): a fix stays on Theodore's tools.
+        user_mcp: false,
     };
     let _guard = ToolsGuard { core, mcp };
 

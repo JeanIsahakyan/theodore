@@ -193,6 +193,8 @@ local folder:  Merge locally  ·  Keep as branch
 - A turn that ends while the window is in the background sends a system notification
   (`spaces.notify`); clicking it opens the space. The dock badge counts spaces waiting on you.
 - Archive any time, or automatically `spaces.auto_archive_days` after shipping.
+- A space's agent also gets your own Claude Code MCP servers (Linear, GitHub…, claude.ai connectors);
+  Settings → Agents → **Allow my Claude MCP servers in spaces** turns that off. Reviews never get them.
 - On for everyone; Settings → Spaces turns them off (the `labs.build_mode` setting). Design:
   `docs/spaces.md`.
 
@@ -320,8 +322,8 @@ cargo tauri build
 
 Auth:
 - GitHub tries, in order: a keychain token, `gh auth token`, `GITHUB_TOKEN`, then the "Sign in with
-  GitHub" OAuth device flow once `THEODORE_GITHUB_CLIENT_ID` (or the `host.github.client_id`
-  setting) is set.
+  GitHub" OAuth device flow (no token to paste). Release builds have the OAuth App's client id
+  compiled in; `THEODORE_GITHUB_CLIENT_ID` or the `host.github.client_id` setting override it.
 - GitLab and Bitbucket (once on in Settings → Labs) take a pasted token or app password
   (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`); no device flow for those yet.
 

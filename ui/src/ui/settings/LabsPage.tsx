@@ -18,6 +18,9 @@ export const LabsPage = observer(function LabsPage() {
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-sm font-medium">{lab.title}</span>
             <span className="text-xs text-muted">{lab.text}</span>
+            {'note' in lab && (
+              <span className="text-xs text-muted">{lab.note}</span>
+            )}
           </div>
           <Switch
             size="sm"

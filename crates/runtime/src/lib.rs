@@ -257,11 +257,14 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
     let claude_home = skills_dir(cfg.sandbox.is_some(), &cfg.data_dir, dirs::home_dir());
 
     let worktree_locks = WorktreeLocks::new();
+    // Every run, grouping included, gets the per-agent model/effort settings.
+    let agents: Arc<dyn theodore_ports::AgentPort> =
+        Arc::new(theodore_app::AgentDefaults::new(a.agents, a.store.clone()));
     let deps = Deps {
         host: a.host,
         git: a.git.clone(),
-        grouper: Arc::new(GroupingGrouper::new(a.agents.clone())),
-        agents: a.agents,
+        grouper: Arc::new(GroupingGrouper::new(agents.clone())),
+        agents,
         store: a.store.clone(),
         secrets: a.secrets,
         clock: a.clock,
