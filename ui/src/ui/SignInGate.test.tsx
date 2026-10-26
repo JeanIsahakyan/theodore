@@ -101,6 +101,38 @@ describe('App behind the account gate', () => {
     );
   });
 
+  it('offers the restart into an installed update over the sign-in', async () => {
+    store.ui.finishOnboarding();
+    await setAccount(signedOut);
+    store.ephemeral.setAppInfo({
+      version: '0.1.0',
+      channel: 'stable',
+      update: null,
+      commit: 'abc',
+      build_env: 'production',
+      built_at: 0,
+    });
+    await act(async () => store.start());
+    await render();
+    expect(host.querySelector('.update-ready')).toBeNull();
+    transport.onCall('install_update', () => null);
+    await act(async () =>
+      transport.emit('update', {
+        version: '0.1.1',
+        notes: '',
+        downloaded: true,
+      }),
+    );
+    const pill = host.querySelector('.update-ready');
+    expect(pill?.textContent).toContain('0.1.1');
+    await act(async () => {
+      buttons()
+        .find((b) => /restart to update/i.test(b.textContent ?? ''))
+        ?.click();
+    });
+    expect(called('install_update')).toBe(true);
+  });
+
   it('says so when the session ended', async () => {
     store.ui.finishOnboarding();
     await setAccount({ ...signedOut, session_ended: true });

@@ -96,12 +96,16 @@ pub async fn check<R: Runtime>(
         .await
         .map_err(|e| format!("couldn't check for updates: {e}"))?
     else {
+        tracing::info!(channel, "updater: up to date");
         return Ok(None);
     };
+    tracing::info!(channel, version = %update.version, "updater: downloading");
     update
         .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|e| format!("download or signature check failed: {e}"))?;
+    // On disk now; this process keeps running the old build until a restart.
+    tracing::info!(version = %update.version, "updater: installed, restart to apply");
 
     let info = UpdateInfo {
         version: update.version.clone(),

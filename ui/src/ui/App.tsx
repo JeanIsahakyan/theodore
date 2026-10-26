@@ -22,6 +22,7 @@ import { TabBar } from './TabBar';
 import { Tasks } from './Tasks';
 import { Onboarding } from './Onboarding';
 import { SignInGate } from './AccountCard';
+import { UpdateReady } from './shell/UpdateReady';
 import { appView } from '../core/accountGate';
 import { StatusBanners } from './shell/StatusBanners';
 import { isBuildMode } from './space/mode';
@@ -151,6 +152,7 @@ export const App = observer(function App() {
     return (
       <>
         {view === 'onboarding' ? <Onboarding /> : <SignInGate />}
+        <UpdateReady />
         <GateModals />
         <Toast.Provider placement="bottom end" maxVisibleToasts={3} />
       </>
@@ -199,7 +201,8 @@ export const App = observer(function App() {
           </div>
           {/* Floats above the hint bar: a banner appearing or clearing
               never moves the page, and never covers the header. */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-14 z-30 flex justify-center px-4 [&>*]:pointer-events-auto">
+          <div className="pointer-events-none absolute inset-x-0 bottom-14 z-30 flex flex-col items-center gap-2 px-4 [&>*]:pointer-events-auto">
+            <UpdateReady inline />
             <StatusBanners />
           </div>
         </Surface>

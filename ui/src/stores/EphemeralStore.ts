@@ -15,11 +15,12 @@ import type {
   AppInfo,
   CommentId,
   Ephemeral,
-  PrId,
   Person,
+  PrId,
   SandboxInfo,
   SpaceLogLine,
   ToastLevel,
+  UpdateInfo,
 } from '../gen/contract';
 import { appendLogs, seedLogs } from '../ui/space/commands';
 import { configPrToast } from '../ui/project/configFile';
@@ -184,6 +185,19 @@ export class EphemeralStore {
     runInAction(() => {
       this.appInfo = info;
     });
+  }
+
+  /** An update the shell downloaded since launch (its `update` event). */
+  setUpdate(update: UpdateInfo): void {
+    runInAction(() => {
+      if (this.appInfo) this.appInfo = { ...this.appInfo, update };
+    });
+  }
+
+  /** Installed on disk, waiting for a restart into it. */
+  get readyUpdate(): UpdateInfo | null {
+    const u = this.appInfo?.update;
+    return u?.downloaded ? u : null;
   }
 
   /** Set only when this window runs against the sandbox host. */

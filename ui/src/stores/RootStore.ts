@@ -1,7 +1,7 @@
 import { getTransport } from '../core/transport';
 import { resourceCache, type ResourceCache } from '../core/resource';
 import { SyncClient, modelAccessors, type ModelAccessors } from '../sync';
-import type { Ephemeral, Revision } from '../gen/contract';
+import type { Ephemeral, Revision, UpdateInfo } from '../gen/contract';
 import { reaction } from 'mobx';
 import { loadAccount, loadAppInfo, loadViewer } from '../actions';
 import { windowTitle } from '../ui/sandbox/sandbox';
@@ -28,6 +28,7 @@ export class RootStore {
   readonly files: ResourceCache<string | null> = resourceCache({ limit: 500 });
 
   private unlistenEphemeral: (() => void) | undefined;
+  private unlistenUpdate: (() => void) | undefined;
   private disposeTitle: (() => void) | undefined;
   private disposeViewerRetry: (() => void) | undefined;
   private disposeGoneWorkspace: (() => void) | undefined;
@@ -44,6 +45,11 @@ export class RootStore {
     this.unlistenEphemeral = await getTransport().listen<Ephemeral>(
       'ephemeral',
       (e) => this.ephemeral.handle(e),
+    );
+    // The shell downloaded and installed an update: offer the restart.
+    this.unlistenUpdate = await getTransport().listen<UpdateInfo>(
+      'update',
+      (u) => this.ephemeral.setUpdate(u),
     );
     // `[SANDBOX] ` in front of the window title while in sandbox mode.
     this.disposeTitle = reaction(
@@ -95,6 +101,7 @@ export class RootStore {
   dispose(): void {
     this.sync.dispose();
     this.unlistenEphemeral?.();
+    this.unlistenUpdate?.();
     this.disposeTitle?.();
     this.disposeViewerRetry?.();
     this.disposeGoneWorkspace?.();
