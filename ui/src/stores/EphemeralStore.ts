@@ -6,18 +6,22 @@ import {
   computed,
   makeObservable,
   observable,
+  type ObservableMap,
   observableRef,
   observableShallow,
   runInAction,
 } from 'mobx';
 import type {
   AccountStatus,
+  AgentId,
+  Anchor,
   AppInfo,
   CommentId,
   Ephemeral,
   Person,
   PrId,
   SandboxInfo,
+  Side,
   SpaceLogLine,
   ToastLevel,
   UpdateInfo,
@@ -43,6 +47,38 @@ export interface Toast {
    *  toast (a function can't cross the wire). */
   action?: ToastAction;
 }
+
+/** A question asked about one diff line, shown on the line itself while it
+ *  runs and until its answer is opened or dismissed. */
+export interface LineAsk {
+  pr: PrId;
+  anchor: Anchor;
+  question: string;
+  /** Who is (likely) answering: the `agents.chat` guess until the reply
+   *  lands, then the reply's author. */
+  agent: AgentId;
+  status: 'asking' | 'answered' | 'failed';
+  /** The question's chat message id, once `ask` returns it. */
+  message: string | null;
+  /** The reply's chat message id, once it lands. */
+  reply: string | null;
+}
+
+/** What the AI panel should bring into view: a chat message, or the
+ *  bottom of the chat (`message: null`, a question not yet stored). `seq`
+ *  makes asking for the same target twice still count. */
+export interface AskFocus {
+  pr: PrId;
+  message: string | null;
+  seq: number;
+}
+
+export const lineAskKey = (
+  pr: PrId,
+  path: string,
+  side: Side,
+  line: number,
+): string => `${pr}\u0000${path}\u0000${side}\u0000${line}`;
 
 export interface HostStatus {
   online: boolean;
@@ -91,8 +127,16 @@ export class EphemeralStore {
    *  id: live `space_log` events, seeded from `space_logs` when its page
    *  opens. Bounded (`SPACE_LOG_LIMIT`). */
   spaceLogs = new Map<string, SpaceLogLine[]>();
+  /** Line asks by `lineAskKey` — an observable map, so a line reading its
+   *  own key re-renders only when that key changes. */
+  readonly lineAsks: ObservableMap<string, LineAsk> = observable.map(
+    {},
+    { deep: false },
+  );
+  askFocus: AskFocus | null = null;
 
   private nextToastId = 1;
+  private nextFocusSeq = 1;
 
   constructor() {
     makeObservable(this, {
@@ -113,6 +157,52 @@ export class EphemeralStore {
       reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
       spaceLogs: observableShallow,
+      askFocus: observableRef,
+    });
+  }
+
+  lineAskAt(
+    pr: PrId,
+    path: string,
+    side: Side,
+    line: number,
+  ): LineAsk | undefined {
+    return this.lineAsks.get(lineAskKey(pr, path, side, line));
+  }
+
+  setLineAsk(key: string, ask: LineAsk): void {
+    runInAction(() => {
+      this.lineAsks.set(key, ask);
+    });
+  }
+
+  /** Merges into the ask at `key`, if it is still there. */
+  patchLineAsk(key: string, patch: Partial<LineAsk>): void {
+    const cur = this.lineAsks.get(key);
+    if (!cur) return;
+    runInAction(() => {
+      this.lineAsks.set(key, { ...cur, ...patch });
+    });
+  }
+
+  clearLineAsk(key: string): void {
+    runInAction(() => {
+      this.lineAsks.delete(key);
+    });
+  }
+
+  /** Asks the AI panel to show `message` (or the chat's bottom). */
+  focusAsk(pr: PrId, message: string | null): void {
+    runInAction(() => {
+      this.askFocus = { pr, message, seq: this.nextFocusSeq++ };
+    });
+  }
+
+  /** The panel brought `seq` into view; a later mount won't again. */
+  consumeAskFocus(seq: number): void {
+    if (this.askFocus?.seq !== seq) return;
+    runInAction(() => {
+      this.askFocus = null;
     });
   }
 
