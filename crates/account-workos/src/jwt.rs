@@ -120,11 +120,20 @@ pub fn check_claims(
     now_secs: i64,
 ) -> AccountResult<()> {
     let trim = |s: &str| s.trim_end_matches('/').to_string();
-    // AuthKit access tokens name the client in the issuer:
-    // `https://api.workos.com/user_management/<client_id>`.
+    // AuthKit access tokens name a client in the issuer:
+    // `https://api.workos.com/user_management/<client_id>`. It is the
+    // environment's own client id, which differs from the app's when the
+    // app signs in through one of the environment's Applications. The
+    // signature (keys fetched for the app's client id) already ties the
+    // token to the environment, so any client id is accepted here.
     let accepted = |iss: &str| {
+        let iss = trim(iss);
         issuers.iter().any(|i| {
-            trim(i) == trim(iss) || format!("{}/user_management/{client_id}", trim(i)) == trim(iss)
+            let i = trim(i);
+            iss == i
+                || iss
+                    .strip_prefix(&format!("{i}/user_management/"))
+                    .is_some_and(|c| c.starts_with("client_") && !c.contains('/'))
         })
     };
     match &claims.iss {
@@ -138,8 +147,15 @@ pub fn check_claims(
     if claims.exp + LEEWAY_SECS < now_secs {
         return Err(AccountError::InvalidToken("token expired".into()));
     }
+    // `client_id`, when present, is the app's or the one the issuer names.
+    let issuer_client = claims.iss.as_deref().and_then(|i| {
+        trim(i)
+            .rsplit_once("/user_management/")
+            .map(|(_, c)| c.to_string())
+    });
     if let Some(cid) = &claims.client_id
         && cid != client_id
+        && Some(cid) != issuer_client.as_ref()
     {
         return Err(AccountError::InvalidToken(format!(
             "token is for client {cid:?}"
@@ -296,16 +312,21 @@ mod tests {
     }
 
     #[test]
-    fn accepts_the_user_management_issuer_of_this_client() {
-        let mut c = claims();
-        c["iss"] = json!("https://api.workos.com/user_management/client_1");
-        let t = token(&c);
-        let parsed = parse(&t).unwrap();
-        check_claims(&parsed.claims, &issuers(), "client_1", "user_1", NOW).unwrap();
-
-        c["iss"] = json!("https://api.workos.com/user_management/client_2");
-        let t = token(&c);
-        let parsed = parse(&t).unwrap();
-        assert!(check_claims(&parsed.claims, &issuers(), "client_1", "user_1", NOW).is_err());
+    fn accepts_a_user_management_issuer_naming_any_client_of_the_origin() {
+        let check = |iss: &str| {
+            let mut c = claims();
+            c["iss"] = json!(iss);
+            let t = token(&c);
+            let parsed = parse(&t).unwrap();
+            check_claims(&parsed.claims, &issuers(), "client_1", "user_1", NOW)
+        };
+        check("https://api.workos.com/user_management/client_1").unwrap();
+        // The environment's client id, when the app signs in through one of
+        // its Applications under another id.
+        check("https://api.workos.com/user_management/client_01ENV").unwrap();
+        assert!(check("https://api.workos.com/user_management/").is_err());
+        assert!(check("https://api.workos.com/user_management/client_1/x").is_err());
+        assert!(check("https://api.workos.com/user_management/user_1").is_err());
+        assert!(check("https://evil.example/user_management/client_1").is_err());
     }
 }
