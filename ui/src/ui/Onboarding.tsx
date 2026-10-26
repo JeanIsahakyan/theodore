@@ -243,7 +243,8 @@ export const Onboarding = observer(function Onboarding() {
               <Spinner />
             </div>
           )}
-          {stepsKnown && step === 0 && (
+          {/* The sign-in is its own first step: no pitch above it. */}
+          {stepsKnown && step === 0 && id !== 'account' && (
             <div className="onb-welcome flex flex-col gap-0.5 pb-2">
               <span className="text-lg font-semibold">
                 Review pull requests by meaning, not by file order.
