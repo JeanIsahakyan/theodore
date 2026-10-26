@@ -22,6 +22,12 @@ import { AgentMenu } from '../AgentMenu';
 import { isAgentEnabled } from '../Settings';
 import { K } from '../bits';
 import { SkillMenu, matchSkills, skillMenuKey } from '../SkillMenu';
+import {
+  AttachButton,
+  AttachmentStrip,
+  fileHandlers,
+  type Attachments,
+} from '../attachments';
 
 export function Composer({
   value,
@@ -37,6 +43,7 @@ export function Composer({
   submit,
   inputRef,
   skills,
+  attachments,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -56,8 +63,12 @@ export function Composer({
   /** Offered after `/` (and on the `/` button): picking one puts
    *  `/skill ` in the box, to send as is or with a task after it. */
   skills?: SkillInfo[];
+  /** Files for the next message (📎, paste, drop). */
+  attachments?: Attachments;
 }) {
-  const empty = !value.trim();
+  const empty =
+    (!value.trim() && !attachments?.ids.length) || !!attachments?.busy;
+  const files = attachments ? fileHandlers(attachments.add) : null;
   const own = useRef<HTMLTextAreaElement | null>(null);
   const matches = skills ? matchSkills(skills, value) : null;
   // The highlighted skill, back to the first whenever the text changes.
@@ -74,7 +85,11 @@ export function Composer({
     assignRef(inputRef, el);
   };
   return (
-    <div className="flex w-full flex-col gap-2">
+    <div
+      className="flex w-full flex-col gap-2"
+      onDragOver={files?.onDragOver}
+      onDrop={files?.onDrop}
+    >
       {matches && matches.length > 0 && (
         <SkillMenu
           matches={matches}
@@ -96,8 +111,10 @@ export function Composer({
           fullWidth
           className="flex h-auto flex-col gap-2 rounded-3xl py-3 focus-within:border-separator focus-within:ring-0 data-[focus-within=true]:ring-0"
         >
+          {attachments && <AttachmentStrip at={attachments} />}
           <InputGroup.TextArea
             ref={ref}
+            onPaste={files?.onPaste}
             rows={rows}
             autoFocus={autoFocus}
             style={{ minHeight: `${rows * 1.625}em` }}
@@ -122,6 +139,9 @@ export function Composer({
             }}
           />
           <InputGroup.Suffix className="flex w-full items-center gap-1.5 px-2.5 py-0">
+            {attachments && (
+              <AttachButton onFiles={attachments.add} isDisabled={disabled} />
+            )}
             {skills && (
               <Tooltip>
                 <Button

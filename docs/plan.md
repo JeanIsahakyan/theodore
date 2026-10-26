@@ -783,7 +783,7 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
   only what the worktree cannot give (PR context, groups, base files, findings).
 - Env: Theodore's own secrets are removed from the child env; the agent's own
   auth variables (e.g. `ANTHROPIC_API_KEY`) are passed through.
-- Permissions: review runs are read-only (tool allowlist: read, grep, MCP).
+- Permissions: review runs are read-only: reading, skills, subagents, todos, the web and MCP, as in Claude Code itself, but no writes and no commands (`Bash`, `Edit`, `Write` denied), so nothing reaches the PR without you.
   Fix runs may edit, only inside the PR worktree.
 - The user's own MCP servers (`agents.user_mcp`, on by default, issue #16),
   in **spaces only** — review runs (grouping, chat, skills, fixes) never
@@ -813,6 +813,9 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 - A skill can run on several agents in parallel; findings merge (§4).
 - Chat: questions about the PR, a group, or a line; replies stream as ephemeral
   events and are stored when complete.
+- Attachments: a question can carry files (images, PDFs, anything), same as
+  a space's chat (docs/spaces.md "Attachments"). The stored question keeps
+  them; the agent gets their paths listed after the question.
 - Cost: the app neither shows nor limits what agent runs cost (budgets and
   the spend display were dropped by the owner, 2026-10-22). The eval
   harness (`theodore eval`) still reports cost per grouping run.

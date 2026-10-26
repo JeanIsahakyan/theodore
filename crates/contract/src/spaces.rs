@@ -123,8 +123,23 @@ pub struct Space {
     /// "Not now" to the repo's commands: they are skipped in this space.
     #[serde(default)]
     pub commands_denied: bool,
+    /// The agent session the last turn ran in: the next turn with the same
+    /// agent continues it instead of replaying the transcript.
+    #[serde(default)]
+    pub agent_session: Option<AgentSession>,
     pub created_at: Millis,
     pub updated_at: Millis,
+}
+
+/// One agent CLI session a space's turns continue (docs/spaces.md §5
+/// "One session per space"): Claude Code's session id, Codex's thread id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct AgentSession {
+    pub agent: AgentId,
+    pub id: String,
+    /// The worktree it ran in. Claude Code keeps sessions per directory, so
+    /// one from another path can't be resumed.
+    pub cwd: String,
 }
 
 /// One agent turn of a space: the messages it answered and the checkpoint
@@ -179,6 +194,9 @@ pub struct SpaceSendRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub mode: Option<SpaceMode>,
+    /// `save_attachment` ids sent with the message.
+    #[serde(default)]
+    pub attachments: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

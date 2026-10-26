@@ -12,6 +12,7 @@ import type {
   AgentStatus,
   AppInfo,
   AskRequest,
+  Attachment,
   BlobResponse,
   Bootstrap,
   BootstrapScope,
@@ -58,6 +59,7 @@ import type {
   ResolveRequest,
   ReviewersRequest,
   RunSkillRequest,
+  SaveAttachmentRequest,
   SandboxFaultRequest,
   SandboxStatus,
   CreateSpaceRequest,
@@ -184,6 +186,11 @@ export const api = {
   regroup: (pr: PrId) => call<null>('regroup', { pr }),
   runSkill: (req: RunSkillRequest) => call<string>('run_skill', { req }),
   ask: (req: AskRequest) => call<string>('ask', { req }),
+  /** Saves a file for a chat message; its `id` goes in `attachments`. */
+  saveAttachment: (req: SaveAttachmentRequest) =>
+    call<Attachment>('save_attachment', { req }),
+  /** A saved attachment as a `data:<mime>;base64,…` URL. */
+  attachmentData: (id: string) => call<string>('attachment_data', { id }),
   cancelRun: (run: string) => call<null>('cancel_run', { run }),
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),

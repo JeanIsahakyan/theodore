@@ -63,11 +63,18 @@ import {
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import type { LineAsk } from '../stores/EphemeralStore';
-import { rich } from '../highlight';
+import { Md, rich } from '../highlight';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
 import { AgentMenu } from './AgentMenu';
 import { SkillMenu, matchSkills, skillMenuKey } from './SkillMenu';
+import {
+  AttachButton,
+  AttachmentStrip,
+  MessageAttachments,
+  fileHandlers,
+  useAttachments,
+} from './attachments';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
 import { isAgentEnabled } from './Settings';
@@ -190,8 +197,8 @@ const LineAskBubble = observer(function LineAskBubble({
             </Alert.Content>
           </Alert>
         ) : text ? (
-          <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-            {rich(text)}
+          <div className="text-sm leading-relaxed">
+            <Md text={text} />
           </div>
         ) : (
           <Dots />
@@ -505,8 +512,8 @@ const SkillRunView = observer(function SkillRunView({
         )}
       </div>
       {live && liveText && (
-        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-          {rich(liveText)}
+        <div className="text-sm leading-relaxed">
+          <Md text={liveText} />
         </div>
       )}
       {(r.status === 'failed' || r.status === 'stalled') && (
@@ -815,6 +822,8 @@ const AgentFailedCard = observer(function AgentFailedCard({
 const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const [text, setText] = useState('');
+  const files = useAttachments();
+  const drop = fileHandlers(files.add);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillAgents, setSkillAgents] = useState<AgentId[]>(AGENTS);
   const [installed, setInstalled] = useState<AgentId[] | null>(null);
@@ -907,7 +916,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
 
   const send = () => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || files.busy) return;
     if (matches && matches[hi]) {
       runMatch(matches[hi]!);
       return;
@@ -923,10 +932,12 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         about: null,
         group: null,
         agent,
+        attachments: files.ids.length ? files.ids : null,
       })
-        .then((id) =>
-          setPending({ run: askRunId(id), startedAt, question: t, agent }),
-        )
+        .then((id) => {
+          files.clear();
+          setPending({ run: askRunId(id), startedAt, question: t, agent });
+        })
         .catch(() => {});
     }
     setText('');
@@ -1010,8 +1021,14 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                       data-msg={m.id}
                       className="msg user flex justify-end"
                     >
-                      <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-surface px-4 py-2 text-sm">
-                        {rich(m.text)}
+                      <div className="flex max-w-[85%] flex-col items-end gap-1.5">
+                        <MessageAttachments
+                          attachments={m.attachments}
+                          align="end"
+                        />
+                        <div className="rich whitespace-pre-wrap rounded-3xl bg-surface px-4 py-2 text-sm">
+                          {rich(m.text)}
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -1026,8 +1043,8 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                           <AgentFailedCard pr={pr} m={m} messages={messages} />
                         ) : (
                           <>
-                            <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                              {rich(m.text)}
+                            <div className="text-sm leading-relaxed">
+                              <Md text={m.text} />
                             </div>
                             {m.refs.length > 0 && (
                               <div className="flex flex-wrap gap-1.5">
@@ -1081,8 +1098,10 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                           </Alert.Content>
                         </Alert>
                       ) : store.ephemeral.agentText.get(pending.run) ? (
-                        <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                          {rich(store.ephemeral.agentText.get(pending.run)!)}
+                        <div className="text-sm leading-relaxed">
+                          <Md
+                            text={store.ephemeral.agentText.get(pending.run)!}
+                          />
                         </div>
                       ) : (
                         <Dots />
@@ -1148,7 +1167,11 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         <div ref={end} />
       </div>
 
-      <div className="chat-input flex flex-col gap-2.5 px-4 pb-3 pt-1">
+      <div
+        className="chat-input flex flex-col gap-2.5 px-4 pb-3 pt-1"
+        onDragOver={drop.onDragOver}
+        onDrop={drop.onDrop}
+      >
         {matches && matches.length > 0 && (
           <SkillMenu
             matches={matches}
@@ -1183,9 +1206,11 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
             fullWidth
             className="flex flex-col gap-2 rounded-3xl py-2.5"
           >
+            <AttachmentStrip at={files} />
             <InputGroup.TextArea
               ref={inputRef}
               rows={2}
+              onPaste={drop.onPaste}
               className="w-full resize-none px-4 py-0"
               placeholder="Ask about the code, or / to run a skill"
               onKeyDown={(e) => {
@@ -1203,6 +1228,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
               }}
             />
             <InputGroup.Suffix className="flex w-full items-center gap-1.5 px-2.5 py-0">
+              <AttachButton onFiles={files.add} />
               <Tooltip>
                 <Button
                   isIconOnly

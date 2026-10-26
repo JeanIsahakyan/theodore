@@ -24,8 +24,29 @@ use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
 use crate::config::AgentBinaryConfig;
 use crate::process::LineParser;
 
+/// `codex exec [flags] <prompt>`, or with `req.resume`
+/// `codex exec [flags] resume [-i …] <thread id> <prompt>`: `-C`, `-s`, `-c`
+/// and `-m` are `exec`'s own and go before `resume` (0.156.1 resumes a
+/// thread with them there; `resume`'s own `-i` takes one value).
 pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     let mut args = vec!["exec".to_string(), "--json".to_string()];
+    // Images go to the model with the prompt; other attachments are only
+    // listed in it (the sandbox reads outside the workspace). Before `-C`:
+    // `-i` takes several values, so a flag must follow it, never the prompt.
+    // It also splits on `,`, so a path with one is left to the prompt.
+    let images: Vec<String> = req
+        .attachments
+        .iter()
+        .map(|a| (a, a.path.display().to_string()))
+        .filter(|(a, path)| a.mime.starts_with("image/") && !path.contains(','))
+        .map(|(_, path)| path)
+        .collect();
+    if req.resume.is_none() {
+        for path in &images {
+            args.push("-i".to_string());
+            args.push(path.clone());
+        }
+    }
     args.push("-C".to_string());
     args.push(req.cwd.display().to_string());
     args.push("-s".to_string());
@@ -66,6 +87,18 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         None => {}
     }
     args.extend(cfg.extra_args.iter().cloned());
+    if let Some(thread) = &req.resume {
+        // The thread already opens with the system prompt (folded into its
+        // first turn, below): only the new turn goes in.
+        args.push("resume".to_string());
+        for path in images {
+            args.push("-i".to_string());
+            args.push(path);
+        }
+        args.push(thread.clone());
+        args.push(req.prompt.clone());
+        return args;
+    }
     // Codex exec has no --append-system-prompt; fold it into the prompt text.
     let prompt = match &req.system {
         Some(system) => format!("{system}\n\n{}", req.prompt),
@@ -129,10 +162,18 @@ pub fn parse_line(line: &str, last_agent_message: &mut String) -> Vec<AgentEvent
                 stderr_tail: String::new(),
             }]
         }
+        // A new thread or a resumed one: its id is what `exec resume` takes.
+        Some("thread.started") => v
+            .get("thread_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(|id| AgentEvent::Session { id: id.to_string() })
+            .into_iter()
+            .collect(),
         // Top-level `error` events are transport-level retries (seen live:
         // repeated reconnect attempts before the real `turn.failed`); never
         // terminal on their own.
-        Some("thread.started") | Some("turn.started") | Some("error") => vec![],
+        Some("turn.started") | Some("error") => vec![],
         _ => vec![],
     }
 }
@@ -294,11 +335,12 @@ mod tests {
     }
 
     #[test]
-    fn thread_and_turn_started_are_ignored() {
+    fn thread_started_reports_the_session_and_turn_started_is_ignored() {
         assert_eq!(
             line(r#"{"type":"thread.started","thread_id":"abc"}"#),
-            vec![]
+            vec![AgentEvent::Session { id: "abc".into() }]
         );
+        assert_eq!(line(r#"{"type":"thread.started"}"#), vec![]);
         assert_eq!(line(r#"{"type":"turn.started"}"#), vec![]);
     }
 
@@ -410,6 +452,8 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
@@ -437,6 +481,8 @@ mod model_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         }
     }
 
@@ -472,5 +518,79 @@ mod model_tests {
                 "{bad}: {args:?}"
             );
         }
+    }
+
+    /// `exec resume <thread> <prompt>` after `exec`'s own flags; images on
+    /// `resume`, and no system prompt: the thread already opens with it.
+    #[test]
+    fn a_resumed_turn_continues_the_thread_with_only_the_new_prompt() {
+        let mut r = req(Some("some-model"), Some("high"));
+        r.mode = AgentMode::Run;
+        r.system = Some("SYSTEM".into());
+        r.resume = Some("thread-1".into());
+        r.attachments = vec![theodore_ports::AgentAttachment {
+            path: "/data/attachments/a/shot.png".into(),
+            mime: "image/png".into(),
+        }];
+        let args = build_args(&r, &Default::default());
+        let at = args.iter().position(|a| a == "resume").expect("resume");
+        let (exec, resume) = args.split_at(at);
+        for flag in ["-C", "-s", "-m", "-c"] {
+            assert!(
+                exec.iter().any(|a| a == flag),
+                "{flag} before resume: {args:?}"
+            );
+        }
+        assert!(!exec.iter().any(|a| a == "-i"), "{args:?}");
+        assert_eq!(
+            resume,
+            [
+                "resume",
+                "-i",
+                "/data/attachments/a/shot.png",
+                "thread-1",
+                "p"
+            ]
+        );
+        assert!(!args.iter().any(|a| a.contains("SYSTEM")), "{args:?}");
+    }
+
+    #[test]
+    fn a_new_turn_folds_the_system_prompt_in() {
+        let mut r = req(None, None);
+        r.system = Some("SYSTEM".into());
+        let args = build_args(&r, &Default::default());
+        assert!(!args.iter().any(|a| a == "resume"));
+        assert_eq!(args.last().map(String::as_str), Some("SYSTEM\n\np"));
+    }
+
+    #[test]
+    fn image_attachments_go_to_dash_i_before_the_other_flags() {
+        let mut r = req(None, None);
+        r.attachments = vec![
+            theodore_ports::AgentAttachment {
+                path: "/data/attachments/a/shot.png".into(),
+                mime: "image/png".into(),
+            },
+            theodore_ports::AgentAttachment {
+                path: "/data/attachments/b/spec.pdf".into(),
+                mime: "application/pdf".into(),
+            },
+            theodore_ports::AgentAttachment {
+                path: "/data/attachments/c/a,b.png".into(),
+                mime: "image/png".into(),
+            },
+        ];
+        let args = build_args(&r, &Default::default());
+        let images: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "-i")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(images, ["/data/attachments/a/shot.png"]);
+        // `-i` is variadic: what follows it must be a flag, not the prompt.
+        let at = args.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(args[at + 2], "-C");
+        assert_eq!(args.last().map(String::as_str), Some("p"));
     }
 }
