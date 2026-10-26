@@ -536,7 +536,32 @@ body.cmd .lines .src span:hover {
     filter: blur(8px);
   }
 }
+/* The switcher's logo while syncing: small, so the motion is louder than
+ * the welcome's — faster stripes, a band of light crossing the lenses in
+ * a loop, and the tile breathing. */
+.logo-busy {
+  animation: logo-breathe 1.6s ease-in-out infinite;
+}
+.logo-busy .welcome-stripes {
+  animation-duration: 1.2s;
+}
+.logo-busy .welcome-stripes-late {
+  animation-delay: -0.6s;
+}
+.logo-busy .welcome-glint {
+  animation: welcome-glint 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.logo-busy .welcome-glint-late {
+  animation-delay: 0.15s;
+}
+@keyframes logo-breathe {
+  50% {
+    transform: scale(0.88);
+    opacity: 0.85;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
+  .logo-busy,
   .welcome-stripes,
   .welcome-glint,
   .welcome-glow,
