@@ -6,6 +6,11 @@
 /* Only HeroUI's own tokens. One radius drives HeroUI's whole scale (sm…4xl). */
 :root {
   --radius: 0.25rem;
+  /* The window controls over the webview: their right and bottom edges. The
+     app sets both (apps/desktop/src/chrome.rs), 0 in full screen; these
+     defaults are for a browser. */
+  --controls-end: 78px;
+  --controls-bottom: 32px;
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', ui-monospace, Menlo, monospace;
   --diff-add: color-mix(in oklab, var(--success) 9%, transparent);
