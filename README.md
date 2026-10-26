@@ -320,8 +320,8 @@ cargo tauri build
 
 Auth:
 - GitHub tries, in order: a keychain token, `gh auth token`, `GITHUB_TOKEN`, then the "Sign in with
-  GitHub" OAuth device flow once `THEODORE_GITHUB_CLIENT_ID` (or the `host.github.client_id`
-  setting) is set.
+  GitHub" OAuth device flow (no token to paste). Release builds have the OAuth App's client id
+  compiled in; `THEODORE_GITHUB_CLIENT_ID` or the `host.github.client_id` setting override it.
 - GitLab and Bitbucket (once on in Settings → Labs) take a pasted token or app password
   (`GITLAB_TOKEN` / `BITBUCKET_TOKEN`); no device flow for those yet.
 

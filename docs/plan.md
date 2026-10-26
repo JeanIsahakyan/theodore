@@ -384,16 +384,17 @@ never in the webview.
 
 The "Sign in with GitHub" button (Onboarding and Settings → Account) runs
 GitHub's OAuth device flow — no pasted token, no `gh` required — but it needs
-an OAuth app's client id. Theodore never ships one; the owner creates a GitHub
-OAuth App (device flow enabled, no client secret needed) and configures its
-client id one of two ways, checked in this order:
+an OAuth app's client id. The owner's GitHub OAuth App (device flow enabled,
+no client secret needed) has its client id in the repo variable
+`THEODORE_GITHUB_CLIENT_ID`, compiled into every CI build. Checked in this
+order:
 
-1. The `THEODORE_GITHUB_CLIENT_ID` environment variable.
-2. The `host.github.client_id` setting (Settings → Account writes this
-   indirectly today only through `THEODORE_GITHUB_CLIENT_ID`; setting it
-   directly is a `transact` on the `setting` model, scope `user`).
+1. The `THEODORE_GITHUB_CLIENT_ID` environment variable at run time.
+2. The `host.github.client_id` setting (a `transact` on the `setting`
+   model, scope `user`).
+3. The client id compiled in (`option_env!`, from the build's environment).
 
-With neither set, `host_status`'s `device_login_available` is `false`, the
+With none set (a local dev build), `host_status`'s `device_login_available` is `false`, the
 button is hidden, and sign-in falls back to `gh`'s own login or a pasted
 token — nothing else about auth changes.
 

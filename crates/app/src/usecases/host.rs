@@ -15,6 +15,9 @@ use crate::error::{AppError, AppResult};
 /// a packaged build or a developer override the setting without touching
 /// the store. The owner creates the OAuth app; Theodore never ships one.
 const CLIENT_ID_ENV: &str = "THEODORE_GITHUB_CLIENT_ID";
+/// The GitHub OAuth App (device flow) a release is built with; public, so
+/// it is compiled in like the account's client id.
+const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("THEODORE_GITHUB_CLIENT_ID");
 const CLIENT_ID_SETTING: &str = "host.github.client_id";
 /// Requested once, at `login_start`: enough to read PRs, threads and
 /// checks, and to resolve team reviewers.
@@ -258,7 +261,8 @@ impl Core {
     }
 
     /// `THEODORE_GITHUB_CLIENT_ID`, else the `host.github.client_id`
-    /// setting; `None` when neither is set (plan "login").
+    /// setting, else the one compiled in; `None` when none is set (plan
+    /// "login").
     async fn github_client_id(&self) -> Option<String> {
         if let Ok(id) = std::env::var(CLIENT_ID_ENV)
             && !id.trim().is_empty()
@@ -266,7 +270,13 @@ impl Core {
             return Some(id);
         }
         let s = self.setting_string(CLIENT_ID_SETTING, "").await;
-        if s.trim().is_empty() { None } else { Some(s) }
+        if !s.trim().is_empty() {
+            return Some(s);
+        }
+        BUILT_IN_CLIENT_ID
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
     }
 
     fn token_source(&self) -> TokenSource {

@@ -319,7 +319,20 @@ export const Onboarding = observer(function Onboarding() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
+                  {/* The main way in: GitHub's device flow, no token to
+                      copy. Without it in this build, re-checking gh is. */}
+                  {deviceLogin.available && (
+                    <Button
+                      variant="primary"
+                      className="gh-device-login self-start"
+                      onPress={deviceLogin.start}
+                    >
+                      <LogoGithub className="size-4" />
+                      Sign in with GitHub
+                    </Button>
+                  )}
                   <Button
+                    variant={deviceLogin.available ? 'ghost' : 'primary'}
                     className="gh-connect self-start"
                     onPress={checkHost}
                     isPending={checking}
@@ -335,16 +348,11 @@ export const Onboarding = observer(function Onboarding() {
                       </>
                     )}
                   </Button>
-                  {deviceLogin.available && (
-                    <Button
-                      variant="ghost"
-                      className="gh-device-login self-start"
-                      onPress={deviceLogin.start}
-                    >
-                      <LogoGithub className="size-4" />
-                      Sign in with GitHub
-                    </Button>
-                  )}
+                  <span className="text-xs text-muted">
+                    Using the GitHub CLI? Run{' '}
+                    <code className="font-mono">gh auth login</code> in a
+                    terminal, then check again.
+                  </span>
                   <Button
                     variant="ghost"
                     className="self-start px-0 text-muted"
