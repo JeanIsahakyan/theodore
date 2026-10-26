@@ -206,7 +206,8 @@ local folder:  Merge locally  ·  Keep as branch
   you type, and saves it to the repo (a PR for a host project), your local file or the global one.
 
 ### Updates
-- Checks for a new build on launch and every 6 hours, on a stable or beta channel.
+- Checks for a new build on launch and every 6 hours: production builds on the stable (or beta)
+  channel, staging builds only on the staging one. Releases: GitHub Releases, from v0.1.0.
 - Restarts only once no agent is running and the outbox is empty.
 - No signed release has shipped yet — see **Not yet**.
 
@@ -402,7 +403,6 @@ Git hooks (`lefthook install` once per clone):
 
 ## Not yet
 
-- A first release: the updater key is in place, but nothing has been tagged and published yet.
 - Notarization and a Developer ID (the release workflow has the steps, no secrets yet); builds are
   ad-hoc signed.
 - Linux and Windows builds — macOS (Apple Silicon) only.

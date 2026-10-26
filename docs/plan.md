@@ -641,6 +641,13 @@ hide it.
 | API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
 | Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
 
+Accepted issuers: the API base itself, or `<API base>/user_management/client_…`
+with any client id. An app signing in through one of the environment's
+Applications gets tokens whose `iss` names the environment's client id, not
+the app's; the signature, checked with the keys fetched for the app's client
+id, is what ties the token to the environment. A `client_id` claim, when
+present, must be the app's or the one the issuer names.
+
 A configured redirect always wins. An `http` one must be on `127.0.0.1`,
 `[::1]` or `localhost`, with an explicit port; any other scheme is treated as
 the app's URL scheme, so only `theodore://callback` makes sense there. Port

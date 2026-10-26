@@ -155,6 +155,20 @@ hand-pushed tag only makes the next merge skip that version).
 
 - **Never re-tag a published release.** Ship a new patch instead.
 
+### A hotfix
+
+Same path, just quick: a fix plus a patch bump, from `main`.
+
+```
+git switch -c author/fix-x origin/main   # staging must already contain main
+fix, scripts/bump-version.sh 0.1.1, commit ──▶ PR into staging ──▶ staging build
+PR staging → main ──▶ release v0.1.1 ──▶ installed apps update on next launch / check
+```
+
+When `staging` equals `main` (nothing else in flight), both merges are
+fast-forwards; otherwise the PR into `main` carries whatever else `staging`
+holds, so ship that too or wait.
+
 ## Staging channel
 
 Every push to `staging` runs `.github/workflows/staging.yml`, which builds
