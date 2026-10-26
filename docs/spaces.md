@@ -328,7 +328,7 @@ config — files copied in, free ports, env, and `setup` / `run` / `check` /
 
 | Mode | The agent may | Port mapping |
 | --- | --- | --- |
-| Ask | read, grep, MCP; no writes | `AgentMode::ReadOnly` |
+| Ask | read, skills, subagents, todos, web, MCP; no writes or commands | `AgentMode::ReadOnly` |
 | Edit (default) | + edit files in the space | `AgentMode::Edit` |
 | Run | + any shell command (tests, installs), no prompts | `AgentMode::Run`: Claude `--permission-mode bypassPermissions`; Codex `workspace-write` with network access; Gemini `--approval-mode yolo`. No sandbox of Theodore's own (§12 #4) |
 

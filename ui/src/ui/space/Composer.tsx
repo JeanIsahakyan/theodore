@@ -66,7 +66,8 @@ export function Composer({
   /** Files for the next message (📎, paste, drop). */
   attachments?: Attachments;
 }) {
-  const empty = !value.trim() || !!attachments?.busy;
+  const empty =
+    (!value.trim() && !attachments?.ids.length) || !!attachments?.busy;
   const files = attachments ? fileHandlers(attachments.add) : null;
   const own = useRef<HTMLTextAreaElement | null>(null);
   const matches = skills ? matchSkills(skills, value) : null;

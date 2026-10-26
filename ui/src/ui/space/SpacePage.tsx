@@ -751,7 +751,8 @@ const SpaceChat = observer(function SpaceChat({
 
   const send = () => {
     const t = text.trim();
-    if (!t || run || files.busy || space.status === 'archived') return;
+    if ((!t && !files.ids.length) || run || files.busy) return;
+    if (space.status === 'archived') return;
     setText('');
     void api
       .spaceSend({

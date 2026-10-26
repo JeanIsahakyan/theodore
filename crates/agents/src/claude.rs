@@ -108,16 +108,16 @@ pub fn build_args(
     match req.mode {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
-            args.push(format!("Read,Grep,Glob,{mcp_tools}"));
+            args.push(format!("{READ_TOOLS},{mcp_tools}"));
             // `--allowedTools` only pre-approves; anything that writes or runs
             // commands must be denied outright for a review run.
             args.push("--disallowedTools".to_string());
-            args.push("Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task".to_string());
+            args.push("Bash,Edit,Write,MultiEdit,NotebookEdit".to_string());
         }
         AgentMode::Edit => {
             args.push("--allowedTools".to_string());
             args.push(format!(
-                "Read,Grep,Glob,Edit,Write,MultiEdit,Bash,{mcp_tools}"
+                "{READ_TOOLS},Edit,Write,MultiEdit,NotebookEdit,Bash,{mcp_tools}"
             ));
             args.push("--permission-mode".to_string());
             args.push("acceptEdits".to_string());
@@ -163,6 +163,11 @@ fn attachment_dirs(req: &AgentRequest) -> Vec<&Path> {
     }
     dirs
 }
+
+/// What every run may use without asking: reading, the user's and the
+/// repo's skills, subagents, its own todo list and the web. Like Claude
+/// Code on its own, minus writing and commands where the mode forbids them.
+const READ_TOOLS: &str = "Read,Grep,Glob,Skill,Task,TodoWrite,WebFetch,WebSearch";
 
 /// `--effort <level>` values, as `claude --help` lists them (2.1.310).
 pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
@@ -557,7 +562,28 @@ mod mcp_config_tests {
         let args = build_args(&req, &Default::default(), None);
         assert!(args.iter().any(|a| a == "--strict-mcp-config"));
         let i = args.iter().position(|a| a == "--allowedTools").unwrap();
-        assert_eq!(args[i + 1], "Read,Grep,Glob,mcp__review-tools__*");
+        assert_eq!(
+            args[i + 1],
+            "Read,Grep,Glob,Skill,Task,TodoWrite,WebFetch,WebSearch,mcp__review-tools__*"
+        );
+    }
+
+    /// Skills, subagents, todos and the web in every mode, as in Claude
+    /// Code itself; a review run still can't write or run commands.
+    #[test]
+    fn every_mode_has_skills_subagents_and_the_web() {
+        for mode in [AgentMode::ReadOnly, AgentMode::Edit] {
+            let mut req = req_with_mcp("t");
+            req.mode = mode;
+            let args = build_args(&req, &Default::default(), None);
+            let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+            for tool in ["Skill", "Task", "TodoWrite", "WebFetch", "WebSearch"] {
+                assert!(args[i + 1].split(',').any(|t| t == tool), "{mode:?} {tool}");
+            }
+        }
+        let args = build_args(&req_with_mcp("t"), &Default::default(), None);
+        let d = args.iter().position(|a| a == "--disallowedTools").unwrap();
+        assert_eq!(args[d + 1], "Bash,Edit,Write,MultiEdit,NotebookEdit");
     }
 
     /// `agents.user_mcp` on: the user's own MCP servers load next to
