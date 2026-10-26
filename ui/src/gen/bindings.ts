@@ -99,6 +99,7 @@ export const commands = {
 	listSpaces: (project: string | null) => typedError<Space[], CommandError>(__TAURI_INVOKE("list_spaces", { project })),
 	spaceSend: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send", { req })),
 	spaceStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("space_stop", { space })),
+	spaceSkills: (space: string) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("space_skills", { space })),
 	spaceReview: (req: SpaceReviewRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("space_review", { req })),
 	archiveSpace: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("archive_space", { space })),
 	shipSpace: (req: ShipSpaceRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("ship_space", { req })),

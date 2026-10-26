@@ -203,6 +203,7 @@ mod tests {
             "list_spaces",
             "create_space",
             "space_send",
+            "space_skills",
             "space_run",
             // shell-side
             "pick_folder",

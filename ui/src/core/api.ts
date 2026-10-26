@@ -262,6 +262,7 @@ export const api = {
     call<Space[]>('list_spaces', { project }),
   spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
+  spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
   spaceReview: (req: SpaceReviewRequest) =>
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),

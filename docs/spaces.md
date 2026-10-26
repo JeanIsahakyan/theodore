@@ -161,6 +161,13 @@ Chat left, changes right. The diff is the whole branch vs its base, the same
 └────────────────────────────────────┴─────────────────────────────────────────────┘
 ```
 
+`/skill` in a space's chat runs your Claude skills (`~/.claude/skills`, the
+repo's `.claude/skills`) as that turn's instructions; review built-ins aren't
+offered there. The skill's `SKILL.md` goes into the agent's prompt with the
+rest of the message as the task (none → "apply it to the work in this
+space"); the chat keeps the text as typed. Same id in both places → yours
+runs. An unknown `/word` is sent as is.
+
 **Undo last turn**: the Undo button on the agent's last reply (and ⌘K "Undo
 last turn") moves the worktree and the checkpoint ref back to where that
 turn started. The turn stays in the chat, dimmed and marked *undone*, and the
@@ -499,6 +506,7 @@ Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 | `list_spaces` | rows of one project or all (the UI reads the synced rows) |
 | `space_send` | chat row, then an Edit-mode turn in the worktree; checkpoint; refresh the diff |
 | `space_stop` | cancels the running turn |
+| `space_skills` | skills `/<id>` can run: `~/.claude/skills` plus the worktree's `.claude/skills`, no built-ins |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |
 | `archive_space` | checkpoint, remove the worktree, keep the ref |
 | `unarchive_space` | recreate the worktree from the ref, reopen the live diff |

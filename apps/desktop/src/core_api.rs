@@ -216,6 +216,10 @@ pub trait CoreApi: Send + Sync {
     async fn space_stop(&self, _space: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
+    /// Skills a space's chat runs with `/<id>`: yours and the worktree's.
+    async fn space_skills(&self, _space: String) -> Result<Vec<SkillInfo>, CommandError> {
+        Err(not_ready())
+    }
     /// Opens (or refreshes) the space's branch review.
     async fn space_review(
         &self,

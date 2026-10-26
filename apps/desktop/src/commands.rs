@@ -698,6 +698,16 @@ pub async fn space_stop(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn space_skills(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<SkillInfo>, CommandError> {
+    op.run(async move { core.space_skills(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn space_review(
     op: crate::op::Op,
     req: theodore_contract::SpaceReviewRequest,
