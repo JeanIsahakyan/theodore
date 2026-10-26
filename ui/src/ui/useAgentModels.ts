@@ -7,16 +7,28 @@
 import { useEffect, useState } from 'react';
 import { api } from '../core/api';
 import type { AgentId, AgentModel } from '../gen/contract';
+import { CLAUDE_MODELS, EFFORTS } from './agentModel';
 
 const cache = new Map<AgentId, Promise<AgentModel[]>>();
+
+/** Claude's aliases, for when the core can't be asked. */
+const CLAUDE_FALLBACK: AgentModel[] = CLAUDE_MODELS.map((m) => ({
+  id: m.id,
+  label: m.label,
+  description: m.hint ?? null,
+  efforts: EFFORTS.map((e) => e.id),
+  default_effort: null,
+}));
 
 function load(agent: AgentId): Promise<AgentModel[]> {
   let p = cache.get(agent);
   if (!p) {
-    p = api.agentModels(agent).catch(() => {
-      cache.delete(agent);
-      return [];
-    });
+    p = Promise.resolve()
+      .then(() => api.agentModels(agent))
+      .catch(() => {
+        cache.delete(agent);
+        return agent === 'claude' ? CLAUDE_FALLBACK : [];
+      });
     cache.set(agent, p);
   }
   return p;
