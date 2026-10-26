@@ -105,6 +105,8 @@ mod tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         }
     }
 

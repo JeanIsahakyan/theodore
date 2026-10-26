@@ -161,6 +161,7 @@ impl Core {
                     agent: None,
                     model: None,
                     mode: None,
+                    attachments: None,
                 })
                 .await
         {

@@ -114,6 +114,26 @@ pub async fn ask(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn save_attachment(
+    op: crate::op::Op,
+    req: theodore_contract::SaveAttachmentRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Attachment, CommandError> {
+    op.run(async move { core.save_attachment(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn attachment_data(
+    op: crate::op::Op,
+    id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    op.run(async move { core.attachment_data(id).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cancel_run(
     op: crate::op::Op,
     run: String,

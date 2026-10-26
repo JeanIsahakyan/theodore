@@ -226,6 +226,7 @@ async fn a_slash_skill_runs_as_the_turns_instructions_and_is_stored_as_typed() {
         agent: None,
         model: None,
         mode: None,
+        attachments: None,
     };
     f.agents.push_script(done("Polished.", 0.0));
     core.space_send(send("/polish the export  ")).await.unwrap();
@@ -318,6 +319,7 @@ async fn later_turns_replay_the_transcript_and_can_switch_agent() {
         agent: Some(AgentId::Codex),
         model: None,
         mode: None,
+        attachments: None,
     })
     .await
     .unwrap();
@@ -330,6 +332,114 @@ async fn later_turns_replay_the_transcript_and_can_switch_agent() {
     assert!(req.prompt.ends_with("Quote fields with commas"));
     assert_eq!(s.agent, AgentId::Codex);
     assert_eq!(s.turns, 2);
+}
+
+#[tokio::test]
+async fn attachments_ride_on_the_message_and_reach_the_agent() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("First pass.", 0.0));
+    let s = core
+        .create_space(request(&project, "Add CSV export"))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+    let att = core
+        .save_attachment(theodore_contract::SaveAttachmentRequest {
+            name: "shot.png".into(),
+            mime: "image/png".into(),
+            data: "iVBORw==".into(),
+        })
+        .await
+        .unwrap();
+
+    f.agents.push_script(done("Matched the mock.", 0.0));
+    let sent = core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "Make it look like this".into(),
+            agent: None,
+            model: None,
+            mode: None,
+            attachments: Some(vec![att.id.clone()]),
+        })
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+
+    let mine = transcript(&f, &s.id)
+        .into_iter()
+        .find(|m| m.id == sent)
+        .unwrap();
+    assert_eq!(mine.text, "Make it look like this", "stored as typed");
+    assert_eq!(mine.attachments, vec![att.clone()]);
+    let req = f.agents.last_request().unwrap();
+    assert!(
+        req.prompt.ends_with(&format!(
+            "Make it look like this\n\nAttached files (read them; images and PDFs too):\n\
+             - {} (image/png, shot.png)",
+            att.path
+        )),
+        "{}",
+        req.prompt
+    );
+    assert_eq!(
+        req.attachments,
+        vec![theodore_ports::AgentAttachment {
+            path: att.path.clone().into(),
+            mime: "image/png".into(),
+        }]
+    );
+
+    // The next turn names it but doesn't attach it again.
+    f.agents.push_script(done("Ok.", 0.0));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "Thanks".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    idle(&f, &s.id).await;
+    let req = f.agents.last_request().unwrap();
+    assert!(
+        req.prompt.contains("(attached: shot.png)"),
+        "{}",
+        req.prompt
+    );
+    assert!(req.attachments.is_empty());
+}
+
+#[tokio::test]
+async fn an_unknown_attachment_fails_the_send_before_anything_is_stored() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("First pass.", 0.0));
+    let s = core
+        .create_space(request(&project, "Add CSV export"))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+    let before = transcript(&f, &s.id).len();
+    let runs = f.agents.requests().len();
+    let err = core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "See this".into(),
+            agent: None,
+            model: None,
+            mode: None,
+            attachments: Some(vec!["0b6e8a52-3c1f-4d7e-9a1b-2f3c4d5e6f70".into()]),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)), "{err:?}");
+    assert_eq!(transcript(&f, &s.id).len(), before);
+    assert_eq!(f.agents.requests().len(), runs);
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Idle);
 }
 
 #[tokio::test]
@@ -350,6 +460,7 @@ async fn a_running_space_refuses_a_second_message_and_stops_cleanly() {
             agent: None,
             model: None,
             mode: None,
+            attachments: None,
         })
         .await
         .unwrap_err();
@@ -393,6 +504,7 @@ async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
         agent: None,
         model: None,
         mode: None,
+        attachments: None,
     })
     .await
     .unwrap();
@@ -421,6 +533,7 @@ async fn a_leftover_space_budget_no_longer_stops_turns() {
         agent: None,
         model: None,
         mode: None,
+        attachments: None,
     })
     .await
     .expect("over an old budget, the turn still starts");
@@ -472,6 +585,7 @@ async fn archive_removes_the_worktree_and_review_but_keeps_the_transcript() {
             agent: None,
             model: None,
             mode: None,
+            attachments: None,
         })
         .await
         .is_err()
@@ -637,6 +751,7 @@ mod real_git {
             agent: None,
             model: None,
             mode: None,
+            attachments: None,
         })
         .await
         .unwrap();

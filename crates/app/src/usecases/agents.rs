@@ -8,12 +8,15 @@ use theodore_contract::{
     AskRequest, ChatMessage, Ephemeral, RunSkillRequest, RunStatus, SkillRun, models,
 };
 use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId};
-use theodore_ports::{AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode};
+use theodore_ports::{
+    AgentAttachment, AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
+use crate::usecases::attachments::{agent_attachments, with_attachments};
 
 impl Core {
     pub async fn run_skill(&self, req: RunSkillRequest) -> AppResult<String> {
@@ -106,6 +109,8 @@ impl Core {
 
     pub async fn ask(&self, req: AskRequest) -> AppResult<String> {
         self.ensure_open(&req.pr).await?;
+        // Checked before the question is stored: an unknown id fails it.
+        let attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
         let message_id = uuid::Uuid::new_v4().to_string();
         let now = self.0.deps.clock.now();
         let question = ChatMessage {
@@ -116,6 +121,7 @@ impl Core {
             refs: req.about.clone().into_iter().collect(),
             at: now,
             failed: None,
+            attachments: attachments.clone(),
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -178,7 +184,11 @@ impl Core {
         tokio::spawn(
             async move {
                 let _lease = lease;
-                drive_ask(&core, run_id, pr, agent, req.question, cwd, cancel).await;
+                let question = Question {
+                    prompt: with_attachments(req.question, &attachments),
+                    attachments: agent_attachments(&attachments),
+                };
+                drive_ask(&core, run_id, pr, agent, question, cwd, cancel).await;
             }
             .in_current_span(),
         );
@@ -408,6 +418,8 @@ async fn drive_skill_run(
             stall_after_ms,
             env: Vec::new(),
             user_mcp,
+            attachments: vec![],
+            resume: None,
         };
         let _guard = ToolsGuard { core, mcp };
         match core.0.deps.agents.run(req).await {
@@ -430,7 +442,7 @@ async fn drive_skill_run(
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: "stalled".into() });
                                 core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
                             }
-                            AgentEvent::Usage { .. } => {}
+                            AgentEvent::Usage { .. } | AgentEvent::Session { .. } => {}
                             AgentEvent::Done { .. } => break,
                             AgentEvent::Error { message, .. } => {
                                 error = Some(message);
@@ -528,6 +540,7 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
         refs: vec![],
         at: core.0.deps.clock.now(),
         failed: Some(text.to_string()),
+        attachments: vec![],
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -668,12 +681,19 @@ const ASK_SYSTEM: &str = "You are answering a question about the pull request ch
      (a file before the change). Look at the change through those tools before \
      answering. Do not edit files. Answer briefly and point at file:line where it helps.";
 
+/// What `drive_ask` sends: the question with its files listed, and the
+/// files themselves.
+struct Question {
+    prompt: String,
+    attachments: Vec<AgentAttachment>,
+}
+
 async fn drive_ask(
     core: &Core,
     run_id: String,
     pr: PrId,
     agent: AgentId,
-    question: String,
+    question: Question,
     cwd: PathBuf,
     cancel: CancellationToken,
 ) {
@@ -684,7 +704,7 @@ async fn drive_ask(
         .with_system(Some(ASK_SYSTEM.into()));
     let req = AgentRequest {
         agent,
-        prompt: question,
+        prompt: question.prompt,
         system,
         cwd,
         mode: AgentMode::ReadOnly,
@@ -695,6 +715,8 @@ async fn drive_ask(
         env: Vec::new(),
         // Spaces only (issue #16): a chat answer stays on Theodore's tools.
         user_mcp: false,
+        attachments: question.attachments,
+        resume: None,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();
@@ -750,6 +772,7 @@ async fn drive_ask(
         refs: vec![],
         at: now,
         failed: None,
+        attachments: vec![],
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

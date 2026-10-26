@@ -55,7 +55,8 @@ import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../SidePanel';
-import { rich } from '../../highlight';
+import { Md } from '../../highlight';
+import { MessageAttachments, useAttachments } from '../attachments';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
 import { agentEffort, agentLabel, agentModel } from '../agentModel';
@@ -697,6 +698,7 @@ const SpaceChat = observer(function SpaceChat({
 }) {
   const store = useRootStore();
   const [text, setText] = useState('');
+  const files = useAttachments();
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const messages = [
@@ -749,7 +751,8 @@ const SpaceChat = observer(function SpaceChat({
 
   const send = () => {
     const t = text.trim();
-    if (!t || run || space.status === 'archived') return;
+    if ((!t && !files.ids.length) || run || files.busy) return;
+    if (space.status === 'archived') return;
     setText('');
     void api
       .spaceSend({
@@ -759,7 +762,9 @@ const SpaceChat = observer(function SpaceChat({
         // The chip's model, so a change there reaches the next turn.
         model: agentModel(store, agent),
         mode: mode === space.mode ? null : mode,
+        attachments: files.ids.length ? files.ids : null,
       })
+      .then(() => files.clear())
       .catch(() => setText(t));
   };
 
@@ -801,10 +806,15 @@ const SpaceChat = observer(function SpaceChat({
                   {m.failed}
                 </span>
               ) : (
-                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                  {m.author.kind === 'me' ? m.text : rich(m.text)}
+                <div className="text-sm leading-relaxed">
+                  {m.author.kind === 'me' ? (
+                    <span className="whitespace-pre-wrap">{m.text}</span>
+                  ) : (
+                    <Md text={m.text} />
+                  )}
                 </div>
               )}
+              <MessageAttachments attachments={m.attachments} />
               {m.author.kind === 'agent' && turnTools(m.id)}
               {m.author.kind === 'agent' && checks.has(m.id) && (
                 <CheckChip check={checks.get(m.id)!} />
@@ -826,8 +836,8 @@ const SpaceChat = observer(function SpaceChat({
                 <ToolCalls tools={tools} running turn={run} />
               )}
               {streaming && (
-                <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
-                  {rich(streaming)}
+                <div className="text-sm leading-relaxed">
+                  <Md text={streaming} />
                 </div>
               )}
             </div>
@@ -861,6 +871,7 @@ const SpaceChat = observer(function SpaceChat({
             running={!!run}
             onStop={() => void api.spaceStop(space.id).catch(() => {})}
             skills={skills}
+            attachments={files}
             chips={
               <>
                 <AgentChip

@@ -3782,6 +3782,7 @@ async fn ask_persists_a_failed_chat_message_on_agent_error() {
         about: None,
         group: None,
         agent: Some(AgentId::Claude),
+        attachments: None,
     })
     .await
     .expect("ask");
@@ -3792,6 +3793,75 @@ async fn ask_persists_a_failed_chat_message_on_agent_error() {
             .any(|m| m.failed.as_deref() == Some("boom"))
     })
     .await;
+}
+
+#[tokio::test]
+async fn ask_stores_its_attachments_and_hands_them_to_the_agent() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let att = core
+        .save_attachment(theodore_contract::SaveAttachmentRequest {
+            name: "trace.pdf".into(),
+            mime: String::new(),
+            data: "JVBERg==".into(),
+        })
+        .await
+        .expect("save_attachment");
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "It's the retry loop.".into(),
+        usage: Default::default(),
+    }]);
+
+    let id = core
+        .ask(theodore_contract::AskRequest {
+            pr: pr.clone(),
+            question: "why does this trace loop?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+            attachments: Some(vec![att.id.clone()]),
+        })
+        .await
+        .expect("ask");
+
+    wait_until(|| chat_messages(&f, &pr).len() == 2).await;
+    let question = chat_messages(&f, &pr)
+        .into_iter()
+        .find(|m| m.id == id)
+        .unwrap();
+    assert_eq!(question.text, "why does this trace loop?");
+    assert_eq!(question.attachments, vec![att.clone()]);
+    assert_eq!(att.mime, "application/pdf");
+    let req = f.agents.last_request().unwrap();
+    assert_eq!(
+        req.prompt,
+        format!(
+            "why does this trace loop?\n\nAttached files (read them; images and PDFs too):\n\
+             - {} (application/pdf, trace.pdf)",
+            att.path
+        )
+    );
+    assert_eq!(req.attachments.len(), 1);
+    assert_eq!(req.attachments[0].path.display().to_string(), att.path);
+}
+
+#[tokio::test]
+async fn ask_with_an_unknown_attachment_is_refused() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let err = core
+        .ask(theodore_contract::AskRequest {
+            pr: pr.clone(),
+            question: "why?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+            attachments: Some(vec!["nope".into()]),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)), "{err:?}");
+    assert!(chat_messages(&f, &pr).is_empty());
 }
 
 #[tokio::test]
@@ -3807,6 +3877,7 @@ async fn ask_persists_a_failed_chat_message_on_cancel() {
             about: None,
             group: None,
             agent: Some(AgentId::Claude),
+            attachments: None,
         })
         .await
         .expect("ask");
@@ -3914,6 +3985,7 @@ async fn ask_holds_the_prs_worktree_lease_for_the_run() {
             about: None,
             group: None,
             agent: Some(AgentId::Claude),
+            attachments: None,
         })
         .await
         .expect("ask");
@@ -3939,6 +4011,7 @@ async fn ask_points_the_agent_at_the_review_tools_for_the_diff() {
         about: None,
         group: None,
         agent: Some(AgentId::Claude),
+        attachments: None,
     })
     .await
     .expect("ask");

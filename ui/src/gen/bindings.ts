@@ -13,6 +13,8 @@ export const commands = {
 	regroup: (pr: PrId) => typedError<null, CommandError>(__TAURI_INVOKE("regroup", { pr })),
 	runSkill: (req: RunSkillRequest) => typedError<string, CommandError>(__TAURI_INVOKE("run_skill", { req })),
 	ask: (req: AskRequest) => typedError<string, CommandError>(__TAURI_INVOKE("ask", { req })),
+	saveAttachment: (req: SaveAttachmentRequest) => typedError<Attachment, CommandError>(__TAURI_INVOKE("save_attachment", { req })),
+	attachmentData: (id: string) => typedError<string, CommandError>(__TAURI_INVOKE("attachment_data", { id })),
 	cancelRun: (run: string) => typedError<null, CommandError>(__TAURI_INVOKE("cancel_run", { run })),
 	submitReview: (req: SubmitReviewRequest) => typedError<null, CommandError>(__TAURI_INVOKE("submit_review", { req })),
 	detectAgents: () => typedError<AgentStatus[], CommandError>(__TAURI_INVOKE("detect_agents")),
@@ -264,6 +266,20 @@ export type AgentModel = {
 	older: boolean,
 };
 
+/**
+ *  One agent CLI session a space's turns continue (docs/spaces.md §5
+ *  "One session per space"): Claude Code's session id, Codex's thread id.
+ */
+export type AgentSession = {
+	agent: AgentId,
+	id: string,
+	/**
+	 *  The worktree it ran in. Claude Code keeps sessions per directory, so
+	 *  one from another path can't be resumed.
+	 */
+	cwd: string,
+};
+
 export type AgentStatus = {
 	id: AgentId,
 	installed: boolean,
@@ -310,6 +326,18 @@ export type AskRequest = {
 	about: Anchor | null,
 	group: string | null,
 	agent: AgentId | null,
+	/**  `save_attachment` ids sent with the question. */
+	attachments?: string[] | null,
+};
+
+/**  A saved file. `path` is absolute: the agent reads it from there. */
+export type Attachment = {
+	id: string,
+	name: string,
+	mime: string,
+	/**  Bytes on disk. */
+	size: number,
+	path: string,
 };
 
 /**
@@ -1073,6 +1101,16 @@ export type SandboxStatus = {
 	prs: number,
 };
 
+/**  `save_attachment`: one file's bytes. Over 25 MB decoded is refused. */
+export type SaveAttachmentRequest = {
+	/**  The file's name; only its last component is kept. */
+	name: string,
+	/**  Empty = guessed from the name's extension. */
+	mime: string,
+	/**  The file's bytes, base64 (standard alphabet). */
+	data: string,
+};
+
 export type SaveConfigRequest = {
 	project: string,
 	layer: ConfigLayer,
@@ -1246,6 +1284,11 @@ export type Space = {
 	process?: SpaceProcess | null,
 	/**  "Not now" to the repo's commands: they are skipped in this space. */
 	commands_denied?: boolean,
+	/**
+	 *  The agent session the last turn ran in: the next turn with the same
+	 *  agent continues it instead of replaying the transcript.
+	 */
+	agent_session?: AgentSession | null,
 	created_at: number,
 	updated_at: number,
 };
@@ -1353,6 +1396,8 @@ export type SpaceSendRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+	/**  `save_attachment` ids sent with the message. */
+	attachments?: string[] | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

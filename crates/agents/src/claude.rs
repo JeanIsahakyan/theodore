@@ -72,6 +72,13 @@ pub fn build_args(
         "--permission-prompts".to_string(),
         "none".to_string(),
     ];
+    // The space's session, continued: everything it read, ran and planned
+    // is still there, and `-p` is only the new turn. The flags below are
+    // per process, so they still go on every turn.
+    if let Some(session) = &req.resume {
+        args.push("--resume".to_string());
+        args.push(session.clone());
+    }
     if let Some(system) = &req.system {
         args.push("--append-system-prompt".to_string());
         args.push(system.clone());
@@ -86,6 +93,12 @@ pub fn build_args(
     // issue or the GitHub thread the user already connected Claude Code to.
     if !req.user_mcp {
         args.push("--strict-mcp-config".to_string());
+    }
+    // Chat attachments live outside `cwd`; Claude Code's Read only opens
+    // them (images and PDFs included) in a directory it was given.
+    for dir in attachment_dirs(req) {
+        args.push("--add-dir".to_string());
+        args.push(dir.display().to_string());
     }
     // The run's own MCP server, whatever it is named; with the user's
     // servers on, theirs too (`mcp__*`). `--permission-prompts none`
@@ -102,16 +115,16 @@ pub fn build_args(
     match req.mode {
         AgentMode::ReadOnly => {
             args.push("--allowedTools".to_string());
-            args.push(format!("Read,Grep,Glob,{mcp_tools}"));
+            args.push(format!("{READ_TOOLS},{mcp_tools}"));
             // `--allowedTools` only pre-approves; anything that writes or runs
             // commands must be denied outright for a review run.
             args.push("--disallowedTools".to_string());
-            args.push("Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task".to_string());
+            args.push("Bash,Edit,Write,MultiEdit,NotebookEdit".to_string());
         }
         AgentMode::Edit => {
             args.push("--allowedTools".to_string());
             args.push(format!(
-                "Read,Grep,Glob,Edit,Write,MultiEdit,Bash,{mcp_tools}"
+                "{READ_TOOLS},Edit,Write,MultiEdit,NotebookEdit,Bash,{mcp_tools}"
             ));
             args.push("--permission-mode".to_string());
             args.push("acceptEdits".to_string());
@@ -145,6 +158,24 @@ pub fn build_args(
     args
 }
 
+/// Each attachment's directory, once, in order.
+fn attachment_dirs(req: &AgentRequest) -> Vec<&Path> {
+    let mut dirs: Vec<&Path> = Vec::new();
+    for a in &req.attachments {
+        if let Some(dir) = a.path.parent()
+            && !dirs.contains(&dir)
+        {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+/// What every run may use without asking: reading, the user's and the
+/// repo's skills, subagents, its own todo list and the web. Like Claude
+/// Code on its own, minus writing and commands where the mode forbids them.
+const READ_TOOLS: &str = "Read,Grep,Glob,Skill,Task,TodoWrite,WebFetch,WebSearch";
+
 /// `--effort <level>` values, as `claude --help` lists them (2.1.310).
 pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -173,8 +204,28 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
     match v.get("type").and_then(Value::as_str) {
         Some("assistant") => content_blocks(&v),
         Some("user") => tool_results(&v),
-        Some("result") => vec![result_event(&v)],
-        _ => vec![], // system/rate_limit_event/init/etc: not user-visible stream content
+        Some("result") => result_events(&v),
+        // `init` opens every run with the session id `--resume` takes.
+        Some("system") if v.get("subtype").and_then(Value::as_str) == Some("init") => {
+            session_event(&v).into_iter().collect()
+        }
+        _ => vec![], // system/rate_limit_event/etc: not user-visible stream content
+    }
+}
+
+fn session_event(v: &Value) -> Option<AgentEvent> {
+    let id = v.get("session_id").and_then(Value::as_str)?;
+    (!id.is_empty()).then(|| AgentEvent::Session { id: id.to_string() })
+}
+
+/// A successful result repeats the session id (in case `init` was missed)
+/// before `Done`. A failed one doesn't: a `--resume` of a session that is
+/// gone fails carrying the id it was given.
+fn result_events(v: &Value) -> Vec<AgentEvent> {
+    let done = result_event(v);
+    match (&done, session_event(v)) {
+        (AgentEvent::Done { .. }, Some(session)) => vec![session, done],
+        _ => vec![done],
     }
 }
 
@@ -256,11 +307,24 @@ fn stringify_tool_content(content: Option<&Value>) -> String {
 fn result_event(v: &Value) -> AgentEvent {
     let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
     if is_error {
+        // `errors` when it failed before a turn started (`--resume` of a
+        // session that is gone: "No conversation found with session ID: …").
+        let errors = v
+            .get("errors")
+            .and_then(Value::as_array)
+            .map(|e| {
+                e.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .filter(|e| !e.is_empty());
         let message = v
             .get("result")
             .and_then(Value::as_str)
-            .unwrap_or("claude reported an error")
-            .to_string();
+            .map(str::to_string)
+            .or(errors)
+            .unwrap_or_else(|| "claude reported an error".to_string());
         return AgentEvent::Error {
             message,
             stderr_tail: String::new(),
@@ -401,6 +465,39 @@ mod tests {
     fn system_lines_are_ignored() {
         let line = r#"{"type":"system","subtype":"init","cwd":"/tmp"}"#;
         assert_eq!(parse_line(line), vec![]);
+        let line = r#"{"type":"system","subtype":"session_state_changed","state":"idle","session_id":"s1"}"#;
+        assert_eq!(parse_line(line), vec![]);
+    }
+
+    #[test]
+    fn init_reports_the_session() {
+        let line = r#"{"type":"system","subtype":"init","cwd":"/tmp","session_id":"8f1c"}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::Session { id: "8f1c".into() }]
+        );
+    }
+
+    #[test]
+    fn a_successful_result_repeats_the_session_before_done() {
+        let line = r#"{"type":"result","is_error":false,"result":"ok","session_id":"8f1c"}"#;
+        let events = parse_line(line);
+        assert_eq!(events[0], AgentEvent::Session { id: "8f1c".into() });
+        assert!(matches!(events[1], AgentEvent::Done { .. }));
+    }
+
+    /// Recorded from `claude -p … --resume <unknown id>` (2.1.310): no
+    /// `init`, no `result` text, the reason in `errors`.
+    #[test]
+    fn a_gone_session_fails_with_its_reason_and_no_session() {
+        let line = r#"{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"session_id":"0000","total_cost_usd":0,"errors":["No conversation found with session ID: 0000"]}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::Error {
+                message: "No conversation found with session ID: 0000".into(),
+                stderr_tail: String::new()
+            }]
+        );
     }
 
     #[test]
@@ -441,6 +538,8 @@ mod read_only_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -473,6 +572,8 @@ mod mcp_config_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         }
     }
 
@@ -536,7 +637,28 @@ mod mcp_config_tests {
         let args = build_args(&req, &Default::default(), None);
         assert!(args.iter().any(|a| a == "--strict-mcp-config"));
         let i = args.iter().position(|a| a == "--allowedTools").unwrap();
-        assert_eq!(args[i + 1], "Read,Grep,Glob,mcp__review-tools__*");
+        assert_eq!(
+            args[i + 1],
+            "Read,Grep,Glob,Skill,Task,TodoWrite,WebFetch,WebSearch,mcp__review-tools__*"
+        );
+    }
+
+    /// Skills, subagents, todos and the web in every mode, as in Claude
+    /// Code itself; a review run still can't write or run commands.
+    #[test]
+    fn every_mode_has_skills_subagents_and_the_web() {
+        for mode in [AgentMode::ReadOnly, AgentMode::Edit] {
+            let mut req = req_with_mcp("t");
+            req.mode = mode;
+            let args = build_args(&req, &Default::default(), None);
+            let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+            for tool in ["Skill", "Task", "TodoWrite", "WebFetch", "WebSearch"] {
+                assert!(args[i + 1].split(',').any(|t| t == tool), "{mode:?} {tool}");
+            }
+        }
+        let args = build_args(&req_with_mcp("t"), &Default::default(), None);
+        let d = args.iter().position(|a| a == "--disallowedTools").unwrap();
+        assert_eq!(args[d + 1], "Bash,Edit,Write,MultiEdit,NotebookEdit");
     }
 
     /// `agents.user_mcp` on: the user's own MCP servers load next to
@@ -600,6 +722,8 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -624,6 +748,8 @@ mod run_mode_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: true,
+            attachments: vec![],
+            resume: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -649,6 +775,8 @@ mod model_and_effort_tests {
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
+            attachments: vec![],
+            resume: None,
         }
     }
 
@@ -662,6 +790,28 @@ mod model_and_effort_tests {
         let args = build_args(&req(Some("opus"), Some("high")), &Default::default(), None);
         assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
         assert_eq!(flag(&args, "--effort").as_deref(), Some("high"));
+    }
+
+    /// A resumed turn keeps every per-process flag: the system prompt,
+    /// permissions, model.
+    #[test]
+    fn a_resumed_turn_passes_the_session_and_still_the_per_process_flags() {
+        let mut r = req(Some("opus"), None);
+        r.system = Some("rules".into());
+        r.resume = Some("8f1c".into());
+        let args = build_args(&r, &Default::default(), None);
+        assert_eq!(flag(&args, "--resume").as_deref(), Some("8f1c"));
+        assert_eq!(flag(&args, "-p").as_deref(), Some("p"));
+        assert_eq!(
+            flag(&args, "--append-system-prompt").as_deref(),
+            Some("rules")
+        );
+        assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
+        assert!(args.iter().any(|a| a == "--disallowedTools"));
+
+        r.resume = None;
+        let args = build_args(&r, &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--resume"));
     }
 
     #[test]
@@ -699,5 +849,30 @@ mod model_and_effort_tests {
         let args = build_args(&req(None, Some(ULTRACODE)), &Default::default(), None);
         let at = args.iter().position(|a| a == "--effort").unwrap();
         assert_eq!(args[at + 1], "max");
+    }
+
+    fn attachment(path: &str, mime: &str) -> theodore_ports::AgentAttachment {
+        theodore_ports::AgentAttachment {
+            path: path.into(),
+            mime: mime.into(),
+        }
+    }
+
+    #[test]
+    fn each_attachment_directory_is_added_once() {
+        let mut r = req(None, None);
+        assert!(!build_args(&r, &Default::default(), None).contains(&"--add-dir".to_string()));
+        r.attachments = vec![
+            attachment("/data/attachments/a/shot.png", "image/png"),
+            attachment("/data/attachments/b/spec.pdf", "application/pdf"),
+            attachment("/data/attachments/a/shot.png", "image/png"),
+        ];
+        let args = build_args(&r, &Default::default(), None);
+        let dirs: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "--add-dir")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(dirs, ["/data/attachments/a", "/data/attachments/b"]);
     }
 }
