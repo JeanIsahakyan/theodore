@@ -135,6 +135,10 @@ impl Core {
             .grouping_context(&entry.worktree_path, &entry.revision)
             .await;
         ctx.review = rules;
+        let agent = crate::deps::GroupingAgent {
+            id: agent,
+            user_mcp: self.user_mcp_allowed().await,
+        };
         let grouping = match prev {
             Some(p) => {
                 self.0

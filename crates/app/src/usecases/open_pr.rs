@@ -460,7 +460,16 @@ impl Core {
                     .0
                     .deps
                     .grouper
-                    .group(&revision, &detail, &ctx, &worktree, agent)
+                    .group(
+                        &revision,
+                        &detail,
+                        &ctx,
+                        &worktree,
+                        crate::deps::GroupingAgent {
+                            id: agent,
+                            user_mcp: core.user_mcp_allowed().await,
+                        },
+                    )
                     .instrument(tracing::info_span!(
                         "grouping",
                         pr = %pr.0,

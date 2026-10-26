@@ -109,6 +109,8 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 - Chat scoped to a PR, a group or a single line.
 - The agent reads what the PR changed through the review tools (the worktree holds only the head),
   so answers are about the diff.
+- Claude also gets your own Claude Code MCP servers (Linear, GitHub…, claude.ai connectors included);
+  Settings → Agents → **Allow my Claude MCP servers in agent runs** turns that off.
 - Skills are `SKILL.md` files: three built in (`bugs`, `security`, `tests`), plus `~/.claude/skills`
   and the repo's `.claude/skills`.
 - Run one from the `/` list in the chat input: type to filter, Enter runs it; the list's footer

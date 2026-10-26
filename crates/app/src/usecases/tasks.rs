@@ -315,6 +315,7 @@ async fn drive_fix_run(
         model: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
+        user_mcp: core.user_mcp_allowed().await,
     };
     let _guard = ToolsGuard { core, mcp };
 

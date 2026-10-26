@@ -3994,6 +3994,50 @@ async fn agent_enabled_defaults_to_true_and_honours_the_setting() {
     assert!(!core.agent_enabled(AgentId::Claude).await);
 }
 
+/// `agents.user_mcp` (issue #16): on unless the user turns it off, and a
+/// repo's config can't turn it either way.
+#[tokio::test]
+async fn user_mcp_defaults_to_on_and_only_the_user_scope_counts() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    assert!(core.user_mcp_allowed().await);
+
+    put_setting(&f, "agents.user_mcp", "repo:acme/app", json!(false));
+    assert!(core.user_mcp_allowed().await, "a repo row must not count");
+
+    put_setting(&f, "agents.user_mcp", "user", json!(false));
+    assert!(!core.user_mcp_allowed().await);
+}
+
+/// The setting reaches the agent runs: a fix run and the grouper.
+#[tokio::test]
+async fn agent_runs_carry_the_user_mcp_setting() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+    core.regroup(pr.clone()).await.expect("regroup");
+    assert_eq!(f.grouper.last_user_mcp(), Some(true));
+
+    put_setting(&f, "agents.user_mcp", "user", json!(false));
+    core.regroup(pr.clone()).await.expect("regroup");
+    assert_eq!(f.grouper.last_user_mcp(), Some(false));
+
+    let task = sample_task("t-mcp", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: Usage::default(),
+    }]);
+    core.delegate_task(DelegateRequest {
+        task: task.id.clone(),
+        agent: Some(AgentId::Claude),
+    })
+    .await
+    .expect("delegate_task");
+    wait_until(|| f.agents.last_request().is_some()).await;
+    assert!(!f.agents.last_request().unwrap().user_mcp);
+}
+
 #[tokio::test]
 async fn stall_after_ms_defaults_and_is_overridable() {
     let f = fixtures();

@@ -16,9 +16,17 @@ use theodore_ports::{
 
 use crate::error::GrouperError;
 
+/// Which agent groups, and whether it may use the user's own MCP servers:
+/// the `agents.grouping` and `agents.user_mcp` settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupingAgent {
+    pub id: AgentId,
+    pub user_mcp: bool,
+}
+
 /// Groups a revision by meaning (plan §5). Implemented by the `grouping`
-/// crate at integration time; `app` only needs the trait. `agent` is the
-/// `agents.grouping` setting, read by the caller and passed in here so the
+/// crate at integration time; `app` only needs the trait. `agent` comes
+/// from the settings, read by the caller and passed in here so the
 /// grouper never has to know about settings (plan §8.5). `ctx` is what the
 /// app could read from the worktree and history (`Core::grouping_context`)
 /// to help tell related files apart; possibly empty.
@@ -30,7 +38,7 @@ pub trait Grouper: Send + Sync {
         pr: &PrDetail,
         ctx: &RepoContext,
         worktree: &Path,
-        agent: AgentId,
+        agent: GroupingAgent,
     ) -> Result<Grouping, GrouperError>;
 
     /// Re-group after a push: unchanged hunks keep their group (plan §5.3).
@@ -41,7 +49,7 @@ pub trait Grouper: Send + Sync {
         pr: &PrDetail,
         ctx: &RepoContext,
         worktree: &Path,
-        agent: AgentId,
+        agent: GroupingAgent,
     ) -> Result<Grouping, GrouperError>;
 }
 

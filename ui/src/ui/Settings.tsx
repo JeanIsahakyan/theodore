@@ -203,6 +203,16 @@ export function isAgentEnabled(
   return v !== false;
 }
 
+/** `agents.user_mcp`, `user` scope, default `true` (issue #16): agent runs
+ *  may use the user's own Claude Code MCP servers next to Theodore's tools. */
+export const USER_MCP_KEY = 'agents.user_mcp';
+
+export function isUserMcpAllowed(
+  store: ReturnType<typeof useRootStore>,
+): boolean {
+  return settingValue(store, 'user', USER_MCP_KEY) !== false;
+}
+
 /** A host connected by a pasted token (GitLab, Bitbucket): no device-flow
  *  login, and not the primary host `host_status` reports on. */
 const TokenHostSection = observer(function TokenHostSection({
@@ -612,6 +622,36 @@ const AgentsPage = observer(function AgentsPage() {
               </div>
             );
           })}
+        </Card>
+      </section>
+      <Separator />
+      <section className="flex flex-col gap-2">
+        <Typography.Heading level={6}>MCP servers</Typography.Heading>
+        <Card
+          variant="secondary"
+          className="set-row flex-row items-center gap-4 px-4 py-3"
+        >
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-sm font-medium">
+              Allow my Claude MCP servers in agent runs
+            </span>
+            <span className="text-xs text-muted">
+              Your Claude Code MCP servers (Linear, GitHub…) are available to
+              the agent. Off: only Theodore's own tools.
+            </span>
+          </div>
+          <Switch
+            size="sm"
+            aria-label="Allow my Claude MCP servers in agent runs"
+            isSelected={isUserMcpAllowed(store)}
+            onChange={(v) => setSetting(store, 'user', USER_MCP_KEY, v)}
+          >
+            <Switch.Content>
+              <Switch.Control>
+                <Switch.Thumb />
+              </Switch.Control>
+            </Switch.Content>
+          </Switch>
         </Card>
       </section>
     </>
