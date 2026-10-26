@@ -109,8 +109,6 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 - Chat scoped to a PR, a group or a single line.
 - The agent reads what the PR changed through the review tools (the worktree holds only the head),
   so answers are about the diff.
-- Claude also gets your own Claude Code MCP servers (Linear, GitHub…, claude.ai connectors included);
-  Settings → Agents → **Allow my Claude MCP servers in agent runs** turns that off.
 - Skills are `SKILL.md` files: three built in (`bugs`, `security`, `tests`), plus `~/.claude/skills`
   and the repo's `.claude/skills`.
 - Run one from the `/` list in the chat input: type to filter, Enter runs it; the list's footer
@@ -195,6 +193,8 @@ local folder:  Merge locally  ·  Keep as branch
 - A turn that ends while the window is in the background sends a system notification
   (`spaces.notify`); clicking it opens the space. The dock badge counts spaces waiting on you.
 - Archive any time, or automatically `spaces.auto_archive_days` after shipping.
+- A space's agent also gets your own Claude Code MCP servers (Linear, GitHub…, claude.ai connectors);
+  Settings → Agents → **Allow my Claude MCP servers in spaces** turns that off. Reviews never get them.
 - On for everyone; Settings → Spaces turns them off (the `labs.build_mode` setting). Design:
   `docs/spaces.md`.
 

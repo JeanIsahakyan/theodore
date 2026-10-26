@@ -633,16 +633,16 @@ const AgentsPage = observer(function AgentsPage() {
         >
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-sm font-medium">
-              Allow my Claude MCP servers in agent runs
+              Allow my Claude MCP servers in spaces
             </span>
             <span className="text-xs text-muted">
-              Your Claude Code MCP servers (Linear, GitHub…) are available to
-              the agent. Off: only Theodore's own tools.
+              A space's agent can use your Claude Code MCP servers (Linear,
+              GitHub…). Reviews always stay on Theodore's own tools.
             </span>
           </div>
           <Switch
             size="sm"
-            aria-label="Allow my Claude MCP servers in agent runs"
+            aria-label="Allow my Claude MCP servers in spaces"
             isSelected={isUserMcpAllowed(store)}
             onChange={(v) => setSetting(store, 'user', USER_MCP_KEY, v)}
           >

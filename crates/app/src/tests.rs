@@ -4009,16 +4009,14 @@ async fn user_mcp_defaults_to_on_and_only_the_user_scope_counts() {
     assert!(!core.user_mcp_allowed().await);
 }
 
-/// The setting reaches the agent runs: a fix run and the grouper.
+/// Only spaces get the user's MCP servers: grouping and a fix run never do,
+/// even with the setting on.
 #[tokio::test]
-async fn agent_runs_carry_the_user_mcp_setting() {
+async fn review_runs_never_carry_the_user_mcp_servers() {
     let f = fixtures();
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
     wait_grouping_idle(&f, &core, &pr).await;
-    core.regroup(pr.clone()).await.expect("regroup");
-    assert_eq!(f.grouper.last_user_mcp(), Some(true));
-
-    put_setting(&f, "agents.user_mcp", "user", json!(false));
+    assert!(core.user_mcp_allowed().await);
     core.regroup(pr.clone()).await.expect("regroup");
     assert_eq!(f.grouper.last_user_mcp(), Some(false));
 

@@ -467,7 +467,9 @@ impl Core {
                         &worktree,
                         crate::deps::GroupingAgent {
                             id: agent,
-                            user_mcp: core.user_mcp_allowed().await,
+                            // Grouping never uses the user's MCP servers: starting
+                            // them on every chunk would only slow it down.
+                            user_mcp: false,
                         },
                     )
                     .instrument(tracing::info_span!(

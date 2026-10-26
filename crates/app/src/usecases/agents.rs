@@ -380,7 +380,8 @@ async fn drive_skill_run(
         }
     };
     let stall_after_ms = core.stall_after_ms().await;
-    let user_mcp = core.user_mcp_allowed().await;
+    // The user's own MCP servers are for spaces only (issue #16).
+    let user_mcp = false;
     // The repo's `review.instructions` / `review.context`.
     let system = core.review_rules_of(&pr).await.with_system(None);
     let started = std::time::Instant::now();
@@ -650,7 +651,8 @@ async fn drive_ask(
         model: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
-        user_mcp: core.user_mcp_allowed().await,
+        // Spaces only (issue #16): a chat answer stays on Theodore's tools.
+        user_mcp: false,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();

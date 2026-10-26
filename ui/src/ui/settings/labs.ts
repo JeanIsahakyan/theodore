@@ -18,7 +18,7 @@ export const LABS = [
     key: LINEAR_LAB,
     title: 'Linear',
     text: 'Settings → Integrations for a Linear API key, and the linked issues as chips in the preview and the review Overview tab.',
-    note: 'Or use your Claude Linear connector: Settings → Agents → Allow my Claude MCP servers.',
+    note: 'In spaces, your Claude Linear connector works too: Settings → Agents → Allow my Claude MCP servers in spaces.',
   },
   {
     key: GITLAB_LAB,

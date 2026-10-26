@@ -776,8 +776,9 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
   auth variables (e.g. `ANTHROPIC_API_KEY`) are passed through.
 - Permissions: review runs are read-only (tool allowlist: read, grep, MCP).
   Fix runs may edit, only inside the PR worktree.
-- The user's own MCP servers (`agents.user_mcp`, on by default, issue #16):
-  Claude runs load the user's Claude Code servers (`~/.claude.json`, the
+- The user's own MCP servers (`agents.user_mcp`, on by default, issue #16),
+  in **spaces only** — review runs (grouping, chat, skills, fixes) never
+  get them: Claude space turns load the user's Claude Code servers (`~/.claude.json`, the
   repo's `.mcp.json`, claude.ai connectors) next to Theodore's, and their
   tools (`mcp__*`) are pre-approved; the read-only denylist still applies.
   Off: `--strict-mcp-config`, only Theodore's own server. Codex and Gemini

@@ -137,7 +137,9 @@ impl Core {
         ctx.review = rules;
         let agent = crate::deps::GroupingAgent {
             id: agent,
-            user_mcp: self.user_mcp_allowed().await,
+            // Grouping never uses the user's MCP servers: starting
+            // them on every chunk would only slow it down.
+            user_mcp: false,
         };
         let grouping = match prev {
             Some(p) => {

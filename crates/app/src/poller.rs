@@ -475,7 +475,9 @@ async fn regroup_after_push(
         .await;
     let agent = crate::deps::GroupingAgent {
         id: agent,
-        user_mcp: core.user_mcp_allowed().await,
+        // Grouping never uses the user's MCP servers: starting
+        // them on every chunk would only slow it down.
+        user_mcp: false,
     };
     let mut ctx = core.grouping_context(worktree, new_rev).await;
     ctx.review = rules;
