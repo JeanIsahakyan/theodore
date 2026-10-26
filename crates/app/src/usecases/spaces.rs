@@ -21,6 +21,7 @@ use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
 use crate::usecases::agents::tool_log_line_with;
 use crate::usecases::projects::stable_hash_u32;
+use crate::usecases::skills::{expand_skill, space_skill_content};
 
 /// The `chat_message.pr` key a space's transcript is stored under.
 pub fn space_chat_key(space: &str) -> PrId {
@@ -304,6 +305,11 @@ impl Core {
                 cancel: cancel.clone(),
             },
         );
+        // `/<skill> task` runs one of your or the repo's skills as this
+        // turn's instructions; the transcript keeps the text as typed.
+        let claude_home = &self.0.deps.claude_home;
+        let ask = expand_skill(&text, |id| space_skill_content(id, &wt.path, claude_home))
+            .unwrap_or_else(|| text.clone());
         let turn = Turn {
             run_id,
             message: message_id.clone(),
@@ -311,7 +317,11 @@ impl Core {
             agent,
             model,
             mode,
-            prompt: with_failed_check(&space, turn_prompt(&history, &text)),
+            prompt: with_ultracode(
+                with_failed_check(&space, turn_prompt(&history, &ask)),
+                agent == AgentId::Claude
+                    && self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE,
+            ),
             system: self
                 .space_review_rules(&space, &project, &wt.path)
                 .await
@@ -903,6 +913,19 @@ async fn drive_turn(core: &Core, turn: Turn) {
     }
 }
 
+/// `agents.claude.effort = "ultracode"` (Claude only, spaces only): the
+/// keyword opens the turn's prompt, so Claude Code works it with several
+/// agents. The run itself goes at `--effort max` (`claude.rs`).
+const ULTRACODE: &str = "ultracode";
+
+fn with_ultracode(prompt: String, on: bool) -> String {
+    if on {
+        format!("{ULTRACODE}\n\n{prompt}")
+    } else {
+        prompt
+    }
+}
+
 /// A failing `check` after the last turn goes into the next prompt, so
 /// the agent sees what broke.
 fn with_failed_check(space: &Space, prompt: String) -> String {
@@ -1157,6 +1180,12 @@ fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ultracode_opens_the_prompt_only_when_on() {
+        assert_eq!(with_ultracode("Fix it".into(), true), "ultracode\n\nFix it");
+        assert_eq!(with_ultracode("Fix it".into(), false), "Fix it");
+    }
 
     #[test]
     fn slug_takes_the_first_words() {

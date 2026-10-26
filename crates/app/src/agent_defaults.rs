@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use theodore_contract::models;
 use theodore_domain::AgentId;
 use theodore_ports::Store;
-use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun};
+use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun, ModelInfo};
 
 use crate::settings::{SCOPE_USER, pick_setting};
 
@@ -67,6 +67,10 @@ impl AgentPort for AgentDefaults {
             req.effort = self.text(effort_key(req.agent)).await;
         }
         self.inner.run(req).await
+    }
+
+    async fn models(&self, agent: AgentId) -> Vec<ModelInfo> {
+        self.inner.models(agent).await
     }
 }
 
@@ -151,6 +155,25 @@ mod tests {
         set(&store, "user", "agents.codex.model", "gpt-5".into());
         let r = sent(store, req(AgentId::Codex, None)).await;
         assert_eq!(r.model.as_deref(), Some("gpt-5"));
+    }
+
+    #[tokio::test]
+    async fn codex_gets_its_effort_too() {
+        let store = FakeStore::new();
+        set(&store, "user", "agents.claude.effort", "max".into());
+        set(&store, "user", "agents.codex.effort", "xhigh".into());
+        let r = sent(store, req(AgentId::Codex, None)).await;
+        assert_eq!(r.effort.as_deref(), Some("xhigh"));
+    }
+
+    #[tokio::test]
+    async fn an_explicit_effort_wins() {
+        let store = FakeStore::new();
+        set(&store, "user", "agents.codex.effort", "xhigh".into());
+        let mut r = req(AgentId::Codex, None);
+        r.effort = Some("low".into());
+        let r = sent(store, r).await;
+        assert_eq!(r.effort.as_deref(), Some("low"));
     }
 
     #[tokio::test]

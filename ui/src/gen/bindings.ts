@@ -16,6 +16,7 @@ export const commands = {
 	cancelRun: (run: string) => typedError<null, CommandError>(__TAURI_INVOKE("cancel_run", { run })),
 	submitReview: (req: SubmitReviewRequest) => typedError<null, CommandError>(__TAURI_INVOKE("submit_review", { req })),
 	detectAgents: () => typedError<AgentStatus[], CommandError>(__TAURI_INVOKE("detect_agents")),
+	agentModels: (agent: AgentId) => typedError<AgentModel[], CommandError>(__TAURI_INVOKE("agent_models", { agent })),
 	/**
 	 *  The core doesn't know about updates the shell already downloaded in the
 	 *  background, so this fills `AppInfo.update` from `UpdateState` itself
@@ -99,6 +100,7 @@ export const commands = {
 	listSpaces: (project: string | null) => typedError<Space[], CommandError>(__TAURI_INVOKE("list_spaces", { project })),
 	spaceSend: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send", { req })),
 	spaceStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("space_stop", { space })),
+	spaceSkills: (space: string) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("space_skills", { space })),
 	spaceReview: (req: SpaceReviewRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("space_review", { req })),
 	archiveSpace: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("archive_space", { space })),
 	shipSpace: (req: ShipSpaceRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("ship_space", { req })),
@@ -245,6 +247,22 @@ export type AddProjectRequest = {
 };
 
 export type AgentId = "claude" | "codex" | "gemini";
+
+/**
+ *  One model an agent CLI can run, for the model picker (`agent_models`).
+ *  `id` is what `agents.<id>.model` stores; `efforts` what
+ *  `agents.<id>.effort` may hold for it (empty = no effort choice).
+ */
+export type AgentModel = {
+	id: string,
+	label: string,
+	description: string | null,
+	efforts: string[],
+	/**  The effort the CLI uses when none is set, if it names one. */
+	default_effort: string | null,
+	/**  An earlier version the CLI still runs: under "More models". */
+	older: boolean,
+};
 
 export type AgentStatus = {
 	id: AgentId,

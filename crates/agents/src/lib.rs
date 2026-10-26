@@ -20,12 +20,13 @@ pub mod config;
 pub mod detect;
 pub mod env;
 pub mod gemini;
+pub mod models;
 pub mod process;
 pub mod shell;
 
 use async_trait::async_trait;
 use theodore_domain::AgentId;
-use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun};
+use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun, ModelInfo};
 
 pub use config::{AgentBinaryConfig, AgentCliConfig};
 pub use shell::ShellRunner;
@@ -37,6 +38,9 @@ pub struct AgentCli {
     pid_dir: Option<std::path::PathBuf>,
     /// Each CLI's `--version` from the last `detect`, for the log.
     versions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<AgentId, String>>>,
+    /// `codex debug models`, parsed once per process. Only a success is
+    /// kept: a failed listing (not installed yet) is retried next call.
+    codex_models: std::sync::Arc<tokio::sync::OnceCell<Vec<ModelInfo>>>,
 }
 
 impl AgentCli {
@@ -144,5 +148,30 @@ impl AgentPort for AgentCli {
                 .cloned(),
         };
         process::spawn_and_stream(spec, parser)
+    }
+
+    async fn models(&self, agent: AgentId) -> Vec<ModelInfo> {
+        match agent {
+            AgentId::Claude => models::claude_models(),
+            AgentId::Codex => {
+                let listed = self
+                    .codex_models
+                    .get_or_try_init(|| async {
+                        let cfg = self.configs.get(AgentId::Codex);
+                        let program = detect::locate_binary(AgentId::Codex, &cfg)
+                            .ok_or_else(|| "not installed".to_string())?;
+                        models::codex_models(&program).await
+                    })
+                    .await;
+                match listed {
+                    Ok(list) => list.clone(),
+                    Err(reason) => {
+                        tracing::warn!(reason, "couldn't list codex models");
+                        Vec::new()
+                    }
+                }
+            }
+            AgentId::Gemini => Vec::new(),
+        }
     }
 }

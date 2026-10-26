@@ -240,6 +240,21 @@ pub struct AgentStatus {
     pub path: Option<String>,
 }
 
+/// One model an agent CLI can run, for the model picker (`agent_models`).
+/// `id` is what `agents.<id>.model` stores; `efforts` what
+/// `agents.<id>.effort` may hold for it (empty = no effort choice).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AgentModel {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub efforts: Vec<String>,
+    /// The effort the CLI uses when none is set, if it names one.
+    pub default_effort: Option<String>,
+    /// An earlier version the CLI still runs: under "More models".
+    pub older: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct AppInfo {
     pub version: String,
@@ -673,6 +688,7 @@ pub fn types() -> specta::Types {
         .register::<AskRequest>()
         .register::<SubmitReviewRequest>()
         .register::<AgentStatus>()
+        .register::<AgentModel>()
         .register::<AppInfo>()
         .register::<CommandError>()
         .register::<Ephemeral>()

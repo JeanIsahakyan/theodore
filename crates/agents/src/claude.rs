@@ -131,6 +131,12 @@ pub fn build_args(
             args.push("--effort".to_string());
             args.push(effort.to_string());
         }
+        // Theodore's own level: a space turn also opens its prompt with the
+        // keyword (multi-agent); every run goes at the top effort.
+        Some(ULTRACODE) => {
+            args.push("--effort".to_string());
+            args.push("max".to_string());
+        }
         // Anything else would fail the whole run on an unknown value.
         Some(effort) => tracing::warn!(effort, "unknown claude effort level, left out"),
         None => {}
@@ -141,6 +147,10 @@ pub fn build_args(
 
 /// `--effort <level>` values, as `claude --help` lists them (2.1.310).
 pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+/// The `agents.claude.effort` value past `max`: Claude Code's multi-agent
+/// mode. Runs as `--effort max`; a space turn's prompt opens with it.
+pub const ULTRACODE: &str = "ultracode";
 
 #[derive(Debug, Default)]
 pub struct ClaudeParser;
@@ -682,5 +692,12 @@ mod model_and_effort_tests {
         };
         let args = build_args(&req(Some("sonnet"), None), &cfg, None);
         assert_eq!(flag(&args, "--model").as_deref(), Some("sonnet"));
+    }
+
+    #[test]
+    fn ultracode_runs_at_max_effort() {
+        let args = build_args(&req(None, Some(ULTRACODE)), &Default::default(), None);
+        let at = args.iter().position(|a| a == "--effort").unwrap();
+        assert_eq!(args[at + 1], "max");
     }
 }

@@ -600,8 +600,9 @@ const AgentsPage = observer(function AgentsPage() {
         <span className="text-xs text-muted">
           Used by every run of that agent: grouping, chat, skills, fixes and
           spaces. Default leaves it to the CLI. Effort is Claude Code&apos;s{' '}
-          <code className="font-mono">--effort</code>; the other CLIs have no
-          such flag.
+          <code className="font-mono">--effort</code> and Codex&apos;s{' '}
+          <code className="font-mono">model_reasoning_effort</code>; Gemini CLI
+          has no such setting.
         </span>
       </section>
       <Separator />
