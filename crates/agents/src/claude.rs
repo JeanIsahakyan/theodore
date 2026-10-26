@@ -118,9 +118,21 @@ pub fn build_args(
         args.push("--model".to_string());
         args.push(model.clone());
     }
+    match req.effort.as_deref() {
+        Some(effort) if EFFORT_LEVELS.contains(&effort) => {
+            args.push("--effort".to_string());
+            args.push(effort.to_string());
+        }
+        // Anything else would fail the whole run on an unknown value.
+        Some(effort) => tracing::warn!(effort, "unknown claude effort level, left out"),
+        None => {}
+    }
     args.extend(cfg.extra_args.iter().cloned());
     args
 }
+
+/// `--effort <level>` values, as `claude --help` lists them (2.1.310).
+pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 #[derive(Debug, Default)]
 pub struct ClaudeParser;
@@ -407,6 +419,7 @@ mod read_only_tests {
             mode: AgentMode::ReadOnly,
             mcp: None,
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
         };
@@ -437,6 +450,7 @@ mod mcp_config_tests {
                 name: theodore_ports::REVIEW_TOOLS.into(),
             }),
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
         }
@@ -523,6 +537,7 @@ mod run_mode_tests {
             mode: AgentMode::Run,
             mcp: None,
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
         };
@@ -532,5 +547,67 @@ mod run_mode_tests {
                 .any(|w| w == ["--permission-mode", "bypassPermissions"])
         );
         assert!(!args.iter().any(|a| a == "--disallowedTools"));
+    }
+}
+
+#[cfg(test)]
+mod model_and_effort_tests {
+    use super::*;
+
+    fn req(model: Option<&str>, effort: Option<&str>) -> AgentRequest {
+        AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::ReadOnly,
+            mcp: None,
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+            stall_after_ms: 1000,
+            env: Vec::new(),
+        }
+    }
+
+    fn flag(args: &[String], name: &str) -> Option<String> {
+        let i = args.iter().position(|a| a == name)?;
+        args.get(i + 1).cloned()
+    }
+
+    #[test]
+    fn model_and_effort_reach_their_flags() {
+        let args = build_args(&req(Some("opus"), Some("high")), &Default::default(), None);
+        assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
+        assert_eq!(flag(&args, "--effort").as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn unset_means_the_cli_defaults() {
+        let args = build_args(&req(None, None), &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--model" || a == "--effort"));
+    }
+
+    #[test]
+    fn every_listed_level_is_passed() {
+        for level in EFFORT_LEVELS {
+            let args = build_args(&req(None, Some(level)), &Default::default(), None);
+            assert_eq!(flag(&args, "--effort").as_deref(), Some(level));
+        }
+    }
+
+    #[test]
+    fn an_unknown_level_is_left_out() {
+        let args = build_args(&req(None, Some("ultra")), &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--effort"));
+    }
+
+    #[test]
+    fn the_request_model_wins_over_the_config_one() {
+        let cfg = AgentBinaryConfig {
+            model: Some("haiku".into()),
+            ..Default::default()
+        };
+        let args = build_args(&req(Some("sonnet"), None), &cfg, None);
+        assert_eq!(flag(&args, "--model").as_deref(), Some("sonnet"));
     }
 }

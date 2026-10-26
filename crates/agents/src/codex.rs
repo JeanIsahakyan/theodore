@@ -389,6 +389,7 @@ mod run_mode_tests {
             mode: AgentMode::Run,
             mcp: None,
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
         };
@@ -398,5 +399,32 @@ mod run_mode_tests {
             args.iter()
                 .any(|a| a == "sandbox_workspace_write.network_access=true")
         );
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+
+    #[test]
+    fn model_goes_to_dash_m_and_effort_is_not_passed() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Codex,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::ReadOnly,
+            mcp: None,
+            model: Some("some-model".into()),
+            effort: Some("high".into()),
+            stall_after_ms: 1000,
+            env: Vec::new(),
+        };
+        let args = build_args(&req, &Default::default());
+        assert!(
+            args.windows(2).any(|w| w == ["-m", "some-model"]),
+            "{args:?}"
+        );
+        assert!(!args.iter().any(|a| a.contains("effort") || a == "high"));
     }
 }

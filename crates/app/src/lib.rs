@@ -3,6 +3,7 @@
 //! `app` depends only on `domain` and `ports`; every adapter is injected
 //! through `Deps`. The same `Core` runs inside Tauri and inside the CLI.
 
+mod agent_defaults;
 mod config;
 mod core;
 mod deps;
@@ -55,6 +56,7 @@ mod space_turns_tests;
 #[cfg(test)]
 mod spaces_tests;
 
+pub use agent_defaults::AgentDefaults;
 pub use core::{Core, Receivers};
 pub use deps::{Deps, Grouper, RunTools, TokenStatus};
 pub use error::{AppError, AppResult, GrouperError};

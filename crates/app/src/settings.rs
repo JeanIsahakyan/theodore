@@ -3,6 +3,9 @@
 //! `user` is the baseline; a project's config files (docs/config.md, read
 //! by `load_repo_settings`) set `review.agents.*`, stored as `repo:<slug>`
 //! rows that win over `user` for that repo.
+//!
+//! `agents.<id>.model` / `agents.<id>.effort` (user scope, unset = the
+//! CLI's own default) are read per run by `AgentDefaults`.
 
 use theodore_contract::{Setting, models};
 use theodore_domain::{AgentId, PrId, RepoRef};

@@ -56,6 +56,10 @@ pub struct AgentRequest {
     pub mode: AgentMode,
     pub mcp: Option<McpEndpoint>,
     pub model: Option<String>,
+    /// How hard the agent thinks (`low` … `max`). Only Claude Code takes it
+    /// (`--effort`); the other runners ignore it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// No output for this long → `AgentEvent::Stalled`.
     pub stall_after_ms: u64,
     /// Added to the child's environment after Theodore's own `THEODORE_*`

@@ -402,6 +402,7 @@ async fn drive_skill_run(
             mode: AgentMode::ReadOnly,
             mcp: mcp.clone(),
             model: None,
+            effort: None,
             stall_after_ms,
             env: Vec::new(),
         };
@@ -646,6 +647,7 @@ async fn drive_ask(
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),
         model: None,
+        effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
     };

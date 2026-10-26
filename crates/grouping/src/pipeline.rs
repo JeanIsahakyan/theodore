@@ -418,6 +418,7 @@ pub(crate) async fn call_agent(
         mode: AgentMode::ReadOnly,
         mcp: None,
         model: opts.model.clone(),
+        effort: None,
         stall_after_ms: opts.stall_after_ms,
         env: Vec::new(),
     };
