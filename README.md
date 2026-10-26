@@ -150,6 +150,8 @@ Add project and its PR links stay hidden. Projects and reviews you already added
 - Appearance: System (follows macOS, the default), Light or Dark; also an onboarding step.
 - About: version, commit and build (`production`, `staging`, `nightly`, `dev`), with Copy for bug
   reports.
+- Each build has its own logo colour, in the app and on the Dock: production blue, staging orange,
+  nightly purple, dev grey-green.
 - The account menu under your name in the sidebar: Settings, Report a problem, Sign out.
 - Labs: per-machine switches for features in progress (Linear, GitLab, Bitbucket), all off by
   default. They may change or go away.

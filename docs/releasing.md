@@ -320,6 +320,37 @@ with an invalid redirect error:
 A nightly bakes in whichever client id the shell exported; register
 `theodore-nightly://callback` on the environment it uses.
 
+## Build colours
+
+Each build's logo has its own tile colour, so builds are told apart at a
+glance, in the app and on the Dock:
+
+| Build env | Tile | Blobs | Lens shadow |
+| --- | --- | --- | --- |
+| `production` | blue `#3F86D6` | `#0C5BC0` | `#03306B` |
+| `staging` | orange `#DE8435` | `#C05A0C` | `#6D2D03` |
+| `nightly` | purple `#8C56D2` | `#6120B6` | `#320868` |
+| `dev` | grey-green `#669980` | `#406D57` | `#183929` |
+
+```
+in the app   AppInfo.build_env ──▶ logoColors() ──▶ <Logo>, <WelcomeLogo>
+                                   (production until app_info answers)
+
+on the Dock  icons/src/icon.svg ──▶ scripts/icon-variant.sh <env> <dir>
+                                     recolour + cargo tauri icon
+                                       │
+             build.yml (staging),      ▼
+             nightly-build.sh ──▶ cargo tauri build --config
+                                  '{"bundle":{"icon":[<dir>/32x32.png, …]}}'
+```
+
+- The colours live in two places that must agree:
+  `ui/src/ui/logoColors.ts` and `scripts/icon-variant.sh`.
+- Production builds use the committed `apps/desktop/icons`; variants are
+  generated at build time into `target/icons/<env>`, never committed.
+- `cargo tauri dev` keeps the blue Dock icon (only the in-app logo is
+  grey-green).
+
 ## First launch on a clean Mac (ad-hoc signed builds)
 
 Without a Developer ID, Gatekeeper blocks the first launch of a downloaded

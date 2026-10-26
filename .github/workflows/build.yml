@@ -129,6 +129,18 @@ jobs:
             echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
           } >> "$GITHUB_ENV"
 
+      # The Dock icon in this build's colours (staging: orange), generated
+      # from apps/desktop/icons/src/icon.svg with the tauri-cli installed
+      # above; production keeps the committed icons (docs/releasing.md).
+      - name: app icon in this build's colours
+        if: inputs.build-env != 'production'
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+        run: |
+          icons="$PWD/target/icons/$BUILD_ENV"
+          sh scripts/icon-variant.sh "$BUILD_ENV" "$icons"
+          echo "ICON_DIR=$icons" >> "$GITHUB_ENV"
+
       # Builds + ad-hoc codesigns (tauri.conf.json's `bundle.macOS.signingIdentity:
       # "-"`, i.e. `codesign --force --deep -s -`) unless the step above loaded
       # a real Developer ID, in which case tauri-bundler signs and notarizes
@@ -164,8 +176,14 @@ jobs:
             production) names='{}' ;;
             *) names=$(cat "apps/desktop/tauri.$THEODORE_BUILD_ENV.conf.json") ;;
           esac
+          # Its names, then its version and (outside production) its icon.
           config=$(jq -nc --argjson names "$names" --arg version "$VERSION" \
-            '$names * { version: $version }')
+            --arg icons "${ICON_DIR:-}" '
+            $names * { version: $version }
+            * if $icons == "" then {} else
+                { bundle: { icon: [ "32x32.png", "128x128.png", "icon.icns" ]
+                                  | map("\($icons)/\(.)") } }
+              end')
           echo "config: $config"
           cargo tauri build --target aarch64-apple-darwin --bundles app,dmg \
             --config "$config"

@@ -6,6 +6,7 @@ import { Thunderbolt } from '@gravity-ui/icons';
 import { Button, Card, Chip, Switch, Typography } from '@heroui/react';
 import type { SandboxStatus } from '../../gen/contract';
 import { api } from '../../core/api';
+import { useRootStore } from '../../stores/context';
 import { Spinner } from '../bits';
 import { SANDBOX_POLL_MS, formatDue, latestOnly } from './sandbox';
 
@@ -21,6 +22,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 export function SandboxPage() {
+  const store = useRootStore();
   const [status, setStatus] = useState<SandboxStatus | null | undefined>(
     undefined,
   );
@@ -100,6 +102,29 @@ export function SandboxPage() {
           <InfoRow label="Scenario dir" value={status.info.scenario_dir} />
         </Card>
         {error && <span className="text-xs text-danger">{error}</span>}
+      </section>
+
+      <section className="sandbox-looks flex flex-col gap-2">
+        <Typography.Heading level={6}>Looks</Typography.Heading>
+        <Card
+          variant="secondary"
+          className="flex flex-row items-center gap-3 px-4 py-3"
+        >
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-sm font-medium">Syncing</span>
+            <span className="text-xs text-muted">
+              The workspace switcher's syncing look — the moving lenses and
+              "Syncing…" — for 8 seconds.
+            </span>
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            onPress={() => store.ephemeral.forceSyncing(8000)}
+          >
+            Show syncing
+          </Button>
+        </Card>
       </section>
 
       <section className="sandbox-faults flex flex-col gap-2">

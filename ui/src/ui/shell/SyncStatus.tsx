@@ -58,7 +58,7 @@ export function useSyncDisplay(): {
     store.ephemeral.hostStatus,
     store.sync.queue.pending.length,
   );
-  const busy = info.dot === 'warning';
+  const busy = info.dot === 'warning' || store.ephemeral.forcedSyncUntil > 0;
   const [shown, setShown] = useState(false);
   useEffect(() => {
     if (busy === shown) return;

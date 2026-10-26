@@ -73,7 +73,8 @@ fi
 # One --config: the version, no updater artifacts, and for any build but
 # production its own names (productName, identifier, URL scheme) from
 # tauri.<env>.conf.json, so it installs beside production without sharing
-# its data (docs/releasing.md "One identity per build").
+# its data (docs/releasing.md "One identity per build"), and its Dock icon
+# in this build's colours (purple for a nightly, orange for staging).
 command -v jq >/dev/null || { echo "✗ jq is required (brew install jq)" >&2; exit 1; }
 case "$THEODORE_BUILD_ENV" in
   production) names='{}' ;;
@@ -83,8 +84,16 @@ case "$THEODORE_BUILD_ENV" in
     exit 2
     ;;
 esac
-config=$(jq -nc --argjson names "$names" --arg version "$version" \
-  '$names * { version: $version, bundle: { createUpdaterArtifacts: false } }')
+icons=""
+if [ "$THEODORE_BUILD_ENV" != production ]; then
+  icons="$root/target/icons/$THEODORE_BUILD_ENV"
+  sh scripts/icon-variant.sh "$THEODORE_BUILD_ENV" "$icons" >/dev/null
+fi
+config=$(jq -nc --argjson names "$names" --arg version "$version" --arg icons "$icons" '
+  $names * { version: $version, bundle: { createUpdaterArtifacts: false } }
+  * if $icons == "" then {} else
+      { bundle: { icon: [ "32x32.png", "128x128.png", "icon.icns" ] | map("\($icons)/\(.)") } }
+    end')
 name=$(jq -r --argjson c "$config" '$c.productName // .productName' apps/desktop/tauri.conf.json)
 
 (cd apps/desktop && cargo tauri build --bundles app --config "$config")
