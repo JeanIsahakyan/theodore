@@ -3,7 +3,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUp,
   Check,
-  ChevronDown,
   CircleCheck,
   CircleStop,
   CodeCommit,
@@ -26,11 +25,9 @@ import {
   Card,
   Chip,
   Disclosure,
-  Dropdown,
   EmptyState,
   Header,
   InputGroup,
-  Label,
   ListBox,
   Tabs,
   TextField,
@@ -69,6 +66,7 @@ import type { LineAsk } from '../stores/EphemeralStore';
 import { rich } from '../highlight';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
+import { AgentMenu } from './AgentMenu';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
 import { PatchView } from './Patch';
 import { isAgentEnabled } from './Settings';
@@ -1272,42 +1270,16 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 </Button>
                 <Tooltip.Content>Skills</Tooltip.Content>
               </Tooltip>
-              <Dropdown>
-                <Button
-                  size="sm"
-                  variant="tertiary"
-                  className="min-w-0 shrink gap-1.5 rounded-full px-3 text-xs"
-                >
-                  <span className="min-w-0 truncate">
-                    {skillAgents.join(' + ')}
-                  </span>
-                  <ChevronDown className="size-3 shrink-0 text-muted" />
-                </Button>
-                <Dropdown.Popover placement="top start">
-                  <Dropdown.Menu
-                    aria-label="Agents"
-                    selectionMode="multiple"
-                    selectedKeys={new Set(skillAgents)}
-                    onSelectionChange={(keys) => {
-                      const next = AGENTS.filter(
-                        (a) => keys === 'all' || keys.has(a),
-                      );
-                      if (next.length) setSkillAgents(next);
-                    }}
-                  >
-                    {/* Only agents installed on this computer and not
-                        disabled in Settings → Agents are offered. */}
-                    {(installed ?? AGENTS)
-                      .filter((a) => isAgentEnabled(store, a))
-                      .map((a) => (
-                        <Dropdown.Item key={a} id={a} textValue={a}>
-                          <Label>{a}</Label>
-                          <Dropdown.ItemIndicator />
-                        </Dropdown.Item>
-                      ))}
-                  </Dropdown.Menu>
-                </Dropdown.Popover>
-              </Dropdown>
+              {/* Only agents installed on this computer and not disabled
+                  in Settings → Agents are offered. */}
+              <AgentMenu
+                multiple
+                agents={(installed ?? AGENTS).filter((a) =>
+                  isAgentEnabled(store, a),
+                )}
+                selected={skillAgents}
+                onSelect={setSkillAgents}
+              />
               <span className="flex-1" />
               <Button
                 isIconOnly

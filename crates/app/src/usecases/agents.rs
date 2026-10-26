@@ -404,6 +404,7 @@ async fn drive_skill_run(
             mode: AgentMode::ReadOnly,
             mcp: mcp.clone(),
             model: None,
+            effort: None,
             stall_after_ms,
             env: Vec::new(),
             user_mcp,
@@ -689,6 +690,7 @@ async fn drive_ask(
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),
         model: None,
+        effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
         // Spaces only (issue #16): a chat answer stays on Theodore's tools.

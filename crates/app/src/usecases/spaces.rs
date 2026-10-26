@@ -694,6 +694,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         },
         mcp,
         model,
+        effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env,
         user_mcp: core.user_mcp_allowed().await,

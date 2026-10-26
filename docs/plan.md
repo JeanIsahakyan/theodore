@@ -819,7 +819,7 @@ Which agent does what is a setting, layered user → repo:
 | `agents.chat` | `claude` | switchable per message in the UI |
 | `agents.skills` | `[claude]` | a list: skills can run on several agents at once |
 | `agents.fix` | `claude` | one agent; edits only in the PR worktree |
-| `agents.<id>.enabled`, `.path`, `.model` | detected on onboarding | CLI path and model override |
+| `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort (Claude: `--effort`) override |
 | `agents.user_mcp` | `true` | user scope only: Claude runs may use the user's own MCP servers (§8.2) |
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the

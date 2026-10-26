@@ -349,6 +349,7 @@ mod tests {
                 name: theodore_ports::REVIEW_TOOLS.into(),
             }),
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
@@ -370,6 +371,7 @@ mod run_mode_tests {
             mode: AgentMode::Run,
             mcp: None,
             model: None,
+            effort: None,
             stall_after_ms: 1000,
             env: Vec::new(),
             user_mcp: false,
@@ -377,5 +379,33 @@ mod run_mode_tests {
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["--approval-mode", "yolo"]));
         assert!(core_tools(AgentMode::Run).contains(&"ShellTool"));
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+
+    #[test]
+    fn model_goes_to_dash_m_and_effort_is_not_passed() {
+        let req = AgentRequest {
+            agent: theodore_domain::AgentId::Gemini,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/tmp".into(),
+            mode: AgentMode::ReadOnly,
+            mcp: None,
+            model: Some("some-model".into()),
+            effort: Some("high".into()),
+            stall_after_ms: 1000,
+            env: Vec::new(),
+            user_mcp: false,
+        };
+        let args = build_args(&req, &Default::default());
+        assert!(
+            args.windows(2).any(|w| w == ["-m", "some-model"]),
+            "{args:?}"
+        );
+        assert!(!args.iter().any(|a| a.contains("effort") || a == "high"));
     }
 }

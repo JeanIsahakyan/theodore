@@ -18,6 +18,7 @@ import { observer } from 'mobx-react-lite';
 import type { AgentId } from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore } from '../../stores/context';
+import { AgentMenu } from '../AgentMenu';
 import { isAgentEnabled } from '../Settings';
 import { K } from '../bits';
 
@@ -188,43 +189,6 @@ export function ChipMenu<T extends string>({
   );
 }
 
-/** Agent + model, as one choice: `claude`, `claude:opus`, `codex`… Only
- *  agents installed here and enabled in Settings → Agents. */
-export type AgentChoice = string;
-
-const CLAUDE_MODELS = [
-  { model: 'opus', hint: 'Most capable' },
-  { model: 'sonnet', hint: 'Balanced' },
-  { model: 'haiku', hint: 'Fastest, cheapest' },
-];
-
-export function parseAgentChoice(c: AgentChoice): {
-  agent: AgentId | null;
-  model: string | null;
-} {
-  if (!c) return { agent: null, model: null };
-  const [agent, model] = c.split(':');
-  return { agent: agent as AgentId, model: model ?? null };
-}
-
-export function agentChoices(
-  agents: AgentId[],
-): { id: AgentChoice; label: string; hint?: string }[] {
-  return agents.flatMap(
-    (a): { id: AgentChoice; label: string; hint?: string }[] =>
-      a === 'claude'
-        ? [
-            { id: 'claude', label: 'claude', hint: 'Default model' },
-            ...CLAUDE_MODELS.map((m) => ({
-              id: `claude:${m.model}`,
-              label: `claude · ${m.model}`,
-              hint: m.hint,
-            })),
-          ]
-        : [{ id: a, label: a }],
-  );
-}
-
 /** The agents offered for a new space: installed and enabled. */
 export const useEnabledAgents = (): AgentId[] => {
   const store = useRootStore();
@@ -249,27 +213,23 @@ export const useEnabledAgents = (): AgentId[] => {
   return agents;
 };
 
-/** The agent chip for a new space. Empty `value` = the `agents.chat`
- *  default, shown as "claude" (or whatever is first). */
+/** The agent chip for a new space, with the agent's model and effort.
+ *  `null` = the `agents.chat` default, shown as the first one offered. */
 export const AgentChip = observer(function AgentChip({
   value,
   onChange,
 }: {
-  value: AgentChoice;
-  onChange: (c: AgentChoice) => void;
+  value: AgentId | null;
+  onChange: (a: AgentId) => void;
 }) {
   const agents = useEnabledAgents();
-  const items = agentChoices(agents);
-  if (!items.length) return null;
-  const current = value || items[0]!.id;
-  const label = items.find((i) => i.id === current)?.label ?? current;
+  if (!agents.length) return null;
+  const current = value && agents.includes(value) ? value : agents[0]!;
   return (
-    <ChipMenu
-      ariaLabel="Agent"
-      label={label}
-      items={items}
-      selected={current}
-      onSelect={onChange}
+    <AgentMenu
+      agents={agents}
+      selected={[current]}
+      onSelect={(next) => next[0] && onChange(next[0])}
     />
   );
 });
