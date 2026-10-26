@@ -56,6 +56,7 @@ import { DiffPane, type ComposerState } from '../DiffPane';
 import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../SidePanel';
 import { Md } from '../../highlight';
+import { MessageAttachments, useAttachments } from '../attachments';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
 import { agentEffort, agentLabel, agentModel } from '../agentModel';
@@ -697,6 +698,7 @@ const SpaceChat = observer(function SpaceChat({
 }) {
   const store = useRootStore();
   const [text, setText] = useState('');
+  const files = useAttachments();
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const messages = [
@@ -749,7 +751,7 @@ const SpaceChat = observer(function SpaceChat({
 
   const send = () => {
     const t = text.trim();
-    if (!t || run || space.status === 'archived') return;
+    if (!t || run || files.busy || space.status === 'archived') return;
     setText('');
     void api
       .spaceSend({
@@ -759,7 +761,9 @@ const SpaceChat = observer(function SpaceChat({
         // The chip's model, so a change there reaches the next turn.
         model: agentModel(store, agent),
         mode: mode === space.mode ? null : mode,
+        attachments: files.ids.length ? files.ids : null,
       })
+      .then(() => files.clear())
       .catch(() => setText(t));
   };
 
@@ -809,6 +813,7 @@ const SpaceChat = observer(function SpaceChat({
                   )}
                 </div>
               )}
+              <MessageAttachments attachments={m.attachments} />
               {m.author.kind === 'agent' && turnTools(m.id)}
               {m.author.kind === 'agent' && checks.has(m.id) && (
                 <CheckChip check={checks.get(m.id)!} />
@@ -865,6 +870,7 @@ const SpaceChat = observer(function SpaceChat({
             running={!!run}
             onStop={() => void api.spaceStop(space.id).catch(() => {})}
             skills={skills}
+            attachments={files}
             chips={
               <>
                 <AgentChip
