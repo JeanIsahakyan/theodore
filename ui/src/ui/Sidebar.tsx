@@ -35,7 +35,6 @@ import { inInbox } from './List';
 import { openPrCount } from './prs/filters';
 import { sectionsOf, type Section } from '../core/workspaces';
 import { SandboxBadge } from './sandbox/SandboxBadge';
-import { SyncStatus } from './shell/SyncStatus';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { spaceSeen } from './space/seen';
 import { isBuildMode } from './space/mode';
@@ -293,16 +292,8 @@ export const Sidebar = observer(function Sidebar() {
 
       <Separator />
       <Toolbar
-        aria-label="Sync status"
-        className="flex w-full items-center gap-2 px-5 pt-2.5"
-      >
-        <SyncStatus />
-        <span className="flex-1" />
-        <SandboxBadge />
-      </Toolbar>
-      <Toolbar
         aria-label="App"
-        className="flex w-full items-center gap-1 px-5 pb-3 pt-1.5"
+        className="flex w-full items-center gap-1 px-5 pb-3 pt-2.5"
       >
         <Dropdown>
           <Button
@@ -361,6 +352,7 @@ export const Sidebar = observer(function Sidebar() {
             </Dropdown.Menu>
           </Dropdown.Popover>
         </Dropdown>
+        <SandboxBadge />
         <IconBtn label="Collapse sidebar  [" onPress={() => ui.toggleSidebar()}>
           <LayoutSideContentLeft className="size-4" />
         </IconBtn>
