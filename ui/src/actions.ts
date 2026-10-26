@@ -10,12 +10,15 @@ import { api } from './core/api';
 import { NO_ACCOUNT } from './core/accountGate';
 import { prUrlHost } from './core/prUrl';
 import { isHostOn } from './ui/settings/labs';
+import { reaction } from 'mobx';
+import { lineAskKey } from './stores/EphemeralStore';
 import type {
   AppInfo,
   AddProjectRequest,
   AgentId,
   Anchor,
   AskRequest,
+  ChatMessage,
   CommentId,
   DraftStateRequest,
   HunkId,
@@ -210,6 +213,129 @@ export async function runSkill(
 
 export async function ask(_store: RootStore, req: AskRequest): Promise<string> {
   return api.ask(req);
+}
+
+/** The run behind a chat question: core names it after the question's
+ *  message id (what `ask` returns), and streams/cancels under this id. */
+export const askRunId = (message: string) => `ask:${message}`;
+
+/** The reply to question `question` among a PR's messages: each agent
+ *  message answers the oldest still-unanswered question before it (core
+ *  stores no link, and runs answer in about the order they were asked). */
+export function replyTo(
+  messages: readonly ChatMessage[],
+  question: string,
+): ChatMessage | null {
+  const sorted = [...messages].sort((a, b) => a.at - b.at);
+  const open: string[] = [];
+  for (const m of sorted) {
+    if (m.author.kind === 'me') {
+      open.push(m.id);
+      continue;
+    }
+    const q = open.shift();
+    if (q === question) return m;
+  }
+  return null;
+}
+
+const AGENT_IDS: readonly AgentId[] = ['claude', 'codex', 'gemini'];
+
+/** The agent a chat question with no agent picked goes to — the
+ *  `agents.chat` setting, else core's default. A label, not a choice:
+ *  core resolves the real one (repo scope, disabled agents). */
+function chatAgentGuess(store: RootStore): AgentId {
+  const v = store.models.settings.get(settingId('user', 'agents.chat'))?.value;
+  return AGENT_IDS.find((a) => a === v) ?? 'claude';
+}
+
+/** Asks the agent about one diff line: the line shows "Asking…" at once,
+ *  the AI panel opens on the question, and the line's chip turns into
+ *  "Answered" (or "Failed") once the reply lands. Asking again while one
+ *  runs on that line only brings it back into view. */
+export async function askAboutLine(
+  store: RootStore,
+  { pr, anchor, question }: { pr: PrId; anchor: Anchor; question: string },
+): Promise<void> {
+  const key = lineAskKey(pr, anchor.path, anchor.side, anchor.line);
+  const cur = store.ephemeral.lineAsks.get(key);
+  store.ui.toggleAside(true);
+  if (cur?.status === 'asking') {
+    store.ephemeral.focusAsk(pr, cur.message);
+    return;
+  }
+  store.ephemeral.setLineAsk(key, {
+    pr,
+    anchor,
+    question,
+    agent: chatAgentGuess(store),
+    status: 'asking',
+    message: null,
+    reply: null,
+  });
+  store.ephemeral.focusAsk(pr, null);
+  // `mine`: still this very ask (not dismissed, not re-asked since).
+  const mine = (message: string | null) => {
+    const a = store.ephemeral.lineAsks.get(key);
+    return a != null && a.status === 'asking' && a.message === message;
+  };
+  let message: string;
+  try {
+    message = await ask(store, {
+      pr,
+      question,
+      about: anchor,
+      group: null,
+      agent: null,
+    });
+  } catch {
+    // toasted by api.ts
+    if (mine(null)) store.ephemeral.patchLineAsk(key, { status: 'failed' });
+    return;
+  }
+  if (!mine(null)) return;
+  store.ephemeral.patchLineAsk(key, { message });
+  store.ephemeral.focusAsk(pr, message);
+  const stop = reaction(
+    () =>
+      mine(message)
+        ? replyTo(store.models.chatMessages.byPr(pr), message)
+        : undefined,
+    (reply) => {
+      if (reply === undefined) {
+        stop();
+        return;
+      }
+      if (!reply) return;
+      stop();
+      store.ephemeral.patchLineAsk(key, {
+        status: reply.failed ? 'failed' : 'answered',
+        reply: reply.id,
+        ...(reply.author.kind === 'agent' ? { agent: reply.author.agent } : {}),
+      });
+    },
+    { fireImmediately: true },
+  );
+}
+
+/** "View" on a line's answered chip: the panel shows the reply, and the
+ *  chip has done its job. */
+export function openLineAnswer(store: RootStore, key: string): void {
+  const a = store.ephemeral.lineAsks.get(key);
+  if (!a) return;
+  store.ui.toggleAside(true);
+  store.ephemeral.focusAsk(a.pr, a.reply ?? a.message);
+  if (a.status !== 'asking') store.ephemeral.clearLineAsk(key);
+}
+
+/** × on a line's chip: forgets it, and stops the run if still asking. */
+export function dismissLineAsk(store: RootStore, key: string): void {
+  const a = store.ephemeral.lineAsks.get(key);
+  if (!a) return;
+  store.ephemeral.clearLineAsk(key);
+  if (a.status === 'asking' && a.message) {
+    void cancelRun(store, askRunId(a.message)).catch(() => {});
+  }
 }
 
 export async function cancelRun(store: RootStore, run: string): Promise<void> {

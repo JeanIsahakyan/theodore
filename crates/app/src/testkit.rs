@@ -1495,6 +1495,7 @@ impl AgentPort for FakeAgent {
 pub struct FakeGrouper {
     grouping: Mutex<Grouping>,
     last_agent: Mutex<Option<AgentId>>,
+    last_user_mcp: Mutex<Option<bool>>,
     last_ctx: Mutex<Option<theodore_domain::grouping::RepoContext>>,
     /// How long `group` takes, so a test can act while it runs.
     delay_ms: std::sync::atomic::AtomicU64,
@@ -1506,6 +1507,7 @@ impl FakeGrouper {
         Arc::new(Self {
             grouping: Mutex::new(grouping),
             last_agent: Mutex::new(None),
+            last_user_mcp: Mutex::new(None),
             last_ctx: Mutex::new(None),
             delay_ms: std::sync::atomic::AtomicU64::new(0),
             calls: std::sync::atomic::AtomicUsize::new(0),
@@ -1526,6 +1528,10 @@ impl FakeGrouper {
     pub fn last_agent(&self) -> Option<AgentId> {
         *self.last_agent.lock().unwrap()
     }
+    /// The `agents.user_mcp` the last `group`/`regroup` call was made with.
+    pub fn last_user_mcp(&self) -> Option<bool> {
+        *self.last_user_mcp.lock().unwrap()
+    }
     /// The repository context the last `group`/`regroup` call received.
     pub fn last_ctx(&self) -> Option<theodore_domain::grouping::RepoContext> {
         self.last_ctx.lock().unwrap().clone()
@@ -1540,10 +1546,11 @@ impl Grouper for FakeGrouper {
         _pr: &PrDetail,
         ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
-        agent: AgentId,
+        agent: crate::deps::GroupingAgent,
     ) -> Result<Grouping, GrouperError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *self.last_agent.lock().unwrap() = Some(agent);
+        *self.last_agent.lock().unwrap() = Some(agent.id);
+        *self.last_user_mcp.lock().unwrap() = Some(agent.user_mcp);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         let delay = self.delay_ms.load(std::sync::atomic::Ordering::SeqCst);
         if delay > 0 {
@@ -1558,11 +1565,12 @@ impl Grouper for FakeGrouper {
         _pr: &PrDetail,
         ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
-        agent: AgentId,
+        agent: crate::deps::GroupingAgent,
     ) -> Result<Grouping, GrouperError> {
         let _ = prev;
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *self.last_agent.lock().unwrap() = Some(agent);
+        *self.last_agent.lock().unwrap() = Some(agent.id);
+        *self.last_user_mcp.lock().unwrap() = Some(agent.user_mcp);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         Ok(self.grouping.lock().unwrap().clone())
     }

@@ -380,6 +380,8 @@ async fn drive_skill_run(
         }
     };
     let stall_after_ms = core.stall_after_ms().await;
+    // The user's own MCP servers are for spaces only (issue #16).
+    let user_mcp = false;
     // The repo's `review.instructions` / `review.context`.
     let system = core.review_rules_of(&pr).await.with_system(None);
     let started = std::time::Instant::now();
@@ -405,6 +407,7 @@ async fn drive_skill_run(
             effort: None,
             stall_after_ms,
             env: Vec::new(),
+            user_mcp,
         };
         let _guard = ToolsGuard { core, mcp };
         match core.0.deps.agents.run(req).await {
@@ -417,8 +420,8 @@ async fn drive_skill_run(
                             AgentEvent::Text { text } | AgentEvent::Thinking { text } => {
                                 core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text });
                             }
-                            AgentEvent::ToolCall { name, .. } => {
-                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line(&name) });
+                            AgentEvent::ToolCall { name, input, .. } => {
+                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line_with(&name, &input) });
                             }
                             AgentEvent::ToolResult { ok, .. } => {
                                 core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool result ok={ok}") });
@@ -542,6 +545,46 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
 /// they do instead of `mcp__space-tools__run_check` (Claude),
 /// `space-tools__run_check` (Codex) or the bare name; anything else is
 /// shown as the agent named it.
+/// `tool: Bash · npm test`: the call's name and what it acted on (a
+/// command, a file, a pattern), for the UI's step list only — this line
+/// goes to the window as an ephemeral event, never to the log file.
+pub(crate) fn tool_log_line_with(name: &str, input: &serde_json::Value) -> String {
+    let line = tool_log_line(name);
+    match tool_target(input) {
+        Some(t) => format!("{line} · {t}"),
+        None => line,
+    }
+}
+
+/// The part of a tool call worth showing: the first line of a command, a
+/// file's last two path segments, or a search pattern; 80 chars at most.
+fn tool_target(input: &serde_json::Value) -> Option<String> {
+    let s = |k: &str| input.get(k).and_then(serde_json::Value::as_str);
+    let raw = if let Some(c) = s("command") {
+        c.lines().next().unwrap_or_default().trim().to_string()
+    } else if let Some(p) = s("file_path")
+        .or_else(|| s("path"))
+        .or_else(|| s("notebook_path"))
+    {
+        let parts: Vec<&str> = p.trim_end_matches('/').rsplit('/').take(2).collect();
+        parts.into_iter().rev().collect::<Vec<_>>().join("/")
+    } else {
+        s("pattern")
+            .or_else(|| s("query"))
+            .or_else(|| s("url"))?
+            .trim()
+            .to_string()
+    };
+    if raw.is_empty() {
+        return None;
+    }
+    Some(if raw.chars().count() > 80 {
+        format!("{}…", raw.chars().take(79).collect::<String>())
+    } else {
+        raw
+    })
+}
+
 pub(crate) fn tool_log_line(name: &str) -> String {
     let own = [theodore_ports::REVIEW_TOOLS, theodore_ports::SPACE_TOOLS]
         .iter()
@@ -650,6 +693,8 @@ async fn drive_ask(
         effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
+        // Spaces only (issue #16): a chat answer stays on Theodore's tools.
+        user_mcp: false,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut text = String::new();
@@ -720,7 +765,7 @@ async fn drive_ask(
 
 #[cfg(test)]
 mod tool_label_tests {
-    use super::tool_log_line;
+    use super::{tool_log_line, tool_log_line_with};
 
     #[test]
     fn theodores_tools_read_as_what_they_do() {
@@ -738,6 +783,35 @@ mod tool_label_tests {
         );
         assert_eq!(tool_log_line("app_status"), "tool: app status");
         assert_eq!(tool_log_line("Bash"), "tool: Bash");
+        assert_eq!(
+            tool_log_line_with(
+                "Bash",
+                &serde_json::json!({ "command": "npm test\nnpm run lint" })
+            ),
+            "tool: Bash · npm test"
+        );
+        assert_eq!(
+            tool_log_line_with(
+                "Edit",
+                &serde_json::json!({ "file_path": "/repo/src/lib/price.ts" })
+            ),
+            "tool: Edit · lib/price.ts"
+        );
+        assert_eq!(
+            tool_log_line_with("Grep", &serde_json::json!({ "pattern": "formatPrice" })),
+            "tool: Grep · formatPrice"
+        );
+        assert_eq!(
+            tool_log_line_with("Bash", &serde_json::json!({})),
+            "tool: Bash"
+        );
+        let long = "x".repeat(200);
+        assert_eq!(
+            tool_log_line_with("Bash", &serde_json::json!({ "command": long }))
+                .chars()
+                .count(),
+            "tool: Bash · ".chars().count() + 80
+        );
         assert_eq!(
             tool_log_line("mcp__other__run_check"),
             "tool: mcp__other__run_check",

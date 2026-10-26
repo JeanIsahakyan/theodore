@@ -384,16 +384,17 @@ never in the webview.
 
 The "Sign in with GitHub" button (Onboarding and Settings → Account) runs
 GitHub's OAuth device flow — no pasted token, no `gh` required — but it needs
-an OAuth app's client id. Theodore never ships one; the owner creates a GitHub
-OAuth App (device flow enabled, no client secret needed) and configures its
-client id one of two ways, checked in this order:
+an OAuth app's client id. The owner's GitHub OAuth App (device flow enabled,
+no client secret needed) has its client id in the repo variable
+`THEODORE_GITHUB_CLIENT_ID`, compiled into every CI build. Checked in this
+order:
 
-1. The `THEODORE_GITHUB_CLIENT_ID` environment variable.
-2. The `host.github.client_id` setting (Settings → Account writes this
-   indirectly today only through `THEODORE_GITHUB_CLIENT_ID`; setting it
-   directly is a `transact` on the `setting` model, scope `user`).
+1. The `THEODORE_GITHUB_CLIENT_ID` environment variable at run time.
+2. The `host.github.client_id` setting (a `transact` on the `setting`
+   model, scope `user`).
+3. The client id compiled in (`option_env!`, from the build's environment).
 
-With neither set, `host_status`'s `device_login_available` is `false`, the
+With none set (a local dev build), `host_status`'s `device_login_available` is `false`, the
 button is hidden, and sign-in falls back to `gh`'s own login or a pasted
 token — nothing else about auth changes.
 
@@ -776,6 +777,15 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
   auth variables (e.g. `ANTHROPIC_API_KEY`) are passed through.
 - Permissions: review runs are read-only (tool allowlist: read, grep, MCP).
   Fix runs may edit, only inside the PR worktree.
+- The user's own MCP servers (`agents.user_mcp`, on by default, issue #16),
+  in **spaces only** — review runs (grouping, chat, skills, fixes) never
+  get them: Claude space turns load the user's Claude Code servers (`~/.claude.json`, the
+  repo's `.mcp.json`, claude.ai connectors) next to Theodore's, and their
+  tools (`mcp__*`) are pre-approved; the read-only denylist still applies.
+  Off: `--strict-mcp-config`, only Theodore's own server. Codex and Gemini
+  have no such flag and ignore the setting: Codex's `-c` overrides add to
+  `~/.codex/config.toml`, so its servers load either way; Gemini's
+  settings-file merge is unverified.
 - Pinned minimum CLI versions; stream parsers covered by recorded fixtures.
 
 ### 8.3 MCP `review-tools`
@@ -810,6 +820,7 @@ Which agent does what is a setting, layered user → repo:
 | `agents.skills` | `[claude]` | a list: skills can run on several agents at once |
 | `agents.fix` | `claude` | one agent; edits only in the PR worktree |
 | `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort (Claude: `--effort`) override |
+| `agents.user_mcp` | `true` | user scope only: Claude runs may use the user's own MCP servers (§8.2) |
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the
 Claude runner; the others follow in M4 behind the same runner trait.

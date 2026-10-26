@@ -47,6 +47,10 @@ pub struct GroupingOptions {
     /// Max number of chunk prompts run concurrently, for large PRs split
     /// into several per-directory prompts (plan §5.2).
     pub chunk_concurrency: usize,
+    /// Forwarded to `AgentRequest::user_mcp` (the `agents.user_mcp`
+    /// setting). Off by default, so evals don't depend on a machine's MCP
+    /// servers.
+    pub user_mcp: bool,
 }
 
 impl Default for GroupingOptions {
@@ -57,6 +61,7 @@ impl Default for GroupingOptions {
             budget: PromptBudget::default(),
             stall_after_ms: 90_000,
             chunk_concurrency: DEFAULT_CHUNK_CONCURRENCY,
+            user_mcp: false,
         }
     }
 }
@@ -421,6 +426,7 @@ pub(crate) async fn call_agent(
         effort: None,
         stall_after_ms: opts.stall_after_ms,
         env: Vec::new(),
+        user_mcp: opts.user_mcp,
     };
     let mut run = agent.run(req).await?;
     let mut usage = Usage::default();

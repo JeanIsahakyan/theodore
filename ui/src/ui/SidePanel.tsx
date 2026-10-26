@@ -49,8 +49,11 @@ import type {
 import { api } from '../core/api';
 import {
   ask,
+  askAboutLine,
+  askRunId,
   cancelRun,
   commitSuggestions,
+  dismissLineAsk,
   findingToDraft,
   findingToTask,
   ignoreFinding,
@@ -59,6 +62,7 @@ import {
   runSkill,
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
+import type { LineAsk } from '../stores/EphemeralStore';
 import { rich } from '../highlight';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
@@ -69,6 +73,7 @@ import { isAgentEnabled } from './Settings';
 import { SkillsManagerModal } from './Skills';
 import { TaskRow } from './Tasks';
 import { SendToAgent } from './space/SendToAgent';
+import { runningLine, summarizeTools, times, usedLine } from './toolSummary';
 
 export type SideTab = 'ai' | 'tasks' | 'threads';
 
@@ -96,6 +101,12 @@ function CountChip({
 export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   const [tab, setTab] = useState<SideTab>('ai');
   const store = useRootStore();
+  // A line ask wants the chat in view: the AI tab takes over.
+  const focusSeq =
+    store.ephemeral.askFocus?.pr === pr ? store.ephemeral.askFocus.seq : null;
+  useEffect(() => {
+    if (focusSeq != null) setTab('ai');
+  }, [focusSeq]);
   const open = store.models.findings
     .byPr(pr)
     .filter((f) => f.state === 'open' || f.state === 'maybe_fixed').length;
@@ -146,6 +157,74 @@ export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   );
 });
 
+/** A line ask (asked from the diff) still running: the agent's live text,
+ *  or dots until there is some. Its question shows above as a normal
+ *  message once synced. */
+const LineAskBubble = observer(function LineAskBubble({
+  askKey,
+  a,
+}: {
+  askKey: string;
+  a: LineAsk;
+}) {
+  const store = useRootStore();
+  const run = a.message ? askRunId(a.message) : null;
+  const text = run ? store.ephemeral.agentText.get(run) : undefined;
+  const tools = run ? store.ephemeral.runLog.get(run) : undefined;
+  const stalled = run != null && store.ephemeral.stalled.has(run);
+  return (
+    <div className="msg agent line-ask flex gap-3" data-line-ask={askKey}>
+      <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+        <div className="flex items-center gap-2">
+          <AgentTag id={a.agent} />
+          <Ref a={a.anchor} />
+        </div>
+        {stalled ? (
+          <Alert status="warning" className="agent-stalled">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Description className="text-xs">
+                No response in a while — the agent may be stuck.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
+        ) : text ? (
+          <div className="rich whitespace-pre-wrap text-sm leading-relaxed">
+            {rich(text)}
+          </div>
+        ) : (
+          <Dots />
+        )}
+        {tools && tools.length > 0 && <ToolCalls tools={tools} running />}
+        <div className="flex gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-fit px-2 text-xs"
+            onPress={() => dismissLineAsk(store, askKey)}
+          >
+            <CircleStop className="size-3.5" />
+            Stop
+          </Button>
+          {stalled && (
+            <Button
+              size="sm"
+              variant="tertiary"
+              className="h-7 w-fit px-2 text-xs"
+              onPress={() => {
+                dismissLineAsk(store, askKey);
+                void askAboutLine(store, a);
+              }}
+            >
+              Retry
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 /** A finding's anchor as an informational file:line chip. Not clickable:
  *  nothing outside `Review`'s own local diff state can jump the diff pane
  *  to a line yet, so this only orients, same as the prototype's `Ref` did,
@@ -185,21 +264,44 @@ function Dots() {
   );
 }
 
-/** Collapsible card with the log lines an agent produced for this answer.
- *  Open while the agent works, folds away once it's done — remounted (via
- *  `key`) rather than synced through an effect, so there's no setState in
- *  an effect body to cascade a render. */
+/** Whether a turn's step list is open, by run id — kept across the remount
+ *  when a running turn becomes a finished one. */
+const stepsOpen = new Map<string, boolean>();
+
+/** A turn's tool calls, folded: while the agent works, only the latest step
+ *  and a count; once it's done, one `Used Bash ×12, Edit ×4` line. The full
+ *  list — back-to-back calls of one tool grouped — opens behind
+ *  `Show N steps`. */
 export function ToolCalls({
   tools,
   running,
+  turn,
 }: {
-  tools: string[];
+  tools: readonly string[];
   running: boolean;
+  /** Run id; keeps the list's open state for this turn. */
+  turn?: string;
 }) {
+  const [open, setOpen] = useState(() =>
+    turn ? (stepsOpen.get(turn) ?? false) : false,
+  );
+  const toggle = (next: boolean) => {
+    if (turn) stepsOpen.set(turn, next);
+    setOpen(next);
+  };
+  const s = summarizeTools(tools);
+  const head = running
+    ? s.latest
+      ? runningLine(s.latest)
+      : 'Working…'
+    : usedLine(s) || 'Done';
+  const count = s.steps
+    ? plural(s.steps, 'step', 'steps', 'steps')
+    : plural(s.groups.length, 'line', 'lines', 'lines');
   return (
     <Disclosure
-      key={running ? 'running' : 'done'}
-      defaultExpanded={running}
+      isExpanded={open}
+      onExpandedChange={toggle}
       className="rounded-2xl border border-separator"
     >
       <Disclosure.Heading>
@@ -207,20 +309,42 @@ export function ToolCalls({
           {running ? (
             <Spinner />
           ) : (
-            <CircleCheck className="size-3.5 text-success" />
+            <CircleCheck className="size-3.5 shrink-0 text-success" />
           )}
-          <span className="text-muted">{running ? 'Working:' : 'Done:'}</span>
-          <span className="truncate font-medium">
-            {plural(tools.length, 'log line', 'log lines', 'log lines')}
+          <span className="min-w-0 flex-1 truncate font-medium" title={head}>
+            {head}
+          </span>
+          <span className="shrink-0 text-muted">
+            {open ? 'Hide' : 'Show'} {count}
           </span>
           <Disclosure.Indicator />
         </Disclosure.Trigger>
       </Disclosure.Heading>
       <Disclosure.Content>
         <Disclosure.Body className="runlog flex flex-col gap-1 px-3 pb-2.5 pt-0 font-mono text-xs text-muted">
-          {tools.map((t, i) => (
-            <span key={i}>{t}</span>
-          ))}
+          {s.groups.map((g, i) =>
+            g.kind === 'note' ? (
+              <span key={i} className="italic">
+                {g.text}
+              </span>
+            ) : (
+              <span key={i} className="flex min-w-0 gap-1.5">
+                <span className="shrink-0 text-foreground">
+                  {times(g.tool, g.count)}
+                </span>
+                {g.target && (
+                  <span className="truncate" title={g.target}>
+                    · {g.target}
+                  </span>
+                )}
+                {g.failed > 0 && (
+                  <span className="shrink-0 text-danger">
+                    · {g.failed} failed
+                  </span>
+                )}
+              </span>
+            ),
+          )}
         </Disclosure.Body>
       </Disclosure.Content>
     </Disclosure>
@@ -418,7 +542,7 @@ const SkillRunView = observer(function SkillRunView({
           </div>
         </div>
       )}
-      {log.length > 0 && <ToolCalls tools={log} running={live} />}
+      {log.length > 0 && <ToolCalls tools={log} running={live} turn={run} />}
       {done && all.length > 0 && (
         <div
           role="toolbar"
@@ -746,6 +870,30 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
       .then(setSkills)
       .catch(() => setSkills([]));
   }, [pr]);
+  // A line ask (DiffPane) wants its question or answer in view.
+  const focus =
+    store.ephemeral.askFocus?.pr === pr ? store.ephemeral.askFocus : null;
+  useEffect(() => {
+    if (!focus) return;
+    const el = focus.message
+      ? document.querySelector<HTMLElement>(
+          `.chat [data-msg="${CSS.escape(focus.message)}"]`,
+        )
+      : null;
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.remove('ask-flash');
+      void el.offsetWidth; // restart the animation on a repeat focus
+      el.classList.add('ask-flash');
+    } else {
+      end.current?.scrollIntoView({ block: 'end' });
+    }
+    // The question isn't synced yet: a later focus (with its id) follows.
+    if (!focus.message || el) store.ephemeral.consumeAskFocus(focus.seq);
+  }, [focus, store, messages.length]);
+  const lineAsks = [...store.ephemeral.lineAsks.entries()].filter(
+    ([, a]) => a.pr === pr && a.status === 'asking',
+  );
   // Once an agent message lands after we fired the ask, the pending bubble
   // has nothing left to show — the real message takes over.
   useEffect(() => {
@@ -784,7 +932,9 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         group: null,
         agent,
       })
-        .then((run) => setPending({ run, startedAt, question: t, agent }))
+        .then((id) =>
+          setPending({ run: askRunId(id), startedAt, question: t, agent }),
+        )
         .catch(() => {});
     }
     setText('');
@@ -806,7 +956,10 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         />
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 py-5">
-        {messages.length === 0 && runs.length === 0 && !pending ? (
+        {messages.length === 0 &&
+        runs.length === 0 &&
+        !pending &&
+        lineAsks.length === 0 ? (
           <div className="m-auto flex w-full flex-col gap-4">
             <div className="flex flex-col items-center gap-2 text-center">
               <span className="grid size-10 place-items-center rounded-full bg-default text-muted">
@@ -860,13 +1013,21 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
               ) : (
                 ((m) =>
                   m.author.kind === 'me' ? (
-                    <div key={m.id} className="msg user flex justify-end">
+                    <div
+                      key={m.id}
+                      data-msg={m.id}
+                      className="msg user flex justify-end"
+                    >
                       <div className="rich max-w-[85%] whitespace-pre-wrap rounded-3xl bg-surface px-4 py-2 text-sm">
                         {rich(m.text)}
                       </div>
                     </div>
                   ) : (
-                    <div key={m.id} className="msg agent flex gap-3">
+                    <div
+                      key={m.id}
+                      data-msg={m.id}
+                      className="msg agent flex gap-3"
+                    >
                       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
                         <AgentTag id={m.author.agent} />
                         {m.failed ? (
@@ -939,6 +1100,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                         <ToolCalls
                           tools={store.ephemeral.runLog.get(pending.run)!}
                           running
+                          turn={pending.run}
                         />
                       )}
                       <div className="flex gap-1.5">
@@ -967,9 +1129,9 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                                 group: null,
                                 agent,
                               })
-                                .then((run) =>
+                                .then((id) =>
                                   setPending({
-                                    run,
+                                    run: askRunId(id),
                                     startedAt,
                                     question,
                                     agent,
@@ -986,6 +1148,9 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                   </div>
                 );
               })()}
+            {lineAsks.map(([key, a]) => (
+              <LineAskBubble key={key} askKey={key} a={a} />
+            ))}
           </>
         )}
         <div ref={end} />

@@ -142,6 +142,8 @@ async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
         format!("/tmp/theodore-fake-space-{}", s.id)
     );
     assert_eq!(req.prompt, "Fix the login redirect");
+    // A space's agent gets the user's own MCP servers (on by default).
+    assert!(req.user_mcp);
     assert!(req.system.unwrap().contains("Do not push"));
 
     let chat = transcript(&f, &s.id);

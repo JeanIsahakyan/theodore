@@ -67,6 +67,11 @@ pub struct AgentRequest {
     /// variables (docs/config.md).
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// The CLI may also load the user's own MCP servers (Claude Code's
+    /// `~/.claude.json`, the repo's `.mcp.json`, claude.ai connectors) next
+    /// to `mcp`: the `agents.user_mcp` setting. `false` = only `mcp`.
+    #[serde(default)]
+    pub user_mcp: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
