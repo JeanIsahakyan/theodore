@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import type { AppInfo } from '../gen/contract';
 import { EphemeralStore } from './EphemeralStore';
+
+const APP_INFO: AppInfo = {
+  version: '0.1.0',
+  channel: 'stable',
+  update: null,
+  commit: 'abc',
+  build_env: 'production',
+  built_at: 0,
+};
 
 describe('EphemeralStore config PR', () => {
   it('a config_pr event becomes a toast that opens the PR', () => {
@@ -143,5 +153,15 @@ describe('EphemeralStore space logs', () => {
       'live',
     ]);
     expect(e.spaceLogs.get('s2')).toHaveLength(1);
+  });
+});
+
+describe('EphemeralStore app info', () => {
+  it('marks the page with the build, for the per-build accent', () => {
+    const e = new EphemeralStore();
+    e.setAppInfo({ ...APP_INFO, build_env: 'staging' });
+    expect(document.documentElement.dataset.build).toBe('staging');
+    e.setAppInfo({ ...APP_INFO, build_env: 'production' });
+    expect(document.documentElement.dataset.build).toBe('production');
   });
 });

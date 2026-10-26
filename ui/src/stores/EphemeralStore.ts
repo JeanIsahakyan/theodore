@@ -276,6 +276,8 @@ export class EphemeralStore {
     runInAction(() => {
       this.appInfo = info;
     });
+    // The accent follows the build, like the logo (`styles.css`).
+    document.documentElement.dataset.build = info.build_env;
   }
 
   /** An update the shell downloaded since launch (its `update` event). */
