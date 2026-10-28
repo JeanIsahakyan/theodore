@@ -153,6 +153,15 @@ packages the DMG and the updater artifacts and writes `latest.json`. Then:
 There is no tag-push release any more: don't push `v*` tags by hand (a
 hand-pushed tag only makes the next merge skip that version).
 
+Merges: a feature PR goes into `staging` as a squash (one commit per
+change); `staging → main` is a merge commit, so `main` keeps each squashed
+change. The repository rules enforce both.
+
+Release notes: `release.yml` publishes with GitHub's generated notes (a
+list of PR titles). Replace them with user-facing notes once the release is
+up: `gh release edit v0.3.0 --notes-file notes.md` — what got faster, what
+got fixed, what to know.
+
 - **Never re-tag a published release.** Ship a new patch instead.
 
 ### A hotfix
