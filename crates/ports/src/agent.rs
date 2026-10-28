@@ -84,6 +84,12 @@ pub struct AgentRequest {
     /// resume and ignores it.
     #[serde(default)]
     pub resume: Option<String>,
+    /// Also report the answer's text as it is generated
+    /// ([`AgentEvent::TextDelta`]), not only per finished message. Claude
+    /// Code: `--include-partial-messages`; the other CLIs ignore it. Off for
+    /// everything but grouping runs that stream groups.
+    #[serde(default)]
+    pub stream_text: bool,
 }
 
 /// One file the agent should read, outside `cwd`.
@@ -97,6 +103,12 @@ pub struct AgentAttachment {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
     Text {
+        text: String,
+    },
+    /// A piece of the answer's text as it is generated (only with
+    /// [`AgentRequest::stream_text`]). The finished message still comes as
+    /// `Text`: deltas are extra, never a replacement.
+    TextDelta {
         text: String,
     },
     Thinking {

@@ -1089,6 +1089,7 @@ mod tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         }
     }
 

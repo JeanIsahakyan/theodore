@@ -320,6 +320,7 @@ async fn drive_fix_run(
         user_mcp: false,
         attachments: vec![],
         resume: None,
+        stream_text: false,
     };
     let _guard = ToolsGuard { core, mcp };
 
