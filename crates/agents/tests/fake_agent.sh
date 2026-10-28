@@ -25,9 +25,9 @@ case "$mode" in
     ;;
   offline_recovered)
     echo "Error: connect ECONNREFUSED 104.18.0.1:443 (retrying)" 1>&2
-    sleep 0.05
+    sleep 0.1
     echo '{"line":1}'
-    sleep 1
+    sleep 1.5
     echo '{"line":2}'
     exit 0
     ;;

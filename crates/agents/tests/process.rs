@@ -149,7 +149,9 @@ async fn going_quiet_while_failing_to_connect_ends_the_run_as_offline() {
 
 #[tokio::test]
 async fn output_after_a_connection_error_means_it_recovered() {
-    let run = spawn_and_stream(spec("offline_recovered", 100), Box::new(EchoParser)).unwrap();
+    // Wide margins: stderr and stdout are read separately, so under load a
+    // tight gap can reorder the error and the first output.
+    let run = spawn_and_stream(spec("offline_recovered", 500), Box::new(EchoParser)).unwrap();
     let events = collect(run.events).await;
     assert!(events.contains(&AgentEvent::Stalled), "{events:?}");
     assert!(
