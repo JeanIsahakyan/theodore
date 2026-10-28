@@ -783,6 +783,7 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
   only what the worktree cannot give (PR context, groups, base files, findings).
 - Env: Theodore's own secrets are removed from the child env; the agent's own
   auth variables (e.g. `ANTHROPIC_API_KEY`) are passed through.
+- Grouping, regroup and merge run on Claude's `sonnet` (Codex/Gemini keep their model setting) and always at `--effort low` (Codex `model_reasoning_effort="low"`), whatever `agents.<id>.effort` says: at high or max Claude explores the repo with Grep/Read instead of grouping the diff it was given (kdb#83, 28k lines: 65 s at low, 75 s at the CLI default, 11+ min at max). Eval at low, 13 fixtures + kdb#83: Sonnet 13/13 valid, 146 s, kdb 36 s; Opus 13/13, 141 s, 55 s; Haiku 11/13 with 2 repairs, 293 s, 92 s and twice the groups.
 - Permissions: review runs are read-only: reading, skills, subagents, todos, the web and MCP, as in Claude Code itself, but no writes and no commands (`Bash`, `Edit`, `Write` denied), so nothing reaches the PR without you.
   Fix runs may edit, only inside the PR worktree.
 - The user's own MCP servers (`agents.user_mcp`, on by default, issue #16),
