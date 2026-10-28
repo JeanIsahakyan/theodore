@@ -246,6 +246,7 @@ fn main() {
                 outliers: vec![],
             },
         ],
+        in_progress: false,
     };
     theodore_domain::grouping::validate(&rev1, &grouping)
         .expect("demo grouping must validate against revision 1");

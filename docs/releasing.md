@@ -71,7 +71,7 @@ only verify updates signed by the key they shipped with.
      (or an empty secret if you generated without one).
 
 Without these two secrets, `.github/workflows/build.yml` fails at the
-"build app, dmg and updater artifacts" step — the updater's pubkey is already
+"build app and updater artifacts" step — the updater's pubkey is already
 configured, so the bundler insists on a matching private key to sign against.
 
 ## Theodore account: the client id
@@ -373,25 +373,41 @@ on the Dock  icons/src/icon.svg ──▶ scripts/icon-variant.sh <env> <dir>
 
 ## DMG window
 
-`tauri.conf.json` `bundle.macOS.dmg` lays the DMG window out as an
-installer: 660 x 400, the app on the left, Applications on the right, a
-background with an arrow and "Drag Theodore to Applications". Staging
-and nightly overlays don't touch `bundle`, so they get it too.
+The DMG opens as an installer: a 660 x 400 window, the app on the left,
+Applications on the right, 128 px icons, an arrow between them. Staging
+and nightly DMGs get the same window.
 
 ```
 icons/src/dmg-background.svg ──▶ scripts/dmg-background.sh
-                                   ──▶ icons/dmg-background.png, @2x.png
-                                   ──▶ icons/dmg-background.tiff (both, used)
+                                   ──▶ icons/dmg-background.png    660 x 400
+                                   ──▶ icons/dmg-background@2x.png 1320 x 800
+
+.app ──▶ scripts/build-dmg.sh <app> <out.dmg> <volume name>
+           throwaway venv, dmgbuild (pinned)
+           scripts/dmg-settings.py ◀── tauri.conf.json bundle.macOS.dmg
+           ──▶ .dmg: app + Applications link, .DS_Store written directly,
+               both PNGs joined into one HiDPI .background.tiff
+           ──▶ hdiutil verify
 ```
 
-Known gaps, so the window may still open plain:
+| Who | Builds the `.app` | Then |
+| --- | --- | --- |
+| `build.yml` (staging, production) | `cargo tauri build --bundles app` (+ updater artifacts) | `build-dmg.sh`, then Developer ID `codesign` of the DMG when that secret is set |
+| `scripts/nightly-build.sh` | `cargo tauri build --bundles app` | `build-dmg.sh` |
 
-- tauri-bundler applies the layout through Finder AppleScript, once. On
-  macOS 26 Finder keeps only the window size and icon positions from that
-  one pass; icon size and background stick only on a second pass.
-- Under `CI=true` (GitHub Actions) tauri-bundler skips that AppleScript
-  entirely, unless `TAURI_BUNDLER_DMG_IGNORE_CI=true`.
-- `scripts/nightly-build.sh` builds its DMG with plain `hdiutil`: no layout.
+- dmgbuild writes the window's `.DS_Store` itself: no Finder, no
+  AppleScript, no automation permission. tauri-bundler's own DMG is not
+  used: under `CI=true` it skips its Finder layout, and on macOS 26 that
+  layout drops the background and icon size.
+- `tauri.conf.json` `bundle.macOS.dmg` stays the one place the window size,
+  icon positions and background are set; `dmg-settings.py` reads it.
+- The background is transparent with no text; Finder paints white under it,
+  in light and dark mode alike. The title bar takes ~32 pt of the 400, so
+  the visible area is 660 x 368.
+- `build-dmg.sh` needs python >= 3.10 (`PYTHON` picks another);
+  `build.yml` pins 3.13 with `actions/setup-python`.
+- Asset names are unchanged: `Theodore_<version>_aarch64.dmg`, volume name
+  = product name (`Theodore`, `Theodore Staging`).
 
 ## First launch on a clean Mac (ad-hoc signed builds)
 

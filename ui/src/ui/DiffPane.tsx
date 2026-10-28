@@ -87,6 +87,11 @@ import {
   type SinceKind,
 } from './diff';
 import { groupsForRevision, type ReviewMode } from './GroupsPane';
+import {
+  useCheckboxRange,
+  useCheckboxRangeEvents,
+  type CheckboxRangeModifiers,
+} from './useCheckboxRange';
 import { nextReviewableGroup } from './review/groups';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
@@ -529,7 +534,12 @@ export const DiffPane = observer(function DiffPane({
           </Alert>
         )}
         {mode.mode === 'groups' && mode.group && (
-          <GroupCard pr={pr} groupId={mode.group} />
+          <GroupCard
+            key={`${pr}:${rev.base}:${rev.head}:${mode.group}`}
+            pr={pr}
+            rev={rev}
+            groupId={mode.group}
+          />
         )}
         {group && group.kind === 'skim' && group.outliers.length > 0 && (
           <Alert
@@ -629,14 +639,31 @@ const RISK_CHIP_MAX = 48;
 
 const GroupCard = observer(function GroupCard({
   pr,
+  rev,
   groupId,
 }: {
   pr: PrId;
+  rev: Revision;
   groupId: string;
 }) {
   const store = useRootStore();
   const g = store.models.groupsOf(pr).find((x) => x.id === groupId);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const occurrences = new Map<string, number>();
+  const checks = (g?.check ?? []).map((text) => {
+    const occurrence = occurrences.get(text) ?? 0;
+    occurrences.set(text, occurrence + 1);
+    return { key: JSON.stringify([text, occurrence]), text };
+  });
+  const range = useCheckboxRange({
+    scopeKey: `checks:${pr}:${rev.base}:${rev.head}:${groupId}`,
+    orderedKeys: checks.map((check) => check.key),
+    onChange: (keys, value) =>
+      setChecked((current) => ({
+        ...current,
+        ...Object.fromEntries(keys.map((key) => [key, value])),
+      })),
+  });
   if (!g) return null;
   // Same sequence `GroupsPane` numbers groups in — includes hidden groups
   // so a badge doesn't shift when one gets "shown anyway".
@@ -693,27 +720,50 @@ const GroupCard = observer(function GroupCard({
       {g.check.length > 0 && (
         <div className="flex flex-col gap-2 rounded-2xl bg-surface-secondary px-4 py-3">
           <span className="text-xs text-muted">What to check</span>
-          {g.check.map((c) => (
-            <Checkbox
-              key={c}
-              isSelected={!!checked[c]}
-              onChange={() => setChecked((s) => ({ ...s, [c]: !s[c] }))}
-            >
-              <Checkbox.Content
-                className={checked[c] ? 'text-muted line-through' : ''}
-              >
-                <Checkbox.Control>
-                  <Checkbox.Indicator />
-                </Checkbox.Control>
-                <span>{rich(c)}</span>
-              </Checkbox.Content>
-            </Checkbox>
+          {checks.map(({ key, text }) => (
+            <ChecklistItem
+              key={key}
+              text={text}
+              checked={!!checked[key]}
+              onPick={(value, modifiers) =>
+                range.activate(key, value, modifiers)
+              }
+            />
           ))}
         </div>
       )}
     </Card>
   );
 });
+
+function ChecklistItem({
+  text,
+  checked,
+  onPick,
+}: {
+  text: string;
+  checked: boolean;
+  onPick: (checked: boolean, modifiers: CheckboxRangeModifiers) => void;
+}) {
+  const rangeEvents = useCheckboxRangeEvents(onPick);
+  return (
+    <span
+      className="contents"
+      onClickCapture={rangeEvents.onClickCapture}
+      onBlurCapture={rangeEvents.onBlurCapture}
+      onKeyDownCapture={rangeEvents.onKeyDownCapture}
+    >
+      <Checkbox isSelected={checked} onChange={rangeEvents.onCheckboxChange}>
+        <Checkbox.Content className={checked ? 'text-muted line-through' : ''}>
+          <Checkbox.Control>
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+          <span>{rich(text)}</span>
+        </Checkbox.Content>
+      </Checkbox>
+    </span>
+  );
+}
 
 function NextGroupInner({
   pr,

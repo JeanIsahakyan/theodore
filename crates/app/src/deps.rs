@@ -24,12 +24,18 @@ pub struct GroupingAgent {
     pub user_mcp: bool,
 }
 
+/// Receives a grouping run's provisional groupings while it is in flight,
+/// in order (streamed grouping, docs/eval/streamed-groups.md).
+pub type OnPartial<'a> = &'a (dyn Fn(Grouping) + Send + Sync);
+
 /// Groups a revision by meaning (plan §5). Implemented by the `grouping`
 /// crate at integration time; `app` only needs the trait. `agent` comes
 /// from the settings, read by the caller and passed in here so the
 /// grouper never has to know about settings (plan §8.5). `ctx` is what the
 /// app could read from the worktree and history (`Core::grouping_context`)
-/// to help tell related files apart; possibly empty.
+/// to help tell related files apart; possibly empty. `on_partial` gets the
+/// groupings a streaming run publishes while the agent is still writing
+/// (each `in_progress`); the run's result is still what `group` returns.
 #[async_trait]
 pub trait Grouper: Send + Sync {
     async fn group(
@@ -39,6 +45,7 @@ pub trait Grouper: Send + Sync {
         ctx: &RepoContext,
         worktree: &Path,
         agent: GroupingAgent,
+        on_partial: OnPartial<'_>,
     ) -> Result<Grouping, GrouperError>;
 
     /// Re-group after a push: unchanged hunks keep their group (plan §5.3).

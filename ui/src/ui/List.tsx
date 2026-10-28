@@ -53,6 +53,11 @@ import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { Peek } from './Peek';
 import { PrStatusIcon, prStatusLabel } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
+import {
+  useCheckboxRange,
+  useCheckboxRangeEvents,
+  type CheckboxRangeModifiers,
+} from './useCheckboxRange';
 
 /** A PR row as the pool stores it — stamped with its own id (see `sync/types.ts`). */
 export type InboxPr = PrSummary & { id: PrId };
@@ -230,18 +235,21 @@ export const PrRow = observer(function PrRow({
   id,
   sel,
   picked,
+  onPick,
   props = ROW_PROPS,
   repo = true,
 }: {
   id: PrId;
   sel: boolean;
   picked: boolean;
+  onPick: (checked: boolean, modifiers: CheckboxRangeModifiers) => void;
   props?: RowProp[];
   /** The repo name before the number; off where every row is one repo's. */
   repo?: boolean;
 }) {
   const store = useRootStore();
   const ui = useUi();
+  const rangeEvents = useCheckboxRangeEvents(onPick);
   const p = store.models.prSummaries.get(id);
   const rowMenu = useContextMenu((): ContextMenuItem[] => {
     if (!p) return [];
@@ -318,18 +326,25 @@ export const PrRow = observer(function PrRow({
       style={{ gridTemplateColumns: cols }}
       onContextMenu={rowMenu}
     >
-      <Checkbox
-        aria-label="select"
-        isSelected={picked}
-        onChange={() => ui.togglePick(id)}
-        className={`pickbox ${picked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+      <span
+        className="contents"
+        onClickCapture={rangeEvents.onClickCapture}
+        onBlurCapture={rangeEvents.onBlurCapture}
+        onKeyDownCapture={rangeEvents.onKeyDownCapture}
       >
-        <Checkbox.Content>
-          <Checkbox.Control>
-            <Checkbox.Indicator />
-          </Checkbox.Control>
-        </Checkbox.Content>
-      </Checkbox>
+        <Checkbox
+          aria-label="select"
+          isSelected={picked}
+          onChange={rangeEvents.onCheckboxChange}
+          className={`pickbox ${picked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+        >
+          <Checkbox.Content>
+            <Checkbox.Control>
+              <Checkbox.Indicator />
+            </Checkbox.Control>
+          </Checkbox.Content>
+        </Checkbox>
+      </span>
       <PrStatusIcon summary={p} progress={readProgress(store, id)} />
       {on('id') && (
         <span
@@ -866,6 +881,15 @@ function ListBody({
   const [closed, setClosed] = useState<Record<string, boolean>>({
     snoozed: true,
   });
+  const ui = useUi();
+  const store = useRootStore();
+  const range = useCheckboxRange({
+    scopeKey: `inbox:${store.workspaces.id}`,
+    orderedKeys: groups.flatMap((g) =>
+      closed[g.id] ? [] : g.items.map((p) => p.id),
+    ),
+    onChange: (ids, checked) => ui.setPicked(ids, checked),
+  });
   return (
     <RowList
       groups={groups}
@@ -879,6 +903,9 @@ function ListBody({
           id={id}
           sel={sel === id}
           picked={picked.includes(id)}
+          onPick={(checked, modifiers) =>
+            range.activate(id, checked, modifiers)
+          }
           props={props}
         />
       )}

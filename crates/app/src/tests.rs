@@ -4968,3 +4968,191 @@ async fn a_write_that_gets_through_clears_the_offline_banner() {
     })
     .await;
 }
+
+// ── streamed grouping ────────────────────────────────────────────────────
+
+/// The grouping rows written for one PR, oldest first.
+async fn grouping_writes(core: &Core, pr: &PrId) -> Vec<theodore_domain::Grouping> {
+    core.catch_up(0)
+        .await
+        .expect("catch_up")
+        .actions
+        .into_iter()
+        .filter(|a| a.model == models::GROUPING && a.model_id == pr.0)
+        .filter_map(|a| serde_json::from_value(a.data?).ok())
+        .collect()
+}
+
+fn group_of(id: &str, hunks: Vec<HunkId>) -> theodore_domain::Group {
+    theodore_domain::Group {
+        id: theodore_domain::GroupId::new(id),
+        title: format!("Group {id}"),
+        why: format!("Why {id}."),
+        kind: theodore_domain::GroupKind::Normal,
+        risk: None,
+        check: vec![],
+        hunks,
+        outliers: vec![],
+    }
+}
+
+fn in_progress(groups: Vec<theodore_domain::Group>) -> theodore_domain::Grouping {
+    theodore_domain::Grouping {
+        rev: Sha::new("head111"),
+        groups,
+        in_progress: true,
+    }
+}
+
+fn stored_grouping(f: &Fixtures, pr: &PrId) -> Option<serde_json::Value> {
+    f.store
+        .get(models::GROUPING, &pr.0)
+        .unwrap()
+        .map(|r| r.data)
+}
+
+/// Streamed grouping: the rows written while the grouper runs are its
+/// provisional groupings, in order and marked in progress, and the
+/// finished grouping lands last, current for the head.
+#[tokio::test]
+async fn opening_a_pr_publishes_streamed_groupings_then_the_finished_one() {
+    let f = fixtures();
+    let rev = testkit::two_hunk_revision(&Sha::new("base000"), &Sha::new("head111"), "src/lib.rs");
+    let ids = testkit::hunk_ids(&rev);
+    let head = Sha::new("head111");
+    let g1 = group_of("g1", vec![ids[0].clone()]);
+    let g2 = group_of("g2", vec![ids[1].clone()]);
+    f.grouper.set_partials(vec![
+        in_progress(vec![g1.clone()]),
+        in_progress(vec![g1.clone(), g2.clone()]),
+    ]);
+    f.grouper.set_delay_ms(5);
+    let finished = theodore_domain::Grouping::new(head.clone(), vec![g2.clone(), g1.clone()]);
+    f.grouper.set(finished.clone());
+
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+
+    let writes = grouping_writes(&core, &pr).await;
+    // Partials queued faster than they are written collapse to the newest,
+    // so the writes are the published sequence in order, maybe with gaps;
+    // the first group always shows before the run ends.
+    let published = [(true, 1), (true, 2), (false, 2)];
+    let seen: Vec<(bool, usize)> = writes
+        .iter()
+        .map(|g| (g.in_progress, g.groups.len()))
+        .collect();
+    let mut rest = published.iter();
+    assert!(
+        seen.iter().all(|s| rest.any(|p| p == s)),
+        "{seen:?} is not in publish order"
+    );
+    assert!(seen.len() >= 2 && seen[0].0, "{seen:?}");
+    assert_eq!(writes.last(), Some(&finished));
+    let row = stored_grouping(&f, &pr).unwrap();
+    assert!(crate::usecases::grouping::row_is_current(&row, &head, None));
+    assert_eq!(
+        serde_json::from_value::<theodore_domain::Grouping>(row).unwrap(),
+        finished
+    );
+}
+
+/// A row a run left in progress (it failed, or the app quit) is not
+/// reused: the PR is grouped again on open.
+#[tokio::test]
+async fn opening_a_pr_regroups_a_grouping_left_in_progress() {
+    let f = fixtures();
+    let pr_id = fixture_pr_ref().id();
+    f.store
+        .apply(vec![NewAction {
+            model: models::GROUPING.into(),
+            model_id: pr_id.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(json!({
+                "rev": "head111", "groups": [], "in_progress": true,
+                "algo": theodore_domain::grouping::ALGO_VERSION,
+            })),
+        }])
+        .unwrap();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_until(|| f.grouper.calls() == 1).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+    wait_until(|| {
+        stored_grouping(&f, &pr).is_some_and(|d| {
+            crate::usecases::grouping::row_is_current(&d, &Sha::new("head111"), None)
+        })
+    })
+    .await;
+}
+
+/// A run that fails mid-stream with nothing stored before it leaves its
+/// provisional groups up, still marked in progress: never looking final,
+/// and regrouped on the next open.
+#[tokio::test]
+async fn a_failed_streamed_grouping_stays_marked_in_progress() {
+    let f = fixtures();
+    let rev = testkit::two_hunk_revision(&Sha::new("base000"), &Sha::new("head111"), "src/lib.rs");
+    let ids = testkit::hunk_ids(&rev);
+    f.grouper.set_partials(vec![in_progress(vec![group_of(
+        "g1",
+        vec![ids[0].clone()],
+    )])]);
+    f.grouper.fail_next("rate limited");
+
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+    let failed = expect_ephemeral(&mut recv, |e| {
+        matches!(
+            e,
+            Ephemeral::Grouping {
+                running: false,
+                error: Some(_),
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(format!("{failed:?}").contains("rate limited"), "{failed:?}");
+    wait_grouping_idle(&f, &core, &pr).await;
+    let row = stored_grouping(&f, &pr).unwrap();
+    let left: theodore_domain::Grouping = serde_json::from_value(row.clone()).unwrap();
+    assert!(left.in_progress);
+    assert_eq!(left.groups.len(), 1);
+    assert!(!crate::usecases::grouping::row_is_current(
+        &row,
+        &Sha::new("head111"),
+        None
+    ));
+}
+
+/// A regroup that fails mid-stream puts back the grouping it was
+/// replacing: the provisional groups don't outlive the run.
+#[tokio::test]
+async fn a_failed_regroup_puts_the_previous_grouping_back() {
+    let f = fixtures();
+    let rev = testkit::two_hunk_revision(&Sha::new("base000"), &Sha::new("head111"), "src/lib.rs");
+    let ids = testkit::hunk_ids(&rev);
+    let before =
+        theodore_domain::Grouping::new(Sha::new("head111"), vec![group_of("all", ids.clone())]);
+    f.grouper.set(before.clone());
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+
+    f.grouper.set_partials(vec![in_progress(vec![group_of(
+        "g1",
+        vec![ids[0].clone()],
+    )])]);
+    f.grouper.fail_next("rate limited");
+    let err = core.regroup(pr.clone()).await.unwrap_err();
+    assert!(err.to_string().contains("rate limited"), "{err}");
+
+    let writes = grouping_writes(&core, &pr).await;
+    assert!(
+        writes.iter().any(|g| g.in_progress),
+        "the streamed group was shown: {writes:?}"
+    );
+    let row = stored_grouping(&f, &pr).unwrap();
+    assert_eq!(
+        serde_json::from_value::<theodore_domain::Grouping>(row).unwrap(),
+        before
+    );
+}

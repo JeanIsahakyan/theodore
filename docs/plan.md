@@ -244,6 +244,29 @@ Output schema per group: `id` (stable slug), `title`, `why`, `kind`
 (`normal | skim | hidden`), `risk?`, `check[]`, `hunks[]`, `outliers[]`, plus a
 global reading order.
 
+Groups show as the agent writes them (streamed grouping, Claude Code only;
+docs/eval/streamed-groups.md: first group in ~5.6 s instead of ~26 s on a
+28k-line PR, same tokens):
+
+```
+answer text deltas ─▶ each group's JSON object closes ─▶ shown at once
+part (chunk) lands ─▶ validated, repaired if needed ─▶ replaces its streamed groups
+                      └─ a repair keeps the streamed groups up until it lands
+all parts ─▶ merge pass orders them ─▶ final grouping
+                      └─ a group the user opened or read keeps its place
+```
+
+- Every grouping written mid-run carries `in_progress`. A run that fails puts
+  the grouping it replaced back; with none, its groups stay marked unfinished
+  ("Grouping stopped before it finished") and the PR is grouped again on the
+  next open.
+- Group ids are unique across parts (`slug-2`) and the same from the streamed
+  group to the final one. Coarsening runs per part, so a group shown once its
+  part landed is never merged away by another part.
+- Codex and Gemini answer whole: their runs show the grouping when it is done.
+- Grouping in two phases (partition, then describe) was measured and rejected:
+  first group ~10.4 s at ~2.7× the tokens.
+
 ### 5.2 Large PRs
 
 - Hunk list sent as headers + a few lines each; the agent reads full code with

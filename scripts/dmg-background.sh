@@ -4,11 +4,12 @@
 #   apps/desktop/icons/src/dmg-background.svg   source, 660 x 400 pt
 #     └─▶ dmg-background.png      1x  660 x 400
 #     └─▶ dmg-background@2x.png   2x  1320 x 800
-#           └─▶ dmg-background.tiff   both in one file (Finder picks per screen)
 #
-# tauri.conf.json bundle.macOS.dmg.background points at the .tiff. macOS only:
-# AppKit's SVG renderer (swift) and tiffutil, nothing to install. Run it after
-# editing the SVG and commit all four files.
+# tauri.conf.json bundle.macOS.dmg.background points at the 1x PNG;
+# scripts/build-dmg.sh (dmgbuild) picks up the @2x beside it and joins the
+# two into one HiDPI TIFF inside the DMG, never in git. macOS only: AppKit's
+# SVG renderer (swift), nothing to install. Run it after editing the SVG and
+# commit the SVG and both PNGs.
 #
 # Usage: scripts/dmg-background.sh
 set -eu
@@ -46,6 +47,4 @@ SWIFT
 
 render 1 "$icons/dmg-background.png"
 render 2 "$icons/dmg-background@2x.png"
-tiffutil -cathidpicheck "$icons/dmg-background.png" "$icons/dmg-background@2x.png" \
-  -out "$icons/dmg-background.tiff"
-echo "✓ $(cd "$icons" && echo dmg-background*)"
+echo "✓ $(cd "$icons" && echo dmg-background*.png)"

@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use theodore_domain::{AgentId, Revision, grouping};
-use theodore_grouping::{GroupingOptions, PrMeta, group_revision, prepass, prompt};
+use theodore_domain::{AgentId, HunkId, Revision, grouping};
+use theodore_grouping::{
+    GroupingOptions, PrMeta, Progress, Stage, group_revision_progress, prepass, prompt,
+};
 use theodore_ports::AgentPort;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -67,6 +69,12 @@ pub struct EvalArgs {
     /// Write each fixture's grouping and run stats to `<dir>/<fixture>.json`.
     #[arg(long)]
     pub save: Option<PathBuf>,
+    /// Stream groups as the app does for Claude: parse each chunk's answer
+    /// as it is written and record when each group came out
+    /// (docs/eval/streamed-groups.md). Off by default, so runs stay
+    /// comparable with earlier evals; Claude only.
+    #[arg(long)]
+    pub stream: bool,
     /// No agent calls: report the relatedness graph and the chunks it
     /// yields for each fixture (offline check, docs/eval/graph-grouping.md).
     #[arg(long)]
@@ -113,6 +121,9 @@ pub struct EvalRow {
     pub valid_first_try: bool,
     pub valid_after_repair: bool,
     pub latency_ms: u64,
+    /// When the first group was shown: the first streamed one, or
+    /// `latency_ms` for a run that didn't stream.
+    pub first_group_ms: u64,
     pub usd: f64,
     pub groups: usize,
     pub error: Option<String>,
@@ -158,8 +169,12 @@ pub async fn run_eval_with_options(
     let mut rows = Vec::with_capacity(fixtures.len());
     for (name, fx) in fixtures {
         let pr: PrMeta = fx.pr.clone().into();
-        match group_revision(agent, &pr, &fx.revision, cwd, opts).await {
+        let seen = Previews::default();
+        let on = |p: Progress<'_>| seen.record(p);
+        let ctx = theodore_domain::grouping::RepoContext::default();
+        match group_revision_progress(agent, &pr, &fx.revision, &ctx, cwd, opts, &on).await {
             Ok(report) => {
+                let previews = seen.against(&report.grouping);
                 let valid_after_repair = grouping::validate(&fx.revision, &report.grouping).is_ok();
                 let chunks = prompt::build_prompts(
                     &pr,
@@ -169,7 +184,8 @@ pub async fn run_eval_with_options(
                 )
                 .len();
                 if let Some(dir) = save
-                    && let Err(e) = save_report(dir, name, &report, chunks, valid_after_repair)
+                    && let Err(e) =
+                        save_report(dir, name, &report, chunks, valid_after_repair, &previews)
                 {
                     eprintln!("could not save {name}: {e}");
                 }
@@ -178,6 +194,7 @@ pub async fn run_eval_with_options(
                     valid_first_try: report.valid_first_try,
                     valid_after_repair,
                     latency_ms: report.duration_ms,
+                    first_group_ms: report.first_group_ms,
                     usd: report.usage.usd,
                     groups: report.grouping.groups.len(),
                     error: None,
@@ -188,6 +205,7 @@ pub async fn run_eval_with_options(
                 valid_first_try: false,
                 valid_after_repair: false,
                 latency_ms: 0,
+                first_group_ms: 0,
                 usd: 0.0,
                 groups: 0,
                 error: Some(e.to_string()),
@@ -197,12 +215,69 @@ pub async fn run_eval_with_options(
     rows
 }
 
+/// Every distinct group a streaming run showed before its chunk landed
+/// (`Stage::Streamed`), to tell how many the final grouping kept as shown.
+#[derive(Default)]
+struct Previews(std::sync::Mutex<Vec<(String, Vec<HunkId>)>>);
+
+/// How the previews fared: shown, kept with the same hunks, and the titles
+/// of those that changed.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct PreviewOutcome {
+    pub shown: usize,
+    pub kept: usize,
+    pub changed: Vec<String>,
+}
+
+impl Previews {
+    fn record(&self, p: Progress<'_>) {
+        if !matches!(p.stage, Stage::Streamed { .. }) {
+            return;
+        }
+        let mut seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        for g in &p.grouping.groups {
+            if g.kind == theodore_domain::GroupKind::Hidden {
+                continue;
+            }
+            let mut hunks = g.hunks.clone();
+            hunks.sort();
+            if !seen.iter().any(|(_, h)| *h == hunks) {
+                seen.push((g.title.clone(), hunks));
+            }
+        }
+    }
+
+    fn against(&self, last: &theodore_domain::Grouping) -> PreviewOutcome {
+        let finals: Vec<Vec<HunkId>> = last
+            .groups
+            .iter()
+            .map(|g| {
+                let mut h = g.hunks.clone();
+                h.sort();
+                h
+            })
+            .collect();
+        let seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let changed: Vec<String> = seen
+            .iter()
+            .filter(|(_, h)| !finals.contains(h))
+            .map(|(t, _)| t.clone())
+            .collect();
+        PreviewOutcome {
+            shown: seen.len(),
+            kept: seen.len() - changed.len(),
+            changed,
+        }
+    }
+}
+
 fn save_report(
     dir: &Path,
     name: &str,
     report: &theodore_grouping::GroupingReport,
     chunks: usize,
     valid_after_repair: bool,
+    previews: &PreviewOutcome,
 ) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let value = serde_json::json!({
@@ -212,6 +287,13 @@ fn save_report(
         "valid_first_try": report.valid_first_try,
         "valid_after_repair": valid_after_repair,
         "duration_ms": report.duration_ms,
+        "first_group_ms": report.first_group_ms,
+        "done_ms": report.duration_ms,
+        "stream": {
+            "group_ms": report.stream.group_ms,
+            "answer_ms": report.stream.answer_ms,
+        },
+        "previews": previews,
         "usage": report.usage,
         "grouping": report.grouping,
     });
@@ -266,8 +348,8 @@ impl EvalSummary {
 
 pub fn print_table(rows: &[EvalRow]) -> EvalSummary {
     println!(
-        "{:<20} {:>9} {:>10} {:>10} {:>8} {:>7}",
-        "fixture", "1st-try", "repaired", "latency", "cost", "groups"
+        "{:<20} {:>9} {:>10} {:>10} {:>10} {:>8} {:>7}",
+        "fixture", "1st-try", "repaired", "first", "latency", "cost", "groups"
     );
     for r in rows {
         if let Some(err) = &r.error {
@@ -275,10 +357,11 @@ pub fn print_table(rows: &[EvalRow]) -> EvalSummary {
             continue;
         }
         println!(
-            "{:<20} {:>9} {:>10} {:>8}ms {:>7.4} {:>7}",
+            "{:<20} {:>9} {:>10} {:>8}ms {:>8}ms {:>8.4} {:>7}",
             r.name,
             if r.valid_first_try { "yes" } else { "no" },
             if r.valid_after_repair { "yes" } else { "no" },
+            r.first_group_ms,
             r.latency_ms,
             r.usd,
             r.groups,
@@ -312,6 +395,7 @@ mod tests {
             valid_first_try,
             valid_after_repair,
             latency_ms: 0,
+            first_group_ms: 0,
             usd: 0.0,
             groups: 1,
             error: None,

@@ -211,14 +211,23 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   // hidden (lockfile/generated) groups, which `GroupsPane` lists collapsed.
   // Same as `groupsForRevision`, memoized on the grouping row (replaced
   // whenever its groups change) so dependents keep their identity.
+  // `groupsOf`, not the row's own order: a group the user opened or partly
+  // read keeps its place when a streamed grouping's final pass reorders
+  // (`stableOrder`).
   const grouping = store.models.groupings.get(pr);
   const allGroups = useMemo(() => {
     if (!revData) return [];
     const hunkIds = new Set(
       revData.files.flatMap((f) => f.hunks.map((h) => h.id)),
     );
-    return groupsInRevision(grouping?.groups ?? [], hunkIds);
-  }, [grouping, revData]);
+    return groupsInRevision(store.models.groupsOf(pr), hunkIds);
+    // `grouping` stands for `groupsOf(pr)`: a new row is a new order.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grouping, revData, store, pr]);
+  useEffect(() => {
+    if (mode.mode === 'groups' && mode.group)
+      store.models.markGroupOpened(pr, mode.group);
+  }, [store, pr, mode.mode, mode.group]);
   const allGroupIds = allGroups.map((g) => g.id).join();
   // The subset `N`/`P` step through — hidden groups are nothing to review,
   // so they're skipped unless opened by hand ("show anyway").

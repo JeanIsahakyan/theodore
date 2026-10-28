@@ -770,7 +770,8 @@ async fn stream_run(
                     }
                     AgentEvent::Thinking { .. }
                     | AgentEvent::ToolResult { .. }
-                    | AgentEvent::Usage { .. } => {}
+                    | AgentEvent::Usage { .. }
+                    | AgentEvent::TextDelta { .. } => {}
                 }
             }
         }
@@ -825,6 +826,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         user_mcp: core.user_mcp_allowed().await,
         attachments,
         resume,
+        stream_text: false,
     };
     let started = std::time::Instant::now();
     let mut streamed = stream_run(core, req.clone(), &cancel, &run_id).await;

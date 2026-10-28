@@ -72,6 +72,11 @@ pub fn build_args(
         "--permission-prompts".to_string(),
         "none".to_string(),
     ];
+    // Text deltas as the answer is generated (`stream_event` lines), on
+    // top of the per-message events (2.1.312: `-p` + stream-json only).
+    if req.stream_text {
+        args.push("--include-partial-messages".to_string());
+    }
     // The space's session, continued: everything it read, ran and planned
     // is still there, and `-p` is only the new turn. The flags below are
     // per process, so they still go on every turn.
@@ -205,12 +210,31 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
         Some("assistant") => content_blocks(&v),
         Some("user") => tool_results(&v),
         Some("result") => result_events(&v),
+        // Only with `--include-partial-messages`: the raw API stream.
+        Some("stream_event") => text_delta(&v).into_iter().collect(),
         // `init` opens every run with the session id `--resume` takes.
         Some("system") if v.get("subtype").and_then(Value::as_str) == Some("init") => {
             session_event(&v).into_iter().collect()
         }
         _ => vec![], // system/rate_limit_event/etc: not user-visible stream content
     }
+}
+
+/// A `content_block_delta` carrying answer text (`text_delta`); thinking
+/// and tool-input deltas are left to the whole-message events.
+fn text_delta(v: &Value) -> Option<AgentEvent> {
+    let event = v.get("event")?;
+    if event.get("type").and_then(Value::as_str) != Some("content_block_delta") {
+        return None;
+    }
+    let delta = event.get("delta")?;
+    if delta.get("type").and_then(Value::as_str) != Some("text_delta") {
+        return None;
+    }
+    let text = delta.get("text").and_then(Value::as_str)?;
+    (!text.is_empty()).then(|| AgentEvent::TextDelta {
+        text: text.to_string(),
+    })
 }
 
 fn session_event(v: &Value) -> Option<AgentEvent> {
@@ -549,6 +573,7 @@ mod read_only_tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -583,6 +608,7 @@ mod mcp_config_tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         }
     }
 
@@ -733,6 +759,7 @@ mod run_mode_tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -759,6 +786,7 @@ mod run_mode_tests {
             user_mcp: true,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -786,6 +814,38 @@ mod model_and_effort_tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
+        }
+    }
+
+    #[test]
+    fn stream_text_asks_for_partial_messages() {
+        let partial = "--include-partial-messages".to_string();
+        let cfg = AgentBinaryConfig::default();
+        let mut r = req(None, None);
+        assert!(!build_args(&r, &cfg, None).contains(&partial));
+        r.stream_text = true;
+        assert!(build_args(&r, &cfg, None).contains(&partial));
+    }
+
+    /// Recorded from `claude -p … --output-format stream-json --verbose
+    /// --include-partial-messages` (2.1.312).
+    #[test]
+    fn partial_text_deltas_become_text_delta_events() {
+        let line = r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\"groups\":[{\""}},"session_id":"s1"}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::TextDelta {
+                text: r#"{"groups":[{""#.into()
+            }]
+        );
+        for other in [
+            r#"{"type":"stream_event","event":{"type":"message_start","message":{}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hm"}}}"#,
+            r#"{"type":"stream_event","event":{"type":"message_stop"}}"#,
+        ] {
+            assert_eq!(parse_line(other), vec![], "{other}");
         }
     }
 

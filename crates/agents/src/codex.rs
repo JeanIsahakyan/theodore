@@ -471,6 +471,7 @@ mod run_mode_tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
@@ -500,6 +501,7 @@ mod model_tests {
             user_mcp: false,
             attachments: vec![],
             resume: None,
+            stream_text: false,
         }
     }
 

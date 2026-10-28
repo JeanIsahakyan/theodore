@@ -80,6 +80,7 @@ fn two_groups(f: &Fixtures) -> Grouping {
     let g = Grouping {
         rev: Sha::new("head111"),
         groups: vec![group("a", ids[0].clone()), group("b", ids[1].clone())],
+        in_progress: false,
     };
     f.grouper.set(g.clone());
     g

@@ -147,13 +147,14 @@ jobs:
       # Builds + ad-hoc codesigns (tauri.conf.json's `bundle.macOS.signingIdentity:
       # "-"`, i.e. `codesign --force --deep -s -`) unless the step above loaded
       # a real Developer ID, in which case tauri-bundler signs and notarizes
-      # with that instead. Also produces the DMG and the updater artifacts
-      # (`.app.tar.gz` + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY).
+      # with that instead. Also produces the updater artifacts (`.app.tar.gz`
+      # + `.sig`, signed with TAURI_SIGNING_PRIVATE_KEY): the bundler makes
+      # them from the `app` bundle. Not the DMG: that is the next step's.
       # `--config version` is the version the updater compares against, so a
       # staging build's `-staging.N` must be in the bundle, not only in About.
       # The bundle is `Theodore Staging.app` for staging; the assets below
       # keep their `Theodore_<version>_…` names.
-      - name: build app, dmg and updater artifacts
+      - name: build app and updater artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -191,8 +192,45 @@ jobs:
                                   | map("\($icons)/\(.)") } }
               end')
           echo "config: $config"
-          cargo tauri build --target aarch64-apple-darwin --bundles app,dmg \
+          cargo tauri build --target aarch64-apple-darwin --bundles app \
             --config "$config"
+
+      # dmgbuild needs python >= 3.10; pin one rather than trust the image.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # The DMG from the app above, laid out as a drag-to-install window
+      # (docs/releasing.md "DMG window"). tauri-bundler's own DMG can't be
+      # used: under CI=true it skips its Finder layout, and on macOS 26 that
+      # layout loses the background anyway. Volume name = product name, as
+      # the bundler had it. With a Developer ID the DMG is signed with it,
+      # as the bundler did (never notarized: the app inside is); ad-hoc
+      # builds leave it unsigned, as the bundler did.
+      - name: build dmg
+        run: |
+          bundle="target/aarch64-apple-darwin/release/bundle"
+          app=$(find "$bundle/macos" -maxdepth 1 -name '*.app' | head -n1)
+          test -d "$app"
+          dmg="$bundle/dmg/Theodore_${VERSION}_aarch64.dmg"
+          sh scripts/build-dmg.sh "$app" "$dmg" "$(basename "$app" .app)"
+          if [ "$HAS_APPLE_CERT" = true ]; then
+            # The bundler's keychain is gone with its process: import again.
+            keychain="$RUNNER_TEMP/dmg-signing.keychain-db"
+            pass=$(uuidgen)
+            security create-keychain -p "$pass" "$keychain"
+            security set-keychain-settings -lut 900 "$keychain"
+            security unlock-keychain -p "$pass" "$keychain"
+            printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+              -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            rm -f "$RUNNER_TEMP/cert.p12"
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" >/dev/null
+            codesign --force --timestamp --keychain "$keychain" \
+              --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+            codesign --verify --verbose "$dmg"
+            security delete-keychain "$keychain"
+          fi
 
       # Versioned names, so a rolling release (channel-staging) never serves
       # a new tarball under an old latest.json's signature mid-upload.

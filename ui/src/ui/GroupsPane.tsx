@@ -37,6 +37,11 @@ import { useRootStore, useUi } from '../stores/context';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
 import { groupsInRevision, groupsProgress } from './review/groups';
+import {
+  useCheckboxRange,
+  useCheckboxRangeEvents,
+  type CheckboxRangeModifiers,
+} from './useCheckboxRange';
 
 export interface ReviewMode {
   mode: 'groups' | 'files';
@@ -134,7 +139,10 @@ export const GroupsPane = observer(function GroupsPane({
   const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
   const hunkReads = store.models.hunkReads.byPr(pr);
   const readSet = new Set(hunkReads.map((r) => r.hunk));
-  const progress = groupsProgress(groups, readSet);
+  // Streamed grouping: groups show as they arrive; `inProgress` until the
+  // final pass lands.
+  const { inProgress } = store.models.groupingState(pr);
+  const progress = groupsProgress(groups, readSet, !inProgress);
   const fileViews = store.models.fileViews.byPr(pr);
   const viewedCount = fileViews.filter((v) => v.state === 'viewed').length;
 
@@ -148,6 +156,31 @@ export const GroupsPane = observer(function GroupsPane({
   const visibleGroups = groups.filter(
     (g) => !sinceOnly || g.hunks.some((h) => since?.has(h)),
   );
+  const fileOf = (h: HunkId) => {
+    const f = hunkFile.get(h);
+    return f === undefined ? [] : [f];
+  };
+  const filesByGroup = new Map(
+    visibleGroups.map((g) => {
+      const hs = sinceOnly ? g.hunks.filter((h) => since?.has(h)) : g.hunks;
+      const outFiles = new Set(
+        hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
+      );
+      const files = [...new Set(hs.flatMap(fileOf))].sort(
+        (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
+      );
+      return [g.id, files] as const;
+    }),
+  );
+  const groupFiles =
+    mode.mode === 'groups' && mode.group
+      ? (filesByGroup.get(mode.group) ?? [])
+      : [];
+  const groupRange = useCheckboxRange({
+    scopeKey: `viewed:groups:${pr}:${rev.base}:${rev.head}:${mode.group ?? ''}:${mode.mode}`,
+    orderedKeys: groupFiles,
+    onChange: (paths, viewed) => setFilesViewed(store, pr, paths, viewed),
+  });
 
   return (
     <Surface
@@ -160,11 +193,11 @@ export const GroupsPane = observer(function GroupsPane({
           value={progress.read}
           maxValue={progress.total}
           size="sm"
-          color={progress.read === progress.total ? 'success' : 'accent'}
+          color={progress.all ? 'success' : 'accent'}
           className="groups-progress mx-4 mb-1 mt-4 w-auto"
         >
           <Label
-            className={`text-xs ${progress.read === progress.total ? 'text-success' : 'text-muted'}`}
+            className={`text-xs ${progress.all ? 'text-success' : 'text-muted'}`}
           >
             {progress.label}
           </Label>
@@ -227,19 +260,10 @@ export const GroupsPane = observer(function GroupsPane({
                 ? g.hunks.filter((h) => since?.has(h))
                 : g.hunks;
               const read = hs.filter((h) => readSet.has(h)).length;
-              // `groupsForRevision` already dropped hunks this revision
-              // lacks; the lookup stays checked so a stale id never reaches
-              // `base()`/`short()` as `undefined`.
-              const fileOf = (h: HunkId) => {
-                const f = hunkFile.get(h);
-                return f === undefined ? [] : [f];
-              };
               const outFiles = new Set(
                 hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
               );
-              const files = [...new Set(hs.flatMap(fileOf))].sort(
-                (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
-              );
+              const files = filesByGroup.get(g.id) ?? [];
               const add = hs.reduce(
                 (n, h) => n + (lineStats.get(h)?.add ?? 0),
                 0,
@@ -382,7 +406,14 @@ export const GroupsPane = observer(function GroupsPane({
                                 textValue={base(f)}
                                 className="min-h-6 gap-1.5 px-1.5 py-0.5 text-xs"
                               >
-                                <Viewed pr={pr} path={f} local={!!local} />
+                                <Viewed
+                                  pr={pr}
+                                  path={f}
+                                  local={!!local}
+                                  onChange={(checked, modifiers) =>
+                                    groupRange.activate(f, checked, modifiers)
+                                  }
+                                />
                                 <span
                                   className="min-w-0 flex-1 truncate font-mono"
                                   title={f}
@@ -445,6 +476,9 @@ export const GroupsPane = observer(function GroupsPane({
             }
           />
         )}
+        {mode.mode === 'groups' && groups.length > 0 && inProgress && (
+          <GroupingMore pr={pr} />
+        )}
       </div>
 
       <div className="groups-foot flex flex-col gap-2 border-t border-separator px-4 py-3 text-xs">
@@ -473,24 +507,44 @@ export const GroupsPane = observer(function GroupsPane({
   );
 });
 
+function setFilesViewed(
+  store: ReturnType<typeof useRootStore>,
+  pr: PrId,
+  paths: readonly string[],
+  viewed: boolean,
+): void {
+  for (const path of paths) {
+    if ((store.models.fileViews.of(pr, path)?.state === 'viewed') !== viewed)
+      setFileViewed(store, pr, path, viewed);
+  }
+}
+
 const Viewed = observer(function Viewed({
   pr,
   path,
   local,
+  onChange,
 }: {
   pr: PrId;
   path: string;
   local: boolean;
+  onChange: (checked: boolean, modifiers: CheckboxRangeModifiers) => void;
 }) {
   const store = useRootStore();
+  const rangeEvents = useCheckboxRangeEvents(onChange);
   const v = store.models.fileViews.of(pr, path);
   const viewed = v?.state === 'viewed';
   return (
-    <span className="viewed inline-flex items-center gap-0.5">
+    <span
+      className="viewed inline-flex items-center gap-0.5"
+      onClickCapture={rangeEvents.onClickCapture}
+      onBlurCapture={rangeEvents.onBlurCapture}
+      onKeyDownCapture={rangeEvents.onKeyDownCapture}
+    >
       <Checkbox
         aria-label={local ? 'Read' : 'Viewed — synced with GitHub'}
         isSelected={viewed}
-        onChange={() => setFileViewed(store, pr, path, !viewed)}
+        onChange={rangeEvents.onCheckboxChange}
       >
         <Checkbox.Content>
           <Checkbox.Control>
@@ -600,6 +654,11 @@ const FileTree = observer(function FileTree({
     for (const f of d.files) rows.push({ key: f.path, depth, file: f });
   };
   walk(tree, 0);
+  const range = useCheckboxRange({
+    scopeKey: `viewed:tree:${pr}:${rev.base}:${rev.head}`,
+    orderedKeys: rows.flatMap((row) => (row.file ? [row.file.path] : [])),
+    onChange: (paths, viewed) => setFilesViewed(store, pr, paths, viewed),
+  });
   return (
     <MaybeVirtual count={rows.length}>
       <ListBox
@@ -666,7 +725,14 @@ const FileTree = observer(function FileTree({
               className="min-h-7 gap-1.5 pe-1.5 text-xs"
               style={pad}
             >
-              <Viewed pr={pr} path={f.path} local={local} />
+              <Viewed
+                pr={pr}
+                path={f.path}
+                local={local}
+                onChange={(checked, modifiers) =>
+                  range.activate(f.path, checked, modifiers)
+                }
+              />
               <span
                 className={`w-3 text-center font-mono font-semibold ${color}`}
                 title={f.status}
@@ -725,6 +791,31 @@ const RegroupButton = observer(function RegroupButton({ pr }: { pr: PrId }) {
         {running ? 'Grouping…' : 'Regroup this PR from scratch'}
       </Tooltip.Content>
     </Tooltip>
+  );
+});
+
+/** Below the groups shown so far while the rest of the grouping run is
+ *  still going, or a note that it stopped before finishing (failed, or the
+ *  app quit mid-run) — same padding either way, so the list doesn't jump
+ *  when the row is replaced. */
+const GroupingMore = observer(function GroupingMore({ pr }: { pr: PrId }) {
+  const store = useRootStore();
+  const status = store.ephemeral.grouping.get(pr);
+  if (status?.running) {
+    return (
+      <div className="grouping-more px-3 pb-1 pt-2" role="status">
+        <AgentWorking text="Grouping…" />
+      </div>
+    );
+  }
+  return (
+    <div className="grouping-stopped px-3 pb-1 pt-2 text-xs text-muted">
+      <span className="text-danger">
+        Grouping stopped before it finished
+        {status?.error ? `: ${status.error}` : ''}
+      </span>
+      {' — regroup to finish it.'}
+    </div>
   );
 });
 

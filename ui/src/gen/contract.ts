@@ -623,6 +623,13 @@ export type GroupKind = "normal" |
 export type Grouping = {
 	rev: Sha,
 	groups: Group[],
+	/**
+	 *  Written while the grouping run is still going: the groups are
+	 *  provisional and some hunks may be in no group yet. Stays set if the
+	 *  run failed or the app quit before it finished; a finished grouping
+	 *  never has it.
+	 */
+	in_progress?: boolean,
 };
 
 /**  Host connection state for onboarding and Settings → Account. */

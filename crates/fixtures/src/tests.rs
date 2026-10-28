@@ -44,6 +44,7 @@ fn agent_request(prompt: &str) -> AgentRequest {
         user_mcp: false,
         attachments: vec![],
         resume: None,
+        stream_text: false,
     }
 }
 

@@ -39,6 +39,7 @@ import {
 import { gatesFor } from './prs/mine';
 import { PrStatusIcon } from './StatusIcon';
 import { latinKey, useViewKeys } from './keys';
+import { useCheckboxRange } from './useCheckboxRange';
 
 const EMPTY: Record<PrFilter, { title: string; text: string }> = {
   all: {
@@ -223,6 +224,7 @@ export const PullRequests = observer(function PullRequests() {
   const ui = useUi();
   const ws = store.workspaces;
   const filter = ui.prsFilter;
+  const picked = ui.picked;
   // Per filter, a group the user opened or closed; else its default.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const pageRef = useRef<HTMLDivElement>(null);
@@ -247,6 +249,19 @@ export const PullRequests = observer(function PullRequests() {
 
   const showRepo = ws.id === ALL;
   const branchReviews = new Set(prs.filter(isBranchReview).map((p) => p.id));
+  const pickOrder =
+    filter === 'mine'
+      ? []
+      : groups.flatMap((g) =>
+          closed[g.id]
+            ? []
+            : g.items.filter((p) => !branchReviews.has(p.id)).map((p) => p.id),
+        );
+  const range = useCheckboxRange({
+    scopeKey: `prs:${ws.id}:${filter}`,
+    orderedKeys: pickOrder,
+    onChange: (ids, checked) => ui.setPicked(ids, checked),
+  });
   const empty = EMPTY[filter];
 
   return (
@@ -289,7 +304,10 @@ export const PullRequests = observer(function PullRequests() {
               <PrRow
                 id={id}
                 sel={ui.selected === id}
-                picked={false}
+                picked={picked.includes(id)}
+                onPick={(checked, modifiers) =>
+                  range.activate(id, checked, modifiers)
+                }
                 repo={showRepo}
               />
             )

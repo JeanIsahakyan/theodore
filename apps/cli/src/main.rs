@@ -90,6 +90,7 @@ async fn run_eval(args: eval::EvalArgs) -> anyhow::Result<()> {
     let mut opts = GroupingOptions {
         agent: agent_id,
         model: args.model.clone(),
+        stream: args.stream,
         ..Default::default()
     };
     if let Some(max_chars) = args.max_chars {
