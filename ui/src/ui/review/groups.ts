@@ -85,19 +85,62 @@ export function nextUnreadGroup(
 
 /** "3 of 5 groups read" for the groups pane's always-visible progress line —
  *  counts reviewable (non-hidden) groups only, each "read" once every one of
- *  its hunks is (the same read-state the group checkmarks use). */
+ *  its hunks is (the same read-state the group checkmarks use). While the
+ *  grouping is still being written (`complete` false) more groups are
+ *  coming: it is never "all read" then. */
 export function groupsProgress(
   groups: Group[],
   readHunks: ReadonlySet<HunkId>,
-): { read: number; total: number; label: string } {
+  complete = true,
+): { read: number; total: number; all: boolean; label: string } {
   const reviewable = reviewableGroups(groups);
   const total = reviewable.length;
   const read = reviewable.filter((g) =>
     g.hunks.every((h) => readHunks.has(h)),
   ).length;
-  const label =
-    total > 0 && read === total
-      ? 'All groups read'
-      : `${read} of ${total} group${total === 1 ? '' : 's'} read`;
-  return { read, total, label };
+  const all = complete && total > 0 && read === total;
+  const label = all
+    ? 'All groups read'
+    : `${read} of ${total} group${total === 1 ? '' : 's'} read${complete ? '' : ' so far'}`;
+  return { read, total, all, label };
+}
+
+/** Reading order that doesn't move what the user is on. Streamed grouping
+ *  replaces the whole row as groups arrive and the final pass may reorder
+ *  them; a group in `anchored` (opened, or partly read) keeps the slot it
+ *  had in `prev` — the order last shown — and every other group fills the
+ *  free slots in `next`'s order. Returns `next` itself when nothing has to
+ *  stay put.
+ *
+ *  ```text
+ *  prev  [A* B]          A* opened
+ *  next  [C A D B]       final order
+ *  out   [A C D B]       A keeps slot 0, the rest in next's order
+ *  ```
+ */
+export function stableOrder(
+  prev: readonly string[],
+  next: Group[],
+  anchored: ReadonlySet<string>,
+): Group[] {
+  const byId = new Map(next.map((g) => [g.id, g]));
+  const pins: [number, Group][] = [];
+  prev.forEach((id, i) => {
+    const g = byId.get(id);
+    if (g && anchored.has(id)) pins.push([i, g]);
+  });
+  if (!pins.length) return next;
+  const out: (Group | undefined)[] = new Array(next.length);
+  for (const [i, g] of pins) {
+    let at = Math.min(i, next.length - 1);
+    while (at < next.length && out[at]) at++;
+    if (at === next.length) at = out.findIndex((x) => !x);
+    out[at] = g;
+  }
+  const pinned = new Set(pins.map(([, g]) => g.id));
+  const rest = next.filter((g) => !pinned.has(g.id));
+  let k = 0;
+  for (let i = 0; i < out.length; i++) if (!out[i]) out[i] = rest[k++];
+  const result = out as Group[];
+  return result.every((g, i) => g === next[i]) ? next : result;
 }

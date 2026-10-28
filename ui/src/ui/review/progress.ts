@@ -12,5 +12,10 @@ export function readProgress(
   const hunks = groups.flatMap((g) => g.hunks);
   if (!hunks.length) return 0;
   const readSet = new Set(reads.map((r) => r.hunk));
-  return hunks.filter((h) => readSet.has(h)).length / hunks.length;
+  const done = hunks.filter((h) => readSet.has(h)).length / hunks.length;
+  // Still streaming in: hunks not yet in a group aren't counted, so it
+  // isn't done however much of what's grouped so far is read.
+  return store.models.groupingState(pr).inProgress
+    ? Math.min(done, 0.99)
+    : done;
 }

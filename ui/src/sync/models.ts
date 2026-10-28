@@ -1,6 +1,7 @@
 /** Typed, per-model accessors over the pool — the ergonomic front door for components. */
 import type { Group, Side, Thread } from '../gen/contract';
 import type { ObjectPool } from './ObjectPool';
+import { stableOrder } from '../ui/review/groups';
 import { groupKey, groupedIndex, type GroupLookup } from './grouped';
 import type { ModelRows } from './types';
 
@@ -64,6 +65,23 @@ export function modelAccessors(pool: ObjectPool) {
       for (const r of pool.all('file_viewed')) add(groupKey(r.pr, r.path), r);
     }),
   );
+  // Reading order as last shown, per PR, and the groups opened this
+  // session: a grouping that streams in and reorders itself when it
+  // finishes doesn't move a group the user opened or started reading.
+  const shown = new Map<string, { from: Group[]; out: Group[] }>();
+  const opened = new Map<string, Set<string>>();
+  const groupsOf = (pr: string): Group[] => {
+    const next = pool.get('grouping', pr)?.groups ?? [];
+    const last = shown.get(pr);
+    if (last?.from === next) return last.out;
+    const anchored = new Set(opened.get(pr));
+    for (const g of next)
+      if (g.hunks.some((h) => hunkReadIdx(groupKey(pr, h)).length > 0))
+        anchored.add(g.id);
+    const out = stableOrder(last?.out.map((g) => g.id) ?? [], next, anchored);
+    shown.set(pr, { from: next, out });
+    return out;
+  };
   const draftsAt = byLine('draft');
   const findingsAt = byLine('finding', (f) => f.state !== 'ignored');
   // Thread ids, not objects: a `pr_detail` row is replaced wholesale on any
@@ -94,9 +112,22 @@ export function modelAccessors(pool: ObjectPool) {
       /** The row for one file, last one wins — same as `where(...).at(-1)`. */
       of: (pr: string, path: string) => fileViewIdx(groupKey(pr, path)).at(-1),
     },
-    /** Groups of one PR's grouping, in reading order. Group ids are only
-     *  unique within a PR — always look groups up through this. */
-    groupsOf: (pr: string) => pool.get('grouping', pr)?.groups ?? [],
+    /** Groups of one PR's grouping, in reading order — except that a group
+     *  opened or partly read keeps the place it was shown at when the
+     *  grouping reorders (`stableOrder`). Group ids are only unique within
+     *  a PR — always look groups up through this. */
+    groupsOf,
+    /** A group was opened: from now on a reorder leaves it where it is. */
+    markGroupOpened: (pr: string, group: string) => {
+      let s = opened.get(pr);
+      if (!s) opened.set(pr, (s = new Set()));
+      s.add(group);
+    },
+    /** Where one PR's grouping stands: still being written, with groups
+     *  provisional and some hunks possibly ungrouped. */
+    groupingState: (pr: string) => ({
+      inProgress: pool.get('grouping', pr)?.in_progress ?? false,
+    }),
     /** Groups of every loaded grouping, in reading order. */
     groups: derived<Group & { id: string }>(() =>
       pool.all('grouping').flatMap((g) => g.groups),
