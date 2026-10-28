@@ -403,6 +403,16 @@ async fn merge_pass(
 
 /// One agent call; `note` (the repo's review config,
 /// `ReviewRules::system_note`) is appended to the system prompt.
+/// The effort every grouping, regroup and merge run goes at, whatever the
+/// agent's own setting (`call_agent`).
+pub const GROUPING_EFFORT: &str = "low";
+
+/// The model a grouping runs on when the caller names none: Claude's
+/// `sonnet` alias (the latest Sonnet); the other CLIs keep their setting.
+pub fn grouping_model(agent: AgentId) -> Option<String> {
+    (agent == AgentId::Claude).then(|| "sonnet".to_string())
+}
+
 pub(crate) async fn call_agent(
     agent: &dyn AgentPort,
     opts: &GroupingOptions,
@@ -422,8 +432,16 @@ pub(crate) async fn call_agent(
         cwd: cwd.to_path_buf(),
         mode: AgentMode::ReadOnly,
         mcp: None,
-        model: opts.model.clone(),
-        effort: None,
+        // Never the chat's model either: a grouping is a classification of
+        // the diff in the prompt, where Sonnet matches Opus (13/13 valid,
+        // same groups on kdb#83) and is faster on big PRs (36 s vs 55 s);
+        // Haiku needs repair calls and fragments, so it's slower overall.
+        model: opts.model.clone().or_else(|| grouping_model(opts.agent)),
+        // Never the chat's effort: at high/max Claude stops grouping the
+        // diff in the prompt and explores the repo with Grep and Read — a
+        // 28k-line PR took 65 s at low, 75 s at the CLI default and over
+        // 11 min at max (40+ turns, ~30 tool calls per chunk).
+        effort: Some(GROUPING_EFFORT.to_string()),
         stall_after_ms: opts.stall_after_ms,
         env: Vec::new(),
         user_mcp: opts.user_mcp,
@@ -696,6 +714,10 @@ mod tests {
         let reqs = agent.requests();
         assert_eq!(reqs.len(), 1);
         assert!(!reqs[0].prompt.contains("lock1"));
+        // Low effort, never the chat's: high effort explores the repo.
+        assert_eq!(reqs[0].effort.as_deref(), Some(GROUPING_EFFORT));
+        // Sonnet unless the caller names a model.
+        assert_eq!(reqs[0].model.as_deref(), Some("sonnet"));
     }
 
     #[tokio::test]

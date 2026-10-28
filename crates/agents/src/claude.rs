@@ -374,6 +374,15 @@ impl LineParser for ClaudeParser {
             stderr_tail: stderr_tail.to_string(),
         }
     }
+
+    /// `system` / `api_retry` events: Claude Code retrying its API.
+    fn is_transport_notice(&self, line: &str) -> bool {
+        line.len() < 16 * 1024
+            && serde_json::from_str::<Value>(line).is_ok_and(|v| {
+                v.get("type").and_then(Value::as_str) == Some("system")
+                    && v.get("subtype").and_then(Value::as_str) == Some("api_retry")
+            })
+    }
 }
 
 #[cfg(test)]

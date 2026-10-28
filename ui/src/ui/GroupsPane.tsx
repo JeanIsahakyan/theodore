@@ -153,13 +153,17 @@ export const GroupsPane = observer(function GroupsPane({
   const visibleGroups = groups.filter(
     (g) => !sinceOnly || g.hunks.some((h) => since?.has(h)),
   );
+  const fileOf = (h: HunkId) => {
+    const f = hunkFile.get(h);
+    return f === undefined ? [] : [f];
+  };
   const filesByGroup = new Map(
     visibleGroups.map((g) => {
       const hs = sinceOnly ? g.hunks.filter((h) => since?.has(h)) : g.hunks;
       const outFiles = new Set(
-        hs.filter((h) => g.outliers.includes(h)).map((h) => hunkFile.get(h)!),
+        hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
       );
-      const files = [...new Set(hs.map((h) => hunkFile.get(h)!))].sort(
+      const files = [...new Set(hs.flatMap(fileOf))].sort(
         (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
       );
       return [g.id, files] as const;
@@ -254,9 +258,7 @@ export const GroupsPane = observer(function GroupsPane({
                 : g.hunks;
               const read = hs.filter((h) => readSet.has(h)).length;
               const outFiles = new Set(
-                hs
-                  .filter((h) => g.outliers.includes(h))
-                  .map((h) => hunkFile.get(h)!),
+                hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
               );
               const files = filesByGroup.get(g.id) ?? [];
               const add = hs.reduce(

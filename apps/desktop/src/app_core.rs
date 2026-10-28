@@ -291,6 +291,8 @@ fn err(e: AppError) -> CommandError {
         // An old local `git` lacking `merge-tree --write-tree` (`conflicts`):
         // the UI hides the conflicts list on this code instead of toasting it.
         AppError::Git(theodore_ports::GitError::Unsupported(_)) => "unsupported",
+        // The git remote can't be reached: offline, not a git failure.
+        AppError::Git(theodore_ports::GitError::Network(_)) | AppError::Offline => "offline",
         AppError::Git(_) => "git",
         AppError::Host(theodore_ports::HostError::Auth) => "auth",
         AppError::Host(_) => "host",

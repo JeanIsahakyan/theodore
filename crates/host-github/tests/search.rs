@@ -50,3 +50,28 @@ async fn raw_query_section_sends_it_verbatim_and_tags_no_reason() {
     assert_eq!(results.len(), 1);
     assert!(results[0].reasons.is_empty());
 }
+
+#[tokio::test]
+async fn a_query_with_partial_errors_still_returns_its_data() {
+    let s = support::servers().await;
+
+    let mut body = support::fixture("search_prs.json");
+    body["errors"] = serde_json::json!([{
+        "type": "FORBIDDEN",
+        "message": "Resource protected by organization SAML enforcement.",
+        "path": ["search", "nodes", 1]
+    }]);
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("review-requested:@me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&s.graphql)
+        .await;
+
+    let results = s
+        .adapter
+        .search(&InboxSection::ReviewRequested)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+}

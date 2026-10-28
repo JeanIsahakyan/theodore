@@ -57,6 +57,10 @@ pub struct OutboxItem {
     pub attempts: u32,
     pub status: OutboxStatus,
     pub not_before: i64,
+    /// Why the last attempt failed (the host's own message where it gave
+    /// one); `None` until an attempt fails.
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -98,8 +102,11 @@ pub trait Store: Send + Sync {
     /// Next pending item with `not_before <= now`, marked in-flight.
     fn outbox_take(&self, now: i64) -> StoreResult<Option<OutboxItem>>;
     fn outbox_done(&self, id: u64) -> StoreResult<()>;
-    fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()>;
-    fn outbox_fail(&self, id: u64) -> StoreResult<()>;
+    /// Back to pending, due at `not_before`, one more attempt counted;
+    /// `error` is why this attempt failed (kept as `last_error`).
+    fn outbox_retry(&self, id: u64, not_before: i64, error: &str) -> StoreResult<()>;
+    /// Given up for good: never taken again, not pending for `is_idle`.
+    fn outbox_fail(&self, id: u64, error: &str) -> StoreResult<()>;
 
     /// `apply` plus one `outbox_push`, as a single atomic unit: a caller
     /// that both changes a model row and enqueues a host write for it (e.g.

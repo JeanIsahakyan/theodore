@@ -111,6 +111,56 @@ async fn crash_exit_becomes_one_error_with_stderr_tail() {
 }
 
 #[tokio::test]
+async fn a_connection_failure_on_stderr_ends_as_offline_not_a_crash() {
+    let run = spawn_and_stream(spec("offline", 5_000), Box::new(EchoParser)).unwrap();
+    let events = collect(run.events).await;
+    match events.as_slice() {
+        [
+            AgentEvent::Error {
+                message,
+                stderr_tail,
+            },
+        ] => {
+            assert_eq!(
+                message,
+                "Couldn't reach Fake's servers — check your connection"
+            );
+            assert!(stderr_tail.contains("ENOTFOUND"), "{stderr_tail:?}");
+        }
+        other => panic!("expected one offline Error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn going_quiet_while_failing_to_connect_ends_the_run_as_offline() {
+    // "offline_hang" sleeps 60 s after its connection error: the first
+    // stall must end it instead of waiting for the runtime cap.
+    let run = spawn_and_stream(spec("offline_hang", 200), Box::new(EchoParser)).unwrap();
+    let events = tokio::time::timeout(Duration::from_secs(10), collect(run.events))
+        .await
+        .expect("an offline stall must end the run well under the agent's own sleep");
+    match events.last() {
+        Some(AgentEvent::Error { message, .. }) => {
+            assert!(message.starts_with("Couldn't reach"), "{message:?}");
+        }
+        other => panic!("expected an offline Error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn output_after_a_connection_error_means_it_recovered() {
+    // Wide margins: stderr and stdout are read separately, so under load a
+    // tight gap can reorder the error and the first output.
+    let run = spawn_and_stream(spec("offline_recovered", 500), Box::new(EchoParser)).unwrap();
+    let events = collect(run.events).await;
+    assert!(events.contains(&AgentEvent::Stalled), "{events:?}");
+    assert!(
+        matches!(events.last(), Some(AgentEvent::Done { .. })),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
 async fn silent_period_emits_stalled_but_keeps_running() {
     // "stall" mode sleeps 1s between its two lines; a 100ms stall threshold
     // must fire at least one `Stalled` without ending the run.

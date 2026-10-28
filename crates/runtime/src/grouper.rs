@@ -42,7 +42,13 @@ fn err(e: theodore_grouping::GroupingPipelineError) -> GrouperError {
         theodore_grouping::GroupingPipelineError::DuplicateHunkIds(_) => {
             GrouperError::Invalid(e.to_string())
         }
-        e => GrouperError::Agent(e.to_string()),
+        e => {
+            let text = e.to_string();
+            match theodore_ports::offline_message_in(&text) {
+                Some(offline) => GrouperError::Offline(offline.to_string()),
+                None => GrouperError::Agent(text),
+            }
+        }
     }
 }
 
@@ -145,5 +151,26 @@ impl Grouper for GroupingGrouper {
         .await
         .map(|r| done(r, agent, rev))
         .map_err(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use theodore_grouping::GroupingPipelineError;
+
+    #[test]
+    fn an_agent_that_could_not_connect_is_offline_not_a_failure() {
+        let offline = theodore_ports::offline_message("claude");
+        let e = err(GroupingPipelineError::AgentRun(format!(
+            "{offline}: getaddrinfo ENOTFOUND api.anthropic.com"
+        )));
+        assert!(
+            matches!(&e, GrouperError::Offline(m) if *m == offline),
+            "{e:?}"
+        );
+        assert_eq!(e.code(), "agent.offline");
+        let e = err(GroupingPipelineError::AgentRun("exited 1: boom".into()));
+        assert!(matches!(e, GrouperError::Agent(_)), "{e:?}");
     }
 }

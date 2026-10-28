@@ -163,7 +163,28 @@ change first, sends it through the outbox, and reconciles:
 - user-visible failure → compensating action + toast;
 - conflict on poll (someone else changed it) → GitHub wins, UI gets the delta.
 
-Offline / 401 / rate limit → outbox pauses; reads come from SQLite.
+Offline / 401 / rate limit → outbox pauses; reads come from SQLite. A host
+refusal (validation, forbidden, not found, a malformed answer) fails the
+write at once with the host's message (§6.7).
+
+Offline, the app stays quiet: one probe watches for the host, nothing else
+calls it.
+
+```
+online ──a read fails on the network──▶ offline banner
+                                          │ PR / inbox / space / project polls: skipped
+                                          │   (local branch reviews still poll)
+                                          │ probe (changed_since) at +30 s
+                                          ├─ fails ─▶ again at +60 s, +120 s, … ≤ 5 min
+                                          └─ answers ─▶ online ─▶ skipped polls run now
+```
+
+| Offline thing | Behaviour |
+| --- | --- |
+| Account refresh | retried after 30 s, doubling up to 10 min; one warning, then debug |
+| Account 4xx | signs out only on the provider's own JSON error (`invalid_grant`); a captive portal's or proxy's 4xx counts as a network failure |
+| Codex model list | "not installed" is debug and stands for 10 min; a real failure warns once per process |
+| Agent run | never blocked by host health (the agent's API may still answer). A connection error in the CLI's error or stderr ends it as `agent.offline` (info): "Couldn't reach Claude's servers — check your connection". A run gone quiet after one (stuck retrying) is stopped at the stall mark, not the 30-min cap |
 
 ---
 
@@ -265,13 +286,20 @@ app ──▶ host::HostAdapter (traits, host-neutral models, capabilities)
             └─ host-bitbucket  REST 2.0                                 — M7.1
             │
             └─ host::http   one client for GitHub and GitLab:
-                 auth injection · ETag cache · rate limiter · retry/backoff ·
+                 auth injection · conditional GET (caller's ETag) · rate limiter ·
+                 retry/backoff · timeouts (connect 10 s, request 60 s) ·
                  token redaction in logs
 ```
 
 `host-bitbucket` owns a second, smaller HTTP client rather than sharing
 `host::http`: that one only ever sends `Authorization: Bearer`, and
-Bitbucket's app-password flow needs Basic auth instead (§6.8).
+Bitbucket's app-password flow needs Basic auth instead (§6.8). It uses the
+same timeouts.
+
+The caller owns the ETag: `get_conditional(path, None)` is a plain GET and
+always answers with a body (the poller passes the ETag it stored per PR;
+opening a PR passes none). If an open still gets "not modified", it drops
+the PR's ETag and fetches once more before giving up.
 
 `reqwest` + `cynic`, no `octocrab`: we need full control over ETags, limits and
 retries, and would use a fraction of it.
@@ -366,8 +394,26 @@ get it. For those, fall back to GraphQL `search` on a slow interval.
   `<!-- theodore:<draft-id> -->` (invisible when rendered). After a timeout the
   outbox looks for it before retrying, so nothing is posted twice.
 - One error type for all adapters:
-  `Auth · RateLimited{reset_at} · NotFound · Conflict · Validation · Network · Unsupported`.
+  `Auth · Forbidden · RateLimited{reset_at} · NotFound · Conflict · Validation · Network · Unsupported · Protocol`.
   The outbox decides from it: wait, retry, or roll back with a compensating action.
+
+  | Error | Outbox |
+  | --- | --- |
+  | `Network` (incl. 5xx after host-http's own retries, timeouts) | retry: 2 s doubling to 5 min for 12 attempts (~30 min), then every 3 h |
+  | `RateLimited` | retry at `reset_at`, rate-limit banner |
+  | ↳ both | give up after 20 attempts (~a day) |
+  | `Auth` (token rejected) | pause 30 s, token banner, until a reconnect |
+  | `Validation` · `Forbidden` · `NotFound` · `Conflict` · `Protocol` · `Unsupported` | fail now |
+
+  Failing = compensating action, one error toast with the host's message,
+  item `failed` with `last_error`. A failed item is not pending, so it no
+  longer holds off "Restart to update".
+- GraphQL: a mutation answered with `errors` fails with GitHub's message
+  even when `data` came back too (`{addPullRequestReview: null}` +
+  `UNPROCESSABLE` "Can not approve your own pull request"):
+  `UNPROCESSABLE` → `Validation`, `FORBIDDEN` → `Forbidden`, `NOT_FOUND` →
+  `NotFound`. A query keeps partial `data` and logs the errors with their
+  op and path.
 
 ### 6.8 Auth (no server)
 
@@ -603,9 +649,10 @@ sign in ─▶ open: the app comes back where it was; held work starts
   `focus_window`. Every other command is gated, new ones included (deny by
   default; the list and its test live in `apps/desktop/src/gate.rs`).
 - **Offline.** A stored session keeps the app usable with no network: a
-  refresh that fails on the network, a timeout or a 5xx keeps the session,
-  and the refresher retries every ~30 s. Only a definitive rejection (the
-  refresh token revoked or no longer valid) signs out. The gate then closes
+  refresh that fails on the network, a timeout, a 5xx or a 4xx without the
+  provider's JSON error keeps the session, and the refresher retries after
+  30 s, doubling up to 10 min. Only a definitive rejection (the provider's
+  error: the refresh token revoked or no longer valid) signs out. The gate then closes
   and says "Your session ended — sign in again".
 - **Signing out** (Settings → Account) closes the gate too. Only the
   session goes: the store, projects, drafts and worktrees stay for the next
@@ -740,6 +787,42 @@ production.
   to disk.
 - Worktree GC: drop worktrees of closed PRs after N days; locked while an agent
   runs in it.
+- **One writer at a time.** A process-wide async lock per bare repo (fetch,
+  clone, `update-ref`, `worktree add/remove/prune`) and per worktree
+  (checkout, reset, clean), keyed by canonical path; a worktree's lock is
+  always taken before its repo's. Without it, the poller's push handler and
+  the UI's `get_revision` fetching into one bare repo lose with `cannot lock
+  ref … is at NEW but expected OLD`, and two checkouts into one worktree
+  with `index.lock: File exists`.
+
+  ```text
+  poller  fetch ─┐                 ┌─▶ fetch ─▶ ok
+  UI      fetch ─┴─▶ lock(repo) ───┴─▶ waits ─▶ fetch ─▶ ok (or reuses one that started after it asked)
+  ```
+
+- **One fetch per open.** `fetch_pr` right after `ensure_repo` fetches only
+  the PR ref; on its own (the poller after a push) it fetches the branches and
+  the PR ref in one `git fetch`, so a moved base is there for the diff too.
+- **The PR worktree is the head.** Agents, grouping, skills and the repo
+  config read it as the PR's current head; an older revision (the review's
+  "since last visit" baseline) is diffed in the bare repo and never checks
+  out there.
+- **Offline.** A fetch git fails with no network ("Could not resolve host",
+  "Failed to connect", "Connection timed out", "Operation timed out",
+  "Network is unreachable", "unable to access" without an HTTP status) is
+  `GitError::Network` (`git.network`, UI code `offline`), never raw stderr.
+  A host project works from the clone already on this Mac:
+
+  | Clone on disk | Network | Result |
+  | --- | --- | --- |
+  | yes | yes | fetched, then used |
+  | yes | no (or the host already known offline: no fetch tried) | used as is, logged "You're offline — using the copy on this Mac"; a refresh keeps `last_fetched_at` |
+  | no | no | `app.offline`: "You're offline and this project hasn't been downloaded to this Mac yet" |
+
+  So spaces (create, send, undo, archive, review), branches and the
+  project refresh keep working offline. A project added offline stays
+  `cloning` with that message in `error` and retries the clone with backoff
+  (15 s doubling to 5 min) — never the red `error` state.
 
 ---
 
@@ -783,6 +866,7 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
   only what the worktree cannot give (PR context, groups, base files, findings).
 - Env: Theodore's own secrets are removed from the child env; the agent's own
   auth variables (e.g. `ANTHROPIC_API_KEY`) are passed through.
+- Grouping, regroup and merge run on Claude's `sonnet` (Codex/Gemini keep their model setting) and always at `--effort low` (Codex `model_reasoning_effort="low"`), whatever `agents.<id>.effort` says: at high or max Claude explores the repo with Grep/Read instead of grouping the diff it was given (kdb#83, 28k lines: 65 s at low, 75 s at the CLI default, 11+ min at max). Eval at low, 13 fixtures + kdb#83: Sonnet 13/13 valid, 146 s, kdb 36 s; Opus 13/13, 141 s, 55 s; Haiku 11/13 with 2 repairs, 293 s, 92 s and twice the groups.
 - Permissions: review runs are read-only: reading, skills, subagents, todos, the web and MCP, as in Claude Code itself, but no writes and no commands (`Bash`, `Edit`, `Write` denied), so nothing reaches the PR without you.
   Fix runs may edit, only inside the PR worktree.
 - The user's own MCP servers (`agents.user_mcp`, on by default, issue #16),
@@ -843,7 +927,7 @@ Claude runner; the others follow in M4 behind the same runner trait.
 - SQLite via `rusqlite` (WAL), migrations in `store`, applied on start; one DB
   per user profile.
 - Tables: models from §4 + `sync_log(id, model, model_id, action, data)` +
-  `outbox(id, op, payload, attempts, status)`.
+  `outbox(id, op, payload, attempts, status, last_error)`.
 - Keychain: one item for all Theodore secrets (one prompt). On macOS through
   `/usr/bin/security` so the prompt survives rebuilds; secret passed on stdin,
   not as an argument.
@@ -894,7 +978,8 @@ app ──▶ on launch + every 6 h
         GET github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json
         newer? ─▶ download in background ─▶ verify signature
                ─▶ "Restart to update" (never forced)
-               ─▶ restart waits until: no agent running, outbox empty
+               ─▶ restart waits until: no agent running, no outbox item
+                  pending (failed ones don't count)
 ```
 
 | Topic | Rule |

@@ -21,9 +21,16 @@ const group = (over: Partial<Group> & { id: string }): Group => ({
 });
 
 describe('groupsInRevision', () => {
-  it('keeps a group whose hunks are part of the revision', () => {
+  it('keeps a group whose hunks are all part of the revision, as is', () => {
     const g = group({ id: 'g1', hunks: ['h1', 'h2'] });
-    expect(groupsInRevision([g], new Set(['h2']))).toEqual([g]);
+    expect(groupsInRevision([g], new Set(['h1', 'h2']))[0]).toBe(g);
+  });
+
+  it('drops hunks (and outliers) a push removed from the revision', () => {
+    const g = group({ id: 'g1', hunks: ['h1', 'h2', 'h3'], outliers: ['h1'] });
+    expect(groupsInRevision([g], new Set(['h2', 'h3']))).toEqual([
+      { ...g, hunks: ['h2', 'h3'], outliers: [] },
+    ]);
   });
 
   it('drops a group with none of its hunks in the revision', () => {

@@ -24,6 +24,11 @@ pub struct Capabilities {
 pub enum HostError {
     #[error("not authenticated or token rejected")]
     Auth,
+    /// The token is good but may not do this one thing (GraphQL `FORBIDDEN`
+    /// on a mutation: no permission on this repo, a protected branch, …).
+    /// Unlike `Auth` it says nothing about the connection.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("rate limited until {reset_at}")]
     RateLimited { reset_at: Millis },
     #[error("not found: {0}")]
@@ -47,6 +52,7 @@ impl HostError {
     pub fn code(&self) -> &'static str {
         match self {
             HostError::Auth => "host.auth",
+            HostError::Forbidden(_) => "host.forbidden",
             HostError::RateLimited { .. } => "host.rate_limited",
             HostError::NotFound(_) => "host.not_found",
             HostError::Conflict(_) => "host.conflict",

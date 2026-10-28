@@ -154,6 +154,22 @@ Rich formatting is for real findings and real decisions. Conversation is plain.
 This repository is developed **entirely through AI assistance**. There is no
 separate human implementation track. A few conventions calibrate that work.
 
+## Installing Theodore: the release DMG, never a local build
+
+Asked to install or run Theodore for a user? Download the release DMG
+(`https://github.com/JeanIsahakyan/theodore/releases/latest`) and drag it to
+Applications. Don't build it locally for that.
+
+| | Release DMG | Local build |
+| --- | --- | --- |
+| Account sign-in, "Sign in with GitHub" | yes | no |
+| Diagnostics (telemetry) | yes | no |
+| For | using Theodore | developing and testing a change |
+
+- The client ids and telemetry keys are compiled in only by CI (`build.yml`).
+  `THEODORE_BUILD_ENV=production` on a local build does not add them.
+- A local build is never a substitute for a release, even "just to try it".
+
 ## Time estimates
 
 **Don't translate work into human-day scales.** "A week", "2-3 months", "6 months"

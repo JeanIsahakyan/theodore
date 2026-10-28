@@ -47,12 +47,7 @@ impl Core {
             }
             None => self.0.deps.git.ensure_repo(repo).await?,
         };
-        let worktree = self
-            .0
-            .deps
-            .git
-            .worktree(&detail.summary.pr, &req.head)
-            .await?;
+        let worktree_path = self.worktree_for(&req, &detail).await?;
         let revision = self
             .0
             .deps
@@ -70,12 +65,48 @@ impl Core {
             Arc::new(RevisionEntry {
                 revision: Arc::new(revision.clone()),
                 repo_path,
-                worktree_path: worktree.path,
+                worktree_path,
                 base: crate::usecases::review_config::ConfigBase::of(&detail.summary.pr, &detail),
                 pr_ref: detail.summary.pr,
             }),
         );
         Ok(revision)
+    }
+
+    /// The PR's one worktree, checked out at `req.head` only when that is
+    /// the PR's current head. Agents, grouping, skills and the repo config
+    /// all read that worktree as "the head": an older revision (the
+    /// review's "since last visit" baseline, loaded alongside the head) is
+    /// diffed in the bare repo and must not move it.
+    ///
+    /// ```text
+    /// get_revision(head)     ─▶ worktree @ head ─▶ diff
+    /// get_revision(baseline) ─────────────────────▶ diff   (worktree stays @ head)
+    /// ```
+    async fn worktree_for(
+        &self,
+        req: &RevisionRequest,
+        detail: &PrDetail,
+    ) -> AppResult<std::path::PathBuf> {
+        let pr_ref = &detail.summary.pr;
+        let current = self.0.current_head.read().await.get(&req.pr).cloned();
+        let at = match current {
+            Some(current) if current != req.head => {
+                let known = self
+                    .0
+                    .revisions
+                    .read()
+                    .await
+                    .get(&(req.pr.clone(), current.clone()))
+                    .map(|e| e.worktree_path.clone());
+                if let Some(path) = known {
+                    return Ok(path);
+                }
+                current
+            }
+            _ => req.head.clone(),
+        };
+        Ok(self.0.deps.git.worktree(pr_ref, &at).await?.path)
     }
 
     pub async fn get_file(&self, req: FileRequest) -> AppResult<Option<String>> {

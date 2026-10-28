@@ -198,7 +198,9 @@ export const api = {
   agentModels: (agent: AgentId) =>
     call<AgentModel[]>('agent_models', { agent }),
   appInfo: () => call<AppInfo>('app_info'),
-  checkUpdate: () => call<UpdateInfo | null>('check_update'),
+  /** `quiet`: the caller says what failed itself (the update toast). */
+  checkUpdate: (quiet = false) =>
+    call<UpdateInfo | null>('check_update', undefined, quiet),
   installUpdate: () => call<null>('install_update'),
   refreshInbox: () => call<null>('refresh_inbox'),
   viewer: () => call<Person>('viewer'),

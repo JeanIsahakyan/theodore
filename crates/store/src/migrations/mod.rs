@@ -15,11 +15,18 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub static MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "0001_init",
-    sql: include_str!("0001_init.sql"),
-}];
+pub static MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "0001_init",
+        sql: include_str!("0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "0002_outbox_last_error",
+        sql: include_str!("0002_outbox_last_error.sql"),
+    },
+];
 
 /// How many backup copies of the database to keep around a migration run.
 const KEEP_BACKUPS: usize = 3;

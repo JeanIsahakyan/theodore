@@ -474,7 +474,18 @@ async fn drive_skill_run(
         }])
         .await;
     let ms = started.elapsed().as_millis() as u64;
-    if let Some(e) = &error {
+    if let Some(e) = &error
+        && theodore_ports::offline_message_in(e).is_some()
+    {
+        // The agent's servers were out of reach: the network, not a bug.
+        tracing::info!(
+            error.code = theodore_ports::AGENT_OFFLINE_CODE,
+            run = %run_id,
+            agent = last_agent.as_str(),
+            duration_ms = ms,
+            "skill run couldn't reach the agent"
+        );
+    } else if let Some(e) = &error {
         tracing::warn!(
             error.code = "skill.failed",
             run = %run_id,

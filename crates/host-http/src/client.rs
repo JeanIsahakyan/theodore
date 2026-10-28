@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -57,6 +56,28 @@ pub struct RawResponse {
     pub headers: HeaderMap,
 }
 
+/// Time to open a connection (DNS + TCP + TLS) before giving up.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Whole-request budget, body included. Host API answers are JSON pages
+/// (diffs come from git, not HTTP); the largest — GitLab's `/changes` for
+/// a big MR — still fits well inside this on a slow link.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A `reqwest::Client` with the host timeouts above. Without them a
+/// half-open connection (laptop sleep, captive portal) hangs a request —
+/// and the outbox item or poll waiting on it — forever. A timeout is a
+/// retryable network error, so the usual retry/backoff takes over.
+pub fn host_reqwest_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "host http client without timeouts");
+            reqwest::Client::new()
+        })
+}
+
 /// Shared HTTP client for code-host adapters. One instance per API endpoint
 /// (e.g. GitHub REST root and GitHub GraphQL each get their own, since they
 /// have different base URLs on GitHub Enterprise).
@@ -65,7 +86,6 @@ pub struct HttpClient {
     base_url: url::Url,
     token: Arc<dyn TokenSource>,
     clock: Arc<dyn Clock>,
-    etags: Mutex<HashMap<String, String>>,
     rate: Mutex<RateState>,
     retry: RetryConfig,
     user_agent: String,
@@ -78,7 +98,7 @@ impl HttpClient {
     /// correctly (e.g. `https://api.github.com/`). A GraphQL endpoint is a
     /// full URL with no further joining (call `post_json` with `path = ""`).
     pub fn new(base_url: url::Url, token: Arc<dyn TokenSource>, clock: Arc<dyn Clock>) -> Self {
-        Self::with_reqwest_client(base_url, token, clock, reqwest::Client::new())
+        Self::with_reqwest_client(base_url, token, clock, host_reqwest_client())
     }
 
     pub fn with_reqwest_client(
@@ -92,7 +112,6 @@ impl HttpClient {
             base_url,
             token,
             clock,
-            etags: Mutex::new(HashMap::new()),
             rate: Mutex::new(RateState::default()),
             retry: RetryConfig::default(),
             user_agent: "theodore".to_string(),
@@ -139,7 +158,7 @@ impl HttpClient {
 
     /// GET, decoded as JSON. No conditional request.
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> HostResult<HttpResponse<T>> {
-        match self.execute(Method::GET, path, None, &[]).await? {
+        match self.execute(Method::GET, path, None, &[], &[]).await? {
             Outcome::Ok { body, headers } => {
                 let value = self.decode(&body)?;
                 let etag = extract_etag(&headers);
@@ -153,31 +172,27 @@ impl HttpClient {
         }
     }
 
-    /// GET with `If-None-Match`. Uses `if_none_match` when given, else the
-    /// per-URL cache from the last `Modified` response for this path.
+    /// GET with `If-None-Match: <if_none_match>`. `None` is a plain,
+    /// unconditional GET that always answers `Modified`: the caller owns
+    /// the ETag (it has a body to compare against; this client doesn't).
+    /// A per-URL cache here used to fill in `None` with the last ETag seen,
+    /// so a caller asking for a fresh body — opening a PR — got a 304 it
+    /// had nothing to show for.
     pub async fn get_conditional<T: DeserializeOwned>(
         &self,
         path: &str,
         if_none_match: Option<&str>,
     ) -> HostResult<Fetched<HttpResponse<T>>> {
-        let url = self.url_for(path)?;
-        let key = url.to_string();
-        let etag = if_none_match
-            .map(|s| s.to_string())
-            .or_else(|| self.etags.lock().expect("etag lock").get(&key).cloned());
-        let headers: &[(&str, String)] = match &etag {
-            Some(e) => &[("if-none-match", e.clone())],
+        let headers: &[(&str, String)] = match if_none_match {
+            Some(e) => &[("if-none-match", e.to_string())],
             None => &[],
         };
 
-        match self.execute(Method::GET, path, None, headers).await? {
+        match self.execute(Method::GET, path, None, headers, &[]).await? {
             Outcome::NotModified(_) => Ok(Fetched::NotModified),
             Outcome::Ok { body, headers } => {
                 let value = self.decode(&body)?;
                 let etag = extract_etag(&headers);
-                if let Some(e) = &etag {
-                    self.etags.lock().expect("etag lock").insert(key, e.clone());
-                }
                 Ok(Fetched::Modified {
                     etag: etag.clone(),
                     value: HttpResponse {
@@ -193,7 +208,7 @@ impl HttpClient {
     /// Raw conditional GET with caller-chosen headers (e.g.
     /// `If-Modified-Since`). Headers are returned on both outcomes.
     pub async fn get_raw(&self, path: &str, headers: &[(&str, String)]) -> HostResult<RawResponse> {
-        match self.execute(Method::GET, path, None, headers).await? {
+        match self.execute(Method::GET, path, None, headers, &[]).await? {
             Outcome::NotModified(headers) => Ok(RawResponse {
                 not_modified: true,
                 body: String::new(),
@@ -212,7 +227,19 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> HostResult<HttpResponse<T>> {
-        self.body_request(Method::POST, path, body).await
+        self.body_request(Method::POST, path, body, &[]).await
+    }
+
+    /// `post_json` for a caller that handles `expected` failure statuses
+    /// itself (e.g. retries without labels after a 403): those are logged
+    /// at info, not as a refusal. The error returned is the same.
+    pub async fn post_json_expecting<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+        expected: &[StatusCode],
+    ) -> HostResult<HttpResponse<T>> {
+        self.body_request(Method::POST, path, body, expected).await
     }
 
     pub async fn patch_json<B: Serialize + ?Sized, T: DeserializeOwned>(
@@ -220,7 +247,7 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> HostResult<HttpResponse<T>> {
-        self.body_request(Method::PATCH, path, body).await
+        self.body_request(Method::PATCH, path, body, &[]).await
     }
 
     pub async fn put_json<B: Serialize + ?Sized, T: DeserializeOwned>(
@@ -228,7 +255,7 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> HostResult<HttpResponse<T>> {
-        self.body_request(Method::PUT, path, body).await
+        self.body_request(Method::PUT, path, body, &[]).await
     }
 
     async fn body_request<B: Serialize + ?Sized, T: DeserializeOwned>(
@@ -236,10 +263,14 @@ impl HttpClient {
         method: Method,
         path: &str,
         body: &B,
+        expected: &[StatusCode],
     ) -> HostResult<HttpResponse<T>> {
         let json =
             serde_json::to_string(body).map_err(|e| HostError::Protocol(format!("encode: {e}")))?;
-        match self.execute(method, path, Some(json), &[]).await? {
+        match self
+            .execute(method, path, Some(json), &[], expected)
+            .await?
+        {
             Outcome::Ok { body, headers } => {
                 let value = self.decode(&body)?;
                 let etag = extract_etag(&headers);
@@ -261,7 +292,10 @@ impl HttpClient {
     ) -> HostResult<()> {
         let json =
             serde_json::to_string(body).map_err(|e| HostError::Protocol(format!("encode: {e}")))?;
-        match self.execute(Method::POST, path, Some(json), &[]).await? {
+        match self
+            .execute(Method::POST, path, Some(json), &[], &[])
+            .await?
+        {
             Outcome::Ok { .. } => Ok(()),
             Outcome::NotModified(_) => unreachable!("no conditional header sent"),
         }
@@ -270,7 +304,7 @@ impl HttpClient {
     /// DELETE, ignoring any response body (GitHub returns 204/empty on
     /// success for comment deletion etc).
     pub async fn delete(&self, path: &str) -> HostResult<()> {
-        match self.execute(Method::DELETE, path, None, &[]).await? {
+        match self.execute(Method::DELETE, path, None, &[], &[]).await? {
             Outcome::Ok { .. } => Ok(()),
             Outcome::NotModified(_) => unreachable!("no conditional header sent"),
         }
@@ -285,7 +319,10 @@ impl HttpClient {
     ) -> HostResult<()> {
         let json =
             serde_json::to_string(body).map_err(|e| HostError::Protocol(format!("encode: {e}")))?;
-        match self.execute(Method::DELETE, path, Some(json), &[]).await? {
+        match self
+            .execute(Method::DELETE, path, Some(json), &[], &[])
+            .await?
+        {
             Outcome::Ok { .. } => Ok(()),
             Outcome::NotModified(_) => unreachable!("no conditional header sent"),
         }
@@ -302,6 +339,7 @@ impl HttpClient {
         path: &str,
         body: Option<String>,
         extra_headers: &[(&str, String)],
+        expected: &[StatusCode],
     ) -> HostResult<Outcome> {
         if let Some(until) = self
             .rate
@@ -347,8 +385,16 @@ impl HttpClient {
                         return Ok(Outcome::NotModified(headers));
                     }
 
+                    // Retries are logged quietly: most succeed on the next
+                    // try. Only the final failure below is a warning.
                     if status.is_server_error() && attempt < self.retry.max_retries {
-                        tracing::warn!(status = %status, attempt, "host-http retrying server error");
+                        tracing::info!(
+                            method = %method,
+                            url = url.path(),
+                            status = status.as_u16(),
+                            attempt,
+                            "host-http retrying server error"
+                        );
                         attempt += 1;
                         self.backoff(attempt).await;
                         continue;
@@ -362,6 +408,7 @@ impl HttpClient {
                             attempt,
                             started,
                             matches!(err, HostError::RateLimited { .. }),
+                            expected.contains(&status),
                         );
                         let text = resp.text().await.unwrap_or_default();
                         return Err(self.attach_body(err, &text));
@@ -392,7 +439,13 @@ impl HttpClient {
                     });
                 }
                 Err(e) if attempt < self.retry.max_retries && is_retryable_send_error(&e) => {
-                    tracing::warn!(error = %e, attempt, "host-http retrying network error");
+                    tracing::debug!(
+                        method = %method,
+                        url = url.path(),
+                        error = %self.redact(&e.to_string()),
+                        attempt,
+                        "host-http retrying network error"
+                    );
                     attempt += 1;
                     self.backoff(attempt).await;
                 }
@@ -484,7 +537,8 @@ pub fn status_code(status: StatusCode, rate_limited: bool) -> &'static str {
 
 /// A 404 / 409 / 422 is often an answer, not a failure (a PR without a
 /// file, a merge that isn't possible yet): logged at debug. Auth and rate
-/// limits are warnings.
+/// limits are warnings — unless the caller said it `expected` the status
+/// and handles it (info).
 fn log_status(
     method: &Method,
     url: &url::Url,
@@ -492,10 +546,19 @@ fn log_status(
     attempt: u32,
     started: std::time::Instant,
     rate_limited: bool,
+    expected: bool,
 ) {
     let code = status_code(status, rate_limited);
     let ms = started.elapsed().as_millis() as u64;
     match status {
+        _ if expected && !rate_limited => tracing::info!(
+            error.code = code,
+            method = %method,
+            url = url.path(),
+            status = status.as_u16(),
+            duration_ms = ms,
+            "host refused the request; the caller handles it"
+        ),
         _ if rate_limited => tracing::warn!(
             error.code = code,
             method = %method,
