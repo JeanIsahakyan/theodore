@@ -902,6 +902,174 @@ async fn outbox_compensates_on_a_permanent_failure() {
     );
 }
 
+/// Reads every hunk of the fixture PR, which queues one `set_viewed`.
+async fn queue_one_set_viewed(core: &Core, pr: &PrId, head: Sha) {
+    let revision = core
+        .get_revision(RevisionRequest {
+            pr: pr.clone(),
+            head,
+        })
+        .await
+        .unwrap();
+    for (i, h) in testkit::hunk_ids(&revision).iter().enumerate() {
+        core.transact(hunk_read_tx(&format!("read-{i}"), pr, h))
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn outbox_fails_a_protocol_error_at_once_and_keeps_the_hosts_message() {
+    let f = fixtures();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+
+    f.host.push_set_viewed(Err(HostError::Protocol(
+        "markFileAsViewed returned nothing".into(),
+    )));
+    queue_one_set_viewed(&core, &pr, head).await;
+
+    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::Toast { .. })).await;
+    assert!(matches!(
+        event,
+        Ephemeral::Toast { level: ToastLevel::Error, ref text } if text.contains("markFileAsViewed returned nothing")
+    ));
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .first()
+            .is_some_and(|i| i.status == OutboxStatus::Failed)
+    })
+    .await;
+    let item = f.store.outbox_snapshot()[0].clone();
+    assert_eq!(item.attempts, 0, "no retry for a permanent error");
+    assert!(
+        item.last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("markFileAsViewed returned nothing")),
+        "{:?}",
+        item.last_error
+    );
+    assert!(
+        core.is_idle().await,
+        "a failed item must not hold off a restart"
+    );
+}
+
+#[tokio::test]
+async fn outbox_fails_a_refused_review_with_githubs_message() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+
+    f.host.push_submit_review(Err(HostError::Validation(
+        "Can not approve your own pull request".into(),
+    )));
+    core.submit_review(SubmitReviewRequest {
+        pr: pr.clone(),
+        event: ReviewEvent::Approve,
+        body: String::new(),
+    })
+    .await
+    .expect("queued");
+
+    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::Toast { .. })).await;
+    assert!(matches!(
+        event,
+        Ephemeral::Toast { ref text, .. } if text == "Can not approve your own pull request"
+    ));
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "submit_review" && i.status == OutboxStatus::Failed)
+    })
+    .await;
+    let item = f
+        .store
+        .outbox_snapshot()
+        .into_iter()
+        .find(|i| i.op == "submit_review")
+        .unwrap();
+    assert_eq!(
+        item.last_error.as_deref(),
+        Some("Can not approve your own pull request")
+    );
+}
+
+#[tokio::test]
+async fn outbox_gives_up_on_a_transient_error_after_max_attempts() {
+    let f = fixtures();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+
+    for _ in 0..crate::outbox::MAX_ATTEMPTS {
+        f.host
+            .push_set_viewed(Err(HostError::Network("connection reset".into())));
+    }
+    queue_one_set_viewed(&core, &pr, head).await;
+
+    for n in 1..crate::outbox::MAX_ATTEMPTS {
+        wait_until(|| {
+            f.store
+                .outbox_snapshot()
+                .first()
+                .is_some_and(|i| i.attempts >= n)
+        })
+        .await;
+        let item = f.store.outbox_snapshot()[0].clone();
+        assert_eq!(item.status, OutboxStatus::Pending, "attempt {n}");
+        assert!(
+            item.last_error
+                .as_deref()
+                .is_some_and(|e| e.contains("connection reset"))
+        );
+        // Past the longest backoff (3 h).
+        f.clock.advance(3 * 60 * 60_000 + 1_000);
+    }
+
+    wait_until(|| f.store.outbox_snapshot()[0].status == OutboxStatus::Failed).await;
+    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::Toast { .. })).await;
+    assert!(matches!(
+        event,
+        Ephemeral::Toast { ref text, .. } if text.contains("gave up after") && text.contains("connection reset")
+    ));
+    assert!(core.is_idle().await);
+}
+
+#[tokio::test]
+async fn open_refetches_once_when_a_fresh_fetch_comes_back_not_modified() {
+    let f = fixtures();
+    let pr_ref = fixture_pr_ref();
+    let detail = testkit::sample_pr_detail(&pr_ref, &Sha::new("base000"), &Sha::new("head111"));
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-2".into()),
+        value: detail,
+    }));
+
+    let (core, _recv) = Core::start(f.deps());
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("the refetch must open the PR");
+    assert_eq!(resp.head, Sha::new("head111"));
+}
+
+#[tokio::test]
+async fn open_refuses_when_the_refetch_is_not_modified_too() {
+    let f = fixtures();
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+    f.host.push_get_pr(Ok(Fetched::NotModified));
+
+    let (core, _recv) = Core::start(f.deps());
+    let err = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)), "{err}");
+}
+
 // ── push handling ─────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -2168,11 +2336,16 @@ impl Store for FailingTaskApplyStore {
     fn outbox_done(&self, id: u64) -> theodore_ports::StoreResult<()> {
         self.0.outbox_done(id)
     }
-    fn outbox_retry(&self, id: u64, not_before: i64) -> theodore_ports::StoreResult<()> {
-        self.0.outbox_retry(id, not_before)
+    fn outbox_retry(
+        &self,
+        id: u64,
+        not_before: i64,
+        error: &str,
+    ) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_retry(id, not_before, error)
     }
-    fn outbox_fail(&self, id: u64) -> theodore_ports::StoreResult<()> {
-        self.0.outbox_fail(id)
+    fn outbox_fail(&self, id: u64, error: &str) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_fail(id, error)
     }
     fn kv_get(&self, key: &str) -> theodore_ports::StoreResult<Option<serde_json::Value>> {
         self.0.kv_get(key)
@@ -3692,11 +3865,16 @@ impl Store for SlowLastSyncId {
     fn outbox_done(&self, id: u64) -> theodore_ports::StoreResult<()> {
         self.0.outbox_done(id)
     }
-    fn outbox_retry(&self, id: u64, not_before: i64) -> theodore_ports::StoreResult<()> {
-        self.0.outbox_retry(id, not_before)
+    fn outbox_retry(
+        &self,
+        id: u64,
+        not_before: i64,
+        error: &str,
+    ) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_retry(id, not_before, error)
     }
-    fn outbox_fail(&self, id: u64) -> theodore_ports::StoreResult<()> {
-        self.0.outbox_fail(id)
+    fn outbox_fail(&self, id: u64, error: &str) -> theodore_ports::StoreResult<()> {
+        self.0.outbox_fail(id, error)
     }
     fn kv_get(&self, key: &str) -> theodore_ports::StoreResult<Option<serde_json::Value>> {
         self.0.kv_get(key)

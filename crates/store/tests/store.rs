@@ -296,14 +296,16 @@ fn outbox_lifecycle() {
     assert_eq!(item.id, id);
     assert_eq!(item.status, OutboxStatus::InFlight);
     assert_eq!(item.attempts, 0);
+    assert_eq!(item.last_error, None);
 
     // taken; nothing else pending
     assert!(store.outbox_take(1_000).unwrap().is_none());
 
-    store.outbox_retry(id, 5_000).unwrap();
+    store.outbox_retry(id, 5_000, "network: timed out").unwrap();
     assert!(store.outbox_take(1_000).unwrap().is_none(), "not due yet");
     let retried = store.outbox_take(5_000).unwrap().unwrap();
     assert_eq!(retried.attempts, 1);
+    assert_eq!(retried.last_error.as_deref(), Some("network: timed out"));
 
     store.outbox_done(id).unwrap();
     assert!(store.outbox_take(10_000).unwrap().is_none());
@@ -313,7 +315,7 @@ fn outbox_lifecycle() {
 fn outbox_respects_not_before() {
     let store = SqliteStore::open_in_memory().unwrap();
     let id = store.outbox_push("op", json!({})).unwrap();
-    store.outbox_retry(id, 5_000).unwrap();
+    store.outbox_retry(id, 5_000, "x").unwrap();
 
     assert!(
         store.outbox_take(1_000).unwrap().is_none(),
@@ -328,8 +330,16 @@ fn outbox_fail_stops_retries() {
     let store = SqliteStore::open_in_memory().unwrap();
     let id = store.outbox_push("op", json!({})).unwrap();
     store.outbox_take(0).unwrap();
-    store.outbox_fail(id).unwrap();
+    assert_eq!(store.outbox_pending_count().unwrap(), 1);
+    store
+        .outbox_fail(id, "Can not approve your own pull request")
+        .unwrap();
     assert!(store.outbox_take(1_000_000).unwrap().is_none());
+    assert_eq!(
+        store.outbox_pending_count().unwrap(),
+        0,
+        "a failed item no longer holds is_idle"
+    );
 }
 
 #[test]

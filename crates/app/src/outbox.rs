@@ -1,5 +1,16 @@
 //! Outbox worker (plan §6.7): resumable host writes. One item at a time,
 //! retried with backoff that depends on the error kind.
+//!
+//! ```text
+//! host error                         outcome
+//! ─────────────────────────────────  ─────────────────────────────────────────
+//! Network (incl. 5xx, timeouts)      retry: 2 s doubling to 5 min, then 3 h;
+//! RateLimited                        retry at reset_at;
+//!                                    either gives up after MAX_ATTEMPTS (~a day)
+//! Auth (token rejected)              pause 30 s, banner; waits for a reconnect
+//! Validation · Forbidden · NotFound  fail now: compensate, toast the host's
+//! Conflict · Protocol · Unsupported    message, item `failed` (not pending)
+//! ```
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +31,14 @@ use crate::wire::ThreadRow;
 const POLL_IDLE_MS: u64 = 50;
 const BASE_BACKOFF_MS: i64 = 2_000;
 const MAX_BACKOFF_MS: i64 = 5 * 60_000;
+/// Retries past this many go every `SLOW_BACKOFF_MS` instead: the first
+/// dozen (~30 min) cover a blip, the rest a long outage.
+const FAST_ATTEMPTS: u32 = 12;
+const SLOW_BACKOFF_MS: i64 = 3 * 60 * 60_000;
+/// Failed attempts after which a transient error gives up: 12 fast + 7
+/// slow retries ≈ 22 h. Without a cap one stuck write retried for days and
+/// held off "Restart to update" (`is_idle`) the whole time.
+pub(crate) const MAX_ATTEMPTS: u32 = 20;
 const AUTH_RETRY_MS: i64 = 30_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,8 +139,10 @@ pub struct RerunCheckPayload {
 }
 
 enum Outcome {
-    RetryAt(i64),
+    /// Transient: due again at `.0`; `.1` is why this attempt failed.
+    RetryAt(i64, String),
     AuthPaused(i64),
+    /// Permanent: the host's message (or why it can't be done).
     Fail(String),
 }
 
@@ -195,10 +216,11 @@ async fn process_item(core: &Core, item: OutboxItem) {
             // than at the next poll.
             core.note_host::<()>(&Ok(()));
         }
-        Err(Outcome::RetryAt(not_before)) => {
+        Err(Outcome::RetryAt(not_before, error)) => {
             let id = item.id;
-            tracing::info!(retry_at = not_before, "outbox item will retry");
-            let _ = tokio::task::spawn_blocking(move || store.outbox_retry(id, not_before)).await;
+            tracing::info!(retry_at = not_before, error = %error, "outbox item will retry");
+            let _ = tokio::task::spawn_blocking(move || store.outbox_retry(id, not_before, &error))
+                .await;
         }
         Err(Outcome::AuthPaused(not_before)) => {
             tracing::warn!(
@@ -206,7 +228,9 @@ async fn process_item(core: &Core, item: OutboxItem) {
                 "outbox paused: the host token was rejected"
             );
             let id = item.id;
-            let _ = tokio::task::spawn_blocking(move || store.outbox_retry(id, not_before)).await;
+            let error = HostError::Auth.to_string();
+            let _ = tokio::task::spawn_blocking(move || store.outbox_retry(id, not_before, &error))
+                .await;
             core.emit(Ephemeral::HostStatus {
                 online: true,
                 rate_limited_until: None,
@@ -220,7 +244,8 @@ async fn process_item(core: &Core, item: OutboxItem) {
                 error = %message,
                 "outbox gave up on a host write"
             );
-            let _ = tokio::task::spawn_blocking(move || store.outbox_fail(id)).await;
+            let error = message.clone();
+            let _ = tokio::task::spawn_blocking(move || store.outbox_fail(id, &error)).await;
             core.emit(Ephemeral::Toast {
                 level: ToastLevel::Error,
                 text: message,
@@ -230,11 +255,39 @@ async fn process_item(core: &Core, item: OutboxItem) {
 }
 
 fn backoff_ms(attempts: u32) -> i64 {
+    if attempts >= FAST_ATTEMPTS {
+        return SLOW_BACKOFF_MS;
+    }
     let scale = 1i64 << attempts.min(10);
     (BASE_BACKOFF_MS.saturating_mul(scale)).min(MAX_BACKOFF_MS)
 }
 
+/// The host's own words for a toast: the error's message, or its full
+/// text when the host sent none (a bare 404).
+fn host_message(err: &HostError) -> String {
+    match err {
+        HostError::Validation(m)
+        | HostError::Forbidden(m)
+        | HostError::NotFound(m)
+        | HostError::Conflict(m)
+            if !m.trim().is_empty() =>
+        {
+            m.clone()
+        }
+        other => other.to_string(),
+    }
+}
+
 async fn classify_host_error(core: &Core, item: &OutboxItem, err: HostError) -> Outcome {
+    let retry = |not_before: i64, err: &HostError| {
+        // This failure is attempt `attempts + 1`: the last one allowed
+        // makes a transient error final.
+        if item.attempts + 1 >= MAX_ATTEMPTS {
+            Outcome::Fail(format!("gave up after {MAX_ATTEMPTS} attempts: {err}"))
+        } else {
+            Outcome::RetryAt(not_before, err.to_string())
+        }
+    };
     match err {
         HostError::RateLimited { reset_at } => {
             // The UI's rate-limit banner counts down to this.
@@ -243,20 +296,24 @@ async fn classify_host_error(core: &Core, item: &OutboxItem, err: HostError) -> 
                 rate_limited_until: Some(reset_at),
                 auth_ok: true,
             });
-            Outcome::RetryAt(reset_at)
+            retry(reset_at, &err)
         }
-        HostError::Network(_) | HostError::Protocol(_) => {
+        HostError::Network(_) => {
             let now = core.0.deps.clock.now();
-            Outcome::RetryAt(now + backoff_ms(item.attempts))
+            retry(now + backoff_ms(item.attempts), &err)
         }
         HostError::Auth => {
             let now = core.0.deps.clock.now();
             Outcome::AuthPaused(now + AUTH_RETRY_MS)
         }
-        HostError::Validation(msg) | HostError::Conflict(msg) | HostError::NotFound(msg) => {
-            Outcome::Fail(msg)
-        }
-        HostError::Unsupported(msg) => Outcome::Fail(msg.to_string()),
+        // A malformed answer (`Protocol`) is no blip either: the same
+        // request gets the same answer, so retrying only loops.
+        HostError::Validation(_)
+        | HostError::Forbidden(_)
+        | HostError::Conflict(_)
+        | HostError::NotFound(_)
+        | HostError::Protocol(_)
+        | HostError::Unsupported(_) => Outcome::Fail(host_message(&err)),
     }
 }
 
