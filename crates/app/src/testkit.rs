@@ -397,7 +397,18 @@ pub struct FakeGit {
     missing_commits: Mutex<std::collections::HashSet<String>>,
     /// Every call that would go to the network (`ensure_repo`, `fetch_pr`).
     network_calls: Mutex<Vec<&'static str>>,
+    /// The remote can't be reached: every network call fails with
+    /// `GitError::Network`, the way `GitCli` classifies git's stderr.
+    offline: Mutex<bool>,
+    /// Every sha `worktree` checked the PR worktree out at, in order.
+    worktree_calls: Mutex<Vec<Sha>>,
+    /// How long `ensure_repo` / `fetch_pr` / `worktree` take, so calls
+    /// from two places can overlap (default: no wait).
+    git_delay: Mutex<Option<std::time::Duration>>,
 }
+
+/// The stderr git prints with no network.
+pub const OFFLINE_STDERR: &str = "fatal: unable to access 'https://github.com/acme/widgets.git/': Could not resolve host: github.com";
 
 /// `FakeGit`'s state for shipping a space (docs/spaces.md §6).
 #[derive(Default)]
@@ -490,7 +501,41 @@ impl FakeGit {
             cached: Mutex::new(true),
             missing_commits: Mutex::new(std::collections::HashSet::new()),
             network_calls: Mutex::new(Vec::new()),
+            offline: Mutex::new(false),
+            worktree_calls: Mutex::new(Vec::new()),
+            git_delay: Mutex::new(None),
         })
+    }
+
+    /// The git remote can't (or can again) be reached.
+    pub fn set_offline(&self, value: bool) {
+        *self.offline.lock().unwrap() = value;
+    }
+
+    /// Every sha the PR worktree was checked out at, in order.
+    pub fn worktree_calls(&self) -> Vec<Sha> {
+        self.worktree_calls.lock().unwrap().clone()
+    }
+
+    /// `ensure_repo`, `fetch_pr` and `worktree` each take `d`.
+    pub fn set_git_delay(&self, d: std::time::Duration) {
+        *self.git_delay.lock().unwrap() = Some(d);
+    }
+
+    async fn network(&self, call: &'static str) -> GitResult<()> {
+        self.network_calls.lock().unwrap().push(call);
+        self.pause().await;
+        if *self.offline.lock().unwrap() {
+            return Err(GitError::Network(OFFLINE_STDERR.into()));
+        }
+        Ok(())
+    }
+
+    async fn pause(&self) {
+        let delay = *self.git_delay.lock().unwrap();
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
     }
 
     /// Whether `cached_repo` finds a clone on disk.
@@ -625,11 +670,11 @@ impl FakeGit {
 #[async_trait]
 impl GitPort for FakeGit {
     async fn ensure_repo(&self, _repo: &theodore_domain::RepoRef) -> GitResult<PathBuf> {
-        self.network_calls.lock().unwrap().push("ensure_repo");
+        self.network("ensure_repo").await?;
         Ok(self.repo_path.clone())
     }
     async fn fetch_pr(&self, _pr: &PrRef) -> GitResult<Sha> {
-        self.network_calls.lock().unwrap().push("fetch_pr");
+        self.network("fetch_pr").await?;
         Ok(self.head.lock().unwrap().clone())
     }
     async fn cached_repo(&self, _repo: &theodore_domain::RepoRef) -> GitResult<Option<PathBuf>> {
@@ -639,6 +684,8 @@ impl GitPort for FakeGit {
         Ok(!self.missing_commits.lock().unwrap().contains(&sha.0))
     }
     async fn worktree(&self, _pr: &PrRef, head: &Sha) -> GitResult<Worktree> {
+        self.worktree_calls.lock().unwrap().push(head.clone());
+        self.pause().await;
         Ok(Worktree {
             path: self.worktree_path(head),
             head: head.clone(),
@@ -874,6 +921,7 @@ impl GitPort for FakeGit {
         _repo_ref: &RepoRef,
         branch: &str,
     ) -> GitResult<Option<Sha>> {
+        self.network("remote_branch").await?;
         Ok(self.ship.lock().unwrap().remote.get(branch).cloned())
     }
 
