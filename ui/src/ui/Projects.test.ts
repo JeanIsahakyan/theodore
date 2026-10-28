@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { HostRepo, Project, RepoRef } from '../gen/contract';
 import {
   filterHostRepos,
+  groupByOwner,
   hostRepoUrl,
   projectLabel,
   repoKey,
+  selectableRepoKeys,
   sameRepo,
 } from './Projects';
 
@@ -82,6 +84,23 @@ describe('filterHostRepos', () => {
 
   it('matches nothing when the query misses', () => {
     expect(filterHostRepos(repos, 'nope')).toEqual([]);
+  });
+});
+
+describe('selectableRepoKeys', () => {
+  it('uses owner-grouped display order and excludes added repositories', () => {
+    const repos = [
+      { ...hostRepo({ name: 'api' }), pushed_at: 1 },
+      { ...hostRepo({ name: 'web' }), pushed_at: 9 },
+      { ...hostRepo({ owner: 'other', name: 'sdk' }), pushed_at: 8 },
+    ];
+    const groups = groupByOwner(repos);
+    const added = new Set([repoKey(repo({ name: 'api' }))]);
+
+    expect(selectableRepoKeys(groups, added)).toEqual([
+      'github:acme/web',
+      'github:other/sdk',
+    ]);
   });
 });
 

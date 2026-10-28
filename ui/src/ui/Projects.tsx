@@ -15,7 +15,6 @@ import {
 import {
   Button,
   Checkbox,
-  CheckboxGroup,
   Chip,
   ScrollShadow,
   SearchField,
@@ -31,6 +30,11 @@ import { Avatar, Empty, Shell, Spinner } from './bits';
 import { ago, type InboxPr } from './List';
 import { RowsSkeleton } from './Loading';
 import { isHostOn } from './settings/labs';
+import {
+  useCheckboxRange,
+  useCheckboxRangeEvents,
+  type CheckboxRangeModifiers,
+} from './useCheckboxRange';
 
 // ── pure helpers (tested) ───────────────────────────────────────────────
 
@@ -97,6 +101,17 @@ export function groupByOwner(
     .sort((a, b) => pushed(b.repos[0]!) - pushed(a.repos[0]!));
 }
 
+export function selectableRepoKeys(
+  groups: { repos: HostRepo[] }[],
+  addedKeys: ReadonlySet<string>,
+): string[] {
+  return groups.flatMap(({ repos }) =>
+    repos
+      .filter((r) => !addedKeys.has(repoKey(r.repo)))
+      .map((r) => repoKey(r.repo)),
+  );
+}
+
 /** PRs the signed-in user is already involved in, in this repo — the
  *  "N PRs with you" chip. */
 export function prsWithYou(items: InboxPr[], repo: RepoRef): number {
@@ -123,11 +138,16 @@ function RepoRow({
   r,
   already,
   prCount,
+  selected,
+  onPick,
 }: {
   r: HostRepo;
   already: boolean;
   prCount: number;
+  selected: boolean;
+  onPick: (checked: boolean, modifiers: CheckboxRangeModifiers) => void;
 }) {
+  const rangeEvents = useCheckboxRangeEvents(onPick);
   const sub = [
     r.description,
     r.pushed_at != null ? `pushed ${ago(r.pushed_at)}` : null,
@@ -160,24 +180,31 @@ function RepoRow({
   }
 
   return (
-    <Checkbox
-      value={repoKey(r.repo)}
-      // `.checkbox-group` puts mt-4 on every checkbox; rows here are spaced
-      // by the list, like the non-checkbox "Added" rows.
-      className="mt-0 rounded-2xl px-3 py-2 hover:bg-default/50"
+    <span
+      className="contents"
+      onClickCapture={rangeEvents.onClickCapture}
+      onBlurCapture={rangeEvents.onBlurCapture}
+      onKeyDownCapture={rangeEvents.onKeyDownCapture}
     >
-      <Checkbox.Content className="w-full">
-        <Checkbox.Control>
-          <Checkbox.Indicator />
-        </Checkbox.Control>
-        {body}
-        {prCount > 0 && (
-          <Chip size="sm" variant="soft" color="accent" className="shrink-0">
-            {prCount} {prCount === 1 ? 'PR' : 'PRs'} with you
-          </Chip>
-        )}
-      </Checkbox.Content>
-    </Checkbox>
+      <Checkbox
+        value={repoKey(r.repo)}
+        isSelected={selected}
+        onChange={rangeEvents.onCheckboxChange}
+        className="mt-0 rounded-2xl px-3 py-2 hover:bg-default/50"
+      >
+        <Checkbox.Content className="w-full">
+          <Checkbox.Control>
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+          {body}
+          {prCount > 0 && (
+            <Chip size="sm" variant="soft" color="accent" className="shrink-0">
+              {prCount} {prCount === 1 ? 'PR' : 'PRs'} with you
+            </Chip>
+          )}
+        </Checkbox.Content>
+      </Checkbox>
+    </span>
   );
 }
 
@@ -216,6 +243,17 @@ export const ProjectPicker = observer(function ProjectPicker({
           q,
         );
   const groups = groupByOwner(shown);
+  const range = useCheckboxRange({
+    scopeKey: `repositories:${store.workspaces.id}`,
+    orderedKeys: selectableRepoKeys(groups, addedKeys),
+    onChange: (keys, checked) =>
+      setPicked((current) => {
+        const changed = new Set(keys);
+        return checked
+          ? [...new Set([...current, ...keys])]
+          : current.filter((key) => !changed.has(key));
+      }),
+  });
 
   const addLocalFolder = () => {
     setAddingFolder(true);
@@ -232,6 +270,7 @@ export const ProjectPicker = observer(function ProjectPicker({
       if (p) onAdded?.(p);
     }
     setPicked([]);
+    range.resetAnchor();
     setAddingPicked(false);
   };
 
@@ -269,10 +308,9 @@ export const ProjectPicker = observer(function ProjectPicker({
               No repositories match "{q}".
             </p>
           ) : (
-            <CheckboxGroup
+            <div
+              role="group"
               aria-label="Repositories"
-              value={picked}
-              onChange={setPicked}
               className="repo-list flex flex-col gap-1"
             >
               {groups.map(({ owner, repos: group }) => (
@@ -298,11 +336,15 @@ export const ProjectPicker = observer(function ProjectPicker({
                       r={r}
                       already={addedKeys.has(repoKey(r.repo))}
                       prCount={prsWithYou(prItems, r.repo)}
+                      selected={picked.includes(repoKey(r.repo))}
+                      onPick={(checked, modifiers) =>
+                        range.activate(repoKey(r.repo), checked, modifiers)
+                      }
                     />
                   ))}
                 </div>
               ))}
-            </CheckboxGroup>
+            </div>
           )}
         </ScrollShadow>
       )}
