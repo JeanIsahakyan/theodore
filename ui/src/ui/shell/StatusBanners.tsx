@@ -65,7 +65,8 @@ export const StatusBanners = observer(function StatusBanners() {
         <Alert.Content>
           <Alert.Title>Offline</Alert.Title>
           <Alert.Description>
-            Diff, drafts and agents keep working locally.{' '}
+            Reviews and spaces you’ve opened stay readable; syncing and agents
+            resume when you’re back online.{' '}
             {pending > 0
               ? `${pending} ${pending === 1 ? 'write is' : 'writes are'} queued and will go out once reconnected.`
               : 'Anything you do will be queued and sent automatically.'}

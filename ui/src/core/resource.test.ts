@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resourceCache } from './resource';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -64,5 +64,56 @@ describe('resourceCache', () => {
     cache.get('k1', load);
     await flush();
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a failed load', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('is served as is right after the failure — no retry loop on re-render', async () => {
+      const cache = resourceCache<string>({ retryAfterMs: 5000 });
+      const load = vi.fn(() => Promise.reject(new Error('boom')));
+      const a = cache.get('k1', load);
+      await flush();
+      expect(a.status).toBe('error');
+      expect(cache.get('k1', load)).toBe(a);
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('is retried by the next get() once it is old enough', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const cache = resourceCache<string>({ retryAfterMs: 5000 });
+      const load = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(new Error('git: bad object'))
+        .mockResolvedValueOnce('rev');
+      cache.get('k1', load);
+      await flush();
+      vi.setSystemTime(Date.now() + 5000);
+      const b = cache.get('k1', load);
+      expect(b.status).toBe('loading');
+      await flush();
+      expect(b.status).toBe('ready');
+      expect(b.data).toBe('rev');
+      expect(load).toHaveBeenCalledTimes(2);
+      // A success is cached for good again.
+      vi.setSystemTime(Date.now() + 60_000);
+      expect(cache.get('k1', load)).toBe(b);
+      expect(load).toHaveBeenCalledTimes(2);
+    });
+
+    it('is retried at once after invalidate() — the Retry button', async () => {
+      const cache = resourceCache<string>();
+      const load = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockResolvedValueOnce('rev');
+      cache.get('k1', load);
+      await flush();
+      cache.invalidate('k1');
+      const b = cache.get('k1', load);
+      await flush();
+      expect(b.status).toBe('ready');
+      expect(load).toHaveBeenCalledTimes(2);
+    });
   });
 });
