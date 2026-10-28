@@ -565,6 +565,15 @@ export class UiStore {
     });
   }
 
+  setPicked(ids: readonly PrId[], checked: boolean): void {
+    runInAction(() => {
+      const changed = new Set(ids);
+      this.picked = checked
+        ? [...new Set([...this.picked, ...ids])]
+        : this.picked.filter((id) => !changed.has(id));
+    });
+  }
+
   clearPicked(): void {
     runInAction(() => {
       this.picked = [];
