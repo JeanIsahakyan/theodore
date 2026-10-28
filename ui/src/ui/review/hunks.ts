@@ -4,21 +4,23 @@
  * no store — mirrors exactly what `DiffPane` renders so J/K lands on what's
  * on screen.
  */
-import type { Hunk, HunkId, Revision } from '../../gen/contract';
+import type { Group, Hunk, HunkId, Revision } from '../../gen/contract';
 import type { ReviewMode } from '../GroupsPane';
+import { groupDiff } from './groups';
 
-/** Every hunk shown for the current `mode`, in file → hunk order. */
+/** Every hunk shown for the current `mode`, in file → hunk order — a
+ *  group's files in `groupDiff`'s order, as `DiffPane` lays them out. */
 export function hunksInScope(
   rev: Pick<Revision, 'files'>,
   mode: ReviewMode,
-  groupHunkIds: Set<HunkId> | null,
+  group: Pick<Group, 'hunks' | 'outliers'> | null,
 ): Hunk[] {
   if (mode.mode === 'files') {
     return rev.files.find((f) => f.path === mode.file)?.hunks ?? [];
   }
-  if (groupHunkIds) {
-    return rev.files.flatMap((f) =>
-      f.hunks.filter((h) => groupHunkIds.has(h.id)),
+  if (group) {
+    return groupDiff(rev.files, group.hunks, group.outliers).flatMap(
+      (f) => f.hunks,
     );
   }
   return rev.files.flatMap((f) => f.hunks);

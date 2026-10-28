@@ -45,11 +45,11 @@ describe('hunksInScope', () => {
     ).toEqual([]);
   });
 
-  it('filters to the group when a group-hunk set is given', () => {
+  it('filters to the group when a group is given', () => {
     const got = hunksInScope(
       rev,
       { mode: 'groups', group: 'g1', file: null },
-      new Set(['h2', 'h3']),
+      { hunks: ['h2', 'h3'], outliers: [] },
     );
     expect(got.map((h) => h.id)).toEqual(['h2', 'h3']);
   });

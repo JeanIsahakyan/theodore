@@ -36,7 +36,11 @@ import { ask, markGroupRead, regroup, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
-import { groupsInRevision, groupsProgress } from './review/groups';
+import {
+  groupFileOrder,
+  groupsInRevision,
+  groupsProgress,
+} from './review/groups';
 import {
   useCheckboxRange,
   useCheckboxRangeEvents,
@@ -163,12 +167,7 @@ export const GroupsPane = observer(function GroupsPane({
   const filesByGroup = new Map(
     visibleGroups.map((g) => {
       const hs = sinceOnly ? g.hunks.filter((h) => since?.has(h)) : g.hunks;
-      const outFiles = new Set(
-        hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
-      );
-      const files = [...new Set(hs.flatMap(fileOf))].sort(
-        (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
-      );
+      const files = groupFileOrder(hs, g.outliers, (h) => hunkFile.get(h));
       return [g.id, files] as const;
     }),
   );
