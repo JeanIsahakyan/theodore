@@ -1558,6 +1558,10 @@ pub struct FakeGrouper {
     /// How long `group` takes, so a test can act while it runs.
     delay_ms: std::sync::atomic::AtomicU64,
     calls: std::sync::atomic::AtomicUsize,
+    /// Published through `on_partial`, in order, before `group` returns.
+    partials: Mutex<Vec<Grouping>>,
+    /// `group` fails with this (after publishing its partials) when set.
+    fail: Mutex<Option<String>>,
 }
 
 impl FakeGrouper {
@@ -1569,7 +1573,19 @@ impl FakeGrouper {
             last_ctx: Mutex::new(None),
             delay_ms: std::sync::atomic::AtomicU64::new(0),
             calls: std::sync::atomic::AtomicUsize::new(0),
+            partials: Mutex::new(Vec::new()),
+            fail: Mutex::new(None),
         })
+    }
+    /// Provisional groupings the next `group` call publishes before it
+    /// returns (streamed grouping), `delay_ms` apart.
+    pub fn set_partials(&self, partials: Vec<Grouping>) {
+        *self.partials.lock().unwrap() = partials;
+    }
+    /// Makes the next `group` call fail with `message` once its partials
+    /// are out.
+    pub fn fail_next(&self, message: &str) {
+        *self.fail.lock().unwrap() = Some(message.to_string());
     }
     /// How many `group`/`regroup` calls were made.
     pub fn calls(&self) -> usize {
@@ -1605,14 +1621,25 @@ impl Grouper for FakeGrouper {
         ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
         agent: crate::deps::GroupingAgent,
+        on_partial: crate::deps::OnPartial<'_>,
     ) -> Result<Grouping, GrouperError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_agent.lock().unwrap() = Some(agent.id);
         *self.last_user_mcp.lock().unwrap() = Some(agent.user_mcp);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
         let delay = self.delay_ms.load(std::sync::atomic::Ordering::SeqCst);
+        let partials = std::mem::take(&mut *self.partials.lock().unwrap());
+        for p in partials {
+            on_partial(p);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+        }
         if delay > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        }
+        if let Some(message) = self.fail.lock().unwrap().take() {
+            return Err(GrouperError::Agent(message));
         }
         Ok(self.grouping.lock().unwrap().clone())
     }
@@ -2309,6 +2336,7 @@ pub fn fixtures() -> Fixtures {
         grouper: FakeGrouper::new(Grouping {
             rev: Sha::new("head111"),
             groups: vec![],
+            in_progress: false,
         }),
         token_status: FakeTokenStatus::new(TokenSource::Keychain),
         device_login: FakeDeviceLogin::new(),
@@ -2477,6 +2505,7 @@ pub fn sample_grouping(rev: &Sha, revision: &Revision) -> Grouping {
             hunks: hunk_ids(revision),
             outliers: vec![],
         }],
+        in_progress: false,
     }
 }
 

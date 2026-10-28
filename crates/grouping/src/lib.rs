@@ -11,13 +11,14 @@ pub mod prepass;
 pub mod prompt;
 mod schema;
 pub mod skeleton;
+pub mod stream;
 mod target;
 
 pub mod testing;
 
 pub use incremental::{regroup, regroup_with};
 pub use pipeline::{
-    GroupingOptions, GroupingPipelineError, GroupingReport, PrMeta, group_revision,
-    group_revision_with,
+    GroupingOptions, GroupingPipelineError, GroupingReport, OnProgress, PrMeta, Progress, Stage,
+    StreamTimings, group_revision, group_revision_progress, group_revision_with,
 };
 pub use prompt::PromptBudget;

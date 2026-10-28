@@ -1187,6 +1187,7 @@ mod tests {
         let grouping = Grouping {
             rev: rev.head.clone(),
             groups,
+            in_progress: false,
         };
         assert_eq!(grouping::validate(&rev, &grouping), Ok(()));
     }
@@ -1207,6 +1208,7 @@ mod tests {
         let grouping = Grouping {
             rev: rev.head.clone(),
             groups,
+            in_progress: false,
         };
         assert_eq!(grouping::validate(&rev, &grouping), Ok(()));
     }

@@ -213,6 +213,7 @@ mod tests {
                 group("api", &["a2"], &[]),
                 group("ui", &["u1"], &["existing"]),
             ],
+            in_progress: false,
         };
         let rules = ReviewRules {
             checklist: vec![

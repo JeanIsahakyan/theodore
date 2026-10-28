@@ -190,6 +190,7 @@ pub fn repair_with_other(rev: &Revision, grouping: Grouping) -> Grouping {
     Grouping {
         rev: grouping.rev,
         groups,
+        in_progress: false,
     }
 }
 
@@ -203,6 +204,7 @@ mod algo_tests {
         let g = Grouping {
             rev: Sha::new("h"),
             groups: vec![],
+            in_progress: false,
         };
         let row = to_row(&g).unwrap();
         assert_eq!(row_algo(&row), ALGO_VERSION);

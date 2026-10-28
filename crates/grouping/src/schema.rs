@@ -62,6 +62,7 @@ impl RawGrouping {
         Grouping {
             rev,
             groups: self.groups.into_iter().map(RawGroup::into_domain).collect(),
+            in_progress: false,
         }
     }
 }

@@ -267,6 +267,7 @@ mod tests {
         Grouping {
             rev: rev.head.clone(),
             groups,
+            in_progress: false,
         }
     }
 
@@ -382,6 +383,7 @@ mod tests {
         let g = Grouping {
             rev: r.head.clone(),
             groups: after.clone(),
+            in_progress: false,
         };
         assert!(grouping::validate(&r, &g).is_ok());
         let infra = after.iter().find(|g| g.id != GroupId::new("core")).unwrap();

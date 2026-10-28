@@ -99,6 +99,10 @@ Failures are logged with a stable dotted `error.code`, plus context: `agent` and
 | Other | `skill.failed`, `app.not_found`, `app.invalid`, `app.internal`, `app.start_failed`, `app.offline_not_cached`, `app.offline` (offline and the project was never cloned), `panic` |
 | UI | `ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash` |
 
+A grouping run also logs `grouping done` (local file) with `duration_ms` and `first_group_ms`,
+when its first group was shown; the same `first_group_ms` is recorded on the run's `grouping`
+span. Without streaming (Codex, Gemini) it equals `duration_ms`.
+
 `AppError::code()` maps every app error; command failures are logged once, at the command
 boundary, inside the command's span.
 
