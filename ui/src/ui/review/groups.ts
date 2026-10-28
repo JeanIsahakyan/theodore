@@ -7,13 +7,30 @@
  */
 import type { Group, HunkId } from '../../gen/contract';
 
-/** Groups whose hunks are part of this revision, in reading order. Includes
- *  hidden groups — `GroupsPane` still lists them (collapsed). */
+/** Groups restricted to this revision, in reading order: each group keeps
+ *  only the hunks the revision has (an older grouping can name hunks a push
+ *  removed), and a group left with none is dropped. A group with every hunk
+ *  present is returned as is. Includes hidden groups — `GroupsPane` still
+ *  lists them (collapsed). */
 export function groupsInRevision(
   groups: Group[],
-  hunkIds: Set<HunkId>,
+  hunkIds: ReadonlySet<HunkId>,
 ): Group[] {
-  return groups.filter((g) => g.hunks.some((h) => hunkIds.has(h)));
+  const out: Group[] = [];
+  for (const g of groups) {
+    const hunks = g.hunks.filter((h) => hunkIds.has(h));
+    if (!hunks.length) continue;
+    if (hunks.length === g.hunks.length) {
+      out.push(g);
+      continue;
+    }
+    out.push({
+      ...g,
+      hunks,
+      outliers: g.outliers.filter((h) => hunkIds.has(h)),
+    });
+  }
+  return out;
 }
 
 /** The subset `N`/`P` navigation (and the groups-pane progress line) step
