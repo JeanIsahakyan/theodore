@@ -87,7 +87,17 @@ impl Core {
             .regroup_run(&prev, &entry, &detail, agent, rules)
             .instrument(span)
             .await;
-        if let Err(e) = &result {
+        if let Err(e @ AppError::Grouper(crate::error::GrouperError::Offline(_))) = &result {
+            // The agent couldn't reach its servers: the network, not a bug.
+            tracing::info!(
+                error.code = e.code(),
+                pr = %pr.0,
+                agent = agent.as_str(),
+                duration_ms = started.elapsed().as_millis() as u64,
+                error = %e,
+                "grouping couldn't run"
+            );
+        } else if let Err(e) = &result {
             tracing::warn!(
                 error.code = e.code(),
                 pr = %pr.0,

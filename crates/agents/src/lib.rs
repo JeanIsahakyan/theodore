@@ -38,9 +38,79 @@ pub struct AgentCli {
     pid_dir: Option<std::path::PathBuf>,
     /// Each CLI's `--version` from the last `detect`, for the log.
     versions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<AgentId, String>>>,
-    /// `codex debug models`, parsed once per process. Only a success is
-    /// kept: a failed listing (not installed yet) is retried next call.
-    codex_models: std::sync::Arc<tokio::sync::OnceCell<Vec<ModelInfo>>>,
+    /// `codex debug models`: a success for the process, a failure (not
+    /// installed, or the listing broke) for `CODEX_RETRY_AFTER`.
+    codex_models: std::sync::Arc<tokio::sync::Mutex<CodexModels>>,
+}
+
+/// How long a failed codex model listing stands before it's tried again:
+/// the picker asks on every open, and a missing CLI stays missing.
+const CODEX_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Why there's no codex model list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CodexListError {
+    /// No `codex` binary: an expected state, logged at debug.
+    NotInstalled,
+    /// Installed, but `codex debug models` failed.
+    Failed(String),
+}
+
+/// The cached outcome of listing codex's models.
+#[derive(Debug, Default)]
+struct CodexModels {
+    listed: Option<Vec<ModelInfo>>,
+    /// The last failure and when it happened.
+    failed: Option<(std::time::Instant, CodexListError)>,
+    /// A real failure was already warned about (once per process).
+    warned: bool,
+}
+
+/// The level a failed listing is logged at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListLog {
+    Debug,
+    Warn,
+}
+
+impl CodexModels {
+    /// The cached answer, if one still stands at `now`.
+    fn cached(&self, now: std::time::Instant) -> Option<Vec<ModelInfo>> {
+        if let Some(list) = &self.listed {
+            return Some(list.clone());
+        }
+        match &self.failed {
+            Some((at, _)) if now.duration_since(*at) < CODEX_RETRY_AFTER => Some(Vec::new()),
+            _ => None,
+        }
+    }
+
+    /// Keeps a fresh outcome; a failure also says how to log it.
+    fn record(
+        &mut self,
+        now: std::time::Instant,
+        outcome: Result<Vec<ModelInfo>, CodexListError>,
+    ) -> (Vec<ModelInfo>, Option<ListLog>) {
+        match outcome {
+            Ok(list) => {
+                self.listed = Some(list.clone());
+                self.failed = None;
+                (list, None)
+            }
+            Err(e) => {
+                let level = match &e {
+                    CodexListError::NotInstalled => ListLog::Debug,
+                    CodexListError::Failed(_) if self.warned => ListLog::Debug,
+                    CodexListError::Failed(_) => {
+                        self.warned = true;
+                        ListLog::Warn
+                    }
+                };
+                self.failed = Some((now, e));
+                (Vec::new(), Some(level))
+            }
+        }
+    }
 }
 
 impl AgentCli {
@@ -154,24 +224,110 @@ impl AgentPort for AgentCli {
         match agent {
             AgentId::Claude => models::claude_models(),
             AgentId::Codex => {
-                let listed = self
-                    .codex_models
-                    .get_or_try_init(|| async {
-                        let cfg = self.configs.get(AgentId::Codex);
-                        let program = detect::locate_binary(AgentId::Codex, &cfg)
-                            .ok_or_else(|| "not installed".to_string())?;
-                        models::codex_models(&program).await
-                    })
-                    .await;
-                match listed {
-                    Ok(list) => list.clone(),
-                    Err(reason) => {
-                        tracing::warn!(reason, "couldn't list codex models");
-                        Vec::new()
+                let mut cache = self.codex_models.lock().await;
+                let now = std::time::Instant::now();
+                if let Some(list) = cache.cached(now) {
+                    return list;
+                }
+                let cfg = self.configs.get(AgentId::Codex);
+                let outcome = match detect::locate_binary(AgentId::Codex, &cfg) {
+                    None => Err(CodexListError::NotInstalled),
+                    Some(program) => models::codex_models(&program)
+                        .await
+                        .map_err(CodexListError::Failed),
+                };
+                let (list, log) = cache.record(now, outcome);
+                if let (Some(level), Some((_, e))) = (log, &cache.failed) {
+                    match (level, e) {
+                        (ListLog::Warn, CodexListError::Failed(reason)) => {
+                            tracing::warn!(reason = %reason, "couldn't list codex models");
+                        }
+                        (_, e) => tracing::debug!(reason = ?e, "no codex models"),
                     }
                 }
+                list
             }
             AgentId::Gemini => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn model(id: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            label: id.into(),
+            description: None,
+            efforts: vec![],
+            default_effort: None,
+            older: false,
+        }
+    }
+
+    #[test]
+    fn not_installed_is_debug_and_stands_for_a_while() {
+        let mut cache = CodexModels::default();
+        let t0 = Instant::now();
+        assert_eq!(cache.cached(t0), None);
+        let (list, log) = cache.record(t0, Err(CodexListError::NotInstalled));
+        assert!(list.is_empty());
+        assert_eq!(log, Some(ListLog::Debug));
+        assert_eq!(cache.cached(t0 + Duration::from_secs(60)), Some(vec![]));
+        assert_eq!(cache.cached(t0 + CODEX_RETRY_AFTER), None, "tried again");
+    }
+
+    #[test]
+    fn a_real_failure_warns_once_per_process() {
+        let mut cache = CodexModels::default();
+        let t0 = Instant::now();
+        let fail = || Err(CodexListError::Failed("exited with 1".into()));
+        assert_eq!(cache.record(t0, fail()).1, Some(ListLog::Warn));
+        let later = t0 + CODEX_RETRY_AFTER;
+        assert_eq!(cache.cached(later), None);
+        assert_eq!(cache.record(later, fail()).1, Some(ListLog::Debug));
+    }
+
+    #[test]
+    fn a_listing_is_kept_for_the_process() {
+        let mut cache = CodexModels::default();
+        let t0 = Instant::now();
+        cache.record(t0, Err(CodexListError::NotInstalled));
+        let (list, log) = cache.record(t0 + CODEX_RETRY_AFTER, Ok(vec![model("m")]));
+        assert_eq!((list.len(), log), (1, None));
+        let much_later = t0 + CODEX_RETRY_AFTER * 10;
+        assert_eq!(cache.cached(much_later), Some(vec![model("m")]));
+    }
+
+    #[tokio::test]
+    async fn a_missing_codex_is_not_looked_for_again_on_every_call() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex");
+        let cli = AgentCli::new().with_config(
+            AgentId::Codex,
+            AgentBinaryConfig {
+                path: Some(path.clone()),
+                ..Default::default()
+            },
+        );
+        assert!(cli.models(AgentId::Codex).await.is_empty());
+
+        // Installed now, but the "not installed" answer still stands.
+        std::fs::write(
+            &path,
+            "#!/bin/sh\necho '{\"models\":[{\"slug\":\"m\",\"visibility\":\"list\"}]}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(cli.models(AgentId::Codex).await.is_empty());
+        let cache = cli.codex_models.lock().await;
+        assert!(matches!(
+            cache.failed,
+            Some((_, CodexListError::NotInstalled))
+        ));
     }
 }

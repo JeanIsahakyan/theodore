@@ -7,10 +7,30 @@
 #   hang       - sleep far longer than any test timeout, for cancellation tests
 #   bigstderr  - >4KB of stderr ending in a known marker, then exit 1
 #   bigline    - one stdout line far larger than the 1MB cap, no trailing newline, exit 0
+#   offline    - a DNS failure on stderr, exit 1
+#   offline_hang - a refused connection on stderr, then silence (retrying forever)
+#   offline_recovered - a refused connection on stderr, then output with a pause, exit 0
 
 mode="${1:-normal}"
 
 case "$mode" in
+  offline)
+    echo "Error: getaddrinfo ENOTFOUND api.anthropic.com" 1>&2
+    exit 1
+    ;;
+  offline_hang)
+    echo "Error: connect ECONNREFUSED 104.18.0.1:443 (retrying)" 1>&2
+    sleep 60
+    exit 0
+    ;;
+  offline_recovered)
+    echo "Error: connect ECONNREFUSED 104.18.0.1:443 (retrying)" 1>&2
+    sleep 0.05
+    echo '{"line":1}'
+    sleep 1
+    echo '{"line":2}'
+    exit 0
+    ;;
   normal)
     echo '{"line":1}'
     exit 0
