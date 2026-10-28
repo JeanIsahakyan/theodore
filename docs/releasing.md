@@ -351,6 +351,28 @@ on the Dock  icons/src/icon.svg ──▶ scripts/icon-variant.sh <env> <dir>
 - `cargo tauri dev` keeps the blue Dock icon (only the in-app logo is
   grey-green).
 
+## DMG window
+
+`tauri.conf.json` `bundle.macOS.dmg` lays the DMG window out as an
+installer: 660 x 400, the app on the left, Applications on the right, a
+background with an arrow and "Drag Theodore to Applications". Staging
+and nightly overlays don't touch `bundle`, so they get it too.
+
+```
+icons/src/dmg-background.svg ──▶ scripts/dmg-background.sh
+                                   ──▶ icons/dmg-background.png, @2x.png
+                                   ──▶ icons/dmg-background.tiff (both, used)
+```
+
+Known gaps, so the window may still open plain:
+
+- tauri-bundler applies the layout through Finder AppleScript, once. On
+  macOS 26 Finder keeps only the window size and icon positions from that
+  one pass; icon size and background stick only on a second pass.
+- Under `CI=true` (GitHub Actions) tauri-bundler skips that AppleScript
+  entirely, unless `TAURI_BUNDLER_DMG_IGNORE_CI=true`.
+- `scripts/nightly-build.sh` builds its DMG with plain `hdiutil`: no layout.
+
 ## First launch on a clean Mac (ad-hoc signed builds)
 
 Without a Developer ID, Gatekeeper blocks the first launch of a downloaded
