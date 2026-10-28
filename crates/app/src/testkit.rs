@@ -979,6 +979,9 @@ pub type MergeCall = (MergeMethod, Option<String>, Option<String>);
 
 #[derive(Default)]
 pub struct FakeHost {
+    /// How many `get_pr` / `changed_since` calls reached the "host".
+    pub get_pr_calls: std::sync::atomic::AtomicUsize,
+    pub changed_since_calls: std::sync::atomic::AtomicUsize,
     pub get_pr_responses: Mutex<VecDeque<HostResult<Fetched<PrDetail>>>>,
     pub set_viewed_responses: Mutex<VecDeque<HostResult<()>>>,
     pub submit_review_responses: Mutex<VecDeque<HostResult<SubmittedReview>>>,
@@ -1165,6 +1168,8 @@ impl HostAdapter for FakeHost {
         }
     }
     async fn changed_since(&self, _cursor: Option<&str>) -> HostResult<Changes> {
+        self.changed_since_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.changed_since_responses
             .lock()
             .unwrap()
@@ -1193,6 +1198,8 @@ impl HostAdapter for FakeHost {
         Ok(vec![])
     }
     async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
+        self.get_pr_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.get_pr_responses
             .lock()
             .unwrap()

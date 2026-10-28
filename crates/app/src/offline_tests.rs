@@ -77,6 +77,15 @@ fn start_offline(f: &Fixtures) -> Core {
     Core::start(f.deps()).0
 }
 
+/// Once offline the inbox poller stops asking, so the `changed_since`
+/// failure `start_offline` queued may still be waiting: drop it, so the
+/// next one is what the probe gets.
+async fn settled_offline(f: &Fixtures, core: &Core) {
+    wait_until(|| !core.host_online()).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    f.host.changed_since_responses.lock().unwrap().clear();
+}
+
 #[tokio::test]
 async fn online_open_fetches_the_pr() {
     let f = fixtures();
@@ -187,6 +196,7 @@ async fn after_reconnecting_a_moved_head_is_picked_up() {
     let pr = opened_in_an_earlier_session(&f).await;
     let core = start_offline(&f);
     core.ensure_open(&pr).await.unwrap();
+    settled_offline(&f, &core).await;
     let fetched = f.git.network_calls().len();
 
     // The host is back, and the author pushed while it was away.
@@ -198,7 +208,8 @@ async fn after_reconnecting_a_moved_head_is_picked_up() {
         etag: Some("etag-2".into()),
         value: testkit::sample_pr_detail(&pr_ref(), &base(), &new_head),
     }));
-    f.clock.advance(15_000);
+    // The first probe, 30 s after going offline, finds the host back.
+    f.clock.advance(crate::poller::PROBE_FIRST_MS);
 
     let mut moved = false;
     for _ in 0..400 {
@@ -222,4 +233,66 @@ async fn after_reconnecting_a_moved_head_is_picked_up() {
         .await
         .unwrap();
     assert_eq!(revision.head, new_head);
+}
+
+fn calls(n: &std::sync::atomic::AtomicUsize) -> usize {
+    n.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Gives the pollers a few of their real-time ticks to act on a clock jump.
+async fn let_pollers_run() {
+    tokio::time::sleep(Duration::from_millis(150)).await;
+}
+
+#[tokio::test]
+async fn offline_the_pollers_wait_for_a_backed_off_probe() {
+    let f = fixtures();
+    let pr = opened_in_an_earlier_session(&f).await;
+    let core = start_offline(&f);
+    core.ensure_open(&pr).await.unwrap();
+    settled_offline(&f, &core).await;
+    let (prs, inbox) = (
+        calls(&f.host.get_pr_calls),
+        calls(&f.host.changed_since_calls),
+    );
+
+    // Past the PR poll and the inbox retry: neither asks the host.
+    f.host.push_changed_since(Err(offline()));
+    f.clock.advance(15_000);
+    let_pollers_run().await;
+    assert_eq!(calls(&f.host.get_pr_calls), prs, "no PR polls offline");
+    assert_eq!(calls(&f.host.changed_since_calls), inbox, "no inbox polls");
+
+    // 30 s in: one probe, still offline, so the next one is 60 s out.
+    f.clock.advance(15_000);
+    wait_until(|| calls(&f.host.changed_since_calls) == inbox + 1).await;
+    let_pollers_run().await;
+    assert_eq!(core.0.host_probe.lock().unwrap().delay_ms(), 60_000);
+    f.clock.advance(30_000);
+    let_pollers_run().await;
+    assert_eq!(calls(&f.host.changed_since_calls), inbox + 1, "backed off");
+    assert_eq!(calls(&f.host.get_pr_calls), prs);
+    assert!(!core.host_online());
+
+    // 60 s after the first probe the host answers: polling resumes at once.
+    f.clock.advance(30_000);
+    wait_until(|| core.host_online()).await;
+    wait_until(|| calls(&f.host.get_pr_calls) > prs).await;
+}
+
+#[test]
+fn the_probe_backs_off_to_five_minutes_and_resets_on_recovery() {
+    use crate::poller::{HostProbe, PROBE_FIRST_MS, PROBE_MAX_MS};
+    let mut probe = HostProbe::default();
+    probe.arm(0);
+    assert_eq!(probe.delay_ms(), PROBE_FIRST_MS);
+    let mut delays = vec![];
+    for _ in 0..6 {
+        probe.failed(0);
+        delays.push(probe.delay_ms() / 1000);
+    }
+    assert_eq!(delays, vec![60, 120, 240, 300, 300, 300]);
+    assert_eq!(PROBE_MAX_MS, 300_000);
+    probe.reset();
+    assert_eq!(probe.delay_ms(), 0);
 }
