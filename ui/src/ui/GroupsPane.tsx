@@ -139,7 +139,10 @@ export const GroupsPane = observer(function GroupsPane({
   const numberOf = new Map(groups.map((g, i) => [g.id, i + 1]));
   const hunkReads = store.models.hunkReads.byPr(pr);
   const readSet = new Set(hunkReads.map((r) => r.hunk));
-  const progress = groupsProgress(groups, readSet);
+  // Streamed grouping: groups show as they arrive; `inProgress` until the
+  // final pass lands.
+  const { inProgress } = store.models.groupingState(pr);
+  const progress = groupsProgress(groups, readSet, !inProgress);
   const fileViews = store.models.fileViews.byPr(pr);
   const viewedCount = fileViews.filter((v) => v.state === 'viewed').length;
 
@@ -190,11 +193,11 @@ export const GroupsPane = observer(function GroupsPane({
           value={progress.read}
           maxValue={progress.total}
           size="sm"
-          color={progress.read === progress.total ? 'success' : 'accent'}
+          color={progress.all ? 'success' : 'accent'}
           className="groups-progress mx-4 mb-1 mt-4 w-auto"
         >
           <Label
-            className={`text-xs ${progress.read === progress.total ? 'text-success' : 'text-muted'}`}
+            className={`text-xs ${progress.all ? 'text-success' : 'text-muted'}`}
           >
             {progress.label}
           </Label>
@@ -472,6 +475,9 @@ export const GroupsPane = observer(function GroupsPane({
               setMode({ mode: 'files', group: mode.group, file: path })
             }
           />
+        )}
+        {mode.mode === 'groups' && groups.length > 0 && inProgress && (
+          <GroupingMore pr={pr} />
         )}
       </div>
 
@@ -785,6 +791,31 @@ const RegroupButton = observer(function RegroupButton({ pr }: { pr: PrId }) {
         {running ? 'Grouping…' : 'Regroup this PR from scratch'}
       </Tooltip.Content>
     </Tooltip>
+  );
+});
+
+/** Below the groups shown so far while the rest of the grouping run is
+ *  still going, or a note that it stopped before finishing (failed, or the
+ *  app quit mid-run) — same padding either way, so the list doesn't jump
+ *  when the row is replaced. */
+const GroupingMore = observer(function GroupingMore({ pr }: { pr: PrId }) {
+  const store = useRootStore();
+  const status = store.ephemeral.grouping.get(pr);
+  if (status?.running) {
+    return (
+      <div className="grouping-more px-3 pb-1 pt-2" role="status">
+        <AgentWorking text="Grouping…" />
+      </div>
+    );
+  }
+  return (
+    <div className="grouping-stopped px-3 pb-1 pt-2 text-xs text-muted">
+      <span className="text-danger">
+        Grouping stopped before it finished
+        {status?.error ? `: ${status.error}` : ''}
+      </span>
+      {' — regroup to finish it.'}
+    </div>
   );
 });
 

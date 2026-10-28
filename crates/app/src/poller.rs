@@ -14,6 +14,7 @@ use theodore_domain::{
     AgentId, Anchor, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
 };
 use theodore_ports::{DiffOptions, NewAction, SyncActionCode};
+use tracing::Instrument as _;
 
 use crate::core::{Core, Inner, RevisionEntry};
 use crate::usecases::review_config::{ConfigBase, ReviewSource};
@@ -608,10 +609,13 @@ async fn regroup_after_push(
         .flatten();
     let rules = core.review_rules_at(source).await;
     let hash = rules.grouping_hash();
-    // Under other review rules the previous groups don't carry over.
+    let prior = prev_row.as_ref().map(|r| r.data.clone());
+    // Under other review rules the previous groups don't carry over, nor
+    // do those of a run that never finished.
     let prev: Option<Grouping> = prev_row
         .filter(|r| theodore_domain::grouping::row_review_hash(&r.data) == hash.as_deref())
-        .and_then(|r| serde_json::from_value(r.data).ok());
+        .and_then(|r| serde_json::from_value::<Grouping>(r.data).ok())
+        .filter(|g| !g.in_progress);
     let repo_scope = detail.summary.pr.repo.slug();
     let agent = core
         .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
@@ -623,7 +627,7 @@ async fn regroup_after_push(
         user_mcp: false,
     };
     let mut ctx = core.grouping_context(worktree, new_rev).await;
-    ctx.review = rules;
+    ctx.review = rules.clone();
     let result = match &prev {
         Some(p) => {
             core.0
@@ -633,11 +637,36 @@ async fn regroup_after_push(
                 .await
         }
         None => {
-            core.0
+            // A fresh grouping streams: its groups show as they come, as on
+            // open.
+            core.emit(Ephemeral::Grouping {
+                pr: pr.clone(),
+                running: true,
+                error: None,
+            });
+            let writer = crate::usecases::grouping::PartialWriter::start(
+                core,
+                pr.clone(),
+                new_rev.clone(),
+                rules,
+                prior,
+            );
+            let r = core
+                .0
                 .deps
                 .grouper
-                .group(new_rev, detail, &ctx, worktree, agent)
-                .await
+                .group(new_rev, detail, &ctx, worktree, agent, &|g| writer.send(g))
+                .instrument(crate::usecases::grouping::grouping_span(
+                    pr, agent.id, false,
+                ))
+                .await;
+            writer.finish(r.is_ok()).await;
+            core.emit(Ephemeral::Grouping {
+                pr: pr.clone(),
+                running: false,
+                error: r.as_ref().err().map(|e| e.to_string()),
+            });
+            r
         }
     };
     if let Ok(grouping) = result {

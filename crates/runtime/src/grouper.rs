@@ -4,10 +4,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use theodore_app::{Grouper, GrouperError, GroupingAgent};
+use theodore_app::{Grouper, GrouperError, GroupingAgent, OnPartial};
 use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, Revision};
-use theodore_grouping::{GroupingOptions, PrMeta};
+use theodore_grouping::{GroupingOptions, PrMeta, Progress, Stage};
 use theodore_ports::AgentPort;
 
 pub struct GroupingGrouper {
@@ -52,13 +52,46 @@ fn err(e: theodore_grouping::GroupingPipelineError) -> GrouperError {
     }
 }
 
-/// Logs a finished run and emits `grouping_done` (docs/telemetry.md).
+/// Whether a grouping run on `agent` streams its groups as they are
+/// written: Claude Code only — the other CLIs report the answer whole, so
+/// their runs stay as they were.
+fn streams(agent: AgentId) -> bool {
+    agent == AgentId::Claude
+}
+
+/// Hands each provisional grouping on, logging the first one at info (time
+/// to the first group is what streaming is for) and the rest at debug.
+fn progress(on_partial: OnPartial<'_>) -> impl Fn(Progress<'_>) + Send + Sync + '_ {
+    let first = std::sync::atomic::AtomicBool::new(true);
+    move |p: Progress<'_>| {
+        let groups = p.grouping.groups.len();
+        if first.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!(elapsed_ms = p.elapsed_ms, groups, "grouping first group");
+        } else if let Stage::Chunk { done, of } = p.stage {
+            tracing::info!(
+                elapsed_ms = p.elapsed_ms,
+                done,
+                of,
+                groups,
+                "grouping chunk landed"
+            );
+        } else {
+            tracing::debug!(elapsed_ms = p.elapsed_ms, ?p.stage, groups, "grouping progress");
+        }
+        on_partial(p.grouping.clone());
+    }
+}
+
+/// Logs a finished run and emits `grouping_done` (docs/telemetry.md). When
+/// the first group was shown also goes on the enclosing `grouping` span.
 fn done(report: theodore_grouping::GroupingReport, agent: AgentId, rev: &Revision) -> Grouping {
     let hunks = rev.hunks().count() as u32;
     let groups = report.grouping.groups.len() as u32;
+    tracing::Span::current().record("first_group_ms", report.first_group_ms);
     tracing::info!(
         agent = agent.as_str(),
         duration_ms = report.duration_ms,
+        first_group_ms = report.first_group_ms,
         attempts = report.attempts,
         valid_first_try = report.valid_first_try,
         chunks = report.chunks,
@@ -94,15 +127,26 @@ impl Grouper for GroupingGrouper {
         ctx: &RepoContext,
         worktree: &Path,
         run: GroupingAgent,
+        on_partial: OnPartial<'_>,
     ) -> Result<Grouping, GrouperError> {
         let agent = run.id;
         let mut opts = self.opts.clone();
         opts.agent = agent;
         opts.user_mcp = run.user_mcp;
-        theodore_grouping::group_revision_with(&*self.agents, &meta(pr), rev, ctx, worktree, &opts)
-            .await
-            .map(|r| done(r, agent, rev))
-            .map_err(err)
+        opts.stream = streams(agent);
+        let on = progress(on_partial);
+        theodore_grouping::group_revision_progress(
+            &*self.agents,
+            &meta(pr),
+            rev,
+            ctx,
+            worktree,
+            &opts,
+            &on,
+        )
+        .await
+        .map(|r| done(r, agent, rev))
+        .map_err(err)
     }
 
     async fn regroup(
@@ -172,5 +216,58 @@ mod tests {
         assert_eq!(e.code(), "agent.offline");
         let e = err(GroupingPipelineError::AgentRun("exited 1: boom".into()));
         assert!(matches!(e, GrouperError::Agent(_)), "{e:?}");
+    }
+
+    /// The app streams Claude groupings (each group handed on as it is
+    /// written, marked in progress); a Codex run publishes nothing and
+    /// asks for no deltas.
+    #[tokio::test]
+    async fn claude_runs_stream_their_groups_and_other_agents_do_not() {
+        use theodore_domain::{PrRef, RepoRef, Sha};
+        use theodore_grouping::testing::FakeAgentPort;
+        let (base, head) = (Sha::new("base000"), Sha::new("head111"));
+        let rev = theodore_app::testkit::two_hunk_revision(&base, &head, "src/lib.rs");
+        let ids = theodore_app::testkit::hunk_ids(&rev);
+        let pr_ref = PrRef {
+            repo: RepoRef {
+                host: theodore_domain::HostKind::Github,
+                owner: "acme".into(),
+                name: "widgets".into(),
+            },
+            number: 7,
+            host_id: None,
+        };
+        let detail = theodore_app::testkit::sample_pr_detail(&pr_ref, &base, &head);
+        let answer = format!(
+            r#"{{"groups": [{{"id": "a", "title": "A", "why": "a", "hunks": ["{}"]}},
+                {{"id": "b", "title": "B", "why": "b", "hunks": ["{}"]}}]}}"#,
+            ids[0], ids[1]
+        );
+        for (agent, streamed) in [(AgentId::Claude, 2), (AgentId::Codex, 0)] {
+            let fake = Arc::new(FakeAgentPort::new([answer.clone()]));
+            let grouper = GroupingGrouper::new(fake.clone());
+            let seen = std::sync::Mutex::new(Vec::new());
+            let on = |g: Grouping| seen.lock().unwrap().push(g);
+            let out = grouper
+                .group(
+                    &rev,
+                    &detail,
+                    &RepoContext::default(),
+                    Path::new("."),
+                    GroupingAgent {
+                        id: agent,
+                        user_mcp: false,
+                    },
+                    &on,
+                )
+                .await
+                .unwrap();
+            let seen = seen.into_inner().unwrap();
+            assert_eq!(seen.len(), streamed, "{agent:?}");
+            assert!(seen.iter().all(|g| g.in_progress), "{agent:?}");
+            assert!(!out.in_progress);
+            assert_eq!(out.groups.len(), 2);
+            assert_eq!(fake.requests()[0].stream_text, streamed > 0, "{agent:?}");
+        }
     }
 }

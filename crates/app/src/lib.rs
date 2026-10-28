@@ -60,7 +60,7 @@ mod spaces_tests;
 
 pub use agent_defaults::AgentDefaults;
 pub use core::{Core, Receivers};
-pub use deps::{Deps, Grouper, GroupingAgent, RunTools, TokenStatus};
+pub use deps::{Deps, Grouper, GroupingAgent, OnPartial, RunTools, TokenStatus};
 pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::account::{AccountGate, resolve_client_id};

@@ -36,6 +36,8 @@ url.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 serde.workspace = true
+# `sample_pr_detail` for the grouper's own tests.
+theodore-app = { workspace = true, features = ["testkit"] }
 
 [lints]
 workspace = true

@@ -2,20 +2,33 @@
 //! agent → validate → one repair call → `repair_with_other` fallback.
 //! Large PRs run one chunk per group of related files, then a merge pass
 //! over the group summaries.
+//!
+//! With `GroupingOptions::stream`, each group is published the moment the
+//! agent has written it, so a reviewer can start reading before the run
+//! ends (docs/eval/streamed-groups.md):
+//!
+//! ```text
+//! delta ─▶ GroupStream ─▶ group closed ─▶ publish (Stage::Streamed)
+//! chunk lands (validated, repaired) ─▶ replaces its previews ─▶ publish (Stage::Chunk)
+//! all chunks ─▶ merge pass orders them ─▶ returned report (final)
+//! ```
+//!
+//! Every publication is `in_progress`; only the returned grouping is final.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Instant;
 
-use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::stream::{self, StreamExt};
 use theodore_domain::grouping::{self, GroupingError, RepoContext};
-use theodore_domain::{AgentId, Group, GroupId, Grouping, Hunk, HunkId, Revision, Usage};
+use theodore_domain::{AgentId, Group, GroupId, Grouping, Hunk, HunkId, Revision, Sha, Usage};
 use theodore_ports::{AgentEvent, AgentMode, AgentPort, AgentRequest};
 
 use crate::coarsen;
 use crate::graph::RelGraph;
 use crate::prepass::{self, HiddenReason, PrePass};
-use crate::prompt::{self, PromptBudget, PromptPart};
+use crate::prompt::{self, PromptBudget, PromptChunk, PromptPart};
 use crate::schema;
 use crate::target;
 
@@ -51,6 +64,13 @@ pub struct GroupingOptions {
     /// setting). Off by default, so evals don't depend on a machine's MCP
     /// servers.
     pub user_mcp: bool,
+    /// Publish each group the moment the agent has written it
+    /// (`Stage::Streamed`), parsed from the answer as it streams in, and
+    /// each chunk's final groups as it lands (`Stage::Chunk`). The final
+    /// grouping is still made from the whole answers, validated and
+    /// repaired as without it. Only Claude Code streams text: the app
+    /// turns this on for Claude runs, the CLI eval with `--stream`.
+    pub stream: bool,
 }
 
 impl Default for GroupingOptions {
@@ -62,8 +82,42 @@ impl Default for GroupingOptions {
             stall_after_ms: 90_000,
             chunk_concurrency: DEFAULT_CHUNK_CONCURRENCY,
             user_mcp: false,
+            stream: false,
         }
     }
+}
+
+/// Where a streaming run is when it publishes a grouping (`OnProgress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Chunk `chunk`'s answer, still being written, has `groups` groups so
+    /// far. They are previews: the chunk's final groups replace them when
+    /// it lands.
+    Streamed { chunk: usize, groups: usize },
+    /// `done` of `of` chunks have landed (validated, repaired if needed).
+    /// Multi-chunk PRs only: a single chunk landing is the final grouping.
+    Chunk { done: usize, of: usize },
+}
+
+/// A grouping published mid-run. Always `in_progress`: its groups are
+/// provisional and some hunks may be in none yet.
+#[derive(Debug, Clone, Copy)]
+pub struct Progress<'a> {
+    pub stage: Stage,
+    pub grouping: &'a Grouping,
+    pub elapsed_ms: u64,
+}
+
+/// Called with each grouping a streaming run publishes, in order.
+pub type OnProgress<'a> = &'a (dyn Fn(Progress<'_>) + Send + Sync);
+
+/// When a streaming run's groups came out of the answers, from its start.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamTimings {
+    /// Each streamed group, in arrival order across chunks.
+    pub group_ms: Vec<u64>,
+    /// When each chunk's first answer ended, in chunk order.
+    pub answer_ms: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,8 +129,13 @@ pub struct GroupingReport {
     pub valid_first_try: bool,
     pub usage: Usage,
     pub duration_ms: u64,
+    /// When the first group was shown: the first publication of a
+    /// streaming run; `duration_ms` for a run that published nothing.
+    pub first_group_ms: u64,
     /// Agent calls the diff was split into (0: no agent call was needed).
     pub chunks: u32,
+    /// Empty unless `GroupingOptions::stream`.
+    pub stream: StreamTimings,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -154,6 +213,22 @@ pub async fn group_revision_with(
     cwd: &Path,
     opts: &GroupingOptions,
 ) -> Result<GroupingReport, GroupingPipelineError> {
+    group_revision_progress(agent, pr, rev, ctx, cwd, opts, &|_| {}).await
+}
+
+/// [`group_revision_with`], publishing each grouping a streaming run
+/// (`GroupingOptions::stream`) has so far through `on`. A run that doesn't
+/// stream publishes nothing: its result is the returned report.
+#[allow(clippy::too_many_arguments)]
+pub async fn group_revision_progress(
+    agent: &dyn AgentPort,
+    pr: &PrMeta,
+    rev: &Revision,
+    ctx: &RepoContext,
+    cwd: &Path,
+    opts: &GroupingOptions,
+    on: OnProgress<'_>,
+) -> Result<GroupingReport, GroupingPipelineError> {
     let start = Instant::now();
     let dupes = duplicate_hunk_ids(rev);
     if !dupes.is_empty() {
@@ -165,47 +240,70 @@ pub async fn group_revision_with(
     let note = note.as_deref();
     let chunks = prompt::build_prompts_with(pr, rev, &prepass, &graph, ctx, &opts.budget);
     let total_visible_hunks: usize = chunks.iter().map(|c| c.hunk_ids.len()).sum();
+    let n = chunks.len();
+    let hidden = hidden_groups(&prepass, rev);
+    let has_hidden_group = !hidden.is_empty();
+    let board = Board::new(
+        opts.stream.then_some(on),
+        start,
+        rev.head.clone(),
+        hidden,
+        &chunks,
+    );
+    let board = &board;
+    let targets: Vec<(usize, usize)> = chunks.iter().map(|c| c.target).collect();
 
     // Run every chunk's agent call concurrently, capped at
-    // `chunk_concurrency` in flight — `buffered` polls up to that many
-    // futures at once but still yields results in the original chunk
-    // order, so the rest of this function doesn't need to know it ran
-    // concurrently at all. Chunks are consumed by value (not borrowed) so
-    // each future owns its own data instead of tying its type to a
-    // borrowed-iterator-item lifetime, which `rustc` otherwise rejects once
-    // this `async fn` is itself boxed by a caller (`#[async_trait]` in
-    // `crates/runtime`).
+    // `chunk_concurrency` in flight, each landing as soon as it is back
+    // (`buffer_unordered`): a streaming run shows it then. Chunks are
+    // consumed by value (not borrowed) so each future owns its own data
+    // instead of tying its type to a borrowed-iterator-item lifetime, which
+    // `rustc` otherwise rejects once this `async fn` is itself boxed by a
+    // caller (`#[async_trait]` in `crates/runtime`).
     let concurrency = opts.chunk_concurrency.max(1);
-    let results: Vec<(Grouping, u32, bool, Usage)> =
-        stream::iter(chunks.into_iter().map(|chunk| {
-            let sub_rev = sub_revision(rev, &chunk.hunk_ids);
-            async move { run_chunk(agent, opts, cwd, note, &sub_rev, &chunk.prompt).await }
-        }))
-        .buffered(concurrency)
-        .try_collect()
-        .await?;
+    let mut results = stream::iter(chunks.into_iter().enumerate().map(|(i, chunk)| {
+        let sub_rev = sub_revision(rev, &chunk.hunk_ids);
+        async move {
+            let r = run_chunk(agent, opts, cwd, note, &sub_rev, &chunk.prompt, board, i).await;
+            (i, r)
+        }
+    }))
+    .buffer_unordered(concurrency);
 
-    let chunk_count = results.len() as u32;
     let mut usage = Usage::default();
     let mut attempts: u32 = 0;
     let mut any_repair = false;
-    let mut chunk_groupings: Vec<Grouping> = Vec::with_capacity(results.len());
-    for (grouping, att, repaired, u) in results {
+    let mut landed = 0;
+    while let Some((i, r)) = results.next().await {
+        let (grouping, att, repaired, u) = r?;
         usage += u;
         attempts += att;
         any_repair |= repaired;
-        chunk_groupings.push(grouping);
-    }
-
-    let mut groups: Vec<Group> = hidden_groups(&prepass, rev);
-    let has_hidden_group = !groups.is_empty();
-
-    if chunk_groupings.len() <= 1 {
-        if let Some(g) = chunk_groupings.into_iter().next() {
-            groups.extend(g.groups);
+        landed += 1;
+        let mut groups = grouping.groups;
+        // Streaming: coarsened within the chunk, to its share of the PR's
+        // target (the whole target for a single chunk), so a group once
+        // shown is never merged away by a later chunk. Otherwise across
+        // the whole PR below, once every chunk is in.
+        if opts.stream && groups.len() > targets[i].1 {
+            groups = coarsen::merge_tiny_groups(rev, groups, targets[i].1, &graph);
         }
+        board.land(
+            i,
+            groups,
+            Stage::Chunk {
+                done: landed,
+                of: n,
+            },
+        );
+    }
+    drop(results);
+
+    let (mut groups, chunk_groups) = board.landed();
+    if chunk_groups.len() <= 1 {
+        groups.extend(chunk_groups.into_iter().flatten());
     } else {
-        let all: Vec<Group> = chunk_groupings.into_iter().flat_map(|g| g.groups).collect();
+        let all: Vec<Group> = chunk_groups.into_iter().flatten().collect();
         attempts += 1;
         match merge_pass(agent, opts, cwd, note, pr, &all).await {
             Some(order) => {
@@ -230,17 +328,14 @@ pub async fn group_revision_with(
     // merge the tiniest ones into their most related same-kind group. Free
     // (no agent call) and exact — it only moves hunks between groups that
     // already exist, so it can't break the partition invariant checked
-    // just below.
+    // just below. A streaming run did it per chunk instead.
     let (_, target_hi) = target::target_group_count(total_visible_hunks);
     let target_max = target_hi + usize::from(has_hidden_group);
-    if groups.len() > target_max {
+    if !opts.stream && groups.len() > target_max {
         groups = coarsen::merge_tiny_groups(rev, groups, target_max, &graph);
     }
 
-    let grouping = Grouping {
-        rev: rev.head.clone(),
-        groups,
-    };
+    let grouping = Grouping::new(rev.head.clone(), groups);
     let (grouping, attempts) = match grouping::validate(rev, &grouping) {
         Ok(()) => (grouping, attempts),
         Err(_) => {
@@ -249,14 +344,258 @@ pub async fn group_revision_with(
         }
     };
 
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let (first_shown, stream) = board.timings();
     Ok(GroupingReport {
         grouping,
         attempts: attempts.max(1),
         valid_first_try: !any_repair,
         usage,
-        duration_ms: start.elapsed().as_millis() as u64,
-        chunks: chunk_count,
+        duration_ms,
+        first_group_ms: first_shown.unwrap_or(duration_ms),
+        chunks: n as u32,
+        stream,
     })
+}
+
+/// Which id each group is shown under: the agent's own slug, made unique
+/// across the run (`slug-2`, …) — chunks are prompted apart, so two can
+/// pick the same one. Keyed by where a group came from (chunk, slug, its
+/// rank among that chunk's groups with that slug), so a streamed group and
+/// the same group in its chunk's final answer get the same id, and a UI
+/// keying groups by id keeps the one the user opened.
+#[derive(Debug, Default)]
+struct Ids {
+    taken: BTreeSet<GroupId>,
+    by_origin: BTreeMap<(usize, GroupId, usize), GroupId>,
+}
+
+impl Ids {
+    fn reserve(&mut self, id: &GroupId) {
+        self.taken.insert(id.clone());
+    }
+
+    /// The id the `rank`-th group slugged `raw` in chunk `chunk` is shown
+    /// under: the same every time it is asked.
+    fn id_for(&mut self, chunk: usize, raw: &GroupId, rank: usize) -> GroupId {
+        let key = (chunk, raw.clone(), rank);
+        if let Some(id) = self.by_origin.get(&key) {
+            return id.clone();
+        }
+        let mut id = raw.clone();
+        let mut k = 2;
+        while self.taken.contains(&id) {
+            id = GroupId(format!("{}-{k}", raw.0));
+            k += 1;
+        }
+        self.taken.insert(id.clone());
+        self.by_origin.insert(key, id.clone());
+        id
+    }
+
+    /// Renames `groups` (chunk `chunk`'s, in its answer's order) to the
+    /// ids they are shown under.
+    fn assign(&mut self, chunk: usize, groups: &mut [Group]) {
+        let mut seen: BTreeMap<GroupId, usize> = BTreeMap::new();
+        for g in groups {
+            let rank = seen.entry(g.id.clone()).or_default();
+            g.id = self.id_for(chunk, &g.id, *rank);
+            *rank += 1;
+        }
+    }
+}
+
+/// What a run has shown so far, and every publication of a streaming one:
+/// the hidden group, then each chunk in chunk order — its final groups once
+/// it has landed, the groups its answer has written until then. A chunk
+/// needing a repair keeps its streamed groups up until the repaired answer
+/// lands. A chunk's place never moves, so groups only ever append within
+/// it while the rest stay put.
+///
+/// ```text
+/// delta ─▶ GroupStream ─▶ group closed ─▶ streamed[chunk] ─▶ publish
+/// chunk lands ─▶ finals[chunk] replaces streamed[chunk] ─▶ publish
+/// ```
+struct Board<'a> {
+    /// `None`: not streaming, nothing is published.
+    on: Option<OnProgress<'a>>,
+    start: Instant,
+    state: Mutex<BoardState>,
+}
+
+struct BoardState {
+    rev: Sha,
+    hidden: Vec<Group>,
+    /// Each chunk's streamed groups, as written (ids as shown).
+    streamed: Vec<Vec<Group>>,
+    /// The agent's own ids of those groups.
+    streamed_raw: Vec<Vec<GroupId>>,
+    /// Each chunk's final groups, once it has landed.
+    finals: Vec<Option<Vec<Group>>>,
+    /// Each chunk's hunk ids: a preview keeps only its own chunk's.
+    known: Vec<BTreeSet<HunkId>>,
+    ids: Ids,
+    first_shown_ms: Option<u64>,
+    timings: StreamTimings,
+}
+
+impl<'a> Board<'a> {
+    fn new(
+        on: Option<OnProgress<'a>>,
+        start: Instant,
+        rev: Sha,
+        hidden: Vec<Group>,
+        chunks: &[PromptChunk],
+    ) -> Self {
+        let n = chunks.len();
+        let mut ids = Ids::default();
+        for g in &hidden {
+            ids.reserve(&g.id);
+        }
+        let streaming = on.is_some();
+        Self {
+            on,
+            start,
+            state: Mutex::new(BoardState {
+                rev,
+                hidden,
+                streamed: vec![Vec::new(); n],
+                streamed_raw: vec![Vec::new(); n],
+                finals: vec![None; n],
+                known: chunks
+                    .iter()
+                    .map(|c| c.hunk_ids.iter().cloned().collect())
+                    .collect(),
+                ids,
+                first_shown_ms: None,
+                timings: StreamTimings {
+                    answer_ms: if streaming { vec![0; n] } else { vec![] },
+                    ..Default::default()
+                },
+            }),
+        }
+    }
+
+    fn streaming(&self) -> bool {
+        self.on.is_some()
+    }
+
+    fn ms(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, BoardState> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Publishes what the board shows, under the lock: publications go out
+    /// in the order they were made.
+    fn publish(&self, st: &mut BoardState, stage: Stage) {
+        let Some(on) = self.on else { return };
+        let ms = self.ms();
+        let now = st.compose();
+        if now.groups.iter().all(|g| st.hidden.contains(g)) {
+            return;
+        }
+        st.first_shown_ms.get_or_insert(ms);
+        on(Progress {
+            stage,
+            grouping: &now,
+            elapsed_ms: ms,
+        });
+    }
+
+    /// A group chunk `chunk`'s answer just closed.
+    fn streamed(&self, chunk: usize, raw: schema::RawGroup) {
+        let ms = self.ms();
+        let mut st = self.lock();
+        if st.finals[chunk].is_some() {
+            return;
+        }
+        let mut g = raw.into_domain();
+        let rank = st.streamed_raw[chunk]
+            .iter()
+            .filter(|id| **id == g.id)
+            .count();
+        st.streamed_raw[chunk].push(g.id.clone());
+        g.id = st.ids.id_for(chunk, &g.id, rank);
+        st.streamed[chunk].push(g);
+        let groups = st.streamed[chunk].len();
+        st.timings.group_ms.push(ms);
+        self.publish(&mut st, Stage::Streamed { chunk, groups });
+    }
+
+    /// Chunk `chunk`'s first answer ended.
+    fn answered(&self, chunk: usize) {
+        let ms = self.ms();
+        if let Some(t) = self.lock().timings.answer_ms.get_mut(chunk) {
+            *t = ms;
+        }
+    }
+
+    /// Chunk `chunk` landed with `groups` (validated, maybe repaired): they
+    /// replace its previews. Published when it isn't the PR's only chunk.
+    fn land(&self, chunk: usize, mut groups: Vec<Group>, stage: Stage) {
+        let mut st = self.lock();
+        st.ids.assign(chunk, &mut groups);
+        st.finals[chunk] = Some(groups);
+        if st.finals.len() > 1 {
+            self.publish(&mut st, stage);
+        }
+    }
+
+    /// The hidden group(s), and each chunk's final groups in chunk order.
+    fn landed(&self) -> (Vec<Group>, Vec<Vec<Group>>) {
+        let st = self.lock();
+        let finals = st.finals.iter().map(|f| f.clone().unwrap_or_default());
+        (st.hidden.clone(), finals.collect())
+    }
+
+    /// When the first group was shown, and the streamed groups' timings.
+    fn timings(&self) -> (Option<u64>, StreamTimings) {
+        let st = self.lock();
+        (st.first_shown_ms, st.timings.clone())
+    }
+}
+
+impl BoardState {
+    /// The hidden group, then each chunk's final or streamed groups in
+    /// chunk order. A preview keeps only hunks of its own chunk not already
+    /// shown, and is dropped if none are left.
+    fn compose(&self) -> Grouping {
+        let mut groups = self.hidden.clone();
+        let mut shown: BTreeSet<HunkId> = groups
+            .iter()
+            .flat_map(|g| g.hunks.iter().cloned())
+            .collect();
+        for (i, streamed) in self.streamed.iter().enumerate() {
+            if let Some(finals) = &self.finals[i] {
+                shown.extend(finals.iter().flat_map(|g| g.hunks.iter().cloned()));
+                groups.extend(finals.iter().cloned());
+                continue;
+            }
+            for g in streamed {
+                let hunks: Vec<HunkId> = g
+                    .hunks
+                    .iter()
+                    .filter(|h| self.known[i].contains(*h) && shown.insert((*h).clone()))
+                    .cloned()
+                    .collect();
+                if hunks.is_empty() {
+                    continue;
+                }
+                let mut g = g.clone();
+                g.outliers.retain(|h| hunks.contains(h));
+                g.hunks = hunks;
+                groups.push(g);
+            }
+        }
+        Grouping {
+            rev: self.rev.clone(),
+            groups,
+            in_progress: true,
+        }
+    }
 }
 
 /// A view of `rev` restricted to the given hunk ids, for per-chunk validation.
@@ -321,7 +660,10 @@ fn hidden_groups(prepass: &PrePass, rev: &Revision) -> Vec<Group> {
 }
 
 /// Run one chunk: initial call, one repair call on validation failure, then
-/// `repair_with_other` as the final safety net.
+/// `repair_with_other` as the final safety net. On a streaming board, the
+/// initial answer's groups go to it as they are written (chunk `chunk`); a
+/// repair call's don't, so the streamed ones stay up until it lands.
+#[allow(clippy::too_many_arguments)]
 async fn run_chunk(
     agent: &dyn AgentPort,
     opts: &GroupingOptions,
@@ -329,9 +671,32 @@ async fn run_chunk(
     note: Option<&str>,
     sub_rev: &Revision,
     prompt: &PromptPart,
+    board: &Board<'_>,
+    chunk: usize,
 ) -> Result<(Grouping, u32, bool, Usage), GroupingPipelineError> {
     let mut usage = Usage::default();
-    let (text, u) = call_agent(agent, opts, cwd, note, &prompt.system, &prompt.user).await?;
+    let (text, u) = if board.streaming() {
+        let mut parser = crate::stream::GroupStream::new();
+        let mut on_delta = |delta: &str| {
+            for g in parser.push(delta) {
+                board.streamed(chunk, g);
+            }
+        };
+        let r = call_agent_streaming(
+            agent,
+            opts,
+            cwd,
+            note,
+            &prompt.system,
+            &prompt.user,
+            Some(&mut on_delta),
+        )
+        .await?;
+        board.answered(chunk);
+        r
+    } else {
+        call_agent(agent, opts, cwd, note, &prompt.system, &prompt.user).await?
+    };
     usage += u;
     let grouping = schema::parse_grouping(&text, sub_rev.head.clone());
 
@@ -421,6 +786,20 @@ pub(crate) async fn call_agent(
     system: &str,
     prompt: &str,
 ) -> Result<(String, Usage), GroupingPipelineError> {
+    call_agent_streaming(agent, opts, cwd, note, system, prompt, None).await
+}
+
+/// [`call_agent`]; with `on_delta`, the answer's text also goes to it
+/// piece by piece as the agent writes it (`AgentRequest::stream_text`).
+async fn call_agent_streaming(
+    agent: &dyn AgentPort,
+    opts: &GroupingOptions,
+    cwd: &Path,
+    note: Option<&str>,
+    system: &str,
+    prompt: &str,
+    mut on_delta: Option<&mut (dyn FnMut(&str) + Send)>,
+) -> Result<(String, Usage), GroupingPipelineError> {
     let system = match note {
         Some(note) => format!("{system}\n\n{note}"),
         None => system.to_string(),
@@ -447,11 +826,17 @@ pub(crate) async fn call_agent(
         user_mcp: opts.user_mcp,
         attachments: vec![],
         resume: None,
+        stream_text: on_delta.is_some(),
     };
     let mut run = agent.run(req).await?;
     let mut usage = Usage::default();
     loop {
         match run.events.recv().await {
+            Some(AgentEvent::TextDelta { text }) => {
+                if let Some(f) = on_delta.as_deref_mut() {
+                    f(&text);
+                }
+            }
             Some(AgentEvent::Usage { usage: u }) => usage += u,
             Some(AgentEvent::Done {
                 final_text,
@@ -767,9 +1152,9 @@ mod tests {
         assert!(system.contains("- docs/architecture.md"));
     }
 
-    /// Speed goal: chunk prompts run concurrently (`buffered`), but the rest
-    /// of the pipeline must see them in their original (alphabetical
-    /// top-level-dir) order regardless. Pinned down via the natural-order
+    /// Speed goal: chunk prompts run concurrently (`buffer_unordered`), but
+    /// the rest of the pipeline must see them in their original
+    /// (alphabetical top-level-dir) order regardless. Pinned down via the natural-order
     /// fallback path: the merge-pass call is scripted to fail, so the final
     /// group order is exactly the chunk submission order.
     #[tokio::test]
@@ -863,5 +1248,411 @@ mod tests {
             1,
             "coarsening is a deterministic post-pass, not another agent call"
         );
+    }
+
+    // ── streaming ───────────────────────────────────────────────────────
+
+    /// Records every published grouping with its stage.
+    #[derive(Default)]
+    struct Published(Mutex<Vec<(Stage, Grouping)>>);
+
+    impl Published {
+        fn take(&self) -> Vec<(Stage, Grouping)> {
+            std::mem::take(&mut self.0.lock().unwrap())
+        }
+    }
+
+    fn streaming() -> GroupingOptions {
+        GroupingOptions {
+            stream: true,
+            ..GroupingOptions::default()
+        }
+    }
+
+    fn tiny_budget() -> PromptBudget {
+        PromptBudget {
+            max_chars: 10,
+            ..PromptBudget::default()
+        }
+    }
+
+    /// Two top-level dirs: with `tiny_budget`, chunk 0 is `a/`, chunk 1 `b/`.
+    fn two_dir_revision() -> Revision {
+        Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files: vec![
+                file("a/one.ts", vec![mk_hunk("a1"), mk_hunk("a2")]),
+                file("b/two.ts", vec![mk_hunk("b1")]),
+            ],
+        }
+    }
+
+    fn ids(g: &Grouping) -> Vec<&str> {
+        g.groups.iter().map(|g| g.id.as_str()).collect()
+    }
+
+    fn hunks_of<'g>(g: &'g Grouping, id: &str) -> Option<Vec<&'g str>> {
+        g.groups
+            .iter()
+            .find(|x| x.id.as_str() == id)
+            .map(|x| x.hunks.iter().map(HunkId::as_str).collect())
+    }
+
+    async fn run_streamed(
+        agent: &FakeAgentPort,
+        rev: &Revision,
+        opts: &GroupingOptions,
+        published: &Published,
+    ) -> Result<GroupingReport, GroupingPipelineError> {
+        let on = |p: Progress<'_>| {
+            published
+                .0
+                .lock()
+                .unwrap()
+                .push((p.stage, p.grouping.clone()));
+        };
+        group_revision_progress(
+            agent,
+            &PrMeta::default(),
+            rev,
+            &RepoContext::default(),
+            Path::new("."),
+            opts,
+            &on,
+        )
+        .await
+    }
+
+    /// Every publication is provisional and never shows a hunk twice.
+    fn assert_provisional(steps: &[(Stage, Grouping)]) {
+        for (k, (stage, g)) in steps.iter().enumerate() {
+            assert!(g.in_progress, "step {k} ({stage:?}) looks final");
+            let mut seen = BTreeSet::new();
+            for h in g.groups.iter().flat_map(|g| &g.hunks) {
+                assert!(seen.insert(h.clone()), "{h} twice in step {k}");
+            }
+        }
+    }
+
+    /// One chunk, streamed: each group is published as it is written; the
+    /// final grouping is the one the whole answer makes, same as without
+    /// streaming.
+    #[tokio::test]
+    async fn single_chunk_streams_each_group_then_returns_the_same_grouping() {
+        let rev = small_revision();
+        let answer = r#"Sure:
+```json
+{"groups": [
+  {"id": "g1", "title": "One", "why": "first {step}", "hunks": ["h1"]},
+  {"id": "g2", "title": "Two", "why": "second", "hunks": ["h2"]}
+]}
+```"#;
+        let published = Published::default();
+        let agent = FakeAgentPort::new([answer]);
+        let report = run_streamed(&agent, &rev, &streaming(), &published)
+            .await
+            .unwrap();
+        assert!(agent.requests()[0].stream_text);
+
+        let steps = published.take();
+        let stages: Vec<Stage> = steps.iter().map(|(s, _)| *s).collect();
+        assert_eq!(
+            stages,
+            vec![
+                Stage::Streamed {
+                    chunk: 0,
+                    groups: 1
+                },
+                Stage::Streamed {
+                    chunk: 0,
+                    groups: 2
+                },
+            ]
+        );
+        assert_eq!(ids(&steps[0].1), ["g1"]);
+        assert_eq!(ids(&steps[1].1), ["g1", "g2"]);
+        assert_eq!(steps[0].1.groups[0].why, "first {step}");
+        assert_provisional(&steps);
+
+        let t = &report.stream;
+        assert_eq!(t.group_ms.len(), 2);
+        assert_eq!(report.first_group_ms, t.group_ms[0]);
+        assert!(report.first_group_ms <= report.duration_ms);
+        assert_eq!(t.answer_ms.len(), 1);
+        assert!(t.group_ms[1] <= t.answer_ms[0]);
+        assert!(!report.grouping.in_progress);
+
+        let plain_agent = FakeAgentPort::new([answer]);
+        let plain = group_revision(
+            &plain_agent,
+            &PrMeta::default(),
+            &rev,
+            Path::new("."),
+            &GroupingOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert!(!plain_agent.requests()[0].stream_text);
+        assert_eq!(report.grouping, plain.grouping);
+        assert_eq!(report.valid_first_try, plain.valid_first_try);
+        assert_eq!(plain.stream, StreamTimings::default());
+        assert_eq!(plain.first_group_ms, plain.duration_ms);
+    }
+
+    /// A preview shows only hunks its chunk has, each once, under an id
+    /// unique in the run; the repair call that fixes the answer doesn't
+    /// stream, and the streamed groups stay up until it lands.
+    #[tokio::test]
+    async fn previews_drop_unknown_and_repeated_hunks_and_stay_up_through_a_repair() {
+        let rev = small_revision();
+        let agent = FakeAgentPort::new([
+            r#"{"groups": [{"id": "g1", "hunks": ["h1", "zz"]},
+                {"id": "g1", "hunks": ["h1", "h2"]}, {"id": "g3", "hunks": ["h1"]}]}"#,
+            valid_json(),
+        ]);
+        let published = Published::default();
+        let report = run_streamed(&agent, &rev, &streaming(), &published)
+            .await
+            .unwrap();
+        let steps = published.take();
+        // g3 has no hunk left to show: published, but adds nothing.
+        assert_eq!(steps.len(), 3, "the repair answer published nothing");
+        assert_provisional(&steps);
+        let shown: Vec<(&str, Vec<&str>)> = steps[2]
+            .1
+            .groups
+            .iter()
+            .map(|g| (g.id.as_str(), g.hunks.iter().map(HunkId::as_str).collect()))
+            .collect();
+        assert_eq!(shown, [("g1", vec!["h1"]), ("g1-2", vec!["h2"])]);
+        let reqs = agent.requests();
+        assert!(reqs[0].stream_text && !reqs[1].stream_text);
+        assert!(!report.valid_first_try);
+        assert!(grouping::validate(&rev, &report.grouping).is_ok());
+        assert_eq!(ids(&report.grouping), ["g1"]);
+    }
+
+    /// Several chunks, streamed one after the other: a chunk's previews,
+    /// then its final groups, then the next chunk's — each chunk keeping
+    /// its place — then the merge pass's order in the returned grouping.
+    /// Two chunks picking the same slug get unique ids, and a group keeps
+    /// its id from preview to final.
+    #[tokio::test]
+    async fn chunks_publish_previews_then_final_groups_with_ids_unique_across_chunks() {
+        let rev = two_dir_revision();
+        let opts = GroupingOptions {
+            budget: tiny_budget(),
+            chunk_concurrency: 1,
+            ..streaming()
+        };
+        let agent = FakeAgentPort::routed([
+            (
+                "Decide the final reading order",
+                r#"{"order": ["core-2", "core"]}"#,
+            ),
+            (
+                "### hunk a1",
+                r#"{"groups": [{"id": "core", "title": "A", "why": "a", "hunks": ["a1", "a2"]}]}"#,
+            ),
+            (
+                "### hunk b1",
+                r#"{"groups": [{"id": "core", "title": "B", "why": "b", "hunks": ["b1"]}]}"#,
+            ),
+        ]);
+        let published = Published::default();
+        let report = run_streamed(&agent, &rev, &opts, &published).await.unwrap();
+        let steps = published.take();
+        let stages: Vec<Stage> = steps.iter().map(|(s, _)| *s).collect();
+        assert_eq!(
+            stages,
+            vec![
+                Stage::Streamed {
+                    chunk: 0,
+                    groups: 1
+                },
+                Stage::Chunk { done: 1, of: 2 },
+                Stage::Streamed {
+                    chunk: 1,
+                    groups: 1
+                },
+                Stage::Chunk { done: 2, of: 2 },
+            ]
+        );
+        assert_provisional(&steps);
+        assert_eq!(ids(&steps[0].1), ["core"]);
+        assert_eq!(ids(&steps[2].1), ["core", "core-2"]);
+        assert_eq!(hunks_of(&steps[2].1, "core-2").unwrap(), ["b1"]);
+        // The merge pass's order, ids as shown.
+        assert_eq!(ids(&report.grouping), ["core-2", "core"]);
+        assert!(!report.grouping.in_progress);
+        assert!(report.valid_first_try);
+        assert!(grouping::validate(&rev, &report.grouping).is_ok());
+        // A group shown once a chunk landed is in the final grouping as it
+        // was shown: per-chunk coarsening never merges it away later.
+        for (stage, g) in &steps {
+            if !matches!(stage, Stage::Chunk { .. }) {
+                continue;
+            }
+            for grp in &g.groups {
+                let last = report.grouping.groups.iter().find(|x| x.id == grp.id);
+                assert_eq!(last.map(|x| &x.hunks), Some(&grp.hunks), "{}", grp.id);
+            }
+        }
+        assert_eq!(report.first_group_ms, report.stream.group_ms[0]);
+        assert_eq!(report.stream.answer_ms.len(), 2);
+    }
+
+    /// A chunk whose first answer needs a repair keeps its streamed groups
+    /// in every publication — also those of the other chunk landing — until
+    /// its repaired answer lands: no flash of empty.
+    #[tokio::test]
+    async fn a_repaired_chunk_keeps_its_streamed_groups_until_replaced() {
+        let rev = two_dir_revision();
+        let opts = GroupingOptions {
+            budget: tiny_budget(),
+            ..streaming()
+        };
+        let agent = FakeAgentPort::routed([
+            (
+                "Problems found",
+                r#"{"groups": [{"id": "ga", "title": "A", "why": "a", "hunks": ["a1", "a2"]}]}"#,
+            ),
+            (
+                "Decide the final reading order",
+                r#"{"order": ["ga", "gb"]}"#,
+            ),
+            (
+                "### hunk a1",
+                r#"{"groups": [{"id": "ga", "title": "A", "why": "a", "hunks": ["a1"]}]}"#,
+            ),
+            (
+                "### hunk b1",
+                r#"{"groups": [{"id": "gb", "title": "B", "why": "b", "hunks": ["b1"]}]}"#,
+            ),
+        ]);
+        let published = Published::default();
+        let report = run_streamed(&agent, &rev, &opts, &published).await.unwrap();
+        let steps = published.take();
+        assert_provisional(&steps);
+        let first = steps
+            .iter()
+            .position(|(_, g)| hunks_of(g, "ga").is_some())
+            .expect("ga streamed");
+        let landed = steps
+            .iter()
+            .position(|(_, g)| hunks_of(g, "ga") == Some(vec!["a1", "a2"]))
+            .expect("the repaired ga landed");
+        assert!(first < landed);
+        for (k, (_, g)) in steps.iter().enumerate().skip(first) {
+            let want: &[&str] = if k < landed { &["a1"] } else { &["a1", "a2"] };
+            assert_eq!(hunks_of(g, "ga").as_deref(), Some(want), "step {k}");
+        }
+        assert!(!report.valid_first_try);
+        assert_eq!(ids(&report.grouping), ["ga", "gb"]);
+        let repair = agent
+            .requests()
+            .into_iter()
+            .find(|r| r.prompt.contains("Problems found"))
+            .unwrap();
+        assert!(!repair.stream_text);
+    }
+
+    /// A run whose agent fails part-way returns the error; whatever it
+    /// published before was marked in progress, so it never looks final.
+    #[tokio::test]
+    async fn a_failed_run_published_only_provisional_groupings() {
+        let rev = two_dir_revision();
+        let opts = GroupingOptions {
+            budget: tiny_budget(),
+            chunk_concurrency: 1,
+            ..streaming()
+        };
+        let fail = format!("{}rate limited", crate::testing::FAIL);
+        let agent = FakeAgentPort::routed([
+            (
+                "### hunk a1",
+                r#"{"groups": [{"id": "ga", "title": "A", "why": "a", "hunks": ["a1", "a2"]}]}"#,
+            ),
+            ("### hunk b1", fail.as_str()),
+        ]);
+        let published = Published::default();
+        let err = run_streamed(&agent, &rev, &opts, &published)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("rate limited"), "{err}");
+        let steps = published.take();
+        assert!(!steps.is_empty(), "chunk a was shown before b failed");
+        assert_provisional(&steps);
+    }
+
+    /// Streamed groups keep their ids into the final grouping, also when
+    /// coarsening merges some on landing (into a group that was shown).
+    #[tokio::test]
+    async fn coarsening_on_landing_keeps_the_shown_ids() {
+        let rev = Revision {
+            base: Sha::new("base"),
+            head: Sha::new("head"),
+            files: vec![
+                file("a/one.rs", vec![mk_hunk("a1")]),
+                file("a/two.rs", vec![mk_hunk("a2")]),
+                file("a/three.rs", vec![mk_hunk("a3")]),
+                file("b/one.rs", vec![mk_hunk("b1")]),
+                file("b/two.rs", vec![mk_hunk("b2")]),
+                file("b/three.rs", vec![mk_hunk("b3")]),
+            ],
+        };
+        let fragmented = r#"{"groups": [
+            {"id": "a1g", "title": "a1", "why": "w", "hunks": ["a1"]},
+            {"id": "a2g", "title": "a2", "why": "w", "hunks": ["a2"]},
+            {"id": "a3g", "title": "a3", "why": "w", "hunks": ["a3"]},
+            {"id": "b1g", "title": "b1", "why": "w", "hunks": ["b1"]},
+            {"id": "b2g", "title": "b2", "why": "w", "hunks": ["b2"]},
+            {"id": "b3g", "title": "b3", "why": "w", "hunks": ["b3"]}
+        ]}"#;
+        let agent = FakeAgentPort::new([fragmented]);
+        let published = Published::default();
+        let report = run_streamed(&agent, &rev, &streaming(), &published)
+            .await
+            .unwrap();
+        let steps = published.take();
+        assert_eq!(steps.len(), 6);
+        assert!(report.grouping.groups.len() <= 4);
+        let shown: BTreeSet<&str> = ids(&steps[5].1).into_iter().collect();
+        for id in ids(&report.grouping) {
+            assert!(shown.contains(id), "{id} was never shown");
+        }
+        assert!(grouping::validate(&rev, &report.grouping).is_ok());
+    }
+
+    /// Without `stream`, a run publishes nothing and asks for no deltas,
+    /// whatever the callback.
+    #[tokio::test]
+    async fn a_run_that_does_not_stream_publishes_nothing() {
+        let rev = two_dir_revision();
+        let opts = GroupingOptions {
+            budget: tiny_budget(),
+            ..GroupingOptions::default()
+        };
+        let agent = FakeAgentPort::routed([
+            (
+                "Decide the final reading order",
+                r#"{"order": ["ga", "gb"]}"#,
+            ),
+            (
+                "### hunk a1",
+                r#"{"groups": [{"id": "ga", "title": "A", "why": "a", "hunks": ["a1", "a2"]}]}"#,
+            ),
+            (
+                "### hunk b1",
+                r#"{"groups": [{"id": "gb", "title": "B", "why": "b", "hunks": ["b1"]}]}"#,
+            ),
+        ]);
+        let published = Published::default();
+        let report = run_streamed(&agent, &rev, &opts, &published).await.unwrap();
+        assert!(published.take().is_empty());
+        assert!(agent.requests().iter().all(|r| !r.stream_text));
+        assert_eq!(report.first_group_ms, report.duration_ms);
+        assert_eq!(ids(&report.grouping), ["ga", "gb"]);
     }
 }

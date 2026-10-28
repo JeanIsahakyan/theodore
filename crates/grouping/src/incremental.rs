@@ -170,6 +170,7 @@ pub async fn regroup_with(
         let grouping = Grouping {
             rev: new_rev.head.clone(),
             groups: groups.into_iter().filter(|g| !g.hunks.is_empty()).collect(),
+            in_progress: false,
         };
         let (grouping, attempts) = finalize(new_rev, grouping, 0);
         return Ok(GroupingReport {
@@ -178,7 +179,9 @@ pub async fn regroup_with(
             valid_first_try: true,
             usage: Usage::default(),
             duration_ms: start.elapsed().as_millis() as u64,
+            first_group_ms: start.elapsed().as_millis() as u64,
             chunks: 0,
+            stream: Default::default(),
         });
     }
 
@@ -212,6 +215,7 @@ pub async fn regroup_with(
     let grouping = Grouping {
         rev: new_rev.head.clone(),
         groups,
+        in_progress: false,
     };
     let (grouping, attempts) = finalize(new_rev, grouping, attempts);
     any_repair |= attempts > 2;
@@ -222,7 +226,9 @@ pub async fn regroup_with(
         valid_first_try: !any_repair,
         usage,
         duration_ms: start.elapsed().as_millis() as u64,
+        first_group_ms: start.elapsed().as_millis() as u64,
         chunks: 1,
+        stream: Default::default(),
     })
 }
 
@@ -237,6 +243,7 @@ fn validate_hunks(rev: &Revision, groups: &[Group]) -> Result<(), Vec<grouping::
     let g = Grouping {
         rev: rev.head.clone(),
         groups: groups.to_vec(),
+        in_progress: false,
     };
     grouping::validate(rev, &g)
 }
@@ -635,6 +642,7 @@ mod tests {
                 hunks: vec![HunkId::new("h1"), HunkId::new("h2")],
                 outliers: vec![],
             }],
+            in_progress: false,
         }
     }
 
@@ -889,6 +897,7 @@ mod tests {
                 group("billing", GroupKind::Normal, &["r1", "s1"]),
                 group("search", GroupKind::Normal, &["k1", "k2"]),
             ],
+            in_progress: false,
         }
     }
 

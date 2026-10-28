@@ -441,8 +441,9 @@ impl Core {
                     .flatten();
                 let rules = core.review_rules_at(entry.config_source()).await;
                 // Reuse a grouping of this head, unless an older algorithm or
-                // other review rules (`hide`, `skim`, `checklist`) made it.
-                if stored.is_some_and(|r| {
+                // other review rules (`hide`, `skim`, `checklist`) made it, or
+                // its run never finished.
+                if stored.as_ref().is_some_and(|r| {
                     crate::usecases::grouping::row_is_current(
                         &r.data,
                         &head,
@@ -451,6 +452,7 @@ impl Core {
                 }) {
                     return;
                 }
+                let prior = stored.map(|r| r.data);
                 {
                     let mut inflight = core
                         .0
@@ -472,8 +474,16 @@ impl Core {
                     .await;
                 let agent = core.effective_agent(configured).await;
                 let mut ctx = core.grouping_context(&worktree, &revision).await;
-                ctx.review = rules;
+                ctx.review = rules.clone();
                 let started = std::time::Instant::now();
+                // Groups show as the agent writes them (streamed grouping).
+                let writer = crate::usecases::grouping::PartialWriter::start(
+                    &core,
+                    pr.clone(),
+                    revision.clone(),
+                    rules,
+                    prior,
+                );
                 let result = core
                     .0
                     .deps
@@ -489,14 +499,11 @@ impl Core {
                             // them on every chunk would only slow it down.
                             user_mcp: false,
                         },
+                        &|g| writer.send(g),
                     )
-                    .instrument(tracing::info_span!(
-                        "grouping",
-                        pr = %pr.0,
-                        agent = agent.as_str(),
-                        incremental = false
-                    ))
+                    .instrument(crate::usecases::grouping::grouping_span(&pr, agent, false))
                     .await;
+                writer.finish(result.is_ok()).await;
                 if let Err(e) = &result {
                     let code = e.code();
                     tracing::warn!(

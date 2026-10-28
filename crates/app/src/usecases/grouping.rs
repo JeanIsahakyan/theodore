@@ -40,6 +40,7 @@ impl Core {
         let prev_row = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &pr_s))
             .await
             .map_err(AppError::join)??;
+        let prior = prev_row.as_ref().map(|r| r.data.clone());
         // Continue from the previous grouping only after a push to a newer
         // head, and only if the current algorithm made it; an explicit
         // regroup of the same head starts fresh (incremental regroup keeps
@@ -52,7 +53,10 @@ impl Core {
             let algo = theodore_domain::grouping::row_algo(&r.data);
             let same_rules = theodore_domain::grouping::row_review_hash(&r.data) == hash.as_deref();
             serde_json::from_value::<Grouping>(r.data).ok().filter(|g| {
-                g.rev != head && algo >= theodore_domain::grouping::ALGO_VERSION && same_rules
+                g.rev != head
+                    && !g.in_progress
+                    && algo >= theodore_domain::grouping::ALGO_VERSION
+                    && same_rules
             })
         });
         let repo_scope = detail.summary.pr.repo.slug();
@@ -76,17 +80,20 @@ impl Core {
             running: true,
             error: None,
         });
-        let span = tracing::info_span!(
-            "grouping",
-            pr = %pr.0,
-            agent = agent.as_str(),
-            incremental = prev.is_some()
-        );
+        let span = grouping_span(&pr, agent, prev.is_some());
         let started = std::time::Instant::now();
+        let writer = PartialWriter::start(
+            self,
+            pr.clone(),
+            entry.revision.clone(),
+            rules.clone(),
+            prior,
+        );
         let result = self
-            .regroup_run(&prev, &entry, &detail, agent, rules)
+            .regroup_run(&prev, &entry, &detail, agent, rules, &|g| writer.send(g))
             .instrument(span)
             .await;
+        writer.finish(result.is_ok()).await;
         if let Err(e @ AppError::Grouper(crate::error::GrouperError::Offline(_))) = &result {
             // The agent couldn't reach its servers: the network, not a bug.
             tracing::info!(
@@ -140,6 +147,7 @@ impl Core {
         detail: &theodore_domain::PrDetail,
         agent: AgentId,
         rules: ReviewRules,
+        on_partial: crate::deps::OnPartial<'_>,
     ) -> AppResult<(Grouping, RepoContext)> {
         let mut ctx = self
             .grouping_context(&entry.worktree_path, &entry.revision)
@@ -170,7 +178,14 @@ impl Core {
                 self.0
                     .deps
                     .grouper
-                    .group(&entry.revision, detail, &ctx, &entry.worktree_path, agent)
+                    .group(
+                        &entry.revision,
+                        detail,
+                        &ctx,
+                        &entry.worktree_path,
+                        agent,
+                        on_partial,
+                    )
                     .await?
             }
         };
@@ -231,20 +246,41 @@ impl Core {
     }
 }
 
+/// The span a grouping run goes in. The grouper records when the first
+/// group was shown on it (`first_group_ms`).
+pub(crate) fn grouping_span(pr: &PrId, agent: AgentId, incremental: bool) -> tracing::Span {
+    tracing::info_span!(
+        "grouping",
+        pr = %pr.0,
+        agent = agent.as_str(),
+        incremental,
+        first_group_ms = tracing::field::Empty,
+    )
+}
+
 /// The grouping as stored: the config's checklist items added to its
 /// groups, then the row with the algorithm version and the hash of the
 /// review rules it was made under.
 pub(crate) fn grouping_row(
-    mut grouping: Grouping,
+    grouping: Grouping,
     rev: &Revision,
     ctx: &RepoContext,
 ) -> serde_json::Result<serde_json::Value> {
-    ctx.review.apply_checklist(&mut grouping, rev);
-    theodore_domain::grouping::to_row_with(&grouping, ctx.review.grouping_hash().as_deref())
+    grouping_row_under(grouping, rev, &ctx.review)
+}
+
+fn grouping_row_under(
+    mut grouping: Grouping,
+    rev: &Revision,
+    rules: &ReviewRules,
+) -> serde_json::Result<serde_json::Value> {
+    rules.apply_checklist(&mut grouping, rev);
+    theodore_domain::grouping::to_row_with(&grouping, rules.grouping_hash().as_deref())
 }
 
 /// A stored grouping row is still good for `head` under rules hashing to
-/// `hash`: same head, current algorithm, same review rules.
+/// `hash`: same head, current algorithm, same review rules, and finished
+/// (a run that failed or was cut short mid-stream left `in_progress` set).
 pub(crate) fn row_is_current(
     data: &serde_json::Value,
     head: &theodore_domain::Sha,
@@ -254,6 +290,120 @@ pub(crate) fn row_is_current(
     data.get("rev").and_then(|v| v.as_str()) == Some(head.as_str())
         && row_algo(data) >= ALGO_VERSION
         && row_review_hash(data) == hash
+        && !data
+            .get("in_progress")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+/// Writes a run's provisional groupings (`Grouper::group`'s `on_partial`)
+/// as the PR's grouping row while the run is in flight, so the UI shows
+/// groups as the agent writes them:
+///
+/// ```text
+/// grouper ─on_partial─▶ channel ─▶ writer task ─▶ grouping row (U, in_progress)
+///                                  └─ several queued: only the newest
+/// run returns ─▶ finish(ok): channel closed, last write awaited
+///    ok     ─▶ caller writes the final row after it
+///    failed ─▶ the row from before the run is put back, if there was one;
+///              else the in_progress row stays (shown as unfinished)
+/// ```
+pub(crate) struct PartialWriter {
+    tx: Option<tokio::sync::mpsc::UnboundedSender<Grouping>>,
+    /// Resolves to whether any row was written.
+    task: tokio::task::JoinHandle<bool>,
+    core: Core,
+    pr: PrId,
+    /// The PR's grouping row from before the run.
+    prior: Option<serde_json::Value>,
+}
+
+impl PartialWriter {
+    pub(crate) fn start(
+        core: &Core,
+        pr: PrId,
+        rev: impl Into<std::sync::Arc<Revision>>,
+        rules: ReviewRules,
+        prior: Option<serde_json::Value>,
+    ) -> Self {
+        let rev: std::sync::Arc<Revision> = rev.into();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Grouping>();
+        let task = tokio::spawn({
+            let core = core.clone();
+            let pr = pr.clone();
+            async move {
+                let mut wrote = false;
+                while let Some(mut grouping) = rx.recv().await {
+                    while let Ok(newer) = rx.try_recv() {
+                        grouping = newer;
+                    }
+                    // Closed while the agent worked: no orphaned row.
+                    if !core.0.current_head.read().await.contains_key(&pr) {
+                        continue;
+                    }
+                    grouping.in_progress = true;
+                    let Ok(data) = grouping_row_under(grouping, &rev, &rules) else {
+                        continue;
+                    };
+                    wrote |= core
+                        .apply(vec![NewAction {
+                            model: models::GROUPING.into(),
+                            model_id: pr.0.clone(),
+                            action: SyncActionCode::U,
+                            data: Some(data),
+                        }])
+                        .await
+                        .is_ok();
+                }
+                wrote
+            }
+            .in_current_span()
+        });
+        Self {
+            tx: Some(tx),
+            task,
+            core: core.clone(),
+            pr,
+            prior,
+        }
+    }
+
+    /// Queue `grouping` for writing (the grouper's `on_partial`).
+    pub(crate) fn send(&self, grouping: Grouping) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(grouping);
+        }
+    }
+
+    /// Wait for the queued writes, so a final row written next lands last.
+    /// A failed run (`!ok`) that wrote any puts the row from before it
+    /// back.
+    pub(crate) async fn finish(self, ok: bool) {
+        let Self {
+            tx,
+            task,
+            core,
+            pr,
+            prior,
+        } = self;
+        drop(tx);
+        let wrote = task.await.unwrap_or(false);
+        if ok || !wrote {
+            return;
+        }
+        let Some(data) = prior else { return };
+        if !core.0.current_head.read().await.contains_key(&pr) {
+            return;
+        }
+        let _ = core
+            .apply(vec![NewAction {
+                model: models::GROUPING.into(),
+                model_id: pr.0.clone(),
+                action: SyncActionCode::U,
+                data: Some(data),
+            }])
+            .await;
+    }
 }
 
 /// Caps on how much of the worktree `grouping_context` reads.

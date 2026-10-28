@@ -515,6 +515,23 @@ pub struct Group {
 pub struct Grouping {
     pub rev: Sha,
     pub groups: Vec<Group>,
+    /// Written while the grouping run is still going: the groups are
+    /// provisional and some hunks may be in no group yet. Stays set if the
+    /// run failed or the app quit before it finished; a finished grouping
+    /// never has it.
+    #[serde(default)]
+    pub in_progress: bool,
+}
+
+impl Grouping {
+    /// A finished grouping of `rev`.
+    pub fn new(rev: Sha, groups: Vec<Group>) -> Self {
+        Self {
+            rev,
+            groups,
+            in_progress: false,
+        }
+    }
 }
 
 // ── findings, fixes, tasks ──────────────────────────────────────────────────

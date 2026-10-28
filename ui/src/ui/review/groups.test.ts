@@ -7,6 +7,7 @@ import {
   nextUnreadGroup,
   prevReviewableGroup,
   reviewableGroups,
+  stableOrder,
 } from './groups';
 
 const group = (over: Partial<Group> & { id: string }): Group => ({
@@ -129,6 +130,7 @@ describe('groupsProgress', () => {
     expect(groupsProgress(groups, read)).toEqual({
       read: 1,
       total: 2,
+      all: false,
       label: '1 of 2 groups read',
     });
   });
@@ -138,6 +140,7 @@ describe('groupsProgress', () => {
     expect(groupsProgress(groups, read)).toEqual({
       read: 2,
       total: 2,
+      all: true,
       label: 'All groups read',
     });
   });
@@ -152,5 +155,70 @@ describe('groupsProgress', () => {
     expect(groupsProgress(one, new Set<string>()).label).toBe(
       '0 of 1 group read',
     );
+  });
+
+  it('is never "all read" while more groups are coming', () => {
+    const read = new Set(['h1', 'h2', 'h4']);
+    expect(groupsProgress(groups, read, false)).toEqual({
+      read: 2,
+      total: 2,
+      all: false,
+      label: '2 of 2 groups read so far',
+    });
+  });
+
+  it('says "so far" even with nothing read yet, while incomplete', () => {
+    const read = new Set<string>();
+    expect(groupsProgress(groups, read, false).label).toBe(
+      '0 of 2 groups read so far',
+    );
+  });
+});
+
+describe('stableOrder', () => {
+  const g = (id: string) => group({ id });
+  const ids = (gs: Group[]) => gs.map((x) => x.id);
+
+  it('takes the new order when nothing is anchored', () => {
+    const next = [g('c'), g('a'), g('b')];
+    expect(stableOrder(['a', 'b'], next, new Set())).toBe(next);
+  });
+
+  it('keeps an opened group in the slot it was shown at', () => {
+    const next = [g('c'), g('a'), g('d'), g('b')];
+    expect(ids(stableOrder(['a', 'b'], next, new Set(['a'])))).toEqual([
+      'a',
+      'c',
+      'd',
+      'b',
+    ]);
+  });
+
+  it('keeps several anchors, in their own slots', () => {
+    const next = [g('d'), g('c'), g('b'), g('a')];
+    expect(
+      ids(stableOrder(['a', 'b', 'c'], next, new Set(['a', 'c']))),
+    ).toEqual(['a', 'd', 'c', 'b']);
+  });
+
+  it('ignores an anchor the new grouping no longer has', () => {
+    const next = [g('b'), g('c')];
+    expect(stableOrder(['a', 'b'], next, new Set(['a']))).toBe(next);
+  });
+
+  it('a new group appended at the end does not disturb anchored ones', () => {
+    const next = [g('a'), g('b'), g('c')];
+    expect(ids(stableOrder(['a', 'b'], next, new Set(['a', 'b'])))).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('is idempotent: the order it returned stays put', () => {
+    const next = [g('c'), g('a'), g('d'), g('b')];
+    const once = stableOrder(['a', 'b'], next, new Set(['a']));
+    const twice = stableOrder(ids(once), next, new Set(['a']));
+    expect(ids(twice)).toEqual(ids(once));
   });
 });

@@ -78,6 +78,8 @@ pub struct PromptChunk {
     pub prompt: PromptPart,
     /// Hunk ids covered by this chunk (everything not hidden).
     pub hunk_ids: Vec<HunkId>,
+    /// The group count this chunk's prompt asks for, `(lo, hi)`.
+    pub target: (usize, usize),
 }
 
 /// `part_of_larger` is the chunk's own top-level directory when a large PR
@@ -535,6 +537,7 @@ pub fn build_prompts_with(
                 user: whole,
             },
             hunk_ids,
+            target: whole_target,
         }];
     }
 
@@ -626,6 +629,7 @@ pub fn build_prompts_with(
                 },
                 label,
                 hunk_ids,
+                target: chunk_target,
             }
         })
         .collect()
