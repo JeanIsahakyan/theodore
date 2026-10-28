@@ -53,6 +53,7 @@ import { setSetting } from '../../actions';
 import { useRootStore, useUi } from '../../stores/context';
 import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
+import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../SidePanel';
 import { Md } from '../../highlight';
@@ -931,9 +932,12 @@ const SpaceChanges = observer(function SpaceChanges({
   const store = useRootStore();
   const review = space.review_pr;
   const summary = review ? store.models.prSummaries.get(review) : undefined;
+  const revKey = review && summary ? `${review}@${summary.head_sha}` : null;
+  // Bumped by Retry so the page calls `get()` again after `invalidate`.
+  const [, setRetries] = useState(0);
   const revision =
-    review && summary
-      ? store.revisions.get(`${review}@${summary.head_sha}`, () =>
+    review && summary && revKey
+      ? store.revisions.get(revKey, () =>
           api.getRevision({ pr: review, head: summary.head_sha }),
         )
       : null;
@@ -960,9 +964,13 @@ const SpaceChanges = observer(function SpaceChanges({
           No changes yet.
         </div>
       ) : revision.status === 'error' ? (
-        <div className="grid flex-1 place-items-center text-danger">
-          Could not load the diff.
-        </div>
+        <RevisionError
+          error={revision.error}
+          onRetry={() => {
+            if (revKey) store.revisions.invalidate(revKey);
+            setRetries((n) => n + 1);
+          }}
+        />
       ) : !rev ? (
         <div className="grid flex-1 place-items-center text-muted">
           <Spinner />

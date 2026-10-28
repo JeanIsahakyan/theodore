@@ -29,6 +29,10 @@ pub enum AppError {
     /// downloaded, so there's no local copy to open.
     #[error("You're offline and this PR's code hasn't been downloaded yet")]
     OfflineNotCached,
+    /// The git remote can't be reached and the project was never cloned to
+    /// this Mac, so there's no local copy to work from.
+    #[error("You're offline and this project hasn't been downloaded to this Mac yet")]
+    Offline,
 }
 
 impl AppError {
@@ -51,7 +55,17 @@ impl AppError {
             AppError::Account(e) => e.code(),
             AppError::AccountRequired => "account.required",
             AppError::OfflineNotCached => "app.offline_not_cached",
+            AppError::Offline => "app.offline",
         }
+    }
+
+    /// The network (not the request, not the repo) is the problem: the
+    /// git remote couldn't be reached.
+    pub fn is_offline(&self) -> bool {
+        matches!(
+            self,
+            AppError::Offline | AppError::Git(theodore_ports::GitError::Network(_))
+        )
     }
 
     /// Whether this is the caller's mistake or an expected state (logged
@@ -63,6 +77,9 @@ impl AppError {
                 | AppError::Invalid(_)
                 | AppError::AccountRequired
                 | AppError::OfflineNotCached
+                | AppError::Offline
+                | AppError::Git(theodore_ports::GitError::Network(_))
+                | AppError::Grouper(GrouperError::Offline(_))
                 | AppError::Git(theodore_ports::GitError::Refused(_))
                 | AppError::Git(theodore_ports::GitError::Unsupported(_))
         )
@@ -76,6 +93,9 @@ pub enum GrouperError {
     Agent(String),
     #[error("invalid output: {0}")]
     Invalid(String),
+    /// The agent couldn't reach its servers (`ports::offline_message`).
+    #[error("{0}")]
+    Offline(String),
 }
 
 impl GrouperError {
@@ -83,6 +103,7 @@ impl GrouperError {
         match self {
             GrouperError::Agent(_) => "grouping.agent_failed",
             GrouperError::Invalid(_) => "grouping.invalid_output",
+            GrouperError::Offline(_) => theodore_ports::AGENT_OFFLINE_CODE,
         }
     }
 }
@@ -136,6 +157,12 @@ mod tests {
             (AccountError::Network("x".into()).into(), "account.network"),
             (AppError::AccountRequired, "account.required"),
             (AppError::OfflineNotCached, "app.offline_not_cached"),
+            (AppError::Offline, "app.offline"),
+            (GitError::Network("x".into()).into(), "git.network"),
+            (
+                GrouperError::Offline("Couldn't reach Claude's servers".into()).into(),
+                "agent.offline",
+            ),
         ];
         for (err, code) in cases {
             assert_eq!(err.code(), code, "{err}");

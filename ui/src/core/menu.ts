@@ -4,9 +4,9 @@ import { openExternal } from './openExternal';
 import type { RootStore } from '../stores/RootStore';
 import { toggleTheme } from '../stores/UiStore';
 import { refreshInbox } from '../actions';
-import { api } from './api';
 import { getTransport } from './transport';
 import { MENU_WHILE_LOCKED } from './accountGate';
+import { checkForUpdates } from './updateCheck';
 
 export const REVIEW_EVENT = 'theodore:review';
 
@@ -28,7 +28,7 @@ export function runMenu(store: RootStore, id: string): void {
     case 'settings':
       return ui.go({ name: 'settings', page: 'agents' });
     case 'check-updates':
-      return void api.checkUpdate().catch(() => {});
+      return void checkForUpdates(store);
     case 'new-tab':
     case 'open-pr':
       return ui.newTab();

@@ -1,5 +1,7 @@
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import {
   useSyncExternalStore,
   type CSSProperties,
@@ -586,12 +588,18 @@ export function rich(text: string): ReactNode[] {
     );
 }
 
-/** GitHub-flavoured markdown (headings, lists, tables, task lists, code) for
- *  PR descriptions and comments. Raw HTML is not rendered. */
+/** GitHub-flavoured markdown (headings, lists, tables, task lists, code,
+ *  footnotes) for PR descriptions, comments and agent replies. Raw HTML goes
+ *  through GitHub's own allowlist (`<details>`, `<summary>`, `<kbd>`,
+ *  `<sub>`, `<br>`…); scripts, styles and event handlers never render. */
 export function Md({ text }: { text: string }) {
   return (
     <div className="rich md">
-      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, defaultSchema]]}
+        components={mdComponents}
+      >
         {stripHtmlComments(text)}
       </Markdown>
     </div>

@@ -135,9 +135,18 @@ impl WorkosAccount {
         if status.is_success() {
             return Ok(Reply::Ok(text));
         }
+        // Only the provider's own JSON error (`invalid_grant`, …) is an
+        // answer. A 4xx without one came from something in between — a
+        // captive portal, a proxy's HTML page — and says nothing about the
+        // grant: a connection problem, so a session survives it.
         let err: ErrorBody = serde_json::from_str(&text).unwrap_or_default();
+        let Some(code) = err.error.or(err.code) else {
+            return Err(AccountError::Network(format!(
+                "{path} failed ({status}) without a provider error"
+            )));
+        };
         Ok(Reply::Err {
-            code: err.error.or(err.code).unwrap_or_else(|| status.to_string()),
+            code,
             message: err
                 .error_description
                 .or(err.message)

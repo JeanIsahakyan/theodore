@@ -29,7 +29,7 @@ impl BbHttp {
     /// `base_url` must end with `/` (e.g. `https://api.bitbucket.org/2.0/`).
     pub(crate) fn new(base_url: url::Url, creds: Credentials, clock: Arc<dyn Clock>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: theodore_host_http::host_reqwest_client(),
             base_url,
             creds,
             clock,

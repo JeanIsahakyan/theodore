@@ -1,4 +1,4 @@
-//! Shared HTTP client for host adapters: auth, ETag cache, rate limits, retry, redaction.
+//! Shared HTTP client for host adapters: auth, conditional GETs, rate limits, retry, timeouts, redaction.
 //!
 //! One [`HttpClient`] per API endpoint (REST root, GraphQL endpoint); adapters
 //! own the host-specific request/response shapes, this crate owns the
@@ -9,5 +9,8 @@ mod rate;
 mod redact;
 mod token;
 
-pub use client::{HttpClient, HttpResponse, RawResponse, RetryConfig};
+pub use client::{
+    CONNECT_TIMEOUT, HttpClient, HttpResponse, REQUEST_TIMEOUT, RawResponse, RetryConfig,
+    host_reqwest_client,
+};
 pub use token::{StaticToken, TokenSource};

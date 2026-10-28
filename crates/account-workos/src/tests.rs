@@ -364,6 +364,33 @@ async fn a_revoked_refresh_token_is_rejected() {
 }
 
 #[tokio::test]
+async fn a_4xx_that_is_not_the_providers_error_is_a_network_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains("refresh_token=portal"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_string("<html><body>Sign in to the Wi-Fi</body></html>"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains("refresh_token=proxy"))
+        .respond_with(ResponseTemplate::new(407).set_body_json(json!({ "detail": "auth" })))
+        .mount(&server)
+        .await;
+    let a = account(&server);
+    for rt in ["portal", "proxy"] {
+        match a.refresh(&cfg(), rt).await {
+            Err(AccountError::Network(m)) => assert!(m.contains("without a provider error"), "{m}"),
+            other => panic!("{rt}: expected Network, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn device_start_returns_the_code_to_show() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

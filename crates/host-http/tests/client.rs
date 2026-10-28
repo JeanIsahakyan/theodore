@@ -24,10 +24,18 @@ fn client(server: &MockServer, token: Option<&str>, clock: Arc<FakeClock>) -> Ht
 }
 
 #[tokio::test]
-async fn etag_cache_turns_second_get_into_not_modified() {
+async fn no_etag_is_a_fresh_get_even_after_one_was_seen() {
     let server = MockServer::start().await;
     let clock = FakeClock::new(0);
 
+    // Any request carrying the ETag gets a 304 — mounted first so it would
+    // win if the client sent it.
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/pulls/1"))
+        .and(header("if-none-match", "\"abc\""))
+        .respond_with(ResponseTemplate::new(304))
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .and(path("/repos/o/r/pulls/1"))
         .respond_with(
@@ -38,47 +46,43 @@ async fn etag_cache_turns_second_get_into_not_modified() {
                     title: "first".into(),
                 }),
         )
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/repos/o/r/pulls/1"))
-        .and(header("if-none-match", "\"abc\""))
-        .respond_with(ResponseTemplate::new(304))
         .mount(&server)
         .await;
 
     let http = client(&server, Some("secret-token"), clock);
 
-    let first = http
-        .get_conditional::<Pr>("repos/o/r/pulls/1", None)
-        .await
-        .unwrap();
-    match first {
-        Fetched::Modified { etag, value } => {
-            assert_eq!(etag, Some("\"abc\"".to_string()));
-            assert_eq!(
-                value.value,
-                Pr {
-                    number: 1,
-                    title: "first".into()
-                }
-            );
+    for _ in 0..2 {
+        let fetched = http
+            .get_conditional::<Pr>("repos/o/r/pulls/1", None)
+            .await
+            .unwrap();
+        match fetched {
+            Fetched::Modified { etag, value } => {
+                assert_eq!(etag, Some("\"abc\"".to_string()));
+                assert_eq!(value.value.title, "first");
+            }
+            Fetched::NotModified => panic!("a fetch with no etag must never be not-modified"),
         }
-        Fetched::NotModified => panic!("expected Modified on first fetch"),
     }
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.headers.contains_key("if-none-match")),
+        "no If-None-Match may be sent when the caller passes none"
+    );
 
-    // No explicit etag passed: the client must have cached it per-URL.
-    let second = http
-        .get_conditional::<Pr>("repos/o/r/pulls/1", None)
+    // The caller's own ETag still makes it conditional.
+    let third = http
+        .get_conditional::<Pr>("repos/o/r/pulls/1", Some("\"abc\""))
         .await
         .unwrap();
-    assert!(matches!(second, Fetched::NotModified));
+    assert!(matches!(third, Fetched::NotModified));
 }
 
 #[tokio::test]
-async fn explicit_etag_overrides_cache() {
+async fn explicit_etag_makes_the_get_conditional() {
     let server = MockServer::start().await;
     let clock = FakeClock::new(0);
 

@@ -39,6 +39,43 @@ pub fn commit(sha: Option<&str>, dirty: bool, env: &str) -> String {
     }
 }
 
+/// What CI bakes into a release (`.github/workflows/build.yml`): without
+/// these a binary has no sign-in and no diagnostics, so it isn't the build
+/// it says it is. `production` and `staging` need them all; a nightly (built
+/// by hand, `scripts/nightly-build.sh`) needs the account only.
+pub const RELEASE_KEYS: [&str; 4] = [
+    "THEODORE_WORKOS_CLIENT_ID",
+    "THEODORE_OTLP_ENDPOINT",
+    "THEODORE_OTLP_HEADERS",
+    "THEODORE_POSTHOG_KEY",
+];
+
+/// The release keys `env` needs that `lookup` doesn't have (unset or blank).
+pub fn missing_keys(env: &str, lookup: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {
+    let needed: &[&'static str] = match env {
+        "production" | "staging" => &RELEASE_KEYS,
+        "nightly" => &RELEASE_KEYS[..1],
+        _ => &[],
+    };
+    needed
+        .iter()
+        .copied()
+        .filter(|k| lookup(k).is_none_or(|v| v.trim().is_empty()))
+        .collect()
+}
+
+/// The build error for `missing` keys, saying what to do instead.
+pub fn missing_keys_error(env: &str, missing: &[&str]) -> String {
+    format!(
+        "THEODORE_BUILD_ENV={env} needs the keys CI bakes into a release, and these are missing: {}.\n\
+         A build without them has no sign-in and no diagnostics, so it must not call itself {env}.\n\
+         - To use Theodore: install the release .dmg (https://github.com/JeanIsahakyan/theodore/releases/latest).\n\
+         - To develop: build without THEODORE_BUILD_ENV (a dev build).\n\
+         - To build it anyway, marked as incomplete: THEODORE_ALLOW_INCOMPLETE_BUILD=1.",
+        missing.join(", ")
+    )
+}
+
 /// The first 7 characters of the sha, keeping a `-dirty` suffix.
 pub fn short_commit(commit: &str) -> String {
     let (sha, dirty) = match commit.strip_suffix("-dirty") {
@@ -56,6 +93,43 @@ pub fn label(version: &str, commit: &str, env: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_release_needs_every_key_a_nightly_only_the_account() {
+        let none = |_: &str| None;
+        assert_eq!(missing_keys("production", none), RELEASE_KEYS.to_vec());
+        assert_eq!(missing_keys("staging", none), RELEASE_KEYS.to_vec());
+        assert_eq!(
+            missing_keys("nightly", none),
+            vec!["THEODORE_WORKOS_CLIENT_ID"]
+        );
+        assert!(missing_keys("dev", none).is_empty());
+        let all = |_: &str| Some("x".to_string());
+        assert!(missing_keys("production", all).is_empty());
+        // Blank counts as missing.
+        let blank = |k: &str| {
+            Some(
+                if k == "THEODORE_POSTHOG_KEY" {
+                    " "
+                } else {
+                    "x"
+                }
+                .to_string(),
+            )
+        };
+        assert_eq!(
+            missing_keys("production", blank),
+            vec!["THEODORE_POSTHOG_KEY"]
+        );
+    }
+
+    #[test]
+    fn the_error_says_what_to_do_instead() {
+        let e = missing_keys_error("production", &["THEODORE_WORKOS_CLIENT_ID"]);
+        assert!(e.contains("THEODORE_WORKOS_CLIENT_ID"));
+        assert!(e.contains("releases/latest"));
+        assert!(e.contains("THEODORE_ALLOW_INCOMPLETE_BUILD=1"));
+    }
     use super::*;
 
     #[test]

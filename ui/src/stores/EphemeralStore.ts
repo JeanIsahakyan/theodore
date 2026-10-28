@@ -280,10 +280,14 @@ export class EphemeralStore {
     document.documentElement.dataset.build = info.build_env;
   }
 
-  /** An update the shell downloaded since launch (its `update` event). */
+  /** An update the shell found (`downloaded: false`, about to download)
+   *  or downloaded since launch — its `update` event. A found one never
+   *  hides one already installed: the restart stays offered. */
   setUpdate(update: UpdateInfo): void {
     runInAction(() => {
-      if (this.appInfo) this.appInfo = { ...this.appInfo, update };
+      if (!this.appInfo) return;
+      if (!update.downloaded && this.appInfo.update?.downloaded) return;
+      this.appInfo = { ...this.appInfo, update };
     });
   }
 

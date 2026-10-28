@@ -220,9 +220,12 @@ impl GitCli {
         .await?
         .trim()
         .to_string();
-        proc(repo, &askpass, &["update-ref", &shipped_ref(space), &sha])
-            .run()
-            .await?;
+        {
+            let _repo = crate::locks::lock(repo).await;
+            proc(repo, &askpass, &["update-ref", &shipped_ref(space), &sha])
+                .run()
+                .await?;
+        }
         Ok(Sha::new(sha))
     }
 
@@ -257,6 +260,7 @@ impl GitCli {
         // Same mapping as the cache's own refresh (`+refs/heads/*`), so the
         // tip's objects are here and nothing new is invented.
         let refspec = format!("+{full}:{full}");
+        let _repo = crate::locks::lock(repo).await;
         GitProc {
             cwd: repo,
             askpass: &askpass,

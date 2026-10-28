@@ -5,16 +5,22 @@
 //!    │                                      │
 //!    ├─ cancel ─▶ SIGTERM ─▶ 5 s ─▶ SIGKILL │
 //!    ├─ silent `stall_after_ms` ─▶ Stalled (keeps running)
+//!    │     └─ last word was "can't connect" ─▶ stop ─▶ Error agent.offline
 //!    └─ exit ≠ 0 ─▶ Error with stderr tail
+//!          └─ connection failure in message/stderr ─▶ Error agent.offline
 //! ```
 //!
 //! Stream parsing is CLI-specific (see `claude`, `codex`, `gemini`); this
 //! module only owns the process, the channel, cancellation and stalls.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use theodore_ports::agent::{AgentError, AgentEvent, AgentRun};
+use theodore_ports::agent::{
+    AGENT_OFFLINE_CODE, AgentError, AgentEvent, AgentRun, is_connection_failure, offline_message,
+};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -46,6 +52,12 @@ pub trait LineParser: Send + 'static {
     fn on_line(&mut self, line: &str) -> Vec<AgentEvent>;
     /// The process exited and no terminal event (`Done`/`Error`) was seen yet.
     fn on_exit(&mut self, success: bool, stderr_tail: &str) -> AgentEvent;
+    /// Whether `line` is the CLI's own transport notice (a retry, a
+    /// reconnect), not the agent's output: only those count as "it can't
+    /// connect" when the run then goes quiet.
+    fn is_transport_notice(&self, _line: &str) -> bool {
+        false
+    }
 }
 
 pub struct SpawnSpec {
@@ -244,20 +256,36 @@ async fn run_loop(
     let mut terminal_sent = false;
     let mut stalled_notified = false;
     let mut exit_success: Option<bool> = None;
+    // "It can't connect" signals, in ms since the run started (0 = never):
+    // the last connection failure stderr showed, the last stdout transport
+    // notice saying so, and the last real output. One newer than the last
+    // output means the CLI is stuck retrying, not thinking.
+    let stderr_offline_at = Arc::new(AtomicU64::new(0));
+    let mut notice_offline_at = 0u64;
+    let mut output_at = 0u64;
 
     // Drain stderr into a bounded tail buffer on its own task, trimming as
     // it goes (never buffering the whole stream before trimming).
-    let stderr_task = tokio::spawn(async move {
-        let mut tail: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            match stderr.read(&mut chunk).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => push_capped_tail(&mut tail, &chunk[..n], STDERR_TAIL_BYTES),
+    let stderr_task = {
+        let offline_at = stderr_offline_at.clone();
+        let log = log.clone();
+        tokio::spawn(async move {
+            let mut tail: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                match stderr.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        push_capped_tail(&mut tail, &chunk[..n], STDERR_TAIL_BYTES);
+                        if is_connection_failure(&String::from_utf8_lossy(&chunk[..n])) {
+                            offline_at.store(log.ms().max(1), Ordering::SeqCst);
+                        }
+                    }
+                }
             }
-        }
-        tail
-    });
+            tail
+        })
+    };
 
     while !terminal_sent {
         tokio::select! {
@@ -297,13 +325,21 @@ async fn run_loop(
                             );
                         }
                         stalled_notified = false;
+                        if parser.is_transport_notice(&l) {
+                            if is_connection_failure(&l) {
+                                notice_offline_at = log.ms().max(1);
+                            }
+                        } else if !l.trim().is_empty() {
+                            output_at = log.ms().max(1);
+                        }
                         for ev in parser.on_line(&l) {
                             let terminal = is_terminal(&ev);
                             if terminal && terminal_sent {
                                 continue;
                             }
                             terminal_sent |= terminal;
-                            log_terminal(&log, &ev, None);
+                            let (ev, offline) = classify_offline(ev, &log.agent, "");
+                            log_terminal(&log, &ev, None, offline);
                             if tx.send(ev).await.is_err() {
                                 return;
                             }
@@ -313,7 +349,27 @@ async fn run_loop(
                     Err(_) => break,
                 }
             }
-            _ = tokio::time::sleep(stall_after), if !stalled_notified => {
+            // Once stalled, this keeps re-checking every `stall_after` (no
+            // second `Stalled`): the connection error may come after the
+            // first stall.
+            _ = tokio::time::sleep(stall_after) => {
+                let offline_at = notice_offline_at.max(stderr_offline_at.load(Ordering::SeqCst));
+                if offline_at > output_at {
+                    // Quiet because it keeps failing to connect: retrying
+                    // until the runtime cap would only keep the user waiting.
+                    let _ = terminate(&mut child).await;
+                    terminal_sent = true;
+                    let ev = AgentEvent::Error {
+                        message: offline_message(&log.agent),
+                        stderr_tail: String::new(),
+                    };
+                    log_terminal(&log, &ev, None, true);
+                    let _ = tx.send(ev).await;
+                    break;
+                }
+                if stalled_notified {
+                    continue;
+                }
                 stalled_notified = true;
                 tracing::warn!(
                     error.code = "agent.stalled",
@@ -347,16 +403,44 @@ async fn run_loop(
             },
         };
         let ev = parser.on_exit(success, &tail_str);
+        let (ev, offline) = if cancelled {
+            (ev, false)
+        } else {
+            classify_offline(ev, &log.agent, &tail_str)
+        };
         if !cancelled {
-            log_terminal(&log, &ev, Some((code, &tail_str)));
+            log_terminal(&log, &ev, Some((code, &tail_str)), offline);
         }
         let _ = tx.send(ev).await;
     }
 }
 
+/// An `Error` whose message or stderr says the CLI couldn't reach its
+/// servers becomes the plain offline message (stderr kept for the log);
+/// the flag says whether it did. Anything else passes through.
+fn classify_offline(ev: AgentEvent, agent: &str, stderr: &str) -> (AgentEvent, bool) {
+    match ev {
+        AgentEvent::Error {
+            message,
+            stderr_tail,
+        } if is_connection_failure(&message)
+            || is_connection_failure(&stderr_tail)
+            || is_connection_failure(stderr) =>
+        {
+            let ev = AgentEvent::Error {
+                message: offline_message(agent),
+                stderr_tail,
+            };
+            (ev, true)
+        }
+        ev => (ev, false),
+    }
+}
+
 /// Logs how a run ended: `info` when done, `agent.crashed` with the exit
-/// code and the end of stderr when it failed.
-fn log_terminal(log: &RunLog, ev: &AgentEvent, exit: Option<(Option<i32>, &str)>) {
+/// code and the end of stderr when it failed, `agent.offline` (info: the
+/// network, not the agent) when it couldn't reach its servers.
+fn log_terminal(log: &RunLog, ev: &AgentEvent, exit: Option<(Option<i32>, &str)>, offline: bool) {
     match ev {
         AgentEvent::Done { .. } => {
             tracing::info!(agent = %log.agent, duration_ms = log.ms(), "agent run done");
@@ -370,6 +454,18 @@ fn log_terminal(log: &RunLog, ev: &AgentEvent, exit: Option<(Option<i32>, &str)>
                 None => (None, stderr_tail.as_str()),
             };
             let tail = tail_of(tail, LOGGED_STDERR_TAIL);
+            if offline {
+                tracing::info!(
+                    error.code = AGENT_OFFLINE_CODE,
+                    agent = %log.agent,
+                    agent_version = %log.version,
+                    duration_ms = log.ms(),
+                    exit_code = code,
+                    stderr_tail = tail,
+                    "agent couldn't reach its servers"
+                );
+                return;
+            }
             tracing::warn!(
                 error.code = "agent.crashed",
                 agent = %log.agent,

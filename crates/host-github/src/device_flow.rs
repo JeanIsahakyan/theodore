@@ -24,7 +24,7 @@ impl GithubDeviceLogin {
     /// `base_url` must end with `/` (a wiremock server's `uri() + "/"` in tests).
     pub fn with_base_url(base_url: url::Url) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: theodore_host_http::host_reqwest_client(),
             base_url,
         }
     }

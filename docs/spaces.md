@@ -552,7 +552,16 @@ Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
 
 One run per space at a time; a send while running is refused (v2: queued).
 Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
-(default 3) queues the rest.
+(default 3) queues the rest. Git writes into the shared bare cache (fetch,
+`update-ref`, `worktree add/remove`) and into one space's worktree
+(checkpoint, reset) each take a per-path lock (plan §7 "One writer at a
+time"), so a turn's checkpoint never races a project refresh.
+
+**Offline.** A space of a host project needs the network only to Open PR /
+Push. Creating it, sending, undo, archive and Review use the clone already
+on this Mac when the remote can't be reached (plan §7 "Offline"); only a
+project never cloned answers "You're offline and this project hasn't been
+downloaded to this Mac yet".
 
 ## 9. Commands
 

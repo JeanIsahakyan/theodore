@@ -132,6 +132,62 @@ pub enum AgentEvent {
     },
 }
 
+/// The `error.code` of a run that failed because the agent's own servers
+/// couldn't be reached (docs/telemetry.md): an expected state, not a crash.
+pub const AGENT_OFFLINE_CODE: &str = "agent.offline";
+
+/// What a CLI says when it can't reach its API: Node's (Claude Code,
+/// Gemini) socket errors, Claude Code's own wording, and Codex's (Rust
+/// `reqwest`/`hyper`). Matched case-insensitively against the error
+/// message and stderr, never against the agent's own text.
+const CONNECTION_FAILURE_MARKERS: &[&str] = &[
+    "enotfound",
+    "getaddrinfo",
+    "econnrefused",
+    "econnreset",
+    "etimedout",
+    "enetunreach",
+    "ehostunreach",
+    "connection error",
+    "unable to connect to api",
+    "fetch failed",
+    "network error",
+    "network is unreachable",
+    "error sending request",
+    "stream disconnected",
+    "dns error",
+    "failed to lookup address",
+    "tcp connect error",
+    "connection refused",
+];
+
+/// Whether an agent CLI's error output says it couldn't reach its servers.
+pub fn is_connection_failure(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    CONNECTION_FAILURE_MARKERS.iter().any(|m| text.contains(m))
+}
+
+const OFFLINE_SUFFIX: &str = "'s servers — check your connection";
+
+/// The message a run ends with when the agent couldn't reach its servers.
+/// `agent` is the CLI name (`claude`, `codex`, `gemini`).
+pub fn offline_message(agent: &str) -> String {
+    let mut chars = agent.chars();
+    let label: String = match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => "the agent".into(),
+    };
+    format!("Couldn't reach {label}{OFFLINE_SUFFIX}")
+}
+
+/// The `offline_message` inside `text`, if there is one: how a caller that
+/// only gets the run's error text (grouping) tells offline from a crash.
+pub fn offline_message_in(text: &str) -> Option<&str> {
+    let start = text.find("Couldn't reach ")?;
+    let end = start + text[start..].find(OFFLINE_SUFFIX)? + OFFLINE_SUFFIX.len();
+    Some(&text[start..end])
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("{0:?} CLI not installed")]
@@ -180,5 +236,41 @@ pub trait AgentPort: Send + Sync {
     /// agent that can't list them (not installed, no listing) gives `[]`.
     async fn models(&self, _agent: AgentId) -> Vec<ModelInfo> {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_failures_are_told_from_other_errors() {
+        for offline in [
+            "Error: getaddrinfo ENOTFOUND api.anthropic.com",
+            "connect ECONNREFUSED 127.0.0.1:443",
+            "API Error: Connection error.",
+            "Unable to connect to API due to poor internet connection",
+            "TypeError: fetch failed",
+            "stream disconnected before completion: error sending request for url (https://api.openai.com/v1/responses)",
+            "dns error: failed to lookup address information: nodename nor servname provided",
+        ] {
+            assert!(is_connection_failure(offline), "{offline}");
+        }
+        for other in [
+            "claude exited with a non-zero status",
+            "unexpected status 401 Unauthorized",
+            "No conversation found with session ID: 0000",
+        ] {
+            assert!(!is_connection_failure(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn the_offline_message_names_the_agent_and_is_found_again() {
+        let m = offline_message("claude");
+        assert_eq!(m, "Couldn't reach Claude's servers — check your connection");
+        let wrapped = format!("agent run failed: {m}: getaddrinfo ENOTFOUND");
+        assert_eq!(offline_message_in(&wrapped), Some(m.as_str()));
+        assert_eq!(offline_message_in("agent run failed: boom"), None);
     }
 }

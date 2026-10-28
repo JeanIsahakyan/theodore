@@ -811,6 +811,44 @@ async fn a_network_failure_keeps_the_session() {
     assert!(core.account_status().await.unwrap().user.is_some());
 }
 
+#[test]
+fn refresh_retries_double_up_to_ten_minutes() {
+    use crate::usecases::account::refresh_retry_delay;
+    let secs: Vec<u64> = (1..=7).map(|n| refresh_retry_delay(n).as_secs()).collect();
+    assert_eq!(secs, vec![30, 60, 120, 240, 480, 600, 600]);
+    assert_eq!(refresh_retry_delay(u32::MAX).as_secs(), 600);
+}
+
+#[tokio::test]
+async fn failed_refreshes_in_a_row_are_counted_and_a_success_resets_them() {
+    use std::sync::atomic::Ordering;
+    let f = fixtures();
+    store_session(&f, &sample_account_session("rt_old", f.clock.now() - 1));
+    let (core, _recv) = configured(&f).await;
+    // What a captive portal's 4xx now maps to: not the provider's answer.
+    for _ in 0..3 {
+        f.account.push_refresh(Err(AccountError::Network(
+            "user_management/authenticate failed (403 Forbidden) without a provider error".into(),
+        )));
+    }
+    for _ in 0..3 {
+        assert!(core.account_access_token().await.is_err());
+    }
+    let failures = core.0.account.refresh_failures.load(Ordering::SeqCst);
+    assert!(failures >= 3, "{failures}");
+    assert!(
+        crate::usecases::account::refresh_retry_delay(failures)
+            > crate::usecases::account::refresh_retry_delay(1)
+    );
+    // Still signed in: only the provider's own error ends a session.
+    assert_eq!(stored(&f).unwrap().refresh_token, "rt_old");
+    assert!(core.account_status().await.unwrap().user.is_some());
+
+    f.account.push_refresh(Ok(fresh(&f, "rt_new")));
+    assert!(core.account_access_token().await.unwrap().is_some());
+    assert_eq!(core.0.account.refresh_failures.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn signed_out_has_no_access_token() {
     let f = fixtures();

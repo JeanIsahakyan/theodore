@@ -69,6 +69,9 @@ pub(crate) struct Inner {
     /// Last host health the UI was told about (`Ephemeral::HostStatus`):
     /// online, rate-limit reset, token accepted.
     pub host_health: std::sync::Mutex<(bool, Option<i64>, bool)>,
+    /// While the host is unreachable the pollers make no host calls; this
+    /// paces the one probe that notices it's back (`poller::probe_host`).
+    pub host_probe: std::sync::Mutex<crate::poller::HostProbe>,
     /// The device flow's `device_code` + poll interval between `login_start`
     /// and the login finishing (plan "login"): kept in memory only, never
     /// persisted — a restart just means starting over.
@@ -135,6 +138,7 @@ impl Core {
             ship_lock: tokio::sync::Mutex::new(()),
             grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
             host_health: std::sync::Mutex::new((true, None, true)),
+            host_probe: std::sync::Mutex::new(crate::poller::HostProbe::default()),
             login: Mutex::new(None),
             linear_cache: std::sync::Mutex::new(HashMap::new()),
             account: crate::usecases::account::AccountState::new(open),
@@ -271,12 +275,22 @@ impl Core {
             // A 404, a validation error, … says nothing about the connection.
             Err(_) => return,
         };
-        let changed = {
+        let (changed, went_offline) = {
             let mut health = self.0.host_health.lock().unwrap_or_else(|p| p.into_inner());
             let changed = *health != next;
+            let went_offline = health.0 && !next.0;
             *health = next;
-            changed
+            (changed, went_offline)
         };
+        {
+            let now = self.0.deps.clock.now();
+            let mut probe = self.0.host_probe.lock().unwrap_or_else(|p| p.into_inner());
+            if went_offline {
+                probe.arm(now);
+            } else if next.0 {
+                probe.reset();
+            }
+        }
         // Every failure is re-sent (a window that opened after the first one
         // must still learn of it); recovery only once.
         if changed || result.is_err() {
@@ -454,14 +468,13 @@ impl Core {
         pr_ref: &PrRef,
     ) -> Option<theodore_domain::PrDetail> {
         let etag = self.0.etags.read().await.get(pr).cloned();
-        let theodore_ports::Fetched::Modified { etag, value } = self
-            .0
-            .deps
-            .host
-            .get_pr(pr_ref, etag.as_deref())
-            .await
-            .ok()?
-        else {
+        let fetched = self.0.deps.host.get_pr(pr_ref, etag.as_deref()).await;
+        // A local branch review's "host" is this machine: it says nothing
+        // about the network.
+        if pr_ref.repo.host != theodore_domain::HostKind::Local {
+            self.note_host(&fetched);
+        }
+        let theodore_ports::Fetched::Modified { etag, value } = fetched.ok()? else {
             return None;
         };
         if let Some(etag) = etag {

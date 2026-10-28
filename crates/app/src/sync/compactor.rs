@@ -95,11 +95,11 @@ mod tests {
         fn outbox_done(&self, id: u64) -> StoreResult<()> {
             self.inner.outbox_done(id)
         }
-        fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()> {
-            self.inner.outbox_retry(id, not_before)
+        fn outbox_retry(&self, id: u64, not_before: i64, error: &str) -> StoreResult<()> {
+            self.inner.outbox_retry(id, not_before, error)
         }
-        fn outbox_fail(&self, id: u64) -> StoreResult<()> {
-            self.inner.outbox_fail(id)
+        fn outbox_fail(&self, id: u64, error: &str) -> StoreResult<()> {
+            self.inner.outbox_fail(id, error)
         }
         fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>> {
             self.inner.kv_get(key)

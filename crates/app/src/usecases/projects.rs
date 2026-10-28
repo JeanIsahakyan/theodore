@@ -141,7 +141,16 @@ impl Core {
             .project_row(id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("project {id}")))?;
-        let repo_path = self.ensure_project_cache(&project).await?;
+        let cache = self
+            .project_cache(&project.repo, project.path.as_deref())
+            .await?;
+        if !cache.fetched {
+            // Offline: nothing new to read, and the host's PR queries would
+            // only fail. `last_fetched_at` stays put, so the header's
+            // "fetched Nm ago" stays true and the poller retries it.
+            return Ok(());
+        }
+        let repo_path = cache.path;
 
         let mut patch = serde_json::Map::new();
         patch.insert(
@@ -422,24 +431,49 @@ impl Core {
         Ok(())
     }
 
+    /// Clones (or mirrors) a new project in the background. Offline with no
+    /// clone yet is a wait, not a failure: the project stays `cloning` with
+    /// the reason in `error`, and the clone is retried with backoff until
+    /// it lands, the project is removed, or Theodore quits.
     fn spawn_project_clone(&self, id: String, repo: RepoRef, path: Option<String>) {
         let core = self.clone();
         tokio::spawn(async move {
-            let result: AppResult<String> = async {
-                let repo_path = match &path {
-                    Some(path) => {
-                        core.0
-                            .deps
-                            .git
-                            .ensure_local_mirror(Path::new(path), &repo)
-                            .await?
+            let mut wait = OFFLINE_CLONE_RETRY_FIRST;
+            let mut noted_offline = false;
+            let result = loop {
+                let result: AppResult<String> = async {
+                    let cache = core.project_cache(&repo, path.as_deref()).await?;
+                    let default_branch = core.0.deps.git.default_branch(&cache.path).await?;
+                    Ok(default_branch.unwrap_or_else(|| "main".into()))
+                }
+                .await;
+                match result {
+                    Err(e) if e.is_offline() => {
+                        tracing::info!(project = %id, error.code = e.code(), "clone waits for the network");
+                        if !noted_offline {
+                            noted_offline = true;
+                            let _ = core
+                                .apply(vec![NewAction {
+                                    model: models::PROJECT.into(),
+                                    model_id: id.clone(),
+                                    action: SyncActionCode::C,
+                                    data: Some(serde_json::json!({ "error": e.to_string() })),
+                                }])
+                                .await;
+                        }
+                        tokio::select! {
+                            _ = core.0.shutdown.cancelled() => return,
+                            _ = tokio::time::sleep(wait) => {}
+                        }
+                        wait = (wait * 2).min(OFFLINE_CLONE_RETRY_MAX);
+                        match core.project_row(&id).await {
+                            Ok(Some(p)) if p.status == ProjectStatus::Cloning => continue,
+                            _ => return,
+                        }
                     }
-                    None => core.0.deps.git.ensure_repo(&repo).await?,
-                };
-                let default_branch = core.0.deps.git.default_branch(&repo_path).await?;
-                Ok(default_branch.unwrap_or_else(|| "main".into()))
-            }
-            .await;
+                    other => break other,
+                }
+            };
 
             match result {
                 Ok(default_branch) => {
@@ -498,20 +532,75 @@ impl Core {
             .map_err(|e| theodore_ports::GitError::Parse(e.to_string()))
     }
 
+    /// The project's cache, refreshed when the remote can be reached.
     pub(crate) async fn ensure_project_cache(
         &self,
         project: &Project,
     ) -> AppResult<std::path::PathBuf> {
-        Ok(match &project.path {
-            Some(path) => {
-                self.0
-                    .deps
-                    .git
-                    .ensure_local_mirror(Path::new(path), &project.repo)
-                    .await?
-            }
-            None => self.0.deps.git.ensure_repo(&project.repo).await?,
-        })
+        Ok(self
+            .project_cache(&project.repo, project.path.as_deref())
+            .await?
+            .path)
+    }
+
+    /// A host project's clone works offline (plan "offline"): the fetch is
+    /// best-effort once a clone is on disk, and only a project never
+    /// cloned needs the network.
+    ///
+    /// ```text
+    /// local folder ──▶ mirror fetch (no network) ─────────────▶ fetched
+    /// host repo ─┬─ clone on disk, host known offline ────────▶ stale copy
+    ///            └─▶ fetch ─┬─ ok ─────────────────────────────▶ fetched
+    ///                       └─ network ─┬─ clone on disk ─────▶ stale copy
+    ///                                   └─ none ─▶ AppError::Offline
+    /// ```
+    pub(crate) async fn project_cache(
+        &self,
+        repo: &RepoRef,
+        folder: Option<&str>,
+    ) -> AppResult<ProjectCache> {
+        let git = &self.0.deps.git;
+        if let Some(folder) = folder {
+            let path = git.ensure_local_mirror(Path::new(folder), repo).await?;
+            return Ok(ProjectCache {
+                path,
+                fetched: true,
+            });
+        }
+        let cached = git.cached_repo(repo).await?;
+        // The host already failed to answer: a fetch would only wait out a
+        // network timeout before falling back to the same copy.
+        if let Some(path) = &cached
+            && !self.host_online()
+        {
+            tracing::info!(repo = %repo.slug(), "You're offline — using the copy on this Mac");
+            return Ok(ProjectCache {
+                path: path.clone(),
+                fetched: false,
+            });
+        }
+        match git.ensure_repo(repo).await {
+            Ok(path) => Ok(ProjectCache {
+                path,
+                fetched: true,
+            }),
+            Err(theodore_ports::GitError::Network(stderr)) => match cached {
+                Some(path) => {
+                    tracing::info!(
+                        repo = %repo.slug(),
+                        error.code = "git.network",
+                        stderr = %stderr.trim(),
+                        "You're offline — using the copy on this Mac"
+                    );
+                    Ok(ProjectCache {
+                        path,
+                        fetched: false,
+                    })
+                }
+                None => Err(AppError::Offline),
+            },
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub(crate) async fn project_row(&self, id: &str) -> AppResult<Option<Project>> {
@@ -572,6 +661,18 @@ fn project_id_for_repo(repo: &RepoRef) -> String {
 }
 
 const FOURTEEN_DAYS_MS: i64 = 14 * 24 * 60 * 60 * 1000;
+
+/// A clone that couldn't start offline is retried after this, doubling up
+/// to `OFFLINE_CLONE_RETRY_MAX`.
+const OFFLINE_CLONE_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(15);
+const OFFLINE_CLONE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Where a project's cache is, and whether it was just refreshed from its
+/// remote (`false`: offline, the copy already on disk as is).
+pub(crate) struct ProjectCache {
+    pub path: std::path::PathBuf,
+    pub fetched: bool,
+}
 
 /// `summaries` sorted newest-first (as a `sort:updated-desc` search query
 /// returns them): keeps a prefix no older than `max_age_ms` and no longer
