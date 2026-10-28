@@ -165,6 +165,25 @@ change first, sends it through the outbox, and reconciles:
 
 Offline / 401 / rate limit → outbox pauses; reads come from SQLite.
 
+Offline, the app stays quiet: one probe watches for the host, nothing else
+calls it.
+
+```
+online ──a read fails on the network──▶ offline banner
+                                          │ PR / inbox / space / project polls: skipped
+                                          │   (local branch reviews still poll)
+                                          │ probe (changed_since) at +30 s
+                                          ├─ fails ─▶ again at +60 s, +120 s, … ≤ 5 min
+                                          └─ answers ─▶ online ─▶ skipped polls run now
+```
+
+| Offline thing | Behaviour |
+| --- | --- |
+| Account refresh | retried after 30 s, doubling up to 10 min; one warning, then debug |
+| Account 4xx | signs out only on the provider's own JSON error (`invalid_grant`); a captive portal's or proxy's 4xx counts as a network failure |
+| Codex model list | "not installed" is debug and stands for 10 min; a real failure warns once per process |
+| Agent run | never blocked by host health (the agent's API may still answer). A connection error in the CLI's error or stderr ends it as `agent.offline` (info): "Couldn't reach Claude's servers — check your connection". A run gone quiet after one (stuck retrying) is stopped at the stall mark, not the 30-min cap |
+
 ---
 
 ## 4. Domain model
@@ -603,9 +622,10 @@ sign in ─▶ open: the app comes back where it was; held work starts
   `focus_window`. Every other command is gated, new ones included (deny by
   default; the list and its test live in `apps/desktop/src/gate.rs`).
 - **Offline.** A stored session keeps the app usable with no network: a
-  refresh that fails on the network, a timeout or a 5xx keeps the session,
-  and the refresher retries every ~30 s. Only a definitive rejection (the
-  refresh token revoked or no longer valid) signs out. The gate then closes
+  refresh that fails on the network, a timeout, a 5xx or a 4xx without the
+  provider's JSON error keeps the session, and the refresher retries after
+  30 s, doubling up to 10 min. Only a definitive rejection (the provider's
+  error: the refresh token revoked or no longer valid) signs out. The gate then closes
   and says "Your session ended — sign in again".
 - **Signing out** (Settings → Account) closes the gate too. Only the
   session goes: the store, projects, drafts and worktrees stay for the next
