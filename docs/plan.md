@@ -740,6 +740,42 @@ production.
   to disk.
 - Worktree GC: drop worktrees of closed PRs after N days; locked while an agent
   runs in it.
+- **One writer at a time.** A process-wide async lock per bare repo (fetch,
+  clone, `update-ref`, `worktree add/remove/prune`) and per worktree
+  (checkout, reset, clean), keyed by canonical path; a worktree's lock is
+  always taken before its repo's. Without it, the poller's push handler and
+  the UI's `get_revision` fetching into one bare repo lose with `cannot lock
+  ref … is at NEW but expected OLD`, and two checkouts into one worktree
+  with `index.lock: File exists`.
+
+  ```text
+  poller  fetch ─┐                 ┌─▶ fetch ─▶ ok
+  UI      fetch ─┴─▶ lock(repo) ───┴─▶ waits ─▶ fetch ─▶ ok (or reuses one that started after it asked)
+  ```
+
+- **One fetch per open.** `fetch_pr` right after `ensure_repo` fetches only
+  the PR ref; on its own (the poller after a push) it fetches the branches and
+  the PR ref in one `git fetch`, so a moved base is there for the diff too.
+- **The PR worktree is the head.** Agents, grouping, skills and the repo
+  config read it as the PR's current head; an older revision (the review's
+  "since last visit" baseline) is diffed in the bare repo and never checks
+  out there.
+- **Offline.** A fetch git fails with no network ("Could not resolve host",
+  "Failed to connect", "Connection timed out", "Operation timed out",
+  "Network is unreachable", "unable to access" without an HTTP status) is
+  `GitError::Network` (`git.network`, UI code `offline`), never raw stderr.
+  A host project works from the clone already on this Mac:
+
+  | Clone on disk | Network | Result |
+  | --- | --- | --- |
+  | yes | yes | fetched, then used |
+  | yes | no (or the host already known offline: no fetch tried) | used as is, logged "You're offline — using the copy on this Mac"; a refresh keeps `last_fetched_at` |
+  | no | no | `app.offline`: "You're offline and this project hasn't been downloaded to this Mac yet" |
+
+  So spaces (create, send, undo, archive, review), branches and the
+  project refresh keep working offline. A project added offline stays
+  `cloning` with that message in `error` and retries the clone with backoff
+  (15 s doubling to 5 min) — never the red `error` state.
 
 ---
 

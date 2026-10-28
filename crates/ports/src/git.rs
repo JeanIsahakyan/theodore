@@ -20,6 +20,11 @@ pub enum GitError {
     },
     #[error("auth failed for {0}")]
     Auth(String),
+    /// The remote couldn't be reached at all (no network, DNS, a timeout):
+    /// an expected state on a laptop, not a failure. Holds git's stderr
+    /// for the log; the message is meant for the user as is.
+    #[error("You're offline — can't reach the git remote")]
+    Network(String),
     #[error("parse: {0}")]
     Parse(String),
     #[error("io: {0}")]
@@ -42,6 +47,7 @@ impl GitError {
             GitError::NotInstalled => "git.not_installed",
             GitError::Command { .. } => "git.command_failed",
             GitError::Auth(_) => "git.auth",
+            GitError::Network(_) => "git.network",
             GitError::Parse(_) => "git.parse",
             GitError::Io(_) => "git.io",
             GitError::Unsupported(_) => "git.unsupported",

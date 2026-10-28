@@ -12,6 +12,7 @@ use theodore_domain::{PrRef, RepoRef, Sha};
 use theodore_ports::{GitResult, Worktree};
 
 use crate::GitCli;
+use crate::locks;
 use crate::meta::{self, WorktreeMeta};
 use crate::process::GitProc;
 
@@ -86,6 +87,12 @@ impl GitCli {
         let wt_path = self.wt_path(pr)?;
         let dirname = Self::wt_dirname(&pr.repo, pr.number)?;
         let head_str = head.as_str().to_string();
+        // One checkout at a time per worktree (`locks`): two at once fight
+        // over its `index.lock`, and whichever ran last would win anyway.
+        if let Some(parent) = wt_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let _wt = locks::lock(&wt_path).await;
 
         if wt_path.join(".git").exists() {
             // Theodore's own throwaway worktree: moving it to a new head with
@@ -118,9 +125,9 @@ impl GitCli {
             .run()
             .await?;
         } else {
-            if let Some(parent) = wt_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
+            // `worktree add` writes the bare repo's `worktrees/` admin dir,
+            // which a concurrent `worktree prune` would sweep.
+            let _repo = locks::lock(&repo_dir).await;
             let path_str = wt_path
                 .to_str()
                 .ok_or_else(|| {
@@ -250,6 +257,8 @@ impl GitCli {
         if !wt_path.exists() {
             return;
         }
+        let _wt = locks::lock(&wt_path).await;
+        let _repo = locks::lock(repo_dir).await;
         if let Some(path_str) = wt_path.to_str() {
             let _ = GitProc {
                 cwd: repo_dir,
@@ -268,6 +277,7 @@ impl GitCli {
 
     async fn prune_all_repos(&self, askpass: &Path) {
         for repo_dir in self.all_repo_dirs() {
+            let _repo = locks::lock(&repo_dir).await;
             let _ = GitProc {
                 cwd: &repo_dir,
                 askpass,
