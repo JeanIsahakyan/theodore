@@ -237,6 +237,13 @@ The commit is `THEODORE_GIT_SHA` when set, else `git rev-parse HEAD`, else
 the version (the nightly script sets `-nightly.N`, `build.yml` the version
 with its suffix).
 
+`THEODORE_BUILD_ENV=production cargo tauri build` by hand makes an app
+stamped `production` that is not a release: the account client id, the
+GitHub OAuth client id and the telemetry keys are compiled in only by
+`build.yml` (from repository variables and secrets), so it has no account
+sign-in, no "Sign in with GitHub" and no diagnostics. Never distribute it or use it in place of a release;
+install the release DMG.
+
 ### A local staging build
 
 The CI staging build is the usual one (above). For a local one: the

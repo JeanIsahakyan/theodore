@@ -21,6 +21,20 @@ already use regroup the diff into the steps the change actually takes. You read
 it group by group, ask the agent about any line, run review skills, and turn
 what you agree with into comments. The agents help; you decide what goes out.
 
+## Install
+
+1. Download the latest `.dmg` from [GitHub Releases](https://github.com/JeanIsahakyan/theodore/releases/latest)
+   (macOS, Apple Silicon).
+2. Open it and drag Theodore to Applications.
+3. First launch: builds are not notarized yet, so macOS blocks it once. System Settings → Privacy &
+   Security → "Open Anyway", or `xattr -dr com.apple.quarantine /Applications/Theodore.app`.
+
+From then on it updates itself.
+
+Building from source is for developing Theodore, not for using it. A local build has no sign-in and
+no diagnostics: the release's client id and keys are added only by the release pipeline, so the app
+behaves differently from the release. Don't use one as your daily app.
+
 ## Why Theodore
 
 Agents now write more code than people can read. Review is the bottleneck.
@@ -319,6 +333,9 @@ Release build:
 ```sh
 cargo tauri build
 ```
+
+This bundles the app for testing a change, not for use: it lacks the release's client id and keys
+(see [Install](#install)).
 
 Auth:
 - GitHub tries, in order: a keychain token, `gh auth token`, `GITHUB_TOKEN`, then the "Sign in with
