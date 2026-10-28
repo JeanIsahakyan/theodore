@@ -101,16 +101,7 @@ name=$(jq -r --argjson c "$config" '$c.productName // .productName' apps/desktop
 bundle="$root/target/release/bundle"
 app="$bundle/macos/$name.app"
 dmg="$bundle/dmg/$(printf %s "$name" | tr " " _)_${version}_${sha}_aarch64.dmg"
-mkdir -p "$bundle/dmg"
 
-# hdiutil directly: tauri's DMG script styles the window through Finder
-# AppleScript, which needs an automation permission this machine may lack.
-stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
-cp -R "$app" "$stage/"
-ln -s /Applications "$stage/Applications"
-rm -f "$dmg"
-hdiutil create -volname "$name $version" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
-hdiutil verify "$dmg" >/dev/null
-
-echo "✓ $dmg"
+# The release DMG's window (background, arrow, big icons), built the same
+# way as build.yml's: dmgbuild, no Finder (docs/releasing.md "DMG window").
+sh scripts/build-dmg.sh "$app" "$dmg" "$name $version"
