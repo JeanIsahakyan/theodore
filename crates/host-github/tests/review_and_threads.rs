@@ -149,3 +149,66 @@ async fn resolve_and_unresolve_hit_the_right_mutation() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn a_refused_review_fails_with_githubs_message_not_a_null_payload() {
+    let s = support::servers().await;
+
+    // GitHub's answer to approving one's own PR: a null payload *and* an
+    // error, in one 200.
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("addPullRequestReview"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "addPullRequestReview": null },
+            "errors": [{
+                "type": "UNPROCESSABLE",
+                "path": ["addPullRequestReview"],
+                "locations": [{ "line": 3, "column": 3 }],
+                "message": "Can not approve your own pull request"
+            }]
+        })))
+        .mount(&s.graphql)
+        .await;
+
+    let submission = ReviewSubmission {
+        event: ReviewEvent::Approve,
+        body: String::new(),
+        comments: vec![],
+        commit: Sha::new("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+    };
+    let err = s
+        .adapter
+        .submit_review(&pr(), &submission)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, theodore_ports::HostError::Validation(m) if m == "Can not approve your own pull request"),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_forbidden_mutation_is_forbidden_not_a_rejected_token() {
+    let s = support::servers().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("addPullRequestReviewThreadReply"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "addPullRequestReviewThreadReply": null },
+            "errors": [{ "type": "FORBIDDEN", "message": "Resource not accessible by integration" }]
+        })))
+        .mount(&s.graphql)
+        .await;
+
+    let err = s
+        .adapter
+        .reply(&pr(), &ThreadId::new("thread_1"), "hi")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, theodore_ports::HostError::Forbidden(m) if m == "Resource not accessible by integration"),
+        "got {err:?}"
+    );
+}

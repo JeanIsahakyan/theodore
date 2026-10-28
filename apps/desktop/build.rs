@@ -65,7 +65,32 @@ fn stamp() {
             (sha, dirty)
         }
     };
-    let commit = build_stamp::commit(sha.as_deref(), dirty, env);
+    // A production/staging/nightly build without the keys CI bakes in has
+    // no sign-in and no diagnostics: fail, unless asked to build it anyway,
+    // and then mark its commit `-incomplete` (About, problem reports).
+    for var in build_stamp::RELEASE_KEYS
+        .iter()
+        .chain(&["THEODORE_ALLOW_INCOMPLETE_BUILD"])
+    {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
+    let missing = build_stamp::missing_keys(env, |k| std::env::var(k).ok());
+    let incomplete = !missing.is_empty();
+    if incomplete {
+        let message = build_stamp::missing_keys_error(env, &missing);
+        let allowed = std::env::var("THEODORE_ALLOW_INCOMPLETE_BUILD")
+            .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"));
+        if !allowed {
+            panic!("\n\n{message}\n");
+        }
+        for line in message.lines() {
+            println!("cargo:warning={line}");
+        }
+    }
+    let mut commit = build_stamp::commit(sha.as_deref(), dirty, env);
+    if incomplete {
+        commit.push_str("-incomplete");
+    }
     let built_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())

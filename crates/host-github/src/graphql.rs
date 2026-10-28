@@ -24,6 +24,9 @@ struct GqlError {
     message: String,
     #[serde(rename = "type")]
     kind: Option<String>,
+    /// Where in the response the error belongs, e.g. `["addPullRequestReview"]`.
+    #[serde(default)]
+    path: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +39,18 @@ struct GqlResponse<T> {
 /// Executes one GraphQL request. Transport-level failures (401, 403, 429,
 /// 5xx, network) are already mapped to `HostError` by `HttpClient`; this
 /// only classifies body-level `errors`.
+///
+/// ```text
+/// mutation + errors of a known type ─▶ Err(Validation|Forbidden|NotFound|RateLimited)
+///                                       with GitHub's message, data or not
+/// errors, no data                   ─▶ Err(classified as for a query)
+/// query + errors + data             ─▶ data (partial results), logged
+/// ```
+///
+/// A refused mutation comes back as a null payload *and* an error (GitHub
+/// answers "Can not approve your own pull request" as
+/// `{data: {addPullRequestReview: null}, errors: [{type: UNPROCESSABLE}]}`):
+/// reading on from `data` would lose GitHub's message.
 pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
     http: &HttpClient,
     query: &str,
@@ -45,14 +60,105 @@ pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
     let resp: theodore_host_http::HttpResponse<GqlResponse<T>> = http.post_json("", &body).await?;
     let GqlResponse { data, errors } = resp.value;
 
-    if let Some(errors) = &errors {
+    if let Some(errors) = errors.as_deref().filter(|e| !e.is_empty()) {
+        let op = operation_label(query);
+        if is_mutation(query)
+            && let Some(err) = classify_mutation_errors(errors, http.now())
+        {
+            tracing::info!(
+                op = %op,
+                paths = %error_paths(errors),
+                error.code = err.code(),
+                error = %error_message(errors),
+                "graphql mutation refused"
+            );
+            return Err(err);
+        }
         if data.is_none() {
             return Err(classify_graphql_errors(errors, http.now()));
         }
-        tracing::warn!(?errors, "graphql returned partial errors alongside data");
+        tracing::warn!(
+            op = %op,
+            paths = %error_paths(errors),
+            ?errors,
+            "graphql returned partial errors alongside data"
+        );
     }
 
     data.ok_or_else(|| HostError::Protocol("graphql response had neither data nor errors".into()))
+}
+
+/// Whether `query` is a mutation document (every mutation string here
+/// starts with the `mutation` keyword).
+fn is_mutation(query: &str) -> bool {
+    query.trim_start().starts_with("mutation")
+}
+
+/// `mutation addPullRequestReview` / `query search`: the operation kind and
+/// its first top-level field, for logs (the documents here are anonymous).
+fn operation_label(query: &str) -> String {
+    let kind = if is_mutation(query) {
+        "mutation"
+    } else {
+        "query"
+    };
+    let field = query
+        .split_once('{')
+        .and_then(|(_, rest)| {
+            rest.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .find(|s| !s.is_empty())
+        })
+        .unwrap_or("?");
+    format!("{kind} {field}")
+}
+
+/// `addPullRequestReview, repository.pullRequest` — the errors' paths.
+fn error_paths(errors: &[GqlError]) -> String {
+    errors
+        .iter()
+        .filter_map(|e| e.path.as_ref())
+        .map(|p| {
+            p.iter()
+                .map(|seg| match seg {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn error_message(errors: &[GqlError]) -> String {
+    errors
+        .iter()
+        .map(|e| e.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// A mutation's body-level errors as a permanent `HostError` carrying
+/// GitHub's own message, or `None` for an error type this doesn't know
+/// (the caller then goes on as for a query). Unlike a query's, a
+/// mutation's `FORBIDDEN` is about this one write, not the token.
+fn classify_mutation_errors(errors: &[GqlError], now_ms: i64) -> Option<HostError> {
+    let message = error_message(errors);
+    let kind = errors
+        .iter()
+        .find_map(|e| e.kind.as_deref())
+        .unwrap_or_default();
+    Some(match kind {
+        "UNPROCESSABLE" | "UNPROCESSABLE_ENTITY" | "BAD_REQUEST" | "VALIDATION" | "INVALID" => {
+            HostError::Validation(message)
+        }
+        "FORBIDDEN" | "INSUFFICIENT_SCOPES" => HostError::Forbidden(message),
+        "NOT_FOUND" => HostError::NotFound(message),
+        "RATE_LIMITED" => HostError::RateLimited {
+            reset_at: now_ms + 60_000,
+        },
+        _ => return None,
+    })
 }
 
 /// `now_ms` backs `RATE_LIMITED`'s `reset_at`: GraphQL's body-level error
@@ -60,11 +166,7 @@ pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
 /// to `now + 60s`, same as `host_http::rate::reset_at_from_headers` does
 /// when a transport-level rate limit arrives with no reset header either.
 fn classify_graphql_errors(errors: &[GqlError], now_ms: i64) -> HostError {
-    let message = errors
-        .iter()
-        .map(|e| e.message.as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
+    let message = error_message(errors);
     let kind = errors
         .first()
         .and_then(|e| e.kind.as_deref())
@@ -76,6 +178,56 @@ fn classify_graphql_errors(errors: &[GqlError], now_ms: i64) -> HostError {
             reset_at: now_ms + 60_000,
         },
         _ => HostError::Validation(message),
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+
+    fn errors(v: serde_json::Value) -> Vec<GqlError> {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn operation_label_names_the_kind_and_first_field() {
+        assert_eq!(
+            operation_label(ADD_PULL_REQUEST_REVIEW),
+            "mutation addPullRequestReview"
+        );
+        assert_eq!(operation_label(VIEWER_QUERY), "query viewer");
+        assert!(is_mutation(ADD_PULL_REQUEST_REVIEW));
+        assert!(!is_mutation(VIEWER_QUERY));
+    }
+
+    #[test]
+    fn mutation_errors_map_by_type_and_keep_githubs_message() {
+        let e = errors(json!([{
+            "type": "UNPROCESSABLE",
+            "message": "Can not approve your own pull request",
+            "path": ["addPullRequestReview"]
+        }]));
+        assert!(matches!(
+            classify_mutation_errors(&e, 0),
+            Some(HostError::Validation(m)) if m == "Can not approve your own pull request"
+        ));
+        assert_eq!(error_paths(&e), "addPullRequestReview");
+
+        let e = errors(json!([{ "type": "FORBIDDEN", "message": "no" }]));
+        assert!(matches!(
+            classify_mutation_errors(&e, 0),
+            Some(HostError::Forbidden(m)) if m == "no"
+        ));
+        let e = errors(json!([{ "type": "NOT_FOUND", "message": "gone" }]));
+        assert!(matches!(
+            classify_mutation_errors(&e, 0),
+            Some(HostError::NotFound(_))
+        ));
+        // Unknown or missing type: not classified, the caller goes on.
+        let e = errors(json!([{ "type": "SOMETHING_NEW", "message": "?" }]));
+        assert!(classify_mutation_errors(&e, 0).is_none());
+        let e = errors(json!([{ "message": "untyped" }]));
+        assert!(classify_mutation_errors(&e, 0).is_none());
     }
 }
 

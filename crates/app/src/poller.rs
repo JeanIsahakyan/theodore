@@ -34,13 +34,141 @@ const PROJECT_REFRESH_AFTER_MS: i64 = 10 * 60_000;
 /// that all went stale together are spread out, not fetched in a burst.
 const PROJECT_STAGGER_MS: i64 = 30_000;
 
+/// The first probe after the host stops answering, doubling per failed
+/// probe up to `PROBE_MAX_MS`.
+pub(crate) const PROBE_FIRST_MS: i64 = 30_000;
+pub(crate) const PROBE_MAX_MS: i64 = 5 * 60_000;
+
 pub(crate) async fn run(inner: Arc<Inner>) {
     tokio::join!(
         poll_open_prs(inner.clone()),
         poll_inbox(inner.clone()),
         poll_projects(inner.clone()),
-        poll_spaces(inner)
+        poll_spaces(inner.clone()),
+        probe_host(inner)
     );
+}
+
+/// When the next "is the host back?" probe is due. Armed by `note_host`
+/// when health goes offline, cleared when it comes back.
+///
+/// ```text
+/// online ──read fails (Network)──▶ offline: pollers skip host calls
+///                                      │ probe at +30 s
+///                                      ├─ fails ─▶ next at +60 s, +120 s, … ≤ 5 min
+///                                      └─ answers ─▶ note_host flips online ─▶ polling resumes
+/// ```
+#[derive(Debug, Default)]
+pub(crate) struct HostProbe {
+    due: Option<i64>,
+    delay_ms: i64,
+}
+
+impl HostProbe {
+    /// Health just went offline: first probe in `PROBE_FIRST_MS`.
+    pub(crate) fn arm(&mut self, now: i64) {
+        self.delay_ms = PROBE_FIRST_MS;
+        self.due = Some(now + self.delay_ms);
+    }
+
+    /// Health is back: nothing to probe.
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Whether a probe is due at `now` (taking it).
+    fn take_due(&mut self, now: i64) -> bool {
+        match self.due {
+            Some(due) if now >= due => {
+                self.due = None;
+                true
+            }
+            // Offline with nothing armed (it started offline): arm now.
+            None if self.delay_ms == 0 => {
+                self.arm(now);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// The probe failed: try again after twice as long, up to the cap.
+    pub(crate) fn failed(&mut self, now: i64) {
+        self.delay_ms = (self.delay_ms * 2).clamp(PROBE_FIRST_MS, PROBE_MAX_MS);
+        self.due = Some(now + self.delay_ms);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delay_ms(&self) -> i64 {
+        self.delay_ms
+    }
+}
+
+/// While the host is unreachable, the only host call the pollers make: one
+/// cheap read on the `HostProbe` schedule. Its outcome goes through
+/// `note_host`, so an answer flips health back online and the pollers pick
+/// up where they left off.
+async fn probe_host(inner: Arc<Inner>) {
+    let core = Core(inner.clone());
+    loop {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
+            return;
+        }
+        if !core.host_online() {
+            let now = inner.deps.clock.now();
+            let due = inner
+                .host_probe
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take_due(now);
+            if due {
+                probe_once(&core).await;
+                if !core.host_online() {
+                    let now = inner.deps.clock.now();
+                    let mut probe = inner.host_probe.lock().unwrap_or_else(|p| p.into_inner());
+                    probe.failed(now);
+                    tracing::debug!(next_in_ms = probe.delay_ms, "host still unreachable");
+                }
+            }
+        }
+        tokio::select! {
+            _ = inner.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(REAL_TICK_MS)) => {},
+        }
+    }
+}
+
+/// One probe: the inbox's `changed_since` (what polling would ask anyway;
+/// the cursor isn't advanced, so the inbox poller still sees the changes),
+/// else — a host without it — a conditional fetch of an open PR, its etag
+/// left as is so the PR poller still gets the change.
+async fn probe_once(core: &Core) {
+    let store = core.0.deps.store.clone();
+    let cursor: Option<String> = tokio::task::spawn_blocking(move || store.kv_get("inbox:cursor"))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten()
+        .and_then(|v| v.as_str().map(str::to_string));
+    let result = core.0.deps.host.changed_since(cursor.as_deref()).await;
+    if !matches!(result, Err(theodore_ports::HostError::Unsupported(_))) {
+        core.note_host(&result);
+        return;
+    }
+    let prs: Vec<PrId> = { core.0.current_head.read().await.keys().cloned().collect() };
+    for pr in prs {
+        let Some(pr_ref) = core.pr_ref(&pr).await else {
+            continue;
+        };
+        if pr_ref.repo.host == theodore_domain::HostKind::Local {
+            continue;
+        }
+        let etag = core.0.etags.read().await.get(&pr).cloned();
+        let fetched = core.0.deps.host.get_pr(&pr_ref, etag.as_deref()).await;
+        core.note_host(&fetched);
+        return;
+    }
 }
 
 /// Shipped spaces (docs/spaces.md §1): notices a space's PR merging and
@@ -102,18 +230,24 @@ async fn poll_projects(inner: Arc<Inner>) {
     }
 }
 
+/// Every `OPEN_PR_POLL_MS`, each PR open this session. While the host is
+/// offline only local branch reviews are polled (`probe_host` watches for
+/// it coming back); the skipped ones are polled as soon as it does.
 async fn poll_open_prs(inner: Arc<Inner>) {
     let core = Core(inner.clone());
     let mut next_due = inner.deps.clock.now();
+    let mut skipped = false;
     loop {
         // Held while signed out where sign-in is required (no host calls).
         if !core.account_hold().await {
             return;
         }
-        if inner.deps.clock.now() >= next_due {
+        let online = core.host_online();
+        if inner.deps.clock.now() >= next_due || (online && skipped) {
+            skipped = false;
             let prs: Vec<PrId> = { inner.current_head.read().await.keys().cloned().collect() };
             for pr in prs {
-                poll_one_pr(&core, &pr).await;
+                skipped |= !poll_one_pr(&core, &pr, online).await;
             }
             next_due = inner.deps.clock.now() + OPEN_PR_POLL_MS;
         }
@@ -124,15 +258,24 @@ async fn poll_open_prs(inner: Arc<Inner>) {
     }
 }
 
-async fn poll_one_pr(core: &Core, pr: &PrId) {
+/// Polls `pr`; `false` when it was skipped because the host is offline.
+async fn poll_one_pr(core: &Core, pr: &PrId, online: bool) -> bool {
     let Some(pr_ref) = core.pr_ref(pr).await else {
-        return;
+        return true;
     };
+    if !online && pr_ref.repo.host != theodore_domain::HostKind::Local {
+        return false;
+    }
+    poll_pr_ref(core, pr, &pr_ref).await;
+    true
+}
+
+async fn poll_pr_ref(core: &Core, pr: &PrId, pr_ref: &PrRef) {
     // `refresh_pr` applies `pr`/`pr_detail` whenever the host reports a
     // change, head moved or not — comments, threads, checks and labels can
     // all change between pushes, and must not be dropped just because this
     // tick isn't a push.
-    let Some(value) = core.refresh_pr(pr, &pr_ref).await else {
+    let Some(value) = core.refresh_pr(pr, pr_ref).await else {
         return;
     };
     let new_head = value.summary.head_sha.clone();
@@ -140,7 +283,7 @@ async fn poll_one_pr(core: &Core, pr: &PrId) {
     if old_head.as_ref() == Some(&new_head) {
         return;
     }
-    handle_push(core, pr, &pr_ref, old_head, new_head, value).await;
+    handle_push(core, pr, pr_ref, old_head, new_head, value).await;
 }
 
 async fn handle_push(
@@ -562,7 +705,8 @@ async fn poll_inbox(inner: Arc<Inner>) {
         if !core.account_hold().await {
             return;
         }
-        if inner.deps.clock.now() >= next_due {
+        // Offline, `probe_host` asks instead; once it's back, this is due.
+        if inner.deps.clock.now() >= next_due && core.host_online() {
             let result = inner.deps.host.changed_since(cursor.as_deref()).await;
             core.note_host(&result);
             match result {

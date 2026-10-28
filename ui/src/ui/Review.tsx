@@ -55,6 +55,7 @@ import {
 import { hunksInScope, moveHunkFocus } from './review/hunks';
 import { SidePanel } from './SidePanel';
 import { readProgress } from './review/progress';
+import { RevisionError } from './review/RevisionError';
 import { StatusChip } from './review/StatusChip';
 import { latinKey, useViewKeys } from './keys';
 
@@ -141,6 +142,13 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const pending = checks.filter((c) => c.status === 'pending').length;
   const passed = checks.filter((c) => c.status === 'pass').length;
   const revKey = summary ? `${pr}@${summary.head_sha}` : null;
+  // Bumped by Retry: `invalidate` isn't observable, so this re-renders the
+  // page to call `get()` again.
+  const [, setRetries] = useState(0);
+  const retryRevision = useCallback(() => {
+    if (revKey) store.revisions.invalidate(revKey);
+    setRetries((n) => n + 1);
+  }, [store, revKey]);
   const revision = revKey
     ? store.revisions.get(revKey, () =>
         api.getRevision({ pr, head: summary!.head_sha }),
@@ -219,7 +227,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
 
   const group =
     mode.mode === 'groups' && mode.group
-      ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
+      ? allGroups.find((g) => g.id === mode.group)
       : null;
   const groupHunkIds = group ? new Set(group.hunks) : null;
 
@@ -708,9 +716,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           <DiffSkeleton />
         </div>
       ) : revision.status === 'error' ? (
-        <div className="flex flex-1 items-center justify-center text-sm text-danger">
-          {revision.error}
-        </div>
+        <RevisionError error={revision.error} onRetry={retryRevision} />
       ) : (
         (() => {
           const showGroupsColumn = layout.groups === 'column';

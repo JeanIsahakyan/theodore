@@ -323,6 +323,13 @@ impl LineParser for CodexParser {
             stderr_tail: stderr_tail.to_string(),
         }
     }
+
+    /// Top-level `error` events: Codex's reconnect attempts.
+    fn is_transport_notice(&self, line: &str) -> bool {
+        line.len() < 16 * 1024
+            && serde_json::from_str::<Value>(line)
+                .is_ok_and(|v| v.get("type").and_then(Value::as_str) == Some("error"))
+    }
 }
 
 #[cfg(test)]
@@ -342,6 +349,16 @@ mod tests {
         );
         assert_eq!(line(r#"{"type":"thread.started"}"#), vec![]);
         assert_eq!(line(r#"{"type":"turn.started"}"#), vec![]);
+    }
+
+    #[test]
+    fn reconnect_errors_are_transport_notices() {
+        let p = CodexParser::new();
+        assert!(p.is_transport_notice(
+            r#"{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: error sending request)"}"#
+        ));
+        assert!(!p.is_transport_notice(r#"{"type":"turn.started"}"#));
+        assert!(!p.is_transport_notice("not json"));
     }
 
     #[test]

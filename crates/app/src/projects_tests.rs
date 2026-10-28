@@ -13,8 +13,10 @@ use theodore_ports::{Clock, CommitLog, HostError, NewAction, Store, SyncActionCo
 use crate::testkit::{self, Fixtures, fixtures};
 use crate::{AppError, Core, Receivers};
 
+/// Up to 10 s: a loaded CI runner (clippy beside the tests) took over 2 s
+/// for the poller's first offline round.
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    for _ in 0..2000 {
         if cond() {
             return;
         }

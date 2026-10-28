@@ -51,6 +51,9 @@ impl GitCli {
         let askpass = self.ensure_askpass()?;
         let path = self.space_path(id)?;
         let refname = space_ref(id);
+        std::fs::create_dir_all(self.spaces_root())?;
+        // Worktree before repo, as everywhere (`locks`).
+        let _wt = crate::locks::lock(&path).await;
 
         if path.join(".git").exists() {
             let head = GitProc {
@@ -68,6 +71,7 @@ impl GitCli {
             });
         }
 
+        let _repo = crate::locks::lock(repo).await;
         // Resume from the last checkpoint when the space already has one
         // (its worktree was archived or deleted by hand), else start at base.
         let existing = GitProc {
@@ -85,7 +89,6 @@ impl GitCli {
             base.as_str().to_string()
         };
 
-        std::fs::create_dir_all(self.spaces_root())?;
         let path_str = path
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 space path".into()))?
@@ -144,6 +147,7 @@ impl GitCli {
     ) -> GitResult<Sha> {
         validate_space_id(id)?;
         let askpass = self.ensure_askpass()?;
+        let _wt = crate::locks::lock(worktree).await;
         let run = |args: &'static [&'static str]| GitProc {
             cwd: worktree,
             askpass: &askpass,
@@ -211,6 +215,7 @@ impl GitCli {
         validate_space_id(id)?;
         let askpass = self.ensure_askpass()?;
         let refname = space_ref(id);
+        let _wt = crate::locks::lock(worktree).await;
         let steps: [&[&str]; 3] = [
             &["reset", "-q", "--hard", to.as_str()],
             // Untracked files the turn left behind; ignored ones (deps,
@@ -238,6 +243,8 @@ impl GitCli {
         if !path.exists() {
             return Ok(());
         }
+        let _wt = crate::locks::lock(&path).await;
+        let _repo = crate::locks::lock(repo).await;
         if let Some(path_str) = path.to_str() {
             let _ = GitProc {
                 cwd: repo,

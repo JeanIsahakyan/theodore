@@ -424,7 +424,10 @@ impl Core {
             if done_at.is_none()
                 && let Some(pr) = &space.pr
             {
+                // Offline, only the host's answer would tell; the poller's
+                // probe notices it's back, and the next sweep asks then.
                 if let Some(pr_ref) = self.space_pr_ref(&space, pr).await
+                    && (self.host_online() || pr_ref.repo.host == HostKind::Local)
                     && self.pr_state(pr).await != Some(PrState::Merged)
                 {
                     self.refresh_pr(pr, &pr_ref).await;

@@ -1,6 +1,7 @@
 //! Updater (plan §11.1): `tauri-plugin-updater` + `tauri-plugin-process`.
 //! Checks on launch and every 6 h, downloads and installs in the background,
-//! emits `update`. The actual restart is gated by `CoreApi::is_idle` and only
+//! emits `update` (`downloaded: false` as the download starts, `true` once
+//! installed). The actual restart is gated by `CoreApi::is_idle` and only
 //! happens when the UI calls the `install_update` command.
 
 use std::sync::{Arc, Mutex};
@@ -57,6 +58,7 @@ fn endpoint_for_channel(channel: &str) -> Url {
 
 /// Checks for an update, and if one exists downloads and installs it (does
 /// not restart). Updates `UpdateState` and emits `update` on success.
+/// Never downloads twice.
 pub async fn check_and_install<R: Runtime>(
     app: &AppHandle<R>,
     core: &Arc<dyn CoreApi>,
@@ -99,7 +101,22 @@ pub async fn check<R: Runtime>(
         tracing::info!(channel, "updater: up to date");
         return Ok(None);
     };
+    // Already on disk from an earlier check in this process: nothing to
+    // download again, the restart is still what's left.
+    if let Some(ready) = app
+        .state::<UpdateState>()
+        .get()
+        .filter(|u| u.downloaded && u.version == update.version)
+    {
+        return Ok(Some(ready));
+    }
     tracing::info!(channel, version = %update.version, "updater: downloading");
+    // Says "downloading" before the download, which can take a while.
+    events::emitter(app.clone()).update(UpdateInfo {
+        version: update.version.clone(),
+        notes: update.body.clone().unwrap_or_default(),
+        downloaded: false,
+    });
     update
         .download_and_install(|_, _| {}, || {})
         .await

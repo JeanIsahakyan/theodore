@@ -334,7 +334,7 @@ impl Store for SqliteStore {
         let tx = conn.transaction().map_err(de)?;
         let found = tx
             .query_row(
-                "SELECT id, op, payload, attempts, not_before FROM outbox
+                "SELECT id, op, payload, attempts, not_before, last_error FROM outbox
                  WHERE status = 'pending' AND not_before <= ?1 ORDER BY id ASC LIMIT 1",
                 params![now],
                 |row| {
@@ -344,12 +344,13 @@ impl Store for SqliteStore {
                         row.get::<_, String>(2)?,
                         row.get::<_, i64>(3)?,
                         row.get::<_, i64>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
             .optional()
             .map_err(de)?;
-        let Some((id, op, payload, attempts, not_before)) = found else {
+        let Some((id, op, payload, attempts, not_before, last_error)) = found else {
             return Ok(None);
         };
         tx.execute(
@@ -366,6 +367,7 @@ impl Store for SqliteStore {
             attempts: attempts as u32,
             status: OutboxStatus::InFlight,
             not_before,
+            last_error,
         }))
     }
 
@@ -379,21 +381,21 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()> {
+    fn outbox_retry(&self, id: u64, not_before: i64, error: &str) -> StoreResult<()> {
         let conn = self.lock()?;
         conn.execute(
-            "UPDATE outbox SET attempts = attempts + 1, status = 'pending', not_before = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id as i64, not_before, now_ms()],
+            "UPDATE outbox SET attempts = attempts + 1, status = 'pending', not_before = ?2, last_error = ?4, updated_at = ?3 WHERE id = ?1",
+            params![id as i64, not_before, now_ms(), error],
         )
         .map_err(de)?;
         Ok(())
     }
 
-    fn outbox_fail(&self, id: u64) -> StoreResult<()> {
+    fn outbox_fail(&self, id: u64, error: &str) -> StoreResult<()> {
         let conn = self.lock()?;
         conn.execute(
-            "UPDATE outbox SET status = 'failed', updated_at = ?2 WHERE id = ?1",
-            params![id as i64, now_ms()],
+            "UPDATE outbox SET status = 'failed', last_error = ?3, updated_at = ?2 WHERE id = ?1",
+            params![id as i64, now_ms(), error],
         )
         .map_err(de)?;
         Ok(())

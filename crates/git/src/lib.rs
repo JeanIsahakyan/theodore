@@ -19,6 +19,7 @@ mod generated;
 mod grep;
 mod history;
 mod local;
+mod locks;
 mod meta;
 mod parse;
 mod process;
@@ -28,8 +29,11 @@ mod ship;
 mod spaces;
 mod worktree;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use theodore_domain::{PrRef, RepoRef, Revision, Sha};
@@ -44,12 +48,20 @@ use process::GitProc;
 /// points every repo at a local `file://` bare repository).
 pub type RemoteUrls = Arc<dyn Fn(&RepoRef) -> Option<String> + Send + Sync>;
 
+/// How long a refresh of a repo's branches counts as current for
+/// `fetch_pr`, which then fetches the PR ref alone.
+const BRANCHES_FRESH_FOR: Duration = Duration::from_secs(10);
+
 /// GitPort over the system `git` binary. Bare clones under `<root>/repos`,
 /// one worktree per PR under `<root>/wt`.
 pub struct GitCli {
     root: PathBuf,
     creds: Arc<dyn CredentialSource>,
     remote_urls: Option<RemoteUrls>,
+    /// Bare repo → when its last successful full refresh started.
+    refreshed: Mutex<HashMap<PathBuf, Instant>>,
+    /// Clones and `refs/heads/*` fetches run so far (tests).
+    full_fetches: AtomicU64,
 }
 
 impl GitCli {
@@ -58,6 +70,8 @@ impl GitCli {
             root,
             creds,
             remote_urls: None,
+            refreshed: Mutex::new(HashMap::new()),
+            full_fetches: AtomicU64::new(0),
         }
     }
 
@@ -132,23 +146,64 @@ impl GitCli {
         Ok(self.wt_root().join(Self::wt_dirname(&pr.repo, pr.number)?))
     }
 
-    /// Bare clone under `repos/...`, or an in-place ref refresh if present.
-    pub(crate) async fn ensure_repo_op(&self, repo: &RepoRef) -> GitResult<PathBuf> {
-        let askpass = self.ensure_askpass()?;
+    /// `dir`'s parent made, so its lock key is stable from before the clone
+    /// that creates `dir` (`locks::key_of`).
+    fn repo_dir_for_lock(&self, repo: &RepoRef) -> GitResult<PathBuf> {
         let dir = self.repo_dir(repo)?;
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(dir)
+    }
+
+    /// When the last full refresh of `dir` that succeeded started.
+    fn refreshed_at(&self, dir: &Path) -> Option<Instant> {
+        self.refreshed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(dir)
+            .copied()
+    }
+
+    /// Bare clone under `repos/...`, or an in-place ref refresh if present.
+    /// Serialized per repo (`locks`); a caller that waited while a refresh
+    /// which started after its own call ran gets that one instead of
+    /// fetching again.
+    pub(crate) async fn ensure_repo_op(&self, repo: &RepoRef) -> GitResult<PathBuf> {
+        let called_at = Instant::now();
+        let dir = self.repo_dir_for_lock(repo)?;
+        let _repo = locks::lock(&dir).await;
+        if self.refreshed_at(&dir).is_some_and(|at| at >= called_at) && dir.join("HEAD").exists() {
+            return Ok(dir);
+        }
+        self.refresh_locked(repo, &dir, None).await?;
+        Ok(dir)
+    }
+
+    /// Under `dir`'s lock: clones it if missing, else one `fetch` of
+    /// `refs/heads/*` (plus `extra`, a PR head refspec, in the same run).
+    async fn refresh_locked(
+        &self,
+        repo: &RepoRef,
+        dir: &Path,
+        extra: Option<&str>,
+    ) -> GitResult<()> {
+        let askpass = self.ensure_askpass()?;
         let token = self.token_for(repo);
         let remote = self.remote_override(repo)?;
 
         if dir.join("HEAD").exists() {
-            let args = [
+            let started = Instant::now();
+            let mut args = vec![
                 "fetch",
                 remote.as_deref().unwrap_or("origin"),
                 "+refs/heads/*:refs/heads/*",
-                "--prune",
-                "--tags",
             ];
+            args.extend(extra);
+            args.extend(["--prune", "--tags"]);
+            self.full_fetches.fetch_add(1, Ordering::Relaxed);
             GitProc {
-                cwd: &dir,
+                cwd: dir,
                 askpass: &askpass,
                 args: &args,
                 token: token.as_deref(),
@@ -156,57 +211,94 @@ impl GitCli {
             }
             .run()
             .await?;
-            return Ok(dir);
+            self.refreshed
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(dir.to_path_buf(), started);
+            return Ok(());
         }
 
+        let started = Instant::now();
+        self.clone_locked(repo, dir, &askpass, token.as_deref(), remote)
+            .await?;
+        self.refreshed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(dir.to_path_buf(), started);
+        Ok(())
+    }
+
+    async fn clone_locked(
+        &self,
+        repo: &RepoRef,
+        dir: &Path,
+        askpass: &Path,
+        token: Option<&str>,
+        remote: Option<String>,
+    ) -> GitResult<()> {
         let url = match remote {
             Some(url) => url,
             None => auth::clone_url(repo.host, &repo.owner, &repo.name).ok_or_else(|| {
                 GitError::Parse(format!("{:?} repos have no remote to clone", repo.host))
             })?,
         };
-        if let Some(parent) = dir.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let dir_str = dir
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 repo path".to_string()))?;
         let args = ["clone", "--bare", url.as_str(), dir_str];
+        self.full_fetches.fetch_add(1, Ordering::Relaxed);
         GitProc {
             cwd: &self.root,
-            askpass: &askpass,
+            askpass,
             args: &args,
-            token: token.as_deref(),
+            token,
             stdin: None,
         }
         .run()
         .await?;
-        Ok(dir)
+        Ok(())
     }
 
-    /// Fetches the PR/MR head into `refs/theodore/pr/<n>` and returns its sha.
+    /// Fetches the PR/MR head into `refs/theodore/pr/<n>` and returns its
+    /// sha. One `git fetch` either way: just the PR ref when the branches
+    /// were refreshed a moment ago (opening a PR runs `ensure_repo` right
+    /// before this), else the branches and the PR ref together — a moved
+    /// base must be here for the diff too.
     pub(crate) async fn fetch_pr_op(&self, pr: &PrRef) -> GitResult<Sha> {
-        let dir = self.ensure_repo_op(&pr.repo).await?;
-        let askpass = self.ensure_askpass()?;
-        let token = self.token_for(&pr.repo);
+        let dir = self.repo_dir_for_lock(&pr.repo)?;
         let remote_ref = auth::remote_pr_ref(pr.repo.host, pr.number);
         let local_ref = auth::local_pr_ref(pr.number);
         let refspec = format!("+{remote_ref}:{local_ref}");
-        let remote = self.remote_override(&pr.repo)?;
-        let fetch_args = [
-            "fetch",
-            remote.as_deref().unwrap_or("origin"),
-            refspec.as_str(),
-        ];
-        GitProc {
-            cwd: &dir,
-            askpass: &askpass,
-            args: &fetch_args,
-            token: token.as_deref(),
-            stdin: None,
+        let askpass = self.ensure_askpass()?;
+
+        let _repo = locks::lock(&dir).await;
+        if !dir.join("HEAD").exists() {
+            // The clone brings the branches, then the PR ref alone below.
+            self.refresh_locked(&pr.repo, &dir, None).await?;
         }
-        .run()
-        .await?;
+        let fresh = self
+            .refreshed_at(&dir)
+            .is_some_and(|at| at.elapsed() < BRANCHES_FRESH_FOR);
+        if fresh {
+            let token = self.token_for(&pr.repo);
+            let remote = self.remote_override(&pr.repo)?;
+            let fetch_args = [
+                "fetch",
+                remote.as_deref().unwrap_or("origin"),
+                refspec.as_str(),
+            ];
+            GitProc {
+                cwd: &dir,
+                askpass: &askpass,
+                args: &fetch_args,
+                token: token.as_deref(),
+                stdin: None,
+            }
+            .run()
+            .await?;
+        } else {
+            self.refresh_locked(&pr.repo, &dir, Some(&refspec)).await?;
+        }
         let rev_args = ["rev-parse", local_ref.as_str()];
         let out = GitProc {
             cwd: &dir,
@@ -479,5 +571,149 @@ pub fn parse_patch(
         base: base.clone(),
         head: head.clone(),
         files,
+    }
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use super::*;
+    use std::process::Command;
+    use theodore_domain::HostKind;
+
+    struct NoAuth;
+    impl CredentialSource for NoAuth {
+        fn token_for(&self, _repo: &RepoRef) -> Option<String> {
+            None
+        }
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git installed");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn repo() -> RepoRef {
+        RepoRef {
+            host: HostKind::Github,
+            owner: "acme".into(),
+            name: "widget".into(),
+        }
+    }
+
+    fn pr() -> PrRef {
+        PrRef {
+            repo: repo(),
+            number: 1,
+            host_id: None,
+        }
+    }
+
+    /// `work` (a checkout) pushed to `remote.git`, which has a PR ref.
+    fn remote(tmp: &Path) -> (PathBuf, PathBuf) {
+        let work = tmp.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "-q", "-b", "main"]);
+        git(&work, &["config", "user.email", "a@b.com"]);
+        git(&work, &["config", "user.name", "test"]);
+        std::fs::write(work.join("a.txt"), "one\n").unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-q", "-m", "base"]);
+        let bare = tmp.join("remote.git");
+        git(
+            tmp,
+            &["clone", "-q", "--bare", "work", bare.to_str().unwrap()],
+        );
+        let head = git(&work, &["rev-parse", "HEAD"]);
+        git(&bare, &["update-ref", "refs/pull/1/head", &head]);
+        (work, bare)
+    }
+
+    fn cli(root: PathBuf, bare: &Path) -> GitCli {
+        let url = format!("file://{}", bare.display());
+        GitCli::new(root, Arc::new(NoAuth))
+            .with_remote_urls(Arc::new(move |_r: &RepoRef| Some(url.clone())))
+    }
+
+    fn full_fetches(cli: &GitCli) -> u64 {
+        cli.full_fetches.load(Ordering::Relaxed)
+    }
+
+    #[tokio::test]
+    async fn opening_a_pr_refreshes_the_branches_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_work, bare) = remote(tmp.path());
+        let cli = cli(tmp.path().join("root"), &bare);
+        cli.ensure_repo_op(&repo()).await.expect("clone");
+        let before = full_fetches(&cli);
+
+        // What `open_ref` runs: ensure_repo, then fetch_pr.
+        cli.ensure_repo_op(&repo()).await.expect("refresh");
+        let sha = cli.fetch_pr_op(&pr()).await.expect("fetch pr");
+
+        assert_eq!(full_fetches(&cli) - before, 1);
+        assert_eq!(sha.as_str(), git(&bare, &["rev-parse", "refs/pull/1/head"]));
+    }
+
+    #[tokio::test]
+    async fn fetch_pr_on_its_own_still_brings_a_moved_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, bare) = remote(tmp.path());
+        let root = tmp.path().join("root");
+        cli(root.clone(), &bare)
+            .ensure_repo_op(&repo())
+            .await
+            .expect("clone");
+        std::fs::write(work.join("a.txt"), "two\n").unwrap();
+        git(&work, &["commit", "-qam", "base moved"]);
+        git(&work, &["push", "-q", bare.to_str().unwrap(), "main"]);
+        let moved = git(&work, &["rev-parse", "HEAD"]);
+
+        // A later session (no refresh on record): the poller's push
+        // handler calls fetch_pr alone.
+        let later = cli(root, &bare);
+        let dir = later.repo_dir(&repo()).unwrap();
+        later.fetch_pr_op(&pr()).await.expect("fetch pr");
+
+        assert_eq!(full_fetches(&later), 1, "branches and PR ref in one fetch");
+        assert_eq!(git(&dir, &["rev-parse", "refs/heads/main"]), moved);
+    }
+
+    #[tokio::test]
+    async fn callers_waiting_on_a_refresh_share_the_next_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_work, bare) = remote(tmp.path());
+        let cli = Arc::new(cli(tmp.path().join("root"), &bare));
+        cli.ensure_repo_op(&repo()).await.expect("clone");
+        let before = full_fetches(&cli);
+
+        let calls: Vec<_> = (0..5)
+            .map(|_| {
+                let cli = cli.clone();
+                tokio::spawn(async move { cli.ensure_repo_op(&repo()).await.map(|_| ()) })
+            })
+            .collect();
+        for c in calls {
+            c.await.unwrap().expect("refresh");
+        }
+
+        let ran = full_fetches(&cli) - before;
+        assert!((1..=2).contains(&ran), "{ran} fetches for 5 callers");
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_remote_is_a_network_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Nothing listens on port 9 (discard) here: connection refused.
+        let cli = GitCli::new(tmp.path().join("root"), Arc::new(NoAuth)).with_remote_urls(
+            Arc::new(|_r: &RepoRef| Some("http://127.0.0.1:9/acme/widget.git".into())),
+        );
+        let err = cli.ensure_repo_op(&repo()).await.unwrap_err();
+        assert!(matches!(err, GitError::Network(_)), "{err:?}");
+        assert_eq!(err.code(), "git.network");
     }
 }

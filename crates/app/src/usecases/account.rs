@@ -60,7 +60,18 @@ pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:47823/callback";
 /// Refresh this long before the access token's `exp`.
 pub(crate) const REFRESH_SKEW_MS: i64 = 60_000;
 const MIN_REFRESH_WAIT_MS: i64 = 5_000;
+/// A refresh that failed without ending the session (offline, a 5xx) is
+/// retried after this, doubling with every failure in a row up to
+/// `RETRY_MAX`.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
+const RETRY_MAX: Duration = Duration::from_secs(10 * 60);
+
+/// How long the refresher waits after `failures` failed refreshes in a row.
+pub(crate) fn refresh_retry_delay(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(16);
+    RETRY_AFTER.saturating_mul(1 << doublings).min(RETRY_MAX)
+}
+
 /// A browser sign-in nobody finishes stops listening after this.
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// A held background loop re-checks the gate this often besides being woken
@@ -174,6 +185,9 @@ pub(crate) struct AccountState {
     /// The provider ended the last session (a rejected refresh); cleared by
     /// the next sign-in or sign-out.
     session_ended: std::sync::atomic::AtomicBool,
+    /// Refreshes failed in a row without ending the session: paces the
+    /// refresher's retries, and only the first one is a warning.
+    pub(crate) refresh_failures: std::sync::atomic::AtomicU32,
 }
 
 impl AccountState {
@@ -854,6 +868,7 @@ impl Core {
             .await
         {
             Ok(next) => {
+                self.0.account.refresh_failures.store(0, Ordering::SeqCst);
                 if self.0.account.generation.load(Ordering::SeqCst) != generation {
                     return Ok(self.account_session());
                 }
@@ -868,6 +883,7 @@ impl Core {
                 Ok(Some(next))
             }
             Err(e @ (AccountError::Rejected(_) | AccountError::InvalidToken(_))) => {
+                self.0.account.refresh_failures.store(0, Ordering::SeqCst);
                 tracing::warn!(
                     error.code = "account.refresh_rejected",
                     error = %e,
@@ -883,7 +899,24 @@ impl Core {
                 Err(e.into())
             }
             Err(e) => {
-                tracing::warn!(error.code = e.code(), error = %e, "account refresh failed");
+                // Offline, this repeats until the network is back: one
+                // warning when it starts, then quiet.
+                let failures = self
+                    .0
+                    .account
+                    .refresh_failures
+                    .fetch_add(1, Ordering::SeqCst)
+                    + 1;
+                if failures == 1 {
+                    tracing::warn!(error.code = e.code(), error = %e, "account refresh failed");
+                } else {
+                    tracing::debug!(
+                        error.code = e.code(),
+                        error = %e,
+                        failures,
+                        "account refresh still failing"
+                    );
+                }
                 Err(e.into())
             }
         }
@@ -921,11 +954,14 @@ impl Core {
                     Ok(None) => return,
                     Err(AppError::Account(AccountError::Rejected(_)))
                     | Err(AppError::Account(AccountError::InvalidToken(_))) => return,
-                    Err(_) => tokio::select! {
-                        _ = token.cancelled() => return,
-                        _ = core.0.shutdown.cancelled() => return,
-                        _ = tokio::time::sleep(RETRY_AFTER) => {}
-                    },
+                    Err(_) => {
+                        let failures = core.0.account.refresh_failures.load(Ordering::SeqCst);
+                        tokio::select! {
+                            _ = token.cancelled() => return,
+                            _ = core.0.shutdown.cancelled() => return,
+                            _ = tokio::time::sleep(refresh_retry_delay(failures)) => {}
+                        }
+                    }
                 }
             }
         });

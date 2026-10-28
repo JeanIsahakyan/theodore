@@ -23,6 +23,10 @@ impl GitCli {
         let source_str = source
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 source path".to_string()))?;
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let _repo = crate::locks::lock(&dir).await;
 
         if dir.join("HEAD").exists() {
             let args = ["fetch", source_str, "+refs/heads/*:refs/heads/*"];
@@ -38,9 +42,6 @@ impl GitCli {
             return Ok(dir);
         }
 
-        if let Some(parent) = dir.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let dir_str = dir
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 repo path".to_string()))?;
@@ -80,6 +81,7 @@ impl GitCli {
                 crate::meta::remove(&self.meta_root(), &dirname);
             }
         }
+        let _repo = crate::locks::lock(&repo_dir).await;
         if repo_dir.exists() {
             std::fs::remove_dir_all(&repo_dir)?;
         }

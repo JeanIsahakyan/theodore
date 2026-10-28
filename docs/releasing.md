@@ -153,6 +153,15 @@ packages the DMG and the updater artifacts and writes `latest.json`. Then:
 There is no tag-push release any more: don't push `v*` tags by hand (a
 hand-pushed tag only makes the next merge skip that version).
 
+Merges: a feature PR goes into `staging` as a squash (one commit per
+change); `staging → main` is a merge commit, so `main` keeps each squashed
+change. The repository rules enforce both.
+
+Release notes: `release.yml` publishes with GitHub's generated notes (a
+list of PR titles). Replace them with user-facing notes once the release is
+up: `gh release edit v0.3.0 --notes-file notes.md` — what got faster, what
+got fixed, what to know.
+
 - **Never re-tag a published release.** Ship a new patch instead.
 
 ### A hotfix
@@ -236,6 +245,17 @@ The commit is `THEODORE_GIT_SHA` when set, else `git rev-parse HEAD`, else
 `THEODORE_BUILD_ENV` value fails the build. `THEODORE_VERSION` overrides
 the version (the nightly script sets `-nightly.N`, `build.yml` the version
 with its suffix).
+
+The account client id, the GitHub OAuth client id and the telemetry keys
+are compiled in only by `build.yml` (from repository variables and
+secrets). So `build.rs` refuses a `production` or `staging` build without
+`THEODORE_WORKOS_CLIENT_ID`, `THEODORE_OTLP_ENDPOINT`,
+`THEODORE_OTLP_HEADERS` and `THEODORE_POSTHOG_KEY` (a nightly needs the
+client id only), and says what to do instead. `THEODORE_ALLOW_INCOMPLETE_BUILD=1`
+builds it anyway with an `-incomplete` commit, which About and problem
+reports show. Such an app has no account sign-in, no "Sign in with GitHub"
+and no diagnostics: never distribute it or use it in place of a release;
+install the release DMG.
 
 ### A local staging build
 
@@ -350,6 +370,28 @@ on the Dock  icons/src/icon.svg ──▶ scripts/icon-variant.sh <env> <dir>
   generated at build time into `target/icons/<env>`, never committed.
 - `cargo tauri dev` keeps the blue Dock icon (only the in-app logo is
   grey-green).
+
+## DMG window
+
+`tauri.conf.json` `bundle.macOS.dmg` lays the DMG window out as an
+installer: 660 x 400, the app on the left, Applications on the right, a
+background with an arrow and "Drag Theodore to Applications". Staging
+and nightly overlays don't touch `bundle`, so they get it too.
+
+```
+icons/src/dmg-background.svg ──▶ scripts/dmg-background.sh
+                                   ──▶ icons/dmg-background.png, @2x.png
+                                   ──▶ icons/dmg-background.tiff (both, used)
+```
+
+Known gaps, so the window may still open plain:
+
+- tauri-bundler applies the layout through Finder AppleScript, once. On
+  macOS 26 Finder keeps only the window size and icon positions from that
+  one pass; icon size and background stick only on a second pass.
+- Under `CI=true` (GitHub Actions) tauri-bundler skips that AppleScript
+  entirely, unless `TAURI_BUNDLER_DMG_IGNORE_CI=true`.
+- `scripts/nightly-build.sh` builds its DMG with plain `hdiutil`: no layout.
 
 ## First launch on a clean Mac (ad-hoc signed builds)
 

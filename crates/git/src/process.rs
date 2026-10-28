@@ -87,6 +87,9 @@ impl GitProc<'_> {
             if looks_like_auth_failure(&stderr) {
                 return Err(GitError::Auth(stderr));
             }
+            if looks_like_network_failure(&stderr) {
+                return Err(GitError::Network(stderr));
+            }
             return Err(GitError::Command {
                 args: self.args.join(" "),
                 code,
@@ -140,6 +143,28 @@ fn looks_like_auth_failure(stderr: &str) -> bool {
         || s.contains("could not read password")
         || s.contains("terminal prompts disabled")
         || s.contains("http basic: access denied")
+}
+
+/// The remote couldn't be reached at all: no network, DNS, a timeout.
+/// `unable to access '<url>': …` is also what git prints for an HTTP
+/// error status (403, 404), which says the network works — so it only
+/// counts without one.
+pub(crate) fn looks_like_network_failure(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    const MARKERS: [&str; 10] = [
+        "could not resolve host",
+        "could not resolve hostname",
+        "temporary failure in name resolution",
+        "connection timed out",
+        "operation timed out",
+        "network is unreachable",
+        "no route to host",
+        "failed to connect",
+        "connection refused",
+        "connection reset",
+    ];
+    MARKERS.iter().any(|m| s.contains(m))
+        || (s.contains("unable to access") && !s.contains("returned error"))
 }
 
 #[cfg(test)]
@@ -201,6 +226,37 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dest);
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::looks_like_network_failure;
+
+    #[test]
+    fn unreachable_remotes_read_as_offline() {
+        for stderr in [
+            "fatal: unable to access 'https://github.com/a/b.git/': Could not resolve host: github.com",
+            "ssh: Could not resolve hostname github.com: nodename nor servname provided",
+            "fatal: unable to access 'https://github.com/a/b.git/': Failed to connect to github.com port 443 after 3 ms: Couldn't connect to server",
+            "fatal: unable to access 'https://x/': Connection timed out after 30000 milliseconds",
+            "ssh: connect to host github.com port 22: Operation timed out",
+            "ssh: connect to host github.com port 22: Network is unreachable",
+        ] {
+            assert!(looks_like_network_failure(stderr), "{stderr}");
+        }
+    }
+
+    #[test]
+    fn a_reachable_remote_that_says_no_is_not_offline() {
+        for stderr in [
+            "fatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403",
+            "fatal: couldn't find remote ref refs/pull/9/head",
+            "error: cannot lock ref 'refs/heads/main': is at abc but expected def",
+            "fatal: 'origin' does not appear to be a git repository",
+        ] {
+            assert!(!looks_like_network_failure(stderr), "{stderr}");
+        }
     }
 }
 

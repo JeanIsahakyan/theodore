@@ -227,12 +227,17 @@ export const GroupsPane = observer(function GroupsPane({
                 ? g.hunks.filter((h) => since?.has(h))
                 : g.hunks;
               const read = hs.filter((h) => readSet.has(h)).length;
+              // `groupsForRevision` already dropped hunks this revision
+              // lacks; the lookup stays checked so a stale id never reaches
+              // `base()`/`short()` as `undefined`.
+              const fileOf = (h: HunkId) => {
+                const f = hunkFile.get(h);
+                return f === undefined ? [] : [f];
+              };
               const outFiles = new Set(
-                hs
-                  .filter((h) => g.outliers.includes(h))
-                  .map((h) => hunkFile.get(h)!),
+                hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
               );
-              const files = [...new Set(hs.map((h) => hunkFile.get(h)!))].sort(
+              const files = [...new Set(hs.flatMap(fileOf))].sort(
                 (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
               );
               const add = hs.reduce(
