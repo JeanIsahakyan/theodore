@@ -163,7 +163,9 @@ change first, sends it through the outbox, and reconciles:
 - user-visible failure → compensating action + toast;
 - conflict on poll (someone else changed it) → GitHub wins, UI gets the delta.
 
-Offline / 401 / rate limit → outbox pauses; reads come from SQLite.
+Offline / 401 / rate limit → outbox pauses; reads come from SQLite. A host
+refusal (validation, forbidden, not found, a malformed answer) fails the
+write at once with the host's message (§6.7).
 
 ---
 
@@ -265,13 +267,20 @@ app ──▶ host::HostAdapter (traits, host-neutral models, capabilities)
             └─ host-bitbucket  REST 2.0                                 — M7.1
             │
             └─ host::http   one client for GitHub and GitLab:
-                 auth injection · ETag cache · rate limiter · retry/backoff ·
+                 auth injection · conditional GET (caller's ETag) · rate limiter ·
+                 retry/backoff · timeouts (connect 10 s, request 60 s) ·
                  token redaction in logs
 ```
 
 `host-bitbucket` owns a second, smaller HTTP client rather than sharing
 `host::http`: that one only ever sends `Authorization: Bearer`, and
-Bitbucket's app-password flow needs Basic auth instead (§6.8).
+Bitbucket's app-password flow needs Basic auth instead (§6.8). It uses the
+same timeouts.
+
+The caller owns the ETag: `get_conditional(path, None)` is a plain GET and
+always answers with a body (the poller passes the ETag it stored per PR;
+opening a PR passes none). If an open still gets "not modified", it drops
+the PR's ETag and fetches once more before giving up.
 
 `reqwest` + `cynic`, no `octocrab`: we need full control over ETags, limits and
 retries, and would use a fraction of it.
@@ -366,8 +375,26 @@ get it. For those, fall back to GraphQL `search` on a slow interval.
   `<!-- theodore:<draft-id> -->` (invisible when rendered). After a timeout the
   outbox looks for it before retrying, so nothing is posted twice.
 - One error type for all adapters:
-  `Auth · RateLimited{reset_at} · NotFound · Conflict · Validation · Network · Unsupported`.
+  `Auth · Forbidden · RateLimited{reset_at} · NotFound · Conflict · Validation · Network · Unsupported · Protocol`.
   The outbox decides from it: wait, retry, or roll back with a compensating action.
+
+  | Error | Outbox |
+  | --- | --- |
+  | `Network` (incl. 5xx after host-http's own retries, timeouts) | retry: 2 s doubling to 5 min for 12 attempts (~30 min), then every 3 h |
+  | `RateLimited` | retry at `reset_at`, rate-limit banner |
+  | ↳ both | give up after 20 attempts (~a day) |
+  | `Auth` (token rejected) | pause 30 s, token banner, until a reconnect |
+  | `Validation` · `Forbidden` · `NotFound` · `Conflict` · `Protocol` · `Unsupported` | fail now |
+
+  Failing = compensating action, one error toast with the host's message,
+  item `failed` with `last_error`. A failed item is not pending, so it no
+  longer holds off "Restart to update".
+- GraphQL: a mutation answered with `errors` fails with GitHub's message
+  even when `data` came back too (`{addPullRequestReview: null}` +
+  `UNPROCESSABLE` "Can not approve your own pull request"):
+  `UNPROCESSABLE` → `Validation`, `FORBIDDEN` → `Forbidden`, `NOT_FOUND` →
+  `NotFound`. A query keeps partial `data` and logs the errors with their
+  op and path.
 
 ### 6.8 Auth (no server)
 
@@ -844,7 +871,7 @@ Claude runner; the others follow in M4 behind the same runner trait.
 - SQLite via `rusqlite` (WAL), migrations in `store`, applied on start; one DB
   per user profile.
 - Tables: models from §4 + `sync_log(id, model, model_id, action, data)` +
-  `outbox(id, op, payload, attempts, status)`.
+  `outbox(id, op, payload, attempts, status, last_error)`.
 - Keychain: one item for all Theodore secrets (one prompt). On macOS through
   `/usr/bin/security` so the prompt survives rebuilds; secret passed on stdin,
   not as an argument.
@@ -895,7 +922,8 @@ app ──▶ on launch + every 6 h
         GET github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json
         newer? ─▶ download in background ─▶ verify signature
                ─▶ "Restart to update" (never forced)
-               ─▶ restart waits until: no agent running, outbox empty
+               ─▶ restart waits until: no agent running, no outbox item
+                  pending (failed ones don't count)
 ```
 
 | Topic | Rule |

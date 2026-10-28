@@ -337,7 +337,20 @@ pub(crate) async fn create_issue(
         body: &issue.body,
         labels: &issue.labels,
     };
-    Ok(http.post_json::<_, GhIssue>(&path, &body).await?.value)
+    // A refused label (422, or 403 for a token that may open but not label
+    // issues) is retried without labels by the caller: not a warning.
+    let expected: &[reqwest::StatusCode] = if issue.labels.is_empty() {
+        &[]
+    } else {
+        &[
+            reqwest::StatusCode::FORBIDDEN,
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        ]
+    };
+    Ok(http
+        .post_json_expecting::<_, GhIssue>(&path, &body, expected)
+        .await?
+        .value)
 }
 
 fn urlencode(s: &str) -> String {

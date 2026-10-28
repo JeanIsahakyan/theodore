@@ -73,9 +73,27 @@ impl Core {
             }
             Err(e) => return Err(e.into()),
         };
+        // An open needs a body. A fetch without an ETag is never "not
+        // modified"; if one still comes back (a stale validator somewhere
+        // on the way), drop the PR's ETag and ask once more.
+        let fetched = match fetched {
+            Fetched::NotModified => {
+                tracing::info!(pr = %pr_ref.id().0, "not-modified on a fresh fetch; refetching once");
+                self.0.etags.write().await.remove(&pr_ref.id());
+                let again = self.0.deps.host.get_pr(&pr_ref, None).await;
+                self.note_host(&again);
+                again?
+            }
+            modified => modified,
+        };
         let detail = match fetched {
             Fetched::Modified { value, .. } => value,
             Fetched::NotModified => {
+                tracing::warn!(
+                    error.code = "host.protocol",
+                    pr = %pr_ref.id().0,
+                    "host returned not-modified on a fresh fetch, twice"
+                );
                 return Err(AppError::Invalid(
                     "host returned not-modified on a fresh fetch".into(),
                 ));

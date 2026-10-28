@@ -248,6 +248,7 @@ impl Store for FakeStore {
             attempts: 0,
             status: OutboxStatus::Pending,
             not_before: 0,
+            last_error: None,
         });
         Ok(id)
     }
@@ -273,9 +274,10 @@ impl Store for FakeStore {
         Ok(())
     }
 
-    fn outbox_retry(&self, id: u64, not_before: i64) -> StoreResult<()> {
+    fn outbox_retry(&self, id: u64, not_before: i64, error: &str) -> StoreResult<()> {
         let mut s = self.0.lock().unwrap();
         if let Some(item) = s.outbox.iter_mut().find(|i| i.id == id) {
+            item.last_error = Some(error.to_string());
             item.attempts += 1;
             item.not_before = not_before;
             item.status = OutboxStatus::Pending;
@@ -283,9 +285,10 @@ impl Store for FakeStore {
         Ok(())
     }
 
-    fn outbox_fail(&self, id: u64) -> StoreResult<()> {
+    fn outbox_fail(&self, id: u64, error: &str) -> StoreResult<()> {
         let mut s = self.0.lock().unwrap();
         if let Some(item) = s.outbox.iter_mut().find(|i| i.id == id) {
+            item.last_error = Some(error.to_string());
             item.status = OutboxStatus::Failed;
         }
         Ok(())
