@@ -3930,6 +3930,40 @@ async fn run_skill_persists_a_failed_chat_message_on_agent_error() {
 }
 
 #[tokio::test]
+async fn an_offline_host_does_not_block_an_agent_run() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    // The host is down; the agent's own API may not be: the run starts,
+    // and if that's down too it says so plainly.
+    core.note_host::<()>(&Err(theodore_ports::HostError::Network("dns".into())));
+    assert!(!core.host_online());
+    let offline = theodore_ports::offline_message("claude");
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: offline.clone(),
+        stderr_tail: "getaddrinfo ENOTFOUND api.anthropic.com".into(),
+    }]);
+
+    let run_id = core
+        .run_skill(RunSkillRequest {
+            pr: pr.clone(),
+            skill: "security".into(),
+            agents: vec![AgentId::Claude],
+        })
+        .await
+        .expect("an offline host doesn't block the run");
+
+    wait_until(|| {
+        f.store
+            .get(models::SKILL_RUN, &run_id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.data.get("error").cloned())
+            .is_some_and(|e| e == json!(offline))
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn run_skill_refuses_when_every_requested_agent_is_disabled() {
     let f = fixtures();
     let (core, _recv, pr, _head) = open_fixture_pr(&f).await;

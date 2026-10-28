@@ -863,7 +863,18 @@ async fn drive_turn(core: &Core, turn: Turn) {
     drop(tools_guard);
     let cancelled = cancel.is_cancelled();
     let ms = started.elapsed().as_millis() as u64;
-    if let (Some(e), false) = (&error, cancelled) {
+    if let (Some(e), false) = (&error, cancelled)
+        && theodore_ports::offline_message_in(e).is_some()
+    {
+        // The agent's servers were out of reach: the network, not a bug.
+        tracing::info!(
+            error.code = theodore_ports::AGENT_OFFLINE_CODE,
+            space = %space.id,
+            agent = agent.as_str(),
+            duration_ms = ms,
+            "space turn couldn't reach the agent"
+        );
+    } else if let (Some(e), false) = (&error, cancelled) {
         tracing::warn!(
             error.code = "space.turn_failed",
             space = %space.id,

@@ -63,6 +63,7 @@ impl AppError {
                 | AppError::Invalid(_)
                 | AppError::AccountRequired
                 | AppError::OfflineNotCached
+                | AppError::Grouper(GrouperError::Offline(_))
                 | AppError::Git(theodore_ports::GitError::Refused(_))
                 | AppError::Git(theodore_ports::GitError::Unsupported(_))
         )
@@ -76,6 +77,9 @@ pub enum GrouperError {
     Agent(String),
     #[error("invalid output: {0}")]
     Invalid(String),
+    /// The agent couldn't reach its servers (`ports::offline_message`).
+    #[error("{0}")]
+    Offline(String),
 }
 
 impl GrouperError {
@@ -83,6 +87,7 @@ impl GrouperError {
         match self {
             GrouperError::Agent(_) => "grouping.agent_failed",
             GrouperError::Invalid(_) => "grouping.invalid_output",
+            GrouperError::Offline(_) => theodore_ports::AGENT_OFFLINE_CODE,
         }
     }
 }
@@ -136,6 +141,10 @@ mod tests {
             (AccountError::Network("x".into()).into(), "account.network"),
             (AppError::AccountRequired, "account.required"),
             (AppError::OfflineNotCached, "app.offline_not_cached"),
+            (
+                GrouperError::Offline("Couldn't reach Claude's servers".into()).into(),
+                "agent.offline",
+            ),
         ];
         for (err, code) in cases {
             assert_eq!(err.code(), code, "{err}");
