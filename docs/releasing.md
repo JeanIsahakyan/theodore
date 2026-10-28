@@ -237,11 +237,15 @@ The commit is `THEODORE_GIT_SHA` when set, else `git rev-parse HEAD`, else
 the version (the nightly script sets `-nightly.N`, `build.yml` the version
 with its suffix).
 
-`THEODORE_BUILD_ENV=production cargo tauri build` by hand makes an app
-stamped `production` that is not a release: the account client id, the
-GitHub OAuth client id and the telemetry keys are compiled in only by
-`build.yml` (from repository variables and secrets), so it has no account
-sign-in, no "Sign in with GitHub" and no diagnostics. Never distribute it or use it in place of a release;
+The account client id, the GitHub OAuth client id and the telemetry keys
+are compiled in only by `build.yml` (from repository variables and
+secrets). So `build.rs` refuses a `production` or `staging` build without
+`THEODORE_WORKOS_CLIENT_ID`, `THEODORE_OTLP_ENDPOINT`,
+`THEODORE_OTLP_HEADERS` and `THEODORE_POSTHOG_KEY` (a nightly needs the
+client id only), and says what to do instead. `THEODORE_ALLOW_INCOMPLETE_BUILD=1`
+builds it anyway with an `-incomplete` commit, which About and problem
+reports show. Such an app has no account sign-in, no "Sign in with GitHub"
+and no diagnostics: never distribute it or use it in place of a release;
 install the release DMG.
 
 ### A local staging build
