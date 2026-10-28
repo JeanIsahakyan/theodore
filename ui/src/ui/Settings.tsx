@@ -46,6 +46,7 @@ import type {
   UpdateInfo,
 } from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
+import { checkFailureText, isOffline } from '../core/updateCheck';
 import { useViewKeys } from './keys';
 import { setSetting } from '../actions';
 import { useDeviceLogin } from '../core/deviceLogin';
@@ -799,7 +800,7 @@ const UpdatesPage = observer(function UpdatesPage() {
   const check = () => {
     setChecking(true);
     void api
-      .checkUpdate()
+      .checkUpdate(true)
       .then((u) => {
         setUpdate(u);
         setResult(u ? null : { kind: 'latest', at: Date.now() });
@@ -808,7 +809,10 @@ const UpdatesPage = observer(function UpdatesPage() {
         setUpdate(null);
         setResult({
           kind: 'error',
-          message: e instanceof CommandFailure ? e.message : String(e),
+          message: checkFailureText(
+            e instanceof CommandFailure ? e.message : String(e),
+            isOffline(store),
+          ),
         });
       })
       .finally(() => setChecking(false));
