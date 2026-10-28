@@ -154,6 +154,52 @@ Rich formatting is for real findings and real decisions. Conversation is plain.
 This repository is developed **entirely through AI assistance**. There is no
 separate human implementation track. A few conventions calibrate that work.
 
+## Where things are
+
+Read the doc before changing its area; keep it true when the change lands.
+
+| Area | Doc | Code |
+| --- | --- | --- |
+| What Theodore is, features, install | `README.md` | — |
+| Design, every subsystem, settings, roadmap | `docs/plan.md` | — |
+| Branches, builds, releases, updater, DMG | `docs/releasing.md` | `.github/workflows/`, `scripts/` |
+| Spaces (agent workspaces, turns, shipping) | `docs/spaces.md` | `crates/app/src/usecases/spaces.rs` |
+| Project config (`.theodore/config.yaml`) | `docs/config.md` | `crates/app/src/config/` |
+| Logs, error codes, New Relic, PostHog | `docs/telemetry.md` | `crates/telemetry` |
+| Simulated host for demos and QA | `docs/sandbox.md` | `crates/sandbox`, `crates/fixtures` |
+| Grouping quality and speed evals | `docs/grouping-eval.md`, `docs/eval/` | `crates/grouping`, `apps/cli` (`theodore eval`) |
+
+Code layout:
+
+```
+apps/desktop   Tauri shell: commands, updater, window, build stamp (build.rs)
+apps/cli       `theodore` CLI: group, eval, sandbox
+crates/app     use cases (the core): PRs, revisions, grouping, spaces, outbox, poller
+crates/domain  types and rules; crates/contract  IPC types → ui/src/gen (generated)
+crates/agents  Claude Code / Codex / Gemini runners; crates/grouping  grouping pipeline
+crates/git, host-*  git and code hosts; crates/store  SQLite; crates/runtime  wiring
+ui/            React + HeroUI v3 + MobX; never edit ui/src/gen by hand
+```
+
+## Shipping: staging first, then main
+
+```
+author/feature ──PR, squash──▶ staging ──PR, merge commit──▶ main
+                                  │                           │
+                       Theodore Staging build       release v<version>, only if
+                       (channel-staging)            the version is new
+```
+
+- Never push to `staging` or `main` directly, and never push `v*` tags: CI
+  tags the release when `main` gets a new version.
+- A release is a version bump (`scripts/bump-version.sh`) merged into
+  `staging`, then a PR `staging → main`. A merge without a bump publishes
+  nothing.
+- After the release is published, replace the generated notes with
+  user-facing ones (`gh release edit v<version> --notes-file …`): what got
+  faster, what got fixed, what to know — not a list of PR titles.
+- Details, the updater, keys and signing: `docs/releasing.md`.
+
 ## Installing Theodore: the release DMG, never a local build
 
 Asked to install or run Theodore for a user? Download the release DMG
