@@ -341,11 +341,12 @@ impl HttpClient {
         extra_headers: &[(&str, String)],
         expected: &[StatusCode],
     ) -> HostResult<Outcome> {
+        let token = self.token.token();
         if let Some(until) = self
             .rate
             .lock()
             .expect("rate lock")
-            .preemptive_block(self.now())
+            .preemptive_block(self.now(), token.as_deref())
         {
             return Err(HostError::RateLimited { reset_at: until });
         }
@@ -358,7 +359,7 @@ impl HttpClient {
                 .client
                 .request(method.clone(), url.clone())
                 .header("user-agent", &self.user_agent);
-            if let Some(token) = self.token.token() {
+            if let Some(token) = &token {
                 req = req.bearer_auth(token);
             }
             if method != Method::GET || body.is_some() {
@@ -400,7 +401,7 @@ impl HttpClient {
                         continue;
                     }
 
-                    if let Some(err) = self.classify(status, &headers) {
+                    if let Some(err) = self.classify(status, &headers, token.as_deref()) {
                         log_status(
                             &method,
                             &url,
@@ -466,13 +467,21 @@ impl HttpClient {
         }
     }
 
-    fn classify(&self, status: StatusCode, headers: &HeaderMap) -> Option<HostError> {
+    fn classify(
+        &self,
+        status: StatusCode,
+        headers: &HeaderMap,
+        token: Option<&str>,
+    ) -> Option<HostError> {
         match status {
             StatusCode::UNAUTHORIZED => Some(HostError::Auth),
             StatusCode::FORBIDDEN => {
                 if is_rate_limited_403(headers) {
                     let reset_at = reset_at_from_headers(headers, self.now());
-                    self.rate.lock().expect("rate lock").block_until(reset_at);
+                    self.rate
+                        .lock()
+                        .expect("rate lock")
+                        .block_until(reset_at, token);
                     Some(HostError::RateLimited { reset_at })
                 } else {
                     Some(HostError::Auth)
@@ -480,7 +489,10 @@ impl HttpClient {
             }
             StatusCode::TOO_MANY_REQUESTS => {
                 let reset_at = reset_at_from_headers(headers, self.now());
-                self.rate.lock().expect("rate lock").block_until(reset_at);
+                self.rate
+                    .lock()
+                    .expect("rate lock")
+                    .block_until(reset_at, token);
                 Some(HostError::RateLimited { reset_at })
             }
             StatusCode::NOT_FOUND => Some(HostError::NotFound(String::new())),
