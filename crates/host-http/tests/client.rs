@@ -179,6 +179,63 @@ async fn preemptive_block_clears_once_the_clock_passes_reset_at() {
     );
 }
 
+/// A keychain-like token that the user can set after the client exists.
+struct SwappableToken(std::sync::Mutex<Option<String>>);
+
+impl theodore_host_http::TokenSource for SwappableToken {
+    fn token(&self) -> Option<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test]
+async fn a_rate_limit_hit_without_a_token_does_not_block_the_token_connected_next() {
+    let server = MockServer::start().await;
+    let clock = FakeClock::new(1_000);
+
+    // Polling before sign-in uses up GitHub's 60/h unauthenticated quota.
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-remaining", "0")
+                .insert_header("x-ratelimit-reset", "3600"),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .and(header("authorization", "Bearer fresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(Pr {
+            number: 1,
+            title: "ok".into(),
+        }))
+        .mount(&server)
+        .await;
+
+    let token = Arc::new(SwappableToken(std::sync::Mutex::new(None)));
+    let base = url::Url::parse(&format!("{}/", server.uri())).unwrap();
+    let http = HttpClient::new(base, token.clone(), clock);
+
+    let err = http.get::<serde_json::Value>("user").await.unwrap_err();
+    assert!(matches!(
+        err,
+        HostError::RateLimited {
+            reset_at: 3_600_000
+        }
+    ));
+    // Still blocked for the same (absent) token, without a round trip.
+    let err = http.get::<serde_json::Value>("user").await.unwrap_err();
+    assert!(matches!(err, HostError::RateLimited { .. }));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    // The user connects GitHub: the new token has its own quota.
+    *token.0.lock().unwrap() = Some("fresh".into());
+    let got = http.get::<Pr>("user").await.unwrap();
+    assert_eq!(got.value.title, "ok");
+}
+
 #[tokio::test]
 async fn forbidden_without_rate_limit_headers_is_auth_not_rate_limited() {
     let server = MockServer::start().await;
