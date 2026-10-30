@@ -92,7 +92,7 @@ import {
   useCheckboxRangeEvents,
   type CheckboxRangeModifiers,
 } from './useCheckboxRange';
-import { nextReviewableGroup } from './review/groups';
+import { groupsInRevision, nextReviewableGroup } from './review/groups';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
@@ -436,16 +436,32 @@ export const DiffPane = observer(function DiffPane({
     since,
   ]);
 
-  // Hunks of each file outside the open group ("also in …" in its header).
+  // The other groups each file also has hunks in ("also in …" in its
+  // header): one entry per group however many of its hunks the file has,
+  // numbered as in the groups pane.
+  const allGroups = store.models.groupsOf(pr);
   const othersByPath = useMemo(() => {
-    const m = new Map<string, Hunk[]>();
+    const m = new Map<string, OtherGroup[]>();
     if (mode.mode !== 'groups' || !groupHunkIds) return m;
+    const groups = groupsInRevision(
+      allGroups,
+      new Set(rev.files.flatMap((f) => f.hunks.map((h) => h.id))),
+    );
+    const byHunk = new Map<HunkId, OtherGroup>();
+    groups.forEach((g, i) => {
+      const other = { id: g.id, title: g.title, n: i + 1 };
+      for (const h of g.hunks) byHunk.set(h, other);
+    });
     for (const f of rev.files) {
-      const others = f.hunks.filter((h) => !groupHunkIds.has(h.id));
-      if (others.length) m.set(f.path, others);
+      const others = new Set<OtherGroup>();
+      for (const h of f.hunks) {
+        const g = groupHunkIds.has(h.id) ? undefined : byHunk.get(h.id);
+        if (g) others.add(g);
+      }
+      if (others.size) m.set(f.path, [...others]);
     }
     return m;
-  }, [rev, mode.mode, groupHunkIds]);
+  }, [rev, mode.mode, groupHunkIds, allGroups]);
   const pathOfHunk = useMemo(() => {
     const m = new Map<HunkId, string>();
     for (const f of rev.files) for (const h of f.hunks) m.set(h.id, f.path);
@@ -600,7 +616,7 @@ export const DiffPane = observer(function DiffPane({
                 file={f}
                 since={since}
                 interdiff={interdiffMap}
-                others={othersByPath.get(f.path) ?? NO_HUNKS}
+                others={othersByPath.get(f.path) ?? NO_OTHERS}
                 setMode={setMode}
                 split={effectiveSplit}
                 focusHunk={focusPath === f.path ? focusHunk : null}
@@ -1031,7 +1047,13 @@ interface LineActions {
 type DraftRow = ModelRows['draft'];
 type FindingRow = ModelRows['finding'];
 
-const NO_HUNKS: Hunk[] = [];
+/** Another group a file has hunks in, numbered as in the groups pane. */
+interface OtherGroup {
+  id: string;
+  title: string;
+  n: number;
+}
+const NO_OTHERS: OtherGroup[] = [];
 const NO_IDS: readonly string[] = [];
 const NO_DRAFTS: readonly DraftRow[] = [];
 const NO_FINDINGS: readonly FindingRow[] = [];
@@ -1098,8 +1120,8 @@ function FileBlockInner({
   /** The re-review word-diff, by the hunk id it's keyed on (plan §4) —
    *  `null`/absent outside "since last visit". */
   interdiff?: Map<HunkId, InterdiffEntry> | null;
-  /** This file's hunks outside the open group (grouped mode only). */
-  others: Hunk[];
+  /** The other groups this file has hunks in (grouped mode only). */
+  others: OtherGroup[];
   setMode: (m: ReviewMode) => void;
   split: boolean;
   /** Only set when the focused hunk is in this file. */
@@ -1262,29 +1284,27 @@ function FileBlockInner({
             </Tooltip.Content>
           </Tooltip>
         )}
-        {others.map((h) => {
-          const g = store.models
-            .groupsOf(pr)
-            .find((x) => x.hunks.includes(h.id));
-          if (!g) return null;
-          return (
-            <Tooltip key={h.id}>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 max-w-40 shrink-0 gap-1 px-2 text-xs text-accent"
-                onPress={() =>
-                  setMode({ mode: 'groups', group: g.id, file: file.path })
-                }
-              >
-                <span className="truncate">also in “{g.title}”</span>
-              </Button>
-              <Tooltip.Content>
-                Another hunk of this file in group “{g.title}”
-              </Tooltip.Content>
-            </Tooltip>
-          );
-        })}
+        {others.map((g) => (
+          <Tooltip key={g.id}>
+            {/* Gives way before the file name does (heavy shrink weight),
+             *  down to "also in N…". */}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 min-w-20 max-w-40 shrink-[100] gap-1 px-2 text-xs text-accent"
+              onPress={() =>
+                setMode({ mode: 'groups', group: g.id, file: file.path })
+              }
+            >
+              <span className="truncate">
+                also in {g.n} “{g.title}”
+              </span>
+            </Button>
+            <Tooltip.Content>
+              More of this file in group {g.n} “{g.title}”
+            </Tooltip.Content>
+          </Tooltip>
+        ))}
         <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
           <Chip size="sm" variant="soft" color="warning" className="shrink-0">
