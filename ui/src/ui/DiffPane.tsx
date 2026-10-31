@@ -7,6 +7,7 @@ import { isImageDiffPath } from './media/imageDiff';
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -744,7 +745,10 @@ function ChecklistItem({
           <Checkbox.Control>
             <Checkbox.Indicator />
           </Checkbox.Control>
-          <span>{rich(text)}</span>
+          {/* `Checkbox.Content` is `select-none` so a click anywhere in the
+              row toggles the box; the text itself should still be
+              drag-selectable for copy, so it opts back into selection. */}
+          <span className="select-text">{rich(text)}</span>
         </Checkbox.Content>
       </Checkbox>
     </span>
@@ -826,6 +830,7 @@ const ContextGap = observer(function ContextGap({
   gap,
   lang,
   expand,
+  onFullyRevealed,
 }: {
   pr: PrId;
   rev: Revision['head'];
@@ -836,6 +841,11 @@ const ContextGap = observer(function ContextGap({
    *  gap once (not on every render, so the manual "load N lines" buttons
    *  below still work undisturbed). */
   expand?: number | null;
+  /** Told whenever the gap goes from partly to fully shown (or back, if the
+   *  file re-fetches) — just the derived fact the hunk below needs, not the
+   *  reveal mechanics themselves (#52: its header hint is redundant once
+   *  every line above it is visible). */
+  onFullyRevealed?: (full: boolean) => void;
 }) {
   const store = useRootStore();
   const [shown, setShown] = useState(0);
@@ -853,6 +863,13 @@ const ContextGap = observer(function ContextGap({
       ? store.files.get(key, () => api.getFile({ pr, rev, path }))
       : null;
   const ready = res?.status === 'ready' && res.data != null;
+  // The callback prop is read through a ref so a parent re-render (a new
+  // closure) doesn't re-fire this for the same reveal state.
+  const onFullyRevealedRef = useRef(onFullyRevealed);
+  onFullyRevealedRef.current = onFullyRevealed;
+  useEffect(() => {
+    onFullyRevealedRef.current?.(ready && shown >= total);
+  }, [ready, shown, total]);
   const from = gap.to - shown + 1;
   const slice = ready ? res!.data!.split('\n').slice(from - 1, gap.to) : [];
   // Tokenized as one block (not line by line): a gap can land mid-comment
@@ -1109,6 +1126,20 @@ function FileBlockInner({
 }) {
   countRender('FileBlock');
   const store = useRootStore();
+  // Which hunks' preceding gap is fully revealed (#52) — just enough lifted
+  // from `ContextGap` for `HunkComponent` to drop its now-redundant header
+  // hint; the reveal mechanics themselves stay local to `ContextGap`.
+  const [gapFullyRevealed, setGapFullyRevealed] = useState<
+    Partial<Record<HunkId, boolean>>
+  >({});
+  const reportGapRevealed = useCallback((id: HunkId, full: boolean) => {
+    setGapFullyRevealed((current) =>
+      // `undefined` (never reported) and `false` both mean "show the
+      // hint" — treated the same so the first, unrevealed report right
+      // after mount doesn't force an extra render of every file.
+      !!current[id] === full ? current : { ...current, [id]: full },
+    );
+  }, []);
   const cardRef = useRef<HTMLDivElement>(null);
   // Anything that jumps here (J/K focus, `E`, `C`, a peek) forces the hunks
   // in first so the jump finds its `H-<id>` element.
@@ -1366,6 +1397,7 @@ function FileBlockInner({
                     gap={gaps.get(h.id)!}
                     lang={lang}
                     expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
+                    onFullyRevealed={(full) => reportGapRevealed(h.id, full)}
                   />
                 )}
                 <HunkComponent
@@ -1381,6 +1413,7 @@ function FileBlockInner({
                   composer={slices.composer}
                   peek={slices.peek}
                   actions={actions}
+                  gapFullyRevealed={!!gapFullyRevealed[h.id]}
                 />
               </div>
             );
@@ -1415,6 +1448,9 @@ interface HunkProps {
   /** Only set when the symbol peek is on one of this hunk's lines. */
   peek: SymbolPeekTarget | null;
   actions: LineActions;
+  /** The gap just above this hunk (if any) is fully revealed, so its own
+   *  header hint (#52) would just repeat what's now visible above it. */
+  gapFullyRevealed?: boolean;
 }
 
 /** A line's annotations and per-line slices of the hunk's props, read from
@@ -1488,8 +1524,18 @@ function openHunkMenu(
 
 function HunkViewInner(props: HunkProps) {
   countRender('Hunk');
-  const { pr, rev, path, h, lang, since, interdiff, focused, setFocusHunk } =
-    props;
+  const {
+    pr,
+    rev,
+    path,
+    h,
+    lang,
+    since,
+    interdiff,
+    focused,
+    setFocusHunk,
+    gapFullyRevealed,
+  } = props;
   const store = useRootStore();
   const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
@@ -1515,7 +1561,7 @@ function HunkViewInner(props: HunkProps) {
         onContextMenu={(e) => openHunkMenu(e, store, props)}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
-        {h.header && (
+        {h.header && !gapFullyRevealed && (
           <span className="min-w-0 flex-1 truncate text-muted/70">
             {h.header}
           </span>
@@ -1564,8 +1610,18 @@ function HunkViewInner(props: HunkProps) {
 /** Side-by-side rendering of one hunk, using `splitRows` to pair del/add lines. */
 function SplitHunkViewInner(props: HunkProps) {
   countRender('Hunk');
-  const { pr, rev, path, h, lang, since, interdiff, focused, setFocusHunk } =
-    props;
+  const {
+    pr,
+    rev,
+    path,
+    h,
+    lang,
+    since,
+    interdiff,
+    focused,
+    setFocusHunk,
+    gapFullyRevealed,
+  } = props;
   const store = useRootStore();
   const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
@@ -1607,7 +1663,7 @@ function SplitHunkViewInner(props: HunkProps) {
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
-        {h.header && (
+        {h.header && !gapFullyRevealed && (
           <span className="min-w-0 flex-1 truncate text-muted/70">
             {h.header}
           </span>
