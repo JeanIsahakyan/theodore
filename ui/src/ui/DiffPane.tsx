@@ -92,7 +92,11 @@ import {
   useCheckboxRangeEvents,
   type CheckboxRangeModifiers,
 } from './useCheckboxRange';
-import { groupsInRevision, nextReviewableGroup } from './review/groups';
+import {
+  groupDiff,
+  groupsInRevision,
+  nextReviewableGroup,
+} from './review/groups';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
@@ -400,13 +404,15 @@ export const DiffPane = observer(function DiffPane({
     let out: FileDiff[] =
       mode.mode === 'files'
         ? rev.files.filter((f) => f.path === mode.file)
-        : groupHunkIds
-          ? rev.files
-              .map((f) => ({
-                ...f,
-                hunks: f.hunks.filter((h) => groupHunkIds.has(h.id)),
-              }))
-              .filter((f) => f.hunks.length)
+        : group
+          ? // Ordered as the groups pane lists them, over the same hunks.
+            groupDiff(
+              rev.files,
+              sinceOnly && since
+                ? group.hunks.filter((h) => since.has(h))
+                : group.hunks,
+              group.outliers,
+            )
           : rev.files;
 
     if (showOnlyOutliers && group) {
@@ -425,16 +431,7 @@ export const DiffPane = observer(function DiffPane({
         .filter((f) => f.hunks.length);
     }
     return out;
-  }, [
-    rev,
-    mode.mode,
-    mode.file,
-    group,
-    groupHunkIds,
-    showOnlyOutliers,
-    sinceOnly,
-    since,
-  ]);
+  }, [rev, mode.mode, mode.file, group, showOnlyOutliers, sinceOnly, since]);
 
   // The other groups each file also has hunks in ("also in …" in its
   // header): one entry per group however many of its hunks the file has,

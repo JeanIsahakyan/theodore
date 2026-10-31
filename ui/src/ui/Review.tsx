@@ -238,7 +238,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     mode.mode === 'groups' && mode.group
       ? allGroups.find((g) => g.id === mode.group)
       : null;
-  const groupHunkIds = group ? new Set(group.hunks) : null;
 
   // Like the prototype: in grouped mode a group is always selected —
   // preferring a reviewable one so a lockfile group is never the default.
@@ -343,7 +342,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       switch (k) {
         case 'j':
         case 'k': {
-          const hunks = hunksInScope(revision.data, mode, groupHunkIds);
+          const hunks = hunksInScope(revision.data, mode, group ?? null);
           const next = moveHunkFocus(hunks, focusHunk, k === 'j' ? 1 : -1);
           if (next) setFocusHunk(next);
           return;
@@ -410,7 +409,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       focusHunk,
       composer,
       revision?.data,
-      groupHunkIds,
+      group,
     ],
   );
 
