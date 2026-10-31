@@ -155,9 +155,11 @@ const noop = () => {};
 export function Harness({
   rev,
   onReady,
+  askAi,
 }: {
   rev: Revision;
   onReady: (c: Controls) => void;
+  askAi?: boolean;
 }) {
   const [focusHunk, setFocusHunk] = useState<HunkId | null>(null);
   const [composer, setComposer] = useState<ComposerState | null>(null);
@@ -176,12 +178,13 @@ export function Harness({
       composer={composer}
       setComposer={setComposer}
       expandHunk={null}
+      askAi={askAi}
     />
   );
 }
 
 /** Renders the harness into a fresh store seeded with the big PR. */
-export async function mountBigPr() {
+export async function mountBigPr({ askAi }: { askAi?: boolean } = {}) {
   const rev = revision();
   const store = new RootStore();
   seed(store, rev);
@@ -194,6 +197,7 @@ export async function mountBigPr() {
       <RootStoreProvider store={store}>
         <Harness
           rev={rev}
+          askAi={askAi}
           onReady={(c) => {
             controls = c;
           }}

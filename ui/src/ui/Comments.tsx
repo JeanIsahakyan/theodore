@@ -43,12 +43,13 @@ import type {
 } from '../gen/contract';
 import {
   addDraft,
-  ask,
+  askAboutLine,
   commitSuggestions,
   deleteComment,
   editComment,
   editDraft,
   reactToComment,
+  referenceLine,
   removeDraft,
   replyThread,
   resolveThread,
@@ -740,11 +741,14 @@ function ComposerInner({
   pr,
   anchor,
   lineText,
+  askAi = true,
   onClose,
 }: {
   pr: PrId;
   anchor: Anchor;
   lineText: string;
+  /** Offer "Ask AI"; off where there's no AI panel to answer in. */
+  askAi?: boolean;
   onClose: () => void;
 }) {
   const store = useRootStore();
@@ -842,21 +846,21 @@ function ComposerInner({
         >
           Suggestion
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onPress={() =>
-            void ask(store, {
-              pr,
-              question: text.trim() || 'explain this line',
-              about: anchor,
-              group: null,
-              agent: null,
-            }).catch(() => {})
-          }
-        >
-          Ask AI
-        </Button>
+        {askAi && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onPress={() => {
+              // The box's text is the question; with none, the line goes to
+              // the AI panel's composer to ask there — nothing canned.
+              const question = text.trim();
+              if (question) void askAboutLine(store, { pr, anchor, question });
+              else referenceLine(store, pr, anchor);
+            }}
+          >
+            Ask AI
+          </Button>
+        )}
         <span className="flex-1" />
         <Button size="sm" variant="ghost" onPress={onClose}>
           Cancel

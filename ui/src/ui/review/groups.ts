@@ -5,7 +5,7 @@
  * collapsed in the diff by default and skipped by `N`/`P` navigation; the
  * user can still open one with "show anyway".
  */
-import type { Group, HunkId } from '../../gen/contract';
+import type { FileDiff, Group, HunkId } from '../../gen/contract';
 
 /** Groups restricted to this revision, in reading order: each group keeps
  *  only the hunks the revision has (an older grouping can name hunks a push
@@ -31,6 +31,50 @@ export function groupsInRevision(
     });
   }
   return out;
+}
+
+/** A group's files in the order the groups pane lists them and the diff
+ *  shows them: files with an off-pattern hunk first, then the rest, each
+ *  placed by its first hunk in `hunks` — the group's own order, as the
+ *  agent wrote it, not the diff's file order. */
+export function groupFileOrder(
+  hunks: readonly HunkId[],
+  outliers: readonly HunkId[],
+  fileOf: (h: HunkId) => string | undefined,
+): string[] {
+  const off = new Set(outliers);
+  const files = new Set<string>();
+  const offFiles = new Set<string>();
+  for (const h of hunks) {
+    const f = fileOf(h);
+    if (f === undefined) continue;
+    files.add(f);
+    if (off.has(h)) offFiles.add(f);
+  }
+  return [...files].sort(
+    (a, b) => Number(offFiles.has(b)) - Number(offFiles.has(a)),
+  );
+}
+
+/** A group's part of the diff: `groupFileOrder`'s files in that order, each
+ *  with only the group's hunks, still in diff order within the file. */
+export function groupDiff(
+  files: readonly FileDiff[],
+  hunks: readonly HunkId[],
+  outliers: readonly HunkId[],
+): FileDiff[] {
+  const keep = new Set(hunks);
+  const byPath = new Map<string, FileDiff>();
+  const fileOf = new Map<HunkId, string>();
+  for (const f of files) {
+    const own = f.hunks.filter((h) => keep.has(h.id));
+    if (!own.length) continue;
+    byPath.set(f.path, { ...f, hunks: own });
+    for (const h of own) fileOf.set(h.id, f.path);
+  }
+  return groupFileOrder(hunks, outliers, (h) => fileOf.get(h)).map((path) =>
+    byPath.get(path)!,
+  );
 }
 
 /** The subset `N`/`P` navigation (and the groups-pane progress line) step

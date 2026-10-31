@@ -1,5 +1,7 @@
 //! Rate-limit bookkeeping from `x-ratelimit-*` / `retry-after` response headers.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use reqwest::header::HeaderMap;
 type Millis = i64;
 
@@ -10,12 +12,21 @@ pub(crate) struct RateState {
     /// Earliest time (ms) a blocked caller may try again. Set from an actual
     /// 429/403 response so later calls can fail fast without a round trip.
     blocked_until_ms: Option<Millis>,
+    /// Fingerprint of the token that earned the block. GitHub counts an
+    /// authenticated limit per user — every token that user holds shares
+    /// one quota — and an unauthenticated limit per IP. A block is keyed by
+    /// token fingerprint rather than just "authenticated or not" because a
+    /// new token can be a different user, or the switch from no token to
+    /// one, and either way it has its own quota, not the one that's blocked.
+    blocked_token: u64,
 }
 
 impl RateState {
-    pub(crate) fn preemptive_block(&self, now_ms: Millis) -> Option<Millis> {
+    pub(crate) fn preemptive_block(&self, now_ms: Millis, token: Option<&str>) -> Option<Millis> {
         match self.blocked_until_ms {
-            Some(until) if until > now_ms => Some(until),
+            Some(until) if until > now_ms && self.blocked_token == fingerprint(token) => {
+                Some(until)
+            }
             _ => None,
         }
     }
@@ -26,14 +37,22 @@ impl RateState {
         }
     }
 
-    pub(crate) fn block_until(&mut self, until_ms: Millis) {
+    pub(crate) fn block_until(&mut self, until_ms: Millis, token: Option<&str>) {
         self.blocked_until_ms = Some(until_ms);
+        self.blocked_token = fingerprint(token);
     }
 
     #[cfg(test)]
     pub(crate) fn remaining(&self) -> Option<u64> {
         self.remaining
     }
+}
+
+/// A hash rather than the token itself, so the secret isn't kept twice.
+fn fingerprint(token: Option<&str>) -> u64 {
+    let mut h = DefaultHasher::new();
+    token.hash(&mut h);
+    h.finish()
 }
 
 fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
@@ -87,14 +106,26 @@ mod tests {
         state.observe(&headers(&[("x-ratelimit-remaining", "12")]));
         assert_eq!(state.remaining(), Some(12));
 
-        assert_eq!(state.preemptive_block(1_000), None);
-        state.block_until(2_000);
-        assert_eq!(state.preemptive_block(1_000), Some(2_000));
+        assert_eq!(state.preemptive_block(1_000, None), None);
+        state.block_until(2_000, None);
+        assert_eq!(state.preemptive_block(1_000, None), Some(2_000));
         assert_eq!(
-            state.preemptive_block(2_000),
+            state.preemptive_block(2_000, None),
             None,
             "block expires at the deadline"
         );
+    }
+
+    #[test]
+    fn a_block_only_holds_for_the_token_that_earned_it() {
+        let mut state = RateState::default();
+        state.block_until(2_000, None);
+        assert_eq!(state.preemptive_block(1_000, Some("new")), None);
+
+        state.block_until(2_000, Some("old"));
+        assert_eq!(state.preemptive_block(1_000, Some("old")), Some(2_000));
+        assert_eq!(state.preemptive_block(1_000, Some("new")), None);
+        assert_eq!(state.preemptive_block(1_000, None), None);
     }
 
     #[test]

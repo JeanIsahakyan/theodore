@@ -36,7 +36,11 @@ import { ask, markGroupRead, regroup, setFileViewed } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import type { SinceKind } from './diff';
-import { groupsInRevision, groupsProgress } from './review/groups';
+import {
+  groupFileOrder,
+  groupsInRevision,
+  groupsProgress,
+} from './review/groups';
 import {
   useCheckboxRange,
   useCheckboxRangeEvents,
@@ -69,6 +73,10 @@ function MaybeVirtual({
 
 const short = (p: string) => p.split('/').slice(-2).join('/');
 const base = (p: string) => p.split('/').pop() ?? p;
+/** A file row's badge: gives way before the file name, down to a stub
+ *  still wide enough to tell "off-pattern" from "also in" ("off…" vs
+ *  "also…"), its label cut with an ellipsis instead of wrapping. */
+const BADGE = 'min-w-12 shrink-[100] *:min-w-0 *:truncate';
 const circled = (n: number) => '①②③④⑤⑥⑦⑧⑨'[n - 1] ?? String(n);
 const plural = (n: number, one: string, few: string, many: string) =>
   `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
@@ -163,12 +171,7 @@ export const GroupsPane = observer(function GroupsPane({
   const filesByGroup = new Map(
     visibleGroups.map((g) => {
       const hs = sinceOnly ? g.hunks.filter((h) => since?.has(h)) : g.hunks;
-      const outFiles = new Set(
-        hs.filter((h) => g.outliers.includes(h)).flatMap(fileOf),
-      );
-      const files = [...new Set(hs.flatMap(fileOf))].sort(
-        (a, b) => Number(outFiles.has(b)) - Number(outFiles.has(a)),
-      );
+      const files = groupFileOrder(hs, g.outliers, (h) => hunkFile.get(h));
       return [g.id, files] as const;
     }),
   );
@@ -414,30 +417,43 @@ export const GroupsPane = observer(function GroupsPane({
                                     groupRange.activate(f, checked, modifiers)
                                   }
                                 />
+                                {/* The name sizes from its content and the
+                                 *  badges shrink first (heavy weight), so a
+                                 *  narrow pane cuts the badges, not the name. */}
                                 <span
-                                  className="min-w-0 flex-1 truncate font-mono"
+                                  className="min-w-0 flex-[1_1_auto] truncate font-mono"
                                   title={f}
                                 >
                                   {short(f)}
                                 </span>
                                 {outFiles.has(f) && (
-                                  <Chip
-                                    size="sm"
-                                    variant="soft"
-                                    color="warning"
-                                  >
-                                    off-pattern
-                                  </Chip>
-                                )}
-                                {elsewhere.length > 0 && (
                                   <Tooltip>
-                                    <Tooltip.Trigger>
+                                    <Tooltip.Trigger className="flex min-w-12 shrink-[100]">
                                       <Chip
                                         size="sm"
                                         variant="soft"
                                         color="warning"
+                                        className={`w-full ${BADGE}`}
                                       >
-                                        also in {others}
+                                        <span>off-pattern</span>
+                                      </Chip>
+                                    </Tooltip.Trigger>
+                                    <Tooltip.Content>
+                                      An edit here doesn't follow the group's
+                                      pattern — read it
+                                    </Tooltip.Content>
+                                  </Tooltip>
+                                )}
+                                {elsewhere.length > 0 && (
+                                  <Tooltip>
+                                    <Tooltip.Trigger className="flex min-w-12 shrink-[100]">
+                                      <Chip
+                                        size="sm"
+                                        variant="soft"
+                                        color="warning"
+                                        className={`w-full ${BADGE}`}
+                                      >
+                                        <span>also in {others}</span>
                                       </Chip>
                                     </Tooltip.Trigger>
                                     <Tooltip.Content>

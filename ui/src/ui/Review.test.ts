@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIFF_MIN, layoutFor } from './Review';
+import { DIFF_MIN, layoutFor, lineIn } from './Review';
 
 describe('layoutFor', () => {
   it('keeps both panes as columns when there is room for all three', () => {
@@ -45,5 +45,20 @@ describe('layoutFor', () => {
       if (wide.groups === 'drawer') expect(narrower.groups).toBe('drawer');
       if (wide.aside === 'drawer') expect(narrower.aside).toBe('drawer');
     }
+  });
+});
+
+describe('lineIn', () => {
+  it('finds a line by its old or new number cell', () => {
+    const root = document.createElement('div');
+    root.innerHTML = [
+      '<div class="ln" id="a"><span class="no">7</span><span class="no">9</span></div>',
+      '<div class="ln" id="b"><span class="no">8</span><span class="no"></span></div>',
+      '<div class="ln" id="c"><span class="no"></span><span class="no">10</span></div>',
+    ].join('');
+    expect(lineIn(root, { side: 'new', line: 9 })?.id).toBe('a');
+    expect(lineIn(root, { side: 'old', line: 8 })?.id).toBe('b');
+    expect(lineIn(root, { side: 'new', line: 10 })?.id).toBe('c');
+    expect(lineIn(root, { side: 'old', line: 10 })).toBeNull();
   });
 });
