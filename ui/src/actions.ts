@@ -249,13 +249,65 @@ function chatAgentGuess(store: RootStore): AgentId {
   return AGENT_IDS.find((a) => a === v) ?? 'claude';
 }
 
+/** A question about `anchor`'s line is still running. */
+export function lineAskRunning(
+  store: RootStore,
+  pr: PrId,
+  anchor: Anchor,
+): boolean {
+  return (
+    store.ephemeral.lineAskAt(pr, anchor.path, anchor.side, anchor.line)
+      ?.status === 'asking'
+  );
+}
+
+/** A line's AI button: nothing is asked yet. The AI panel opens with the
+ *  line as a chip in its composer, the caret in the box — the question is
+ *  the user's to type. Another line replaces the chip; the same line only
+ *  refocuses. A line whose question still runs brings that one into view
+ *  instead, as asking again would. */
+export function referenceLine(
+  store: RootStore,
+  pr: PrId,
+  anchor: Anchor,
+): void {
+  store.ui.toggleAside(true);
+  if (lineAskRunning(store, pr, anchor)) {
+    const key = lineAskKey(pr, anchor.path, anchor.side, anchor.line);
+    store.ephemeral.focusAsk(pr, store.ephemeral.lineAsks.get(key)!.message);
+    return;
+  }
+  store.ephemeral.setLineRef(pr, anchor);
+  store.ephemeral.focusComposer(pr);
+}
+
+/** A file:line chip: the diff shows that line. In the narrow layout the
+ *  AI panel is a drawer over the diff, so it steps aside. */
+export function jumpToLine(store: RootStore, pr: PrId, anchor: Anchor): void {
+  if (store.ui.asideIsDrawer) store.ui.toggleAside(false);
+  store.ephemeral.jumpToLine(pr, anchor);
+}
+
 /** Asks the agent about one diff line: the line shows "Asking…" at once,
  *  the AI panel opens on the question, and the line's chip turns into
  *  "Answered" (or "Failed") once the reply lands. Asking again while one
  *  runs on that line only brings it back into view. */
 export async function askAboutLine(
   store: RootStore,
-  { pr, anchor, question }: { pr: PrId; anchor: Anchor; question: string },
+  {
+    pr,
+    anchor,
+    question,
+    picked = null,
+    attachments = null,
+  }: {
+    pr: PrId;
+    anchor: Anchor;
+    question: string;
+    /** The composer's agent; `null`: core's default. */
+    picked?: AgentId | null;
+    attachments?: string[] | null;
+  },
 ): Promise<void> {
   const key = lineAskKey(pr, anchor.path, anchor.side, anchor.line);
   const cur = store.ephemeral.lineAsks.get(key);
@@ -268,7 +320,9 @@ export async function askAboutLine(
     pr,
     anchor,
     question,
-    agent: chatAgentGuess(store),
+    agent: picked ?? chatAgentGuess(store),
+    picked,
+    attachments,
     status: 'asking',
     message: null,
     reply: null,
@@ -286,7 +340,8 @@ export async function askAboutLine(
       question,
       about: anchor,
       group: null,
-      agent: null,
+      agent: picked,
+      ...(attachments?.length ? { attachments } : {}),
     });
   } catch {
     // toasted by api.ts

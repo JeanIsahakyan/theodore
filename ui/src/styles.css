@@ -712,8 +712,13 @@ body.cmd .lines .src span:hover {
   animation: flash 1.6s ease-out;
   border-radius: 1rem;
 }
+/* So does the diff, for a line a file:line chip jumped to. */
+.ln.ln-flash {
+  animation: flash 1.6s ease-out;
+}
 @media (prefers-reduced-motion: reduce) {
   .ln.ln-asking,
+  .ln.ln-flash,
   .chat .ask-flash {
     animation: none;
   }

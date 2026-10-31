@@ -17,6 +17,7 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  Xmark,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -57,6 +58,8 @@ import {
   findingToDraft,
   findingToTask,
   ignoreFinding,
+  jumpToLine,
+  lineAskRunning,
   replyThread,
   resolveThread,
   runSkill,
@@ -109,12 +112,17 @@ function CountChip({
 export const SidePanel = observer(function SidePanel({ pr }: { pr: PrId }) {
   const [tab, setTab] = useState<SideTab>('ai');
   const store = useRootStore();
-  // A line ask wants the chat in view: the AI tab takes over.
+  // A line ask wants the chat in view, or a referenced line its composer:
+  // the AI tab takes over.
   const focusSeq =
     store.ephemeral.askFocus?.pr === pr ? store.ephemeral.askFocus.seq : null;
+  const composerSeq =
+    store.ephemeral.composerFocus?.pr === pr
+      ? store.ephemeral.composerFocus.seq
+      : null;
   useEffect(() => {
-    if (focusSeq != null) setTab('ai');
-  }, [focusSeq]);
+    if (focusSeq != null || composerSeq != null) setTab('ai');
+  }, [focusSeq, composerSeq]);
   const open = store.models.findings
     .byPr(pr)
     .filter((f) => f.state === 'open' || f.state === 'maybe_fixed').length;
@@ -185,7 +193,7 @@ const LineAskBubble = observer(function LineAskBubble({
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <div className="flex items-center gap-2">
           <AgentTag id={a.agent} />
-          <Ref a={a.anchor} />
+          <Ref a={a.anchor} pr={a.pr} />
         </div>
         {stalled ? (
           <Alert status="warning" className="agent-stalled">
@@ -233,23 +241,65 @@ const LineAskBubble = observer(function LineAskBubble({
   );
 });
 
-/** A finding's anchor as an informational file:line chip. Not clickable:
- *  nothing outside `Review`'s own local diff state can jump the diff pane
- *  to a line yet, so this only orients, same as the prototype's `Ref` did,
- *  minus the jump. Capped to its container's width — a long path truncates
+/** `name.ts:12` (or `:10-14` for a range): the file name, not the path —
+ *  the chip shares narrow rows; the full path is in the tooltip. */
+function refLabel(a: Anchor): string {
+  return `${a.path.slice(a.path.lastIndexOf('/') + 1)}:${lineRange(a)}`;
+}
+
+const lineRange = (a: Anchor): string =>
+  a.start_line != null && a.start_line !== a.line
+    ? `${a.start_line}-${a.line}`
+    : `${a.line}`;
+
+/** An anchor as a file:line chip. With `pr` (the chat's chips) a click
+ *  shows the line in the diff; elsewhere it only orients. With `onRemove`
+ *  it has a ×. Capped to its container's width — a long path truncates
  *  inside the chip instead of forcing the panel wider. */
-function Ref({ a }: { a: Anchor }) {
+function Ref({
+  a,
+  pr,
+  onRemove,
+}: {
+  a: Anchor;
+  pr?: PrId;
+  onRemove?: () => void;
+}) {
+  const store = useRootStore();
+  const label = refLabel(a);
+  const body = (
+    <>
+      <FileCode className="size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{label}</span>
+      {a.side === 'old' && <span className="shrink-0 opacity-70">old</span>}
+    </>
+  );
   return (
     <span
-      className="ref inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-separator px-2.5 font-mono text-xs text-muted"
-      title={`${a.path}:${a.line}`}
+      className={`ref inline-flex h-6 max-w-full items-center gap-1 rounded-full border border-separator ps-2.5 font-mono text-xs text-muted ${onRemove ? 'pe-1' : 'pe-2.5'}`}
+      title={`${a.path}:${lineRange(a)}${a.side === 'old' ? ' (old side)' : ''}`}
     >
-      <FileCode className="size-3.5 shrink-0" />
-      {/* The file name, not the path: the chip shares a narrow row with the
-       *  author; the full path is in the tooltip. */}
-      <span className="min-w-0 truncate">
-        {a.path.slice(a.path.lastIndexOf('/') + 1)}:{a.line}
-      </span>
+      {pr ? (
+        <button
+          type="button"
+          className="ref-jump inline-flex min-w-0 items-center gap-1.5 hover:text-foreground"
+          onClick={() => jumpToLine(store, pr, a)}
+        >
+          {body}
+        </button>
+      ) : (
+        <span className="inline-flex min-w-0 items-center gap-1.5">{body}</span>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          aria-label={`Remove ${label}`}
+          className="ref-remove grid size-4 shrink-0 place-items-center rounded-full hover:bg-default hover:text-foreground"
+          onClick={onRemove}
+        >
+          <Xmark className="size-3" />
+        </button>
+      )}
     </span>
   );
 }
@@ -895,6 +945,21 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const lineAsks = [...store.ephemeral.lineAsks.entries()].filter(
     ([, a]) => a.pr === pr && a.status === 'asking',
   );
+  // The diff line the next question is about (a line's AI button), and its
+  // ask for the caret.
+  const lineRef = store.ephemeral.lineRefs.get(pr) ?? null;
+  const composerFocus =
+    store.ephemeral.composerFocus?.pr === pr
+      ? store.ephemeral.composerFocus.seq
+      : null;
+  useEffect(() => {
+    if (composerFocus == null) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    store.ephemeral.consumeComposerFocus(composerFocus);
+  }, [composerFocus, store]);
   // Once an agent message lands after we fired the ask, the pending bubble
   // has nothing left to show — the real message takes over.
   useEffect(() => {
@@ -923,6 +988,22 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     }
     if (t.startsWith('/')) {
       void runSkill(store, pr, t.slice(1).split(' ')[0] ?? '', skillAgents);
+    } else if (lineRef) {
+      // About a line: its own status on the line, its own bubble here.
+      if (lineAskRunning(store, pr, lineRef)) {
+        // One question per line at a time: show the running one, keep this.
+        void askAboutLine(store, { pr, anchor: lineRef, question: t });
+        return;
+      }
+      void askAboutLine(store, {
+        pr,
+        anchor: lineRef,
+        question: t,
+        picked: skillAgents[0] ?? null,
+        attachments: files.ids.length ? files.ids : null,
+      });
+      store.ephemeral.clearLineRef(pr);
+      files.clear();
     } else {
       const startedAt = Date.now();
       const agent = skillAgents[0] ?? null;
@@ -1022,6 +1103,13 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                       className="msg user flex justify-end"
                     >
                       <div className="flex max-w-[85%] flex-col items-end gap-1.5">
+                        {m.refs.length > 0 && (
+                          <div className="flex max-w-full flex-wrap justify-end gap-1.5">
+                            {m.refs.map((a, i) => (
+                              <Ref key={i} a={a} pr={pr} />
+                            ))}
+                          </div>
+                        )}
                         <MessageAttachments
                           attachments={m.attachments}
                           align="end"
@@ -1049,7 +1137,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                             {m.refs.length > 0 && (
                               <div className="flex flex-wrap gap-1.5">
                                 {m.refs.map((a, i) => (
-                                  <Ref key={i} a={a} />
+                                  <Ref key={i} a={a} pr={pr} />
                                 ))}
                               </div>
                             )}
@@ -1206,19 +1294,41 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
             fullWidth
             className="flex flex-col gap-2 rounded-3xl py-2.5"
           >
+            {lineRef && (
+              <div className="line-ref flex w-full px-3 pb-1">
+                <Ref
+                  a={lineRef}
+                  pr={pr}
+                  onRemove={() => {
+                    store.ephemeral.clearLineRef(pr);
+                    inputRef.current?.focus();
+                  }}
+                />
+              </div>
+            )}
             <AttachmentStrip at={files} />
             <InputGroup.TextArea
               ref={inputRef}
               rows={2}
               onPaste={drop.onPaste}
               className="w-full resize-none px-4 py-0"
-              placeholder="Ask about the code, or / to run a skill"
+              placeholder={
+                lineRef
+                  ? `Ask about ${refLabel(lineRef)}`
+                  : 'Ask about the code, or / to run a skill'
+              }
               onKeyDown={(e) => {
                 if (
                   skillMenuKey(e, matches, hi, setHi, runMatch, () =>
                     setText(''),
                   )
                 ) {
+                  return;
+                }
+                // Backspace in an empty box takes the line chip back out.
+                if (e.key === 'Backspace' && lineRef && !text) {
+                  e.preventDefault();
+                  store.ephemeral.clearLineRef(pr);
                   return;
                 }
                 if (e.key === 'Enter' && !e.shiftKey) {

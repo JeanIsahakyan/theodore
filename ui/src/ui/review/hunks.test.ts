@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { FileDiff, Group, Hunk, Revision } from '../../gen/contract';
 import {
   diffFiles,
+  hunkAt,
   hunksInScope,
+  jumpView,
   moveHunkFocus,
   type DiffFilters,
 } from './hunks';
@@ -153,5 +155,80 @@ describe('moveHunkFocus', () => {
 
   it('returns null for an empty scope', () => {
     expect(moveHunkFocus([], 'h1', 1)).toBeNull();
+  });
+});
+
+describe('hunkAt', () => {
+  const at = (id: string, o: number, ol: number, n: number, nl: number) => ({
+    ...hunk(id),
+    old_start: o,
+    old_lines: ol,
+    new_start: n,
+    new_lines: nl,
+  });
+  const r = {
+    files: [file('a.ts', [at('h1', 1, 5, 1, 5), at('h2', 8, 4, 10, 5)])],
+  };
+  const go = (side: 'old' | 'new', line: number, path = 'a.ts') =>
+    hunkAt(r, { path, side, line })?.hunk.id ?? null;
+
+  it('finds the hunk holding the line on its side', () => {
+    expect(go('new', 12)).toBe('h2');
+    expect(go('old', 9)).toBe('h2');
+    expect(go('new', 3)).toBe('h1');
+  });
+
+  it('a line between hunks lands on the next one, past them on the last', () => {
+    expect(go('new', 7)).toBe('h2');
+    expect(go('new', 40)).toBe('h2');
+  });
+
+  it('nothing for a file not in the diff', () => {
+    expect(go('new', 1, 'z.ts')).toBeNull();
+  });
+});
+
+describe('jumpView', () => {
+  const groups = [
+    { id: 'g1', ...group(['h1']) },
+    { id: 'g2', ...group(['h2', 'h3'], ['h3']) },
+    { id: 'g3', ...group(['h9'], [], 'hidden') },
+  ];
+  const plain = () => ALL;
+  const g1 = { mode: 'groups', group: 'g1', file: null } as const;
+
+  it('keeps the view that already shows the hunk', () => {
+    const v = jumpView(rev, g1, groups, plain, 'a.ts', 'h1');
+    expect(v.mode).toBe(g1);
+    expect([v.sinceOff, v.showAll, v.showHidden]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('opens the group holding it, past "Only outliers"', () => {
+    const v = jumpView(rev, g1, groups, plain, 'a.ts', 'h2');
+    expect(v.mode).toEqual({ mode: 'groups', group: 'g2', file: 'a.ts' });
+    expect(v.showAll).toBe(true);
+  });
+
+  it('turns "Since only" off when it hides the hunk', () => {
+    const since = () => ({ ...ALL, since: new Set(['h3']) });
+    const v = jumpView(rev, g1, groups, since, 'a.ts', 'h2');
+    expect(v.sinceOff).toBe(true);
+  });
+
+  it('in files mode, opens the file', () => {
+    const files = { mode: 'files', group: 'g1', file: 'b.ts' } as const;
+    const v = jumpView(rev, files, groups, plain, 'a.ts', 'h1');
+    expect(v.mode).toEqual({ mode: 'files', group: 'g1', file: 'a.ts' });
+  });
+
+  it('shows a hidden group anyway', () => {
+    const r = { files: [...rev.files, file('c.ts', [hunk('h9')])] };
+    const v = jumpView(r, g1, groups, plain, 'c.ts', 'h9');
+    expect(v.mode.group).toBe('g3');
+    expect(v.showHidden).toBe(true);
   });
 });

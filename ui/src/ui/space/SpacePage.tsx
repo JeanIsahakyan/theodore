@@ -990,6 +990,7 @@ const SpaceChanges = observer(function SpaceChanges({
           composer={composer}
           setComposer={setComposer}
           nextGroup={false}
+          askAi={false}
         />
       )}
     </>
