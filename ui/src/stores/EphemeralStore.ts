@@ -80,6 +80,8 @@ export const lineAskKey = (
   line: number,
 ): string => `${pr}\u0000${path}\u0000${side}\u0000${line}`;
 
+const groupViewKey = (pr: PrId, group: string): string => `${pr}\u0000${group}`;
+
 export interface HostStatus {
   online: boolean;
   rateLimitedUntil: number | null;
@@ -134,6 +136,12 @@ export class EphemeralStore {
     { deep: false },
   );
   askFocus: AskFocus | null = null;
+  /** Groups whose diff the user opened past its default, by
+   *  `groupViewKey`: a skim group's "Show all" (past "Only outliers") and a
+   *  hidden group's "Show anyway". Kept here, not in `DiffPane`, so
+   *  `Review`'s J/K steps through the same hunks the diff shows. */
+  allEditsShown = new Set<string>();
+  hiddenShown = new Set<string>();
 
   private nextToastId = 1;
   private nextFocusSeq = 1;
@@ -158,6 +166,8 @@ export class EphemeralStore {
       suggestionBatch: observableShallow,
       spaceLogs: observableShallow,
       askFocus: observableRef,
+      allEditsShown: observableShallow,
+      hiddenShown: observableShallow,
     });
   }
 
@@ -203,6 +213,40 @@ export class EphemeralStore {
     if (this.askFocus?.seq !== seq) return;
     runInAction(() => {
       this.askFocus = null;
+    });
+  }
+
+  /** A group's diff toggles, in the shape `diffFiles` takes them; both
+   *  off without a group. */
+  groupView(
+    pr: PrId,
+    group: string | null | undefined,
+  ): { allEdits: boolean; hiddenShown: boolean } {
+    if (!group) return { allEdits: false, hiddenShown: false };
+    const key = groupViewKey(pr, group);
+    return {
+      allEdits: this.allEditsShown.has(key),
+      hiddenShown: this.hiddenShown.has(key),
+    };
+  }
+
+  /** "Show all" / "Only outliers" on a skim group. */
+  toggleAllEdits(pr: PrId, group: string): void {
+    const key = groupViewKey(pr, group);
+    runInAction(() => {
+      const next = new Set(this.allEditsShown);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      this.allEditsShown = next;
+    });
+  }
+
+  /** "Show anyway" on a hidden group. */
+  showHidden(pr: PrId, group: string): void {
+    const key = groupViewKey(pr, group);
+    if (this.hiddenShown.has(key)) return;
+    runInAction(() => {
+      this.hiddenShown = new Set(this.hiddenShown).add(key);
     });
   }
 

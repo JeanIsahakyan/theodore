@@ -92,11 +92,8 @@ import {
   useCheckboxRangeEvents,
   type CheckboxRangeModifiers,
 } from './useCheckboxRange';
-import {
-  groupDiff,
-  groupsInRevision,
-  nextReviewableGroup,
-} from './review/groups';
+import { nextReviewableGroup } from './review/groups';
+import { diffFiles, isCollapsed, showsOnlyOutliers } from './review/hunks';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
@@ -297,8 +294,6 @@ export const DiffPane = observer(function DiffPane({
   // Only read when a line's comment button is shift-clicked — nothing
   // renders from it, so it lives in a ref instead of re-rendering the diff.
   const rangeStart = useRef<RangeStart | null>(null);
-  const [outliersOpen, setOutliersOpen] = useState<Record<string, boolean>>({});
-  const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
   // Which paths the open diff actually has, so a symbol hit elsewhere in
@@ -380,9 +375,20 @@ export const DiffPane = observer(function DiffPane({
     };
   }, []);
 
+  // Every group with hunks in this revision, in reading order — numbered
+  // as the groups pane numbers them. `groupsOf(pr)` keeps its identity
+  // until the grouping row changes, and so does this list.
+  const allGroups = store.models.groupsOf(pr);
+  const revGroups = useMemo(
+    () => groupsForRevision(store, pr, rev),
+    // `allGroups` stands for `groupsOf(pr)`: a new row is a new list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allGroups, store, pr, rev],
+  );
+  // The same group `Review`'s J/K reads: trimmed to this revision's hunks.
   const group =
     mode.mode === 'groups' && mode.group
-      ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
+      ? revGroups.find((g) => g.id === mode.group)
       : null;
   // Memoized on the group object, which stays the same until the grouping
   // row changes — so the filtered file list below keeps its identity too.
@@ -390,62 +396,33 @@ export const DiffPane = observer(function DiffPane({
     () => (group ? new Set(group.hunks) : null),
     [group],
   );
-  const showOnlyOutliers =
-    !!group &&
-    group.kind === 'skim' &&
-    group.outliers.length > 0 &&
-    !outliersOpen[group.id];
+  const { allEdits, hiddenShown } = store.ephemeral.groupView(pr, group?.id);
+  const showOnlyOutliers = showsOnlyOutliers(group ?? null, allEdits);
   // Lockfiles and generated code: collapsed by default, same as the
   // prototype — "show anyway" reveals this group's diff like any other.
-  const groupCollapsed =
-    !!group && group.kind === 'hidden' && !hiddenOpen[group.id];
+  const groupCollapsed = isCollapsed(group ?? null, hiddenShown);
 
-  const files = useMemo(() => {
-    let out: FileDiff[] =
-      mode.mode === 'files'
-        ? rev.files.filter((f) => f.path === mode.file)
-        : group
-          ? // Ordered as the groups pane lists them, over the same hunks.
-            groupDiff(
-              rev.files,
-              sinceOnly && since
-                ? group.hunks.filter((h) => since.has(h))
-                : group.hunks,
-              group.outliers,
-            )
-          : rev.files;
-
-    if (showOnlyOutliers && group) {
-      const outlierSet = new Set(group.outliers);
-      out = out
-        .map((f) => ({
-          ...f,
-          hunks: f.hunks.filter((h) => outlierSet.has(h.id)),
-        }))
-        .filter((f) => f.hunks.length);
-    }
-
-    if (sinceOnly && since) {
-      out = out
-        .map((f) => ({ ...f, hunks: f.hunks.filter((h) => since.has(h.id)) }))
-        .filter((f) => f.hunks.length);
-    }
-    return out;
-  }, [rev, mode.mode, mode.file, group, showOnlyOutliers, sinceOnly, since]);
+  // The same call `Review`'s J/K steps through, so focus only ever lands
+  // on what's rendered here, in this order.
+  const sinceShown = sinceOnly && since ? since : null;
+  const files = useMemo(
+    () =>
+      diffFiles(rev, { mode: mode.mode, file: mode.file }, group ?? null, {
+        since: sinceShown,
+        allEdits,
+        hiddenShown,
+      }),
+    [rev, mode.mode, mode.file, group, sinceShown, allEdits, hiddenShown],
+  );
 
   // The other groups each file also has hunks in ("also in …" in its
   // header): one entry per group however many of its hunks the file has,
   // numbered as in the groups pane.
-  const allGroups = store.models.groupsOf(pr);
   const othersByPath = useMemo(() => {
     const m = new Map<string, OtherGroup[]>();
     if (mode.mode !== 'groups' || !groupHunkIds) return m;
-    const groups = groupsInRevision(
-      allGroups,
-      new Set(rev.files.flatMap((f) => f.hunks.map((h) => h.id))),
-    );
     const byHunk = new Map<HunkId, OtherGroup>();
-    groups.forEach((g, i) => {
+    revGroups.forEach((g, i) => {
       const other = { id: g.id, title: g.title, n: i + 1 };
       for (const h of g.hunks) byHunk.set(h, other);
     });
@@ -458,7 +435,7 @@ export const DiffPane = observer(function DiffPane({
       if (others.size) m.set(f.path, [...others]);
     }
     return m;
-  }, [rev, mode.mode, groupHunkIds, allGroups]);
+  }, [rev, mode.mode, groupHunkIds, revGroups]);
   const pathOfHunk = useMemo(() => {
     const m = new Map<HunkId, string>();
     for (const f of rev.files) for (const h of f.hunks) m.set(h.id, f.path);
@@ -575,9 +552,7 @@ export const DiffPane = observer(function DiffPane({
             </Alert.Content>
             <Btn
               tone="tertiary"
-              onPress={() =>
-                setOutliersOpen((o) => ({ ...o, [group.id]: !o[group.id] }))
-              }
+              onPress={() => store.ephemeral.toggleAllEdits(pr, group.id)}
             >
               {showOnlyOutliers ? 'Show all' : 'Only outliers'}
             </Btn>
@@ -592,9 +567,7 @@ export const DiffPane = observer(function DiffPane({
             <Btn
               tone="tertiary"
               className="show-hidden"
-              onPress={() =>
-                setHiddenOpen((o) => ({ ...o, [group!.id]: true }))
-              }
+              onPress={() => store.ephemeral.showHidden(pr, group!.id)}
             >
               Show anyway
             </Btn>
@@ -1281,27 +1254,35 @@ function FileBlockInner({
             </Tooltip.Content>
           </Tooltip>
         )}
-        {others.map((g) => (
-          <Tooltip key={g.id}>
-            {/* Gives way before the file name does (heavy shrink weight),
-             *  down to "also in N…". */}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 min-w-20 max-w-40 shrink-[100] gap-1 px-2 text-xs text-accent"
-              onPress={() =>
-                setMode({ mode: 'groups', group: g.id, file: file.path })
-              }
-            >
-              <span className="truncate">
-                also in {g.n} “{g.title}”
-              </span>
-            </Button>
-            <Tooltip.Content>
-              More of this file in group {g.n} “{g.title}”
-            </Tooltip.Content>
-          </Tooltip>
-        ))}
+        {others.length > 0 && (
+          // Each group as just its number, as the groups pane shows it (the
+          // title is in the tooltip and accessible name), so the file name
+          // and the Viewed toggle keep their room. Past a handful the row
+          // gives way first (heavy shrink weight) and clips — never them.
+          <span className="also-in flex min-w-0 shrink-[100] items-center gap-0.5 overflow-hidden">
+            <span aria-hidden className="shrink-0 pr-0.5 text-xs text-muted">
+              also in
+            </span>
+            {others.map((g) => (
+              <Tooltip key={g.id}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Also in group ${g.n} “${g.title}”`}
+                  className="size-6 min-w-6 shrink-0 rounded-full p-0 text-xs tabular-nums text-accent"
+                  onPress={() =>
+                    setMode({ mode: 'groups', group: g.id, file: file.path })
+                  }
+                >
+                  {g.n}
+                </Button>
+                <Tooltip.Content>
+                  More of this file in group {g.n} “{g.title}”
+                </Tooltip.Content>
+              </Tooltip>
+            ))}
+          </span>
+        )}
         <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
           <Chip size="sm" variant="soft" color="warning" className="shrink-0">

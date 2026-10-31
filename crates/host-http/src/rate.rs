@@ -12,10 +12,12 @@ pub(crate) struct RateState {
     /// Earliest time (ms) a blocked caller may try again. Set from an actual
     /// 429/403 response so later calls can fail fast without a round trip.
     blocked_until_ms: Option<Millis>,
-    /// Fingerprint of the token that earned the block. GitHub counts limits
-    /// per token (and per IP with none), so a block earned unauthenticated
-    /// (60/h, used up by polling before sign-in) must not stop the token the
-    /// user just connected.
+    /// Fingerprint of the token that earned the block. GitHub counts an
+    /// authenticated limit per user — every token that user holds shares
+    /// one quota — and an unauthenticated limit per IP. A block is keyed by
+    /// token fingerprint rather than just "authenticated or not" because a
+    /// new token can be a different user, or the switch from no token to
+    /// one, and either way it has its own quota, not the one that's blocked.
     blocked_token: u64,
 }
 

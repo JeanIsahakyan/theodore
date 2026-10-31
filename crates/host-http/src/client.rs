@@ -152,6 +152,9 @@ impl HttpClient {
         self.clock.now()
     }
 
+    /// For callers outside `execute` (`decode`, on a successful response)
+    /// that never captured the token a request sent — the current token is
+    /// the best guess there, and good enough for a success body.
     fn redact(&self, text: &str) -> String {
         redact(self.token.token().as_deref(), text)
     }
@@ -412,7 +415,7 @@ impl HttpClient {
                             expected.contains(&status),
                         );
                         let text = resp.text().await.unwrap_or_default();
-                        return Err(self.attach_body(err, &text));
+                        return Err(self.attach_body(err, &text, token.as_deref()));
                     }
 
                     if status.is_server_error() {
@@ -430,10 +433,9 @@ impl HttpClient {
                         )));
                     }
 
-                    let text = resp
-                        .text()
-                        .await
-                        .map_err(|e| HostError::Network(self.redact(&e.to_string())))?;
+                    let text = resp.text().await.map_err(|e| {
+                        HostError::Network(redact(token.as_deref(), &e.to_string()))
+                    })?;
                     return Ok(Outcome::Ok {
                         body: text,
                         headers,
@@ -443,7 +445,7 @@ impl HttpClient {
                     tracing::debug!(
                         method = %method,
                         url = url.path(),
-                        error = %self.redact(&e.to_string()),
+                        error = %redact(token.as_deref(), &e.to_string()),
                         attempt,
                         "host-http retrying network error"
                     );
@@ -451,7 +453,7 @@ impl HttpClient {
                     self.backoff(attempt).await;
                 }
                 Err(e) => {
-                    let msg = self.redact(&e.to_string());
+                    let msg = redact(token.as_deref(), &e.to_string());
                     tracing::warn!(
                         error.code = "host.network",
                         method = %method,
@@ -509,8 +511,11 @@ impl HttpClient {
         }
     }
 
-    fn attach_body(&self, err: HostError, body: &str) -> HostError {
-        let msg = self.redact(body);
+    /// `token` is the one the request actually sent (captured once at the
+    /// top of `execute`), not whatever `self.token` reads now — the two can
+    /// differ if the token was swapped while this response was in flight.
+    fn attach_body(&self, err: HostError, body: &str, token: Option<&str>) -> HostError {
+        let msg = redact(token, body);
         match err {
             HostError::NotFound(_) => HostError::NotFound(msg),
             HostError::Conflict(_) => HostError::Conflict(msg),

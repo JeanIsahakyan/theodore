@@ -236,6 +236,68 @@ async fn a_rate_limit_hit_without_a_token_does_not_block_the_token_connected_nex
     assert_eq!(got.value.title, "ok");
 }
 
+/// Same scenario as above, but over `post_json` — GitHub's GraphQL root
+/// (`viewer` query) answers an unauthenticated POST with the same 403 +
+/// zeroed `x-ratelimit-*` shape REST does, and the block must still clear
+/// for the token the user connects next.
+#[tokio::test]
+async fn an_unauthenticated_graphql_post_is_blocked_then_a_fresh_token_reaches_the_server() {
+    let server = MockServer::start().await;
+    let clock = FakeClock::new(1_000);
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-limit", "0")
+                .insert_header("x-ratelimit-remaining", "0")
+                .insert_header("x-ratelimit-reset", "3600"),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(header("authorization", "Bearer fresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "viewer": { "login": "octocat" } }
+        })))
+        .mount(&server)
+        .await;
+
+    let token = Arc::new(SwappableToken(std::sync::Mutex::new(None)));
+    let base = url::Url::parse(&format!("{}/", server.uri())).unwrap();
+    let http = HttpClient::new(base, token.clone(), clock);
+    let query = serde_json::json!({ "query": "{ viewer { login } }" });
+
+    let err = http
+        .post_json::<_, serde_json::Value>("", &query)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        HostError::RateLimited {
+            reset_at: 3_600_000
+        }
+    ));
+    // Still blocked for the same (absent) token, without a round trip.
+    let err = http
+        .post_json::<_, serde_json::Value>("", &query)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, HostError::RateLimited { .. }));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    // The user connects GitHub: the new token has its own quota, so this
+    // request isn't blocked locally and actually hits the server.
+    *token.0.lock().unwrap() = Some("fresh".into());
+    let got = http
+        .post_json::<_, serde_json::Value>("", &query)
+        .await
+        .unwrap();
+    assert_eq!(got.value["data"]["viewer"]["login"], "octocat");
+}
+
 #[tokio::test]
 async fn forbidden_without_rate_limit_headers_is_auth_not_rate_limited() {
     let server = MockServer::start().await;

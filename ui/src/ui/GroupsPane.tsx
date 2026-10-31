@@ -73,9 +73,10 @@ function MaybeVirtual({
 
 const short = (p: string) => p.split('/').slice(-2).join('/');
 const base = (p: string) => p.split('/').pop() ?? p;
-/** A file row's badge: gives way before the file name, down to a stub,
- *  its label cut with an ellipsis instead of wrapping. */
-const BADGE = 'min-w-8 shrink-[100] *:min-w-0 *:truncate';
+/** A file row's badge: gives way before the file name, down to a stub
+ *  still wide enough to tell "off-pattern" from "also in" ("off…" vs
+ *  "also…"), its label cut with an ellipsis instead of wrapping. */
+const BADGE = 'min-w-12 shrink-[100] *:min-w-0 *:truncate';
 const circled = (n: number) => '①②③④⑤⑥⑦⑧⑨'[n - 1] ?? String(n);
 const plural = (n: number, one: string, few: string, many: string) =>
   `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
@@ -426,19 +427,26 @@ export const GroupsPane = observer(function GroupsPane({
                                   {short(f)}
                                 </span>
                                 {outFiles.has(f) && (
-                                  <Chip
-                                    size="sm"
-                                    variant="soft"
-                                    color="warning"
-                                    className={BADGE}
-                                    title="off-pattern"
-                                  >
-                                    off-pattern
-                                  </Chip>
+                                  <Tooltip>
+                                    <Tooltip.Trigger className="flex min-w-12 shrink-[100]">
+                                      <Chip
+                                        size="sm"
+                                        variant="soft"
+                                        color="warning"
+                                        className={`w-full ${BADGE}`}
+                                      >
+                                        <span>off-pattern</span>
+                                      </Chip>
+                                    </Tooltip.Trigger>
+                                    <Tooltip.Content>
+                                      An edit here doesn't follow the group's
+                                      pattern — read it
+                                    </Tooltip.Content>
+                                  </Tooltip>
                                 )}
                                 {elsewhere.length > 0 && (
                                   <Tooltip>
-                                    <Tooltip.Trigger className="flex min-w-8 shrink-[100]">
+                                    <Tooltip.Trigger className="flex min-w-12 shrink-[100]">
                                       <Chip
                                         size="sm"
                                         variant="soft"

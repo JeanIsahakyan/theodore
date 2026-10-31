@@ -342,7 +342,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       switch (k) {
         case 'j':
         case 'k': {
-          const hunks = hunksInScope(revision.data, mode, group ?? null);
+          // Exactly what `DiffPane` renders: the same filters it applies.
+          const hunks = hunksInScope(revision.data, mode, group ?? null, {
+            since: sinceOnly && sinceCount > 0 ? since : null,
+            ...store.ephemeral.groupView(pr, group?.id),
+          });
           const next = moveHunkFocus(hunks, focusHunk, k === 'j' ? 1 : -1);
           if (next) setFocusHunk(next);
           return;
@@ -410,6 +414,9 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       composer,
       revision?.data,
       group,
+      since,
+      sinceOnly,
+      sinceCount,
     ],
   );
 

@@ -15,6 +15,7 @@ import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { DiffPane } from './DiffPane';
 import { GroupsPane, type ReviewMode } from './GroupsPane';
+import type { SinceKind } from './diff';
 import { hunksInScope } from './review/hunks';
 
 const PR = 'gh:acme/app#1';
@@ -84,7 +85,11 @@ function seed(grouping: Grouping): RootStore {
 const noop = () => {};
 
 /** Both panes over one store, the way `Review` lays them out. */
-function view(store: RootStore, group: string) {
+function view(
+  store: RootStore,
+  group: string,
+  since: Map<HunkId, SinceKind> | null = null,
+) {
   const mode: ReviewMode = { mode: 'groups', group, file: null };
   return (
     <RootStoreProvider store={store}>
@@ -93,16 +98,16 @@ function view(store: RootStore, group: string) {
         rev={rev}
         mode={mode}
         setMode={noop}
-        since={null}
-        sinceOnly={false}
+        since={since}
+        sinceOnly={!!since}
       />
       <DiffPane
         pr={PR}
         rev={rev}
         mode={mode}
         setMode={noop}
-        since={null}
-        sinceOnly={false}
+        since={since}
+        sinceOnly={!!since}
         baselineSha={null}
         focusHunk={null}
         setFocusHunk={noop}
@@ -213,8 +218,32 @@ describe('hunksInScope in grouped mode', () => {
     const ids = (hs: { id: HunkId }[]) => hs.map((h) => h.id);
     expect(
       ids(
-        hunksInScope(rev, { mode: 'groups', group: 'g1', file: null }, group),
+        hunksInScope(rev, { mode: 'groups', group: 'g1', file: null }, group, {
+          since: null,
+          allEdits: false,
+          hiddenShown: false,
+        }),
       ),
     ).toEqual(['model1', 'api1', 'api2', 'test1']);
+  });
+
+  it('steps through exactly the hunks the diff renders with "Since only"', async () => {
+    const group = g('g1', ['api1', 'model1', 'api2']);
+    const since = new Map<HunkId, SinceKind>([
+      ['model1', 'new'],
+      ['api2', 'changed'],
+    ]);
+    m = await mount(view(seed({ rev: HEAD, groups: [group] }), 'g1', since));
+    const rendered = [...m.host.querySelectorAll('.diff .hunk')].map((e) =>
+      e.id.slice(2),
+    );
+    expect(rendered).toEqual(['model1', 'api2']);
+    expect(
+      hunksInScope(rev, { mode: 'groups', group: 'g1', file: null }, group, {
+        since,
+        allEdits: false,
+        hiddenShown: false,
+      }).map((h) => h.id),
+    ).toEqual(rendered);
   });
 });
