@@ -69,6 +69,9 @@ function MaybeVirtual({
 
 const short = (p: string) => p.split('/').slice(-2).join('/');
 const base = (p: string) => p.split('/').pop() ?? p;
+/** A file row's badge: gives way before the file name, down to a stub,
+ *  its label cut with an ellipsis instead of wrapping. */
+const BADGE = 'min-w-8 shrink-[100] *:min-w-0 *:truncate';
 const circled = (n: number) => '①②③④⑤⑥⑦⑧⑨'[n - 1] ?? String(n);
 const plural = (n: number, one: string, few: string, many: string) =>
   `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
@@ -414,8 +417,11 @@ export const GroupsPane = observer(function GroupsPane({
                                     groupRange.activate(f, checked, modifiers)
                                   }
                                 />
+                                {/* The name sizes from its content and the
+                                 *  badges shrink first (heavy weight), so a
+                                 *  narrow pane cuts the badges, not the name. */}
                                 <span
-                                  className="min-w-0 flex-1 truncate font-mono"
+                                  className="min-w-0 flex-[1_1_auto] truncate font-mono"
                                   title={f}
                                 >
                                   {short(f)}
@@ -425,19 +431,22 @@ export const GroupsPane = observer(function GroupsPane({
                                     size="sm"
                                     variant="soft"
                                     color="warning"
+                                    className={BADGE}
+                                    title="off-pattern"
                                   >
                                     off-pattern
                                   </Chip>
                                 )}
                                 {elsewhere.length > 0 && (
                                   <Tooltip>
-                                    <Tooltip.Trigger>
+                                    <Tooltip.Trigger className="flex min-w-8 shrink-[100]">
                                       <Chip
                                         size="sm"
                                         variant="soft"
                                         color="warning"
+                                        className={`w-full ${BADGE}`}
                                       >
-                                        also in {others}
+                                        <span>also in {others}</span>
                                       </Chip>
                                     </Tooltip.Trigger>
                                     <Tooltip.Content>
