@@ -8,9 +8,16 @@
 #   download   per platform; sha256 is required (an entry without it is
 #              dropped). redirect_hosts: the only hosts the URL may redirect to.
 #   launch     argv; "{bin}" is replaced by the resolved binary.
-#   review_init_options  merged over init_options in a review run (§8).
+#   review_init_options  merged over init_options in a review run (§8). They
+#              narrow what a server runs; they do not make it safe: rust-analyzer
+#              still runs `cargo metadata` (a PR's .cargo/config.toml
+#              `rustc-wrapper`, rust-toolchain.toml), typescript-language-server
+#              loads node_modules/typescript. Hence review runs start servers
+#              only when `code_intel.lsp.review` is on (off by default).
 # languages[]: globs match the file name (`*.rs`, `Dockerfile`); a glob with a
 #   `/` matches the repo-relative path. First language whose glob matches wins.
+#   tags_extends  a language whose tags query is prepended to this one's
+#              (upstream TypeScript tags.scm is written to extend JavaScript's).
 
 servers:
   - name: rust-analyzer
@@ -100,10 +107,12 @@ languages:
     servers: [rust-analyzer]
   - id: typescript
     globs: ["*.ts", "*.mts", "*.cts"]
+    tags_extends: javascript
     servers: [typescript-language-server]
   - id: tsx
     globs: ["*.tsx"]
     lsp_id: typescriptreact
+    tags_extends: javascript
     servers: [typescript-language-server]
   - id: javascript
     globs: ["*.js", "*.mjs", "*.cjs", "*.jsx"]

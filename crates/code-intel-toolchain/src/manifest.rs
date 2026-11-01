@@ -193,6 +193,13 @@ pub struct LanguageSpec {
     pub globs: Vec<String>,
     /// LSP `languageId` when it differs from `id` (`tsx` → `typescriptreact`).
     pub lsp_id: Option<String>,
+    /// A language whose tags query goes in front of this one's: upstream
+    /// TypeScript's `tags.scm` only adds to JavaScript's (it has no classes
+    /// or functions of its own). [`Toolchain::ensure_grammar`] hands over
+    /// each language's own query; the code-intel facade joins the two.
+    ///
+    /// [`Toolchain::ensure_grammar`]: crate::Toolchain::ensure_grammar
+    pub tags_extends: Option<LanguageId>,
     /// The package that parses it, if CI built one.
     pub grammar: Option<GrammarSpec>,
     /// In preference order.
@@ -240,6 +247,8 @@ struct RawLanguage {
     globs: Vec<String>,
     #[serde(default)]
     lsp_id: Option<String>,
+    #[serde(default)]
+    tags_extends: Option<LanguageId>,
     #[serde(default)]
     servers: Vec<String>,
 }
@@ -321,9 +330,29 @@ impl Manifest {
                 id: lang.id,
                 globs: lang.globs,
                 lsp_id: lang.lsp_id,
+                tags_extends: lang.tags_extends,
                 grammar,
                 servers: specs,
             });
+        }
+        // Checked once every id is known. One level only: a base that
+        // extends another is refused rather than chained.
+        let ids: HashSet<LanguageId> = languages.iter().map(|l| l.id.clone()).collect();
+        let extending: HashSet<LanguageId> = languages
+            .iter()
+            .filter(|l| l.tags_extends.is_some())
+            .map(|l| l.id.clone())
+            .collect();
+        for l in &mut languages {
+            if let Some(base) = &l.tags_extends
+                && (!ids.contains(base) || extending.contains(base))
+            {
+                warnings.push(format!(
+                    "language {}: tags_extends {base} is unknown or extends another, ignored",
+                    l.id
+                ));
+                l.tags_extends = None;
+            }
         }
         for g in &grammars {
             for l in &g.languages {
@@ -578,6 +607,41 @@ mod tests {
                 .lsp_language_id(),
             "typescriptreact"
         );
+        for id in ["typescript", "tsx"] {
+            assert_eq!(
+                m.language(&LanguageId::new(id)).unwrap().tags_extends,
+                Some(LanguageId::new("javascript")),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn tags_extends_must_name_a_plain_language() {
+        let yaml = r#"
+servers:
+  - name: s
+    detect: [["s"]]
+    launch: ["{bin}"]
+languages:
+  - { id: base, globs: ["*.b"] }
+  - { id: ok, globs: ["*.o"], tags_extends: base }
+  - { id: unknown, globs: ["*.u"], tags_extends: nope }
+  - { id: chained, globs: ["*.c"], tags_extends: ok }
+  - { id: self, globs: ["*.s"], tags_extends: self, servers: [s] }
+"#;
+        let (m, warnings) = Manifest::parse(yaml, r#"{"schema":1,"grammars":[]}"#).unwrap();
+        let ext = |id: &str| {
+            m.language(&LanguageId::new(id))
+                .unwrap()
+                .tags_extends
+                .clone()
+        };
+        assert_eq!(ext("ok"), Some(LanguageId::new("base")));
+        assert_eq!(ext("unknown"), None);
+        assert_eq!(ext("chained"), None);
+        assert_eq!(ext("self"), None);
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
     }
 
     #[test]
