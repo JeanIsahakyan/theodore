@@ -1535,6 +1535,7 @@ pub struct FakeAgent {
     /// call, which would otherwise race these with a background task a
     /// test never asked about (`space_naming`, `space_handoff`).
     requests: Mutex<Vec<AgentRequest>>,
+<<<<<<< HEAD
     /// The `stream_text: false` calls (`one_shot::run`), separately: a
     /// test that cares inspects these with `utility_requests`.
     utility_requests: Mutex<Vec<AgentRequest>>,
@@ -1546,6 +1547,15 @@ fn default_done() -> Vec<AgentEvent> {
         final_text: "ok".into(),
         usage: theodore_domain::Usage::default(),
     }]
+=======
+    /// `run_steerable` gives a steer handle (as Claude Code's runner does).
+    steerable: std::sync::atomic::AtomicBool,
+    /// Messages steered into runs, in order.
+    steered: Arc<Mutex<Vec<String>>>,
+    /// The next run waits for this before it plays its script (a dropped
+    /// sender: it never does).
+    paused: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+>>>>>>> dda9c32 (feat(spaces): queue sends while a turn runs, send now (wip))
 }
 
 impl FakeAgent {
@@ -1579,12 +1589,29 @@ impl FakeAgent {
     pub fn last_request(&self) -> Option<AgentRequest> {
         self.requests.lock().unwrap().last().cloned()
     }
+<<<<<<< HEAD
     /// The one-shot utility calls (`stream_text: false`), in order.
     pub fn utility_requests(&self) -> Vec<AgentRequest> {
         self.utility_requests.lock().unwrap().clone()
     }
     pub fn last_utility_request(&self) -> Option<AgentRequest> {
         self.utility_requests.lock().unwrap().last().cloned()
+=======
+    /// The next run plays its script only once the returned sender fires:
+    /// a turn that is "running" for as long as a test needs.
+    pub fn pause_next_run(&self) -> tokio::sync::oneshot::Sender<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.paused.lock().unwrap() = Some(rx);
+        tx
+    }
+    /// Runs take steered messages from now on ("Send now").
+    pub fn take_steering(&self) {
+        self.steerable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn steered(&self) -> Vec<String> {
+        self.steered.lock().unwrap().clone()
+>>>>>>> dda9c32 (feat(spaces): queue sends while a turn runs, send now (wip))
     }
 }
 
@@ -1633,7 +1660,16 @@ impl AgentPort for FakeAgent {
                     default_done()
                 }
             });
+            let paused = self.paused.lock().unwrap().take();
             tokio::spawn(async move {
+                if let Some(go) = paused
+                    && go.await.is_err()
+                {
+                    // Never released: hang like `hang_next_run`.
+                    let _keep = tx;
+                    std::future::pending::<()>().await;
+                    return;
+                }
                 for e in events {
                     if tx.send(e).await.is_err() {
                         break;
@@ -1645,6 +1681,24 @@ impl AgentPort for FakeAgent {
             events: rx,
             cancel: CancellationToken::new(),
         })
+    }
+    async fn run_steerable(
+        &self,
+        req: AgentRequest,
+    ) -> Result<(AgentRun, Option<theodore_ports::Steer>), AgentError> {
+        let run = self.run(req).await?;
+        if !self.steerable.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok((run, None));
+        }
+        let (steer, mut messages) = theodore_ports::Steer::channel();
+        let steered = self.steered.clone();
+        tokio::spawn(async move {
+            while let Some(m) = messages.recv().await {
+                steered.lock().unwrap().push(m.text);
+                let _ = m.delivered.send(());
+            }
+        });
+        Ok((run, Some(steer)))
     }
 }
 

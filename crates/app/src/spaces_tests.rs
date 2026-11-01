@@ -443,7 +443,7 @@ async fn an_unknown_attachment_fails_the_send_before_anything_is_stored() {
 }
 
 #[tokio::test]
-async fn a_running_space_refuses_a_second_message_and_stops_cleanly() {
+async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     f.agents.hang_next_run();
@@ -453,7 +453,7 @@ async fn a_running_space_refuses_a_second_message_and_stops_cleanly() {
         .unwrap();
     assert_eq!(space(&f, &s.id).status, SpaceStatus::Running);
 
-    let err = core
+    let queued_id = core
         .space_send(SpaceSendRequest {
             space: s.id.clone(),
             text: "and another".into(),
@@ -463,15 +463,20 @@ async fn a_running_space_refuses_a_second_message_and_stops_cleanly() {
             attachments: None,
         })
         .await
-        .unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+        .unwrap();
+    assert_eq!(f.agents.requests().len(), 1, "queued, not run");
 
     core.space_stop(&s.id).await.unwrap();
     let s = idle(&f, &s.id).await;
     assert_eq!(s.status, SpaceStatus::Idle);
     assert_eq!(s.error, None);
     let chat = transcript(&f, &s.id);
-    assert_eq!(chat.last().unwrap().failed.as_deref(), Some("stopped"));
+    let reply = chat.iter().find(|m| m.author != Author::Me).unwrap();
+    assert_eq!(reply.failed.as_deref(), Some("stopped"));
+    // Stop holds the queue: it waits for you, nothing runs on its own.
+    let queued = chat.iter().find(|m| m.id == queued_id).unwrap();
+    assert!(queued.queued.as_ref().is_some_and(|q| q.held));
+    assert_eq!(f.agents.requests().len(), 1);
     // Edits made before the stop are still checkpointed.
     assert!(
         f.git.checkpoints.lock().unwrap()[0]

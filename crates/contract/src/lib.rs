@@ -31,6 +31,8 @@ mod space_progress;
 pub use space_progress::*;
 mod spaces;
 pub use spaces::*;
+mod space_queue;
+pub use space_queue::*;
 mod config;
 pub use config::*;
 mod account;
@@ -690,6 +692,9 @@ pub struct ChatMessage {
     /// Files sent with your message; empty on replies and older rows.
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    /// A space message waiting for its turn (docs/spaces.md §8).
+    #[serde(default)]
+    pub queued: Option<QueuedSend>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -800,6 +805,9 @@ pub fn types() -> specta::Types {
         .register::<AgentSession>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
+        .register::<QueuedSend>()
+        .register::<QueuedAction>()
+        .register::<SpaceQueuedRequest>()
         .register::<ConfigLayer>()
         .register::<ConfigFile>()
         .register::<ConfigEntry>()

@@ -24,7 +24,11 @@ pub mod space_commands;
 pub mod space_feedback;
 pub(crate) mod space_handoff;
 pub mod space_hooks;
+<<<<<<< HEAD
 pub(crate) mod space_naming;
+=======
+pub mod space_queue;
+>>>>>>> dda9c32 (feat(spaces): queue sends while a turn runs, send now (wip))
 pub mod space_setup_assist;
 pub mod space_terminal;
 pub mod space_tools;
