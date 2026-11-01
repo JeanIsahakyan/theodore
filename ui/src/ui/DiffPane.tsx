@@ -92,7 +92,7 @@ import {
   useCheckboxRangeEvents,
   type CheckboxRangeModifiers,
 } from './useCheckboxRange';
-import { groupsInRevision, nextReviewableGroup } from './review/groups';
+import { nextReviewableGroup } from './review/groups';
 import { diffFiles, isCollapsed, showsOnlyOutliers } from './review/hunks';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
@@ -375,9 +375,20 @@ export const DiffPane = observer(function DiffPane({
     };
   }, []);
 
+  // Every group with hunks in this revision, in reading order — numbered
+  // as the groups pane numbers them. `groupsOf(pr)` keeps its identity
+  // until the grouping row changes, and so does this list.
+  const allGroups = store.models.groupsOf(pr);
+  const revGroups = useMemo(
+    () => groupsForRevision(store, pr, rev),
+    // `allGroups` stands for `groupsOf(pr)`: a new row is a new list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allGroups, store, pr, rev],
+  );
+  // The same group `Review`'s J/K reads: trimmed to this revision's hunks.
   const group =
     mode.mode === 'groups' && mode.group
-      ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
+      ? revGroups.find((g) => g.id === mode.group)
       : null;
   // Memoized on the group object, which stays the same until the grouping
   // row changes — so the filtered file list below keeps its identity too.
@@ -407,16 +418,11 @@ export const DiffPane = observer(function DiffPane({
   // The other groups each file also has hunks in ("also in …" in its
   // header): one entry per group however many of its hunks the file has,
   // numbered as in the groups pane.
-  const allGroups = store.models.groupsOf(pr);
   const othersByPath = useMemo(() => {
     const m = new Map<string, OtherGroup[]>();
     if (mode.mode !== 'groups' || !groupHunkIds) return m;
-    const groups = groupsInRevision(
-      allGroups,
-      new Set(rev.files.flatMap((f) => f.hunks.map((h) => h.id))),
-    );
     const byHunk = new Map<HunkId, OtherGroup>();
-    groups.forEach((g, i) => {
+    revGroups.forEach((g, i) => {
       const other = { id: g.id, title: g.title, n: i + 1 };
       for (const h of g.hunks) byHunk.set(h, other);
     });
@@ -429,7 +435,7 @@ export const DiffPane = observer(function DiffPane({
       if (others.size) m.set(f.path, [...others]);
     }
     return m;
-  }, [rev, mode.mode, groupHunkIds, allGroups]);
+  }, [rev, mode.mode, groupHunkIds, revGroups]);
   const pathOfHunk = useMemo(() => {
     const m = new Map<HunkId, string>();
     for (const f of rev.files) for (const h of f.hunks) m.set(h.id, f.path);
