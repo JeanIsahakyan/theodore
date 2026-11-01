@@ -1489,6 +1489,11 @@ impl HostAdapter for FakeHost {
 #[derive(Default)]
 pub struct FakeAgent {
     scripts: Mutex<VecDeque<Vec<AgentEvent>>>,
+    /// Checked before `scripts`, in push order: a one-shot utility call
+    /// (`space_naming`, `space_handoff` — always `stream_text: false`) a
+    /// test wants to control without racing a turn's own queued script
+    /// (`stream_text: true`, never matched here).
+    tagged: Mutex<Vec<(Box<dyn Fn(&AgentRequest) -> bool + Send>, Vec<AgentEvent>)>>,
     hang_next: Mutex<bool>,
     /// Keeps a run's sender alive forever so its `events.recv()` never
     /// resolves (used to test cancellation deterministically).
@@ -1498,12 +1503,33 @@ pub struct FakeAgent {
     requests: Mutex<Vec<AgentRequest>>,
 }
 
+/// What an untagged, unscripted call gets: one plain, successful turn.
+fn default_done() -> Vec<AgentEvent> {
+    vec![AgentEvent::Done {
+        final_text: "ok".into(),
+        usage: theodore_domain::Usage::default(),
+    }]
+}
+
 impl FakeAgent {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
     pub fn push_script(&self, events: Vec<AgentEvent>) {
         self.scripts.lock().unwrap().push_back(events);
+    }
+    /// The next call whose request matches `matches` gets `events`
+    /// instead of the next one off the FIFO queue (or the default "ok"),
+    /// regardless of when it actually runs.
+    pub fn push_tagged(
+        &self,
+        matches: impl Fn(&AgentRequest) -> bool + Send + 'static,
+        events: Vec<AgentEvent>,
+    ) {
+        self.tagged
+            .lock()
+            .unwrap()
+            .push((Box::new(matches), events));
     }
     /// The next `run()` call never emits anything and never closes, until
     /// the whole fake is dropped.
@@ -1532,17 +1558,32 @@ impl AgentPort for FakeAgent {
             .collect()
     }
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
+        let stream_text = req.stream_text;
+        let tagged = {
+            let mut tagged = self.tagged.lock().unwrap();
+            tagged
+                .iter()
+                .position(|(matches, _)| matches(&req))
+                .map(|i| tagged.remove(i).1)
+        };
         self.requests.lock().unwrap().push(req);
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let hang = std::mem::take(&mut *self.hang_next.lock().unwrap());
         if hang {
             self.kept_alive.lock().unwrap().push(tx);
         } else {
-            let events = self.scripts.lock().unwrap().pop_front().unwrap_or_else(|| {
-                vec![AgentEvent::Done {
-                    final_text: "ok".into(),
-                    usage: theodore_domain::Usage::default(),
-                }]
+            let events = tagged.unwrap_or_else(|| {
+                if stream_text {
+                    self.scripts
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .unwrap_or_else(default_done)
+                } else {
+                    // A one-shot utility call: never steals a turn's
+                    // queued script (see `tagged` above).
+                    default_done()
+                }
             });
             tokio::spawn(async move {
                 for e in events {

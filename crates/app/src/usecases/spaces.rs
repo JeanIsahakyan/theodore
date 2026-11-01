@@ -32,7 +32,7 @@ pub fn space_chat_key(space: &str) -> PrId {
 
 /// Messages of history replayed into a turn that starts a new agent session
 /// (docs/spaces.md §5 "One session per space").
-const HISTORY_MESSAGES: usize = 12;
+pub(crate) const HISTORY_MESSAGES: usize = 12;
 /// Per replayed message.
 const HISTORY_CHARS: usize = 2_000;
 
@@ -49,6 +49,14 @@ impl Core {
             .ok_or_else(|| {
                 AppError::Invalid(format!("project {} has no default branch yet", project.id))
             })?;
+        // Whether the dialog's own name/branch wins over the agent's later
+        // proposal (`space_naming::apply`, docs/spaces.md §3 "New space").
+        let user_named = req
+            .name
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|n| !n.is_empty());
+        let user_branched = req.branch.is_some();
         let name = match req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(n) => n.to_string(),
             // Named after the goal; a second "fix login" in the project
@@ -61,22 +69,9 @@ impl Core {
         };
         let branch = match req.branch.clone() {
             Some(b) => b,
-            None => {
-                // Named after you on the host (docs/spaces.md §12); a local
-                // folder, or a host we can't reach, gets `space/<slug>`.
-                let login = match project.path {
-                    Some(_) => None,
-                    None => self
-                        .0
-                        .deps
-                        .host
-                        .viewer_for(project.repo.host)
-                        .await
-                        .ok()
-                        .map(|p| p.login),
-                };
-                crate::usecases::ship::branch_for(login.as_deref(), &slug(&name))
-            }
+            // Named after you on the host (docs/spaces.md §12); a local
+            // folder, or a host we can't reach, gets `space/<slug>`.
+            None => crate::usecases::space_naming::branch_for(self, &project, &name).await,
         };
         if !is_valid_branch(&branch) {
             return Err(AppError::Invalid(format!("bad branch name {branch:?}")));
@@ -169,6 +164,8 @@ impl Core {
             agent_session: None,
             created_at: now,
             updated_at: now,
+            title: None,
+            handoff_summary: None,
         };
         self.apply(vec![NewAction {
             model: models::SPACE.into(),
@@ -203,6 +200,29 @@ impl Core {
                 attachments: None,
             })
             .await?;
+        }
+        // A better name and a chat title, from the chat agent (never turn
+        // 1's own, which the dialog may have overridden): backgrounded, so
+        // it never delays turn 1 (`space_naming`).
+        if !space.goal.is_empty() {
+            let configured = self
+                .setting_agent_scoped("agents.chat", Some(&project.repo.slug()), AgentId::Claude)
+                .await;
+            let chat_agent = self.effective_agent(configured).await;
+            let core = self.clone();
+            let (id2, goal, cwd) = (id.clone(), space.goal.clone(), wt.path.clone());
+            tokio::spawn(async move {
+                crate::usecases::space_naming::apply(
+                    &core,
+                    id2,
+                    chat_agent,
+                    goal,
+                    cwd,
+                    user_named,
+                    user_branched,
+                )
+                .await;
+            });
         }
         self.space_row(&id).await
     }
@@ -326,10 +346,22 @@ impl Core {
         // hears only the new turn; anything else starts a new session from
         // the replayed transcript.
         let resume = resumable_session(&space, agent, &wt.path);
-        let replay = wrap(turn_prompt(&history, &ask));
+        // Can't resume: a cached, once-generated summary of everything
+        // before the replayed window stands in for the full transcript
+        // (`space_handoff`). The rarer case — a resume that turns out to
+        // be gone mid-run — keeps today's plain replay; it's already
+        // failing once, so it doesn't also pay for a summarizer call.
         let (prompt, replay) = match &resume {
-            Some(_) => (wrap(ask), Some(replay)),
-            None => (replay, None),
+            Some(_) => (wrap(ask.clone()), Some(wrap(turn_prompt(&history, &ask)))),
+            None => (
+                wrap(
+                    crate::usecases::space_handoff::replay_prompt(
+                        self, &space, agent, &wt.path, &history, &ask,
+                    )
+                    .await,
+                ),
+                None,
+            ),
         };
         let turn = Turn {
             run_id,
@@ -1304,7 +1336,7 @@ fn base_system_prompt(space: &Space) -> String {
 /// The new message, preceded by the recent transcript (each CLI run starts
 /// fresh, so this is what carries the conversation across turns, crashes
 /// and agent switches).
-fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
+pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
     let recent = &history[history.len().saturating_sub(HISTORY_MESSAGES)..];
     if recent.is_empty() {
         return text.to_string();
