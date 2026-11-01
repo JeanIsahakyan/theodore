@@ -24,7 +24,7 @@ import {
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { HunkId, PrId } from '../gen/contract';
+import type { Anchor, HunkId, PrId } from '../gen/contract';
 import { api } from '../core/api';
 import { markGroupRead, setDraft, setFileViewed } from '../actions';
 import { FEATURES } from '../features';
@@ -52,7 +52,7 @@ import {
   prevReviewableGroup,
   reviewableGroups,
 } from './review/groups';
-import { hunksInScope, moveHunkFocus } from './review/hunks';
+import { hunkAt, hunksInScope, jumpView, moveHunkFocus } from './review/hunks';
 import { SidePanel } from './SidePanel';
 import { readProgress } from './review/progress';
 import { RevisionError } from './review/RevisionError';
@@ -60,6 +60,27 @@ import { StatusChip } from './review/StatusChip';
 import { latinKey, useViewKeys } from './keys';
 
 type PrTab = 'overview' | 'diff' | 'checks' | 'commits';
+
+/** `a`'s line among the diff lines under `root`: the row whose old (or new)
+ *  number cell says its line. */
+export function lineIn(
+  root: ParentNode,
+  a: Pick<Anchor, 'side' | 'line'>,
+): HTMLElement | null {
+  const col = a.side === 'old' ? 0 : 1;
+  const no = String(a.line);
+  for (const el of root.querySelectorAll<HTMLElement>('.ln')) {
+    if (el.children[col]?.textContent === no) return el;
+  }
+  return null;
+}
+
+/** A short glow on a line the diff just jumped to. */
+function flash(el: HTMLElement): void {
+  el.classList.remove('ln-flash');
+  void el.offsetWidth; // restart the animation on a repeat jump
+  el.classList.add('ln-flash');
+}
 
 const lastSeenKey = (pr: PrId) => `${STORAGE_NS}theodore-lastseen:${pr}`;
 const baselineKeyOf = (pr: PrId) => `${STORAGE_NS}theodore-baseline:${pr}`;
@@ -238,7 +259,6 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     mode.mode === 'groups' && mode.group
       ? allGroups.find((g) => g.id === mode.group)
       : null;
-  const groupHunkIds = group ? new Set(group.hunks) : null;
 
   // Like the prototype: in grouped mode a group is always selected —
   // preferring a reviewable one so a lockfile group is never the default.
@@ -283,6 +303,44 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     },
     [allGroups, revision?.data],
   );
+
+  // A file:line chip in the AI panel: show the view that has the line (its
+  // group, its file, past the filters that hide it), then land on the line
+  // itself (the focus effect below).
+  const jumpLine = useRef<Anchor | null>(null);
+  const lineJump =
+    store.ephemeral.lineJump?.pr === pr ? store.ephemeral.lineJump : null;
+  useEffect(() => {
+    if (!lineJump || !revision?.data) return;
+    store.ephemeral.consumeLineJump(lineJump.seq);
+    const at = hunkAt(revision.data, lineJump.anchor);
+    if (!at) return;
+    const sinceOn = sinceOnly && sinceCount > 0 ? since : null;
+    const view = jumpView(
+      revision.data,
+      mode,
+      allGroups,
+      (g) => ({ since: sinceOn, ...store.ephemeral.groupView(pr, g) }),
+      at.path,
+      at.hunk.id,
+    );
+    const g = view.mode.group;
+    if (view.sinceOff) setSinceOnly(false);
+    if (view.showHidden && g) store.ephemeral.showHidden(pr, g);
+    if (view.showAll && g) store.ephemeral.toggleAllEdits(pr, g);
+    const key = (m: ReviewMode) =>
+      m.mode === 'files' ? `f:${m.file}` : `g:${m.group}`;
+    // Only a view change resets the scroll (DiffPane) — and only then must
+    // it be told not to.
+    if (key(view.mode) !== key(mode)) pendingJump.current = true;
+    if (view.mode !== mode) setMode(view.mode);
+    setTab('diff');
+    jumpLine.current = lineJump.anchor;
+    setJumpStart(true);
+    setJumpSeq((n) => n + 1);
+    setFocusHunk(at.hunk.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineJump?.seq, revision?.data]);
 
   // Review items of the native menu bar (see core/menu.ts).
   useEffect(() => {
@@ -343,7 +401,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       switch (k) {
         case 'j':
         case 'k': {
-          const hunks = hunksInScope(revision.data, mode, groupHunkIds);
+          // Exactly what `DiffPane` renders: the same filters it applies.
+          const hunks = hunksInScope(revision.data, mode, group ?? null, {
+            since: sinceOnly && sinceCount > 0 ? since : null,
+            ...store.ephemeral.groupView(pr, group?.id),
+          });
           const next = moveHunkFocus(hunks, focusHunk, k === 'j' ? 1 : -1);
           if (next) setFocusHunk(next);
           return;
@@ -410,7 +472,10 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       focusHunk,
       composer,
       revision?.data,
-      groupHunkIds,
+      group,
+      since,
+      sinceOnly,
+      sinceCount,
     ],
   );
 
@@ -431,16 +496,28 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     // which moves the target after a smooth scroll has aimed at it. Jump
     // instantly, then re-aim until the layout settles.
     setJumpStart(false);
-    const timers = [0, 80, 200, 400, 700].map((ms) =>
-      setTimeout(
-        () =>
-          // The file card, so its name is in view, not just the hunk.
-          (target()?.closest('.file') ?? target())?.scrollIntoView({
-            block: 'start',
-            behavior: 'auto',
-          }),
-        ms,
-      ),
+    // A line jump aims at the line, centred, and lights it up once landed.
+    const toLine = jumpLine.current;
+    jumpLine.current = null;
+    const line = () => {
+      const h = target();
+      return toLine && h ? lineIn(h.closest('.file') ?? h, toLine) : null;
+    };
+    const steps = [0, 80, 200, 400, 700];
+    const timers = steps.map((ms) =>
+      setTimeout(() => {
+        const l = line();
+        if (l) {
+          l.scrollIntoView({ block: 'center', behavior: 'auto' });
+          if (ms === steps.at(-1)) flash(l);
+          return;
+        }
+        // The file card, so its name is in view, not just the hunk.
+        (target()?.closest('.file') ?? target())?.scrollIntoView({
+          block: 'start',
+          behavior: 'auto',
+        });
+      }, ms),
     );
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps

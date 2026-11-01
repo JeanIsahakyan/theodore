@@ -86,8 +86,9 @@ pub struct AgentRequest {
     pub resume: Option<String>,
     /// Also report the answer's text as it is generated
     /// ([`AgentEvent::TextDelta`]), not only per finished message. Claude
-    /// Code: `--include-partial-messages`; the other CLIs ignore it. Off for
-    /// everything but grouping runs that stream groups.
+    /// Code: `--include-partial-messages`; a CLI that can't ignores it. On
+    /// for every run the window shows live (chat, skills, space turns,
+    /// fixes) and for grouping runs that stream groups.
     #[serde(default)]
     pub stream_text: bool,
 }

@@ -2069,6 +2069,123 @@ async fn delegate_task_runs_the_agent_in_edit_mode_and_captures_a_patch() {
     assert!(req.prompt.contains("Fix the thing"));
 }
 
+/// What each run showed live: its `AgentDelta` text joined, and its
+/// `RunLog` lines.
+fn shown_live(
+    events: &mut tokio::sync::broadcast::Receiver<Ephemeral>,
+    run: &str,
+) -> (String, Vec<String>) {
+    let mut text = String::new();
+    let mut log = Vec::new();
+    while let Ok(e) = events.try_recv() {
+        match e {
+            Ephemeral::AgentDelta {
+                run: r, text: t, ..
+            } if r == run => text.push_str(&t),
+            Ephemeral::RunLog { run: r, line, .. } if r == run => log.push(line),
+            _ => {}
+        }
+    }
+    (text, log)
+}
+
+/// A fix shows what the agent says and does while it works, under the run
+/// id `delegate_task` returned.
+#[tokio::test]
+async fn a_fix_run_streams_its_text_and_tool_calls_live() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-live", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    let mut events = core.0.ephemeral_tx.subscribe();
+    f.agents.push_script(vec![
+        AgentEvent::TextDelta {
+            text: "Fixing ".into(),
+        },
+        AgentEvent::TextDelta { text: "it.".into() },
+        AgentEvent::Text {
+            text: "Fixing it.".into(),
+        },
+        AgentEvent::ToolCall {
+            id: "c1".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "src/lib.rs" }),
+        },
+        AgentEvent::ToolResult {
+            id: "c1".into(),
+            ok: true,
+            output: String::new(),
+        },
+        AgentEvent::Done {
+            final_text: "Fixing it.".into(),
+            usage: Usage::default(),
+        },
+    ]);
+
+    let run_id = core
+        .delegate_task(DelegateRequest {
+            task: task.id.clone(),
+            agent: Some(AgentId::Claude),
+        })
+        .await
+        .expect("delegate_task");
+    wait_until(|| task_row(&f, &task.id).status == TaskStatus::Review).await;
+
+    assert!(f.agents.last_request().unwrap().stream_text);
+    let (text, log) = shown_live(&mut events, &run_id);
+    assert_eq!(text, "Fixing it.");
+    assert_eq!(log, vec!["tool: Edit · src/lib.rs", "tool result ok=true"]);
+}
+
+/// A chat answer streams piece by piece, shows once, and the stored reply
+/// is the whole answer.
+#[tokio::test]
+async fn ask_streams_its_answer_once_and_stores_it_whole() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let mut events = core.0.ephemeral_tx.subscribe();
+    f.agents.push_script(vec![
+        AgentEvent::TextDelta { text: "Be".into() },
+        AgentEvent::TextDelta {
+            text: "cause.".into(),
+        },
+        AgentEvent::Text {
+            text: "Because.".into(),
+        },
+        AgentEvent::Done {
+            final_text: "Because.".into(),
+            usage: Usage::default(),
+        },
+    ]);
+    let message = core
+        .ask(theodore_contract::AskRequest {
+            pr: pr.clone(),
+            question: "why?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+            attachments: None,
+        })
+        .await
+        .expect("ask");
+    wait_until(|| {
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| matches!(m.author, theodore_domain::Author::Agent(_)))
+    })
+    .await;
+
+    assert!(f.agents.last_request().unwrap().stream_text);
+    let (text, _) = shown_live(&mut events, &format!("ask:{message}"));
+    assert_eq!(text, "Because.");
+    let replies: Vec<_> = chat_messages(&f, &pr)
+        .into_iter()
+        .filter(|m| matches!(m.author, theodore_domain::Author::Agent(_)))
+        .map(|m| m.text)
+        .collect();
+    assert_eq!(replies, vec!["Because.".to_string()]);
+}
+
 #[tokio::test]
 async fn a_fix_run_carries_the_repo_instructions() {
     let f = fixtures();
@@ -5155,4 +5272,222 @@ async fn a_failed_regroup_puts_the_previous_grouping_back() {
         serde_json::from_value::<theodore_domain::Grouping>(row).unwrap(),
         before
     );
+}
+
+// ── grouping across a push ───────────────────────────────────────────────
+
+/// The author pushes `head` (the same two hunks, at a new head); returns
+/// once the poller has taken it in.
+async fn push_head(f: &Fixtures, recv: &mut Receivers, head: &str) -> Sha {
+    let base = Sha::new("base000");
+    let head = Sha::new(head);
+    f.git.set_head(head.clone());
+    f.git
+        .set_revision(testkit::two_hunk_revision(&base, &head, "src/lib.rs"));
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some(format!("etag-{head}")),
+        value: testkit::sample_pr_detail(&fixture_pr_ref(), &base, &head),
+    }));
+    f.clock.advance(15_000);
+    let pushed = format!("pushed {head}");
+    expect_ephemeral(
+        recv,
+        |e| matches!(e, Ephemeral::Toast { text, .. } if text.contains(&pushed)),
+    )
+    .await;
+    head
+}
+
+fn stored_grouping_of(f: &Fixtures, pr: &PrId) -> theodore_domain::Grouping {
+    serde_json::from_value(stored_grouping(f, pr).expect("a grouping row")).unwrap()
+}
+
+/// Issue #74: a push while the PR is being grouped never starts a second
+/// run alongside it. The run going finishes, then exactly one more groups
+/// the new head (continuing from the first), and the spinner stays on
+/// across both — one `running: false`, at the end.
+#[tokio::test]
+async fn a_push_during_grouping_runs_one_follow_up_on_the_new_head() {
+    let f = fixtures();
+    f.grouper.hold();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    wait_until(|| f.grouper.calls() == 1).await;
+    let mut events = core.0.ephemeral_tx.subscribe();
+
+    let new_head = push_head(&f, &mut recv, "head222").await;
+    assert_eq!(f.grouper.calls(), 1, "no second run while one is going");
+    assert_eq!(
+        core.0.current_head.read().await.get(&pr),
+        Some(&new_head),
+        "the push is taken in without waiting for the run"
+    );
+
+    f.grouper.release();
+    wait_until(|| f.grouper.calls() == 2).await;
+    f.grouper.release();
+    wait_until(|| core.0.grouping_inflight.lock().unwrap().is_empty()).await;
+
+    assert_eq!(
+        f.grouper.runs(),
+        vec![(head, false), (new_head.clone(), true)],
+        "the old head, then the new one, continuing from the first"
+    );
+    assert_eq!(f.grouper.max_active(), 1);
+    let row = stored_grouping(&f, &pr).unwrap();
+    assert!(crate::usecases::grouping::row_is_current(
+        &row, &new_head, None
+    ));
+    assert!(!stored_grouping_of(&f, &pr).in_progress);
+    let mut grouping_events = vec![];
+    while let Ok(e) = events.try_recv() {
+        if let Ephemeral::Grouping { running, error, .. } = e {
+            grouping_events.push((running, error));
+        }
+    }
+    assert_eq!(grouping_events, vec![(false, None)]);
+}
+
+/// Several pushes during one run queue one more run, not one each: it
+/// groups the latest head.
+#[tokio::test]
+async fn pushes_during_grouping_coalesce_into_one_run_on_the_latest_head() {
+    let f = fixtures();
+    f.grouper.hold();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    wait_until(|| f.grouper.calls() == 1).await;
+
+    push_head(&f, &mut recv, "head222").await;
+    let latest = push_head(&f, &mut recv, "head333").await;
+    assert_eq!(f.grouper.calls(), 1);
+
+    f.grouper.release();
+    wait_until(|| f.grouper.calls() == 2).await;
+    f.grouper.release();
+    wait_until(|| core.0.grouping_inflight.lock().unwrap().is_empty()).await;
+
+    assert_eq!(
+        f.grouper.runs(),
+        vec![(head, false), (latest.clone(), true)]
+    );
+    assert_eq!(f.grouper.max_active(), 1);
+    let row = stored_grouping(&f, &pr).unwrap();
+    assert!(crate::usecases::grouping::row_is_current(
+        &row, &latest, None
+    ));
+}
+
+/// A run that fails with a push queued behind it still hands over: the
+/// new head is grouped from scratch (the failed run's groups never
+/// finished) and the row ends finished, for the new head.
+#[tokio::test]
+async fn a_failed_run_with_a_push_queued_still_groups_the_new_head() {
+    let f = fixtures();
+    let rev = testkit::two_hunk_revision(&Sha::new("base000"), &Sha::new("head111"), "src/lib.rs");
+    let ids = testkit::hunk_ids(&rev);
+    f.grouper.set_partials(vec![in_progress(vec![group_of(
+        "g1",
+        vec![ids[0].clone()],
+    )])]);
+    f.grouper.fail_next("rate limited");
+    f.grouper.hold();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    wait_until(|| f.grouper.calls() == 1).await;
+    wait_until(|| stored_grouping(&f, &pr).is_some()).await;
+
+    let new_head = push_head(&f, &mut recv, "head222").await;
+    f.grouper.release();
+    wait_until(|| f.grouper.calls() == 2).await;
+    f.grouper.release();
+    wait_until(|| core.0.grouping_inflight.lock().unwrap().is_empty()).await;
+
+    assert_eq!(
+        f.grouper.runs(),
+        vec![(head, false), (new_head.clone(), false)]
+    );
+    let row = stored_grouping(&f, &pr).unwrap();
+    assert!(crate::usecases::grouping::row_is_current(
+        &row, &new_head, None
+    ));
+    assert!(!stored_grouping_of(&f, &pr).in_progress);
+}
+
+/// The regroup after a push fails: the UI is told (no spinner left on),
+/// the PR is free to group again, and the previous finished grouping
+/// stays.
+#[tokio::test]
+async fn a_failed_regroup_after_a_push_says_so_and_frees_the_pr() {
+    let f = fixtures();
+    f.grouper.hold();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    wait_until(|| f.grouper.calls() == 1).await;
+    push_head(&f, &mut recv, "head222").await;
+    f.grouper.release();
+    wait_until(|| f.grouper.calls() == 2).await;
+    f.grouper.fail_next("rate limited");
+    f.grouper.release();
+
+    let stopped = expect_ephemeral(&mut recv, |e| {
+        matches!(e, Ephemeral::Grouping { running: false, .. })
+    })
+    .await;
+    assert!(
+        format!("{stopped:?}").contains("rate limited"),
+        "{stopped:?}"
+    );
+    wait_until(|| core.0.grouping_inflight.lock().unwrap().is_empty()).await;
+    let left = stored_grouping_of(&f, &pr);
+    assert_eq!(left.rev, head);
+    assert!(!left.in_progress);
+    assert!(core.claim_grouping(&pr, false).is_some(), "the PR is free");
+}
+
+/// A run that ends without releasing its slot (a panic, a dropped task)
+/// still frees the PR and turns its spinner off.
+#[tokio::test]
+async fn a_grouping_slot_dropped_mid_run_frees_the_pr_and_stops_the_spinner() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+
+    let mut slot = core.claim_grouping(&pr, false).expect("free");
+    assert!(core.claim_grouping(&pr, true).is_none(), "one at a time");
+    slot.announce();
+    drop(slot);
+
+    expect_ephemeral(&mut recv, |e| {
+        matches!(
+            e,
+            Ephemeral::Grouping {
+                running: false,
+                error: Some(_),
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(core.0.grouping_inflight.lock().unwrap().is_empty());
+}
+
+/// A finished grouping of the PR's current head is never replaced by a
+/// run's grouping of an older head.
+#[tokio::test]
+async fn a_stale_runs_grouping_never_replaces_the_current_heads() {
+    let f = fixtures();
+    let (core, mut recv, pr, head) = open_fixture_pr(&f).await;
+    wait_grouping_idle(&f, &core, &pr).await;
+    let new_head = push_head(&f, &mut recv, "head222").await;
+    wait_until(|| {
+        stored_grouping(&f, &pr)
+            .is_some_and(|r| crate::usecases::grouping::row_is_current(&r, &new_head, None))
+    })
+    .await;
+    wait_until(|| core.0.grouping_inflight.lock().unwrap().is_empty()).await;
+
+    let stale =
+        theodore_domain::grouping::to_row(&theodore_domain::Grouping::new(head.clone(), vec![]))
+            .unwrap();
+    core.write_grouping_row(&pr, &head, stale)
+        .await
+        .expect("write");
+    assert_eq!(stored_grouping_of(&f, &pr).rev, new_head);
 }

@@ -17,6 +17,7 @@ import {
   CodePullRequest,
   Folder,
   LayoutSideContentRight,
+  Pencil,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -55,12 +56,12 @@ import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
-import { ToolCalls } from '../SidePanel';
-import { Md } from '../../highlight';
-import { MessageAttachments, useAttachments } from '../attachments';
+import { ToolCalls } from '../ToolCalls';
+import { useAttachments } from '../attachments';
+import { ChatEmpty, ChatLive, ChatLog, ChatMessage } from '../ChatTurn';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
-import { agentEffort, agentLabel, agentModel } from '../agentModel';
+import { agentModel } from '../agentModel';
 import { isBuildMode } from './mode';
 import { markSpaceSeen } from './seen';
 import {
@@ -689,7 +690,8 @@ const ShipControls = observer(function ShipControls({
   );
 });
 
-const SpaceChat = observer(function SpaceChat({
+/** The space's chat: its turns, the live one, the composer. */
+export const SpaceChat = observer(function SpaceChat({
   space,
   handle,
 }: {
@@ -720,11 +722,12 @@ const SpaceChat = observer(function SpaceChat({
     ) : null;
   };
   const setupStage = setupView(space) === 'stage';
-  const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
-  const tools = run ? (store.ephemeral.runLog.get(run) ?? []) : [];
+  // A turn whose check still runs has its reply stored already: its text
+  // shows there, not twice.
+  const replied = run != null && [...turnRuns.values()].includes(run);
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages.length, streaming]);
+  }, [messages.length, run]);
 
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
@@ -771,82 +774,66 @@ const SpaceChat = observer(function SpaceChat({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-        {/* Messages keep a reading width; the scroll area and the input
-            strip below span the whole column. */}
-        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 px-5 py-4">
-          <SetupStage space={space} />
-          <SetupNote space={space} />
-          {messages.length === 0 && !run && !setupStage && (
-            <span className="text-sm text-muted">
-              Tell the agent what to change. It works in its own worktree; your
-              checkout is never touched.
-            </span>
-          )}
-          {messages.map((m) => (
-            <div
+      <ChatLog end={end}>
+        <SetupStage space={space} />
+        <SetupNote space={space} />
+        {messages.length === 0 && !run && !setupStage && (
+          <ChatEmpty
+            icon={<Pencil />}
+            title="Tell the agent what to change"
+            hint="It works in its own worktree; your checkout is never touched."
+          />
+        )}
+        {messages.map((m) => {
+          const agent = m.author.kind === 'agent';
+          const undoneReply = agent && undone.has(m.id);
+          const undoHere =
+            undo.turn?.reply === m.id && space.status !== 'archived';
+          return (
+            <ChatMessage
               key={m.id}
-              className={`flex flex-col gap-1 ${undone.has(m.id) ? 'space-undone opacity-50' : ''}`}
-            >
-              <span className="flex items-center gap-1.5 text-xs text-muted">
-                {m.author.kind === 'me' ? 'you' : m.author.agent}
-                {undone.has(m.id) && m.author.kind === 'agent' && (
-                  <span className="rounded-full bg-default px-1.5 text-[10px]">
-                    undone
-                  </span>
-                )}
-                {undo.turn?.reply === m.id && space.status !== 'archived' && (
-                  <UndoTurn
-                    space={space}
-                    reason={undo.ok ? null : undo.reason}
-                  />
-                )}
-              </span>
-              {m.failed ? (
-                <span className="text-sm text-danger [overflow-wrap:anywhere]">
-                  {m.failed}
-                </span>
-              ) : (
-                <div className="text-sm leading-relaxed">
-                  {m.author.kind === 'me' ? (
-                    <span className="whitespace-pre-wrap">{m.text}</span>
-                  ) : (
-                    <Md text={m.text} />
-                  )}
-                </div>
-              )}
-              <MessageAttachments attachments={m.attachments} />
-              {m.author.kind === 'agent' && turnTools(m.id)}
-              {m.author.kind === 'agent' && checks.has(m.id) && (
-                <CheckChip check={checks.get(m.id)!} />
-              )}
-            </div>
-          ))}
-          {run && (
-            <div className="flex flex-col gap-1">
-              <span className="flex items-center gap-2 text-xs text-muted">
-                <Spinner />{' '}
-                {agentLabel(
-                  space.agent,
-                  space.model ?? agentModel(store, space.agent),
-                  agentEffort(store, space.agent),
-                )}{' '}
-                is working
-              </span>
-              {tools.length > 0 && (
-                <ToolCalls tools={tools} running turn={run} />
-              )}
-              {streaming && (
-                <div className="text-sm leading-relaxed">
-                  <Md text={streaming} />
-                </div>
-              )}
-            </div>
-          )}
-          <div ref={end} />
-        </div>
-      </div>
-      <div className="px-4 pb-3 pt-1">
+              m={m}
+              className={undone.has(m.id) ? 'space-undone opacity-50' : ''}
+              badges={
+                undoneReply || undoHere ? (
+                  <>
+                    {undoneReply && (
+                      <span className="rounded-full bg-default px-1.5 text-[10px] text-muted">
+                        undone
+                      </span>
+                    )}
+                    {undoHere && (
+                      <UndoTurn
+                        space={space}
+                        reason={undo.ok ? null : undo.reason}
+                      />
+                    )}
+                  </>
+                ) : undefined
+              }
+              after={
+                agent ? (
+                  <>
+                    {turnTools(m.id)}
+                    {checks.has(m.id) && (
+                      <CheckChip check={checks.get(m.id)!} />
+                    )}
+                  </>
+                ) : undefined
+              }
+            />
+          );
+        })}
+        {run && (
+          <ChatLive
+            run={run}
+            agent={space.agent}
+            text={!replied}
+            follow={end}
+          />
+        )}
+      </ChatLog>
+      <div className="chat-input px-4 pb-3 pt-1">
         <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
           {space.status === 'failed' && space.error && (
             <span
@@ -990,6 +977,7 @@ const SpaceChanges = observer(function SpaceChanges({
           composer={composer}
           setComposer={setComposer}
           nextGroup={false}
+          askAi={false}
         />
       )}
     </>
@@ -1072,6 +1060,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             onSubmit={() => void start()}
             placeholder="What do you want to work on?"
             rows={5}
+            quiet
             autoFocus
             disabled={busy || !project}
             submit={busy ? 'Creating…' : 'Create'}

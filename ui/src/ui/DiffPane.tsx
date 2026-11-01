@@ -7,6 +7,7 @@ import { isImageDiffPath } from './media/imageDiff';
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -63,12 +64,13 @@ import type {
   Side,
 } from '../gen/contract';
 import {
-  ask,
   askAboutLine,
+  askPending,
   dismissLineAsk,
   markGroupRead,
   markHunkRead,
   openLineAnswer,
+  referenceLine,
   setFileViewed,
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
@@ -93,6 +95,7 @@ import {
   type CheckboxRangeModifiers,
 } from './useCheckboxRange';
 import { nextReviewableGroup } from './review/groups';
+import { diffFiles, isCollapsed, showsOnlyOutliers } from './review/hunks';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
@@ -266,6 +269,9 @@ export const DiffPane = observer(function DiffPane({
   /** The "Next: <group>" button under the diff; off where the diff isn't
    *  read group by group (a space's live diff). */
   nextGroup = true,
+  /** Asking the AI about a line or hunk (it opens the AI panel); off where
+   *  the diff has no AI panel next to it (a space's live diff). */
+  askAi = true,
 }: {
   pr: PrId;
   rev: Revision;
@@ -280,6 +286,7 @@ export const DiffPane = observer(function DiffPane({
   setComposer: (c: ComposerState | null) => void;
   expandHunk?: { hunk: HunkId; nonce: number } | null;
   nextGroup?: boolean;
+  askAi?: boolean;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -293,8 +300,6 @@ export const DiffPane = observer(function DiffPane({
   // Only read when a line's comment button is shift-clicked — nothing
   // renders from it, so it lives in a ref instead of re-rendering the diff.
   const rangeStart = useRef<RangeStart | null>(null);
-  const [outliersOpen, setOutliersOpen] = useState<Record<string, boolean>>({});
-  const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
   // Which paths the open diff actually has, so a symbol hit elsewhere in
@@ -332,8 +337,9 @@ export const DiffPane = observer(function DiffPane({
       setRangeStart: (r) => {
         rangeStart.current = r;
       },
+      askAi,
     }),
-    [setComposer, diffPaths, findHunk],
+    [setComposer, diffPaths, findHunk, askAi],
   );
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
@@ -376,9 +382,20 @@ export const DiffPane = observer(function DiffPane({
     };
   }, []);
 
+  // Every group with hunks in this revision, in reading order — numbered
+  // as the groups pane numbers them. `groupsOf(pr)` keeps its identity
+  // until the grouping row changes, and so does this list.
+  const allGroups = store.models.groupsOf(pr);
+  const revGroups = useMemo(
+    () => groupsForRevision(store, pr, rev),
+    // `allGroups` stands for `groupsOf(pr)`: a new row is a new list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allGroups, store, pr, rev],
+  );
+  // The same group `Review`'s J/K reads: trimmed to this revision's hunks.
   const group =
     mode.mode === 'groups' && mode.group
-      ? store.models.groupsOf(pr).find((g) => g.id === mode.group)
+      ? revGroups.find((g) => g.id === mode.group)
       : null;
   // Memoized on the group object, which stays the same until the grouping
   // row changes — so the filtered file list below keeps its identity too.
@@ -386,66 +403,46 @@ export const DiffPane = observer(function DiffPane({
     () => (group ? new Set(group.hunks) : null),
     [group],
   );
-  const showOnlyOutliers =
-    !!group &&
-    group.kind === 'skim' &&
-    group.outliers.length > 0 &&
-    !outliersOpen[group.id];
+  const { allEdits, hiddenShown } = store.ephemeral.groupView(pr, group?.id);
+  const showOnlyOutliers = showsOnlyOutliers(group ?? null, allEdits);
   // Lockfiles and generated code: collapsed by default, same as the
   // prototype — "show anyway" reveals this group's diff like any other.
-  const groupCollapsed =
-    !!group && group.kind === 'hidden' && !hiddenOpen[group.id];
+  const groupCollapsed = isCollapsed(group ?? null, hiddenShown);
 
-  const files = useMemo(() => {
-    let out: FileDiff[] =
-      mode.mode === 'files'
-        ? rev.files.filter((f) => f.path === mode.file)
-        : groupHunkIds
-          ? rev.files
-              .map((f) => ({
-                ...f,
-                hunks: f.hunks.filter((h) => groupHunkIds.has(h.id)),
-              }))
-              .filter((f) => f.hunks.length)
-          : rev.files;
+  // The same call `Review`'s J/K steps through, so focus only ever lands
+  // on what's rendered here, in this order.
+  const sinceShown = sinceOnly && since ? since : null;
+  const files = useMemo(
+    () =>
+      diffFiles(rev, { mode: mode.mode, file: mode.file }, group ?? null, {
+        since: sinceShown,
+        allEdits,
+        hiddenShown,
+      }),
+    [rev, mode.mode, mode.file, group, sinceShown, allEdits, hiddenShown],
+  );
 
-    if (showOnlyOutliers && group) {
-      const outlierSet = new Set(group.outliers);
-      out = out
-        .map((f) => ({
-          ...f,
-          hunks: f.hunks.filter((h) => outlierSet.has(h.id)),
-        }))
-        .filter((f) => f.hunks.length);
-    }
-
-    if (sinceOnly && since) {
-      out = out
-        .map((f) => ({ ...f, hunks: f.hunks.filter((h) => since.has(h.id)) }))
-        .filter((f) => f.hunks.length);
-    }
-    return out;
-  }, [
-    rev,
-    mode.mode,
-    mode.file,
-    group,
-    groupHunkIds,
-    showOnlyOutliers,
-    sinceOnly,
-    since,
-  ]);
-
-  // Hunks of each file outside the open group ("also in …" in its header).
+  // The other groups each file also has hunks in ("also in …" in its
+  // header): one entry per group however many of its hunks the file has,
+  // numbered as in the groups pane.
   const othersByPath = useMemo(() => {
-    const m = new Map<string, Hunk[]>();
+    const m = new Map<string, OtherGroup[]>();
     if (mode.mode !== 'groups' || !groupHunkIds) return m;
+    const byHunk = new Map<HunkId, OtherGroup>();
+    revGroups.forEach((g, i) => {
+      const other = { id: g.id, title: g.title, n: i + 1 };
+      for (const h of g.hunks) byHunk.set(h, other);
+    });
     for (const f of rev.files) {
-      const others = f.hunks.filter((h) => !groupHunkIds.has(h.id));
-      if (others.length) m.set(f.path, others);
+      const others = new Set<OtherGroup>();
+      for (const h of f.hunks) {
+        const g = groupHunkIds.has(h.id) ? undefined : byHunk.get(h.id);
+        if (g) others.add(g);
+      }
+      if (others.size) m.set(f.path, [...others]);
     }
     return m;
-  }, [rev, mode.mode, groupHunkIds]);
+  }, [rev, mode.mode, groupHunkIds, revGroups]);
   const pathOfHunk = useMemo(() => {
     const m = new Map<HunkId, string>();
     for (const f of rev.files) for (const h of f.hunks) m.set(h.id, f.path);
@@ -562,9 +559,7 @@ export const DiffPane = observer(function DiffPane({
             </Alert.Content>
             <Btn
               tone="tertiary"
-              onPress={() =>
-                setOutliersOpen((o) => ({ ...o, [group.id]: !o[group.id] }))
-              }
+              onPress={() => store.ephemeral.toggleAllEdits(pr, group.id)}
             >
               {showOnlyOutliers ? 'Show all' : 'Only outliers'}
             </Btn>
@@ -579,9 +574,7 @@ export const DiffPane = observer(function DiffPane({
             <Btn
               tone="tertiary"
               className="show-hidden"
-              onPress={() =>
-                setHiddenOpen((o) => ({ ...o, [group!.id]: true }))
-              }
+              onPress={() => store.ephemeral.showHidden(pr, group!.id)}
             >
               Show anyway
             </Btn>
@@ -600,7 +593,7 @@ export const DiffPane = observer(function DiffPane({
                 file={f}
                 since={since}
                 interdiff={interdiffMap}
-                others={othersByPath.get(f.path) ?? NO_HUNKS}
+                others={othersByPath.get(f.path) ?? NO_OTHERS}
                 setMode={setMode}
                 split={effectiveSplit}
                 focusHunk={focusPath === f.path ? focusHunk : null}
@@ -758,7 +751,10 @@ function ChecklistItem({
           <Checkbox.Control>
             <Checkbox.Indicator />
           </Checkbox.Control>
-          <span>{rich(text)}</span>
+          {/* `Checkbox.Content` is `select-none` so a click anywhere in the
+              row toggles the box; the text itself should still be
+              drag-selectable for copy, so it opts back into selection. */}
+          <span className="select-text">{rich(text)}</span>
         </Checkbox.Content>
       </Checkbox>
     </span>
@@ -840,6 +836,7 @@ const ContextGap = observer(function ContextGap({
   gap,
   lang,
   expand,
+  onFullyRevealed,
 }: {
   pr: PrId;
   rev: Revision['head'];
@@ -850,6 +847,11 @@ const ContextGap = observer(function ContextGap({
    *  gap once (not on every render, so the manual "load N lines" buttons
    *  below still work undisturbed). */
   expand?: number | null;
+  /** Told whenever the gap goes from partly to fully shown (or back, if the
+   *  file re-fetches) — just the derived fact the hunk below needs, not the
+   *  reveal mechanics themselves (#52: its header hint is redundant once
+   *  every line above it is visible). */
+  onFullyRevealed?: (full: boolean) => void;
 }) {
   const store = useRootStore();
   const [shown, setShown] = useState(0);
@@ -867,6 +869,13 @@ const ContextGap = observer(function ContextGap({
       ? store.files.get(key, () => api.getFile({ pr, rev, path }))
       : null;
   const ready = res?.status === 'ready' && res.data != null;
+  // The callback prop is read through a ref so a parent re-render (a new
+  // closure) doesn't re-fire this for the same reveal state.
+  const onFullyRevealedRef = useRef(onFullyRevealed);
+  onFullyRevealedRef.current = onFullyRevealed;
+  useEffect(() => {
+    onFullyRevealedRef.current?.(ready && shown >= total);
+  }, [ready, shown, total]);
   const from = gap.to - shown + 1;
   const slice = ready ? res!.data!.split('\n').slice(from - 1, gap.to) : [];
   // Tokenized as one block (not line by line): a gap can land mid-comment
@@ -1026,12 +1035,21 @@ interface LineActions {
   /** Read at click time only; nothing renders from it. */
   rangeStart: () => RangeStart | null;
   setRangeStart: (r: RangeStart | null) => void;
+  /** The diff has an AI panel next to it: offer asking about lines and
+   *  hunks, and the ways into the panel. */
+  askAi: boolean;
 }
 
 type DraftRow = ModelRows['draft'];
 type FindingRow = ModelRows['finding'];
 
-const NO_HUNKS: Hunk[] = [];
+/** Another group a file has hunks in, numbered as in the groups pane. */
+interface OtherGroup {
+  id: string;
+  title: string;
+  n: number;
+}
+const NO_OTHERS: OtherGroup[] = [];
 const NO_IDS: readonly string[] = [];
 const NO_DRAFTS: readonly DraftRow[] = [];
 const NO_FINDINGS: readonly FindingRow[] = [];
@@ -1098,8 +1116,8 @@ function FileBlockInner({
   /** The re-review word-diff, by the hunk id it's keyed on (plan §4) —
    *  `null`/absent outside "since last visit". */
   interdiff?: Map<HunkId, InterdiffEntry> | null;
-  /** This file's hunks outside the open group (grouped mode only). */
-  others: Hunk[];
+  /** The other groups this file has hunks in (grouped mode only). */
+  others: OtherGroup[];
   setMode: (m: ReviewMode) => void;
   split: boolean;
   /** Only set when the focused hunk is in this file. */
@@ -1117,6 +1135,20 @@ function FileBlockInner({
 }) {
   countRender('FileBlock');
   const store = useRootStore();
+  // Which hunks' preceding gap is fully revealed (#52) — just enough lifted
+  // from `ContextGap` for `HunkComponent` to drop its now-redundant header
+  // hint; the reveal mechanics themselves stay local to `ContextGap`.
+  const [gapFullyRevealed, setGapFullyRevealed] = useState<
+    Partial<Record<HunkId, boolean>>
+  >({});
+  const reportGapRevealed = useCallback((id: HunkId, full: boolean) => {
+    setGapFullyRevealed((current) =>
+      // `undefined` (never reported) and `false` both mean "show the
+      // hint" — treated the same so the first, unrevealed report right
+      // after mount doesn't force an extra render of every file.
+      !!current[id] === full ? current : { ...current, [id]: full },
+    );
+  }, []);
   const cardRef = useRef<HTMLDivElement>(null);
   // Anything that jumps here (J/K focus, `E`, `C`, a peek) forces the hunks
   // in first so the jump finds its `H-<id>` element.
@@ -1262,29 +1294,35 @@ function FileBlockInner({
             </Tooltip.Content>
           </Tooltip>
         )}
-        {others.map((h) => {
-          const g = store.models
-            .groupsOf(pr)
-            .find((x) => x.hunks.includes(h.id));
-          if (!g) return null;
-          return (
-            <Tooltip key={h.id}>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 max-w-40 shrink-0 gap-1 px-2 text-xs text-accent"
-                onPress={() =>
-                  setMode({ mode: 'groups', group: g.id, file: file.path })
-                }
-              >
-                <span className="truncate">also in “{g.title}”</span>
-              </Button>
-              <Tooltip.Content>
-                Another hunk of this file in group “{g.title}”
-              </Tooltip.Content>
-            </Tooltip>
-          );
-        })}
+        {others.length > 0 && (
+          // Each group as just its number, as the groups pane shows it (the
+          // title is in the tooltip and accessible name), so the file name
+          // and the Viewed toggle keep their room. Past a handful the row
+          // gives way first (heavy shrink weight) and clips — never them.
+          <span className="also-in flex min-w-0 shrink-[100] items-center gap-0.5 overflow-hidden">
+            <span aria-hidden className="shrink-0 pr-0.5 text-xs text-muted">
+              also in
+            </span>
+            {others.map((g) => (
+              <Tooltip key={g.id}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Also in group ${g.n} “${g.title}”`}
+                  className="size-6 min-w-6 shrink-0 rounded-full p-0 text-xs tabular-nums text-accent"
+                  onPress={() =>
+                    setMode({ mode: 'groups', group: g.id, file: file.path })
+                  }
+                >
+                  {g.n}
+                </Button>
+                <Tooltip.Content>
+                  More of this file in group {g.n} “{g.title}”
+                </Tooltip.Content>
+              </Tooltip>
+            ))}
+          </span>
+        )}
         <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
           <Chip size="sm" variant="soft" color="warning" className="shrink-0">
@@ -1368,6 +1406,7 @@ function FileBlockInner({
                     gap={gaps.get(h.id)!}
                     lang={lang}
                     expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
+                    onFullyRevealed={(full) => reportGapRevealed(h.id, full)}
                   />
                 )}
                 <HunkComponent
@@ -1383,6 +1422,7 @@ function FileBlockInner({
                   composer={slices.composer}
                   peek={slices.peek}
                   actions={actions}
+                  gapFullyRevealed={!!gapFullyRevealed[h.id]}
                 />
               </div>
             );
@@ -1417,13 +1457,16 @@ interface HunkProps {
   /** Only set when the symbol peek is on one of this hunk's lines. */
   peek: SymbolPeekTarget | null;
   actions: LineActions;
+  /** The gap just above this hunk (if any) is fully revealed, so its own
+   *  header hint (#52) would just repeat what's now visible above it. */
+  gapFullyRevealed?: boolean;
 }
 
 /** A line's annotations and per-line slices of the hunk's props, read from
  *  the per-line indexes — the hunk observes them, the line just renders. */
 function lineSlice(
   store: ReturnType<typeof useRootStore>,
-  { pr, path, composer, peek }: HunkProps,
+  { pr, path, composer, peek, actions }: HunkProps,
   l: DiffLine,
 ) {
   const a = anchorSide(l);
@@ -1433,9 +1476,11 @@ function lineSlice(
     findings: a
       ? store.models.findings.shownAt(pr, path, a.side, a.line)
       : NO_FINDINGS,
-    lineAsk: a
-      ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
-      : undefined,
+    // No AI panel, no answer to view or ask to retry: no line ask chip.
+    lineAsk:
+      a && actions.askAi
+        ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
+        : undefined,
     composer:
       a &&
       composer &&
@@ -1453,7 +1498,7 @@ function lineSlice(
 function openHunkMenu(
   e: React.MouseEvent,
   store: ReturnType<typeof useRootStore>,
-  { pr, path, h }: HunkProps,
+  { pr, path, h, actions }: HunkProps,
 ) {
   contextMenuHandler(store.ui, (): ContextMenuItem[] => [
     {
@@ -1463,20 +1508,24 @@ function openHunkMenu(
       disabledReason: 'Already read',
       onAction: () => markHunkRead(store, pr, h.id),
     },
-    {
-      id: 'ask-agent',
-      label: 'Ask agent',
-      onAction: () =>
-        void ask(store, {
-          pr,
-          question: `about the hunk at ${path}:${h.new_start}`,
-          about: null,
-          group: null,
-          agent: null,
-        }).catch(() => {
-          // toasted by api.ts
-        }),
-    },
+    ...(actions.askAi
+      ? [
+          {
+            id: 'ask-agent',
+            label: 'Ask agent',
+            onAction: () =>
+              void askPending(store, {
+                pr,
+                question: `about the hunk at ${path}:${h.new_start}`,
+                about: null,
+                group: null,
+                agent: null,
+              }).catch(() => {
+                // toasted by api.ts
+              }),
+          },
+        ]
+      : []),
     {
       id: 'copy-hunk',
       label: 'Copy hunk',
@@ -1490,8 +1539,18 @@ function openHunkMenu(
 
 function HunkViewInner(props: HunkProps) {
   countRender('Hunk');
-  const { pr, rev, path, h, lang, since, interdiff, focused, setFocusHunk } =
-    props;
+  const {
+    pr,
+    rev,
+    path,
+    h,
+    lang,
+    since,
+    interdiff,
+    focused,
+    setFocusHunk,
+    gapFullyRevealed,
+  } = props;
   const store = useRootStore();
   const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
@@ -1517,7 +1576,7 @@ function HunkViewInner(props: HunkProps) {
         onContextMenu={(e) => openHunkMenu(e, store, props)}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
-        {h.header && (
+        {h.header && !gapFullyRevealed && (
           <span className="min-w-0 flex-1 truncate text-muted/70">
             {h.header}
           </span>
@@ -1566,8 +1625,18 @@ function HunkViewInner(props: HunkProps) {
 /** Side-by-side rendering of one hunk, using `splitRows` to pair del/add lines. */
 function SplitHunkViewInner(props: HunkProps) {
   countRender('Hunk');
-  const { pr, rev, path, h, lang, since, interdiff, focused, setFocusHunk } =
-    props;
+  const {
+    pr,
+    rev,
+    path,
+    h,
+    lang,
+    since,
+    interdiff,
+    focused,
+    setFocusHunk,
+    gapFullyRevealed,
+  } = props;
   const store = useRootStore();
   const read = store.models.hunkReads.isRead(pr, h.id);
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
@@ -1609,7 +1678,7 @@ function SplitHunkViewInner(props: HunkProps) {
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
-        {h.header && (
+        {h.header && !gapFullyRevealed && (
           <span className="min-w-0 flex-1 truncate text-muted/70">
             {h.header}
           </span>
@@ -1671,16 +1740,15 @@ function openLineMenu(
         onAction: () =>
           actions.setRangeStart({ path, side: anchor.side, line: anchor.line }),
       },
-      {
-        id: 'ask-agent',
-        label: 'Ask agent',
-        onAction: () =>
-          void askAboutLine(store, {
-            pr,
-            question: `about ${path}:${lineNo}`,
-            anchor,
-          }),
-      },
+      ...(actions.askAi
+        ? [
+            {
+              id: 'ask-agent',
+              label: 'Ask agent',
+              onAction: () => referenceLine(store, pr, anchor),
+            },
+          ]
+        : []),
       {
         id: 'copy-line',
         label: 'Copy line',
@@ -1767,9 +1835,11 @@ const Line = memo(function Line(props: LineProps) {
         <span className="mark">
           {findings.length > 0 ? (
             <span
-              className={`inline-block size-[9px] cursor-pointer rounded-full ${sevBg[findings[0]!.severity]}`}
+              className={`inline-block size-[9px] rounded-full ${actions.askAi ? 'cursor-pointer' : ''} ${sevBg[findings[0]!.severity]}`}
               title={findings.map((f) => f.title).join('\n')}
-              onClick={() => store.ui.toggleAside(true)}
+              onClick={
+                actions.askAi ? () => store.ui.toggleAside(true) : undefined
+              }
             />
           ) : (
             <span>{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</span>
@@ -1822,21 +1892,17 @@ const Line = memo(function Line(props: LineProps) {
                   Comment · shift-click another line for a range
                 </Tooltip.Content>
               </Tooltip>
-              <Button
-                isIconOnly
-                size="sm"
-                aria-label="ask AI about this line"
-                className="h-5 min-w-5 w-5 rounded-xl text-xs"
-                onPress={() =>
-                  void askAboutLine(store, {
-                    pr,
-                    question: `explain ${path}:${lineNo}`,
-                    anchor,
-                  })
-                }
-              >
-                <Sparkles className="size-3" />
-              </Button>
+              {actions.askAi && (
+                <Button
+                  isIconOnly
+                  size="sm"
+                  aria-label="ask AI about this line"
+                  className="h-5 min-w-5 w-5 rounded-xl text-xs"
+                  onPress={() => referenceLine(store, pr, anchor)}
+                >
+                  <Sparkles className="size-3" />
+                </Button>
+              )}
             </>
           )}
         </span>
@@ -1883,6 +1949,7 @@ const Line = memo(function Line(props: LineProps) {
               pr={pr}
               anchor={composerAnchor}
               lineText={l.kind !== 'del' ? l.text : ''}
+              askAi={actions.askAi}
               onClose={() => actions.setComposer(null)}
             />
           )}

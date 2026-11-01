@@ -8,7 +8,9 @@ import { lineAskKey } from './stores/EphemeralStore';
 import {
   askAboutLine,
   dismissLineAsk,
+  jumpToLine,
   openLineAnswer,
+  referenceLine,
   replyTo,
 } from './actions';
 import type { Anchor, ChatMessage } from './gen/contract';
@@ -137,6 +139,81 @@ describe('askAboutLine', () => {
     await askAboutLine(store, { pr: PR, anchor, question: 'explain' });
     expect(transport.calls.filter((c) => c.cmd === 'ask')).toHaveLength(1);
     expect(store.ephemeral.askFocus?.message).toBe('q5');
+  });
+});
+
+describe('referenceLine', () => {
+  const other: Anchor = { ...anchor, line: 30 };
+
+  it('puts the line in the composer and asks nothing', () => {
+    const store = new RootStore();
+    referenceLine(store, PR, anchor);
+    expect(store.ephemeral.lineRefs.get(PR)).toEqual(anchor);
+    expect(store.ui.asideShown).toBe(true);
+    expect(store.ephemeral.composerFocus?.pr).toBe(PR);
+    expect(store.ephemeral.lineAsks.size).toBe(0);
+    expect(transport.calls.filter((c) => c.cmd === 'ask')).toHaveLength(0);
+  });
+
+  it('another line replaces it; the same line only refocuses', () => {
+    const store = new RootStore();
+    referenceLine(store, PR, anchor);
+    referenceLine(store, PR, other);
+    expect(store.ephemeral.lineRefs.get(PR)).toEqual(other);
+    const seq = store.ephemeral.composerFocus!.seq;
+    store.ephemeral.consumeComposerFocus(seq);
+    referenceLine(store, PR, other);
+    expect(store.ephemeral.lineRefs.get(PR)).toEqual(other);
+    expect(store.ephemeral.composerFocus!.seq).toBeGreaterThan(seq);
+  });
+
+  it('a line whose question still runs brings that one into view', async () => {
+    const store = new RootStore();
+    transport.queueResult('ask', 'q6');
+    await askAboutLine(store, { pr: PR, anchor, question: 'why?' });
+    referenceLine(store, PR, anchor);
+    expect(store.ephemeral.lineRefs.has(PR)).toBe(false);
+    expect(store.ephemeral.askFocus?.message).toBe('q6');
+  });
+});
+
+describe('askAboutLine from the composer', () => {
+  it('sends the typed question, its agent and files, again on Retry', async () => {
+    const store = new RootStore();
+    transport.queueResult('ask', new Error('boom'), 'q7');
+    await askAboutLine(store, {
+      pr: PR,
+      anchor,
+      question: 'why a loop?',
+      picked: 'codex',
+      attachments: ['att1'],
+    });
+    const req = {
+      pr: PR,
+      question: 'why a loop?',
+      about: anchor,
+      agent: 'codex',
+      attachments: ['att1'],
+    };
+    expect(transport.calls.at(-1)).toMatchObject({ cmd: 'ask', args: { req } });
+    expect(store.ephemeral.lineAsks.get(KEY)).toMatchObject({
+      status: 'failed',
+      agent: 'codex',
+    });
+
+    await askAboutLine(store, store.ephemeral.lineAsks.get(KEY)!);
+    expect(transport.calls.at(-1)).toMatchObject({ cmd: 'ask', args: { req } });
+  });
+});
+
+describe('jumpToLine', () => {
+  it('asks the diff for the line, the drawer stepping aside', () => {
+    const store = new RootStore();
+    store.ui.setAsideIsDrawer(true);
+    store.ui.toggleAside(true);
+    jumpToLine(store, PR, anchor);
+    expect(store.ephemeral.lineJump).toMatchObject({ pr: PR, anchor });
+    expect(store.ui.asideShown).toBe(false);
   });
 });
 

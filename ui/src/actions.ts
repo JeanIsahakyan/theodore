@@ -215,6 +215,52 @@ export async function ask(_store: RootStore, req: AskRequest): Promise<string> {
   return api.ask(req);
 }
 
+/** A question with no diff-line chip — the composer's plain send, or a
+ *  hunk's fixed "Ask agent": the AI panel opens at once with a pending
+ *  bubble (the question, then the agent's streaming text), which gives way
+ *  to the real reply once it lands. Throws (already toasted by `api.ts`)
+ *  on a rejected `ask`, same as calling `ask` directly — the caller decides
+ *  what "failed to ask" means for it (e.g. not clearing its composer). */
+export async function askPending(
+  store: RootStore,
+  req: AskRequest,
+): Promise<void> {
+  store.ui.toggleAside(true);
+  const startedAt = Date.now();
+  const message = await ask(store, req);
+  const run = askRunId(message);
+  store.ephemeral.setChatPending(req.pr, {
+    run,
+    startedAt,
+    question: req.question,
+    agent: req.agent,
+  });
+  store.ephemeral.focusAsk(req.pr, null);
+  // Three states: `undefined` — no longer this ask's to track (cleared or
+  // replaced elsewhere), stop watching; `false` — still pending; `true` —
+  // the reply landed, clear it.
+  const stop = reaction(
+    (): boolean | undefined => {
+      const cur = store.ephemeral.chatPending.get(req.pr);
+      if (!cur || cur.run !== run) return undefined;
+      return store.models.chatMessages
+        .byPr(req.pr)
+        .some((m) => m.author.kind !== 'me' && m.at >= startedAt);
+    },
+    (landed) => {
+      if (landed === undefined) {
+        stop();
+        return;
+      }
+      if (landed) {
+        stop();
+        store.ephemeral.clearChatPending(req.pr);
+      }
+    },
+    { fireImmediately: true },
+  );
+}
+
 /** The run behind a chat question: core names it after the question's
  *  message id (what `ask` returns), and streams/cancels under this id. */
 export const askRunId = (message: string) => `ask:${message}`;
@@ -249,13 +295,65 @@ function chatAgentGuess(store: RootStore): AgentId {
   return AGENT_IDS.find((a) => a === v) ?? 'claude';
 }
 
+/** A question about `anchor`'s line is still running. */
+export function lineAskRunning(
+  store: RootStore,
+  pr: PrId,
+  anchor: Anchor,
+): boolean {
+  return (
+    store.ephemeral.lineAskAt(pr, anchor.path, anchor.side, anchor.line)
+      ?.status === 'asking'
+  );
+}
+
+/** A line's AI button: nothing is asked yet. The AI panel opens with the
+ *  line as a chip in its composer, the caret in the box — the question is
+ *  the user's to type. Another line replaces the chip; the same line only
+ *  refocuses. A line whose question still runs brings that one into view
+ *  instead, as asking again would. */
+export function referenceLine(
+  store: RootStore,
+  pr: PrId,
+  anchor: Anchor,
+): void {
+  store.ui.toggleAside(true);
+  if (lineAskRunning(store, pr, anchor)) {
+    const key = lineAskKey(pr, anchor.path, anchor.side, anchor.line);
+    store.ephemeral.focusAsk(pr, store.ephemeral.lineAsks.get(key)!.message);
+    return;
+  }
+  store.ephemeral.setLineRef(pr, anchor);
+  store.ephemeral.focusComposer(pr);
+}
+
+/** A file:line chip: the diff shows that line. In the narrow layout the
+ *  AI panel is a drawer over the diff, so it steps aside. */
+export function jumpToLine(store: RootStore, pr: PrId, anchor: Anchor): void {
+  if (store.ui.asideIsDrawer) store.ui.toggleAside(false);
+  store.ephemeral.jumpToLine(pr, anchor);
+}
+
 /** Asks the agent about one diff line: the line shows "Asking…" at once,
  *  the AI panel opens on the question, and the line's chip turns into
  *  "Answered" (or "Failed") once the reply lands. Asking again while one
  *  runs on that line only brings it back into view. */
 export async function askAboutLine(
   store: RootStore,
-  { pr, anchor, question }: { pr: PrId; anchor: Anchor; question: string },
+  {
+    pr,
+    anchor,
+    question,
+    picked = null,
+    attachments = null,
+  }: {
+    pr: PrId;
+    anchor: Anchor;
+    question: string;
+    /** The composer's agent; `null`: core's default. */
+    picked?: AgentId | null;
+    attachments?: string[] | null;
+  },
 ): Promise<void> {
   const key = lineAskKey(pr, anchor.path, anchor.side, anchor.line);
   const cur = store.ephemeral.lineAsks.get(key);
@@ -268,10 +366,13 @@ export async function askAboutLine(
     pr,
     anchor,
     question,
-    agent: chatAgentGuess(store),
+    agent: picked ?? chatAgentGuess(store),
+    picked,
+    attachments,
     status: 'asking',
     message: null,
     reply: null,
+    startedAt: Date.now(),
   });
   store.ephemeral.focusAsk(pr, null);
   // `mine`: still this very ask (not dismissed, not re-asked since).
@@ -286,7 +387,8 @@ export async function askAboutLine(
       question,
       about: anchor,
       group: null,
-      agent: null,
+      agent: picked,
+      ...(attachments?.length ? { attachments } : {}),
     });
   } catch {
     // toasted by api.ts
@@ -388,15 +490,19 @@ export function assignTask(
 
 /** Hands a task to an agent CLI, which fixes it in the PR worktree (Edit
  *  mode). The task's own status moves to `progress`/`review` via sync, not
- *  locally — this only kicks the run off. Returns the run id, or `null` on
- *  a graceful failure (toast, no crash). */
+ *  locally — this only kicks the run off and remembers its run id for the
+ *  row's live view. Returns the run id, or `null` on a graceful failure
+ *  (toast, no crash). */
 export async function delegateTask(
-  _store: RootStore,
+  store: RootStore,
   task: string,
   agent: AgentId | null = null,
 ): Promise<string | null> {
   try {
-    return await api.delegateTask({ task, agent });
+    const run = await api.delegateTask({ task, agent });
+    // The task's row shows this run's output while the fix runs.
+    store.ephemeral.setTaskRun(task, run);
+    return run;
   } catch {
     return null; // toasted by api.ts
   }

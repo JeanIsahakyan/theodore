@@ -1,6 +1,7 @@
 //! Poller (plan §6.6): ETag polling of open PRs, cursor polling of the
 //! inbox. A new head runs the push pipeline: diff, classify, clear reads of
-//! changed hunks, dismiss their files, regroup, wake `NextPush` snoozes.
+//! changed hunks, dismiss their files, regroup (queued behind a run already
+//! going), wake `NextPush` snoozes.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -10,11 +11,8 @@ use std::time::Duration;
 use theodore_contract::{Ephemeral, HunkRead, InboxState, ToastLevel, models};
 use theodore_domain::anchors::Remapped;
 use theodore_domain::snooze::PrEvent;
-use theodore_domain::{
-    AgentId, Anchor, Grouping, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState,
-};
+use theodore_domain::{Anchor, HunkId, PrDetail, PrId, PrRef, Revision, Sha, ViewedState};
 use theodore_ports::{DiffOptions, NewAction, SyncActionCode};
-use tracing::Instrument as _;
 
 use crate::core::{Core, Inner, RevisionEntry};
 use crate::usecases::review_config::{ConfigBase, ReviewSource};
@@ -399,16 +397,9 @@ async fn handle_push(
         remap_anchors_after_push(core, pr, &repo_path, old_head, &new_head).await;
     }
 
-    regroup_after_push(core, pr, &new_rev, &detail, source).await;
-    wake_next_push(core, pr).await;
-
-    {
-        core.0
-            .current_head
-            .write()
-            .await
-            .insert(pr.clone(), new_head.clone());
-    }
+    // The new head is the PR's head from here on — before regrouping, so
+    // the regroup (and a run already going for the old head, when it
+    // ends) sees it, and the poller doesn't wait on an agent run.
     {
         core.0.revisions.write().await.insert(
             (pr.clone(), new_head.clone()),
@@ -421,6 +412,18 @@ async fn handle_push(
             }),
         );
     }
+    {
+        core.0
+            .current_head
+            .write()
+            .await
+            .insert(pr.clone(), new_head.clone());
+    }
+
+    // In the background, and never alongside another run for this PR: a
+    // push while one is going queues one more run, on the latest head.
+    core.regroup_latest(pr);
+    wake_next_push(core, pr).await;
 
     // `pr`/`pr_detail` were already written by `poll_one_pr`'s `refresh_pr`
     // call, from this same fetch — nothing left to apply here.
@@ -590,101 +593,6 @@ async fn dismiss_files(
         }
     }
     let _ = core.apply(actions).await;
-}
-
-async fn regroup_after_push(
-    core: &Core,
-    pr: &PrId,
-    new_rev: &Revision,
-    detail: &PrDetail,
-    source: ReviewSource<'_>,
-) {
-    let worktree = source.worktree;
-    let store = core.0.deps.store.clone();
-    let pr_s = pr.0.clone();
-    let prev_row = tokio::task::spawn_blocking(move || store.get(models::GROUPING, &pr_s))
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .flatten();
-    let rules = core.review_rules_at(source).await;
-    let hash = rules.grouping_hash();
-    let prior = prev_row.as_ref().map(|r| r.data.clone());
-    // Under other review rules the previous groups don't carry over, nor
-    // do those of a run that never finished.
-    let prev: Option<Grouping> = prev_row
-        .filter(|r| theodore_domain::grouping::row_review_hash(&r.data) == hash.as_deref())
-        .and_then(|r| serde_json::from_value::<Grouping>(r.data).ok())
-        .filter(|g| !g.in_progress);
-    let repo_scope = detail.summary.pr.repo.slug();
-    let agent = core
-        .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
-        .await;
-    let agent = crate::deps::GroupingAgent {
-        id: agent,
-        // Grouping never uses the user's MCP servers: starting
-        // them on every chunk would only slow it down.
-        user_mcp: false,
-    };
-    let mut ctx = core.grouping_context(worktree, new_rev).await;
-    ctx.review = rules.clone();
-    let result = match &prev {
-        Some(p) => {
-            core.0
-                .deps
-                .grouper
-                .regroup(p, new_rev, detail, &ctx, worktree, agent)
-                .await
-        }
-        None => {
-            // A fresh grouping streams: its groups show as they come, as on
-            // open.
-            core.emit(Ephemeral::Grouping {
-                pr: pr.clone(),
-                running: true,
-                error: None,
-            });
-            let writer = crate::usecases::grouping::PartialWriter::start(
-                core,
-                pr.clone(),
-                new_rev.clone(),
-                rules,
-                prior,
-            );
-            let r = core
-                .0
-                .deps
-                .grouper
-                .group(new_rev, detail, &ctx, worktree, agent, &|g| writer.send(g))
-                .instrument(crate::usecases::grouping::grouping_span(
-                    pr, agent.id, false,
-                ))
-                .await;
-            writer.finish(r.is_ok()).await;
-            core.emit(Ephemeral::Grouping {
-                pr: pr.clone(),
-                running: false,
-                error: r.as_ref().err().map(|e| e.to_string()),
-            });
-            r
-        }
-    };
-    if let Ok(grouping) = result {
-        let data =
-            crate::usecases::grouping::grouping_row(grouping, new_rev, &ctx).expect("serializable");
-        let action = NewAction {
-            model: models::GROUPING.into(),
-            model_id: pr.0.clone(),
-            action: SyncActionCode::U,
-            data: Some(data),
-        };
-        let _ = core.apply(vec![action]).await;
-    } else {
-        core.emit(Ephemeral::Toast {
-            level: ToastLevel::Warn,
-            text: "regrouping after push failed".into(),
-        });
-    }
 }
 
 async fn wake_next_push(core: &Core, pr: &PrId) {

@@ -63,10 +63,17 @@ export interface LineAsk {
    *  lands, then the reply's author. */
   agent: AgentId;
   status: 'asking' | 'answered' | 'failed';
+  /** The agent the composer picked, sent as `ask`'s `agent` (again on
+   *  Retry); `null` = core's default. */
+  picked?: AgentId | null;
+  /** `save_attachment` ids sent with the question (again on Retry). */
+  attachments?: string[] | null;
   /** The question's chat message id, once `ask` returns it. */
   message: string | null;
   /** The reply's chat message id, once it lands. */
   reply: string | null;
+  /** When it was asked (ms): the AI panel's Stop goes to the newest run. */
+  startedAt?: number;
 }
 
 /** What the AI panel should bring into view: a chat message, or the
@@ -78,12 +85,38 @@ export interface AskFocus {
   seq: number;
 }
 
+/** A question asked with no diff-line chip to pin it to — the composer's
+ *  plain send, or a fixed question like a hunk's "Ask agent": the pending
+ *  bubble shown in the chat (question, then the agent's streaming text)
+ *  until the real reply lands. One per PR; a later ask replaces it. */
+export interface ChatPending {
+  run: string;
+  startedAt: number;
+  /** So a stalled run's Retry can resend the same question. */
+  question: string;
+  agent: AgentId | null;
+}
+
+/** A one-shot request to a component, per PR; `seq` makes asking twice
+ *  still count. */
+export interface PrSignal {
+  pr: PrId;
+  seq: number;
+}
+
+/** A file:line chip asked the diff to show this line. */
+export interface LineJump extends PrSignal {
+  anchor: Anchor;
+}
+
 export const lineAskKey = (
   pr: PrId,
   path: string,
   side: Side,
   line: number,
 ): string => `${pr}\u0000${path}\u0000${side}\u0000${line}`;
+
+const groupViewKey = (pr: PrId, group: string): string => `${pr}\u0000${group}`;
 
 export interface HostStatus {
   online: boolean;
@@ -92,10 +125,24 @@ export interface HostStatus {
 }
 
 export class EphemeralStore {
-  /** Streaming text per run id, appended as `agent_delta` events arrive. */
-  agentText = new Map<string, string>();
-  /** Last lines of a skill run's log, per run id. */
-  runLog = new Map<string, string[]>();
+  /** Streaming text per run id, appended as `agent_delta` events arrive
+   *  (a piece at a time while the agent writes). Observable per key: a
+   *  view reading one run re-renders only when that run grows. */
+  readonly agentText: ObservableMap<string, string> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** Last lines of a run's log (its tool calls), per run id. */
+  readonly runLog: ObservableMap<string, string[]> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** The fix run of each task delegated this session, by task id: what
+   *  its row shows live while the task is in progress. */
+  readonly taskRuns: ObservableMap<string, string> = observable.map(
+    {},
+    { deep: false },
+  );
   /** Run ids with no output for `agents.stall_after_ms` while still alive —
    *  the UI offers Retry/Cancel instead of waiting silently. Cleared as
    *  soon as the run produces output again, or ends. */
@@ -139,14 +186,37 @@ export class EphemeralStore {
     { deep: false },
   );
   askFocus: AskFocus | null = null;
+  /** `ChatPending` by PR — the composer's and the hunk ask's shared pending
+   *  bubble; an observable map so only a PR's own chat re-renders on it. */
+  readonly chatPending: ObservableMap<PrId, ChatPending> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** The diff line the PR chat's next question is about, per PR: a line's
+   *  AI button sets it, the composer shows it as a chip and sends it as
+   *  the question's `about`. One per PR — `ask` takes one anchor. */
+  readonly lineRefs: ObservableMap<PrId, Anchor> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** The PR chat's composer should take the caret (a line was just
+   *  referenced); the composer clears it once it has. */
+  composerFocus: PrSignal | null = null;
+  /** The diff should show a line (a file:line chip was clicked); `Review`
+   *  clears it once it has. */
+  lineJump: LineJump | null = null;
+  /** Groups whose diff the user opened past its default, by
+   *  `groupViewKey`: a skim group's "Show all" (past "Only outliers") and a
+   *  hidden group's "Show anyway". Kept here, not in `DiffPane`, so
+   *  `Review`'s J/K steps through the same hunks the diff shows. */
+  allEditsShown = new Set<string>();
+  hiddenShown = new Set<string>();
 
   private nextToastId = 1;
   private nextFocusSeq = 1;
 
   constructor() {
     makeObservable(this, {
-      agentText: observableShallow,
-      runLog: observableShallow,
       stalled: observableShallow,
       toasts: observableShallow,
       hostStatus: observable,
@@ -163,6 +233,10 @@ export class EphemeralStore {
       suggestionBatch: observableShallow,
       spaceLogs: observableShallow,
       askFocus: observableRef,
+      composerFocus: observableRef,
+      lineJump: observableRef,
+      allEditsShown: observableShallow,
+      hiddenShown: observableShallow,
     });
   }
 
@@ -208,6 +282,93 @@ export class EphemeralStore {
     if (this.askFocus?.seq !== seq) return;
     runInAction(() => {
       this.askFocus = null;
+    });
+  }
+
+  setChatPending(pr: PrId, p: ChatPending): void {
+    runInAction(() => {
+      this.chatPending.set(pr, p);
+    });
+  }
+
+  clearChatPending(pr: PrId): void {
+    runInAction(() => {
+      this.chatPending.delete(pr);
+    });
+  }
+
+  /** Makes `anchor` the PR chat's reference, replacing any other. */
+  setLineRef(pr: PrId, anchor: Anchor): void {
+    runInAction(() => {
+      this.lineRefs.set(pr, anchor);
+    });
+  }
+
+  clearLineRef(pr: PrId): void {
+    runInAction(() => {
+      this.lineRefs.delete(pr);
+    });
+  }
+
+  /** Asks the PR chat's composer to take the caret. */
+  focusComposer(pr: PrId): void {
+    runInAction(() => {
+      this.composerFocus = { pr, seq: this.nextFocusSeq++ };
+    });
+  }
+
+  consumeComposerFocus(seq: number): void {
+    if (this.composerFocus?.seq !== seq) return;
+    runInAction(() => {
+      this.composerFocus = null;
+    });
+  }
+
+  /** Asks the diff to show `anchor`'s line. */
+  jumpToLine(pr: PrId, anchor: Anchor): void {
+    runInAction(() => {
+      this.lineJump = { pr, anchor, seq: this.nextFocusSeq++ };
+    });
+  }
+
+  consumeLineJump(seq: number): void {
+    if (this.lineJump?.seq !== seq) return;
+    runInAction(() => {
+      this.lineJump = null;
+    });
+  }
+
+  /** A group's diff toggles, in the shape `diffFiles` takes them; both
+   *  off without a group. */
+  groupView(
+    pr: PrId,
+    group: string | null | undefined,
+  ): { allEdits: boolean; hiddenShown: boolean } {
+    if (!group) return { allEdits: false, hiddenShown: false };
+    const key = groupViewKey(pr, group);
+    return {
+      allEdits: this.allEditsShown.has(key),
+      hiddenShown: this.hiddenShown.has(key),
+    };
+  }
+
+  /** "Show all" / "Only outliers" on a skim group. */
+  toggleAllEdits(pr: PrId, group: string): void {
+    const key = groupViewKey(pr, group);
+    runInAction(() => {
+      const next = new Set(this.allEditsShown);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      this.allEditsShown = next;
+    });
+  }
+
+  /** "Show anyway" on a hidden group. */
+  showHidden(pr: PrId, group: string): void {
+    const key = groupViewKey(pr, group);
+    if (this.hiddenShown.has(key)) return;
+    runInAction(() => {
+      this.hiddenShown = new Set(this.hiddenShown).add(key);
     });
   }
 
@@ -345,18 +506,13 @@ export class EphemeralStore {
   handle(e: Ephemeral): void {
     runInAction(() => {
       switch (e.type) {
-        case 'agent_delta': {
-          const next = new Map(this.agentText);
-          next.set(e.run, (next.get(e.run) ?? '') + e.text);
-          this.agentText = next;
+        case 'agent_delta':
+          this.agentText.set(e.run, (this.agentText.get(e.run) ?? '') + e.text);
           this.clearStalled(e.run);
           return;
-        }
         case 'run_log': {
-          const next = new Map(this.runLog);
-          const lines = [...(next.get(e.run) ?? []), e.line].slice(-LOG_LIMIT);
-          next.set(e.run, lines);
-          this.runLog = next;
+          const lines = [...(this.runLog.get(e.run) ?? []), e.line];
+          this.runLog.set(e.run, lines.slice(-LOG_LIMIT));
           this.clearStalled(e.run);
           return;
         }
@@ -463,13 +619,19 @@ export class EphemeralStore {
   /** A run is done (or cancelled/failed): its streaming text and log no longer grow. */
   clearRun(run: string): void {
     runInAction(() => {
-      const text = new Map(this.agentText);
-      text.delete(run);
-      this.agentText = text;
-      const log = new Map(this.runLog);
-      log.delete(run);
-      this.runLog = log;
+      this.agentText.delete(run);
+      this.runLog.delete(run);
       this.clearStalled(run);
+    });
+  }
+
+  /** `task` is being fixed by `run`; what an earlier fix of it showed is
+   *  dropped. */
+  setTaskRun(task: string, run: string): void {
+    runInAction(() => {
+      const prev = this.taskRuns.get(task);
+      if (prev && prev !== run) this.clearRun(prev);
+      this.taskRuns.set(task, run);
     });
   }
 
