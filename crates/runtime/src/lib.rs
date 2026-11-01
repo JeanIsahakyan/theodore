@@ -275,6 +275,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         account_client_id: BUILT_IN_CLIENT_ID.map(str::to_string),
         claude_home,
         commands: Arc::new(theodore_agents::ShellRunner::new()),
+        terminals: Arc::new(theodore_agents::PtyRunner::new()),
         data_dir: cfg.data_dir.clone(),
         worktree_lease: Arc::new(worktree_gc::WorktreeLeaseAdapter::new(
             worktree_locks.clone(),

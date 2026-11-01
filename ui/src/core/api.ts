@@ -45,6 +45,7 @@ import type {
   OpenBranchRequest,
   OpenPrRequest,
   OpenPrResponse,
+  OpenTerminalRequest,
   Person,
   ProblemReport,
   PrId,
@@ -54,6 +55,7 @@ import type {
   ReplyRequest,
   ReportedIssue,
   RerunCheckRequest,
+  ResizeTerminalRequest,
   Revision,
   RevisionRequest,
   ResolveRequest,
@@ -72,6 +74,7 @@ import type {
   SpaceLogLine,
   SpaceRunRequest,
   SpaceSetupRequest,
+  SpaceTerminalInfo,
   SpaceTrustRequest,
   EffectiveConfig,
   GlobalConfigInfo,
@@ -96,6 +99,7 @@ import type {
   UiEvent,
   TriageRequest,
   UpdateInfo,
+  WriteTerminalRequest,
 } from '../gen/contract';
 
 /** A fresh operation id: 16 lowercase hex chars. Sent with every command
@@ -300,6 +304,21 @@ export const api = {
   /** Starts or stops the space's `run` command. */
   spaceRun: (req: SpaceRunRequest) => call<Space>('space_run', { req }),
   spaceLogs: (space: string) => call<SpaceLogLine[]>('space_logs', { space }),
+  /** Starts a terminal in the space's worktree (docs/spaces.md "Terminal"). */
+  openSpaceTerminal: (req: OpenTerminalRequest) =>
+    call<SpaceTerminalInfo>('open_space_terminal', { req }),
+  /** Bytes typed or pasted into it. */
+  writeSpaceTerminal: (req: WriteTerminalRequest) =>
+    call<null>('write_space_terminal', { req }),
+  /** A new size in cells. */
+  resizeSpaceTerminal: (req: ResizeTerminalRequest) =>
+    call<null>('resize_space_terminal', { req }),
+  /** Kills its shell. */
+  closeSpaceTerminal: (terminal: string) =>
+    call<null>('close_space_terminal', { terminal }),
+  /** The space's open (or just-exited) terminals, with scrollback. */
+  listSpaceTerminals: (space: string) =>
+    call<SpaceTerminalInfo[]>('list_space_terminals', { space }),
   /** A project's merged config, read-only (Settings → Labs). */
   projectConfig: (project: string) =>
     call<EffectiveConfig>('project_config', { project }),

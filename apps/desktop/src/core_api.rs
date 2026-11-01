@@ -18,6 +18,9 @@ use theodore_contract::{
     SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
     TriageRequest, UpdateInfo,
 };
+use theodore_contract::{
+    OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, WriteTerminalRequest,
+};
 use theodore_contract::{SandboxFaultRequest, SandboxStatus};
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 
@@ -320,6 +323,33 @@ pub trait CoreApi: Send + Sync {
         &self,
         _space: String,
     ) -> Result<Vec<theodore_contract::SpaceLogLine>, CommandError> {
+        Err(not_ready())
+    }
+    /// Starts a terminal in the space's worktree (docs/spaces.md "Terminal").
+    async fn open_space_terminal(
+        &self,
+        _req: OpenTerminalRequest,
+    ) -> Result<SpaceTerminalInfo, CommandError> {
+        Err(not_ready())
+    }
+    /// Bytes typed or pasted into it.
+    async fn write_space_terminal(&self, _req: WriteTerminalRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// A new size in cells.
+    async fn resize_space_terminal(&self, _req: ResizeTerminalRequest) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Kills its shell.
+    async fn close_space_terminal(&self, _terminal: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// The space's open (or just-exited) terminals, with scrollback to seed
+    /// `xterm.js`.
+    async fn list_space_terminals(
+        &self,
+        _space: String,
+    ) -> Result<Vec<SpaceTerminalInfo>, CommandError> {
         Err(not_ready())
     }
     /// A project's merged config, with each value's file.

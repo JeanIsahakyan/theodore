@@ -506,7 +506,17 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
  */
 { type: "config_pr"; project: string; number: number;
 /**  Empty when the host didn't say. */
-url: string };
+url: string } |
+/**
+ *  Raw PTY output of a space's terminal (docs/spaces.md "Terminal"),
+ *  base64 (control sequences and all) so a chunk split mid UTF-8 still
+ *  round-trips — `xterm.js`'s own parser tolerates that. `seq` is
+ *  monotonic per terminal, for merging with `SpaceTerminalInfo::seq`'s
+ *  scrollback seed, the same way `space_log` merges with `space_logs`.
+ */
+{ type: "terminal_output"; space: string; terminal: string; seq: number; data: string } |
+/**  The terminal's shell exited (on its own, or `close_space_terminal`). */
+{ type: "terminal_exit"; space: string; terminal: string; exit_code: number | null; error: string | null };
 
 export type FileDiff = {
 	path: string,
@@ -871,6 +881,12 @@ export type OpenPrResponse = {
 	head: Sha,
 };
 
+export type OpenTerminalRequest = {
+	space: string,
+	cols: number,
+	rows: number,
+};
+
 export type Patch = {
 	path: string,
 	before: string[],
@@ -1084,6 +1100,12 @@ export type RerunCheckRequest = {
 	pr: PrId,
 	/**  `Check::id`, as reported in `PrDetail::checks`. */
 	check: string,
+};
+
+export type ResizeTerminalRequest = {
+	terminal: string,
+	cols: number,
+	rows: number,
 };
 
 export type ResolveRequest = {
@@ -1600,6 +1622,36 @@ export type SpaceStatus =
 /**  The last turn errored, was interrupted, or the worktree is gone. */
 "failed" | "archived";
 
+/**
+ *  One terminal tab. `scrollback` is the backend's bounded raw buffer
+ *  (base64, ANSI intact), written into the terminal emulator once before
+ *  live `Ephemeral::TerminalOutput` events (by `seq`) pick up where it left
+ *  off — the same seed-then-live pattern `space_logs` uses for command
+ *  output.
+ */
+export type SpaceTerminalInfo = {
+	id: string,
+	space: string,
+	title: string,
+	shell: string,
+	status: TerminalStatus,
+	exit_code?: number | null,
+	/**
+	 *  Set when the shell could not even be started (a missing cwd, an
+	 *  unknown `$SHELL`); `status` is `exited`.
+	 */
+	error?: string | null,
+	cols: number,
+	rows: number,
+	created_at: number,
+	/**
+	 *  The last output event already folded into `scrollback`; live events
+	 *  at or before this `seq` are redundant.
+	 */
+	seq: number,
+	scrollback?: string,
+};
+
 /**  "Run commands from this repo?" for a space's project. */
 export type SpaceTrustRequest = {
 	space: string,
@@ -1742,6 +1794,10 @@ export type TelemetryStatus = {
 	never_sent: string[],
 };
 
+export type TerminalStatus = "running" |
+/**  The shell exited; `exit_code` says how. */
+"exited";
+
 export type Thread = {
 	id: ThreadId,
 	anchor: Anchor | null,
@@ -1815,4 +1871,10 @@ export type WireRow = {
 	id: string,
 	data: unknown,
 	archived: boolean,
+};
+
+export type WriteTerminalRequest = {
+	terminal: string,
+	/**  What was typed or pasted, as `xterm.js`'s `onData` hands it over. */
+	data: string,
 };

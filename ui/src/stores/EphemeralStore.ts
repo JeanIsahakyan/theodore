@@ -27,6 +27,7 @@ import type {
   UpdateInfo,
 } from '../gen/contract';
 import { appendLogs, seedLogs } from '../ui/space/commands';
+import { appendChunk, type TerminalChunk } from '../ui/space/terminalBuffer';
 import { configPrToast } from '../ui/project/configFile';
 import { openExternal } from '../core/openExternal';
 import { accountGate, type AccountGate } from '../core/accountGate';
@@ -174,6 +175,16 @@ export class EphemeralStore {
    *  id: live `space_log` events, seeded from `space_logs` when its page
    *  opens. Bounded (`SPACE_LOG_LIMIT`). */
   spaceLogs = new Map<string, SpaceLogLine[]>();
+  /** A space terminal's live output since this session started, per
+   *  terminal id (bounded) — a bridge over a brief gap (remounting the
+   *  panel); `SpaceTerminalInfo.scrollback` covers everything older. */
+  terminalChunks = new Map<string, TerminalChunk[]>();
+  /** A terminal's exit, once it has happened since the page last read
+   *  `list_space_terminals`. */
+  terminalExit = new Map<
+    string,
+    { exitCode: number | null; error: string | null }
+  >();
   /** Line asks by `lineAskKey` — an observable map, so a line reading its
    *  own key re-renders only when that key changes. */
   readonly lineAsks: ObservableMap<string, LineAsk> = observable.map(
@@ -227,6 +238,8 @@ export class EphemeralStore {
       reactionOverrides: observableShallow,
       suggestionBatch: observableShallow,
       spaceLogs: observableShallow,
+      terminalChunks: observableShallow,
+      terminalExit: observableShallow,
       askFocus: observableRef,
       composerFocus: observableRef,
       lineJump: observableRef,
@@ -545,6 +558,24 @@ export class EphemeralStore {
           this.spaceLogs = next;
           return;
         }
+        case 'terminal_output': {
+          const next = new Map(this.terminalChunks);
+          next.set(
+            e.terminal,
+            appendChunk(next.get(e.terminal) ?? [], {
+              seq: e.seq,
+              data: e.data,
+            }),
+          );
+          this.terminalChunks = next;
+          return;
+        }
+        case 'terminal_exit': {
+          const next = new Map(this.terminalExit);
+          next.set(e.terminal, { exitCode: e.exit_code, error: e.error });
+          this.terminalExit = next;
+          return;
+        }
         case 'config_pr': {
           const toast = configPrToast(e.number, e.url, openExternal);
           this.toasts = [
@@ -590,6 +621,15 @@ export class EphemeralStore {
       this.agentText.delete(run);
       this.runLog.delete(run);
       this.clearStalled(run);
+    });
+  }
+
+  /** A terminal tab is closed: its buffered output and exit no longer
+   *  matter (a new tab never reuses an id). */
+  clearTerminal(terminal: string): void {
+    runInAction(() => {
+      this.terminalChunks.delete(terminal);
+      this.terminalExit.delete(terminal);
     });
   }
 

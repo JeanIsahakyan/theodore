@@ -538,10 +538,11 @@ impl Core {
         }
     }
 
-    /// Stops every space's running `run` (and in-flight `setup`), waiting
-    /// briefly for each — called on a clean app exit so quitting normally
-    /// never orphans a space's server the way an unclean exit can
-    /// (docs/spaces.md "Crash recovery").
+    /// Stops every space's running `run` (and in-flight `setup`) and every
+    /// open terminal, waiting briefly for each — called on a clean app exit
+    /// so quitting normally never orphans a space's server (or a
+    /// terminal's shell) the way an unclean exit can (docs/spaces.md
+    /// "Crash recovery").
     pub async fn stop_all_running_spaces(&self) {
         let ids: Vec<String> = {
             let rt = self.0.space_rt.lock().unwrap_or_else(|p| p.into_inner());
@@ -553,6 +554,7 @@ impl Core {
         for id in ids {
             self.stop_space_commands(&id).await;
         }
+        self.stop_all_space_terminals().await;
     }
 
     /// Reaps a `run` an earlier, uncleanly-exited Theodore left behind

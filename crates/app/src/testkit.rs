@@ -2352,6 +2352,68 @@ impl theodore_ports::CommandPort for FakeCommands {
     }
 }
 
+// ── terminals ─────────────────────────────────────────────────────────────
+
+/// `TerminalPort` fake: records every spec; a spawned terminal echoes back
+/// whatever is written to it (enough to exercise write → output without a
+/// real shell) and exits once killed.
+#[derive(Default)]
+pub struct FakeTerminals {
+    specs: Mutex<Vec<theodore_ports::TerminalSpec>>,
+    /// The next `spawn`'s `TerminalHandle::pid`.
+    next_pid: Mutex<Option<u32>>,
+}
+
+impl FakeTerminals {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn specs(&self) -> Vec<theodore_ports::TerminalSpec> {
+        self.specs.lock().unwrap().clone()
+    }
+
+    pub fn set_next_pid(&self, pid: u32) {
+        *self.next_pid.lock().unwrap() = Some(pid);
+    }
+}
+
+#[async_trait]
+impl theodore_ports::TerminalPort for FakeTerminals {
+    async fn spawn(&self, spec: theodore_ports::TerminalSpec) -> theodore_ports::TerminalHandle {
+        use theodore_ports::{TerminalEvent, TerminalExit};
+        self.specs.lock().unwrap().push(spec);
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let (input, mut input_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let (resize, _resize_rx) = tokio::sync::mpsc::unbounded_channel::<(u16, u16)>();
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    got = input_rx.recv() => {
+                        let Some(buf) = got else { return };
+                        if tx.send(TerminalEvent::Output(buf)).await.is_err() {
+                            return;
+                        }
+                    }
+                    _ = token.cancelled() => {
+                        let _ = tx.send(TerminalEvent::Exit(TerminalExit::default())).await;
+                        return;
+                    }
+                }
+            }
+        });
+        theodore_ports::TerminalHandle {
+            events: rx,
+            input,
+            resize,
+            kill: cancel,
+            pid: self.next_pid.lock().unwrap().take(),
+        }
+    }
+}
+
 // ── run tools ─────────────────────────────────────────────────────────────
 
 /// One `RunTools` registration, as the fake saw it.
@@ -2454,6 +2516,7 @@ pub struct Fixtures {
     /// the fixture's lifetime, deleted on drop. Never the real home dir.
     pub claude_home: Arc<tempfile::TempDir>,
     pub commands: Arc<FakeCommands>,
+    pub terminals: Arc<FakeTerminals>,
     /// A throwaway `~/.theodore` (the global `config.yaml`).
     pub data_dir: Arc<tempfile::TempDir>,
     /// Wired only by [`Fixtures::deps_with_tools`]; `deps` runs agents
@@ -2487,6 +2550,7 @@ impl Fixtures {
             account: self.account.clone(),
             account_client_id: None,
             commands: self.commands.clone(),
+            terminals: self.terminals.clone(),
             data_dir: self.data_dir.path().to_path_buf(),
         }
     }
@@ -2516,6 +2580,7 @@ pub fn fixtures() -> Fixtures {
         account: FakeAccount::new(),
         claude_home: Arc::new(tempfile::tempdir().expect("tempdir")),
         commands: FakeCommands::new(),
+        terminals: FakeTerminals::new(),
         data_dir: Arc::new(tempfile::tempdir().expect("tempdir")),
         tools: FakeRunTools::new(),
     }

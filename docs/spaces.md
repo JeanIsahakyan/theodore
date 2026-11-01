@@ -334,6 +334,38 @@ space works with zero config; a project with no commands at all offers "Set
 up with agent" instead, and a failed setup offers "Fix with agent" next to
 Retry. See `docs/config.md`.
 
+### Terminal
+
+An interactive shell in the space's worktree, next to the agent's turns —
+for `git log`, a one-off script, poking at something the agent just wrote.
+Toggled from the header (and `⌃\``), it opens as a drawer under the page;
+`+` starts another tab, × closes one.
+
+```
+⌃`   ──▶ drawer ── [Terminal 1] [Terminal 2] [+] ────────────────┐
+           tab = one xterm.js view over one real PTY             │
+           $SHELL -l, cwd = worktree, env = the space's own ◀────┘
+```
+
+- **Shell**: `$SHELL -l` (the user's login shell), so `.zshrc`/`.bashrc`
+  aliases and prompt apply, same as a terminal app.
+- **Env**: the parent process's env minus Theodore's own `THEODORE_*`
+  secrets, plus the space's variables and `spaces.env` — the same
+  `space_command_env` a space's `setup`/`run`/`check` commands get
+  (docs/config.md).
+- **Several per space, outlive the page.** Each tab is a real PTY the core
+  owns, not the component; navigating away from the space page and back
+  re-lists and re-attaches whatever is still running, scrollback included.
+  Closed on archive (before the worktree is removed) and on a clean app
+  quit — never left running past the space, or past Theodore itself.
+- **Bounded, twice.** The core keeps a raw tail (ANSI intact) per terminal
+  to reseed the view on reattach, and a separate ANSI-stripped line tail
+  (`space_terminal_tail`, 2,000 lines) for a later agent tool to read as
+  plain text — not wired up yet.
+- **Flow control**: output is batched (16 ms or 64 KB, whichever first)
+  before it reaches the UI, so a chatty shell can't flood the event bus.
+- Follows the app's light/dark tokens, not a terminal palette of its own.
+
 ## 4. What makes it Theodore's
 
 - **Review is the product.** The agent's diff is reviewed with the same
@@ -694,6 +726,11 @@ downloaded to this Mac yet".
 | `ship_space` | `open_pr` · `open_draft_pr` · `push` (host project) or `merge_locally` · `keep_branch` (local folder), with an optional title (§6) |
 | `space_setup_assist` | "Set up with agent": no `spaces:` commands at all — a turn asking the agent to look at the repo and write them (`docs/config.md` §2, §8) |
 | `space_fix_setup` | "Fix with agent": setup failed — a turn with the command, its exit status and the log tail, asking the agent to fix the cause |
+| `open_space_terminal` | a new PTY in the worktree (§3 "Terminal"), `$SHELL -l`, given `cols`/`rows` |
+| `write_space_terminal` | bytes typed or pasted into it |
+| `resize_space_terminal` | a new `cols`/`rows` (`SIGWINCH`) |
+| `close_space_terminal` | kills its process group |
+| `list_space_terminals` | a space's open (or just-exited) terminals, each with scrollback to reseed the view |
 
 ## 10. The flag
 
@@ -713,7 +750,10 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 | Phase | Scope |
 | --- | --- |
 | **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`); `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent"; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent"; the agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer) |
-| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel` |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; an agent tool over `space_terminal_tail` |
 | **Later** | OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
 ## 12. Decisions (owner, 2026-10-21)

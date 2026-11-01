@@ -11,7 +11,7 @@ use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{
     AccountPort, AgentPort, Clock, CommandPort, DeviceLoginPort, GitPort, HostAdapter, McpEndpoint,
-    Secrets, Store, WorktreeLease,
+    Secrets, Store, TerminalPort, WorktreeLease,
 };
 
 use crate::error::GrouperError;
@@ -120,6 +120,8 @@ pub struct Deps {
     /// Runs a space's `setup` / `run` / `check` / `archive` commands
     /// (docs/config.md).
     pub commands: Arc<dyn CommandPort>,
+    /// Runs a space's interactive terminals (docs/spaces.md "Terminal").
+    pub terminals: Arc<dyn TerminalPort>,
     /// Theodore's data directory (`~/.theodore`): holds the global
     /// `config.yaml`. Tests point it at a throwaway directory.
     pub data_dir: std::path::PathBuf,

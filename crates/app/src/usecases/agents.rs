@@ -453,6 +453,12 @@ async fn drive_skill_run(
     } else {
         RunStatus::Done
     };
+    // The chat message first: whoever waits for the run's final status
+    // (the UI, tests) must find it already there.
+    if cancelled || error.is_some() {
+        let text = error.clone().unwrap_or_else(|| "cancelled".into());
+        persist_failed_message(core, &pr, last_agent, &text).await;
+    }
     let data = serde_json::json!({ "status": status, "error": error });
     let _ = core
         .apply(vec![NewAction {
@@ -494,10 +500,6 @@ async fn drive_skill_run(
             findings,
             ms,
         });
-    }
-    if cancelled || error.is_some() {
-        let text = error.unwrap_or_else(|| "cancelled".into());
-        persist_failed_message(core, &pr, last_agent, &text).await;
     }
     core.0.runs.write().await.remove(&run_id);
 }
@@ -668,6 +670,7 @@ fn skill_prompt(skill: &str, agent: AgentId, worktree: &Path, claude_home: &Path
 }
 
 async fn fail_run(core: &Core, run_id: &str, pr: &PrId, agent: AgentId, message: &str) {
+    persist_failed_message(core, pr, agent, message).await;
     let data = serde_json::json!({ "status": RunStatus::Failed, "error": message });
     let _ = core
         .apply(vec![NewAction {
@@ -677,7 +680,6 @@ async fn fail_run(core: &Core, run_id: &str, pr: &PrId, agent: AgentId, message:
             data: Some(data),
         }])
         .await;
-    persist_failed_message(core, pr, agent, message).await;
     core.0.runs.write().await.remove(run_id);
 }
 

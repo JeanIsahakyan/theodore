@@ -105,6 +105,10 @@ pub(crate) struct Inner {
     pub review_lock: tokio::sync::Mutex<()>,
     /// `review.auto_skills` runs at all (`Core::set_auto_skills`).
     pub auto_skills: std::sync::atomic::AtomicBool,
+    /// A space's open terminals (docs/spaces.md "Terminal"), by terminal
+    /// id: purely in memory, like `space_rt` — never synced, gone on
+    /// restart (the PTYs themselves don't survive one either).
+    pub term_rt: std::sync::Mutex<HashMap<String, crate::usecases::space_terminal::TerminalEntry>>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -153,6 +157,7 @@ impl Core {
             config_repos: std::sync::Mutex::new(HashMap::new()),
             review_lock: tokio::sync::Mutex::new(()),
             auto_skills: std::sync::atomic::AtomicBool::new(true),
+            term_rt: std::sync::Mutex::new(HashMap::new()),
         });
 
         let core = Core(inner.clone());

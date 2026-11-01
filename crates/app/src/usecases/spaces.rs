@@ -442,6 +442,9 @@ impl Core {
         let repo_path = self.ensure_project_cache(&project).await?;
         // docs/config.md: stop `run`, checkpoint, `archive`, then remove.
         self.stop_space_commands(&space.id).await;
+        // docs/spaces.md "Terminal": a shell must not keep writing into a
+        // worktree about to be removed.
+        self.close_space_terminals(&space.id).await;
         let worktree_exists = Path::new(&space.worktree).exists();
         if worktree_exists {
             let saved = self

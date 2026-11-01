@@ -126,6 +126,19 @@ export const commands = {
 	spaceRun: (req: SpaceRunRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("space_run", { req })),
 	/**  The last lines of the space's commands. */
 	spaceLogs: (space: string) => typedError<SpaceLogLine[], CommandError>(__TAURI_INVOKE("space_logs", { space })),
+	/**  Starts a terminal in the space's worktree (docs/spaces.md "Terminal"). */
+	openSpaceTerminal: (req: OpenTerminalRequest) => typedError<SpaceTerminalInfo, CommandError>(__TAURI_INVOKE("open_space_terminal", { req })),
+	/**  Bytes typed or pasted into it. */
+	writeSpaceTerminal: (req: WriteTerminalRequest) => typedError<null, CommandError>(__TAURI_INVOKE("write_space_terminal", { req })),
+	/**  A new size in cells. */
+	resizeSpaceTerminal: (req: ResizeTerminalRequest) => typedError<null, CommandError>(__TAURI_INVOKE("resize_space_terminal", { req })),
+	/**  Kills its shell. */
+	closeSpaceTerminal: (terminal: string) => typedError<null, CommandError>(__TAURI_INVOKE("close_space_terminal", { terminal })),
+	/**
+	 *  The space's open (or just-exited) terminals, with scrollback to seed
+	 *  `xterm.js`.
+	 */
+	listSpaceTerminals: (space: string) => typedError<SpaceTerminalInfo[], CommandError>(__TAURI_INVOKE("list_space_terminals", { space })),
 	/**  A project's merged config, with each value's file. */
 	projectConfig: (project: string) => typedError<EffectiveConfig, CommandError>(__TAURI_INVOKE("project_config", { project })),
 	/**
@@ -624,7 +637,17 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
  */
 { type: "config_pr"; project: string; number: number;
 /**  Empty when the host didn't say. */
-url: string };
+url: string } |
+/**
+ *  Raw PTY output of a space's terminal (docs/spaces.md "Terminal"),
+ *  base64 (control sequences and all) so a chunk split mid UTF-8 still
+ *  round-trips — `xterm.js`'s own parser tolerates that. `seq` is
+ *  monotonic per terminal, for merging with `SpaceTerminalInfo::seq`'s
+ *  scrollback seed, the same way `space_log` merges with `space_logs`.
+ */
+{ type: "terminal_output"; space: string; terminal: string; seq: number; data: string } |
+/**  The terminal's shell exited (on its own, or `close_space_terminal`). */
+{ type: "terminal_exit"; space: string; terminal: string; exit_code: number | null; error: string | null };
 
 export type FileDiff = {
 	path: string,
@@ -903,6 +926,12 @@ export type OpenPrResponse = {
 	head: Sha,
 };
 
+export type OpenTerminalRequest = {
+	space: string,
+	cols: number,
+	rows: number,
+};
+
 export type Person = {
 	login: string,
 	name: string | null,
@@ -1025,6 +1054,12 @@ export type RerunCheckRequest = {
 	pr: PrId,
 	/**  `Check::id`, as reported in `PrDetail::checks`. */
 	check: string,
+};
+
+export type ResizeTerminalRequest = {
+	terminal: string,
+	cols: number,
+	rows: number,
 };
 
 export type ResolveRequest = {
@@ -1496,6 +1531,36 @@ export type SpaceStatus =
 /**  The last turn errored, was interrupted, or the worktree is gone. */
 "failed" | "archived";
 
+/**
+ *  One terminal tab. `scrollback` is the backend's bounded raw buffer
+ *  (base64, ANSI intact), written into the terminal emulator once before
+ *  live `Ephemeral::TerminalOutput` events (by `seq`) pick up where it left
+ *  off — the same seed-then-live pattern `space_logs` uses for command
+ *  output.
+ */
+export type SpaceTerminalInfo = {
+	id: string,
+	space: string,
+	title: string,
+	shell: string,
+	status: TerminalStatus,
+	exit_code?: number | null,
+	/**
+	 *  Set when the shell could not even be started (a missing cwd, an
+	 *  unknown `$SHELL`); `status` is `exited`.
+	 */
+	error?: string | null,
+	cols: number,
+	rows: number,
+	created_at: number,
+	/**
+	 *  The last output event already folded into `scrollback`; live events
+	 *  at or before this `seq` are redundant.
+	 */
+	seq: number,
+	scrollback?: string,
+};
+
 /**  "Run commands from this repo?" for a space's project. */
 export type SpaceTrustRequest = {
 	space: string,
@@ -1603,6 +1668,10 @@ export type TelemetryStatus = {
 	never_sent: string[],
 };
 
+export type TerminalStatus = "running" |
+/**  The shell exited; `exit_code` says how. */
+"exited";
+
 export type ThreadId = string;
 
 export type ToastLevel = "info" | "warn" | "error";
@@ -1664,6 +1733,12 @@ export type WireRow = {
 	id: string,
 	data: unknown,
 	archived: boolean,
+};
+
+export type WriteTerminalRequest = {
+	terminal: string,
+	/**  What was typed or pasted, as `xterm.js`'s `onData` hands it over. */
+	data: string,
 };
 
 /* Tauri Specta runtime */
