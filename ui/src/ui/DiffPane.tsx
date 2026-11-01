@@ -64,8 +64,8 @@ import type {
   Side,
 } from '../gen/contract';
 import {
-  ask,
   askAboutLine,
+  askPending,
   dismissLineAsk,
   markGroupRead,
   markHunkRead,
@@ -1514,7 +1514,7 @@ function openHunkMenu(
             id: 'ask-agent',
             label: 'Ask agent',
             onAction: () =>
-              void ask(store, {
+              void askPending(store, {
                 pr,
                 question: `about the hunk at ${path}:${h.new_start}`,
                 about: null,

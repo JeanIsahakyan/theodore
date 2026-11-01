@@ -78,6 +78,18 @@ export interface AskFocus {
   seq: number;
 }
 
+/** A question asked with no diff-line chip to pin it to — the composer's
+ *  plain send, or a fixed question like a hunk's "Ask agent": the pending
+ *  bubble shown in the chat (question, then the agent's streaming text)
+ *  until the real reply lands. One per PR; a later ask replaces it. */
+export interface ChatPending {
+  run: string;
+  startedAt: number;
+  /** So a stalled run's Retry can resend the same question. */
+  question: string;
+  agent: AgentId | null;
+}
+
 /** A one-shot request to a component, per PR; `seq` makes asking twice
  *  still count. */
 export interface PrSignal {
@@ -167,6 +179,12 @@ export class EphemeralStore {
     { deep: false },
   );
   askFocus: AskFocus | null = null;
+  /** `ChatPending` by PR — the composer's and the hunk ask's shared pending
+   *  bubble; an observable map so only a PR's own chat re-renders on it. */
+  readonly chatPending: ObservableMap<PrId, ChatPending> = observable.map(
+    {},
+    { deep: false },
+  );
   /** The diff line the PR chat's next question is about, per PR: a line's
    *  AI button sets it, the composer shows it as a chip and sends it as
    *  the question's `about`. One per PR — `ask` takes one anchor. */
@@ -257,6 +275,18 @@ export class EphemeralStore {
     if (this.askFocus?.seq !== seq) return;
     runInAction(() => {
       this.askFocus = null;
+    });
+  }
+
+  setChatPending(pr: PrId, p: ChatPending): void {
+    runInAction(() => {
+      this.chatPending.set(pr, p);
+    });
+  }
+
+  clearChatPending(pr: PrId): void {
+    runInAction(() => {
+      this.chatPending.delete(pr);
     });
   }
 
