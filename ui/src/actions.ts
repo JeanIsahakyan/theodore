@@ -372,6 +372,7 @@ export async function askAboutLine(
     status: 'asking',
     message: null,
     reply: null,
+    startedAt: Date.now(),
   });
   store.ephemeral.focusAsk(pr, null);
   // `mine`: still this very ask (not dismissed, not re-asked since).
