@@ -362,6 +362,22 @@ Some servers run code from the project they open.
 - A server is never started from a path inside the worktree in a review run:
   a PR could ship its own `node_modules/.bin/…`. In a space, the repo's own
   binaries are used under the same trust rule as its commands.
+- Those options narrow what a server runs; they do not make it safe.
+  rust-analyzer still runs `cargo metadata`, which honours a PR's
+  `.cargo/config.toml` (`rustc-wrapper`) and `rust-toolchain.toml`;
+  typescript-language-server loads the worktree's `node_modules/typescript`.
+  So servers start in review runs only when the user turns that on:
+
+| `code_intel.lsp` | Review run | Space |
+| --- | --- | --- |
+| `review: false` (default) | syntax + text only | — |
+| `review: true` | server, review options | — |
+| `spaces: true` (default) | — | server |
+| `spaces: false` | — | syntax + text only |
+
+- A switch turned off stops the sessions it no longer allows; turned on, the
+  servers already on disk start. Answers say why a server is not used.
+- Review sessions never share a process with a space's, even for one repo.
 
 ## 9. Settings
 
@@ -374,8 +390,8 @@ Some servers run code from the project they open.
 | `code_intel.max_servers` | `4` | alive at once |
 | `code_intel.idle_minutes` | `10` | idle server shutdown |
 | `code_intel.max_file_kb` | `1024` | larger files are not indexed |
-| `code_intel.lsp.spaces` | `true` | language servers in spaces; global / local file only |
-| `code_intel.lsp.review` | `false` | language servers in review runs: a PR's code may run; global / local file only, never the repo's |
+| `code_intel.lsp.review` | `false` | language servers in review runs: a PR's code may run (§8); global / local file only, never the repo's |
+| `code_intel.lsp.spaces` | `true` | language servers in spaces (§8); global / local file only |
 
 Settings → Languages lists each detected language with its grammar, server
 (found / downloaded / not available), index progress, and Install / Remove.

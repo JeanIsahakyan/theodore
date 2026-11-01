@@ -32,6 +32,7 @@ theodore-telemetry = { path = "crates/telemetry" }
 theodore-code-intel-lsp = { path = "crates/code-intel-lsp" }
 theodore-code-intel-toolchain = { path = "crates/code-intel-toolchain" }
 theodore-code-intel-syntax = { path = "crates/code-intel-syntax" }
+theodore-code-intel = { path = "crates/code-intel" }
 
 # shared
 serde = { version = "1", features = ["derive"] }
