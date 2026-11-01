@@ -11,7 +11,7 @@ use theodore_contract::{
     Space, SpaceFeedback, SpaceFeedbackRequest, SpaceSendRequest, SpaceStatus, models,
 };
 use theodore_domain::{AgentId, Author, PrId, Sha, Usage};
-use theodore_ports::{AgentEvent, NewAction, Store, SyncActionCode};
+use theodore_ports::{AgentEvent, AgentRequest, NewAction, Store, SyncActionCode};
 
 use crate::testkit::{Fixtures, fixtures};
 use crate::usecases::spaces::space_chat_key;
@@ -791,4 +791,119 @@ async fn unarchive_keeps_the_session_unless_the_checkpoints_are_gone() {
     );
     let s = core.unarchive_space(&s.id).await.unwrap();
     assert_eq!(s.agent_session, None);
+}
+
+// ── handoff summaries ────────────────────────────────────────────────────────
+
+fn is_summary_call(req: &AgentRequest) -> bool {
+    req.system.as_deref() == Some(crate::usecases::space_handoff::SUMMARY_SYSTEM)
+}
+
+fn summary_calls(f: &Fixtures) -> usize {
+    f.agents
+        .utility_requests()
+        .iter()
+        .filter(|r| is_summary_call(r))
+        .count()
+}
+
+/// `space_in_session`, then `extra` more turns resuming the same session —
+/// enough of them pushes the history past `HISTORY_MESSAGES` without ever
+/// needing a summary yet.
+async fn long_space_in_session(f: &Fixtures, core: &Core, project: &Project, extra: u32) -> Space {
+    let mut s = space_in_session(f, core, project).await;
+    for i in 0..extra {
+        f.agents.push_script(in_session("s1", &format!("did {i}")));
+        s = send(f, core, &s.id, &format!("do {i}"), None).await;
+    }
+    s
+}
+
+#[tokio::test]
+async fn a_long_space_gets_a_cached_summary_when_it_cant_resume() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    // Turn 1 plus 6 more: 14 messages, past the 12-message replay window.
+    let s = long_space_in_session(&f, &core, &project, 6).await;
+    assert_eq!(
+        f.agents.last_request().unwrap().resume.as_deref(),
+        Some("s1")
+    );
+
+    // Switching to Gemini can't resume: the summarizer runs once.
+    f.agents.push_tagged(
+        is_summary_call,
+        vec![AgentEvent::Done {
+            final_text: "Added a guard; six follow-ups logged things.".into(),
+            usage: Usage::default(),
+        }],
+    );
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "Reviewed.".into(),
+        usage: Usage::default(),
+    }]);
+    let s = send(&f, &core, &s.id, "Have a look", Some(AgentId::Gemini)).await;
+
+    let req = f.agents.last_request().unwrap();
+    assert!(
+        req.prompt.starts_with(
+            "Summary of the conversation before this point:\n\
+             Added a guard; six follow-ups logged things.\n\n\
+             Conversation so far:"
+        ),
+        "{}",
+        req.prompt
+    );
+    assert_eq!(summary_calls(&f), 1);
+    assert_eq!(
+        space(&f, &s.id).handoff_summary.as_deref(),
+        Some("Added a guard; six follow-ups logged things.")
+    );
+
+    // Another switch reuses the cached summary: no second call.
+    f.agents.push_script(in_session("s2", "ok"));
+    send(&f, &core, &s.id, "Go on", Some(AgentId::Claude)).await;
+    assert_eq!(summary_calls(&f), 1, "cached, not asked again");
+}
+
+#[tokio::test]
+async fn a_failed_summarizer_falls_back_to_the_plain_replay() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = long_space_in_session(&f, &core, &project, 6).await;
+
+    f.agents.push_tagged(
+        is_summary_call,
+        vec![AgentEvent::Error {
+            message: "rate limited".into(),
+            stderr_tail: String::new(),
+        }],
+    );
+    f.agents.push_script(done("Reviewed."));
+    let s = send(&f, &core, &s.id, "Have a look", Some(AgentId::Gemini)).await;
+
+    let req = f.agents.last_request().unwrap();
+    assert!(
+        !req.prompt
+            .contains("Summary of the conversation before this point"),
+        "{}",
+        req.prompt
+    );
+    assert!(req.prompt.contains("Conversation so far:"));
+    assert_eq!(summary_calls(&f), 1);
+    assert_eq!(space(&f, &s.id).handoff_summary, None);
+}
+
+/// A space whose history never outgrows the replay window needs no
+/// summarizer call at all, even across an agent switch.
+#[tokio::test]
+async fn a_short_space_switch_needs_no_summary() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+
+    f.agents.push_script(done("Reviewed."));
+    let s = send(&f, &core, &s.id, "Have a look", Some(AgentId::Gemini)).await;
+    assert_eq!(summary_calls(&f), 0);
+    assert_eq!(space(&f, &s.id).handoff_summary, None);
 }
