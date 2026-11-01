@@ -112,14 +112,22 @@ body {
   word-break: break-all;
   tab-size: 4;
 }
+/* Always laid out (never `display: none`), so the row's last grid track
+   never resizes on hover — only visibility/opacity change, which don't
+   affect layout. `:focus-within` keeps the buttons reachable by keyboard
+   even before the pointer ever hovers the row. */
 .ln-act {
-  display: none;
+  display: flex;
   gap: 2px;
   padding-right: 6px;
   align-items: center;
+  opacity: 0;
+  pointer-events: none;
 }
-.ln:hover .ln-act {
-  display: flex;
+.ln:hover .ln-act,
+.ln:focus-within .ln-act {
+  opacity: 1;
+  pointer-events: auto;
 }
 .ln .wd {
   border-radius: 3px;
@@ -170,11 +178,15 @@ body {
 .side.t-none {
   background: color-mix(in oklab, var(--default) 40%, transparent);
 }
-.ln.split:hover .ln-act {
-  display: none;
+.ln.split:hover .ln-act,
+.ln.split:focus-within .ln-act {
+  opacity: 0;
+  pointer-events: none;
 }
-.ln.split .side:hover .ln-act {
-  display: flex;
+.ln.split .side:hover .ln-act,
+.ln.split .side:focus-within .ln-act {
+  opacity: 1;
+  pointer-events: auto;
 }
 body.cmd .lines .src span:hover {
   text-decoration: underline;
