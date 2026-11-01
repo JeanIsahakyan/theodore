@@ -14,8 +14,7 @@ use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use serde_json::{Value, json};
 use theodore_domain::{
-    AgentId, DiffLine, FileDiff, FileStatus, FindingId, Hunk, HunkId, LineKind, PrId, RunId,
-    Severity, Sha,
+    AgentId, DiffLine, FileDiff, FileStatus, FindingId, Hunk, HunkId, LineKind, PrId, RunId, Sha,
 };
 use theodore_mcp::space_agent::MAX_DIFF_CHARS;
 use theodore_mcp::{
