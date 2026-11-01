@@ -9,7 +9,8 @@
 //! ```
 //!
 //! and, once the change is done (PR merged, merged locally, kept as a
-//! branch), archived after `spaces.auto_archive_days`.
+//! branch), archived after `spaces.auto_archive_days` — unless a merged
+//! PR's space continues on a new branch (`space_pr.rs`).
 
 use std::path::{Path, PathBuf};
 
