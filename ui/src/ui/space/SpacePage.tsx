@@ -72,6 +72,7 @@ import {
   setupView,
 } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
+import { SpaceProgress } from './SpaceProgress';
 import {
   CheckChip,
   LogsDrawer,
@@ -848,6 +849,7 @@ export const SpaceChat = observer(function SpaceChat({
               {space.error}
             </span>
           )}
+          <SpaceProgress space={space} />
           <Composer
             inputRef={input}
             value={text}
