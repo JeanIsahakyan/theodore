@@ -64,8 +64,11 @@ pub(crate) struct Inner {
     /// Serializes shipping spaces (Open PR / Push / Merge locally): two
     /// clicks never squash and push the same space twice.
     pub ship_lock: tokio::sync::Mutex<()>,
-    /// PRs whose grouping is running, so a PR is never grouped twice at once.
-    pub grouping_inflight: std::sync::Mutex<std::collections::HashSet<PrId>>,
+    /// PRs whose grouping is running, so a PR is never grouped twice at
+    /// once; `true` when another run was asked for meanwhile (a push), to
+    /// run on the then-current head once this one ends
+    /// (`usecases::grouping::GroupingSlot`).
+    pub grouping_inflight: std::sync::Mutex<HashMap<PrId, bool>>,
     /// Last host health the UI was told about (`Ephemeral::HostStatus`):
     /// online, rate-limit reset, token accepted.
     pub host_health: std::sync::Mutex<(bool, Option<i64>, bool)>,
@@ -136,7 +139,7 @@ impl Core {
             shutdown: CancellationToken::new(),
             open_lock: tokio::sync::Mutex::new(()),
             ship_lock: tokio::sync::Mutex::new(()),
-            grouping_inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            grouping_inflight: std::sync::Mutex::new(HashMap::new()),
             host_health: std::sync::Mutex::new((true, None, true)),
             host_probe: std::sync::Mutex::new(crate::poller::HostProbe::default()),
             login: Mutex::new(None),

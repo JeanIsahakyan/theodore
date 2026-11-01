@@ -1560,8 +1560,39 @@ pub struct FakeGrouper {
     calls: std::sync::atomic::AtomicUsize,
     /// Published through `on_partial`, in order, before `group` returns.
     partials: Mutex<Vec<Grouping>>,
-    /// `group` fails with this (after publishing its partials) when set.
+    /// `group` (after publishing its partials) or `regroup` fails with
+    /// this when set.
     fail: Mutex<Option<String>>,
+    /// While set (`hold`), each call waits for a permit (`release`) before
+    /// it returns: a test acts while a run is in flight, deterministically.
+    gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    /// Each call's revision head, and whether it was a `regroup`, in order.
+    runs: Mutex<Vec<(Sha, bool)>>,
+    /// Calls in flight now, and the most ever in flight at once.
+    active: std::sync::atomic::AtomicUsize,
+    max_active: std::sync::atomic::AtomicUsize,
+}
+
+/// Counts a `FakeGrouper` call in flight until dropped.
+struct ActiveRun<'a>(&'a FakeGrouper);
+
+impl<'a> ActiveRun<'a> {
+    fn start(g: &'a FakeGrouper, rev: &Revision, regroup: bool) -> Self {
+        use std::sync::atomic::Ordering::SeqCst;
+        g.calls.fetch_add(1, SeqCst);
+        g.runs.lock().unwrap().push((rev.head.clone(), regroup));
+        let now = g.active.fetch_add(1, SeqCst) + 1;
+        g.max_active.fetch_max(now, SeqCst);
+        Self(g)
+    }
+}
+
+impl Drop for ActiveRun<'_> {
+    fn drop(&mut self) {
+        self.0
+            .active
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl FakeGrouper {
@@ -1575,7 +1606,43 @@ impl FakeGrouper {
             calls: std::sync::atomic::AtomicUsize::new(0),
             partials: Mutex::new(Vec::new()),
             fail: Mutex::new(None),
+            gate: Mutex::new(None),
+            runs: Mutex::new(Vec::new()),
+            active: std::sync::atomic::AtomicUsize::new(0),
+            max_active: std::sync::atomic::AtomicUsize::new(0),
         })
+    }
+    /// From now on each `group`/`regroup` call waits for a `release`.
+    pub fn hold(&self) {
+        *self.gate.lock().unwrap() = Some(Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+    /// Lets one held call (the current one, or the next) return.
+    pub fn release(&self) {
+        if let Some(gate) = &*self.gate.lock().unwrap() {
+            gate.add_permits(1);
+        }
+    }
+    /// Each call's revision head and whether it was a `regroup`, in order.
+    pub fn runs(&self) -> Vec<(Sha, bool)> {
+        self.runs.lock().unwrap().clone()
+    }
+    /// How many calls were ever in flight at once.
+    pub fn max_active(&self) -> usize {
+        self.max_active.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    async fn wait_gate(&self) {
+        let gate = self.gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.acquire().await.expect("gate open").forget();
+        }
+    }
+    /// The configured grouping, as a grouping of `rev` (a real grouper's
+    /// result is always of the revision it was given).
+    fn result_for(&self, rev: &Revision) -> Grouping {
+        Grouping {
+            rev: rev.head.clone(),
+            ..self.grouping.lock().unwrap().clone()
+        }
     }
     /// Provisional groupings the next `group` call publishes before it
     /// returns (streamed grouping), `delay_ms` apart.
@@ -1616,14 +1683,14 @@ impl FakeGrouper {
 impl Grouper for FakeGrouper {
     async fn group(
         &self,
-        _rev: &Revision,
+        rev: &Revision,
         _pr: &PrDetail,
         ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
         agent: crate::deps::GroupingAgent,
         on_partial: crate::deps::OnPartial<'_>,
     ) -> Result<Grouping, GrouperError> {
-        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _active = ActiveRun::start(self, rev, false);
         *self.last_agent.lock().unwrap() = Some(agent.id);
         *self.last_user_mcp.lock().unwrap() = Some(agent.user_mcp);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
@@ -1638,26 +1705,31 @@ impl Grouper for FakeGrouper {
         if delay > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
         }
+        self.wait_gate().await;
         if let Some(message) = self.fail.lock().unwrap().take() {
             return Err(GrouperError::Agent(message));
         }
-        Ok(self.grouping.lock().unwrap().clone())
+        Ok(self.result_for(rev))
     }
     async fn regroup(
         &self,
         prev: &Grouping,
-        _rev: &Revision,
+        rev: &Revision,
         _pr: &PrDetail,
         ctx: &theodore_domain::grouping::RepoContext,
         _worktree: &Path,
         agent: crate::deps::GroupingAgent,
     ) -> Result<Grouping, GrouperError> {
         let _ = prev;
-        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _active = ActiveRun::start(self, rev, true);
         *self.last_agent.lock().unwrap() = Some(agent.id);
         *self.last_user_mcp.lock().unwrap() = Some(agent.user_mcp);
         *self.last_ctx.lock().unwrap() = Some(ctx.clone());
-        Ok(self.grouping.lock().unwrap().clone())
+        self.wait_gate().await;
+        if let Some(message) = self.fail.lock().unwrap().take() {
+            return Err(GrouperError::Agent(message));
+        }
+        Ok(self.result_for(rev))
     }
 }
 

@@ -453,21 +453,12 @@ impl Core {
                     return;
                 }
                 let prior = stored.map(|r| r.data);
-                {
-                    let mut inflight = core
-                        .0
-                        .grouping_inflight
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner());
-                    if !inflight.insert(pr.clone()) {
-                        return;
-                    }
-                }
-                core.emit(Ephemeral::Grouping {
-                    pr: pr.clone(),
-                    running: true,
-                    error: None,
-                });
+                // One run at a time: if one is going (a close-and-reopen
+                // while it worked), it groups again after, if still needed.
+                let Some(mut slot) = core.claim_grouping(&pr, true) else {
+                    return;
+                };
+                slot.announce();
                 let repo_scope = detail.summary.pr.repo.slug();
                 let configured = core
                     .setting_agent_scoped("agents.grouping", Some(&repo_scope), AgentId::Claude)
@@ -518,20 +509,14 @@ impl Core {
                         code: code.to_string(),
                     });
                 }
-                // The PR may have been closed while the agent worked (a branch
-                // review's "Close review"): don't write an orphaned grouping back.
-                let still_open = core.0.current_head.read().await.contains_key(&pr);
+                // Not written back if the PR was closed while the agent
+                // worked (a branch review's "Close review"), or a newer
+                // head's grouping is already stored.
                 let error = match result {
-                    Ok(_) if !still_open => None,
                     Ok(grouping) => {
                         match crate::usecases::grouping::grouping_row(grouping, &revision, &ctx) {
                             Ok(data) => core
-                                .apply(vec![NewAction {
-                                    model: models::GROUPING.into(),
-                                    model_id: pr.0.clone(),
-                                    action: SyncActionCode::U,
-                                    data: Some(data),
-                                }])
+                                .write_grouping_row(&pr, &head, data)
                                 .await
                                 .err()
                                 .map(|e| e.to_string()),
@@ -540,22 +525,16 @@ impl Core {
                     }
                     Err(e) => Some(e.to_string()),
                 };
-                core.0
-                    .grouping_inflight
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(&pr);
                 if let Some(e) = &error {
                     core.emit(Ephemeral::Toast {
                         level: ToastLevel::Error,
                         text: format!("grouping failed: {e}"),
                     });
                 }
-                core.emit(Ephemeral::Grouping {
-                    pr,
-                    running: false,
-                    error,
-                });
+                // A push while it ran: group the new head now.
+                if slot.next(error) {
+                    core.group_until_settled(slot).await;
+                }
             }
             .in_current_span(),
         );
