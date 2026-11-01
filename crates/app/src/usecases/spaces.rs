@@ -162,6 +162,7 @@ impl Core {
             process: None,
             commands_denied: false,
             agent_session: None,
+            sent_feedback: Vec::new(),
             created_at: now,
             updated_at: now,
             title: None,

@@ -63,6 +63,7 @@ import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
 import { agentModel } from '../agentModel';
 import { isBuildMode } from './mode';
+import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import {
   checksByReply,
@@ -391,7 +392,6 @@ const SpaceHeader = observer(function SpaceHeader({
 }) {
   const store = useRootStore();
   const ui = useUi();
-  const [busy, setBusy] = useState(false);
   const running = space.status === 'running';
   const archived = space.status === 'archived';
   const project = store.models.projects.get(space.project);
@@ -427,23 +427,7 @@ const SpaceHeader = observer(function SpaceHeader({
       <RunButton space={space} config={config} />
       <PortChips space={space} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
-      <Button
-        size="sm"
-        variant="secondary"
-        isDisabled={busy || archived}
-        onPress={async () => {
-          setBusy(true);
-          try {
-            await openGroupedReview(store, ui, space);
-          } catch {
-            // toasted by api.ts
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        Review
-      </Button>
+      <ReviewMenu space={space} />
       {!archived && project && (
         <ShipControls
           space={space}

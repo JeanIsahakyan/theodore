@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use serde_json::json;
 use theodore_contract::{
-    AddProjectRequest, ChatMessage, CreateSpaceRequest, Project, ShipAction, ShipSpaceRequest,
-    Space, SpaceFeedback, SpaceFeedbackRequest, SpaceSendRequest, SpaceStatus, models,
+    AddProjectRequest, ChatMessage, CreateSpaceRequest, Project, SentFeedback, ShipAction,
+    ShipSpaceRequest, Space, SpaceFeedback, SpaceFeedbackRequest, SpaceSendRequest, SpaceStatus,
+    models,
 };
 use theodore_domain::{AgentId, Author, PrId, Sha, Usage};
 use theodore_ports::{AgentEvent, AgentRequest, NewAction, Store, SyncActionCode};
@@ -458,6 +459,78 @@ async fn a_thread_and_a_finding_on_the_space_pr_go_as_one_turn() {
     assert!(prompt.contains(
         "2. Finding (high) on src/db.ts:3: SQL injection:\n> The query concatenates input.\n"
     ));
+}
+
+#[tokio::test]
+async fn sent_feedback_is_marked_with_the_turn_it_rides_and_not_sent_twice() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("one"));
+    f.git.push_checkpoint(Sha::new("turn1"));
+    let s = core
+        .create_space(request(&project, "Redirect"))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.turns, 1);
+    let review = s.review_pr.clone().unwrap();
+    put(
+        &f,
+        models::DRAFT,
+        "d1",
+        json!({ "id": "d1", "pr": review, "anchor": anchor("src/redirect.ts", 12),
+                "body": "also handle //evil.com", "source": { "kind": "me" },
+                "outdated": false }),
+    );
+
+    f.agents.push_script(done("Handled it."));
+    core.space_send_feedback(SpaceFeedbackRequest {
+        space: s.id.clone(),
+        items: vec![SpaceFeedback::Draft("d1".into())],
+    })
+    .await
+    .expect("send to agent");
+
+    // Recorded at once, before the turn it starts has even finished.
+    let mid = space(&f, &s.id);
+    assert_eq!(
+        mid.sent_feedback,
+        vec![SentFeedback {
+            item: SpaceFeedback::Draft("d1".into()),
+            turn: 2,
+        }]
+    );
+
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.turns, 2);
+    // The turn finishing doesn't touch the marking; it's keyed by turn
+    // number, not by a flag the turn flips.
+    assert_eq!(s.sent_feedback, mid.sent_feedback);
+
+    // Sending it again (e.g. the UI composed a second batch before seeing
+    // the first was recorded) adds a second entry at the next turn — the
+    // core doesn't refuse a resend, the footer's own filtering does.
+    f.agents.push_script(done("Handled it again."));
+    core.space_send_feedback(SpaceFeedbackRequest {
+        space: s.id.clone(),
+        items: vec![SpaceFeedback::Draft("d1".into())],
+    })
+    .await
+    .expect("send to agent again");
+    let s = idle(&f, &s.id).await;
+    assert_eq!(
+        s.sent_feedback,
+        vec![
+            SentFeedback {
+                item: SpaceFeedback::Draft("d1".into()),
+                turn: 2,
+            },
+            SentFeedback {
+                item: SpaceFeedback::Draft("d1".into()),
+                turn: 3,
+            },
+        ]
+    );
 }
 
 #[tokio::test]
