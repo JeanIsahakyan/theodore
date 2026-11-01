@@ -66,23 +66,45 @@ export function PrGlyph({ pr }: { pr: PrSummary | undefined }) {
 }
 
 /** `merge_info` of an open PR, asked again whenever `version` changes
- *  (the PR row's head and update time). Quiet: the caller says what's
- *  unknown. */
+ *  (the PR row's head and update time); the last answer stays meanwhile.
+ *  Quiet: the caller says what's unknown. */
 function useMergeInfo(pr: PrId | null, version: string): MergeInfo | null {
-  const [info, setInfo] = useState<MergeInfo | null>(null);
+  const [got, setGot] = useState<{ pr: PrId; info: MergeInfo } | null>(null);
   useEffect(() => {
-    setInfo(null);
     if (!pr) return;
     let live = true;
     void api
       .mergeInfo(pr, true)
-      .then((i) => live && setInfo(i))
+      .then((info) => live && setGot({ pr, info }))
       .catch(() => {});
     return () => {
       live = false;
     };
   }, [pr, version]);
-  return info;
+  return got && got.pr === pr ? got.info : null;
+}
+
+/** The conflicting files of `pr` at `head` (`conflicts`, computed
+ *  locally), when the host says it conflicts; `null` until known. */
+function useConflicts(
+  pr: PrId,
+  head: string | undefined,
+  on: boolean,
+): ConflictFile[] | null {
+  const key = `${pr}@${head}`;
+  const [got, setGot] = useState<{ key: string; files: ConflictFile[] }>();
+  useEffect(() => {
+    if (!on) return;
+    let live = true;
+    void api
+      .conflicts(pr)
+      .then((files) => live && files && setGot({ key, files }))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [pr, key, on]);
+  return on && got?.key === key ? got.files : null;
 }
 
 const isOpen = (s: PrSummary | undefined) =>
@@ -203,20 +225,12 @@ const SpaceChecks = observer(function SpaceChecks({ pr }: { pr: PrId }) {
     open ? pr : null,
     `${summary?.head_sha}:${summary?.updated_at}`,
   );
-  const [conflicts, setConflicts] = useState<ConflictFile[] | null>(null);
+  const conflicts = useConflicts(
+    pr,
+    summary?.head_sha,
+    open && !!summary?.conflicts,
+  );
   const [updating, setUpdating] = useState(false);
-  useEffect(() => {
-    setConflicts(null);
-    if (!summary?.conflicts) return;
-    let live = true;
-    void api
-      .conflicts(pr)
-      .then((files) => live && setConflicts(files))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [pr, summary?.conflicts, summary?.head_sha]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto">

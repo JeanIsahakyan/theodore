@@ -18,12 +18,13 @@ Spaces, §10).
 ```
               DRAFTING                         IN REVIEW                    DONE
 ┌──────────────────────────────┐   ┌──────────────────────────────┐
-│ New space ─▶ agent turns ──┐ │   │ PR #123 (inbox, checks,      │
-│     ▲        (checkpoints) │ │   │ reviewers, merge)            │
-│     └── review · comments ◀┘ │──▶│     ▲            │           │──▶ merged ──▶ archived
-└──────────────────────────────┘   │     └─ threads ◀─┘ → agent   │
-         "Open PR" ▾ draft         └──────────────────────────────┘
-         (host project)
+│ New space ─▶ agent turns ──┐ │   │ PR #123: Changes · Threads · │
+│     ▲        (checkpoints) │ │   │ Checks, [Merge] in the space │
+│     └── review · comments ◀┘ │──▶│     ▲            │           │──▶ merged ─┬─▶ archived
+└──────────────────────────────┘   │     └─ threads ◀─┘ → agent   │            │
+     ▲   "Open PR" ▾ draft         └──────────────────────────────┘            │
+     │   (host project)                                                        │
+     └─── "Continue": branch <login>/<slug>-2 on the base's fresh tip ─────────┘
          "Merge locally"   ─────────────────────────────────────────▶ merged ──▶ archived
          ▾ "Keep as branch" ────────────────────────────────────────▶ branch ──▶ archived
          (local folder)
@@ -36,8 +37,8 @@ space, and a push from the space updates the PR.
 | Stage | Space shows | Who acts | Ends when |
 | --- | --- | --- | --- |
 | Drafting | chat · live diff vs base | you + the agent | Open PR / Merge locally / Keep as branch |
-| In review | the same, plus the PR (opened from the header) | reviewers → you → the agent | merged or closed on the host |
-| Done | transcript and final diff | — | archived (auto, `spaces.auto_archive_days` after merge, merge locally or keep) |
+| In review | the same, plus the PR's Threads and Checks tabs and Merge | reviewers → you → the agent | merged (here or on the host) or closed |
+| Done | transcript and final diff; Continue | — | Continue (drafting again, new branch) or archived (auto, `spaces.auto_archive_days` after merge, merge locally or keep) |
 
 ## 2. The core loop
 
@@ -57,7 +58,9 @@ Open PR                ──▶  squash checkpoints ─▶ one commit by you
                             space.pr = github:o/r#123 ─▶ PR row, inbox, polling
 reviewer comments      ──▶  thread ─▶ "Send to agent" ─▶ turn ─▶ Push ─▶ PR updated
 not what you wanted    ──▶  "Undo" ─▶ worktree + ref back to the previous checkpoint
+Merge                  ──▶  merge_space ─▶ outbox merge_pr (now · auto-merge · queue)
 merged                 ──▶  space.done_at ─▶ archive after spaces.auto_archive_days
+Continue               ──▶  fetch base ─▶ <login>/fix-login-2 on its tip ─▶ drafting again
 ```
 
 ---
@@ -106,7 +109,9 @@ a separate feature island.
 | ● | turn finished since you last looked | `space.updated_at` > last seen (UI-local) |
 | ○ | idle | `idle` |
 | ✕ | last turn failed or was interrupted | `failed` |
-| ⎇ #n | PR open; tinted by checks | `space.pr` + its `pr` row |
+| ⎇ #n | has a PR; tinted by its checks (green · red · amber), the merge icon once merged | `space.pr` + its `pr` row (`checks`, `state`) |
+
+◐, ✕ and ● win over ⎇; the label keeps `#n` either way.
 
 ### New space
 
@@ -257,20 +262,48 @@ PR's own "Update branch" on the host is a separate action and stays as is.
 
 ### Space page — in review
 
-The header gains the PR; the right pane gains Threads and Checks tabs
-(planned; today the PR opens in the normal review). Reviewer threads carry
-"Send to agent"; after the agent's turn, "Push" updates the PR.
+Once `space.pr` is set the header gains the PR and Merge, and the right
+pane gains tabs: **Changes · Threads · Checks**. Everything a PR needs
+happens here; "PR" still opens the normal review.
 
 ```
-┌ ○ rate-limits ── PR #123 ⎇ ada/rate-limits ── In review ── ✓ 9/9 ── 2 threads ───┐
-│ claude ▾  Edit ▾                         [Review ▸] [Push 1 turn] [Open on host] │
-├──────────── chat ──────────────────┬── Changes │ Threads 2 │ Checks ─────────────┤
+┌ ○ rate-limits ── In review · #123 ───────── [Review] [Push] [Merge ▾] [PR] ──────┐
+├──────────── chat ──────────────────┬── Changes │ Threads 2 │ ⎇ Checks ───────────┤
 │ …                                  │ ● anna · limiter.ts:41                      │
 │ ◆ turn 4 · 9f8e7d · pushed         │   "Should this be per-token, not global?"   │
-│ ◆ turn 5 · 1c2d3e · not pushed     │   [Send to agent] [Reply] [Resolve]         │
+│ ◆ turn 5 · 1c2d3e · not pushed     │   [Reply…] [Send to agent] [Resolve]        │
 │                                    │ ● ci-bot · README.md:12                     │
 │                                    │   [Send to agent] …                         │
 └────────────────────────────────────┴─────────────────────────────────────────────┘
+```
+
+| Tab | Shows | Reuses |
+| --- | --- | --- |
+| Changes | the live diff, as while drafting | `DiffPane` |
+| Threads | the PR's threads and drafts: Reply · Resolve · Send to agent; unresolved count on the tab | the review side panel's `Threads` |
+| Checks | review decision + approvals, mergeable state (`merge_info`), conflicting files (`conflicts`) with Update branch, then every check with Re-run (`rerun_check`) | `Checks`, `ReviewerStrip` |
+
+**Merge** (`merge_space`, through `merge_pr` and the outbox):
+
+| PR state (`merge_info`) | Merge does |
+| --- | --- |
+| clean / unstable, mergeable | merges now |
+| the base has a merge queue | adds it to the queue |
+| blocked / behind / unknown, the repo allows auto-merge | turns on auto-merge |
+| conflicts, a draft, auto-merge already on, in the queue | disabled, says why |
+| turns not pushed yet | refused: Push first, so the merge has them |
+
+The method is the host's default (GitHub `viewerDefaultMergeMethod`: your
+last one, else the repo's) when the repo allows it, else the first allowed
+one; ▾ picks another allowed method or opens the full merge dialog.
+
+**Continue** — once the PR merged, a banner offers it instead of only
+waiting for auto-archive (§7):
+
+```
+#123 merged ─▶ [Continue] ─▶ fetch main ─▶ branch ada/rate-limits-2 on main's tip
+                              turns + chat stay · pr/shipped/done_at clear
+                              next turn's prompt: "the previous PR (#123) merged…"
 ```
 
 **Send to agent** sits next to a thread's Resolve, a draft's edit/delete and
