@@ -362,6 +362,49 @@ impl Core {
         true
     }
 
+    /// A space turn moved its checkpoint `before` → `after`: the files the
+    /// agent wrote with its own tools are reindexed, in the background.
+    pub(crate) fn spawn_space_code_changed(
+        &self,
+        root: PathBuf,
+        before: theodore_domain::Sha,
+        after: theodore_domain::Sha,
+    ) {
+        let Some(port) = self.code_port() else {
+            return;
+        };
+        let open = self
+            .0
+            .code_intel
+            .open
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&root);
+        if !open {
+            return;
+        }
+        let git = self.0.deps.git.clone();
+        tokio::spawn(async move {
+            let opts = theodore_ports::DiffOptions {
+                context: 0,
+                max_file_lines: 0,
+                ..Default::default()
+            };
+            let rev = match git.diff(&root, &before, &after, &opts).await {
+                Ok(rev) => rev,
+                Err(e) => {
+                    tracing::warn!(error = %e, "code intelligence: no diff of the turn");
+                    return;
+                }
+            };
+            for f in &rev.files {
+                for path in std::iter::once(&f.path).chain(f.old_path.as_ref()) {
+                    port.file_changed(&root, path).await;
+                }
+            }
+        });
+    }
+
     fn forget_code_root(&self, root: &Path) -> bool {
         self.0
             .code_intel

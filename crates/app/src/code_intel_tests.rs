@@ -350,6 +350,51 @@ async fn a_turns_mode_decides_whether_its_code_tools_edit() {
     }
 }
 
+/// Files the agent wrote with its own tools are reindexed when the turn's
+/// checkpoint moves.
+#[tokio::test]
+async fn a_turn_reindexes_the_files_it_changed() {
+    let e = code_env().await;
+    let s = e.create("").await;
+    let files: Vec<String> = theodore_ports::GitPort::diff(
+        &*e.f.git,
+        Path::new("."),
+        &theodore_domain::Sha::new("a"),
+        &theodore_domain::Sha::new("b"),
+        &Default::default(),
+    )
+    .await
+    .unwrap()
+    .files
+    .into_iter()
+    .map(|f| f.path)
+    .collect();
+    assert!(!files.is_empty());
+    e.f.git.push_checkpoint(theodore_domain::Sha::new("turn1"));
+    e.f.agents.push_script(done("ok"));
+    e.core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "go".into(),
+            agent: None,
+            model: None,
+            mode: Some(theodore_contract::SpaceMode::Edit),
+            attachments: None,
+        })
+        .await
+        .unwrap();
+    e.until(&s.id, |s| s.run.is_none()).await;
+    wait_until(|| {
+        let calls = e.f.code_intel.calls();
+        files.iter().all(|p| {
+            calls
+                .iter()
+                .any(|c| c.starts_with("file_changed") && c.ends_with(p.as_str()))
+        })
+    })
+    .await;
+}
+
 // ── code_intel.lsp ──────────────────────────────────────────────────────────
 
 #[test]

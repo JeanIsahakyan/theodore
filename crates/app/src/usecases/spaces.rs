@@ -1021,6 +1021,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
         core.0.runs.write().await.remove(&run_id);
     }
 
+    if changed && let Some(after) = &head {
+        core.spawn_space_code_changed(cwd.clone(), space.head_sha.clone(), after.clone());
+    }
     if changed {
         // The live diff follows the new checkpoint; grouping waits for Review.
         if let Err(e) = core

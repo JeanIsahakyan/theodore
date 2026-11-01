@@ -5,14 +5,15 @@ Instead of grepping a name and reading whole files, an agent asks "where is
 `save` defined, who calls it, does this still type-check" and gets
 `file:line` answers with a few lines of context.
 
-Status: **design**; the app side is built (config, open/close, install
-flow, MCP tools, Settings → Languages commands) against the port, and runs
-without it until the `crates/code-intel` facade is wired into `Deps`.
+Status: **built**. Grammars download from the `grammars-<tag>` release
+(`.github/workflows/grammars.yml`); language servers are found on the
+machine or downloaded on consent. Open: the eval (§10).
 
 | Hook | Where |
 | --- | --- |
 | PR opened, review run starts | `open_pr.rs` `finish_open_full`, `space_tools.rs` `pr_tools`: `TrustMode::Review` |
 | space created / unarchived / turn | `spaces.rs` `create_space`, `unarchive_space`, `space_send`: trusted per §8 |
+| space turn ends (files the agent wrote) | `spaces.rs` turn end → `code_intel.rs` `spawn_space_code_changed`: the checkpoint's diff → `file_changed` |
 | closed | `spaces.rs` `archive_space`, `projects.rs` `close_branch_review`, runtime worktree GC → `Core::code_intel_sweep` |
 
 ---
@@ -399,10 +400,11 @@ Settings → Languages lists each detected language with its grammar, server
 ## 10. Rollout
 
 ```
-S1  syntax layer + toolchain/manifest + grammar CI + review-tools   ─┐ parallel,
-    Settings → Languages                                            ─┘ disjoint files
-S2  LSP client + pool + trust flags + space-tools edits + watcher
-S3  eval with and without the tools; limits; Grep decision
+S1  syntax layer + toolchain/manifest + grammar CI + review-tools   ✓
+    Settings → Languages                                            ✓
+S2  LSP client + pool + trust switches + space-tools edits          ✓
+    reindex after each space turn (the checkpoint's diff)           ✓
+S3  eval with and without the tools; limits; Grep decision          open
 ```
 
 The eval decides each step: `theodore eval` for grouping, and review / space
