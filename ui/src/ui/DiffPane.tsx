@@ -92,11 +92,8 @@ import {
   useCheckboxRangeEvents,
   type CheckboxRangeModifiers,
 } from './useCheckboxRange';
-import {
-  groupDiff,
-  groupsInRevision,
-  nextReviewableGroup,
-} from './review/groups';
+import { groupsInRevision, nextReviewableGroup } from './review/groups';
+import { diffFiles, isCollapsed, showsOnlyOutliers } from './review/hunks';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
@@ -297,8 +294,6 @@ export const DiffPane = observer(function DiffPane({
   // Only read when a line's comment button is shift-clicked — nothing
   // renders from it, so it lives in a ref instead of re-rendering the diff.
   const rangeStart = useRef<RangeStart | null>(null);
-  const [outliersOpen, setOutliersOpen] = useState<Record<string, boolean>>({});
-  const [hiddenOpen, setHiddenOpen] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState(CHUNK);
   const [peek, setPeek] = useState<SymbolPeekTarget | null>(null);
   // Which paths the open diff actually has, so a symbol hit elsewhere in
@@ -390,48 +385,24 @@ export const DiffPane = observer(function DiffPane({
     () => (group ? new Set(group.hunks) : null),
     [group],
   );
-  const showOnlyOutliers =
-    !!group &&
-    group.kind === 'skim' &&
-    group.outliers.length > 0 &&
-    !outliersOpen[group.id];
+  const { allEdits, hiddenShown } = store.ephemeral.groupView(pr, group?.id);
+  const showOnlyOutliers = showsOnlyOutliers(group ?? null, allEdits);
   // Lockfiles and generated code: collapsed by default, same as the
   // prototype — "show anyway" reveals this group's diff like any other.
-  const groupCollapsed =
-    !!group && group.kind === 'hidden' && !hiddenOpen[group.id];
+  const groupCollapsed = isCollapsed(group ?? null, hiddenShown);
 
-  const files = useMemo(() => {
-    let out: FileDiff[] =
-      mode.mode === 'files'
-        ? rev.files.filter((f) => f.path === mode.file)
-        : group
-          ? // Ordered as the groups pane lists them, over the same hunks.
-            groupDiff(
-              rev.files,
-              sinceOnly && since
-                ? group.hunks.filter((h) => since.has(h))
-                : group.hunks,
-              group.outliers,
-            )
-          : rev.files;
-
-    if (showOnlyOutliers && group) {
-      const outlierSet = new Set(group.outliers);
-      out = out
-        .map((f) => ({
-          ...f,
-          hunks: f.hunks.filter((h) => outlierSet.has(h.id)),
-        }))
-        .filter((f) => f.hunks.length);
-    }
-
-    if (sinceOnly && since) {
-      out = out
-        .map((f) => ({ ...f, hunks: f.hunks.filter((h) => since.has(h.id)) }))
-        .filter((f) => f.hunks.length);
-    }
-    return out;
-  }, [rev, mode.mode, mode.file, group, showOnlyOutliers, sinceOnly, since]);
+  // The same call `Review`'s J/K steps through, so focus only ever lands
+  // on what's rendered here, in this order.
+  const sinceShown = sinceOnly && since ? since : null;
+  const files = useMemo(
+    () =>
+      diffFiles(rev, { mode: mode.mode, file: mode.file }, group ?? null, {
+        since: sinceShown,
+        allEdits,
+        hiddenShown,
+      }),
+    [rev, mode.mode, mode.file, group, sinceShown, allEdits, hiddenShown],
+  );
 
   // The other groups each file also has hunks in ("also in …" in its
   // header): one entry per group however many of its hunks the file has,
@@ -575,9 +546,7 @@ export const DiffPane = observer(function DiffPane({
             </Alert.Content>
             <Btn
               tone="tertiary"
-              onPress={() =>
-                setOutliersOpen((o) => ({ ...o, [group.id]: !o[group.id] }))
-              }
+              onPress={() => store.ephemeral.toggleAllEdits(pr, group.id)}
             >
               {showOnlyOutliers ? 'Show all' : 'Only outliers'}
             </Btn>
@@ -592,9 +561,7 @@ export const DiffPane = observer(function DiffPane({
             <Btn
               tone="tertiary"
               className="show-hidden"
-              onPress={() =>
-                setHiddenOpen((o) => ({ ...o, [group!.id]: true }))
-              }
+              onPress={() => store.ephemeral.showHidden(pr, group!.id)}
             >
               Show anyway
             </Btn>
