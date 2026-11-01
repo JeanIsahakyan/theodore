@@ -23,6 +23,7 @@ pub mod env;
 pub mod gemini;
 pub mod models;
 pub mod process;
+pub mod pty;
 pub mod shell;
 
 use async_trait::async_trait;
@@ -30,6 +31,7 @@ use theodore_domain::AgentId;
 use theodore_ports::agent::{AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun, ModelInfo};
 
 pub use config::{AgentBinaryConfig, AgentCliConfig};
+pub use pty::PtyRunner;
 pub use shell::ShellRunner;
 
 /// `AgentPort` over local CLI processes.
