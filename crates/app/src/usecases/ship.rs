@@ -43,8 +43,18 @@ impl Core {
     /// as it is now; an opened PR lands on `space.pr` once the outbox item
     /// runs.
     pub async fn ship_space(&self, req: ShipSpaceRequest) -> AppResult<Space> {
+        self.ship_space_as(req, None).await
+    }
+
+    /// `ship_space` asked for by the agent of the turn `turn` (the `ship`
+    /// tool): the space is running that very turn, which doesn't block it.
+    pub(crate) async fn ship_space_as(
+        &self,
+        req: ShipSpaceRequest,
+        turn: Option<&str>,
+    ) -> AppResult<Space> {
         let how = crate::usecases::telemetry::wire_str(&req.action);
-        let result = self.ship_space_inner(req).await;
+        let result = self.ship_space_inner(req, turn).await;
         match &result {
             Ok(_) => {
                 theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceShipped { how })
@@ -60,10 +70,16 @@ impl Core {
         result
     }
 
-    async fn ship_space_inner(&self, req: ShipSpaceRequest) -> AppResult<Space> {
+    async fn ship_space_inner(
+        &self,
+        req: ShipSpaceRequest,
+        turn: Option<&str>,
+    ) -> AppResult<Space> {
         let _guard = self.0.ship_lock.lock().await;
         let space = self.space_row(&req.space).await?;
+        let own_turn = turn.is_some() && space.run.as_deref() == turn;
         match space.status {
+            SpaceStatus::Running if own_turn => {}
             SpaceStatus::Running => {
                 return Err(AppError::Invalid(
                     "the agent is still working; stop it or wait for the turn to end".into(),

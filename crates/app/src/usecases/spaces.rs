@@ -166,6 +166,7 @@ impl Core {
             updated_at: now,
             title: None,
             handoff_summary: None,
+            progress: None,
         };
         self.apply(vec![NewAction {
             model: models::SPACE.into(),
@@ -999,6 +1000,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         "turns": turn_no,
         "error": space_error,
         "agent_session": agent_session,
+        // The tracker is the turn's: it goes when the agent is done.
+        "progress": null,
         "updated_at": core.0.deps.clock.now(),
     });
     if let Some(head) = &head {
