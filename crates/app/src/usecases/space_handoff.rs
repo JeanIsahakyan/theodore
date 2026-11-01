@@ -107,7 +107,7 @@ mod tests {
     fn msg(author: theodore_domain::Author, text: &str, at: i64) -> ChatMessage {
         ChatMessage {
             id: at.to_string(),
-            pr: "space:s".into(),
+            pr: crate::usecases::spaces::space_chat_key("s"),
             author,
             text: text.into(),
             refs: vec![],
@@ -131,6 +131,7 @@ mod tests {
     fn render_caps_each_message() {
         let long = "x".repeat(SUMMARY_INPUT_CHARS + 500);
         let out = render(&[msg(theodore_domain::Author::Me, &long, 0)]);
-        assert_eq!(out.trim().len(), SUMMARY_INPUT_CHARS);
+        let body = out.strip_prefix("[user]\n").unwrap().trim();
+        assert_eq!(body.len(), SUMMARY_INPUT_CHARS);
     }
 }

@@ -1498,9 +1498,15 @@ pub struct FakeAgent {
     /// Keeps a run's sender alive forever so its `events.recv()` never
     /// resolves (used to test cancellation deterministically).
     kept_alive: Mutex<Vec<tokio::sync::mpsc::Sender<AgentEvent>>>,
-    /// Every request `run()` was called with, in order (assertions on the
-    /// prompt, mode, or agent a use case picked).
+    /// Every `stream_text: true` request `run()` was called with, in
+    /// order (assertions on the prompt, mode, or agent a use case
+    /// picked): a turn, a skill run, an ask — never a one-shot utility
+    /// call, which would otherwise race these with a background task a
+    /// test never asked about (`space_naming`, `space_handoff`).
     requests: Mutex<Vec<AgentRequest>>,
+    /// The `stream_text: false` calls (`one_shot::run`), separately: a
+    /// test that cares inspects these with `utility_requests`.
+    utility_requests: Mutex<Vec<AgentRequest>>,
 }
 
 /// What an untagged, unscripted call gets: one plain, successful turn.
@@ -1542,6 +1548,13 @@ impl FakeAgent {
     pub fn last_request(&self) -> Option<AgentRequest> {
         self.requests.lock().unwrap().last().cloned()
     }
+    /// The one-shot utility calls (`stream_text: false`), in order.
+    pub fn utility_requests(&self) -> Vec<AgentRequest> {
+        self.utility_requests.lock().unwrap().clone()
+    }
+    pub fn last_utility_request(&self) -> Option<AgentRequest> {
+        self.utility_requests.lock().unwrap().last().cloned()
+    }
 }
 
 #[async_trait]
@@ -1566,7 +1579,11 @@ impl AgentPort for FakeAgent {
                 .position(|(matches, _)| matches(&req))
                 .map(|i| tagged.remove(i).1)
         };
-        self.requests.lock().unwrap().push(req);
+        if stream_text {
+            self.requests.lock().unwrap().push(req);
+        } else {
+            self.utility_requests.lock().unwrap().push(req);
+        }
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let hang = std::mem::take(&mut *self.hang_next.lock().unwrap());
         if hang {
