@@ -14,6 +14,7 @@ use theodore_domain::Usage;
 use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
 
 use crate::config::AgentBinaryConfig;
+use crate::edit_guard;
 use crate::process::LineParser;
 
 /// The `--mcp-config` JSON, including the bearer token in its `headers`.
@@ -62,6 +63,16 @@ pub fn build_args(
     req: &AgentRequest,
     cfg: &AgentBinaryConfig,
     mcp_config_path: Option<&Path>,
+) -> Vec<String> {
+    build_args_guarded(req, cfg, mcp_config_path, edit_guard::installed_exe())
+}
+
+/// `build_args` with `guard` as the edit hook's binary (`edit_guard`).
+fn build_args_guarded(
+    req: &AgentRequest,
+    cfg: &AgentBinaryConfig,
+    mcp_config_path: Option<&Path>,
+    guard: Option<&Path>,
 ) -> Vec<String> {
     let mut args = vec![
         "-p".to_string(),
@@ -127,10 +138,11 @@ pub fn build_args(
             args.push("Bash,Edit,Write,MultiEdit,NotebookEdit".to_string());
         }
         AgentMode::Edit => {
+            // No bare `Edit`/`Write` here: allowed outright they reach any
+            // path. `acceptEdits` takes edits in the working directories
+            // only, and `edit_settings` names those.
             args.push("--allowedTools".to_string());
-            args.push(format!(
-                "{READ_TOOLS},Edit,Write,MultiEdit,NotebookEdit,Bash,{mcp_tools}"
-            ));
+            args.push(format!("{READ_TOOLS},Bash,{mcp_tools}"));
             args.push("--permission-mode".to_string());
             args.push("acceptEdits".to_string());
         }
@@ -139,6 +151,10 @@ pub fn build_args(
             args.push("--permission-mode".to_string());
             args.push("bypassPermissions".to_string());
         }
+    }
+    if let Some(settings) = edit_settings(req, guard) {
+        args.push("--settings".to_string());
+        args.push(settings);
     }
     if let Some(model) = req.model.as_ref().or(cfg.model.as_ref()) {
         args.push("--model".to_string());
@@ -161,6 +177,50 @@ pub fn build_args(
     }
     args.extend(cfg.extra_args.iter().cloned());
     args
+}
+
+/// The tools that write files; one `PreToolUse` matcher for all of them.
+const EDIT_TOOLS: &str = "Edit|Write|MultiEdit|NotebookEdit";
+
+/// Edit and Run: the `--settings` that keep the file-edit tools inside
+/// the worktree and the attachment dirs (docs/spaces.md §5). Edit names
+/// them as the only places edits are allowed; both modes get the
+/// `edit_guard` hook, which also holds under `bypassPermissions`. Shell
+/// commands are not limited.
+fn edit_settings(req: &AgentRequest, guard: Option<&Path>) -> Option<String> {
+    if req.mode == AgentMode::ReadOnly {
+        return None;
+    }
+    let mut roots = vec![req.cwd.clone()];
+    roots.extend(attachment_dirs(req).into_iter().map(Path::to_path_buf));
+    let mut settings = serde_json::json!({});
+    if req.mode == AgentMode::Edit {
+        let mut allow: Vec<String> = Vec::new();
+        for root in &roots {
+            // As given and with symlinks resolved (`/tmp` → `/private/tmp`).
+            let real = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+            for form in [root, &real] {
+                // `//` = an absolute path in Claude Code's rule syntax.
+                let rule = format!("Edit(/{}/**)", form.display());
+                if !allow.contains(&rule) {
+                    allow.push(rule);
+                }
+            }
+        }
+        settings["permissions"] = serde_json::json!({ "allow": allow });
+    }
+    if let Some(exe) = guard {
+        settings["hooks"] = serde_json::json!({
+            "PreToolUse": [{
+                "matcher": EDIT_TOOLS,
+                "hooks": [{
+                    "type": "command",
+                    "command": crate::edit_guard::hook_command(exe, &roots),
+                }],
+            }],
+        });
+    }
+    (settings != serde_json::json!({})).then(|| settings.to_string())
 }
 
 /// Each attachment's directory, once, in order.
@@ -792,6 +852,75 @@ mod run_mode_tests {
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
         // bypassPermissions already allows every tool; no allowlist to widen.
         assert!(!args.iter().any(|a| a == "--allowedTools"));
+    }
+
+    fn settings_of(args: &[String]) -> Option<serde_json::Value> {
+        let i = args.iter().position(|a| a == "--settings")?;
+        Some(serde_json::from_str(&args[i + 1]).unwrap())
+    }
+
+    /// Edit and Run: the file-edit tools stay in the worktree and the
+    /// attachment dirs (docs/spaces.md §5); a review run gets nothing.
+    #[test]
+    fn edits_are_kept_inside_the_worktree_and_attachments() {
+        let mut req = AgentRequest {
+            agent: theodore_domain::AgentId::Claude,
+            prompt: "p".into(),
+            system: None,
+            cwd: "/data/spaces/a1".into(),
+            mode: AgentMode::Edit,
+            mcp: None,
+            model: None,
+            effort: None,
+            stall_after_ms: 1000,
+            env: Vec::new(),
+            user_mcp: false,
+            attachments: vec![theodore_ports::AgentAttachment {
+                path: "/data/attachments/x/shot.png".into(),
+                mime: "image/png".into(),
+            }],
+            resume: None,
+            stream_text: false,
+        };
+        let exe = Path::new("/Applications/Theodore.app/Contents/MacOS/theodore");
+
+        let args = build_args_guarded(&req, &Default::default(), None, Some(exe));
+        let i = args.iter().position(|a| a == "--allowedTools").unwrap();
+        let allowed: Vec<&str> = args[i + 1].split(',').collect();
+        for bare in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+            assert!(!allowed.contains(&bare), "{bare} would reach any path");
+        }
+        assert!(allowed.contains(&"Bash"));
+        let s = settings_of(&args).expect("settings");
+        assert_eq!(
+            s["permissions"]["allow"],
+            serde_json::json!(["Edit(//data/spaces/a1/**)", "Edit(//data/attachments/x/**)"])
+        );
+        let hook = &s["hooks"]["PreToolUse"][0];
+        assert_eq!(hook["matcher"], "Edit|Write|MultiEdit|NotebookEdit");
+        assert_eq!(
+            hook["hooks"][0]["command"],
+            "'/Applications/Theodore.app/Contents/MacOS/theodore' --theodore-edit-guard \
+             '/data/spaces/a1' '/data/attachments/x'"
+        );
+
+        // Run: no allow rules (everything is allowed), the hook still holds.
+        req.mode = AgentMode::Run;
+        let s = settings_of(&build_args_guarded(
+            &req,
+            &Default::default(),
+            None,
+            Some(exe),
+        ))
+        .expect("settings");
+        assert!(s.get("permissions").is_none());
+        assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].is_string());
+        // A binary that never installed the guard offers no hook.
+        assert!(settings_of(&build_args_guarded(&req, &Default::default(), None, None)).is_none());
+
+        req.mode = AgentMode::ReadOnly;
+        let args = build_args_guarded(&req, &Default::default(), None, Some(exe));
+        assert!(settings_of(&args).is_none());
     }
 }
 
