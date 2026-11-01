@@ -10,13 +10,15 @@
 pub mod backend;
 pub mod bridge;
 pub mod server;
+pub mod space_agent;
 pub mod tools;
 
 pub use backend::{
-    AppStatus, BackendError, CheckOutcome, FileSummary, GroupSummary, GroupWithHunks, LogTail,
-    NewFinding, NewPatch, NoSpaceTools, PrContext, REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES,
-    ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES, SpaceCommandName, SpaceInfo, SpaceToolError,
-    SpaceToolsBackend, ToolSet,
+    AppStatus, BackendError, BaseChange, CheckOutcome, FileSummary, GroupSummary, GroupWithHunks,
+    LogTail, NewFinding, NewPatch, NewReviewComment, NoSpaceTools, PrContext, ProgressStep,
+    ProgressStepState, REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES, ReviewItem, ReviewToolsBackend,
+    RunContext, SPACE_TOOL_NAMES, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
+    SpaceInfo, SpaceToolError, SpaceToolsBackend, ToolSet,
 };
 pub use bridge::{BridgeError, run_stdio_bridge};
 pub use server::{McpHandle, McpServer};
