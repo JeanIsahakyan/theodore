@@ -427,15 +427,22 @@ export const GroupsPane = observer(function GroupsPane({
                                   {short(f)}
                                 </span>
                                 {outFiles.has(f) && (
-                                  <Chip
-                                    size="sm"
-                                    variant="soft"
-                                    color="warning"
-                                    className={BADGE}
-                                    title="off-pattern"
-                                  >
-                                    off-pattern
-                                  </Chip>
+                                  <Tooltip>
+                                    <Tooltip.Trigger className="flex min-w-12 shrink-[100]">
+                                      <Chip
+                                        size="sm"
+                                        variant="soft"
+                                        color="warning"
+                                        className={`w-full ${BADGE}`}
+                                      >
+                                        <span>off-pattern</span>
+                                      </Chip>
+                                    </Tooltip.Trigger>
+                                    <Tooltip.Content>
+                                      An edit here doesn't follow the group's
+                                      pattern — read it
+                                    </Tooltip.Content>
+                                  </Tooltip>
                                 )}
                                 {elsewhere.length > 0 && (
                                   <Tooltip>
