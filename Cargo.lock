@@ -5561,6 +5561,7 @@ dependencies = [
  "base64 0.22.1",
  "hex",
  "pretty_assertions",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",

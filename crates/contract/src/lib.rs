@@ -39,6 +39,8 @@ mod attachments;
 pub use attachments::*;
 mod telemetry;
 pub use telemetry::*;
+mod terminal;
+pub use terminal::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -596,6 +598,24 @@ pub enum Ephemeral {
         /// Empty when the host didn't say.
         url: String,
     },
+    /// Raw PTY output of a space's terminal (docs/spaces.md "Terminal"),
+    /// base64 (control sequences and all) so a chunk split mid UTF-8 still
+    /// round-trips — `xterm.js`'s own parser tolerates that. `seq` is
+    /// monotonic per terminal, for merging with `SpaceTerminalInfo::seq`'s
+    /// scrollback seed, the same way `space_log` merges with `space_logs`.
+    TerminalOutput {
+        space: String,
+        terminal: String,
+        seq: u64,
+        data: String,
+    },
+    /// The terminal's shell exited (on its own, or `close_space_terminal`).
+    TerminalExit {
+        space: String,
+        terminal: String,
+        exit_code: Option<i32>,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -826,7 +846,12 @@ pub fn types() -> specta::Types {
         .register::<IssueTarget>()
         .register::<IssueRequest>()
         .register::<IssuePreview>()
-        .register::<ReportedIssue>();
+        .register::<ReportedIssue>()
+        .register::<TerminalStatus>()
+        .register::<SpaceTerminalInfo>()
+        .register::<OpenTerminalRequest>()
+        .register::<WriteTerminalRequest>()
+        .register::<ResizeTerminalRequest>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()
