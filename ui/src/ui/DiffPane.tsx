@@ -268,6 +268,9 @@ export const DiffPane = observer(function DiffPane({
   /** The "Next: <group>" button under the diff; off where the diff isn't
    *  read group by group (a space's live diff). */
   nextGroup = true,
+  /** Asking the AI about a line or hunk (it opens the AI panel); off where
+   *  the diff has no AI panel next to it (a space's live diff). */
+  askAi = true,
 }: {
   pr: PrId;
   rev: Revision;
@@ -282,6 +285,7 @@ export const DiffPane = observer(function DiffPane({
   setComposer: (c: ComposerState | null) => void;
   expandHunk?: { hunk: HunkId; nonce: number } | null;
   nextGroup?: boolean;
+  askAi?: boolean;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -332,8 +336,9 @@ export const DiffPane = observer(function DiffPane({
       setRangeStart: (r) => {
         rangeStart.current = r;
       },
+      askAi,
     }),
-    [setComposer, diffPaths, findHunk],
+    [setComposer, diffPaths, findHunk, askAi],
   );
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
@@ -1013,6 +1018,9 @@ interface LineActions {
   /** Read at click time only; nothing renders from it. */
   rangeStart: () => RangeStart | null;
   setRangeStart: (r: RangeStart | null) => void;
+  /** The diff has an AI panel next to it: offer asking about lines and
+   *  hunks, and the ways into the panel. */
+  askAi: boolean;
 }
 
 type DraftRow = ModelRows['draft'];
@@ -1422,7 +1430,7 @@ interface HunkProps {
  *  the per-line indexes — the hunk observes them, the line just renders. */
 function lineSlice(
   store: ReturnType<typeof useRootStore>,
-  { pr, path, composer, peek }: HunkProps,
+  { pr, path, composer, peek, actions }: HunkProps,
   l: DiffLine,
 ) {
   const a = anchorSide(l);
@@ -1432,9 +1440,11 @@ function lineSlice(
     findings: a
       ? store.models.findings.shownAt(pr, path, a.side, a.line)
       : NO_FINDINGS,
-    lineAsk: a
-      ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
-      : undefined,
+    // No AI panel, no answer to view or ask to retry: no line ask chip.
+    lineAsk:
+      a && actions.askAi
+        ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
+        : undefined,
     composer:
       a &&
       composer &&
@@ -1452,7 +1462,7 @@ function lineSlice(
 function openHunkMenu(
   e: React.MouseEvent,
   store: ReturnType<typeof useRootStore>,
-  { pr, path, h }: HunkProps,
+  { pr, path, h, actions }: HunkProps,
 ) {
   contextMenuHandler(store.ui, (): ContextMenuItem[] => [
     {
@@ -1462,20 +1472,24 @@ function openHunkMenu(
       disabledReason: 'Already read',
       onAction: () => markHunkRead(store, pr, h.id),
     },
-    {
-      id: 'ask-agent',
-      label: 'Ask agent',
-      onAction: () =>
-        void ask(store, {
-          pr,
-          question: `about the hunk at ${path}:${h.new_start}`,
-          about: null,
-          group: null,
-          agent: null,
-        }).catch(() => {
-          // toasted by api.ts
-        }),
-    },
+    ...(actions.askAi
+      ? [
+          {
+            id: 'ask-agent',
+            label: 'Ask agent',
+            onAction: () =>
+              void ask(store, {
+                pr,
+                question: `about the hunk at ${path}:${h.new_start}`,
+                about: null,
+                group: null,
+                agent: null,
+              }).catch(() => {
+                // toasted by api.ts
+              }),
+          },
+        ]
+      : []),
     {
       id: 'copy-hunk',
       label: 'Copy hunk',
@@ -1670,11 +1684,15 @@ function openLineMenu(
         onAction: () =>
           actions.setRangeStart({ path, side: anchor.side, line: anchor.line }),
       },
-      {
-        id: 'ask-agent',
-        label: 'Ask agent',
-        onAction: () => referenceLine(store, pr, anchor),
-      },
+      ...(actions.askAi
+        ? [
+            {
+              id: 'ask-agent',
+              label: 'Ask agent',
+              onAction: () => referenceLine(store, pr, anchor),
+            },
+          ]
+        : []),
       {
         id: 'copy-line',
         label: 'Copy line',
@@ -1761,9 +1779,11 @@ const Line = memo(function Line(props: LineProps) {
         <span className="mark">
           {findings.length > 0 ? (
             <span
-              className={`inline-block size-[9px] cursor-pointer rounded-full ${sevBg[findings[0]!.severity]}`}
+              className={`inline-block size-[9px] rounded-full ${actions.askAi ? 'cursor-pointer' : ''} ${sevBg[findings[0]!.severity]}`}
               title={findings.map((f) => f.title).join('\n')}
-              onClick={() => store.ui.toggleAside(true)}
+              onClick={
+                actions.askAi ? () => store.ui.toggleAside(true) : undefined
+              }
             />
           ) : (
             <span>{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</span>
@@ -1816,15 +1836,17 @@ const Line = memo(function Line(props: LineProps) {
                   Comment · shift-click another line for a range
                 </Tooltip.Content>
               </Tooltip>
-              <Button
-                isIconOnly
-                size="sm"
-                aria-label="ask AI about this line"
-                className="h-5 min-w-5 w-5 rounded-xl text-xs"
-                onPress={() => referenceLine(store, pr, anchor)}
-              >
-                <Sparkles className="size-3" />
-              </Button>
+              {actions.askAi && (
+                <Button
+                  isIconOnly
+                  size="sm"
+                  aria-label="ask AI about this line"
+                  className="h-5 min-w-5 w-5 rounded-xl text-xs"
+                  onPress={() => referenceLine(store, pr, anchor)}
+                >
+                  <Sparkles className="size-3" />
+                </Button>
+              )}
             </>
           )}
         </span>
@@ -1871,6 +1893,7 @@ const Line = memo(function Line(props: LineProps) {
               pr={pr}
               anchor={composerAnchor}
               lineText={l.kind !== 'del' ? l.text : ''}
+              askAi={actions.askAi}
               onClose={() => actions.setComposer(null)}
             />
           )}

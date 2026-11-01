@@ -99,3 +99,50 @@ describe('asking about a diff line', () => {
     expect(view.store.ephemeral.askFocus?.message).toBe('r1');
   });
 });
+
+describe('a diff with no AI panel (askAi={false})', () => {
+  let view: Awaited<ReturnType<typeof mountBigPr>>;
+
+  beforeEach(async () => {
+    setTransport(new FakeTransport());
+    view = await mountBigPr({ askAi: false });
+  });
+
+  afterEach(() => view.unmount());
+
+  const menuIds = async (el: Element) => {
+    await act(async () => {
+      el.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+    });
+    return view.store.ui.contextMenu?.items.map((i) => i.id) ?? [];
+  };
+
+  it('offers no AI ask on a line, its menu, its hunk or its comment box', async () => {
+    const hunk = view.host.querySelector('#H-f0h0')!;
+    expect(
+      view.host.querySelector('button[aria-label="ask AI about this line"]'),
+    ).toBeNull();
+
+    const line = await menuIds(hunk.querySelectorAll('.ln')[2]!);
+    expect(line).toContain('comment');
+    expect(line).not.toContain('ask-agent');
+
+    const header = await menuIds(hunk.firstElementChild!);
+    expect(header).toContain('mark-read');
+    expect(header).not.toContain('ask-agent');
+
+    const anchor = view.rev.files[0]!.hunks[0]!.lines[2]!;
+    await act(async () =>
+      view.controls().setComposer({
+        path: view.rev.files[0]!.path,
+        side: 'new',
+        line: anchor.new_no!,
+      }),
+    );
+    const box = hunk.querySelector('.composer')!;
+    expect(box.textContent).toContain('Suggestion');
+    expect(box.textContent).not.toContain('Ask AI');
+  });
+});
