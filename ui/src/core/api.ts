@@ -65,6 +65,8 @@ import type {
   SandboxFaultRequest,
   SandboxStatus,
   CreateSpaceRequest,
+  MergeSpaceRequest,
+  MergeSpaceResult,
   ShipSpaceRequest,
   Space,
   SpaceBaseStatus,
@@ -295,6 +297,12 @@ export const api = {
   archiveSpace: (space: string) => call<null>('archive_space', { space }),
   shipSpace: (req: ShipSpaceRequest) => call<Space>('ship_space', { req }),
   undoSpaceTurn: (space: string) => call<Space>('undo_space_turn', { space }),
+  /** Merge the space's PR: the host's default method, auto-merge when it
+   *  can't merge yet (docs/spaces.md §3). */
+  mergeSpace: (req: MergeSpaceRequest) =>
+    call<MergeSpaceResult>('merge_space', { req }),
+  /** Continue after merge: a new branch on the base's fresh tip (§7). */
+  continueSpace: (space: string) => call<Space>('continue_space', { space }),
   unarchiveSpace: (space: string) => call<Space>('unarchive_space', { space }),
   spaceSendFeedback: (req: SpaceFeedbackRequest) =>
     call<string>('space_send_feedback', { req }),
