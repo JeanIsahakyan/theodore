@@ -51,6 +51,7 @@ import { api } from '../core/api';
 import {
   ask,
   askAboutLine,
+  askPending,
   askRunId,
   cancelRun,
   commitSuggestions,
@@ -900,13 +901,10 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   const [hi, setHi] = useState(0);
   const [managing, setManaging] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [pending, setPending] = useState<{
-    run: string;
-    startedAt: number;
-    /** So a stalled run's Retry can resend the same question. */
-    question: string;
-    agent: AgentId | null;
-  } | null>(null);
+  // The composer's plain send and the hunk header's "Ask agent" (DiffPane)
+  // share this pending bubble via the store — `askPending` sets it,
+  // watches for the reply, and clears it once the real message lands.
+  const pending = store.ephemeral.chatPending.get(pr) ?? null;
   const end = useRef<HTMLDivElement>(null);
   const messages = [...store.models.chatMessages.byPr(pr)].sort(
     (a, b) => a.at - b.at,
@@ -960,17 +958,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
     el.setSelectionRange(el.value.length, el.value.length);
     store.ephemeral.consumeComposerFocus(composerFocus);
   }, [composerFocus, store]);
-  // Once an agent message lands after we fired the ask, the pending bubble
-  // has nothing left to show — the real message takes over.
-  useEffect(() => {
-    if (
-      pending &&
-      messages.some((m) => m.author.kind !== 'me' && m.at >= pending.startedAt)
-    ) {
-      setPending(null);
-    }
-  }, [messages, pending]);
-
   const matches = matchSkills(skills, text);
   useEffect(() => setHi(0), [text]);
 
@@ -1005,9 +992,8 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
       store.ephemeral.clearLineRef(pr);
       files.clear();
     } else {
-      const startedAt = Date.now();
       const agent = skillAgents[0] ?? null;
-      void ask(store, {
+      void askPending(store, {
         pr,
         question: t,
         about: null,
@@ -1015,10 +1001,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
         agent,
         attachments: files.ids.length ? files.ids : null,
       })
-        .then((id) => {
-          files.clear();
-          setPending({ run: askRunId(id), startedAt, question: t, agent });
-        })
+        .then(() => files.clear())
         .catch(() => {});
     }
     setText('');
@@ -1171,7 +1154,7 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 const stalled = store.ephemeral.stalled.has(pending.run);
                 const stop = () => {
                   void cancelRun(store, pending.run);
-                  setPending(null);
+                  store.ephemeral.clearChatPending(pr);
                 };
                 return (
                   <div className="msg agent flex gap-3">
@@ -1220,23 +1203,13 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                             onPress={() => {
                               const { question, agent } = pending;
                               stop();
-                              const startedAt = Date.now();
-                              void ask(store, {
+                              void askPending(store, {
                                 pr,
                                 question,
                                 about: null,
                                 group: null,
                                 agent,
-                              })
-                                .then((id) =>
-                                  setPending({
-                                    run: askRunId(id),
-                                    startedAt,
-                                    question,
-                                    agent,
-                                  }),
-                                )
-                                .catch(() => {});
+                              }).catch(() => {});
                             }}
                           >
                             Retry
