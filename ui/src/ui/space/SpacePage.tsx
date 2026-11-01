@@ -55,7 +55,8 @@ import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
-import { ToolCalls } from '../SidePanel';
+import { LiveText } from '../RunLive';
+import { ToolCalls } from '../ToolCalls';
 import { Md } from '../../highlight';
 import { MessageAttachments, useAttachments } from '../attachments';
 import { latinKey, useViewKeys } from '../keys';
@@ -720,11 +721,13 @@ const SpaceChat = observer(function SpaceChat({
     ) : null;
   };
   const setupStage = setupView(space) === 'stage';
-  const streaming = run ? store.ephemeral.agentText.get(run) : undefined;
   const tools = run ? (store.ephemeral.runLog.get(run) ?? []) : [];
+  // A turn whose check still runs has its reply stored already: its text
+  // shows there, not twice.
+  const replied = run != null && [...turnRuns.values()].includes(run);
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages.length, streaming]);
+  }, [messages.length]);
 
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
@@ -836,11 +839,7 @@ const SpaceChat = observer(function SpaceChat({
               {tools.length > 0 && (
                 <ToolCalls tools={tools} running turn={run} />
               )}
-              {streaming && (
-                <div className="text-sm leading-relaxed">
-                  <Md text={streaming} />
-                </div>
-              )}
+              {!replied && <LiveText run={run} follow={end} />}
             </div>
           )}
           <div ref={end} />

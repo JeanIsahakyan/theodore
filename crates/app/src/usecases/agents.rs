@@ -4,9 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use theodore_contract::{
-    AskRequest, ChatMessage, Ephemeral, RunSkillRequest, RunStatus, SkillRun, models,
-};
+use theodore_contract::{AskRequest, ChatMessage, RunSkillRequest, RunStatus, SkillRun, models};
 use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId};
 use theodore_ports::{
     AgentAttachment, AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode,
@@ -17,6 +15,7 @@ use tracing::Instrument as _;
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
 use crate::usecases::attachments::{agent_attachments, with_attachments};
+use crate::usecases::live::LiveRun;
 
 impl Core {
     pub async fn run_skill(&self, req: RunSkillRequest) -> AppResult<String> {
@@ -420,35 +419,24 @@ async fn drive_skill_run(
             user_mcp,
             attachments: vec![],
             resume: None,
-            stream_text: false,
+            stream_text: true,
         };
         let _guard = ToolsGuard { core, mcp };
+        let mut live = LiveRun::new(run_id.as_str(), agent).with_thinking();
         match core.0.deps.agents.run(req).await {
             Ok(mut run) => loop {
                 tokio::select! {
                     _ = cancel.cancelled() => { run.cancel.cancel(); break; }
                     event = run.events.recv() => {
                         let Some(event) = event else { break };
+                        live.show(core, &event);
                         match event {
-                            AgentEvent::Text { text } | AgentEvent::Thinking { text } => {
-                                core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text });
-                            }
-                            AgentEvent::ToolCall { name, input, .. } => {
-                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: tool_log_line_with(&name, &input) });
-                            }
-                            AgentEvent::ToolResult { ok, .. } => {
-                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: format!("tool result ok={ok}") });
-                            }
-                            AgentEvent::Stalled => {
-                                core.emit(Ephemeral::RunLog { run: run_id.clone(), agent, line: "stalled".into() });
-                                core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
-                            }
-                            AgentEvent::Usage { .. } | AgentEvent::Session { .. } | AgentEvent::TextDelta { .. } => {}
                             AgentEvent::Done { .. } => break,
                             AgentEvent::Error { message, .. } => {
                                 error = Some(message);
                                 break;
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -729,9 +717,10 @@ async fn drive_ask(
         user_mcp: false,
         attachments: question.attachments,
         resume: None,
-        stream_text: false,
+        stream_text: true,
     };
     let _guard = ToolsGuard { core, mcp };
+    let mut live = LiveRun::new(run_id.as_str(), agent);
     let mut text = String::new();
     let mut error = None;
     match core.0.deps.agents.run(req).await {
@@ -740,14 +729,9 @@ async fn drive_ask(
                 _ = cancel.cancelled() => { run.cancel.cancel(); break; }
                 event = run.events.recv() => {
                     let Some(event) = event else { break };
+                    live.show(core, &event);
                     match event {
-                        AgentEvent::Text { text: t } => {
-                            text.push_str(&t);
-                            core.emit(Ephemeral::AgentDelta { run: run_id.clone(), agent, text: t });
-                        }
-                        AgentEvent::Stalled => {
-                            core.emit(Ephemeral::RunStalled { run: run_id.clone(), agent });
-                        }
+                        AgentEvent::Text { text: t } => text.push_str(&t),
                         AgentEvent::Done { final_text, .. } => {
                             text = final_text;
                             break;

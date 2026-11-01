@@ -20,8 +20,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
-use crate::usecases::agents::tool_log_line_with;
 use crate::usecases::attachments::{agent_attachments, with_attachments};
+use crate::usecases::live::LiveRun;
 use crate::usecases::projects::stable_hash_u32;
 use crate::usecases::skills::{expand_skill, space_skill_content};
 
@@ -739,22 +739,15 @@ async fn stream_run(
             return out;
         }
     };
+    let mut live = LiveRun::new(run_id, agent);
     loop {
         tokio::select! {
             _ = cancel.cancelled() => { run.cancel.cancel(); break; }
             event = run.events.recv() => {
                 let Some(event) = event else { break };
+                live.show(core, &event);
                 match event {
-                    AgentEvent::Text { text: t } => {
-                        out.text.push_str(&t);
-                        core.emit(Ephemeral::AgentDelta { run: run_id.to_string(), agent, text: t });
-                    }
-                    AgentEvent::ToolCall { name, input, .. } => {
-                        core.emit(Ephemeral::RunLog { run: run_id.to_string(), agent, line: tool_log_line_with(&name, &input) });
-                    }
-                    AgentEvent::Stalled => {
-                        core.emit(Ephemeral::RunStalled { run: run_id.to_string(), agent });
-                    }
+                    AgentEvent::Text { text: t } => out.text.push_str(&t),
                     AgentEvent::Session { id } => out.session = Some(id),
                     AgentEvent::Done { final_text, .. } => {
                         if !final_text.is_empty() {
@@ -768,10 +761,12 @@ async fn stream_run(
                         out.error = Some(message);
                         break;
                     }
-                    AgentEvent::Thinking { .. }
+                    AgentEvent::TextDelta { .. }
+                    | AgentEvent::Thinking { .. }
+                    | AgentEvent::ToolCall { .. }
                     | AgentEvent::ToolResult { .. }
-                    | AgentEvent::Usage { .. }
-                    | AgentEvent::TextDelta { .. } => {}
+                    | AgentEvent::Stalled
+                    | AgentEvent::Usage { .. } => {}
                 }
             }
         }
@@ -826,7 +821,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         user_mcp: core.user_mcp_allowed().await,
         attachments,
         resume,
-        stream_text: false,
+        stream_text: true,
     };
     let started = std::time::Instant::now();
     let mut streamed = stream_run(core, req.clone(), &cancel, &run_id).await;

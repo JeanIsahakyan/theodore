@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::core::{Core, RunHandle};
 use crate::error::{AppError, AppResult};
 use crate::usecases::agents::ToolsGuard;
+use crate::usecases::live::LiveRun;
 
 impl Core {
     pub async fn delegate_task(&self, req: DelegateRequest) -> AppResult<String> {
@@ -320,10 +321,13 @@ async fn drive_fix_run(
         user_mcp: false,
         attachments: vec![],
         resume: None,
-        stream_text: false,
+        stream_text: true,
     };
     let _guard = ToolsGuard { core, mcp };
 
+    // What the agent says and does, live under the run id `delegate_task`
+    // returned: the task row shows it while the fix runs.
+    let mut live = LiveRun::new(run_id.as_str(), agent).with_thinking();
     let mut error: Option<String> = None;
     match core.0.deps.agents.run(req).await {
         Ok(mut run) => loop {
@@ -331,6 +335,7 @@ async fn drive_fix_run(
                 _ = cancel.cancelled() => { run.cancel.cancel(); break; }
                 event = run.events.recv() => {
                     let Some(event) = event else { break };
+                    live.show(core, &event);
                     match event {
                         AgentEvent::Done { .. } => break,
                         AgentEvent::Error { message, .. } => { error = Some(message); break; }
