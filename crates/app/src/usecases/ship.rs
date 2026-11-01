@@ -163,6 +163,10 @@ impl Core {
                 let shipped = self
                     .push_squashed(&space, &project, &repo_path, &head, &message, &author)
                     .await?;
+                // The repo's PR template when it has one, and a link back.
+                let body = self
+                    .space_pr_body(&space, &repo_path, &head, pr_body(&space.goal))
+                    .await;
                 let payload = CreateSpacePrPayload {
                     space: space.id.clone(),
                     repo: project.repo.clone(),
@@ -170,7 +174,7 @@ impl Core {
                         head: space.branch.clone(),
                         base: space.base.clone(),
                         title,
-                        body: pr_body(&space.goal),
+                        body,
                         draft: req.action == ShipAction::OpenDraftPr,
                     },
                 };
@@ -463,13 +467,11 @@ impl Core {
                 {
                     self.refresh_pr(pr, &pr_ref).await;
                 }
-                if self.pr_state(pr).await == Some(PrState::Merged) {
+                // Not if Continue moved the space to a new branch meanwhile.
+                if self.pr_state(pr).await == Some(PrState::Merged)
+                    && self.mark_space_done(&space.id, pr, now).await
+                {
                     done_at = Some(now);
-                    let _ = self
-                        .apply(vec![
-                            self.patch(&space.id, serde_json::json!({ "done_at": now })),
-                        ])
-                        .await;
                 }
             }
             if let Some(done) = done_at
@@ -501,7 +503,7 @@ impl Core {
         })
     }
 
-    async fn pr_state(&self, pr: &theodore_domain::PrId) -> Option<PrState> {
+    pub(crate) async fn pr_state(&self, pr: &theodore_domain::PrId) -> Option<PrState> {
         let data = self.get_row(models::PR, &pr.0).await.ok()??;
         serde_json::from_value::<PrSummary>(data)
             .ok()
