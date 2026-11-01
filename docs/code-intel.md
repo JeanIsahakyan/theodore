@@ -76,8 +76,8 @@ question ─▶ language server ready? ── yes ─▶ semantic layer (LSP)   
 └────────────────────────────────────────────────────────────────────────────┘
          ▲                                        ▲
 ┌─ CI ───┴────────────────────────┐      ┌────────┴───────────────────────────┐
-│ grammars.toml ─▶ cc ─▶ arm64+x64│      │ upstream releases · npm tgz · wheel│
-│ ─▶ lipo ─▶ sha256 ─▶ assets     │      │ built by us where upstream has no  │
+│ grammars.toml ─▶ cc ─▶ arm64    │      │ upstream releases · npm tgz · wheel│
+│ ─▶ sha256 ─▶ release assets     │      │ built by us where upstream has no  │
 │ ─▶ manifest (generated)         │      │ macOS binary (gopls)               │
 └─────────────────────────────────┘      └────────────────────────────────────┘
 ```
@@ -115,7 +115,6 @@ small Rust hook next to their entry.
       detect: [["ty", "--version"]]
       download:
         darwin-arm64: { url: "…", sha256: "…", format: tar.gz, bin: ty }
-        darwin-x64:   { url: "…", sha256: "…", format: tar.gz, bin: ty }
       launch: ["{bin}", "server"]
     - name: pyright                # only if the user has it; needs Node
       detect: [["pyright-langserver", "--version"]]
@@ -163,11 +162,14 @@ code_intel:
 | `tree-sitter-python` | `python` |
 
 ```
-grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64 + x64
-  ─▶ lipo (universal) ─▶ sha256 ─▶ release assets
+grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64
+  ─▶ sha256 ─▶ release assets
   ─▶ manifest entries (generated, never edited by hand)
 ```
 
+- arm64 only, like the app (`build.yml` builds `aarch64-apple-darwin`). The
+  manifest is keyed by platform, so another target is one more build line
+  (and `lipo` for a universal file).
 - One CI job builds every grammar from a pinned list. A new language is one
   line in `grammars.toml`.
 - The tags query (`tags.scm`, defs and refs) ships next to its dylib.
