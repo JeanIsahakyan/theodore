@@ -1,7 +1,10 @@
-/** "Ask AI" on a diff line shows on that line at once — before core has
- *  even answered the command — and touches only that line's hunk. */
+/** "Ask AI" on a diff line asks nothing by itself: it puts the line in the
+ *  AI composer. The question sent from there shows on that line at once —
+ *  before core has even answered the command — and touches only that
+ *  line's hunk. */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { askAboutLine } from '../actions';
 import { renderCounts } from '../core/perf';
 import { setTransport } from '../core/transport';
 import { FakeTransport } from '../test/fakeTransport';
@@ -10,9 +13,10 @@ import { PR, mountBigPr } from '../test/bigPr';
 describe('asking about a diff line', () => {
   let view: Awaited<ReturnType<typeof mountBigPr>>;
   let resolve: (id: string) => void = () => {};
+  let transport: FakeTransport;
 
   beforeEach(async () => {
-    const transport = new FakeTransport();
+    transport = new FakeTransport();
     transport.onCall('ask', () => new Promise<string>((r) => (resolve = r)));
     setTransport(transport);
     view = await mountBigPr();
@@ -26,10 +30,35 @@ describe('asking about a diff line', () => {
       'button[aria-label="ask AI about this line"]',
     );
 
+  /** The AI button, then the composer's send with `question`. */
+  const askLine = async (i: number, question = 'what is v2?') => {
+    await act(async () => askButtons()[i]!.click());
+    const anchor = view.store.ephemeral.lineRefs.get(PR)!;
+    await act(async () => {
+      void askAboutLine(view.store, { pr: PR, anchor, question });
+    });
+  };
+
+  it('the AI button references the line and asks nothing', async () => {
+    await act(async () => askButtons()[2]!.click());
+    expect(view.store.ephemeral.lineRefs.get(PR)).toMatchObject({
+      path: 'src/mod0/file0.ts',
+      side: 'new',
+    });
+    expect(view.store.ui.asideShown).toBe(true);
+    expect(view.store.ephemeral.composerFocus?.pr).toBe(PR);
+    expect(hunk().querySelector('.line-ask')).toBeNull();
+    expect(transport.calls.some((c) => c.cmd === 'ask')).toBe(false);
+  });
+
   it('shows "Asking claude…" under the line at once', async () => {
     expect(hunk().querySelector('.line-ask')).toBeNull();
-    renderCounts.reset();
     await act(async () => askButtons()[2]!.click());
+    const anchor = view.store.ephemeral.lineRefs.get(PR)!;
+    renderCounts.reset();
+    await act(async () => {
+      void askAboutLine(view.store, { pr: PR, anchor, question: 'why?' });
+    });
 
     const pill = hunk().querySelector('.line-ask');
     expect(pill?.textContent).toContain('Asking claude…');
@@ -39,7 +68,7 @@ describe('asking about a diff line', () => {
   });
 
   it('turns into "Answered · View" when the reply lands, gone once viewed', async () => {
-    await act(async () => askButtons()[2]!.click());
+    await askLine(2);
     await act(async () => resolve('q1'));
     await act(async () => {
       view.store.sync.pool.put('chat_message', 'q1', {

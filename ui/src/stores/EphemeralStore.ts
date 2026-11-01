@@ -58,6 +58,11 @@ export interface LineAsk {
    *  lands, then the reply's author. */
   agent: AgentId;
   status: 'asking' | 'answered' | 'failed';
+  /** The agent the composer picked, sent as `ask`'s `agent` (again on
+   *  Retry); `null` = core's default. */
+  picked?: AgentId | null;
+  /** `save_attachment` ids sent with the question (again on Retry). */
+  attachments?: string[] | null;
   /** The question's chat message id, once `ask` returns it. */
   message: string | null;
   /** The reply's chat message id, once it lands. */
@@ -71,6 +76,18 @@ export interface AskFocus {
   pr: PrId;
   message: string | null;
   seq: number;
+}
+
+/** A one-shot request to a component, per PR; `seq` makes asking twice
+ *  still count. */
+export interface PrSignal {
+  pr: PrId;
+  seq: number;
+}
+
+/** A file:line chip asked the diff to show this line. */
+export interface LineJump extends PrSignal {
+  anchor: Anchor;
 }
 
 export const lineAskKey = (
@@ -136,6 +153,19 @@ export class EphemeralStore {
     { deep: false },
   );
   askFocus: AskFocus | null = null;
+  /** The diff line the PR chat's next question is about, per PR: a line's
+   *  AI button sets it, the composer shows it as a chip and sends it as
+   *  the question's `about`. One per PR — `ask` takes one anchor. */
+  readonly lineRefs: ObservableMap<PrId, Anchor> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** The PR chat's composer should take the caret (a line was just
+   *  referenced); the composer clears it once it has. */
+  composerFocus: PrSignal | null = null;
+  /** The diff should show a line (a file:line chip was clicked); `Review`
+   *  clears it once it has. */
+  lineJump: LineJump | null = null;
   /** Groups whose diff the user opened past its default, by
    *  `groupViewKey`: a skim group's "Show all" (past "Only outliers") and a
    *  hidden group's "Show anyway". Kept here, not in `DiffPane`, so
@@ -166,6 +196,8 @@ export class EphemeralStore {
       suggestionBatch: observableShallow,
       spaceLogs: observableShallow,
       askFocus: observableRef,
+      composerFocus: observableRef,
+      lineJump: observableRef,
       allEditsShown: observableShallow,
       hiddenShown: observableShallow,
     });
@@ -213,6 +245,47 @@ export class EphemeralStore {
     if (this.askFocus?.seq !== seq) return;
     runInAction(() => {
       this.askFocus = null;
+    });
+  }
+
+  /** Makes `anchor` the PR chat's reference, replacing any other. */
+  setLineRef(pr: PrId, anchor: Anchor): void {
+    runInAction(() => {
+      this.lineRefs.set(pr, anchor);
+    });
+  }
+
+  clearLineRef(pr: PrId): void {
+    runInAction(() => {
+      this.lineRefs.delete(pr);
+    });
+  }
+
+  /** Asks the PR chat's composer to take the caret. */
+  focusComposer(pr: PrId): void {
+    runInAction(() => {
+      this.composerFocus = { pr, seq: this.nextFocusSeq++ };
+    });
+  }
+
+  consumeComposerFocus(seq: number): void {
+    if (this.composerFocus?.seq !== seq) return;
+    runInAction(() => {
+      this.composerFocus = null;
+    });
+  }
+
+  /** Asks the diff to show `anchor`'s line. */
+  jumpToLine(pr: PrId, anchor: Anchor): void {
+    runInAction(() => {
+      this.lineJump = { pr, anchor, seq: this.nextFocusSeq++ };
+    });
+  }
+
+  consumeLineJump(seq: number): void {
+    if (this.lineJump?.seq !== seq) return;
+    runInAction(() => {
+      this.lineJump = null;
     });
   }
 

@@ -69,6 +69,7 @@ import {
   markGroupRead,
   markHunkRead,
   openLineAnswer,
+  referenceLine,
   setFileViewed,
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
@@ -1672,12 +1673,7 @@ function openLineMenu(
       {
         id: 'ask-agent',
         label: 'Ask agent',
-        onAction: () =>
-          void askAboutLine(store, {
-            pr,
-            question: `about ${path}:${lineNo}`,
-            anchor,
-          }),
+        onAction: () => referenceLine(store, pr, anchor),
       },
       {
         id: 'copy-line',
@@ -1825,13 +1821,7 @@ const Line = memo(function Line(props: LineProps) {
                 size="sm"
                 aria-label="ask AI about this line"
                 className="h-5 min-w-5 w-5 rounded-xl text-xs"
-                onPress={() =>
-                  void askAboutLine(store, {
-                    pr,
-                    question: `explain ${path}:${lineNo}`,
-                    anchor,
-                  })
-                }
+                onPress={() => referenceLine(store, pr, anchor)}
               >
                 <Sparkles className="size-3" />
               </Button>

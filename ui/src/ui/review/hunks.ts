@@ -6,6 +6,7 @@
  * call, so J/K lands on exactly what's on screen, in the same order.
  */
 import type {
+  Anchor,
   FileDiff,
   Group,
   Hunk,
@@ -113,4 +114,82 @@ export function moveHunkFocus(
   const i = focusId ? hunks.findIndex((h) => h.id === focusId) : -1;
   const next = hunks[Math.max(0, Math.min(hunks.length - 1, i + delta))];
   return next ? next.id : null;
+}
+
+/** The hunk a jump to `a`'s line lands on: the one holding that line on
+ *  its side, else the first one after it (the line sits in the context gap
+ *  above that hunk), else the file's last. `null` when the file isn't in
+ *  the diff.
+ *
+ *  ```text
+ *  side new, line 12   h1 new 1..5   h2 new 10..14   →  h2
+ *  side new, line 7                                   →  h2 (gap above it)
+ *  side new, line 40                                  →  h2 (last)
+ *  ```
+ */
+export function hunkAt(
+  rev: Pick<Revision, 'files'>,
+  a: Pick<Anchor, 'path' | 'side' | 'line'>,
+): { path: string; hunk: Hunk } | null {
+  const file = rev.files.find((f) => f.path === a.path);
+  if (!file?.hunks.length) return null;
+  const span = (h: Hunk) =>
+    a.side === 'old'
+      ? { start: h.old_start, n: h.old_lines }
+      : { start: h.new_start, n: h.new_lines };
+  const hunk =
+    file.hunks.find((h) => {
+      const { start, n } = span(h);
+      return a.line >= start && a.line < start + n;
+    }) ??
+    file.hunks.find((h) => span(h).start > a.line) ??
+    file.hunks[file.hunks.length - 1]!;
+  return { path: file.path, hunk };
+}
+
+/** What a jump to `hunk` changes so the diff shows it. */
+export interface JumpView {
+  /** The current mode when it already shows the hunk; else the group
+   *  holding it, or (files mode, or no group holds it) its file. */
+  mode: ReviewMode;
+  /** "Since only" would hide it: turn it off. */
+  sinceOff: boolean;
+  /** A skim group's "Only outliers" would hide it: "Show all". */
+  showAll: boolean;
+  /** Its group is hidden (collapsed): "Show anyway". */
+  showHidden: boolean;
+}
+
+export function jumpView(
+  rev: Pick<Revision, 'files'>,
+  mode: ReviewMode,
+  groups: readonly (ViewGroup & { id: string })[],
+  /** The diff's filters with `group` selected. */
+  filters: (group: string | null) => DiffFilters,
+  path: string,
+  hunk: HunkId,
+): JumpView {
+  const groupOf = (m: ReviewMode) =>
+    m.mode === 'groups' ? (groups.find((g) => g.id === m.group) ?? null) : null;
+  const shown = hunksInScope(
+    rev,
+    mode,
+    groupOf(mode),
+    filters(mode.mode === 'groups' ? mode.group : null),
+  ).some((h) => h.id === hunk);
+  if (shown) {
+    return { mode, sinceOff: false, showAll: false, showHidden: false };
+  }
+  const g =
+    mode.mode === 'groups' ? groups.find((x) => x.hunks.includes(hunk)) : null;
+  const f = filters(g?.id ?? null);
+  return {
+    mode: g
+      ? { mode: 'groups', group: g.id, file: path }
+      : { mode: 'files', group: mode.group, file: path },
+    sinceOff: !!f.since && !f.since.has(hunk),
+    showAll:
+      !!g && showsOnlyOutliers(g, f.allEdits) && !g.outliers.includes(hunk),
+    showHidden: !!g && isCollapsed(g, f.hiddenShown),
+  };
 }
