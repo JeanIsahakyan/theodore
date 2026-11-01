@@ -1086,6 +1086,56 @@ mod tests {
     #[test]
     fn a_rate_limit_says_how_long_to_wait() {
         let e = err(AppError::Host(HostError::RateLimited {
+    async fn approve_space_plan(&self, space: String) -> Result<String, CommandError> {
+        self.core.approve_space_plan(&space).await.map_err(err)
+    }
+    async fn answer_space_question(
+        &self,
+        req: theodore_contract::SpaceAnswerRequest,
+    ) -> Result<(), CommandError> {
+        self.core.answer_space_question(req).await.map_err(err)
+    }
+    async fn account_status(&self) -> Result<AccountStatus, CommandError> {
+        self.core.account_status().await.map_err(err)
+    }
+    async fn account_sign_in_start(
+        &self,
+        req: AccountSignInRequest,
+    ) -> Result<AccountSignInStart, CommandError> {
+        self.core.account_sign_in_start(req).await.map_err(err)
+    }
+    async fn account_sign_in_poll(&self) -> Result<AccountSignInState, CommandError> {
+        self.core.account_sign_in_poll().await.map_err(err)
+    }
+    async fn account_sign_in_cancel(&self) -> Result<(), CommandError> {
+        self.core.account_sign_in_cancel();
+        Ok(())
+    }
+    async fn account_sign_out(&self) -> Result<AccountStatus, CommandError> {
+        self.core.account_sign_out().await.map_err(err)
+    }
+    async fn account_sign_in_callback(&self, url: String) -> bool {
+        !matches!(
+            self.core.account_sign_in_callback(&url).await,
+            theodore_ports::CallbackPage::Ignored
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_sign_in_has_its_own_code() {
+        let e = err(AppError::AccountRequired);
+        assert_eq!(e.code, "account_required");
+        assert_eq!(e.message, "Sign in to your Theodore account to continue");
+    }
+
+    #[test]
+    fn a_rate_limit_says_how_long_to_wait() {
+        let e = err(AppError::Host(HostError::RateLimited {
             reset_at: now_ms() + 59 * 60_000 + 30_000,
         }));
         assert_eq!(e.code, "rate_limited");
