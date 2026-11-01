@@ -2089,6 +2089,54 @@ fn shown_live(
     (text, log)
 }
 
+/// A fix shows what the agent says and does while it works, under the run
+/// id `delegate_task` returned.
+#[tokio::test]
+async fn a_fix_run_streams_its_text_and_tool_calls_live() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let task = sample_task("t-live", &pr, None, None, f.clock.now());
+    put_task(&f, &task);
+    let mut events = core.0.ephemeral_tx.subscribe();
+    f.agents.push_script(vec![
+        AgentEvent::TextDelta {
+            text: "Fixing ".into(),
+        },
+        AgentEvent::TextDelta { text: "it.".into() },
+        AgentEvent::Text {
+            text: "Fixing it.".into(),
+        },
+        AgentEvent::ToolCall {
+            id: "c1".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "src/lib.rs" }),
+        },
+        AgentEvent::ToolResult {
+            id: "c1".into(),
+            ok: true,
+            output: String::new(),
+        },
+        AgentEvent::Done {
+            final_text: "Fixing it.".into(),
+            usage: Usage::default(),
+        },
+    ]);
+
+    let run_id = core
+        .delegate_task(DelegateRequest {
+            task: task.id.clone(),
+            agent: Some(AgentId::Claude),
+        })
+        .await
+        .expect("delegate_task");
+    wait_until(|| task_row(&f, &task.id).status == TaskStatus::Review).await;
+
+    assert!(f.agents.last_request().unwrap().stream_text);
+    let (text, log) = shown_live(&mut events, &run_id);
+    assert_eq!(text, "Fixing it.");
+    assert_eq!(log, vec!["tool: Edit · src/lib.rs", "tool result ok=true"]);
+}
+
 /// A chat answer streams piece by piece, shows once, and the stored reply
 /// is the whole answer.
 #[tokio::test]

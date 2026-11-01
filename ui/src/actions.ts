@@ -443,15 +443,19 @@ export function assignTask(
 
 /** Hands a task to an agent CLI, which fixes it in the PR worktree (Edit
  *  mode). The task's own status moves to `progress`/`review` via sync, not
- *  locally — this only kicks the run off. Returns the run id, or `null` on
- *  a graceful failure (toast, no crash). */
+ *  locally — this only kicks the run off and remembers its run id for the
+ *  row's live view. Returns the run id, or `null` on a graceful failure
+ *  (toast, no crash). */
 export async function delegateTask(
-  _store: RootStore,
+  store: RootStore,
   task: string,
   agent: AgentId | null = null,
 ): Promise<string | null> {
   try {
-    return await api.delegateTask({ task, agent });
+    const run = await api.delegateTask({ task, agent });
+    // The task's row shows this run's output while the fix runs.
+    store.ephemeral.setTaskRun(task, run);
+    return run;
   } catch {
     return null; // toasted by api.ts
   }

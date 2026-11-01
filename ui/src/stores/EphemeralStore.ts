@@ -118,6 +118,12 @@ export class EphemeralStore {
     {},
     { deep: false },
   );
+  /** The fix run of each task delegated this session, by task id: what
+   *  its row shows live while the task is in progress. */
+  readonly taskRuns: ObservableMap<string, string> = observable.map(
+    {},
+    { deep: false },
+  );
   /** Run ids with no output for `agents.stall_after_ms` while still alive —
    *  the UI offers Retry/Cancel instead of waiting silently. Cleared as
    *  soon as the run produces output again, or ends. */
@@ -552,6 +558,16 @@ export class EphemeralStore {
       this.agentText.delete(run);
       this.runLog.delete(run);
       this.clearStalled(run);
+    });
+  }
+
+  /** `task` is being fixed by `run`; what an earlier fix of it showed is
+   *  dropped. */
+  setTaskRun(task: string, run: string): void {
+    runInAction(() => {
+      const prev = this.taskRuns.get(task);
+      if (prev && prev !== run) this.clearRun(prev);
+      this.taskRuns.set(task, run);
     });
   }
 
