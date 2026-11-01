@@ -242,7 +242,9 @@ export const api = {
     getTransport()
       .invoke<ProjectWorkingState>('project_working_state', { project })
       .catch(() => null),
-  mergeInfo: (pr: PrId) => call<MergeInfo>('merge_info', { pr }),
+  /** `quiet`: the caller shows the failure itself (a status line). */
+  mergeInfo: (pr: PrId, quiet = false) =>
+    call<MergeInfo>('merge_info', { pr }, quiet),
   mergePr: (req: MergeRequest) => call<null>('merge_pr', { req }),
   /** A passive read (the @-mention list, the reviewer picker): a failure
    *  just leaves the list empty, it isn't toasted. */
