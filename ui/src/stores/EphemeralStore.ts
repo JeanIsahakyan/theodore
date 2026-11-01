@@ -28,6 +28,8 @@ import type {
 } from '../gen/contract';
 import { appendLogs, seedLogs } from '../ui/space/commands';
 import { configPrToast } from '../ui/project/configFile';
+import { suggestText } from '../ui/settings/languages';
+import { api } from '../core/api';
 import { openExternal } from '../core/openExternal';
 import { accountGate, type AccountGate } from '../core/accountGate';
 
@@ -46,6 +48,9 @@ export interface Toast {
    *  `ephemeral` event from core, only by client code that pushes its own
    *  toast (a function can't cross the wire). */
   action?: ToastAction;
+  /** A second choice next to `action` ("Not now"); either one closes the
+   *  toast, which then stays up longer. */
+  secondary?: ToastAction;
 }
 
 /** A question asked about one diff line, shown on the line itself while it
@@ -394,6 +399,33 @@ export class EphemeralStore {
           this.toasts = [
             ...this.toasts,
             { id: this.nextToastId++, level: 'info', ...toast },
+          ];
+          return;
+        }
+        case 'code_intel_suggest': {
+          // The core asks once per language per session (§5.1).
+          const { language } = e;
+          this.toasts = [
+            ...this.toasts,
+            {
+              id: this.nextToastId++,
+              level: 'info',
+              text: suggestText(language, e.server),
+              action: {
+                label: 'Download',
+                onAction: () =>
+                  void api.codeIntelInstall(language).catch(() => {
+                    // toasted by api.ts
+                  }),
+              },
+              secondary: {
+                label: 'Not now',
+                onAction: () =>
+                  void api.codeIntelDecline(language).catch(() => {
+                    // toasted by api.ts
+                  }),
+              },
+            },
           ];
           return;
         }
