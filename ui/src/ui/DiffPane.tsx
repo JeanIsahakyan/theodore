@@ -1254,27 +1254,35 @@ function FileBlockInner({
             </Tooltip.Content>
           </Tooltip>
         )}
-        {others.map((g) => (
-          <Tooltip key={g.id}>
-            {/* Gives way before the file name does (heavy shrink weight),
-             *  down to "also in N…". */}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 min-w-20 max-w-40 shrink-[100] gap-1 px-2 text-xs text-accent"
-              onPress={() =>
-                setMode({ mode: 'groups', group: g.id, file: file.path })
-              }
-            >
-              <span className="truncate">
-                also in {g.n} “{g.title}”
-              </span>
-            </Button>
-            <Tooltip.Content>
-              More of this file in group {g.n} “{g.title}”
-            </Tooltip.Content>
-          </Tooltip>
-        ))}
+        {others.length > 0 && (
+          // Each group as just its number, as the groups pane shows it (the
+          // title is in the tooltip and accessible name), so the file name
+          // and the Viewed toggle keep their room. Past a handful the row
+          // gives way first (heavy shrink weight) and clips — never them.
+          <span className="also-in flex min-w-0 shrink-[100] items-center gap-0.5 overflow-hidden">
+            <span aria-hidden className="shrink-0 pr-0.5 text-xs text-muted">
+              also in
+            </span>
+            {others.map((g) => (
+              <Tooltip key={g.id}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Also in group ${g.n} “${g.title}”`}
+                  className="size-6 min-w-6 shrink-0 rounded-full p-0 text-xs tabular-nums text-accent"
+                  onPress={() =>
+                    setMode({ mode: 'groups', group: g.id, file: file.path })
+                  }
+                >
+                  {g.n}
+                </Button>
+                <Tooltip.Content>
+                  More of this file in group {g.n} “{g.title}”
+                </Tooltip.Content>
+              </Tooltip>
+            ))}
+          </span>
+        )}
         <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
           <Chip size="sm" variant="soft" color="warning" className="shrink-0">

@@ -1,6 +1,7 @@
 /** A file header's "also in …" links: one per other group however many of
- *  the file's hunks sit there, numbered as in the groups pane, and sized to
- *  give way before the file name. */
+ *  the file's hunks sit there, each just its number as in the groups pane
+ *  (the title in its accessible name), and the row sized to give way before
+ *  the file name and the Viewed toggle (#72). */
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, type Mounted } from '../test/dom';
 import type { FileDiff, Hunk, Revision } from '../gen/contract';
@@ -83,7 +84,7 @@ afterEach(() => {
 const noop = () => {};
 
 describe('DiffPane "also in" links', () => {
-  it('shows one numbered link per other group, shrinkable', async () => {
+  it('shows one numbered link per other group, compact and shrinkable', async () => {
     const store = new RootStore();
     seed(store);
     m = await mount(
@@ -106,24 +107,26 @@ describe('DiffPane "also in" links', () => {
     );
     const headers = [...m.host.querySelectorAll('.file-h')];
     expect(headers).toHaveLength(2);
-    const links = (h: Element) =>
-      [...h.querySelectorAll('button')]
-        .map((b) => b.textContent ?? '')
-        .filter((t) => t.startsWith('also in'));
+    const links = (h: Element) => [...h.querySelectorAll('.also-in button')];
 
     // Three hunks of a.ts in g2 used to give three identical links.
-    expect(links(headers[0]!)).toEqual([
-      'also in 2 “Group g2”',
-      'also in 3 “Group g3”',
+    const a = links(headers[0]!);
+    expect(a.map((b) => b.textContent)).toEqual(['2', '3']);
+    // The title stays in the accessible name.
+    expect(a.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Also in group 2 “Group g2”',
+      'Also in group 3 “Group g3”',
     ]);
     // b.ts lives wholly in the open group.
     expect(links(headers[1]!)).toEqual([]);
+    expect(headers[1]!.querySelector('.also-in')).toBeNull();
 
-    // The links shrink ahead of the file name instead of pushing it out.
-    const link = [...headers[0]!.querySelectorAll('button')].find((b) =>
-      b.textContent?.startsWith('also in'),
-    )!;
-    expect(link.className).toContain('shrink-[100]');
-    expect(link.className).not.toContain('shrink-0');
+    // The row shrinks ahead of the file name instead of pushing it out —
+    // or pushing the Viewed toggle out of the card.
+    const row = headers[0]!.querySelector('.also-in')!;
+    expect(row.className).toContain('shrink-[100]');
+    expect(row.className).toContain('min-w-0');
+    expect(row.className).toContain('overflow-hidden');
+    expect(headers[0]!.querySelector('.viewed-toggle')).not.toBeNull();
   });
 });
