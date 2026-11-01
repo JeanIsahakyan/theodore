@@ -112,7 +112,7 @@ impl Core {
 
         // Files from the checkout, then ports for the space's life.
         let mut notes = Vec::new();
-        let copy = cfg.merged.config.spaces.copy.clone();
+        let copy = cfg.merged.config.spaces.effective_copy();
         match (&project.path, copy.is_empty()) {
             (_, true) => {}
             (Some(root), false) => {

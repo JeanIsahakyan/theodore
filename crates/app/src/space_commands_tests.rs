@@ -275,10 +275,27 @@ async fn no_setup_means_the_goal_runs_at_once() {
     let e = started().await;
     e.f.agents.push_script(done("ok"));
     let s = e.create("Fix it").await;
-    assert_eq!(s.setup, None);
-    assert!(s.ports.is_empty());
+    // Zero config still gets the defaults: 2 ports, and a note that this
+    // empty fixture folder has no `.env*` to copy — but no command to
+    // wait on, so the goal still runs at once.
+    let setup = s.setup.clone().expect("a copy note");
+    assert_eq!(setup.status, SetupStatus::Done);
+    assert!(!setup.goal_pending);
+    assert!(setup.notes.iter().any(|n| n.contains(".env*")), "{setup:?}");
+    assert_eq!(s.ports.len(), 2);
     e.until(&s.id, |s| s.turns == 1).await;
     assert!(e.f.commands.specs().is_empty());
+}
+
+#[tokio::test]
+async fn explicit_copy_and_ports_turn_the_defaults_off() {
+    let e = started().await;
+    e.global("spaces: {copy: [], ports: 0}");
+    e.f.agents.push_script(done("ok"));
+    let s = e.create("Fix it").await;
+    assert_eq!(s.setup, None, "no note: copy is off, not just unmatched");
+    assert!(s.ports.is_empty());
+    e.until(&s.id, |s| s.turns == 1).await;
 }
 
 #[tokio::test]

@@ -188,8 +188,8 @@ spaces:
 
 | Key | Default | Does |
 | --- | --- | --- |
-| `copy` | `[]` | paths copied from the project's local folder into the new space's worktree (§3) |
-| `ports` | `0` | free TCP ports reserved for the space's life (at most 16) |
+| `copy` | `[".env*"]` | paths copied from the project's local folder into the new space's worktree (§3); `copy: []` turns it off |
+| `ports` | `2` | free TCP ports reserved for the space's life (at most 16); `ports: 0` turns it off |
 | `env` | `{}` | extra environment for the space's commands and agent turns; values expand variables (§4) |
 | `setup` | — | runs once after create, before the first agent turn |
 | `run` | — | long-running (a dev server): Run / Stop in the space header, `⇧R` |
@@ -238,7 +238,9 @@ Each entry is a path relative to the project's folder: a file, a directory
 (copied whole), or a `*` / `?` glob in its last segment (`.env*`). Absolute
 paths, `..`, `.git` and symlinks are skipped with a note. Copying needs the
 project's own checkout: a host project has none, so `copy` is skipped there
-with a note.
+with a note. Unset by every layer, a space copies `.env*` by default — so a
+project with no config at all still gets its local secrets; set `copy: []`
+to turn that off.
 
 ## 4. Variables
 
