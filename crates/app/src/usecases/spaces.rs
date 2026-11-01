@@ -1330,8 +1330,9 @@ fn base_system_prompt(space: &Space) -> String {
          Base branch: {base}. The change will be shipped as branch {branch}.\n\
          Rules: work only inside the current directory. Shipping goes through Theodore: \
          never run git push, gh pr create or another PR command, and do not switch, create \
-         or rebase branches or rewrite history yourself. Theodore commits your edits after \
-         every turn, so you don't need to. End each turn with a short summary of what you \
+         or rebase branches or rewrite history yourself; without the ship tool, point the \
+         user to Ship in the space's header. Theodore commits your edits after every turn, \
+         so you don't need to. End each turn with a short summary of what you \
          changed and anything left to do.",
         goal = if space.goal.is_empty() {
             &space.name
