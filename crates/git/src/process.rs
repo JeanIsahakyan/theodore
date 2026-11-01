@@ -101,6 +101,18 @@ impl GitProc<'_> {
         self.run_cmd(self.command_below(Some(ceiling))).await
     }
 
+    /// `run` below `ceiling`, with extra variables on the child
+    /// (`GIT_INDEX_FILE` for a snapshot through a temporary index).
+    pub(crate) async fn run_env_below(
+        &self,
+        ceiling: &Path,
+        env: &[(&str, &Path)],
+    ) -> GitResult<Vec<u8>> {
+        let mut cmd = self.command_below(Some(ceiling));
+        cmd.envs(env.iter().copied());
+        self.run_cmd(cmd).await
+    }
+
     async fn run_cmd(&self, mut cmd: tokio::process::Command) -> GitResult<Vec<u8>> {
         let mut child = cmd.spawn().map_err(io_err)?;
         if let (Some(data), Some(mut pipe)) = (self.stdin, child.stdin.take()) {

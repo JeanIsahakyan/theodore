@@ -264,7 +264,18 @@ async fn a_space_turn_gets_space_tools_and_is_told_about_them() {
         Some("space-tools")
     );
     let system = req.system.unwrap();
-    for tool in ["run_check", "start_app", "read_logs", "space_info"] {
+    for tool in [
+        "run_check",
+        "start_app",
+        "read_logs",
+        "space_info",
+        "ship",
+        "get_space_diff",
+        "get_review_comments",
+        "add_review_comment",
+        "set_base",
+        "update_progress",
+    ] {
         assert!(system.contains(tool), "{system}");
     }
     // The token goes with the turn.

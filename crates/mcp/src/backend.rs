@@ -5,7 +5,9 @@
 use async_trait::async_trait;
 use theodore_domain::{AgentId, Commit, FileStatus, FindingId, Group, Hunk, PrId, RunId, Severity};
 pub use theodore_ports::{
-    AppStatus, CheckOutcome, LogTail, SpaceCommandName, SpaceInfo, SpaceToolError,
+    AppStatus, BaseChange, CheckOutcome, LogTail, NewReviewComment, ProgressStep,
+    ProgressStepState, ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
+    SpaceInfo, SpaceToolError,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -37,6 +39,12 @@ pub const SPACE_TOOL_NAMES: &[&str] = &[
     "app_status",
     "read_logs",
     "space_info",
+    "ship",
+    "get_space_diff",
+    "get_review_comments",
+    "add_review_comment",
+    "set_base",
+    "update_progress",
 ];
 
 /// Identifies the agent run calling the MCP server: which PR, which agent, which
@@ -198,6 +206,68 @@ pub trait SpaceToolsBackend: Send + Sync {
         tail: usize,
     ) -> Result<LogTail, SpaceToolError>;
     async fn space_info(&self, space: &str) -> Result<SpaceInfo, SpaceToolError>;
+
+    // ── the change itself (`space_agent`); unavailable unless implemented ──
+
+    /// Ships the space on behalf of the turn `run_id` (Theodore's own
+    /// squash, push and PR; never forced).
+    async fn ship(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        action: ShipToolAction,
+        title: Option<String>,
+    ) -> Result<ShipOutcome, SpaceToolError> {
+        let _ = (space, run_id, action, title);
+        Err(unavailable())
+    }
+    /// The change vs its base's merge-base, uncommitted edits included.
+    async fn space_diff(
+        &self,
+        space: &str,
+        file: Option<&str>,
+    ) -> Result<SpaceDiff, SpaceToolError> {
+        let _ = (space, file);
+        Err(unavailable())
+    }
+    async fn review_comments(
+        &self,
+        space: &str,
+        file: Option<&str>,
+    ) -> Result<Vec<ReviewItem>, SpaceToolError> {
+        let _ = (space, file);
+        Err(unavailable())
+    }
+    /// A finding on the space's own review, by `agent`.
+    async fn add_review_comment(
+        &self,
+        space: &str,
+        agent: AgentId,
+        comment: NewReviewComment,
+    ) -> Result<FindingId, SpaceToolError> {
+        let _ = (space, agent, comment);
+        Err(unavailable())
+    }
+    async fn set_base(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        branch: &str,
+    ) -> Result<BaseChange, SpaceToolError> {
+        let _ = (space, run_id, branch);
+        Err(unavailable())
+    }
+    /// Replaces the turn's progress tracker; no steps clears it.
+    async fn update_progress(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        steps: Vec<ProgressStep>,
+        note: Option<String>,
+    ) -> Result<(), SpaceToolError> {
+        let _ = (space, run_id, steps, note);
+        Err(unavailable())
+    }
 }
 
 /// For servers started without spaces (tests, the CLI): every call fails.

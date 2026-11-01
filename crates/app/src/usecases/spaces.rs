@@ -166,6 +166,7 @@ impl Core {
             updated_at: now,
             title: None,
             handoff_summary: None,
+            progress: None,
         };
         self.apply(vec![NewAction {
             model: models::SPACE.into(),
@@ -999,6 +1000,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         "turns": turn_no,
         "error": space_error,
         "agent_session": agent_session,
+        // The tracker is the turn's: it goes when the agent is done.
+        "progress": null,
         "updated_at": core.0.deps.clock.now(),
     });
     if let Some(head) = &head {
@@ -1303,7 +1306,13 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
      space's configured commands for you: run_check (the project's check; use it after \
      changes), start_app / stop_app / app_status (the app, its ports and http://localhost \
      URLs; start_app to try it), read_logs (setup, run, check or archive output) and \
-     space_info.";
+     space_info. It also acts on the change: when the user asks you to push, open a PR \
+     (or a draft), merge or keep it as a branch, call ship and tell them what it returns \
+     (the PR link, or why it was refused). get_space_diff shows your change against the \
+     base, uncommitted edits included; get_review_comments reads the review's comments \
+     and add_review_comment leaves one on a line; set_base changes the base branch when \
+     the user asks; update_progress shows your plan above the user's message box, for \
+     work with several steps.";
 
 fn system_prompt(space: &Space, tools: bool) -> String {
     let mut prompt = base_system_prompt(space);
@@ -1319,10 +1328,12 @@ fn base_system_prompt(space: &Space) -> String {
         "You are working in a Theodore space: an isolated git worktree for one change.\n\
          Goal: {goal}\n\
          Base branch: {base}. The change will be shipped as branch {branch}.\n\
-         Rules: work only inside the current directory. Do not push, do not switch or \
-         create branches, do not rewrite history. Theodore commits your edits after every \
-         turn, so you don't need to. End each turn with a short summary of what you changed \
-         and anything left to do.",
+         Rules: work only inside the current directory. Shipping goes through Theodore: \
+         never run git push, gh pr create or another PR command, and do not switch, create \
+         or rebase branches or rewrite history yourself; without the ship tool, point the \
+         user to Ship in the space's header. Theodore commits your edits after every turn, \
+         so you don't need to. End each turn with a short summary of what you \
+         changed and anything left to do.",
         goal = if space.goal.is_empty() {
             &space.name
         } else {

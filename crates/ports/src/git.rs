@@ -441,6 +441,15 @@ pub trait GitPort: Send + Sync {
         Ok(None)
     }
 
+    /// The space's worktree as it is now, as a commit on top of `HEAD`:
+    /// staged through a temporary index, so the worktree's own index, its
+    /// `HEAD` and every ref stay as they were. `HEAD` itself when nothing
+    /// changed since the last checkpoint.
+    async fn space_snapshot(&self, worktree: &Path) -> GitResult<Sha> {
+        let _ = worktree;
+        Err(GitError::Unsupported("space_snapshot"))
+    }
+
     /// Removes a space's worktree directory. The checkpoint ref stays, so
     /// `space_worktree` can bring the space back. A directory that isn't
     /// a worktree of Theodore's is moved aside, never deleted.
