@@ -5955,6 +5955,7 @@ dependencies = [
  "theodore-account-workos",
  "theodore-agents",
  "theodore-app",
+ "theodore-code-intel",
  "theodore-contract",
  "theodore-domain",
  "theodore-fixtures",

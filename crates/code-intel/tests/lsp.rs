@@ -260,3 +260,37 @@ async fn review_sessions_get_review_options_and_their_own_process() {
     let a = ci.file_symbols(wt.path(), "src/lib.rs").await.unwrap();
     assert_eq!(a.source, Source::Lsp);
 }
+
+/// A workspace's own policy (`Workspace::lsp`, the project's config) wins
+/// over the facade's default, both ways.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workspace_policy_overrides_the_default() {
+    let env = Env::new();
+    let review = repo(&[("src/lib.rs", LIB)]);
+    let space = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.fake_lsp_facade(LspPolicy::default());
+    let on = LspPolicy {
+        review: true,
+        spaces: true,
+    };
+    let off = LspPolicy {
+        review: false,
+        spaces: false,
+    };
+    let mut ws = workspace(review.path(), TrustMode::Review);
+    ws.lsp = Some(on);
+    ci.open(ws).await.unwrap();
+    let mut ws = workspace(space.path(), TrustMode::Trusted);
+    ws.lsp = Some(off);
+    ci.open(ws).await.unwrap();
+
+    ready(&ci, review.path()).await;
+    indexed(&ci, space.path()).await;
+    let syms = ci.file_symbols(space.path(), "src/lib.rs").await.unwrap();
+    assert_eq!(syms.source, Source::Syntax);
+    assert_eq!(
+        server_state(&ci, space.path(), "rust").await,
+        Some(ServerState::NotRunning)
+    );
+    assert_eq!(env.launches().len(), 1, "{:?}", env.launches());
+}

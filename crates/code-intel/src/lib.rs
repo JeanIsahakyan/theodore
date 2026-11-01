@@ -248,7 +248,7 @@ impl CodeIntel {
             old_pool.shutdown_all().await;
         }
         let open: Vec<Arc<Ws>> = lock(&self.inner.workspaces).values().cloned().collect();
-        for w in open {
+        for w in open.into_iter().filter(|w| w.lsp.is_none()) {
             let (was, now) = (allowed(old.lsp, w.trust), allowed(options.lsp, w.trust));
             if !now {
                 if was {
@@ -277,6 +277,11 @@ impl CodeIntel {
 
     fn policy(&self) -> LspPolicy {
         lock(&self.inner.options).lsp
+    }
+
+    /// `w`'s own policy, else the default.
+    fn policy_for(&self, w: &Ws) -> LspPolicy {
+        w.lsp.unwrap_or_else(|| self.policy())
     }
 
     fn pool(&self) -> Arc<LspPool> {
@@ -339,6 +344,7 @@ impl CodeIntel {
             root: root.clone(),
             repo_key: ws.repo_key,
             trust: ws.trust,
+            lsp: ws.lsp,
             requested: ws.languages,
             language_of: lang_of,
             servers: Mutex::default(),
@@ -400,7 +406,7 @@ impl CodeIntel {
 
     /// (Re)decide `lang`'s server for `w`. Probes; downloads nothing.
     async fn plan_server(&self, w: &Ws, lang: &LanguageId) {
-        let policy = self.policy();
+        let policy = self.policy_for(w);
         let Some(plan) = servers::plan(&self.inner.toolchain, lang, &w.root, policy, w.trust).await
         else {
             return;
@@ -412,7 +418,7 @@ impl CodeIntel {
     /// on disk.
     async fn attach(&self, w: &Ws, server: &str) -> Option<Arc<LspSession>> {
         let (plan, langs) = w.servers_by_name().remove(server)?;
-        if !allowed(self.policy(), w.trust) {
+        if !allowed(self.policy_for(w), w.trust) {
             return None;
         }
         let config = servers::launch(&self.inner.toolchain, &plan, w.trust, &langs)?;
@@ -450,7 +456,7 @@ impl CodeIntel {
             return Route::Not(None);
         };
         let name = plan.spec.name.clone();
-        if !allowed(self.policy(), w.trust) {
+        if !allowed(self.policy_for(w), w.trust) {
             return Route::Not(Some(denied_note(w.trust).into()));
         }
         if plan.resolved.is_none() {
@@ -949,7 +955,7 @@ impl CodeIntel {
         let Some(plan) = w.language(&path).and_then(|l| w.plan(&l)) else {
             return;
         };
-        if !allowed(self.policy(), w.trust) {
+        if !allowed(self.policy_for(&w), w.trust) {
             return;
         }
         if let Some(s) = self.pool().get(&w.pool_key, &w.root, &plan.spec.name).await
@@ -961,7 +967,7 @@ impl CodeIntel {
 
     async fn status_of(&self, root: &Path) -> CodeIntelResult<Vec<LanguageStatus>> {
         let w = self.ws(root)?;
-        let policy = self.policy();
+        let policy = self.policy_for(&w);
         let snap = w.index.snapshot();
         let progress = w.index.progress();
         let running: BTreeMap<String, ServerState> =

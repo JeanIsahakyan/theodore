@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use theodore_code_intel_syntax::{Snapshot, SyntaxIndex, WorkspaceIndex};
 use theodore_code_intel_toolchain::Manifest;
-use theodore_ports::code_intel::{LanguageId, TrustMode};
+use theodore_ports::code_intel::{LanguageId, LspPolicy, TrustMode};
 use tokio::task::JoinHandle;
 
 use crate::servers::ServerPlan;
@@ -37,6 +37,8 @@ pub(crate) struct Ws {
     pub root: PathBuf,
     pub repo_key: String,
     pub trust: TrustMode,
+    /// `Workspace::lsp`: this workspace's own policy, over the default.
+    pub lsp: Option<LspPolicy>,
     /// `Workspace::languages` as given (empty: detected).
     pub requested: Vec<LanguageId>,
     pub pool_key: String,

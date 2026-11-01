@@ -132,6 +132,7 @@ pub fn workspace(root: &Path, trust: TrustMode) -> Workspace {
         trust,
         languages: vec![],
         focus_paths: vec![],
+        lsp: None,
     }
 }
 

@@ -219,6 +219,10 @@ pub struct Workspace {
     /// Empty: no priority, the whole worktree in path order.
     #[serde(default)]
     pub focus_paths: Vec<String>,
+    /// The project's own `code_intel.lsp.*` (its global and local config
+    /// layers). `None`: the facade's default policy.
+    #[serde(default)]
+    pub lsp: Option<LspPolicy>,
 }
 
 /// State of one installable thing (a grammar or a server).

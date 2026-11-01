@@ -49,9 +49,7 @@ pub(crate) const LSP_SPACES_KEY: &str = "code_intel.lsp.spaces";
 /// Where language servers may run (`code_intel.lsp`), resolved: your
 /// global / local file, else the Settings toggle, else the default. The
 /// repo's file never sets it (`config::repo_may_not_set`).
-///
-/// TODO(code-intel facade): map to `ports::LspPolicy { review, spaces }`
-/// (`CodeIntelOptions.lsp`) when the facade is wired into `Deps`.
+/// Handed to the port per workspace (`Workspace::lsp`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LspPolicy {
     /// In review runs: a PR's code may run.
@@ -217,6 +215,13 @@ impl Core {
             root: entry.worktree_path.clone(),
             trust: TrustMode::Review,
             languages: languages(&cfg),
+            focus_paths: entry
+                .revision
+                .files
+                .iter()
+                .map(|f| f.path.clone())
+                .collect(),
+            lsp: None,
         };
         if self
             .open_code_workspace(ws, lsp, cfg.install, project)
@@ -261,6 +266,8 @@ impl Core {
                 TrustMode::Review
             },
             languages: languages(code),
+            focus_paths: Vec::new(),
+            lsp: None,
         };
         self.open_code_workspace(ws, lsp, code.install, Some(project.id.clone()))
             .await
@@ -326,8 +333,15 @@ impl Core {
             None => {}
         }
         let root = ws.root.clone();
-        // TODO(code-intel facade): hand `lsp` over with the workspace
-        // (`LspPolicy`); until then the facade decides on its own.
+        // The decision is made here, per project; the facade only applies
+        // it to this workspace's trust.
+        let ws = Workspace {
+            lsp: Some(theodore_ports::LspPolicy {
+                review: lsp,
+                spaces: lsp,
+            }),
+            ..ws
+        };
         if let Err(e) = port.open(ws).await {
             tracing::warn!(
                 error.code = "code_intel.open_failed",
@@ -498,6 +512,8 @@ impl Core {
                 root: PathBuf::from(folder),
                 trust: TrustMode::Review,
                 languages: languages(&cfg),
+                focus_paths: Vec::new(),
+                lsp: None,
             };
             if self
                 .open_code_workspace(ws, policy.review, cfg.install, Some(p.id.clone()))
