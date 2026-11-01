@@ -248,6 +248,10 @@ struct RawLanguage {
 #[serde(deny_unknown_fields)]
 struct RawGrammars {
     schema: u32,
+    /// The release the URLs point at; informational.
+    #[serde(default)]
+    #[allow(dead_code)]
+    release_tag: Option<String>,
     grammars: Vec<GrammarSpec>,
 }
 

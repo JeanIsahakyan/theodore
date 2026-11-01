@@ -314,26 +314,47 @@ print(json.dumps(entry))
 done < "$plan_file"
 
 # --- 3. assemble grammars.json -------------------------------------------
-python3 -c "
+# Schema 1 of crates/code-intel-toolchain/src/manifest.rs: one entry per
+# package, its languages inside. A language without a tags query has
+# nothing to index, so it is left out.
+python3 - "$languages_manifest" "$release_tag" "$manifest_out" <<'PY'
 import json, sys
 
-languages = []
-with open(sys.argv[1]) as f:
+src, release_tag, out = sys.argv[1:4]
+redirect = ["release-assets.githubusercontent.com", "objects.githubusercontent.com"]
+packages = {}
+with open(src) as f:
     for line in f:
         line = line.strip()
-        if line:
-            languages.append(json.loads(line))
-languages.sort(key=lambda l: l['id'])
+        if not line:
+            continue
+        lang = json.loads(line)
+        if not lang["tags_query"]:
+            print(f"  skip {lang['id']}: no tags query", file=sys.stderr)
+            continue
+        pkg = packages.setdefault(lang["package"], {
+            "package": lang["package"],
+            "version": lang["version"],
+            "languages": [],
+            "downloads": {
+                plat: dict(a, redirect_hosts=redirect)
+                for plat, a in lang["downloads"].items()
+            },
+        })
+        pkg["languages"].append({
+            "id": lang["id"],
+            "symbol": lang["symbol"],
+            "tags_query": dict(lang["tags_query"], redirect_hosts=redirect),
+        })
 
-manifest = {
-    'generated_by': 'scripts/build-grammars.sh',
-    'release_tag': sys.argv[2],
-    'languages': languages,
-}
-with open(sys.argv[3], 'w') as f:
+grammars = sorted(packages.values(), key=lambda g: g["package"])
+for g in grammars:
+    g["languages"].sort(key=lambda l: l["id"])
+manifest = {"schema": 1, "release_tag": release_tag, "grammars": grammars}
+with open(out, "w") as f:
     json.dump(manifest, f, indent=2)
-    f.write('\n')
-" "$languages_manifest" "$release_tag" "$manifest_out"
+    f.write("\n")
+PY
 
 echo "wrote $manifest_out"
 echo "wrote $(find "$out_dir" -maxdepth 1 -name '*.dylib' | wc -l | tr -d ' ') dylib(s) and $(find "$out_dir" -maxdepth 1 -name '*.tags.scm' | wc -l | tr -d ' ') tags query/queries to $out_dir"
