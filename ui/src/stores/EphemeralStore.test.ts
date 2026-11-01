@@ -1,3 +1,4 @@
+import { autorun } from 'mobx';
 import { describe, expect, it } from 'vitest';
 import type { AppInfo } from '../gen/contract';
 import { EphemeralStore } from './EphemeralStore';
@@ -163,5 +164,45 @@ describe('EphemeralStore app info', () => {
     expect(document.documentElement.dataset.build).toBe('staging');
     e.setAppInfo({ ...APP_INFO, build_env: 'production' });
     expect(document.documentElement.dataset.build).toBe('production');
+  });
+});
+
+describe('EphemeralStore agent text', () => {
+  const delta = (run: string, text: string) =>
+    ({ type: 'agent_delta', run, agent: 'claude', text }) as const;
+
+  it('appends each piece to its own run', () => {
+    const e = new EphemeralStore();
+    e.handle(delta('r1', 'Hel'));
+    e.handle(delta('r2', 'Other'));
+    e.handle(delta('r1', 'lo'));
+    expect(e.agentText.get('r1')).toBe('Hello');
+    expect(e.agentText.get('r2')).toBe('Other');
+  });
+
+  it('a reader of one run reacts to that run only', () => {
+    const e = new EphemeralStore();
+    let runs = 0;
+    const stop = autorun(() => {
+      e.agentText.get('r1');
+      runs += 1;
+    });
+    e.handle(delta('r2', 'a'));
+    e.handle(delta('r2', 'b'));
+    expect(runs).toBe(1);
+    e.handle(delta('r1', 'c'));
+    expect(runs).toBe(2);
+    stop();
+  });
+
+  it('clearRun drops the text and log of that run only', () => {
+    const e = new EphemeralStore();
+    e.handle(delta('r1', 'a'));
+    e.handle(delta('r2', 'b'));
+    e.handle({ type: 'run_log', run: 'r1', agent: 'claude', line: 'tool: x' });
+    e.clearRun('r1');
+    expect(e.agentText.has('r1')).toBe(false);
+    expect(e.runLog.has('r1')).toBe(false);
+    expect(e.agentText.get('r2')).toBe('b');
   });
 });

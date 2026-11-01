@@ -106,10 +106,18 @@ export interface HostStatus {
 }
 
 export class EphemeralStore {
-  /** Streaming text per run id, appended as `agent_delta` events arrive. */
-  agentText = new Map<string, string>();
-  /** Last lines of a skill run's log, per run id. */
-  runLog = new Map<string, string[]>();
+  /** Streaming text per run id, appended as `agent_delta` events arrive
+   *  (a piece at a time while the agent writes). Observable per key: a
+   *  view reading one run re-renders only when that run grows. */
+  readonly agentText: ObservableMap<string, string> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** Last lines of a run's log (its tool calls), per run id. */
+  readonly runLog: ObservableMap<string, string[]> = observable.map(
+    {},
+    { deep: false },
+  );
   /** Run ids with no output for `agents.stall_after_ms` while still alive —
    *  the UI offers Retry/Cancel instead of waiting silently. Cleared as
    *  soon as the run produces output again, or ends. */
@@ -178,8 +186,6 @@ export class EphemeralStore {
 
   constructor() {
     makeObservable(this, {
-      agentText: observableShallow,
-      runLog: observableShallow,
       stalled: observableShallow,
       toasts: observableShallow,
       hostStatus: observable,
@@ -457,18 +463,13 @@ export class EphemeralStore {
   handle(e: Ephemeral): void {
     runInAction(() => {
       switch (e.type) {
-        case 'agent_delta': {
-          const next = new Map(this.agentText);
-          next.set(e.run, (next.get(e.run) ?? '') + e.text);
-          this.agentText = next;
+        case 'agent_delta':
+          this.agentText.set(e.run, (this.agentText.get(e.run) ?? '') + e.text);
           this.clearStalled(e.run);
           return;
-        }
         case 'run_log': {
-          const next = new Map(this.runLog);
-          const lines = [...(next.get(e.run) ?? []), e.line].slice(-LOG_LIMIT);
-          next.set(e.run, lines);
-          this.runLog = next;
+          const lines = [...(this.runLog.get(e.run) ?? []), e.line];
+          this.runLog.set(e.run, lines.slice(-LOG_LIMIT));
           this.clearStalled(e.run);
           return;
         }
@@ -548,12 +549,8 @@ export class EphemeralStore {
   /** A run is done (or cancelled/failed): its streaming text and log no longer grow. */
   clearRun(run: string): void {
     runInAction(() => {
-      const text = new Map(this.agentText);
-      text.delete(run);
-      this.agentText = text;
-      const log = new Map(this.runLog);
-      log.delete(run);
-      this.runLog = log;
+      this.agentText.delete(run);
+      this.runLog.delete(run);
       this.clearStalled(run);
     });
   }

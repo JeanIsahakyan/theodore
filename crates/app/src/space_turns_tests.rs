@@ -583,6 +583,46 @@ async fn the_next_turn_continues_the_session_with_only_the_new_message() {
     assert!(transcript(&f, &s.id).iter().any(|m| m.text == "Logged it."));
 }
 
+/// A turn's answer streams piece by piece, shows once, and the stored
+/// reply is the whole message.
+#[tokio::test]
+async fn a_turn_streams_its_answer_once_and_stores_it_whole() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    let mut events = core.0.ephemeral_tx.subscribe();
+
+    f.agents.push_script(vec![
+        AgentEvent::TextDelta { text: "Log".into() },
+        AgentEvent::TextDelta {
+            text: "ged.".into(),
+        },
+        AgentEvent::Text {
+            text: "Logged.".into(),
+        },
+        AgentEvent::Done {
+            final_text: "Logged.".into(),
+            usage: Usage::default(),
+        },
+    ]);
+    let s = send(&f, &core, &s.id, "Log it", None).await;
+    assert!(f.agents.last_request().unwrap().stream_text);
+
+    let mut shown = String::new();
+    while let Ok(e) = events.try_recv() {
+        if let theodore_contract::Ephemeral::AgentDelta { text, .. } = e {
+            shown.push_str(&text);
+        }
+    }
+    assert_eq!(shown, "Logged.");
+    let replies: Vec<_> = transcript(&f, &s.id)
+        .into_iter()
+        .filter(|m| m.text.starts_with("Logged"))
+        .map(|m| m.text)
+        .collect();
+    assert_eq!(replies, vec!["Logged.".to_string()]);
+}
+
 #[tokio::test]
 async fn another_agent_starts_over_from_the_transcript() {
     let f = fixtures();

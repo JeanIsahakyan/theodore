@@ -2069,6 +2069,75 @@ async fn delegate_task_runs_the_agent_in_edit_mode_and_captures_a_patch() {
     assert!(req.prompt.contains("Fix the thing"));
 }
 
+/// What each run showed live: its `AgentDelta` text joined, and its
+/// `RunLog` lines.
+fn shown_live(
+    events: &mut tokio::sync::broadcast::Receiver<Ephemeral>,
+    run: &str,
+) -> (String, Vec<String>) {
+    let mut text = String::new();
+    let mut log = Vec::new();
+    while let Ok(e) = events.try_recv() {
+        match e {
+            Ephemeral::AgentDelta {
+                run: r, text: t, ..
+            } if r == run => text.push_str(&t),
+            Ephemeral::RunLog { run: r, line, .. } if r == run => log.push(line),
+            _ => {}
+        }
+    }
+    (text, log)
+}
+
+/// A chat answer streams piece by piece, shows once, and the stored reply
+/// is the whole answer.
+#[tokio::test]
+async fn ask_streams_its_answer_once_and_stores_it_whole() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let mut events = core.0.ephemeral_tx.subscribe();
+    f.agents.push_script(vec![
+        AgentEvent::TextDelta { text: "Be".into() },
+        AgentEvent::TextDelta {
+            text: "cause.".into(),
+        },
+        AgentEvent::Text {
+            text: "Because.".into(),
+        },
+        AgentEvent::Done {
+            final_text: "Because.".into(),
+            usage: Usage::default(),
+        },
+    ]);
+    let message = core
+        .ask(theodore_contract::AskRequest {
+            pr: pr.clone(),
+            question: "why?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+            attachments: None,
+        })
+        .await
+        .expect("ask");
+    wait_until(|| {
+        chat_messages(&f, &pr)
+            .iter()
+            .any(|m| matches!(m.author, theodore_domain::Author::Agent(_)))
+    })
+    .await;
+
+    assert!(f.agents.last_request().unwrap().stream_text);
+    let (text, _) = shown_live(&mut events, &format!("ask:{message}"));
+    assert_eq!(text, "Because.");
+    let replies: Vec<_> = chat_messages(&f, &pr)
+        .into_iter()
+        .filter(|m| matches!(m.author, theodore_domain::Author::Agent(_)))
+        .map(|m| m.text)
+        .collect();
+    assert_eq!(replies, vec!["Because.".to_string()]);
+}
+
 #[tokio::test]
 async fn a_fix_run_carries_the_repo_instructions() {
     let f = fixtures();
