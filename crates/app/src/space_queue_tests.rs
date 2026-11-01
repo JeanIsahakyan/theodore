@@ -423,7 +423,7 @@ async fn send_now_goes_into_a_running_turn_that_takes_it() {
 
     release();
     let s = idle(&f, &s.id).await;
-    assert_eq!(s.turn_log[0].steered, [id.clone()]);
+    assert_eq!(s.turn_log[0].steered, std::slice::from_ref(&id));
 
     // Undone with its turn: the next turn's replay leaves it out.
     core.undo_space_turn(&s.id).await.unwrap();

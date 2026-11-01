@@ -164,16 +164,14 @@ impl Core {
                     }
                     // Back in line: it goes when the running turn ends.
                     SpaceStatus::Running => {
-                        let mut queued = message.queued.clone().unwrap_or_else(|| QueuedSend {
-                            seq: 0,
-                            agent: None,
-                            model: None,
-                            mode: None,
-                            held: false,
-                        });
-                        queued.held = false;
-                        self.patch_message(&message.id, serde_json::json!({ "queued": queued }))
+                        if let Some(mut queued) = message.queued.clone() {
+                            queued.held = false;
+                            self.patch_message(
+                                &message.id,
+                                serde_json::json!({ "queued": queued }),
+                            )
                             .await?;
+                        }
                     }
                     SpaceStatus::Idle | SpaceStatus::Failed => {
                         self.check_setup_done(&space)?;
