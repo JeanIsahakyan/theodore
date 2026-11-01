@@ -87,6 +87,7 @@ import {
   useSpaceConfig,
   useSpaceLogsSeed,
 } from './SpaceCommands';
+import { TerminalDrawer, TerminalToggle } from './Terminal';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
@@ -119,6 +120,7 @@ const WHOLE_DIFF: ReviewMode = { mode: 'groups', group: null, file: null };
 type Store = ReturnType<typeof useRootStore>;
 
 const LS_SPACE_CHANGES = `${STORAGE_NS}theodore-space-changes`;
+const LS_SPACE_TERMINAL = `${STORAGE_NS}theodore-space-terminal`;
 type Ui = ReturnType<typeof useUi>;
 
 /** What the page's keys reach inside the chat and the ship controls. */
@@ -184,6 +186,31 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
       localStorage.setItem(LS_SPACE_CHANGES, v ? '0' : '1');
       return !v;
     });
+  // Same idea for the terminal drawer, default closed: its shells live in
+  // the core regardless, so reopening it (or navigating back to the page)
+  // just re-lists and re-attaches them.
+  const [terminalOpen, setTerminalOpen] = useState(
+    () => localStorage.getItem(LS_SPACE_TERMINAL) === '1',
+  );
+  const toggleTerminal = () =>
+    setTerminalOpen((v) => {
+      localStorage.setItem(LS_SPACE_TERMINAL, v ? '0' : '1');
+      return !v;
+    });
+  // ⌃` toggles it from anywhere on the page, composer included — the same
+  // reach as ⌘.'s stop, below.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.key !== '`') return;
+      e.preventDefault();
+      setTerminalOpen((v) => {
+        localStorage.setItem(LS_SPACE_TERMINAL, v ? '0' : '1');
+        return !v;
+      });
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   useSpaceLogsSeed(id);
   const run = space ? runControl(config, space) : null;
 
@@ -290,6 +317,8 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         config={config}
         logsOpen={logsOpen}
         onToggleLogs={() => setLogsOpen((v) => !v)}
+        terminalOpen={terminalOpen}
+        onToggleTerminal={toggleTerminal}
         showChanges={showChanges}
         onToggleChanges={toggleChanges}
       />
@@ -325,10 +354,18 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
       {logsOpen && (
         <LogsDrawer space={space} onClose={() => setLogsOpen(false)} />
       )}
+      {terminalOpen && live && (
+        <TerminalDrawer
+          space={space.id}
+          open={terminalOpen}
+          onClose={() => setTerminalOpen(false)}
+        />
+      )}
       {space.status === 'archived' && <ArchivedBanner space={space} />}
       <Hints>
-        <K>C</K> message the agent <K>M</K> mode <K>D</K> changes <K>⌘.</K> stop{' '}
-        <K>R</K> review <K>P</K> {space.pr ? 'push' : 'ship'}
+        <K>C</K> message the agent <K>M</K> mode <K>D</K> changes <K>⌃`</K>{' '}
+        terminal <K>⌘.</K> stop <K>R</K> review <K>P</K>{' '}
+        {space.pr ? 'push' : 'ship'}
         {space.pr ? (
           <>
             {' '}
@@ -379,6 +416,8 @@ const SpaceHeader = observer(function SpaceHeader({
   config,
   logsOpen,
   onToggleLogs,
+  terminalOpen,
+  onToggleTerminal,
   showChanges,
   onToggleChanges,
 }: {
@@ -387,6 +426,8 @@ const SpaceHeader = observer(function SpaceHeader({
   config: SpaceConfigView | null;
   logsOpen: boolean;
   onToggleLogs: () => void;
+  terminalOpen: boolean;
+  onToggleTerminal: () => void;
   showChanges: boolean;
   onToggleChanges: () => void;
 }) {
@@ -427,6 +468,9 @@ const SpaceHeader = observer(function SpaceHeader({
       <RunButton space={space} config={config} />
       <PortChips space={space} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
+      {!archived && (
+        <TerminalToggle open={terminalOpen} onToggle={onToggleTerminal} />
+      )}
       <ReviewMenu space={space} />
       {!archived && project && (
         <ShipControls
