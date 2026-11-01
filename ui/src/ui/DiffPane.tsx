@@ -744,7 +744,10 @@ function ChecklistItem({
           <Checkbox.Control>
             <Checkbox.Indicator />
           </Checkbox.Control>
-          <span>{rich(text)}</span>
+          {/* `Checkbox.Content` is `select-none` so a click anywhere in the
+              row toggles the box; the text itself should still be
+              drag-selectable for copy, so it opts back into selection. */}
+          <span className="select-text">{rich(text)}</span>
         </Checkbox.Content>
       </Checkbox>
     </span>
