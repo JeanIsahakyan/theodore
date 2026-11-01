@@ -410,7 +410,8 @@ impl Core {
         self.stop_space_commands(&space.id).await;
         let worktree_exists = Path::new(&space.worktree).exists();
         if worktree_exists {
-            self.0
+            let saved = self
+                .0
                 .deps
                 .git
                 .space_checkpoint(
@@ -418,7 +419,13 @@ impl Core {
                     &space.id,
                     &format!("{}: uncommitted changes at archive", space.name),
                 )
-                .await?;
+                .await;
+            match saved {
+                // Its `.git` is gone: nothing git can save, and the remove
+                // below moves the directory aside instead of deleting it.
+                Ok(_) | Err(theodore_ports::GitError::NotAWorktree(_)) => {}
+                Err(e) => return Err(e.into()),
+            }
         }
         self.run_archive_command(&space, &project, worktree_exists)
             .await;
@@ -469,7 +476,13 @@ impl Core {
             .deps
             .git
             .space_reset(&wt.path, &space.id, &turn.before)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                theodore_ports::GitError::Busy(busy) => AppError::Invalid(format!(
+                    "can't undo: {busy} in the space's worktree; finish or abort it first"
+                )),
+                e => e.into(),
+            })?;
         let mut log = space.turn_log.clone();
         log[i].undone = true;
         self.apply(vec![NewAction {
@@ -909,8 +922,15 @@ async fn drive_turn(core: &Core, turn: Turn) {
             &format!("{}: turn {turn_no}{suffix}", space.name),
         )
         .await;
+    // A rebase or conflict left in the worktree: the answer stands, the
+    // snapshot waits for the next turn, and the space says why.
+    let mut skipped = None;
     let head = match checkpoint {
         Ok(head) => Some(head),
+        Err(theodore_ports::GitError::Busy(busy)) => {
+            skipped = Some(format!("checkpoint skipped: {busy}"));
+            None
+        }
         Err(e) => {
             error.get_or_insert_with(|| format!("checkpoint failed: {e}"));
             None
@@ -932,16 +952,20 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // `check` (docs/config.md) is part of the turn: the space stays
     // running, and Stop stops it too.
     let checking = changed && !cancelled && core.has_check(&space).await;
-    let status = if error.is_some() && !cancelled {
+    let status = if (error.is_some() && !cancelled) || skipped.is_some() {
         SpaceStatus::Failed
     } else {
         SpaceStatus::Idle
+    };
+    let space_error = match (cancelled, &error) {
+        (false, Some(e)) => Some(e.clone()),
+        _ => skipped.clone(),
     };
     let mut patch = serde_json::json!({
         "status": if checking { SpaceStatus::Running } else { status },
         "run": if checking { Some(run_id.clone()) } else { None },
         "turns": turn_no,
-        "error": if cancelled { None } else { error.clone() },
+        "error": space_error,
         "agent_session": agent_session,
         "updated_at": core.0.deps.clock.now(),
     });

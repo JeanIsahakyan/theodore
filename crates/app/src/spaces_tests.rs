@@ -515,6 +515,43 @@ async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
     assert!(!f.agents.last_request().unwrap().prompt.contains("boom"));
 }
 
+/// A rebase the agent left mid-way: the answer is kept, no checkpoint is
+/// recorded, and the space says why; archive waits for it too.
+#[tokio::test]
+async fn a_busy_worktree_skips_the_checkpoint_and_says_why() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let root = tempfile::TempDir::new().unwrap();
+    f.git.set_space_root(root.path());
+    f.agents.push_script(done("Rebased onto main.", 0.0));
+    f.git.push_checkpoint_error(theodore_ports::GitError::Busy(
+        theodore_ports::WorktreeBusy::Rebase,
+    ));
+    let s = core
+        .create_space(request(&project, "Rebase"))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.status, SpaceStatus::Failed);
+    assert_eq!(
+        s.error.as_deref(),
+        Some("checkpoint skipped: rebase in progress")
+    );
+    assert_eq!(s.head_sha, Sha::new("base000"));
+    assert!(s.turn_log.is_empty());
+    let reply = transcript(&f, &s.id).pop().unwrap();
+    assert_eq!(reply.text, "Rebased onto main.");
+    assert_eq!(reply.failed, None);
+
+    f.git.push_checkpoint_error(theodore_ports::GitError::Busy(
+        theodore_ports::WorktreeBusy::Rebase,
+    ));
+    let err = core.archive_space(&s.id).await.unwrap_err();
+    assert!(err.to_string().contains("rebase in progress"), "{err}");
+    assert!(err.is_expected());
+    assert_ne!(space(&f, &s.id).status, SpaceStatus::Archived);
+}
+
 /// Budgets were dropped (owner, 2026-10-22): an old
 /// `budget.per_space_usd` row, already exceeded, never blocks a turn.
 #[tokio::test]
