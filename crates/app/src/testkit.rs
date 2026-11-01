@@ -347,6 +347,9 @@ impl Secrets for FakeSecrets {
 
 pub struct FakeGit {
     pub repo_path: PathBuf,
+    /// What `grep` returns for any pattern; `None`: `Unsupported`, like
+    /// the trait's default.
+    pub grep_hits: Mutex<Option<Vec<theodore_ports::GrepHit>>>,
     /// Parent of every PR worktree `worktree()` hands out: private to this
     /// fake, so files a test plants (or an earlier run left) never leak
     /// into another test.
@@ -498,6 +501,7 @@ impl FakeGit {
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
             space_root: Mutex::new(None),
+            grep_hits: Mutex::new(None),
             resets: Mutex::new(Vec::new()),
             ship: Mutex::new(FakeShip {
                 identity: Some(theodore_ports::Identity {
@@ -707,6 +711,17 @@ impl GitPort for FakeGit {
     async fn remove_worktree(&self, pr: &PrRef) -> GitResult<()> {
         self.removed_worktrees.lock().unwrap().push(pr.clone());
         Ok(())
+    }
+    async fn grep(
+        &self,
+        _worktree: &Path,
+        _pattern: &str,
+    ) -> GitResult<Vec<theodore_ports::GrepHit>> {
+        self.grep_hits
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(GitError::Unsupported("grep"))
     }
     async fn gc_worktrees(&self, _keep: &[PrRef]) -> GitResult<u32> {
         Ok(0)
@@ -1568,8 +1583,8 @@ impl FakeAgent {
             .unwrap()
             .push((Box::new(matches), events));
     }
-    /// The next `run()` call never emits anything and never closes, until
-    /// the whole fake is dropped.
+    /// The next turn's `run()` never emits anything and never closes, until
+    /// the whole fake is dropped. Utility one-shots don't take it.
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
     }
@@ -1616,7 +1631,9 @@ impl AgentPort for FakeAgent {
             self.utility_requests.lock().unwrap().push(req);
         }
         let (tx, rx) = tokio::sync::mpsc::channel(64);
-        let hang = std::mem::take(&mut *self.hang_next.lock().unwrap());
+        // Only a turn hangs: a utility one-shot (a space's name, a summary)
+        // running in the background never takes the hang meant for it.
+        let hang = stream_text && std::mem::take(&mut *self.hang_next.lock().unwrap());
         if hang {
             self.kept_alive.lock().unwrap().push(tx);
         } else {
@@ -2363,6 +2380,8 @@ pub struct ToolRegistration {
     /// The PR of a review registration.
     pub pr: Option<theodore_domain::PrId>,
     pub space: Option<String>,
+    /// The code tools it lists.
+    pub code: crate::deps::CodeTools,
 }
 
 /// `RunTools` fake: records registrations, hands out one-off tokens.
@@ -2405,12 +2424,14 @@ impl crate::deps::RunTools for FakeRunTools {
         pr: &theodore_domain::PrId,
         _agent: AgentId,
         space: Option<&str>,
+        code: crate::deps::CodeTools,
     ) -> theodore_ports::McpEndpoint {
         self.add(ToolRegistration {
             run_id: run_id.into(),
             name: theodore_ports::REVIEW_TOOLS.into(),
             pr: Some(pr.clone()),
             space: space.map(str::to_string),
+            code,
         })
     }
 
@@ -2419,12 +2440,14 @@ impl crate::deps::RunTools for FakeRunTools {
         run_id: &str,
         space: &str,
         _agent: AgentId,
+        code: crate::deps::CodeTools,
     ) -> theodore_ports::McpEndpoint {
         self.add(ToolRegistration {
             run_id: run_id.into(),
             name: theodore_ports::SPACE_TOOLS.into(),
             pr: None,
             space: Some(space.into()),
+            code,
         })
     }
 
@@ -2433,6 +2456,204 @@ impl crate::deps::RunTools for FakeRunTools {
             .lock()
             .unwrap()
             .push(endpoint.token.clone());
+    }
+}
+
+// ── code intelligence ─────────────────────────────────────────────────────
+
+/// `CodeIntelPort` fake: records every call as one line (`open <root>
+/// <trust> [langs]`, `close <root>`, `install <lang>`, `file_changed <root>
+/// <path>`, `<query> <path>…`) and answers from what the test set.
+#[derive(Default)]
+pub struct FakeCodeIntel {
+    calls: Mutex<Vec<String>>,
+    /// `status()` for every root.
+    pub status: Mutex<Vec<theodore_ports::LanguageStatus>>,
+    /// `find_symbol` / `file_symbols` items; `symbol_body` picks the one
+    /// named in its path.
+    pub symbols: Mutex<Vec<theodore_ports::CodeSymbol>>,
+    /// `symbol_body`'s text per symbol name.
+    pub bodies: Mutex<HashMap<String, String>>,
+    /// `definition` / `references` hits.
+    pub hits: Mutex<Vec<theodore_ports::CodeHit>>,
+    pub diagnostics: Mutex<Vec<theodore_ports::Diagnostic>>,
+    pub renames: Mutex<Vec<theodore_ports::TextEdit>>,
+    /// Every query fails with this, when set.
+    pub fail: Mutex<Option<theodore_ports::CodeIntelError>>,
+}
+
+impl FakeCodeIntel {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn record(&self, call: String) {
+        self.calls.lock().unwrap().push(call);
+    }
+
+    fn check(&self) -> theodore_ports::CodeIntelResult<()> {
+        match self.fail.lock().unwrap().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    fn answer<T>(items: Vec<T>) -> theodore_ports::Answer<T> {
+        theodore_ports::Answer {
+            items,
+            source: theodore_ports::Source::Syntax,
+            index_percent: 62,
+            note: Some("rust-analyzer warming up".into()),
+        }
+    }
+}
+
+#[async_trait]
+impl theodore_ports::CodeIntelPort for FakeCodeIntel {
+    async fn open(&self, ws: theodore_ports::Workspace) -> theodore_ports::CodeIntelResult<()> {
+        let langs: Vec<&str> = ws.languages.iter().map(|l| l.as_str()).collect();
+        self.record(format!(
+            "open {} {:?} [{}]",
+            ws.root.display(),
+            ws.trust,
+            langs.join(",")
+        ));
+        Ok(())
+    }
+    async fn close(&self, root: &Path) {
+        self.record(format!("close {}", root.display()));
+    }
+    async fn find_symbol(
+        &self,
+        _root: &Path,
+        name: &str,
+        _kind: Option<theodore_ports::CodeSymbolKind>,
+    ) -> theodore_ports::CodeIntelResult<theodore_ports::Answer<theodore_ports::CodeSymbol>> {
+        self.record(format!("find_symbol {name}"));
+        self.check()?;
+        let items = self
+            .symbols
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.name == name)
+            .cloned()
+            .collect();
+        Ok(Self::answer(items))
+    }
+    async fn file_symbols(
+        &self,
+        _root: &Path,
+        path: &str,
+    ) -> theodore_ports::CodeIntelResult<theodore_ports::Answer<theodore_ports::CodeSymbol>> {
+        self.record(format!("file_symbols {path}"));
+        self.check()?;
+        let items = self
+            .symbols
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.path == path)
+            .cloned()
+            .collect();
+        Ok(Self::answer(items))
+    }
+    async fn symbol_body(
+        &self,
+        _root: &Path,
+        path: &str,
+        name: &str,
+    ) -> theodore_ports::CodeIntelResult<(theodore_ports::CodeSymbol, String)> {
+        self.record(format!("symbol_body {path} {name}"));
+        self.check()?;
+        let sym = self
+            .symbols
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.path == path && s.name == name)
+            .cloned()
+            .ok_or_else(|| theodore_ports::CodeIntelError::NoSymbol {
+                path: path.into(),
+                name: name.into(),
+            })?;
+        let body = self
+            .bodies
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        Ok((sym, body))
+    }
+    async fn definition(
+        &self,
+        _root: &Path,
+        path: &str,
+        at: theodore_ports::Position,
+    ) -> theodore_ports::CodeIntelResult<theodore_ports::Answer<theodore_ports::CodeHit>> {
+        self.record(format!("definition {path}:{}:{}", at.line, at.col));
+        self.check()?;
+        let items = self
+            .hits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.is_definition)
+            .cloned()
+            .collect();
+        Ok(Self::answer(items))
+    }
+    async fn references(
+        &self,
+        _root: &Path,
+        path: &str,
+        at: theodore_ports::Position,
+    ) -> theodore_ports::CodeIntelResult<theodore_ports::Answer<theodore_ports::CodeHit>> {
+        self.record(format!("references {path}:{}:{}", at.line, at.col));
+        self.check()?;
+        Ok(Self::answer(self.hits.lock().unwrap().clone()))
+    }
+    async fn diagnostics(
+        &self,
+        _root: &Path,
+        path: Option<&str>,
+    ) -> theodore_ports::CodeIntelResult<theodore_ports::Answer<theodore_ports::Diagnostic>> {
+        self.record(format!("diagnostics {}", path.unwrap_or("*")));
+        self.check()?;
+        Ok(Self::answer(self.diagnostics.lock().unwrap().clone()))
+    }
+    async fn rename(
+        &self,
+        _root: &Path,
+        path: &str,
+        at: theodore_ports::Position,
+        new_name: &str,
+    ) -> theodore_ports::CodeIntelResult<Vec<theodore_ports::TextEdit>> {
+        self.record(format!("rename {path}:{}:{} {new_name}", at.line, at.col));
+        self.check()?;
+        Ok(self.renames.lock().unwrap().clone())
+    }
+    async fn install(
+        &self,
+        language: &theodore_ports::LanguageId,
+    ) -> theodore_ports::CodeIntelResult<()> {
+        self.record(format!("install {language}"));
+        Ok(())
+    }
+    async fn file_changed(&self, root: &Path, path: &str) {
+        self.record(format!("file_changed {} {path}", root.display()));
+    }
+    async fn status(
+        &self,
+        root: &Path,
+    ) -> theodore_ports::CodeIntelResult<Vec<theodore_ports::LanguageStatus>> {
+        self.record(format!("status {}", root.display()));
+        Ok(self.status.lock().unwrap().clone())
     }
 }
 
@@ -2459,6 +2680,9 @@ pub struct Fixtures {
     /// Wired only by [`Fixtures::deps_with_tools`]; `deps` runs agents
     /// without MCP.
     pub tools: Arc<FakeRunTools>,
+    /// Wired only by [`Fixtures::deps_with_code`]; `deps` has code
+    /// intelligence off.
+    pub code_intel: Arc<FakeCodeIntel>,
 }
 
 impl Fixtures {
@@ -2467,6 +2691,14 @@ impl Fixtures {
         Deps {
             tools: Some(self.tools.clone()),
             ..self.deps()
+        }
+    }
+
+    /// `deps_with_tools` with the [`FakeCodeIntel`] wired in.
+    pub fn deps_with_code(&self) -> Deps {
+        Deps {
+            code_intel: Some(self.code_intel.clone()),
+            ..self.deps_with_tools()
         }
     }
 
@@ -2488,6 +2720,7 @@ impl Fixtures {
             account_client_id: None,
             commands: self.commands.clone(),
             data_dir: self.data_dir.path().to_path_buf(),
+            code_intel: None,
         }
     }
 }
@@ -2518,6 +2751,7 @@ pub fn fixtures() -> Fixtures {
         commands: FakeCommands::new(),
         data_dir: Arc::new(tempfile::tempdir().expect("tempdir")),
         tools: FakeRunTools::new(),
+        code_intel: FakeCodeIntel::new(),
     }
 }
 

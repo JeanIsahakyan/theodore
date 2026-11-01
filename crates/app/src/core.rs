@@ -105,6 +105,9 @@ pub(crate) struct Inner {
     pub review_lock: tokio::sync::Mutex<()>,
     /// `review.auto_skills` runs at all (`Core::set_auto_skills`).
     pub auto_skills: std::sync::atomic::AtomicBool,
+    /// Worktrees open on the code-intelligence port, and the install
+    /// suggestions already made (`usecases::code_intel`).
+    pub code_intel: crate::usecases::code_intel::CodeIntelState,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -153,6 +156,7 @@ impl Core {
             config_repos: std::sync::Mutex::new(HashMap::new()),
             review_lock: tokio::sync::Mutex::new(()),
             auto_skills: std::sync::atomic::AtomicBool::new(true),
+            code_intel: Default::default(),
         });
 
         let core = Core(inner.clone());
