@@ -295,6 +295,7 @@ fn err(e: AppError) -> CommandError {
         AppError::Git(theodore_ports::GitError::Network(_)) | AppError::Offline => "offline",
         AppError::Git(_) => "git",
         AppError::Host(theodore_ports::HostError::Auth) => "auth",
+        AppError::Host(theodore_ports::HostError::RateLimited { .. }) => "rate_limited",
         AppError::Host(_) => "host",
         AppError::Grouper(_) => "grouping",
         AppError::NotFound(_) => "not_found",
@@ -305,10 +306,32 @@ fn err(e: AppError) -> CommandError {
         AppError::AccountRequired => "account_required",
         AppError::OfflineNotCached => "offline_not_cached",
     };
+    let message = match &e {
+        AppError::Host(HostError::RateLimited { reset_at }) => {
+            rate_limited_message(*reset_at, now_ms())
+        }
+        _ => e.to_string(),
+    };
     CommandError {
         code: code.into(),
-        message: e.to_string(),
+        message,
     }
+}
+
+/// "rate limited until 1793393359000" means nothing to a person: say how
+/// long to wait instead.
+fn rate_limited_message(reset_at: i64, now: i64) -> String {
+    let minutes = (reset_at - now + 59_999).div_euclid(60_000);
+    match minutes {
+        ..=1 => "Rate limit reached. Try again in a minute.".to_string(),
+        m => format!("Rate limit reached. Try again in {m} minutes."),
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 #[async_trait]
@@ -920,6 +943,29 @@ mod tests {
         let e = err(AppError::AccountRequired);
         assert_eq!(e.code, "account_required");
         assert_eq!(e.message, "Sign in to your Theodore account to continue");
+    }
+
+    #[test]
+    fn a_rate_limit_says_how_long_to_wait() {
+        let e = err(AppError::Host(HostError::RateLimited {
+            reset_at: now_ms() + 59 * 60_000 + 30_000,
+        }));
+        assert_eq!(e.code, "rate_limited");
+        assert_eq!(e.message, "Rate limit reached. Try again in 60 minutes.");
+
+        let now = 1_793_389_849_000;
+        assert_eq!(
+            rate_limited_message(now + 3_510_000, now),
+            "Rate limit reached. Try again in 59 minutes."
+        );
+        assert_eq!(
+            rate_limited_message(now + 5_000, now),
+            "Rate limit reached. Try again in a minute."
+        );
+        assert_eq!(
+            rate_limited_message(now - 5_000, now),
+            "Rate limit reached. Try again in a minute."
+        );
     }
 
     #[test]
