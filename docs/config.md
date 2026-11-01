@@ -211,7 +211,7 @@ variables, then get the space's variables and `env`.
 
 ```
 create ─▶ worktree ─▶ copy ─▶ ports ─▶ setup ──ok──▶ turn 1 (the goal)
-                                         │ └─fail─▶ Retry · Continue without setup
+                                         │ └─fail─▶ Retry · Continue without setup · Fix with agent
                                          └─ from the repo, not allowed ─▶ "Run commands from this repo?"
 turn ─▶ checkpoint ─▶ files changed? ─▶ check ─▶ ✓ / ✗ on the turn
                                                   └─ ✗: its output goes into the next prompt
@@ -221,9 +221,23 @@ archive ─▶ stop run ─▶ checkpoint ─▶ archive ─▶ remove worktree 
 
 - **Setup.** The space page shows "Setting up…" with the live log. The goal
   waits; sending a message is refused until setup ends. On failure (non-zero
-  exit, timeout) the page offers **Retry** and **Continue without setup**.
-  Notes from copying (a missing file, a path outside the project) are shown
-  with it.
+  exit, timeout) the page offers **Retry**, **Continue without setup** and
+  **Fix with agent**. Notes from copying (a missing file, a path outside the
+  project) are shown with it.
+- **No commands at all.** A project whose `spaces:` section sets none of
+  `setup` / `run` / `check` / `archive` shows **Set up with agent** instead:
+  a turn asking the space's agent to look at the repo (package manager,
+  lockfiles, README, Makefile/justfile, docker compose, existing scripts)
+  and write the section. The agent edits `.theodore/config.yaml` with its
+  normal tools, in its own worktree, like any other change — so whatever it
+  proposes reaches the project only once the space ships, and waits for the
+  usual trust prompt from there.
+- **Fix with agent.** Setup's `failed` state already lets you type in the
+  composer (only `running` / `waiting` block it); this button sends the
+  agent a turn with the setup command, how it failed and the tail of its
+  output, asking it to fix the script or the config. Setup itself is left
+  `failed` — Retry and Continue without setup stay put, and a Retry that
+  later succeeds still fires the goal it was waiting on.
 - **Check** is part of the turn: the space stays running until it ends, and
   Stop stops it too. A turn that changed nothing runs no check. Passed /
   failed shows as a chip on the turn, expandable to the output.

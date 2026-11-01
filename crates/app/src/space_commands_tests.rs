@@ -13,7 +13,7 @@ use theodore_contract::{
     SpaceStatus, SpaceTrustRequest, models,
 };
 use theodore_domain::{AgentId, Sha, Usage};
-use theodore_ports::{AgentEvent, Store};
+use theodore_ports::{AgentEvent, AgentMode, Store};
 
 use crate::testkit::{FakeScript, Fixtures, fixtures};
 use crate::{Core, Receivers};
@@ -846,4 +846,99 @@ async fn run_reports_a_port_already_held_instead_of_crashing() {
             .with_runtime(&s.id, |rt| rt.logs.iter().any(|l| l.line == message)),
         "the run log explains it"
     );
+}
+
+#[tokio::test]
+async fn set_up_with_agent_sends_a_turn_to_write_the_spaces_section() {
+    let e = started().await;
+    e.global("spaces: {copy: [], ports: 0}");
+    let s = e.create("").await;
+    assert_eq!(s.setup, None, "nothing configured, nothing to wait on");
+
+    e.f.agents
+        .push_script(done("added spaces: setup, run, check"));
+    e.core.space_setup_assist(&s.id).await.unwrap();
+    e.until(&s.id, |s| s.turns == 1).await;
+
+    let req = e.f.agents.last_request().expect("the turn ran");
+    assert_eq!(req.mode, AgentMode::Edit, "it must be able to write files");
+    assert!(
+        req.prompt.contains(".theodore/config.yaml"),
+        "{}",
+        req.prompt
+    );
+    assert!(req.prompt.contains("spaces:"), "{}", req.prompt);
+    assert!(req.prompt.contains("$THEODORE_PORT"), "{}", req.prompt);
+    for word in ["setup", "run", "check", "archive", "copy", "ports"] {
+        assert!(
+            req.prompt.contains(word),
+            "{word:?} missing: {}",
+            req.prompt
+        );
+    }
+}
+
+#[tokio::test]
+async fn fix_with_agent_quotes_the_failure_and_leaves_setup_retryable() {
+    let e = started().await;
+    e.global("spaces: {setup: make setup}");
+    e.f.commands.on(
+        "make setup",
+        FakeScript::Exit {
+            lines: vec!["no make".into()],
+            code: 3,
+        },
+    );
+    let s = e.create("Fix it").await;
+    let s = e
+        .until(&s.id, |s| setup_status(s) == Some(SetupStatus::Failed))
+        .await;
+    assert!(
+        s.setup.as_ref().unwrap().goal_pending,
+        "the goal still waits"
+    );
+
+    e.f.agents.push_script(done("fixed the Makefile"));
+    let s = e.core.space_fix_setup(&s.id).await.unwrap();
+    assert_eq!(
+        setup_status(&s),
+        Some(SetupStatus::Failed),
+        "setup itself is untouched: Retry / Continue without setup stay put"
+    );
+    e.until(&s.id, |s| s.turns == 1).await;
+
+    let req = e.f.agents.last_request().expect("the fix turn ran");
+    assert_eq!(req.mode, AgentMode::Edit);
+    assert!(req.prompt.contains("make setup"), "{}", req.prompt);
+    assert!(req.prompt.contains("setup exited with 3"), "{}", req.prompt);
+    assert!(req.prompt.contains("no make"), "{}", req.prompt);
+
+    // Retry still works, and the goal it was waiting on finally runs.
+    e.f.commands.on(
+        "make setup",
+        FakeScript::Exit {
+            lines: vec![],
+            code: 0,
+        },
+    );
+    e.f.agents.push_script(done("ok"));
+    e.core
+        .space_setup(SpaceSetupRequest {
+            space: s.id.clone(),
+            action: SetupAction::Retry,
+        })
+        .await
+        .unwrap();
+    e.until(&s.id, |s| {
+        setup_status(s) == Some(SetupStatus::Done) && s.turns == 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn fix_with_agent_refuses_when_setup_has_not_failed() {
+    let e = started().await;
+    let s = e.create("").await;
+    let err = e.core.space_fix_setup(&s.id).await.unwrap_err();
+    assert!(err.to_string().contains("hasn't failed"), "{err}");
 }
