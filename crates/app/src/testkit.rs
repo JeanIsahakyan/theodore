@@ -1486,6 +1486,9 @@ impl HostAdapter for FakeHost {
 
 // ── agents ────────────────────────────────────────────────────────────────
 
+/// A `push_tagged` entry: matched against a request, then spent.
+type TaggedScript = (Box<dyn Fn(&AgentRequest) -> bool + Send>, Vec<AgentEvent>);
+
 #[derive(Default)]
 pub struct FakeAgent {
     scripts: Mutex<VecDeque<Vec<AgentEvent>>>,
@@ -1493,7 +1496,7 @@ pub struct FakeAgent {
     /// (`space_naming`, `space_handoff` — always `stream_text: false`) a
     /// test wants to control without racing a turn's own queued script
     /// (`stream_text: true`, never matched here).
-    tagged: Mutex<Vec<(Box<dyn Fn(&AgentRequest) -> bool + Send>, Vec<AgentEvent>)>>,
+    tagged: Mutex<Vec<TaggedScript>>,
     hang_next: Mutex<bool>,
     /// Keeps a run's sender alive forever so its `events.recv()` never
     /// resolves (used to test cancellation deterministically).

@@ -739,7 +739,7 @@ async fn the_proposed_name_is_deduped_against_its_siblings() {
     core.create_space(request(&project, "Retry the export job"))
         .await
         .unwrap();
-    wait_until(|| f.agents.utility_requests().len() >= 1).await;
+    wait_until(|| !f.agents.utility_requests().is_empty()).await;
 
     // The first space already took this name.
     let mut req = request(&project, "Retry the export job");
@@ -826,7 +826,7 @@ async fn a_shipped_space_is_not_renamed_even_if_the_answer_lands_late() {
     let s = idle(&f, &created.id).await;
     // Let the creation's own (untagged) identity call run its course
     // first, so it can't race the tagged one pushed below.
-    wait_until(|| f.agents.utility_requests().len() >= 1).await;
+    wait_until(|| !f.agents.utility_requests().is_empty()).await;
     core.ship_space(theodore_contract::ShipSpaceRequest {
         space: s.id.clone(),
         action: theodore_contract::ShipAction::KeepBranch,
