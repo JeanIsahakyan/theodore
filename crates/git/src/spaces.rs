@@ -55,20 +55,23 @@ impl GitCli {
         // Worktree before repo, as everywhere (`locks`).
         let _wt = crate::locks::lock(&path).await;
 
-        if path.join(".git").exists() {
-            let head = GitProc {
-                cwd: &path,
-                askpass: &askpass,
-                args: &["rev-parse", "--verify", "HEAD"],
-                token: None,
-                stdin: None,
+        if std::fs::symlink_metadata(&path).is_ok() {
+            let git = self.space_git(&path, &askpass);
+            match git.verify_root().await {
+                Ok(()) => {
+                    let head = git.run_text(&["rev-parse", "--verify", "HEAD"]).await?;
+                    return Ok(Worktree {
+                        path,
+                        head: Sha::new(head.trim().to_string()),
+                    });
+                }
+                // Its `.git` is gone: whatever is there is kept, out of
+                // the way, and the worktree comes back from the ref.
+                Err(GitError::NotAWorktree(_)) => {
+                    self.move_aside(&path, id)?;
+                }
+                Err(e) => return Err(e),
             }
-            .run_text()
-            .await?;
-            return Ok(Worktree {
-                path,
-                head: Sha::new(head.trim().to_string()),
-            });
         }
 
         let _repo = crate::locks::lock(repo).await;
@@ -148,40 +151,33 @@ impl GitCli {
         validate_space_id(id)?;
         let askpass = self.ensure_askpass()?;
         let _wt = crate::locks::lock(worktree).await;
-        let run = |args: &'static [&'static str]| GitProc {
-            cwd: worktree,
-            askpass: &askpass,
-            args,
-            token: None,
-            stdin: None,
-        };
-        run(&["add", "-A"]).run().await?;
+        let git = self.space_git(worktree, &askpass);
+        git.verify_root().await?;
+        // Mid-rebase or with conflict markers in the files, a snapshot
+        // would record half an operation: the next turn checkpoints it.
+        if let Some(busy) = git.busy().await? {
+            return Err(GitError::Busy(busy));
+        }
+        git.run(&["add", "-A"]).await?;
         // Exit 1 = something is staged.
-        let staged = run(&["diff", "--cached", "--quiet"]).run_raw().await?;
+        let staged = git.run_raw(&["diff", "--cached", "--quiet"]).await?;
         if staged.status == 1 {
             // Theodore's own snapshot: no user hooks or signing prompts on
             // every agent turn, a fixed identity like other Theodore commits.
-            GitProc {
-                cwd: worktree,
-                askpass: &askpass,
-                args: &[
-                    "-c",
-                    "user.name=Theodore",
-                    "-c",
-                    "user.email=theodore@localhost",
-                    "-c",
-                    "commit.gpgsign=false",
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                    "commit",
-                    "-q",
-                    "-m",
-                    message,
-                ],
-                token: None,
-                stdin: None,
-            }
-            .run()
+            git.run(&[
+                "-c",
+                "user.name=Theodore",
+                "-c",
+                "user.email=theodore@localhost",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ])
             .await?;
         } else if staged.status != 0 {
             return Err(GitError::Command {
@@ -190,20 +186,43 @@ impl GitCli {
                 stderr: String::from_utf8_lossy(&staged.stderr).into_owned(),
             });
         }
-        let head = run(&["rev-parse", "--verify", "HEAD"]).run_text().await?;
+        let head = git.run_text(&["rev-parse", "--verify", "HEAD"]).await?;
         let head = head.trim().to_string();
         // Refs outside `refs/heads` and `refs/worktree` are shared by every
         // worktree, so this lands in the bare cache.
-        GitProc {
-            cwd: worktree,
-            askpass: &askpass,
-            args: &["update-ref", &space_ref(id), &head],
-            token: None,
-            stdin: None,
-        }
-        .run()
-        .await?;
+        git.run(&["update-ref", &space_ref(id), &head]).await?;
         Ok(Sha::new(head))
+    }
+
+    pub(crate) async fn worktree_busy_op(
+        &self,
+        worktree: &Path,
+    ) -> GitResult<Option<theodore_ports::WorktreeBusy>> {
+        let askpass = self.ensure_askpass()?;
+        let git = self.space_git(worktree, &askpass);
+        git.verify_root().await?;
+        git.busy().await
+    }
+
+    /// Moves a space directory that isn't its worktree any more to
+    /// `<root>/spaces/.moved-aside/<id>-<millis>`: never deleted, since
+    /// nothing proves it is Theodore's. Returns where it went.
+    fn move_aside(&self, path: &Path, id: &str) -> GitResult<PathBuf> {
+        let aside = self.spaces_root().join(".moved-aside");
+        std::fs::create_dir_all(&aside)?;
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let to = aside.join(format!("{id}-{millis}"));
+        std::fs::rename(path, &to)?;
+        tracing::warn!(
+            error.code = "space.worktree_moved_aside",
+            space = id,
+            to = %to.display(),
+            "space directory was not its git worktree; moved aside"
+        );
+        Ok(to)
     }
 
     pub(crate) async fn space_reset_op(
@@ -216,6 +235,12 @@ impl GitCli {
         let askpass = self.ensure_askpass()?;
         let refname = space_ref(id);
         let _wt = crate::locks::lock(worktree).await;
+        let git = self.space_git(worktree, &askpass);
+        git.verify_root().await?;
+        // Undo would throw the unfinished operation away with the turn.
+        if let Some(busy) = git.busy().await? {
+            return Err(GitError::Busy(busy));
+        }
         let steps: [&[&str]; 3] = [
             &["reset", "-q", "--hard", to.as_str()],
             // Untracked files the turn left behind; ignored ones (deps,
@@ -224,15 +249,7 @@ impl GitCli {
             &["update-ref", &refname, to.as_str()],
         ];
         for args in steps {
-            GitProc {
-                cwd: worktree,
-                askpass: &askpass,
-                args,
-                token: None,
-                stdin: None,
-            }
-            .run()
-            .await?;
+            git.run(args).await?;
         }
         Ok(())
     }
@@ -240,24 +257,33 @@ impl GitCli {
     pub(crate) async fn remove_space_worktree_op(&self, repo: &Path, id: &str) -> GitResult<()> {
         let askpass = self.ensure_askpass()?;
         let path = self.space_path(id)?;
-        if !path.exists() {
+        if std::fs::symlink_metadata(&path).is_err() {
             return Ok(());
         }
         let _wt = crate::locks::lock(&path).await;
         let _repo = crate::locks::lock(repo).await;
-        if let Some(path_str) = path.to_str() {
-            let _ = GitProc {
-                cwd: repo,
-                askpass: &askpass,
-                args: &["worktree", "remove", "--force", path_str],
-                token: None,
-                stdin: None,
+        match self.space_git(&path, &askpass).verify_root().await {
+            Ok(()) => {
+                if let Some(path_str) = path.to_str() {
+                    let _ = GitProc {
+                        cwd: repo,
+                        askpass: &askpass,
+                        args: &["worktree", "remove", "--force", path_str],
+                        token: None,
+                        stdin: None,
+                    }
+                    .run()
+                    .await;
+                }
+                // Verified ours above: what `worktree remove` left goes.
+                if path.exists() {
+                    std::fs::remove_dir_all(&path)?;
+                }
             }
-            .run()
-            .await;
-        }
-        if path.exists() {
-            std::fs::remove_dir_all(&path)?;
+            Err(GitError::NotAWorktree(_)) => {
+                self.move_aside(&path, id)?;
+            }
+            Err(e) => return Err(e),
         }
         let _ = GitProc {
             cwd: repo,

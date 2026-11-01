@@ -26,6 +26,7 @@ mod process;
 pub use process::isolate_from_user_config;
 mod safety;
 mod ship;
+mod space_guard;
 mod spaces;
 mod worktree;
 
@@ -476,6 +477,13 @@ impl GitPort for GitCli {
 
     async fn space_reset(&self, worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
         self.space_reset_op(worktree, space, to).await
+    }
+
+    async fn worktree_busy(
+        &self,
+        worktree: &Path,
+    ) -> GitResult<Option<theodore_ports::WorktreeBusy>> {
+        self.worktree_busy_op(worktree).await
     }
 
     async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {
