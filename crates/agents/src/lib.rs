@@ -197,7 +197,7 @@ impl AgentPort for AgentCli {
         let parser: Box<dyn process::LineParser> = match req.agent {
             AgentId::Claude => Box::new(claude::ClaudeParser::new()),
             AgentId::Codex => Box::new(codex::CodexParser::new()),
-            AgentId::Gemini => Box::new(gemini::GeminiParser::new()),
+            AgentId::Gemini => Box::new(gemini::GeminiParser::new(req.stream_text)),
         };
 
         let spec = process::SpawnSpec {
