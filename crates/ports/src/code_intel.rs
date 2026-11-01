@@ -168,6 +168,42 @@ pub enum TrustMode {
     Trusted,
 }
 
+/// Where language servers may run (`code_intel.lsp`, docs/code-intel.md
+/// §8): two switches, one per [`TrustMode`]. Off → that kind of worktree
+/// gets syntax and text answers only. A server is a process over the
+/// worktree, and most can run the project's code whatever their options
+/// say (rust-analyzer runs `cargo metadata`, which honours a
+/// `.cargo/config.toml` wrapper; typescript-language-server loads the
+/// worktree's `node_modules/typescript`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LspPolicy {
+    /// `TrustMode::Review` (someone's PR). Default off: on, a PR's code may
+    /// run; each server's review options still apply.
+    pub review: bool,
+    /// `TrustMode::Trusted` (spaces). Default on.
+    pub spaces: bool,
+}
+
+impl Default for LspPolicy {
+    fn default() -> Self {
+        Self {
+            review: false,
+            spaces: true,
+        }
+    }
+}
+
+impl LspPolicy {
+    /// Whether a worktree of `trust` may start language servers.
+    pub fn allows(&self, trust: TrustMode) -> bool {
+        match trust {
+            TrustMode::Review => self.review,
+            TrustMode::Trusted => self.spaces,
+        }
+    }
+}
+
 /// A worktree code intelligence is asked about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
@@ -178,6 +214,11 @@ pub struct Workspace {
     pub trust: TrustMode,
     /// The languages to serve; empty = detected from the files.
     pub languages: Vec<LanguageId>,
+    /// Repo-relative files to index first: a PR's diff, a space's changed
+    /// files. Names they define are indexed next (docs/code-intel.md §5.2).
+    /// Empty: no priority, the whole worktree in path order.
+    #[serde(default)]
+    pub focus_paths: Vec<String>,
 }
 
 /// State of one installable thing (a grammar or a server).
