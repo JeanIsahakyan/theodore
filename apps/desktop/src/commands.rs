@@ -982,6 +982,67 @@ pub async fn space_logs(
     op.run(async move { core.space_logs(space).await }).await
 }
 
+/// Starts a terminal in the space's worktree (docs/spaces.md "Terminal").
+#[tauri::command]
+#[specta::specta]
+pub async fn open_space_terminal(
+    op: crate::op::Op,
+    req: theodore_contract::OpenTerminalRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::SpaceTerminalInfo, CommandError> {
+    op.run(async move { core.open_space_terminal(req).await })
+        .await
+}
+
+/// Bytes typed or pasted into it.
+#[tauri::command]
+#[specta::specta]
+pub async fn write_space_terminal(
+    op: crate::op::Op,
+    req: theodore_contract::WriteTerminalRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.write_space_terminal(req).await })
+        .await
+}
+
+/// A new size in cells.
+#[tauri::command]
+#[specta::specta]
+pub async fn resize_space_terminal(
+    op: crate::op::Op,
+    req: theodore_contract::ResizeTerminalRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.resize_space_terminal(req).await })
+        .await
+}
+
+/// Kills its shell.
+#[tauri::command]
+#[specta::specta]
+pub async fn close_space_terminal(
+    op: crate::op::Op,
+    terminal: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.close_space_terminal(terminal).await })
+        .await
+}
+
+/// The space's open (or just-exited) terminals, with scrollback to seed
+/// `xterm.js`.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_space_terminals(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::SpaceTerminalInfo>, CommandError> {
+    op.run(async move { core.list_space_terminals(space).await })
+        .await
+}
+
 /// A project's merged config, with each value's file.
 #[tauri::command]
 #[specta::specta]
