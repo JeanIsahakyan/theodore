@@ -11,7 +11,7 @@ use theodore_contract::{
     SpaceReviewRequest, SpaceSendRequest, SpaceStatus, models,
 };
 use theodore_domain::{AgentId, Author, PrSummary, Sha, Usage};
-use theodore_ports::{AgentEvent, AgentMode, NewAction, Store, SyncActionCode};
+use theodore_ports::{AgentEvent, AgentMode, AgentRequest, NewAction, Store, SyncActionCode};
 
 use crate::testkit::{Fixtures, fixtures};
 use crate::usecases::spaces::space_chat_key;
@@ -685,6 +685,178 @@ async fn bootstrap_returns_spaces_and_a_space_transcript_without_opening_anythin
         .unwrap();
     assert_eq!(scoped.rows.len(), 2);
     assert!(scoped.rows.iter().all(|r| r.model == models::CHAT_MESSAGE));
+}
+
+// ── chat-proposed name and title ─────────────────────────────────────────────
+
+/// A tagged response for the identity one-shot call (`space_naming`),
+/// distinct from the turn's own (`stream_text: true`) request.
+fn identity_answer(name: &str, title: &str) -> Vec<AgentEvent> {
+    vec![AgentEvent::Done {
+        final_text: format!("NAME: {name}\nTITLE: {title}"),
+        usage: Usage::default(),
+    }]
+}
+
+fn is_identity_call(req: &AgentRequest) -> bool {
+    req.system.as_deref() == Some(crate::usecases::space_naming::IDENTITY_SYSTEM)
+}
+
+#[tokio::test]
+async fn the_chat_agent_renames_the_space_and_sets_its_title() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("retry-export-backoff", "Retry export on 429s"),
+    );
+    let created = core
+        .create_space(request(&project, "Retry the export job on 429s"))
+        .await
+        .unwrap();
+    idle(&f, &created.id).await;
+
+    wait_until(|| space(&f, &created.id).title.is_some()).await;
+    let s = space(&f, &created.id);
+    assert_eq!(s.name, "retry-export-backoff");
+    assert_eq!(s.branch, "space/retry-export-backoff");
+    assert_eq!(s.title.as_deref(), Some("Retry export on 429s"));
+
+    let utility = f.agents.last_utility_request().expect("one-shot ran");
+    assert!(!utility.stream_text);
+    assert_eq!(utility.mode, AgentMode::ReadOnly);
+}
+
+#[tokio::test]
+async fn the_proposed_name_is_deduped_against_its_siblings() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    // Each creation's own (untagged) identity call runs in the background
+    // too; waiting for its count after every one keeps it from racing the
+    // tag meant for the third space below.
+    f.agents.push_script(done("ok", 0.0));
+    core.create_space(request(&project, "Retry the export job"))
+        .await
+        .unwrap();
+    wait_until(|| f.agents.utility_requests().len() >= 1).await;
+
+    // The first space already took this name.
+    let mut req = request(&project, "Retry the export job");
+    req.name = Some("retry-export-backoff".into());
+    f.agents.push_script(done("ok", 0.0));
+    core.create_space(req).await.unwrap();
+    wait_until(|| f.agents.utility_requests().len() >= 2).await;
+
+    f.agents.push_script(done("ok", 0.0));
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("retry-export-backoff", "Retry export"),
+    );
+    let third = core
+        .create_space(request(&project, "Retry the export once more"))
+        .await
+        .unwrap();
+    idle(&f, &third.id).await;
+
+    wait_until(|| space(&f, &third.id).title.is_some()).await;
+    assert_eq!(space(&f, &third.id).name, "retry-export-backoff-2");
+}
+
+#[tokio::test]
+async fn a_user_typed_name_and_branch_are_kept_but_the_title_still_lands() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("retry-export-backoff", "Retry export on 429s"),
+    );
+    let mut req = request(&project, "Retry the export job on 429s");
+    req.name = Some("my-own-name".into());
+    req.branch = Some("me/my-own-branch".into());
+    let created = core.create_space(req).await.unwrap();
+    idle(&f, &created.id).await;
+
+    wait_until(|| space(&f, &created.id).title.is_some()).await;
+    let s = space(&f, &created.id);
+    assert_eq!(s.name, "my-own-name");
+    assert_eq!(s.branch, "me/my-own-branch");
+    assert_eq!(s.title.as_deref(), Some("Retry export on 429s"));
+}
+
+#[tokio::test]
+async fn a_bad_answer_keeps_the_slug_name_and_no_title() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    f.agents.push_tagged(
+        is_identity_call,
+        vec![AgentEvent::Error {
+            message: "rate limited".into(),
+            stderr_tail: String::new(),
+        }],
+    );
+    let created = core
+        .create_space(request(&project, "Retry the export job on 429s"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+    assert_eq!(s.name, "retry-the-export-job-on");
+
+    // No successful answer ever lands: nothing to wait for but time.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let s = space(&f, &created.id);
+    assert_eq!(s.name, "retry-the-export-job-on");
+    assert_eq!(s.title, None);
+}
+
+#[tokio::test]
+async fn a_shipped_space_is_not_renamed_even_if_the_answer_lands_late() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    // Turn 1's own call: no tagged answer, so it isn't mistaken for the
+    // identity one below.
+    f.agents.push_script(done("ok", 0.0));
+    f.git.push_checkpoint(Sha::new("kept1"));
+    let created = core
+        .create_space(request(&project, "Retry the export job on 429s"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+    // Let the creation's own (untagged) identity call run its course
+    // first, so it can't race the tagged one pushed below.
+    wait_until(|| f.agents.utility_requests().len() >= 1).await;
+    core.ship_space(theodore_contract::ShipSpaceRequest {
+        space: s.id.clone(),
+        action: theodore_contract::ShipAction::KeepBranch,
+        title: None,
+    })
+    .await
+    .unwrap();
+
+    // A valid answer, landing only now — after the space already shipped.
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("retry-export-backoff", "Retry export on 429s"),
+    );
+    crate::usecases::space_naming::apply(
+        &core,
+        s.id.clone(),
+        AgentId::Claude,
+        "Retry the export job on 429s".into(),
+        std::path::PathBuf::from(&s.worktree),
+        false,
+        false,
+    )
+    .await;
+    let after = space(&f, &s.id);
+    assert_eq!(after.name, s.name, "shipped: the name stays");
+    assert_eq!(
+        after.title.as_deref(),
+        Some("Retry export on 429s"),
+        "the title isn't tied to shipping"
+    );
 }
 
 // ── real git ────────────────────────────────────────────────────────────────

@@ -21,7 +21,9 @@ use crate::core::Core;
 use crate::usecases::one_shot;
 use crate::usecases::spaces::{slug, unique_name};
 
-const IDENTITY_SYSTEM: &str = "You name short-lived work in Theodore, a code review tool, from \
+/// Marks a naming/title call for a test's `push_tagged`, distinct from any
+/// other one-shot utility call (`space_handoff`'s own system prompt).
+pub(crate) const IDENTITY_SYSTEM: &str = "You name short-lived work in Theodore, a code review tool, from \
      what someone asked an agent to change. Answer with exactly two lines and nothing else:\n\
      NAME: 2 to 4 lowercase words for the change, separated by hyphens, no other punctuation.\n\
      TITLE: a title for this chat, 6 words or fewer, in sentence case. If the request names an \
@@ -33,12 +35,14 @@ struct Identity {
 }
 
 /// After the goal is sent as turn 1: the chat agent's cheapest model
-/// proposes a name and a title. The name (and the branch that follows it)
-/// is applied only where nothing already claimed it — the dialog's own
-/// name or branch, or a ship — and only after deduping it against its
-/// siblings; the title always is, it has no dialog field to override. Any
-/// failure (offline, no CLI, an answer that doesn't parse) leaves the
-/// slug name and the goal's first line title in place, silently.
+/// proposes a name and a title. The title is stored whenever a valid
+/// answer lands — it has no dialog field to override and no branch to
+/// stay consistent with. The name (and the branch that follows it) is
+/// applied only where nothing already claimed it — the dialog's own name
+/// or branch, or a ship — and only after deduping it against its
+/// siblings. Any failure (offline, no CLI, an answer that doesn't parse,
+/// an archived space) leaves the slug name and the goal's first line
+/// title in place, silently.
 pub(crate) async fn apply(
     core: &Core,
     space_id: String,
@@ -54,11 +58,11 @@ pub(crate) async fn apply(
     let Ok(space) = core.space_row(&space_id).await else {
         return;
     };
-    if space.status == SpaceStatus::Archived || space.shipped.is_some() {
+    if space.status == SpaceStatus::Archived {
         return;
     }
     let mut patch = serde_json::json!({ "title": identity.title });
-    if !user_named {
+    if !user_named && space.shipped.is_none() {
         let siblings = core
             .list_spaces(Some(space.project.clone()))
             .await

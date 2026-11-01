@@ -17,7 +17,9 @@ use crate::core::Core;
 use crate::usecases::one_shot;
 use crate::usecases::spaces::{HISTORY_MESSAGES, turn_prompt};
 
-const SUMMARY_SYSTEM: &str = "Summarize an earlier part of a conversation between someone and \
+/// Marks a handoff-summary call for a test's `push_tagged`, distinct from
+/// `space_naming`'s own system prompt.
+pub(crate) const SUMMARY_SYSTEM: &str = "Summarize an earlier part of a conversation between someone and \
      a coding agent, so a different agent session can pick up the work without the full \
      transcript. Cover the goal, decisions made, files or areas touched, and what is left to \
      do. Plain prose, under 12 lines, no headings, no code blocks, nothing else.";
