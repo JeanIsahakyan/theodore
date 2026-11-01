@@ -71,7 +71,7 @@ import {
   settingUp,
   setupView,
 } from './commands';
-import { GlobalConfigSection } from './ConfigSection';
+import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import {
   CheckChip,
   LogsDrawer,
@@ -306,7 +306,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
               onChanged={refreshConfig}
             />
           </div>
-          <SpaceChat space={space} handle={chat} />
+          <SpaceChat space={space} config={config} handle={chat} />
         </section>
         {showChanges && (
           <section className="flex min-w-0 flex-1 flex-col">
@@ -693,9 +693,11 @@ const ShipControls = observer(function ShipControls({
 /** The space's chat: its turns, the live one, the composer. */
 export const SpaceChat = observer(function SpaceChat({
   space,
+  config,
   handle,
 }: {
   space: Space;
+  config: SpaceConfigView | null;
   /** `C` / `M` on the page. */
   handle: MutableRefObject<ChatHandle | null>;
 }) {
@@ -778,11 +780,14 @@ export const SpaceChat = observer(function SpaceChat({
         <SetupStage space={space} />
         <SetupNote space={space} />
         {messages.length === 0 && !run && !setupStage && (
-          <ChatEmpty
-            icon={<Pencil />}
-            title="Tell the agent what to change"
-            hint="It works in its own worktree; your checkout is never touched."
-          />
+          <>
+            <ChatEmpty
+              icon={<Pencil />}
+              title="Tell the agent what to change"
+              hint="It works in its own worktree; your checkout is never touched."
+            />
+            <SpaceSetupAssistHint space={space} config={config} />
+          </>
         )}
         {messages.map((m) => {
           const agent = m.author.kind === 'agent';

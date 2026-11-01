@@ -34,6 +34,12 @@ pub const DEFAULT_CHECK_TIMEOUT_S: u64 = 600;
 pub const DEFAULT_ARCHIVE_TIMEOUT_S: u64 = 120;
 /// More would be a typo, not a plan.
 pub const MAX_PORTS: u16 = 16;
+/// `spaces.ports` unset: a space gets this many free ports so `run` has
+/// one to bind without asking (explicit `ports: 0` turns it off).
+pub const DEFAULT_PORTS: u16 = 2;
+/// `spaces.copy` unset: a space's worktree gets the project's env files
+/// (explicit `copy: []` turns it off).
+pub const DEFAULT_COPY: &str = ".env*";
 
 /// The typed, merged config. Unknown keys are dropped here (and reported
 /// by `Merged::unknown`).
@@ -89,10 +95,13 @@ impl OneOrMany {
 #[serde(default)]
 pub struct SpacesConfig {
     /// Paths (a `*` / `?` glob in the last segment) copied from the
-    /// project's local checkout into a new space.
-    pub copy: Vec<String>,
-    /// Free TCP ports reserved per space.
-    pub ports: u16,
+    /// project's local checkout into a new space. `None`: unset by any
+    /// layer, defaults to `[DEFAULT_COPY]`; `Some(vec![])` is an explicit
+    /// `copy: []`, turning it off.
+    pub copy: Option<Vec<String>>,
+    /// Free TCP ports reserved per space. `None`: unset, defaults to
+    /// `DEFAULT_PORTS`; `Some(0)` is explicit, turning it off.
+    pub ports: Option<u16>,
     pub env: BTreeMap<String, String>,
     pub setup: Option<String>,
     pub run: Option<String>,
@@ -134,7 +143,15 @@ impl SpacesConfig {
     }
 
     pub fn port_count(&self) -> u16 {
-        self.ports.min(MAX_PORTS)
+        self.ports.unwrap_or(DEFAULT_PORTS).min(MAX_PORTS)
+    }
+
+    /// Paths copied into a new space's worktree (§3): `copy` as set, or
+    /// `[DEFAULT_COPY]` when no layer sets it at all.
+    pub fn effective_copy(&self) -> Vec<String> {
+        self.copy
+            .clone()
+            .unwrap_or_else(|| vec![DEFAULT_COPY.to_string()])
     }
 }
 
@@ -524,8 +541,8 @@ pub const GLOBAL_TEMPLATE: &str = r#"# Theodore global config (docs/config.md).
 #   ignore_findings: ["vendor/**"]
 
 # spaces:
-#   copy: [.env, .env.local]
-#   ports: 1                # $THEODORE_PORT, $THEODORE_PORT_1, …
+#   copy: [.env, .env.local]  # default: [".env*"]; [] turns it off
+#   ports: 1                # $THEODORE_PORT, $THEODORE_PORT_1, … (default: 2; 0 turns it off)
 #   env:
 #     APP_URL: "http://localhost:$THEODORE_PORT"
 #   setup: pnpm install

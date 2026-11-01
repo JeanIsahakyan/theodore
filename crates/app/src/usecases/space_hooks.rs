@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use theodore_contract::{
     EffectiveConfig, GlobalConfigInfo, ProcessStatus, SetupAction, SetupStatus, Space, SpaceCheck,
-    SpaceCheckStatus, SpaceCommandKind, SpaceConfigView, SpaceLogLine, SpaceProcess,
+    SpaceCheckStatus, SpaceCommandKind, SpaceConfigView, SpaceLogLine, SpaceMode, SpaceProcess,
     SpaceRunRequest, SpaceSendRequest, SpaceSetup, SpaceSetupRequest, SpaceStatus,
     SpaceTrustRequest, ToastLevel, models,
 };
@@ -284,6 +284,64 @@ impl Core {
                 .await
             }
         }
+    }
+
+    /// "Set up with agent" (docs/config.md §2, §8): the project has no
+    /// `spaces:` commands yet, so send the space's own agent a turn to
+    /// look at the repo and write them. Edit mode, so it can actually
+    /// write the file — not the space's sticky mode, which may be Ask.
+    pub async fn space_setup_assist(&self, space: &str) -> AppResult<Space> {
+        self.space_send(SpaceSendRequest {
+            space: space.to_string(),
+            text: crate::usecases::space_setup_assist::setup_assist_prompt(),
+            agent: None,
+            model: None,
+            mode: Some(SpaceMode::Edit),
+            attachments: None,
+        })
+        .await?;
+        self.space_row(space).await
+    }
+
+    /// "Fix with agent", next to Retry / Continue without setup: setup's
+    /// `Failed` already lets the composer send (only `running` /
+    /// `waiting` block it, in `space_send`), so this just sends the
+    /// diagnostic turn — the setup command, how it failed, and its log
+    /// tail — asking the agent to fix the cause. Setup itself is left
+    /// `failed`: Retry and Continue without setup stay exactly where they
+    /// were, and a Retry that later succeeds still fires the goal it was
+    /// waiting on.
+    pub async fn space_fix_setup(&self, space: &str) -> AppResult<Space> {
+        let row = self.space_row(space).await?;
+        let failure = row
+            .setup
+            .as_ref()
+            .filter(|s| s.status == SetupStatus::Failed)
+            .and_then(|s| s.error.clone())
+            .ok_or_else(|| AppError::Invalid("setup hasn't failed".into()))?;
+        let project = self.space_project(&row).await?;
+        let cfg = self.space_config_of(&row, &project).await;
+        let script = cfg
+            .command(SpaceCommandKind::Setup)
+            .map(|c| c.script)
+            .unwrap_or_default();
+        let tail = self.with_runtime(space, |rt| {
+            rt.logs
+                .iter()
+                .filter(|l| l.kind == SpaceCommandKind::Setup)
+                .map(|l| l.line.clone())
+                .collect::<Vec<_>>()
+        });
+        self.space_send(SpaceSendRequest {
+            space: space.to_string(),
+            text: crate::usecases::space_setup_assist::fix_setup_prompt(&script, &failure, &tail),
+            agent: None,
+            model: None,
+            mode: Some(SpaceMode::Edit),
+            attachments: None,
+        })
+        .await?;
+        self.space_row(space).await
     }
 
     /// "Run commands from this repo?": Allow (stored for the project

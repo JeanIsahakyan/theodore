@@ -935,6 +935,31 @@ pub async fn space_setup(
     op.run(async move { core.space_setup(req).await }).await
 }
 
+/// "Set up with agent": no `spaces:` commands yet — ask the space's agent
+/// to look at the repo and write them (docs/config.md §2, §8).
+#[tauri::command]
+#[specta::specta]
+pub async fn space_setup_assist(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.space_setup_assist(space).await })
+        .await
+}
+
+/// "Fix with agent": setup failed — ask the agent to fix the cause.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_fix_setup(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.space_fix_setup(space).await })
+        .await
+}
+
 /// Starts or stops the space's `run` command.
 #[tauri::command]
 #[specta::specta]

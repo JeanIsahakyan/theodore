@@ -291,6 +291,12 @@ export const api = {
   spaceTrust: (req: SpaceTrustRequest) => call<Space>('space_trust', { req }),
   /** Retry a failed setup, or continue without it. */
   spaceSetup: (req: SpaceSetupRequest) => call<Space>('space_setup', { req }),
+  /** "Set up with agent": no `spaces:` commands yet — ask the agent to
+   *  look at the repo and write them. */
+  spaceSetupAssist: (space: string) =>
+    call<Space>('space_setup_assist', { space }),
+  /** "Fix with agent": setup failed — ask the agent to fix the cause. */
+  spaceFixSetup: (space: string) => call<Space>('space_fix_setup', { space }),
   /** Starts or stops the space's `run` command. */
   spaceRun: (req: SpaceRunRequest) => call<Space>('space_run', { req }),
   spaceLogs: (space: string) => call<SpaceLogLine[]>('space_logs', { space }),
