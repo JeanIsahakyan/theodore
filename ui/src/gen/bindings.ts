@@ -115,6 +115,13 @@ export const commands = {
 	spaceTrust: (req: SpaceTrustRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("space_trust", { req })),
 	/**  Retry a failed setup, or continue without it. */
 	spaceSetup: (req: SpaceSetupRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("space_setup", { req })),
+	/**
+	 *  "Set up with agent": no `spaces:` commands yet — ask the space's agent
+	 *  to look at the repo and write them (docs/config.md §2, §8).
+	 */
+	spaceSetupAssist: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("space_setup_assist", { space })),
+	/**  "Fix with agent": setup failed — ask the agent to fix the cause. */
+	spaceFixSetup: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("space_fix_setup", { space })),
 	/**  Starts or stops the space's `run` command. */
 	spaceRun: (req: SpaceRunRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("space_run", { req })),
 	/**  The last lines of the space's commands. */

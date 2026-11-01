@@ -383,6 +383,8 @@ pub struct FakeGit {
     /// Heads the next `space_checkpoint` calls return, in order; when empty
     /// a checkpoint leaves the space where it was (nothing changed).
     checkpoint_heads: Mutex<VecDeque<Sha>>,
+    /// Errors the next `space_checkpoint` calls fail with, before any head.
+    checkpoint_errors: Mutex<VecDeque<GitError>>,
     /// `(space, message)` of every `space_checkpoint`.
     pub checkpoints: Mutex<Vec<(String, String)>>,
     removed_spaces: Mutex<Vec<String>>,
@@ -490,6 +492,7 @@ impl FakeGit {
             working_state_calls: Mutex::new(Vec::new()),
             removed_worktrees: Mutex::new(Vec::new()),
             checkpoint_heads: Mutex::new(VecDeque::new()),
+            checkpoint_errors: Mutex::new(VecDeque::new()),
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
             space_root: Mutex::new(None),
@@ -643,6 +646,11 @@ impl FakeGit {
     /// The next `space_checkpoint` moves the space to `head`.
     pub fn push_checkpoint(&self, head: Sha) {
         self.checkpoint_heads.lock().unwrap().push_back(head);
+    }
+
+    /// The next `space_checkpoint` fails with `e`.
+    pub fn push_checkpoint_error(&self, e: GitError) {
+        self.checkpoint_errors.lock().unwrap().push_back(e);
     }
 
     /// Space worktrees become real directories under `root`.
@@ -880,6 +888,9 @@ impl GitPort for FakeGit {
             .lock()
             .unwrap()
             .push((space.to_string(), message.to_string()));
+        if let Some(e) = self.checkpoint_errors.lock().unwrap().pop_front() {
+            return Err(e);
+        }
         let refname = theodore_ports::space_ref(space);
         let next = self.checkpoint_heads.lock().unwrap().pop_front();
         let mut refs = self.resolve_refs.lock().unwrap();

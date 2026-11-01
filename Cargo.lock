@@ -5736,6 +5736,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-specta",
  "tempfile",
+ "theodore-agents",
  "theodore-app",
  "theodore-contract",
  "theodore-domain",

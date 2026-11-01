@@ -80,7 +80,7 @@ async function render(s: Space) {
   );
   m = await mount(
     <RootStoreProvider store={store}>
-      <SpaceChat space={s} handle={createRef()} />
+      <SpaceChat space={s} config={null} handle={createRef()} />
     </RootStoreProvider>,
   );
   await settle();

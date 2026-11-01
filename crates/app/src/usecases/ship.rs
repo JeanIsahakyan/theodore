@@ -97,7 +97,8 @@ impl Core {
         let repo_path = self.ensure_project_cache(&project).await?;
         // Edits made by hand in the worktree since the last turn ship too.
         let head = if Path::new(&space.worktree).exists() {
-            self.0
+            let saved = self
+                .0
                 .deps
                 .git
                 .space_checkpoint(
@@ -105,7 +106,14 @@ impl Core {
                     &space.id,
                     &format!("{}: edits before shipping", space.name),
                 )
-                .await?
+                .await;
+            match saved {
+                Ok(head) => head,
+                // Its `.git` is gone: the last checkpoint is what ships.
+                Err(GitError::NotAWorktree(_)) => space.head_sha.clone(),
+                // A rebase or conflict mid-way: nothing half-done ships.
+                Err(e) => return Err(e.into()),
+            }
         } else {
             space.head_sha.clone()
         };

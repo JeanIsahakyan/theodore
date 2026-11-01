@@ -293,6 +293,21 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// "Set up with agent": no `spaces:` commands yet — ask the space's
+    /// agent to look at the repo and write them.
+    async fn space_setup_assist(
+        &self,
+        _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Fix with agent": setup failed — ask the agent to fix the cause.
+    async fn space_fix_setup(
+        &self,
+        _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
     /// Starts or stops the space's `run` command.
     async fn space_run(
         &self,

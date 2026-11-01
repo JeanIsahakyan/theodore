@@ -307,7 +307,10 @@ counts as seen while the window has focus.
 
 A space can be set up for its project by the `spaces:` section of the project
 config — files copied in, free ports, env, and `setup` / `run` / `check` /
-`archive` commands. See `docs/config.md`.
+`archive` commands. Nothing configured gets `.env*` and 2 ports anyway, so a
+space works with zero config; a project with no commands at all offers "Set
+up with agent" instead, and a failed setup offers "Fix with agent" next to
+Retry. See `docs/config.md`.
 
 ## 4. What makes it Theodore's
 
@@ -362,9 +365,23 @@ remaining prompts and limits.
     whatever `HEAD` is; a `HEAD` that no longer descends from the base is
     flagged instead of silently recorded.
   - Theodore's secrets are stripped from the agent env (existing).
-  - Not an OS sandbox: a CLI with shell access can still leave its directory.
-    Later: run agents under a macOS sandbox profile that only allows writes
-    inside the space (open question 4).
+  - Every git command Theodore runs in the worktree first checks that git
+    resolves exactly that worktree (§6 "Worktree guard"); otherwise nothing
+    runs, so a lost `.git` never turns into `add -A` / `reset --hard` on a
+    parent repository.
+  - File-edit tools stay inside the worktree and the turn's attachment dirs
+    (Edit and Run; Ask can't edit at all):
+
+    | Agent | How | Verified |
+    | --- | --- | --- |
+    | Claude Code | no blanket `Edit`/`Write` allow; `--settings` with `Edit(//<dir>/**)` rules (Edit) and a `PreToolUse` hook on `Edit\|Write\|MultiEdit\|NotebookEdit` (Edit and Run): Theodore's own binary run as `--theodore-edit-guard <dir>…` exits 2 for a path outside, symlinks resolved, `..` refused. The hook holds under `bypassPermissions` too | live, 2.1.312 |
+    | Codex | its own `workspace-write` sandbox: writes only in cwd (plus `/tmp` and `$TMPDIR`), for shell and patches alike | flags only |
+    | Gemini | its file tools refuse paths outside the workspace (the CLI's own check); nothing added | not installed here |
+
+  - Not an OS sandbox: in Edit and Run, a shell command (Claude's Bash,
+    Gemini's shell) can still write outside its directory. Later: run agents
+    under a macOS sandbox profile that only allows writes inside the space
+    (open question 4).
 
 ### One session per space
 
@@ -459,6 +476,39 @@ PR's revisions), "undo last turn" is a ref move plus `reset --hard` and
 `git commit`s are simply kept. Checkpoints are authored by Theodore and never
 leave the cache; what ships is one squashed commit authored by you (§12 #2).
 
+**Worktree guard** (checkpoint, Undo, the busy check, reopen, archive):
+
+```
+git in ~/.theodore/spaces/<id>   GIT_CEILING_DIRECTORIES=~/.theodore/spaces, no inherited GIT_DIR
+  ├─ real dir, `.git` is a file, rev-parse --show-toplevel == the dir (symlinks resolved),
+  │  common dir under ~/.theodore/repos                         ─▶ run the command
+  └─ anything else (`.git` gone, a `git init` in its place, …)  ─▶ NotAWorktree, nothing run
+```
+
+The ceiling alone already makes git fail instead of walking up into a
+git-controlled home; the guard says why. A directory that fails it is never
+deleted: reopening the space (next turn, Undo, unarchive) or archiving it
+moves it to `~/.theodore/spaces/.moved-aside/<id>-<millis>` and recreates the
+worktree from `refs/theodore/spaces/<id>`.
+
+**Busy worktree**: before a checkpoint or Undo Theodore asks git what is
+unfinished there (`GitPort::worktree_busy`, one `WorktreeBusy`):
+
+| Found (`rev-parse --git-path`, `ls-files -u`) | Busy |
+| --- | --- |
+| `rebase-merge/`, `rebase-apply/` | rebase (also `git am`) |
+| `MERGE_HEAD` | merge |
+| `CHERRY_PICK_HEAD` | cherry-pick |
+| `REVERT_HEAD` | revert |
+| unmerged index entries, none of the above | unresolved conflicts |
+
+| While busy | |
+| --- | --- |
+| a turn ends | answer kept, no checkpoint, no `turn_log` entry; space `failed` with "checkpoint skipped: rebase in progress" |
+| Undo | refused: "can't undo: … finish or abort it first" |
+| Archive, Ship | refused with the same reason; nothing half-done is committed |
+| next turn after it's finished | checkpoints as usual |
+
 **Shipping, step by step**
 
 - *Author*: `user.name` / `user.email` as git resolves them (a local
@@ -544,6 +594,8 @@ Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
 | `status = running` | → `failed` "interrupted: Theodore was closed" |
 | dirty worktree | kept; the next turn (or archive) checkpoints it first |
 | worktree dir missing | recreated from `refs/theodore/spaces/<id>` |
+| dir there, but not the space's worktree (`.git` gone or foreign) | git refuses to run in it (§6 "Worktree guard"); on reopen or archive it is moved to `spaces/.moved-aside/`, never deleted, and recreated from the ref |
+| a rebase, merge or conflict left in the worktree | no checkpoint or Undo until it is finished or aborted (§6 "Busy worktree") |
 | ref missing too | `failed`, transcript kept, "Restart from base" offered |
 
 ---
@@ -579,6 +631,8 @@ downloaded to this Mac yet".
 | `undo_space_turn` | worktree and ref back to the last live turn's `before`; the turn is marked undone |
 | `space_send_feedback` | threads / drafts / findings of the space's PR or own review, quoted as one turn |
 | `ship_space` | `open_pr` · `open_draft_pr` · `push` (host project) or `merge_locally` · `keep_branch` (local folder), with an optional title (§6) |
+| `space_setup_assist` | "Set up with agent": no `spaces:` commands at all — a turn asking the agent to look at the repo and write them (`docs/config.md` §2, §8) |
+| `space_fix_setup` | "Fix with agent": setup failed — a turn with the command, its exit status and the log tail, asking the agent to fix the cause |
 
 ## 10. The flag
 
@@ -597,7 +651,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel` |
 | **Later** | OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 

@@ -806,6 +806,18 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.space_setup(req).await.map_err(err)
     }
+    async fn space_setup_assist(
+        &self,
+        space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.space_setup_assist(&space).await.map_err(err)
+    }
+    async fn space_fix_setup(
+        &self,
+        space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.space_fix_setup(&space).await.map_err(err)
+    }
     async fn space_run(
         &self,
         req: theodore_contract::SpaceRunRequest,

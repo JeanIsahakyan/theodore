@@ -18,6 +18,7 @@ pub mod claude;
 pub mod codex;
 pub mod config;
 pub mod detect;
+pub mod edit_guard;
 pub mod env;
 pub mod gemini;
 pub mod models;

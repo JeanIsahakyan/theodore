@@ -22,6 +22,7 @@ pub mod skills;
 pub mod space_commands;
 pub mod space_feedback;
 pub mod space_hooks;
+pub mod space_setup_assist;
 pub mod space_tools;
 pub mod spaces;
 pub mod suggestions;
