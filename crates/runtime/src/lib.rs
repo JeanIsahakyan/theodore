@@ -253,7 +253,8 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         (None, None) => (real_adapters(cfg)?, None),
     };
     let backend = Arc::new(CoreTools::default());
-    let mcp = Arc::new(McpRunTools::start(backend.clone(), backend.clone()).await?);
+    let mcp =
+        Arc::new(McpRunTools::start(backend.clone(), backend.clone(), backend.clone()).await?);
     let claude_home = skills_dir(cfg.sandbox.is_some(), &cfg.data_dir, dirs::home_dir());
 
     let worktree_locks = WorktreeLocks::new();
@@ -279,6 +280,8 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         worktree_lease: Arc::new(worktree_gc::WorktreeLeaseAdapter::new(
             worktree_locks.clone(),
         )),
+        // The `crates/code-intel` facade, once wired: off until then.
+        code_intel: None,
     };
     let (core, receivers) = Core::start(deps);
     if let Some(sb) = &sandbox {

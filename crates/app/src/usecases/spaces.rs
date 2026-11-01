@@ -19,6 +19,7 @@ use theodore_ports::{
 use tokio_util::sync::CancellationToken;
 
 use crate::core::{Core, RunHandle};
+use crate::deps::CodeTools;
 use crate::error::{AppError, AppResult};
 use crate::usecases::agents::tool_log_line_with;
 use crate::usecases::attachments::{agent_attachments, with_attachments};
@@ -178,6 +179,7 @@ impl Core {
         }])
         .await?;
         drop(ports_guard);
+        self.spawn_space_code(&space, &project);
         theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceCreated {
             mode: crate::usecases::telemetry::wire_str(&space.mode),
         });
@@ -331,6 +333,18 @@ impl Core {
             Some(_) => (wrap(ask), Some(replay)),
             None => (replay, None),
         };
+        // Opens the worktree on code intelligence; the turn's mode decides
+        // whether its tools may edit.
+        let code = match self.0.deps.tools {
+            Some(_) => {
+                let at = Space {
+                    worktree: wt.path.display().to_string(),
+                    ..space.clone()
+                };
+                self.space_code_tools(&at, &project, mode).await
+            }
+            None => CodeTools::Off,
+        };
         let turn = Turn {
             run_id,
             message: message_id.clone(),
@@ -344,12 +358,17 @@ impl Core {
             system: self
                 .space_review_rules(&space, &project, &wt.path)
                 .await
-                .with_system(Some(system_prompt(&space, self.0.deps.tools.is_some())))
+                .with_system(Some(system_prompt(
+                    &space,
+                    self.0.deps.tools.is_some(),
+                    code,
+                )))
                 .unwrap_or_default(),
             env: self.space_agent_env(&space).await,
             attachments: agent_attachments(&attachments),
             cwd: wt.path,
             cancel,
+            code,
         };
         let core = self.clone();
         let span = tracing::info_span!("space_turn", space = %space.id, agent = agent.as_str());
@@ -427,6 +446,7 @@ impl Core {
             .git
             .remove_space_worktree(&repo_path, &space.id)
             .await?;
+        self.close_code_root(Path::new(&space.worktree)).await;
         if let Some(review) = &space.review_pr {
             // Best-effort: a review that was never stored is already gone.
             let _ = self.close_branch_review(review).await;
@@ -564,7 +584,9 @@ impl Core {
             group: false,
         })
         .await?;
-        self.space_row(&space.id).await
+        let space = self.space_row(&space.id).await?;
+        self.spawn_space_code(&space, &project);
+        Ok(space)
     }
 
     /// Turns left `running` by a previous process can never finish
@@ -697,6 +719,8 @@ struct Turn {
     attachments: Vec<AgentAttachment>,
     cwd: PathBuf,
     cancel: CancellationToken,
+    /// The code tools this turn's `space-tools` lists.
+    code: CodeTools,
 }
 
 /// The stored session the next turn continues: same agent, same worktree.
@@ -795,6 +819,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         attachments,
         cwd,
         cancel,
+        code,
     } = turn;
     // The space's commands as tools, for this turn only.
     let mcp = core
@@ -802,7 +827,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         .deps
         .tools
         .as_ref()
-        .map(|t| t.register_space(&run_id, &space.id, agent));
+        .map(|t| t.register_space(&run_id, &space.id, agent, code));
     let tools_guard = crate::usecases::agents::ToolsGuard {
         core,
         mcp: mcp.clone(),
@@ -1254,11 +1279,15 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
      URLs; start_app to try it), read_logs (setup, run, check or archive output) and \
      space_info.";
 
-fn system_prompt(space: &Space, tools: bool) -> String {
+fn system_prompt(space: &Space, tools: bool, code: CodeTools) -> String {
     let mut prompt = base_system_prompt(space);
     if tools {
         prompt.push('\n');
         prompt.push_str(SPACE_TOOLS_PROMPT);
+    }
+    if let Some(hint) = crate::usecases::code_intel::code_prompt(code) {
+        prompt.push('\n');
+        prompt.push_str(hint);
     }
     prompt
 }

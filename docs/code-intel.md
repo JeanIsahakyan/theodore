@@ -5,7 +5,15 @@ Instead of grepping a name and reading whole files, an agent asks "where is
 `save` defined, who calls it, does this still type-check" and gets
 `file:line` answers with a few lines of context.
 
-Status: **design**, not built. Nothing here ships yet.
+Status: **design**; the app side is built (config, open/close, install
+flow, MCP tools, Settings → Languages commands) against the port, and runs
+without it until the `crates/code-intel` facade is wired into `Deps`.
+
+| Hook | Where |
+| --- | --- |
+| PR opened, review run starts | `open_pr.rs` `finish_open_full`, `space_tools.rs` `pr_tools`: `TrustMode::Review` |
+| space created / unarchived / turn | `spaces.rs` `create_space`, `unarchive_space`, `space_send`: trusted per §8 |
+| closed | `spaces.rs` `archive_space`, `projects.rs` `close_branch_review`, runtime worktree GC → `Core::code_intel_sweep` |
 
 ---
 
@@ -366,6 +374,8 @@ Some servers run code from the project they open.
 | `code_intel.max_servers` | `4` | alive at once |
 | `code_intel.idle_minutes` | `10` | idle server shutdown |
 | `code_intel.max_file_kb` | `1024` | larger files are not indexed |
+| `code_intel.lsp.spaces` | `true` | language servers in spaces; global / local file only |
+| `code_intel.lsp.review` | `false` | language servers in review runs: a PR's code may run; global / local file only, never the repo's |
 
 Settings → Languages lists each detected language with its grammar, server
 (found / downloaded / not available), index progress, and Install / Remove.
