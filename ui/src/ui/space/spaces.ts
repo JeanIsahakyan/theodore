@@ -90,7 +90,7 @@ export function spaceGlyph(
  *  not looking at the space. `null` when nothing finished. */
 export function turnEnded(
   prev: Pick<Space, 'status'> | undefined,
-  next: Pick<Space, 'status' | 'name' | 'error' | 'goal'>,
+  next: Pick<Space, 'status' | 'name' | 'error' | 'goal' | 'title'>,
 ): { level: 'info' | 'error'; text: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
   if (next.status === 'failed') {
@@ -147,14 +147,18 @@ export function unshipped(s: Pick<Space, 'shipped' | 'head_sha'>): boolean {
   return s.shipped != null && s.shipped.head !== s.head_sha;
 }
 
-/** The title Open PR / Merge locally proposes: the goal's first line,
- *  else the space's name. */
-/** What a space is called on screen: the first line of what you asked
- *  for, as you wrote it. The slug (`name`) is only for its branch. */
-export function spaceTitle(s: Pick<Space, 'goal' | 'name'>): string {
+/** What a space is called on screen: the chat agent's proposed title
+ *  (GitHub #78 — a raw first line reads as a run-on sentence), else the
+ *  first line of what you asked for, as you wrote it, else the space's
+ *  name. The slug (`name`) is only for its branch; the goal's first line
+ *  is still what Open PR / Merge locally defaults their own title to
+ *  (`defaultTitle`, unrelated to this one). */
+export function spaceTitle(s: Pick<Space, 'goal' | 'name' | 'title'>): string {
+  const proposed = s.title?.trim();
+  const raw = proposed && proposed.length > 0 ? proposed : defaultTitle(s);
   // Short enough for a sidebar row or a notification: no trailing period
   // (it reads as "formatter.: turn done"), cut at a word near 60 chars.
-  const t = defaultTitle(s).replace(/[.。!]+$/u, '');
+  const t = raw.replace(/[.。!]+$/u, '');
   if (t.length <= 60) return t;
   const cut = t.slice(0, 60);
   const word = cut.lastIndexOf(' ');
@@ -302,7 +306,7 @@ export function notifyOn(
  *  did: "<space>: turn finished" / "<space>: turn failed". */
 export function nativeNotice(
   prev: Pick<Space, 'status'> | undefined,
-  next: Pick<Space, 'status' | 'name' | 'error' | 'goal'>,
+  next: Pick<Space, 'status' | 'name' | 'error' | 'goal' | 'title'>,
 ): { title: string; body?: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
   if (next.status === 'failed') {

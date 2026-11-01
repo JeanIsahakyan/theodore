@@ -136,6 +136,28 @@ editable.
 | 修复登录 | `space` (other scripts only break words) |
 | a second "исправить логин" in the project | `ispravit-login-2`, and so its branch |
 
+That slug is only the instant placeholder. Without delaying turn 1, the
+chat agent (`agents.chat`, its fastest, cheapest model — Claude's `haiku`)
+proposes a better one from the goal, in the background:
+
+```
+create_space ─▶ slug name, turn 1 sent ──▶ page opens at once
+                      │
+                      └─▶ space_naming::apply (background)
+                              chat agent, cheap model ─▶ "NAME: … / TITLE: …"
+                              name/branch ─▶ applied, deduped          (unless you typed one, or it shipped)
+                              title       ─▶ applied                   (always, once a valid answer lands)
+                              anything else (offline, no CLI, a bad
+                              answer) ─▶ nothing changes, silently
+```
+
+`Space::title` is what the sidebar, palette, tab and notifications show
+(`spaceTitle`) instead of the goal's raw first line — the fix for chats
+that otherwise read as a run-on sentence ("For LIN-145, I dont agree with
+the proposed solution…", GitHub #78). Open PR / Merge locally's own title
+field still defaults to the goal's first line (`defaultTitle`), on
+purpose: that one is the commit message, not the chat's name.
+
 ### Space page — drafting
 
 Chat left, changes right. The diff is the whole branch vs its base, the same
@@ -415,6 +437,24 @@ gone?  ─▶ "No conversation found" / "no rollout found"
   one: the conversation moved on without it.
 - Review runs (AI panel, grouping, skills, fixes) don't keep sessions.
 
+**The replayed transcript, once a space outgrows it.** The last 12 messages
+carry the conversation across a switch, but a space with more history than
+that would otherwise lose everything before them. The first time a turn
+can't resume hits that case, the chat agent's cheap model summarizes
+whatever falls outside the window (goal, decisions, files touched, what's
+left) once; the summary is cached on the space (`handoff_summary`) and
+prepended ahead of the replayed window on every switch after that — no
+second call:
+
+```
+history > 12 messages, can't resume
+  cached already?      ──yes──▶ prepend it
+  no  ──▶ chat agent, cheap model ─▶ summary ─▶ cached ─▶ prepend it
+          fails (offline, no CLI) ─▶ today's plain replay, nothing cached
+```
+
+A short space (≤ 12 messages total) never asks for one.
+
 ### Tools the agent gets
 
 Every turn, in every mode, gets the `space-tools` MCP server: the space's
@@ -562,6 +602,8 @@ New synced model `space` (core-owned, written only by commands):
 | `shipped` | the last ship: `how` (`pr · merged_locally · branch`), `branch`, `sha` (the squashed commit), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
 | `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch |
 | `turn_log` | per turn: your message and the reply (`chat_message` ids), checkpoint `before` / `after`, `undone` |
+| `title` | the chat agent's proposed title (§3 "New space"); `None` until it lands |
+| `handoff_summary` | the earlier conversation, summarized once and cached (§5 "One session per space") |
 
 | Data | Where |
 | --- | --- |
@@ -651,7 +693,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`); `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel` |
 | **Later** | OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 

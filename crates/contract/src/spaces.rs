@@ -129,6 +129,16 @@ pub struct Space {
     pub agent_session: Option<AgentSession>,
     pub created_at: Millis,
     pub updated_at: Millis,
+    /// A short chat title the chat agent proposed from the goal, shown
+    /// instead of its raw first line (`ui/src/ui/space/spaces.ts`'s
+    /// `defaultTitle`); `None` until that run lands or when it failed.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The earlier conversation, summarized once and cached: what a turn
+    /// that can't resume its agent session prepends instead of replaying
+    /// the whole transcript (docs/spaces.md §5 "One session per space").
+    #[serde(default)]
+    pub handoff_summary: Option<String>,
 }
 
 /// One agent CLI session a space's turns continue (docs/spaces.md §5

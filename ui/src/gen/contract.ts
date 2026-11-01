@@ -1494,6 +1494,18 @@ export type Space = {
 	agent_session?: AgentSession | null,
 	created_at: number,
 	updated_at: number,
+	/**
+	 *  A short chat title the chat agent proposed from the goal, shown
+	 *  instead of its raw first line (`ui/src/ui/space/spaces.ts`'s
+	 *  `defaultTitle`); `None` until that run lands or when it failed.
+	 */
+	title?: string | null,
+	/**
+	 *  The earlier conversation, summarized once and cached: what a turn
+	 *  that can't resume its agent session prepends instead of replaying
+	 *  the whole transcript (docs/spaces.md §5 "One session per space").
+	 */
+	handoff_summary?: string | null,
 };
 
 /**  `check` after a turn that changed files. */
