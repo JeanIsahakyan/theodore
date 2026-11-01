@@ -131,6 +131,11 @@ impl Core {
             _ = cancel.cancelled() => Waited::Stopped,
             _ = tokio::time::sleep(timeout) => Waited::TimedOut,
         };
+        // Stop ends the turn too, which drops the wait: either way, stopped.
+        let waited = match waited {
+            Waited::Gone if cancel.is_cancelled() => Waited::Stopped,
+            w => w,
+        };
         self.questions().remove(&id);
         // Unless the turn already moved on (it ended and cleared it).
         if self
