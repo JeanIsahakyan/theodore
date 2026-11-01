@@ -188,15 +188,22 @@ pub enum InstallState {
     Missing,
     Downloading,
     /// Found on the machine (PATH, rustup, xcrun, …).
-    System { path: PathBuf, version: Option<String> },
+    System {
+        path: PathBuf,
+        version: Option<String>,
+    },
     /// Downloaded by Theodore.
-    Installed { version: String },
+    Installed {
+        version: String,
+    },
     /// The manifest has no download for this platform and nothing is
     /// installed.
     Unavailable,
     /// The user said no (`code_intel.install: ask`).
     Declined,
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
