@@ -21,6 +21,8 @@ use theodore_mcp::{
 use theodore_ports::{
     Answer, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic, LanguageStatus, McpEndpoint, Position,
 };
+use theodore_ports::McpEndpoint;
+use theodore_ports::{UserAnswer, UserQuestion};
 
 /// Backend over the core. Created before the core exists (the core needs the
 /// MCP endpoint registry), then `attach`ed once it is started.
@@ -428,6 +430,16 @@ fn mcp_code(code: theodore_app::CodeTools) -> CodeTools {
         theodore_app::CodeTools::Off => CodeTools::Off,
         theodore_app::CodeTools::Read => CodeTools::Read,
         theodore_app::CodeTools::Edit => CodeTools::Edit,
+    }
+    async fn ask_user(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        questions: Vec<UserQuestion>,
+    ) -> Result<Vec<UserAnswer>, SpaceToolError> {
+        self.space_core()?
+            .space_tool_ask(space, &run_id.0, questions)
+            .await
     }
 }
 
