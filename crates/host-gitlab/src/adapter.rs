@@ -193,6 +193,7 @@ impl HostAdapter for GitlabAdapter {
             merge_queue: false,
             auto_merge: true,
             reactions: true,
+            issues: true,
         }
     }
 

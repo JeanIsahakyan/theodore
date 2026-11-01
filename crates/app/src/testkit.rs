@@ -1350,6 +1350,7 @@ impl HostAdapter for FakeHost {
             merge_queue: false,
             auto_merge: false,
             reactions: true,
+            issues: true,
         }
     }
     async fn changed_since(&self, _cursor: Option<&str>) -> HostResult<Changes> {
