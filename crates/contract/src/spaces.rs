@@ -127,6 +127,12 @@ pub struct Space {
     /// agent continues it instead of replaying the transcript.
     #[serde(default)]
     pub agent_session: Option<AgentSession>,
+    /// Items a "Send to agent" already sent, and which turn carries them
+    /// (docs/spaces.md §3 "Send N to agent"): kept so the same draft,
+    /// finding or thread isn't sent twice, and so a finding it addressed
+    /// can be dismissed in bulk once that turn ends.
+    #[serde(default)]
+    pub sent_feedback: Vec<SentFeedback>,
     pub created_at: Millis,
     pub updated_at: Millis,
     /// A short chat title the chat agent proposed from the goal, shown
@@ -263,4 +269,12 @@ pub enum SpaceFeedback {
 pub struct SpaceFeedbackRequest {
     pub space: String,
     pub items: Vec<SpaceFeedback>,
+}
+
+/// One item a "Send to agent" sent, and the turn it went as — `Space::turns`
+/// once that turn finishes (`space_send_feedback`, docs/spaces.md §3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SentFeedback {
+    pub item: SpaceFeedback,
+    pub turn: u32,
 }

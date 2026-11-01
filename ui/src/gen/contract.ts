@@ -1322,6 +1322,15 @@ export type SaveSkillRequest = {
 	body: string,
 };
 
+/**
+ *  One item a "Send to agent" sent, and the turn it went as — `Space::turns`
+ *  once that turn finishes (`space_send_feedback`, docs/spaces.md §3).
+ */
+export type SentFeedback = {
+	item: SpaceFeedback,
+	turn: number,
+};
+
 export type SetLinearTokenRequest = {
 	/**
 	 *  `None` disconnects (clears the stored token). Validated against
@@ -1492,6 +1501,13 @@ export type Space = {
 	 *  agent continues it instead of replaying the transcript.
 	 */
 	agent_session?: AgentSession | null,
+	/**
+	 *  Items a "Send to agent" already sent, and which turn carries them
+	 *  (docs/spaces.md §3 "Send N to agent"): kept so the same draft,
+	 *  finding or thread isn't sent twice, and so a finding it addressed
+	 *  can be dismissed in bulk once that turn ends.
+	 */
+	sent_feedback?: SentFeedback[],
 	created_at: number,
 	updated_at: number,
 	/**

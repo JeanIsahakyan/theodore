@@ -4,10 +4,14 @@
  * says, and which "branch reviews" are really a space's live diff.
  */
 import type {
+  AgentId,
   PrId,
   PrSummary,
+  SkillInfo,
+  SkillRun,
   Setting,
   Space,
+  SpaceFeedback,
   SpaceMode,
   SpaceTurn,
 } from '../../gen/contract';
@@ -237,6 +241,89 @@ export function spaceOfReview(spaces: Space[], pr: PrId): Space | undefined {
   return spaces.find(
     (s) => s.status !== 'archived' && (s.pr === pr || s.review_pr === pr),
   );
+}
+
+// ── review with agent (docs/spaces.md §3) ───────────────────────────────────
+
+/** The reviewer agent setting (`Settings → Spaces`'s picker lives in the
+ *  Review menu itself): sticky per machine, independent of the space's own
+ *  writing agent. */
+export const REVIEW_AGENT_KEY = 'spaces.review_agent';
+
+/** The built-in skill "Review with agent" runs when none is picked: a
+ *  general review, the same one `/bugs` runs by hand. */
+export const DEFAULT_REVIEW_SKILL = 'bugs';
+
+/** Which skill id "Review with agent" runs: the default built-in if it's
+ *  still offered (not forked away under the same id), else any other
+ *  built-in, else whatever the list offers — there is always something
+ *  once skills have loaded. */
+export function defaultReviewSkill(
+  skills: Pick<SkillInfo, 'id' | 'source'>[],
+): string {
+  const builtins = skills.filter((s) => s.source === 'built-in');
+  return (
+    builtins.find((s) => s.id === DEFAULT_REVIEW_SKILL)?.id ??
+    builtins[0]?.id ??
+    skills[0]?.id ??
+    DEFAULT_REVIEW_SKILL
+  );
+}
+
+/** The reviewer agent a space's "Review with agent" starts from: your
+ *  sticky pick, else the one `agents.skills` runs by default, else the
+ *  first agent on offer. */
+export function reviewAgentDefault(
+  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+  agents: AgentId[],
+): AgentId {
+  const picked = userSetting(settings, REVIEW_AGENT_KEY)?.value;
+  if (typeof picked === 'string' && agents.includes(picked as AgentId)) {
+    return picked as AgentId;
+  }
+  const skillDefaults = userSetting(settings, 'agents.skills')?.value;
+  const fromSkills = Array.isArray(skillDefaults)
+    ? skillDefaults.find((a): a is AgentId => agents.includes(a as AgentId))
+    : undefined;
+  return fromSkills ?? agents[0] ?? 'claude';
+}
+
+/** A "Review with agent" run on the space's own review (`run_skill` on
+ *  `Space.review_pr`) still going — shown as "Reviewing…" without
+ *  touching `Space.status`, which stays the writing agent's. */
+export function reviewRunning(
+  runs: readonly Pick<SkillRun, 'status'>[],
+): boolean {
+  return runs.some((r) => r.status === 'running');
+}
+
+// ── send all to agent (docs/spaces.md §3) ───────────────────────────────────
+
+/** Same item, independent of object identity — `SpaceFeedback` is a plain
+ *  `{ kind, id }` tag. */
+function sameFeedback(a: SpaceFeedback, b: SpaceFeedback): boolean {
+  return a.kind === b.kind && a.id === b.id;
+}
+
+/** The turn `item` rode as part of a "Send N to agent", `undefined` if it
+ *  was never sent that way (the per-item "Send to agent" doesn't mark
+ *  anything, so an item sent only that way still reads as unsent here). */
+export function sentTurnOf(
+  space: Pick<Space, 'sent_feedback'>,
+  item: SpaceFeedback,
+): number | undefined {
+  return (space.sent_feedback ?? []).find((s) => sameFeedback(s.item, item))
+    ?.turn;
+}
+
+/** The turn that carried `turn` has run to completion (failed or not): a
+ *  finding it addressed can be dismissed in bulk, and the space is done
+ *  enough to try again. */
+export function sentTurnDone(
+  space: Pick<Space, 'status' | 'turns'>,
+  turn: number,
+): boolean {
+  return space.status !== 'running' && space.turns >= turn;
 }
 
 export type UndoState =
