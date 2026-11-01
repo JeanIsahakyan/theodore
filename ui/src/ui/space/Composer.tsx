@@ -1,8 +1,9 @@
 /**
- * The space composer: one rounded card holding the text and, under it, a
+ * The chat composer: one rounded card holding the text and, under it, a
  * row of chips (agent, mode, base…) with the send / stop control on the
- * right. The same card starts a space (big, in the New space dialog) and
- * continues it (in the space's chat), so both read as one conversation.
+ * right. The same card starts a space (big, in the New space dialog),
+ * continues it (in the space's chat) and asks about a PR (the review's AI
+ * panel), so every chat with an agent reads the same.
  */
 import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ArrowUp, ChevronDown, Square } from '@gravity-ui/icons';
@@ -43,7 +44,15 @@ export function Composer({
   submit,
   inputRef,
   skills,
+  onPickSkill,
+  skillFooter,
   attachments,
+  label,
+  strip,
+  requireText,
+  sendWhileRunning,
+  onEmptyBackspace,
+  quiet,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -63,11 +72,31 @@ export function Composer({
   /** Offered after `/` (and on the `/` button): picking one puts
    *  `/skill ` in the box, to send as is or with a task after it. */
   skills?: SkillInfo[];
+  /** Picking a skill does this instead of putting `/skill ` in the box
+   *  (the AI panel runs it on the PR at once). */
+  onPickSkill?: (s: SkillInfo) => void;
+  /** Under the skills list. */
+  skillFooter?: ReactNode;
   /** Files for the next message (📎, paste, drop). */
   attachments?: Attachments;
+  /** The box's accessible name; the placeholder by default. */
+  label?: string;
+  /** Inside the card, above the files: e.g. the line the question is
+   *  about. */
+  strip?: ReactNode;
+  /** Files alone don't make a message. */
+  requireText?: boolean;
+  /** ⏎ still sends while a run goes (the AI panel's questions run side by
+   *  side); the button stays Stop. */
+  sendWhileRunning?: boolean;
+  /** Backspace in an empty box (takes a chip back out). */
+  onEmptyBackspace?: () => void;
+  /** The big New space box: larger text, no focus ring. */
+  quiet?: boolean;
 }) {
   const empty =
-    (!value.trim() && !attachments?.ids.length) || !!attachments?.busy;
+    (!value.trim() && (requireText || !attachments?.ids.length)) ||
+    !!attachments?.busy;
   const files = attachments ? fileHandlers(attachments.add) : null;
   const own = useRef<HTMLTextAreaElement | null>(null);
   const matches = skills ? matchSkills(skills, value) : null;
@@ -77,6 +106,10 @@ export function Composer({
   const setHi = (f: (n: number) => number) =>
     setHiAt({ text: value, i: f(hi) });
   const pick = (s: SkillInfo) => {
+    if (onPickSkill) {
+      onPickSkill(s);
+      return;
+    }
     onChange(`/${s.id} `);
     own.current?.focus();
   };
@@ -96,29 +129,37 @@ export function Composer({
           hi={hi}
           onHover={(i) => setHi(() => i)}
           onPick={pick}
+          footer={skillFooter}
         />
       )}
       <TextField
         fullWidth
-        aria-label={placeholder}
+        aria-label={label ?? placeholder}
         value={value}
         onChange={onChange}
         isDisabled={disabled}
       >
-        {/* A quiet card: no focus ring around a box this big — the caret
-          says where you are. */}
+        {/* Quiet: no focus ring around a box this big — the caret says
+          where you are. */}
         <InputGroup
           fullWidth
-          className="flex h-auto flex-col gap-2 rounded-3xl py-3 focus-within:border-separator focus-within:ring-0 data-[focus-within=true]:ring-0"
+          className={
+            quiet
+              ? 'flex h-auto flex-col gap-2 rounded-3xl py-3 focus-within:border-separator focus-within:ring-0 data-[focus-within=true]:ring-0'
+              : 'flex h-auto flex-col gap-2 rounded-3xl py-2.5'
+          }
         >
+          {strip}
           {attachments && <AttachmentStrip at={attachments} />}
           <InputGroup.TextArea
             ref={ref}
             onPaste={files?.onPaste}
             rows={rows}
             autoFocus={autoFocus}
-            style={{ minHeight: `${rows * 1.625}em` }}
-            className="w-full resize-none px-4 py-0 text-[15px] leading-relaxed"
+            style={{
+              minHeight: quiet ? `${rows * 1.625}em` : `${rows * 1.25}rem`,
+            }}
+            className={`w-full resize-none px-4 py-0 ${quiet ? 'text-[15px] leading-relaxed' : 'text-sm'}`}
             placeholder={placeholder}
             onKeyDown={(e) => {
               if (
@@ -126,9 +167,14 @@ export function Composer({
               ) {
                 return;
               }
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Backspace' && !value && onEmptyBackspace) {
                 e.preventDefault();
-                if (!empty && !running) onSubmit();
+                onEmptyBackspace();
+              } else if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!empty && !disabled && (!running || sendWhileRunning)) {
+                  onSubmit();
+                }
               } else if (e.key === 'Escape') {
                 // In a dialog (New space) Esc closes the dialog. On the page
                 // it leaves the box, so page keys work again.

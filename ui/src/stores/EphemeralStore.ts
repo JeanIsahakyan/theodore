@@ -67,6 +67,8 @@ export interface LineAsk {
   message: string | null;
   /** The reply's chat message id, once it lands. */
   reply: string | null;
+  /** When it was asked (ms): the AI panel's Stop goes to the newest run. */
+  startedAt?: number;
 }
 
 /** What the AI panel should bring into view: a chat message, or the
