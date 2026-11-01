@@ -916,6 +916,18 @@ impl CoreApi for AppCore {
     ) -> Result<String, CommandError> {
         self.core.space_send(req).await.map_err(err)
     }
+    async fn space_send_now(
+        &self,
+        req: theodore_contract::SpaceSendRequest,
+    ) -> Result<String, CommandError> {
+        self.core.space_send_now(req).await.map_err(err)
+    }
+    async fn space_queued(
+        &self,
+        req: theodore_contract::SpaceQueuedRequest,
+    ) -> Result<(), CommandError> {
+        self.core.space_queued(req).await.map_err(err)
+    }
     async fn space_stop(&self, space: String) -> Result<(), CommandError> {
         self.core.space_stop(&space).await.map_err(err)
     }

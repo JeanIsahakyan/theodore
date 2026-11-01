@@ -101,6 +101,10 @@ export const commands = {
 	createSpace: (req: CreateSpaceRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("create_space", { req })),
 	listSpaces: (project: string | null) => typedError<Space[], CommandError>(__TAURI_INVOKE("list_spaces", { project })),
 	spaceSend: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send", { req })),
+	/**  "Send now": into the running turn when it takes messages, else queued. */
+	spaceSendNow: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send_now", { req })),
+	/**  Send / Cancel / Edit on a queued message. */
+	spaceQueued: (req: SpaceQueuedRequest) => typedError<null, CommandError>(__TAURI_INVOKE("space_queued", { req })),
 	spaceStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("space_stop", { space })),
 	spaceSkills: (space: string) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("space_skills", { space })),
 	spaceReview: (req: SpaceReviewRequest) => typedError<OpenPrResponse, CommandError>(__TAURI_INVOKE("space_review", { req })),
@@ -1007,6 +1011,15 @@ export type ProjectWorkingState = {
 	dirty_files: number,
 };
 
+/**  What to do with one queued message. */
+export type QueuedAction =
+/**  Run it now if the space is free; otherwise release it to the queue. */
+{ kind: "send" } |
+/**  Drop it from the transcript. */
+{ kind: "cancel" } |
+/**  Replace its text. */
+{ kind: "edit"; text: string };
+
 export type ReactRequest = {
 	pr: PrId,
 	comment: CommentId,
@@ -1466,6 +1479,13 @@ export type SpaceProgressStep = {
 	state: SpaceProgressState,
 };
 
+export type SpaceQueuedRequest = {
+	space: string,
+	/**  The queued `chat_message` id. */
+	message: string,
+	action: QueuedAction,
+};
+
 export type SpaceReviewRequest = {
 	space: string,
 	/**  Also group the diff by meaning (Review); `false` for the live diff. */
@@ -1589,6 +1609,11 @@ export type SpaceTurn = {
 	undone?: boolean,
 	/**  `spaces.check` after the turn, when it changed files. */
 	check?: SpaceCheck | null,
+	/**
+	 *  Messages of yours sent into it while it ran ("Send now"):
+	 *  `chat_message` ids, undone with it.
+	 */
+	steered?: string[],
 };
 
 export type SubmitReviewRequest = {

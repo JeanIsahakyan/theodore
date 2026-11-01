@@ -109,6 +109,8 @@ pub(crate) struct Inner {
     /// id: purely in memory, like `space_rt` — never synced, gone on
     /// restart (the PTYs themselves don't survive one either).
     pub term_rt: std::sync::Mutex<HashMap<String, crate::usecases::space_terminal::TerminalEntry>>,
+    /// Spaces' send queues and the turns "Send now" can steer into.
+    pub space_queue: crate::usecases::space_queue::QueueState,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -158,6 +160,7 @@ impl Core {
             review_lock: tokio::sync::Mutex::new(()),
             auto_skills: std::sync::atomic::AtomicBool::new(true),
             term_rt: std::sync::Mutex::new(HashMap::new()),
+            space_queue: Default::default(),
         });
 
         let core = Core(inner.clone());

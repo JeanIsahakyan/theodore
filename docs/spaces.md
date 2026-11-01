@@ -395,7 +395,8 @@ is unchanged from before: Claude's Edit already pre-approves Bash, Codex's
 remaining prompts and limits.
 
 - **Stop** cancels the run (SIGTERM → 5 s → SIGKILL, existing lifecycle), then
-  checkpoints whatever was edited as "turn N (stopped)". Nothing is lost.
+  checkpoints whatever was edited as "turn N (stopped)". Nothing is lost;
+  messages queued behind it are held, not sent (§8).
 - **Resume** = send another message. The space keeps one agent session and
   each turn continues it (below), so the agent still has the files it read,
   the commands it ran and its todo list; a different agent picks up from the
@@ -655,10 +656,11 @@ New synced model `space` (core-owned, written only by commands):
 | `title` | the chat agent's proposed title (§3 "New space"); `None` until it lands |
 | `handoff_summary` | the earlier conversation, summarized once and cached (§5 "One session per space") |
 | `progress` | the running turn's tracker (`update_progress`): `steps` (label, `pending · active · done`), `note`, `at`; `null` once the turn ends |
+| `turn_log` | per turn: your message and the reply (`chat_message` ids), messages steered into it (`steered`), checkpoint `before` / `after`, `undone` |
 
 | Data | Where |
 | --- | --- |
-| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it |
+| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8) |
 | Streaming text, tool lines | `Ephemeral::AgentDelta` / `RunLog` with run id `space:<id>:<msg>`; not persisted |
 | A turn | on the space row: `status`, `turns`, `head_sha`, and an entry in `turn_log` (what undo moves back to). Later: `space_run` rows (agent, mode, usage, session id) for per-turn diffs and native resume |
 | Code | the worktree and `refs/theodore/spaces/<id>` |
@@ -685,6 +687,7 @@ Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
 | Found on start | Action |
 | --- | --- |
 | `status = running` | → `failed` "interrupted: Theodore was closed" |
+| queued messages | kept, held: each waits for its Send (§8) |
 | dirty worktree | kept; the next turn (or archive) checkpoints it first |
 | worktree dir missing | recreated from `refs/theodore/spaces/<id>` |
 | dir there, but not the space's worktree (`.git` gone or foreign) | git refuses to run in it (§6 "Worktree guard"); on reopen or archive it is moved to `spaces/.moved-aside/`, never deleted, and recreated from the ref |
@@ -695,7 +698,66 @@ Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
 
 ## 8. Concurrency
 
-One run per space at a time; a send while running is refused (v2: queued).
+One run per space at a time. A send while it runs is **queued**: stored as
+your `chat_message` with `queued` (`seq`, the agent / model / mode picked,
+`held`) and shown under the running turn, not in the transcript yet.
+Attachments go with it; a `/skill` is expanded when it runs, from the
+worktree as it is then.
+
+```
+send ─▶ running? ── no ──▶ turn now
+           └─ yes ─▶ queued #n ──▶ turn ends ─┬─ on its own ─▶ #1 runs, then #2 …
+                                              └─ stopped · failed · restart
+                                                   └─▶ held: Send · Edit · Cancel
+```
+
+| Turn ended | The queue |
+| --- | --- |
+| on its own (a failing `check` included: the next turn hears it) | the first waiting message runs as the next turn, then the next |
+| stopped (also during its `check`) | held: nothing is sent, nothing dropped |
+| failed, or a queued one couldn't start | held |
+| Theodore restarted | held (§7 Crash recovery) |
+
+- **Edit** changes a queued message's text, **Cancel** deletes it; both
+  only while it is queued.
+- **Send** on a held message runs it now when the space is free; while a
+  turn runs it goes back in line. Held ones never send on their own, and a
+  new message while some are held runs at once.
+- A queued message's picks win over the space's when it runs; `None` means
+  whatever the space has then. Its turn is a normal one: undo, session
+  resume and the replayed transcript treat it like any other.
+- **Undo** and **Archive** leave the queue as it is. An archived space sends
+  nothing (Send is refused); after Unarchive the held messages can be sent.
+- A per-space lock covers "send now or queue" and "turn ends → next queued
+  starts", so a send never slips in between and the order holds.
+
+**Send now (steer).** For a Claude Code turn the composer also offers
+*Send now* (⌘⏎; ⏎ still queues): the message goes into the running turn and
+the agent takes it at its next step. Claude Code reads messages from stdin
+while it runs (`--input-format stream-json --replay-user-messages`, checked
+on 2.1.312): one written mid-run joins the turn after the current tool call
+and is echoed back when taken; one that lands just as the turn ends starts
+another turn in the same process and session. The run ends — stdin closed —
+once every message was taken and answered; the reply is all the answers.
+
+```
+claude -p --input-format stream-json …   stdin ◀─ goal
+   tool call … ◀────────────────────────── stdin ◀─ "also handle 404s"  (Send now)
+   echo: taken ─▶ … ─▶ result ─▶ all taken? ─▶ close stdin ─▶ exit ─▶ checkpoint
+```
+
+| | Send now |
+| --- | --- |
+| Claude Code, same agent and mode, no attachments | into the running turn; listed in the turn's `steered`, undone with it |
+| Codex, Gemini (one prompt per process) | queued |
+| another agent / mode, attachments (`--add-dir` is per process) | queued |
+| the run just ended, or hasn't started taking input yet | queued |
+
+The runner exposes it as an optional capability (`AgentPort::run_steerable`
+returns a `Steer` handle or none). A message written but never taken within
+30 s of the run's last result closes stdin anyway, so a run never waits on
+input forever.
+
 Spaces run in parallel, each in its own worktree. v2: `spaces.max_parallel`
 (default 3) queues the rest. Git writes into the shared bare cache (fetch,
 `update-ref`, `worktree add/remove`) and into one space's worktree
@@ -714,8 +776,10 @@ downloaded to this Mac yet".
 | --- | --- |
 | `create_space` | worktree + ref at the base, `space` row; sends `goal` as turn 1 when given |
 | `list_spaces` | rows of one project or all (the UI reads the synced rows) |
-| `space_send` | chat row, then an Edit-mode turn in the worktree; checkpoint; refresh the diff |
-| `space_stop` | cancels the running turn |
+| `space_send` | chat row, then a turn in the worktree; checkpoint; refresh the diff. While a turn runs: a queued chat row (§8) |
+| `space_send_now` | into the running Claude turn when it can take it (§8 "Send now"), else as `space_send` |
+| `space_queued` | `send` · `cancel` · `edit` one queued message |
+| `space_stop` | cancels the running turn; the queue is held |
 | `save_attachment` | stores a file (≤ 25 MB) for a message; `attachment_data` reads it back as a `data:` URL |
 | `space_skills` | skills `/<id>` can run: `~/.claude/skills` plus the worktree's `.claude/skills`, no built-ins |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |
@@ -753,7 +817,9 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit |
-| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; an agent tool over `space_terminal_tail` |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; an agent tool over `space_terminal_tail`; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel`; sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn |
+| **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; `max_parallel` |
 | **Later** | OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
 ## 12. Decisions (owner, 2026-10-21)

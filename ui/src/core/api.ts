@@ -69,6 +69,7 @@ import type {
   Space,
   SpaceFeedbackRequest,
   SpaceReviewRequest,
+  SpaceQueuedRequest,
   SpaceSendRequest,
   SpaceConfigView,
   SpaceLogLine,
@@ -278,6 +279,11 @@ export const api = {
   listSpaces: (project: string | null) =>
     call<Space[]>('list_spaces', { project }),
   spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),
+  /** "Send now": into the running turn when it can take it, else queued. */
+  spaceSendNow: (req: SpaceSendRequest) =>
+    call<string>('space_send_now', { req }),
+  /** Send / Cancel / Edit on a queued message (docs/spaces.md §8). */
+  spaceQueued: (req: SpaceQueuedRequest) => call<null>('space_queued', { req }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
   spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
   spaceReview: (req: SpaceReviewRequest) =>

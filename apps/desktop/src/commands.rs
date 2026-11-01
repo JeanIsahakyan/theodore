@@ -717,6 +717,28 @@ pub async fn space_send(
     op.run(async move { core.space_send(req).await }).await
 }
 
+/// "Send now": into the running turn when it takes messages, else queued.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_send_now(
+    op: crate::op::Op,
+    req: theodore_contract::SpaceSendRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    op.run(async move { core.space_send_now(req).await }).await
+}
+
+/// Send / Cancel / Edit on a queued message.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_queued(
+    op: crate::op::Op,
+    req: theodore_contract::SpaceQueuedRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.space_queued(req).await }).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn space_stop(
