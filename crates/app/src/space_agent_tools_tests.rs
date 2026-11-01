@@ -96,11 +96,12 @@ async fn ship_runs_from_the_agents_own_turn_only() {
     assert_eq!(out.sha, "squash1");
     assert_eq!(out.summary, "Merged into main in the local folder");
     assert_eq!(out.pr_number, None);
-    let ship = e.f.git.ship.lock().unwrap();
-    assert_eq!(ship.merges.len(), 1);
-    assert!(ship.commits[0].1.message.starts_with("Fix the login"));
-    assert!(ship.pushes.is_empty(), "never a push from a folder");
-    drop(ship);
+    {
+        let ship = e.f.git.ship.lock().unwrap();
+        assert_eq!(ship.merges.len(), 1);
+        assert!(ship.commits[0].1.message.starts_with("Fix the login"));
+        assert!(ship.pushes.is_empty(), "never a push from a folder");
+    }
 
     let err = e
         .core

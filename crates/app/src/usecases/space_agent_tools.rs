@@ -110,7 +110,7 @@ impl Core {
         let pr_number = summary_row
             .as_ref()
             .map(|s| s.pr.number)
-            .or_else(|| pr.as_ref().and_then(|p| pr_number_of(p)));
+            .or_else(|| pr.as_ref().and_then(pr_number_of));
         let pr_url = summary_row.map(|s| s.url).filter(|u| !u.is_empty());
         let summary = match (action, shipped.how, pr_number) {
             (ShipToolAction::OpenPr | ShipToolAction::OpenDraftPr, _, Some(n)) => format!(
