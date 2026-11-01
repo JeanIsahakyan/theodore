@@ -180,6 +180,10 @@ pub struct SpaceTurn {
     /// `spaces.check` after the turn, when it changed files.
     #[serde(default)]
     pub check: Option<SpaceCheck>,
+    /// Messages of yours sent into it while it ran ("Send now"):
+    /// `chat_message` ids, undone with it.
+    #[serde(default)]
+    pub steered: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

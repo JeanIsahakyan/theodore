@@ -228,6 +228,20 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<String, CommandError> {
         Err(not_ready())
     }
+    /// "Send now": into the running turn, or queued like `space_send`.
+    async fn space_send_now(
+        &self,
+        _req: theodore_contract::SpaceSendRequest,
+    ) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    /// Send / Cancel / Edit on a queued message.
+    async fn space_queued(
+        &self,
+        _req: theodore_contract::SpaceQueuedRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
     async fn space_stop(&self, _space: String) -> Result<(), CommandError> {
         Err(not_ready())
     }

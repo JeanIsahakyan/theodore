@@ -375,7 +375,7 @@ export function undoneMessages(s: Pick<Space, 'turn_log'>): Set<string> {
   return new Set(
     (s.turn_log ?? [])
       .filter((t) => t.undone)
-      .flatMap((t) => [t.message, t.reply]),
+      .flatMap((t) => [t.message, t.reply, ...(t.steered ?? [])]),
   );
 }
 

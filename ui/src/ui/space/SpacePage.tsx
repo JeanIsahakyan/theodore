@@ -59,6 +59,8 @@ import type { ReviewMode } from '../GroupsPane';
 import { ToolCalls } from '../ToolCalls';
 import { useAttachments } from '../attachments';
 import { ChatEmpty, ChatLive, ChatLog, ChatMessage } from '../ChatTurn';
+import { QueuedMessages } from './QueuedMessages';
+import { canSendNow, splitQueue } from './queue';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
 import { agentModel } from '../agentModel';
@@ -735,9 +737,10 @@ export const SpaceChat = observer(function SpaceChat({
   const files = useAttachments();
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
-  const messages = [
+  // Queued messages wait under the running turn, in the order they send.
+  const { sent: messages, queued } = splitQueue([
     ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
-  ].sort((a, b) => a.at - b.at);
+  ]);
   const run = space.status === 'running' ? space.run : null;
   const undone = undoneMessages(space);
   const undo = undoState(space);
@@ -758,12 +761,14 @@ export const SpaceChat = observer(function SpaceChat({
   const replied = run != null && [...turnRuns.values()].includes(run);
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages.length, run]);
+  }, [messages.length, queued.length, run]);
 
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
   useEffect(() => setMode(space.mode), [space.mode]);
-  const locked = !!run || space.status === 'archived';
+  // Open while a turn runs: a queued message keeps the picks it was sent
+  // with.
+  const locked = space.status === 'archived';
   // `/skill` in the box: your Claude skills and the repo's.
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   useEffect(() => {
@@ -784,24 +789,31 @@ export const SpaceChat = observer(function SpaceChat({
     cycleMode: () => !locked && setMode((m) => nextMode(m)),
   };
 
-  const send = () => {
+  const send = (now = false) => {
     const t = text.trim();
-    if ((!t && !files.ids.length) || run || files.busy) return;
+    if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
     setText('');
-    void api
-      .spaceSend({
-        space: space.id,
-        text: t,
-        agent: agent === space.agent ? null : agent,
-        // The chip's model, so a change there reaches the next turn.
-        model: agentModel(store, agent),
-        mode: mode === space.mode ? null : mode,
-        attachments: files.ids.length ? files.ids : null,
-      })
+    void (now ? api.spaceSendNow : api.spaceSend)({
+      space: space.id,
+      text: t,
+      agent: agent === space.agent ? null : agent,
+      // The chip's model, so a change there reaches the next turn; "Send
+      // now" keeps the running turn's.
+      model: now ? null : agentModel(store, agent),
+      mode: mode === space.mode ? null : mode,
+      attachments: files.ids.length ? files.ids : null,
+    })
       .then(() => files.clear())
       .catch(() => setText(t));
   };
+  const sendNow = canSendNow(space, {
+    agent,
+    mode,
+    files: files.ids.length,
+  })
+    ? () => send(true)
+    : undefined;
 
   return (
     <>
@@ -866,6 +878,7 @@ export const SpaceChat = observer(function SpaceChat({
             follow={end}
           />
         )}
+        <QueuedMessages space={space} queued={queued} />
       </ChatLog>
       <div className="chat-input px-4 pb-3 pt-1">
         <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
@@ -882,17 +895,21 @@ export const SpaceChat = observer(function SpaceChat({
             inputRef={input}
             value={text}
             onChange={setText}
-            onSubmit={send}
+            onSubmit={() => send()}
             placeholder={
               space.status === 'archived'
                 ? 'Archived'
                 : settingUp(space)
                   ? 'Setting up…'
-                  : 'Ask the agent to change something…'
+                  : run
+                    ? 'Queue a message for after this turn…'
+                    : 'Ask the agent to change something…'
             }
             disabled={space.status === 'archived' || settingUp(space)}
             running={!!run}
             onStop={() => void api.spaceStop(space.id).catch(() => {})}
+            onSendNow={sendNow}
+            queueWhileRunning
             skills={skills}
             attachments={files}
             chips={

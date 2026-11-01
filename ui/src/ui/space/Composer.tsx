@@ -40,6 +40,7 @@ export function Composer({
   disabled,
   running,
   onStop,
+  onSendNow,
   chips,
   submit,
   inputRef,
@@ -51,6 +52,7 @@ export function Composer({
   strip,
   requireText,
   sendWhileRunning,
+  queueWhileRunning,
   onEmptyBackspace,
   quiet,
 }: {
@@ -64,6 +66,9 @@ export function Composer({
   /** A turn is running: the arrow becomes Stop. */
   running?: boolean;
   onStop?: () => void;
+  /** While running: "Send now" (⌘⏎) into the running turn, when it can
+   *  take the message. */
+  onSendNow?: () => void;
   /** Left side of the footer row. */
   chips?: ReactNode;
   /** A labelled button instead of the round arrow (e.g. "Create"). */
@@ -89,6 +94,9 @@ export function Composer({
   /** ⏎ still sends while a run goes (the AI panel's questions run side by
    *  side); the button stays Stop. */
   sendWhileRunning?: boolean;
+  /** A space: while its turn runs, ⏎ and the arrow next to Stop queue the
+   *  message for after the turn (docs/spaces.md §8). */
+  queueWhileRunning?: boolean;
   /** Backspace in an empty box (takes a chip back out). */
   onEmptyBackspace?: () => void;
   /** The big New space box: larger text, no focus ring. */
@@ -172,7 +180,10 @@ export function Composer({
                 onEmptyBackspace();
               } else if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (!empty && !disabled && (!running || sendWhileRunning)) {
+                if (empty || disabled) return;
+                if (running && onSendNow && (e.metaKey || e.ctrlKey)) {
+                  onSendNow();
+                } else if (!running || sendWhileRunning || queueWhileRunning) {
                   onSubmit();
                 }
               } else if (e.key === 'Escape') {
@@ -209,6 +220,41 @@ export function Composer({
             )}
             {chips}
             <span className="flex-1" />
+            {running && onSendNow && (
+              <Tooltip>
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  aria-label="Send now"
+                  className="shrink-0 rounded-full px-3 text-xs"
+                  isDisabled={empty || disabled}
+                  onPress={onSendNow}
+                >
+                  Send now
+                </Button>
+                <Tooltip.Content>
+                  Into the running turn <K>⌘⏎</K>
+                </Tooltip.Content>
+              </Tooltip>
+            )}
+            {running && queueWhileRunning && (
+              <Tooltip>
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="tertiary"
+                  aria-label="Queue"
+                  className="shrink-0 rounded-full"
+                  isDisabled={empty || disabled}
+                  onPress={onSubmit}
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+                <Tooltip.Content>
+                  Queue for after this turn <K>⏎</K>
+                </Tooltip.Content>
+              </Tooltip>
+            )}
             {running ? (
               <Tooltip>
                 <Button
