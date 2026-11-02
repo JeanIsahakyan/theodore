@@ -441,6 +441,7 @@ impl Core {
             && self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE;
         let wrap = |prompt: String| {
             let prompt = crate::usecases::space_pr::with_continue_note(&space, prompt);
+            let prompt = crate::usecases::space_checkpoints::with_reverts(&space, prompt);
             with_ultracode(with_failed_check(&space, prompt), ultracode)
         };
         // The same agent in the same worktree continues its session and
@@ -752,6 +753,19 @@ impl Core {
     /// The review of `base_sha...refs/theodore/spaces/<id>`. Caller holds
     /// `open_lock`.
     async fn open_space_review(&self, space: &Space, group: bool) -> AppResult<OpenPrResponse> {
+        self.open_space_review_at(space, group, None).await
+    }
+
+    /// `open_space_review`, with `live` (a snapshot no ref points at) as
+    /// the head instead of the checkpoint: the diff during a turn
+    /// (`space_live_diff`). Its files are the space worktree's own, so no
+    /// PR worktree is checked out for it.
+    pub(crate) async fn open_space_review_at(
+        &self,
+        space: &Space,
+        group: bool,
+        live: Option<&theodore_domain::Sha>,
+    ) -> AppResult<OpenPrResponse> {
         let project = self.space_project(space).await?;
         let repo_path = self.ensure_project_cache(&project).await?;
         let refname = space_ref(&space.id);
@@ -768,7 +782,7 @@ impl Core {
                 &repo_path,
                 &project.repo,
                 pr_ref.number,
-                &refname,
+                live.map_or(refname.as_str(), |s| s.as_str()),
                 space.base_sha.as_str(),
             )
             .await?;
@@ -776,8 +790,11 @@ impl Core {
         detail.summary.head_ref = space.branch.clone();
         detail.summary.base_ref = space.base.clone();
         let head = detail.summary.head_sha.clone();
-        let worktree = self.0.deps.git.worktree(&pr_ref, &head).await?;
-        self.finish_open_with(pr_ref, detail, revision, repo_path, worktree.path, group)
+        let worktree = match live {
+            Some(_) => PathBuf::from(&space.worktree),
+            None => self.0.deps.git.worktree(&pr_ref, &head).await?.path,
+        };
+        self.finish_open_with(pr_ref, detail, revision, repo_path, worktree, group)
             .await
     }
 
@@ -999,6 +1016,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         stream_text: true,
     };
     let started = std::time::Instant::now();
+    // The diff follows the agent's edits while it works (no checkpoints).
+    let live = crate::usecases::space_live_diff::start(core, &space.id, &cwd);
     let mut streamed = stream_run(core, req.clone(), &cancel, &run_id).await;
     let session_gone = streamed.session_gone && !cancel.is_cancelled();
     if session_gone && let Some(replay) = replay {
@@ -1040,8 +1059,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
         None if resumed && !session_gone => space.agent_session.clone(),
         None => None,
     };
-    // The agent is done: its token goes before the after-turn check.
+    // The agent is done: its token goes before the after-turn check, and
+    // the live diff stops before the real checkpoint replaces it.
     drop(tools_guard);
+    let shown_live = live.stop().await;
     let cancelled = cancel.is_cancelled();
     let ms = started.elapsed().as_millis() as u64;
     if let (Some(e), false) = (&error, cancelled)
@@ -1094,8 +1115,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // A rebase or conflict left in the worktree: the answer stands, the
     // snapshot waits for the next turn, and the space says why.
     let mut skipped = None;
-    let head = match saved.result {
-        Ok(head) => Some(head),
+    let checkpoint = match saved.result {
+        Ok(cp) => Some(cp),
         Err(theodore_ports::GitError::Busy(busy)) => {
             skipped = Some(
                 saved
@@ -1122,6 +1143,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         attachments: vec![],
         queued: None,
     };
+    let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
     // `check` (docs/config.md) is part of the turn: the space stays
     // running, and Stop stops it too.
@@ -1149,8 +1171,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
     if let Some(extra) = saved.patch {
         crate::usecases::space_update::merge_fields(&mut patch, extra);
     }
-    if let Some(head) = &head {
-        patch["head_sha"] = serde_json::json!(head);
+    if let Some(cp) = &checkpoint {
+        patch["head_sha"] = serde_json::json!(cp.sha);
+        patch["worktree_head"] = serde_json::json!(cp.head);
         // Nothing else writes the log while a turn runs (undo is refused),
         // but read it fresh rather than trust the snapshot from the send.
         let mut log = core
@@ -1162,7 +1185,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             message,
             reply: reply.id.clone(),
             before: space.head_sha.clone(),
-            after: head.clone(),
+            after: cp.sha.clone(),
             undone: false,
             steered: core.take_steered(&run_id),
             check: checking.then(|| theodore_contract::SpaceCheck {
@@ -1175,6 +1198,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
             }),
             base_before: saved.base_before.clone(),
             plan,
+            before_head: space.worktree_head.clone(),
+            after_head: Some(cp.head.clone()),
+            reverted: vec![],
         });
         patch["turn_log"] = serde_json::json!(log);
     }
@@ -1209,7 +1235,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     if changed && let Some(after) = &head {
         core.spawn_space_code_changed(cwd.clone(), space.head_sha.clone(), after.clone());
     }
-    if changed {
+    if changed || shown_live {
         // The live diff follows the new checkpoint; grouping waits for Review.
         if let Err(e) = core
             .space_review(SpaceReviewRequest {
@@ -1286,7 +1312,7 @@ fn with_failed_check(space: &Space, prompt: String) -> String {
         .turn_log
         .iter()
         .rev()
-        .find(|t| !t.undone)
+        .find(|t| !t.undone && t.reverted.is_empty())
         .and_then(|t| t.check.as_ref())
         .filter(|c| c.status == theodore_contract::SpaceCheckStatus::Failed);
     match failed {
