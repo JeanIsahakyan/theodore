@@ -280,7 +280,10 @@ describe('review with agent', () => {
   it('picks the sticky setting first, else agents.skills, else the first offered', () => {
     expect(reviewAgentDefault([], ['codex', 'claude'])).toBe('codex');
     expect(
-      reviewAgentDefault([row('agents.skills', ['codex'])], ['codex', 'claude']),
+      reviewAgentDefault(
+        [row('agents.skills', ['codex'])],
+        ['codex', 'claude'],
+      ),
     ).toBe('codex');
     expect(
       reviewAgentDefault(
@@ -298,19 +301,15 @@ describe('review with agent', () => {
   it('prefers the default built-in skill, then any built-in, then anything', () => {
     expect(
       defaultReviewSkill([
-        { id: 'tests', title: '', description: '', source: 'built-in' },
-        { id: 'bugs', title: '', description: '', source: 'built-in' },
+        { id: 'tests', source: 'built-in' },
+        { id: 'bugs', source: 'built-in' },
       ]),
     ).toBe('bugs');
+    expect(defaultReviewSkill([{ id: 'security', source: 'built-in' }])).toBe(
+      'security',
+    );
     expect(
-      defaultReviewSkill([
-        { id: 'security', title: '', description: '', source: 'built-in' },
-      ]),
-    ).toBe('security');
-    expect(
-      defaultReviewSkill([
-        { id: 'polish', title: '', description: '', source: '~/.claude/skills' },
-      ]),
+      defaultReviewSkill([{ id: 'polish', source: '~/.claude/skills' }]),
     ).toBe('polish');
     expect(defaultReviewSkill([])).toBe('bugs');
   });
@@ -326,11 +325,15 @@ describe('review with agent', () => {
 
 describe('send N to agent', () => {
   it('reads the turn an item was sent with, undefined if never', () => {
-    const s = { sent_feedback: [{ item: { kind: 'draft', id: 'd1' }, turn: 2 }] };
+    const s: Pick<Space, 'sent_feedback'> = {
+      sent_feedback: [{ item: { kind: 'draft', id: 'd1' }, turn: 2 }],
+    };
     expect(sentTurnOf(s, { kind: 'draft', id: 'd1' })).toBe(2);
     expect(sentTurnOf(s, { kind: 'draft', id: 'd2' })).toBeUndefined();
     expect(sentTurnOf(s, { kind: 'finding', id: 'd1' })).toBeUndefined();
-    expect(sentTurnOf({ sent_feedback: [] }, { kind: 'draft', id: 'd1' })).toBeUndefined();
+    expect(
+      sentTurnOf({ sent_feedback: [] }, { kind: 'draft', id: 'd1' }),
+    ).toBeUndefined();
   });
 
   it('is "done" once the space is past that turn and not running', () => {

@@ -10,7 +10,13 @@
 import { useState } from 'react';
 import { Check, PaperPlane } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
-import type { Draft, Finding, PrId, SpaceFeedback, Thread } from '../../gen/contract';
+import type {
+  Draft,
+  Finding,
+  PrId,
+  SpaceFeedback,
+  Thread,
+} from '../../gen/contract';
 import { api } from '../../core/api';
 import { ignoreFinding } from '../../actions';
 import { useRootStore } from '../../stores/context';
@@ -81,7 +87,10 @@ export const SendAllToAgentFooter = observer(function SendAllToAgentFooter({
       store.ephemeral.toast(
         `Sent ${plural(items.length, 'item')} to ${spaceTitle(space)}`,
         'info',
-        { label: 'Open', onAction: () => store.ui.go({ name: 'space', id: space.id }) },
+        {
+          label: 'Open',
+          onAction: () => store.ui.go({ name: 'space', id: space.id }),
+        },
       );
     } catch {
       // toasted by api.ts
@@ -106,9 +115,7 @@ export const SendAllToAgentFooter = observer(function SendAllToAgentFooter({
           <Btn
             tone="tertiary"
             icon={<Check className="size-3.5" />}
-            onPress={() =>
-              addressed.forEach((f) => ignoreFinding(store, f.id))
-            }
+            onPress={() => addressed.forEach((f) => ignoreFinding(store, f.id))}
           >
             Dismiss {plural(addressed.length, 'addressed finding')}
           </Btn>

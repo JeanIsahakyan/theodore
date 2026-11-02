@@ -119,8 +119,8 @@ export const ReviewMenu = observer(function ReviewMenu({
             </Popover.Heading>
             <span className="text-xs text-muted">
               Runs a review skill on this space&rsquo;s own branch review — a
-              second opinion, side by side with the agent writing the
-              change. Findings land on the review as usual.
+              second opinion, side by side with the agent writing the change.
+              Findings land on the review as usual.
             </span>
             <AgentChip
               value={agent}
