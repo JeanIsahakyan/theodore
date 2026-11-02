@@ -843,6 +843,11 @@ and `done_at` cleared the sweep has nothing to archive; a sweep that
 found the old PR merged while Continue ran re-reads the row under the
 ship lock and leaves it alone.
 
+| Once the PR merged | |
+| --- | --- |
+| Update from base (§6) | off: "Base moved" hides and the core refuses; Continue is the way onto the new base |
+| An Update from base still resolving | Continue waits: complete or abort it first |
+
 Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
 **GC** (archived spaces whose branch was never pushed lose their ref after
 `spaces.gc_days`, 30); removing a project archiving its spaces first.

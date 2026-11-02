@@ -539,7 +539,8 @@ async fn an_update_from_base_still_merging_must_finish_before_it_continues() {
     let f = fixtures();
     let (core, _recv, project) = host_project(&f).await;
     let s = in_review(&f, &core, &project, "Retry on 429").await;
-    merge_on_host(&f, &core, 100).await;
+    // An update started while in review, still resolving when the PR
+    // merges on the host.
     base_moved(&f, "main222");
     f.git.set_resolve("main", Sha::new("main222"));
     f.git
@@ -550,8 +551,19 @@ async fn an_update_from_base_still_merging_must_finish_before_it_continues() {
     core.update_space_from_base(&s.id).await.unwrap();
     let s = idle(&f, &s.id).await;
     assert!(s.updating.is_some(), "still resolving");
+    merge_on_host(&f, &core, 100).await;
 
     let err = core.continue_space(&s.id).await.unwrap_err();
     assert!(err.to_string().contains("update from the base"), "{err}");
     assert_eq!(space(&f, &s.id).branch, s.branch, "nothing moved");
+}
+
+#[tokio::test]
+async fn a_merged_space_continues_rather_than_updating_from_base() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    merge_on_host(&f, &core, 100).await;
+    let err = core.update_space_from_base(&s.id).await.unwrap_err();
+    assert!(err.to_string().contains("Continue"), "{err}");
 }

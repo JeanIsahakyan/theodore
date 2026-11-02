@@ -478,7 +478,8 @@ const SpaceHeader = observer(function SpaceHeader({
         </span>
       )}
       <span className="flex-1" />
-      <BaseMoved space={space} />
+      {/* Once its PR merged, Continue moves it onto the new base. */}
+      {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
       <RunButton space={space} config={config} />
       <PortChips space={space} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
