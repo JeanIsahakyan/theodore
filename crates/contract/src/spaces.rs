@@ -171,6 +171,10 @@ pub struct Space {
     /// project's repo. `ship_space`'s PR body says "Closes #<n>".
     #[serde(default)]
     pub issue: Option<u64>,
+    /// Pinned spaces sort first in the sidebar and ⌘K (docs/spaces.md §3).
+    /// Set only by `set_space_pinned`, never by a client transaction.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// A merge of the base into the space, left in progress on conflicts
@@ -196,7 +200,6 @@ pub struct SpaceBaseStatus {
     pub base_tip: Sha,
     /// Commits on the base since `base_sha`.
     pub behind: u32,
-}
 
 /// One merged round of a continued space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -409,4 +412,10 @@ pub struct MergeSpaceResult {
     pub auto: bool,
     /// Added to the base branch's merge queue instead.
     pub queue: bool,
+/// "Pin"/"Unpin" on a space (docs/spaces.md §3): sidebar context menu and
+/// ⌘K.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SetSpacePinnedRequest {
+    pub space: String,
+    pub pinned: bool,
 }
