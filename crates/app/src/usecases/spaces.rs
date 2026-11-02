@@ -194,6 +194,7 @@ impl Core {
             pinned: false,
             build_mode: None,
             question: None,
+            mirror: None,
         };
         self.apply(vec![NewAction {
             model: models::SPACE.into(),
