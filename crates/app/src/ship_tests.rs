@@ -141,6 +141,7 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project, goal: &str) -> S
             base: None,
             agent: None,
             model: None,
+            start_from: None,
         })
         .await
         .unwrap();
@@ -358,6 +359,7 @@ async fn nothing_to_ship_without_changes() {
             base: None,
             agent: None,
             model: None,
+            start_from: None,
         })
         .await
         .unwrap();
