@@ -1657,7 +1657,10 @@ impl AgentPort for FakeAgent {
                     default_done()
                 }
             });
-            let paused = self.paused.lock().unwrap().take();
+            // Like the hang: only a turn waits, never a background call.
+            let paused = stream_text
+                .then(|| self.paused.lock().unwrap().take())
+                .flatten();
             tokio::spawn(async move {
                 if let Some(go) = paused
                     && go.await.is_err()
