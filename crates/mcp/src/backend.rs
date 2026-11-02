@@ -9,9 +9,7 @@ pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
     LanguageStatus, LogTail, NewReviewComment, Position, ProgressStep, ProgressStepState,
     ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
-    SpaceToolError,
-    AppStatus, CheckOutcome, LogTail, SpaceCommandName, SpaceInfo, SpaceToolError, UserAnswer,
-    UserQuestion,
+    SpaceToolError, UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -318,14 +316,17 @@ pub trait SpaceToolsBackend: Send + Sync {
         note: Option<String>,
     ) -> Result<(), SpaceToolError> {
         let _ = (space, run_id, steps, note);
+        Err(unavailable())
+    }
     /// Shows `questions` in the space and waits for your answers: until
     /// you answer, the turn (`run_id`) is stopped, or the wait times out.
     async fn ask_user(
         &self,
-        _space: &str,
-        _run_id: &RunId,
-        _questions: Vec<UserQuestion>,
+        space: &str,
+        run_id: &RunId,
+        questions: Vec<UserQuestion>,
     ) -> Result<Vec<UserAnswer>, SpaceToolError> {
+        let _ = (space, run_id, questions);
         Err(unavailable())
     }
 }

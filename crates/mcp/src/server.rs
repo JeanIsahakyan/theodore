@@ -35,14 +35,12 @@ use crate::backend::{
     ReviewToolsBackend, RunContext, SpaceToolError, SpaceToolsBackend, ToolSet,
 };
 use crate::tools::{
-    AddFindingParams, AddFindingResult, BaseFileResult, CodeAnswerResult, CodeEditResult,
-    CodeStatusResult, DiagnosticItem, DiagnosticsParams, FindSymbolParams, GetBaseFileParams,
-    GetGroupParams, GetSymbolParams, GroupResult, HitItem, InsertAfterSymbolParams, PositionParams,
-    PrContextResult, ProposePatchParams, ProposePatchResult, ReadLogsParams, RenameSymbolParams,
-    ReplaceSymbolBodyParams, SymbolBodyResult, SymbolItem,
     AddFindingParams, AddFindingResult, AskUserParams, AskUserResult, BaseFileResult,
-    GetBaseFileParams, GetGroupParams, GroupResult, PrContextResult, ProposePatchParams,
-    ProposePatchResult, ReadLogsParams,
+    CodeAnswerResult, CodeEditResult, CodeStatusResult, DiagnosticItem, DiagnosticsParams,
+    FindSymbolParams, GetBaseFileParams, GetGroupParams, GetSymbolParams, GroupResult, HitItem,
+    InsertAfterSymbolParams, PositionParams, PrContextResult, ProposePatchParams,
+    ProposePatchResult, ReadLogsParams, RenameSymbolParams, ReplaceSymbolBodyParams,
+    SymbolBodyResult, SymbolItem,
 };
 
 /// Live run registrations: bearer token → run context. Shared between the auth
@@ -553,8 +551,8 @@ impl ServerHandler for ReviewToolsServer {
             {
                 return Ok(CallToolResponse::Complete(CallToolResult::error(vec![
                     ContentBlock::text(
-                        "code edits are off: this turn is in Ask mode. Ask the user to switch \
-                         the space to Edit",
+                        "code edits are off: this turn is in Ask or Plan mode. Ask the user to \
+                         switch the space to Edit",
                     ),
                 ])));
             }

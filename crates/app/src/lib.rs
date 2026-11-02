@@ -63,6 +63,8 @@ mod space_pr_tests;
 mod space_queue_tests;
 mod space_plan_tests;
 #[cfg(test)]
+mod space_queue_tests;
+#[cfg(test)]
 mod space_tools_tests;
 #[cfg(test)]
 mod space_turns_tests;

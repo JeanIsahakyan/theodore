@@ -633,15 +633,6 @@ impl From<crate::backend::CodeEditOutcome> for CodeEditResult {
     }
 }
 
-#[cfg(test)]
-mod code_tests {
-    use super::*;
-
-    #[test]
-    fn caps_count_chars() {
-        assert_eq!(cap("héllo", 10), ("héllo".to_string(), false));
-        assert_eq!(cap("héllo", 2), ("hé…".to_string(), true));
-    }
 // ── ask_user ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -678,4 +669,15 @@ impl AskUserParams {
 #[derive(Debug, Serialize)]
 pub struct AskUserResult {
     pub answers: Vec<crate::backend::UserAnswer>,
+}
+
+#[cfg(test)]
+mod code_tests {
+    use super::*;
+
+    #[test]
+    fn caps_count_chars() {
+        assert_eq!(cap("héllo", 10), ("héllo".to_string(), false));
+        assert_eq!(cap("héllo", 2), ("hé…".to_string(), true));
+    }
 }

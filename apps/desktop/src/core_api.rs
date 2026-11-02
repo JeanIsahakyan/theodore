@@ -345,6 +345,8 @@ pub trait CoreApi: Send + Sync {
         &self,
         _req: theodore_contract::SpaceFixCiRequest,
     ) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
     /// Approve on a plan card: the next turn implements the plan.
     async fn approve_space_plan(&self, _space: String) -> Result<String, CommandError> {
         Err(not_ready())

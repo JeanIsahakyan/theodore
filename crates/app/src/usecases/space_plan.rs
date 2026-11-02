@@ -60,6 +60,7 @@ impl Core {
     /// latest plan in its build mode. Refused while a turn runs and when
     /// the latest turn has no plan.
     pub async fn approve_space_plan(&self, space: &str) -> AppResult<String> {
+        let _queue = self.space_queue_lock(space).await;
         let row = self.space_row(space).await?;
         if row.status == SpaceStatus::Running {
             return Err(AppError::Invalid(

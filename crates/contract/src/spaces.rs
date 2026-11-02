@@ -178,6 +178,14 @@ pub struct Space {
     /// Set only by `set_space_pinned`, never by a client transaction.
     #[serde(default)]
     pub pinned: bool,
+    /// The mode that writes, Edit or Run, a turn last ran in: what an
+    /// approved plan is implemented in. `None` = Edit.
+    #[serde(default)]
+    pub build_mode: Option<SpaceMode>,
+    /// The agent's `ask_user` questions waiting for your answer; the turn
+    /// is paused on them.
+    #[serde(default)]
+    pub question: Option<SpaceQuestion>,
 }
 
 /// A merge of the base into the space, left in progress on conflicts
@@ -203,14 +211,6 @@ pub struct SpaceBaseStatus {
     pub base_tip: Sha,
     /// Commits on the base since `base_sha`.
     pub behind: u32,
-    /// The mode that writes, Edit or Run, a turn last ran in: what an
-    /// approved plan is implemented in. `None` = Edit.
-    #[serde(default)]
-    pub build_mode: Option<SpaceMode>,
-    /// The agent's `ask_user` questions waiting for your answer; the turn
-    /// is paused on them.
-    #[serde(default)]
-    pub question: Option<SpaceQuestion>,
 }
 
 /// Questions the agent asked mid-turn (`ask_user` on `space-tools`).

@@ -293,7 +293,8 @@ impl Core {
     }
 
     /// `space_send`, with `prompt` (when set) as the turn's ask instead of
-    /// the message as typed (an approved plan, `space_plan`).
+    /// the message as typed (an approved plan, `space_plan`). Caller holds
+    /// the space's queue lock.
     pub(crate) async fn space_send_as(
         &self,
         req: SpaceSendRequest,
@@ -314,6 +315,12 @@ impl Core {
             return Err(AppError::Invalid("empty message".into()));
         }
         if running {
+            if prompt.is_some() {
+                // Its ask isn't the message: it can't wait in the queue.
+                return Err(AppError::Invalid(
+                    "the agent is still working in this space".into(),
+                ));
+            }
             return self.queue_message(&space, &req, text, attachments).await;
         }
         let message = ChatMessage {
@@ -327,7 +334,7 @@ impl Core {
             attachments,
             queued: None,
         };
-        self.start_turn(space, &req, message, false).await
+        self.start_turn(space, &req, message, false, prompt).await
     }
 
     /// Refused while the space sets up: the goal goes first.
@@ -344,14 +351,16 @@ impl Core {
     }
 
     /// Stores `message` (new, or a queued one now sent: `stored`) and
-    /// starts its turn with `req`'s picks. Caller holds the space's queue
-    /// lock; the space isn't running.
+    /// starts its turn with `req`'s picks; `prompt`, when set, is the
+    /// turn's ask instead of the message (an approved plan). Caller holds
+    /// the space's queue lock; the space isn't running.
     pub(crate) async fn start_turn(
         &self,
         space: Space,
         req: &SpaceSendRequest,
         message: ChatMessage,
         stored: bool,
+        prompt: Option<String>,
     ) -> AppResult<String> {
         let project = self.space_project(&space).await?;
         let (text, attachments) = (message.text.clone(), message.attachments.clone());
@@ -492,7 +501,7 @@ impl Core {
                     code,
                     self.user_mcp_allowed().await,
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
-                    system_prompt(&space, self.0.deps.tools.is_some()),
+                    system_prompt(&space, self.0.deps.tools.is_some(), code),
                     mode,
                 )))
                 .unwrap_or_default(),
@@ -1538,10 +1547,8 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
      base, uncommitted edits included; get_review_comments reads the review's comments \
      and add_review_comment leaves one on a line; set_base changes the base branch when \
      the user asks; update_progress shows your plan above the user's message box, for \
-     work with several steps.";
-     URLs; start_app to try it), read_logs (setup, run, check or archive output), \
-     space_info, and ask_user: ask the user 1-3 multiple-choice questions and wait for \
-     the answer, only when you can't go on without their decision.";
+     work with several steps; ask_user asks the user 1-3 multiple-choice questions and \
+     waits for the answer, only when you can't go on without their decision.";
 
 /// Told to the agent when its turn has the user's own MCP servers.
 const USER_MCP_PROMPT: &str = "The user's own MCP servers (Linear, GitHub, docs and \

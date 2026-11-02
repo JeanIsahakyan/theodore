@@ -268,6 +268,14 @@ fn edit_settings(req: &AgentRequest, guard: Option<&Path>) -> Option<String> {
     }
     let mut roots = vec![req.cwd.clone()];
     roots.extend(attachment_dirs(req).into_iter().map(Path::to_path_buf));
+    if req.mode == AgentMode::Plan {
+        // Plan writes only its plan file (`plans`); the worktree stays
+        // untouched. No config dir known: every write is denied, and the
+        // plan comes from the final message instead.
+        roots = crate::models::claude_config_dir()
+            .map(|d| vec![d.join("plans")])
+            .unwrap_or_default();
+    }
     let mut settings = serde_json::json!({});
     if req.mode == AgentMode::Edit {
         let mut allow: Vec<String> = Vec::new();
@@ -610,11 +618,11 @@ fn claude_usage(u: &Value, usd: f64) -> Usage {
 
 impl LineParser for ClaudeParser {
     fn on_line(&mut self, line: &str) -> Vec<AgentEvent> {
-        if self.stdin_input {
-            return self.on_stdin_line(line);
-        }
-        parse_line(line)
-        let mut events = parse_line(line);
+        let mut events = if self.stdin_input {
+            self.on_stdin_line(line)
+        } else {
+            parse_line(line)
+        };
         let plans = plans(&events);
         // Before `Done`: the plan is part of the run, not after it.
         let at = events
@@ -1144,6 +1152,23 @@ mod run_mode_tests {
         assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].is_string());
         // A binary that never installed the guard offers no hook.
         assert!(settings_of(&build_args_guarded(&req, &Default::default(), None, None)).is_none());
+
+        // Plan: the guard's only root is Claude's plan directory, so the
+        // plan file is written and the worktree never is.
+        req.mode = AgentMode::Plan;
+        let s = settings_of(&build_args_guarded(
+            &req,
+            &Default::default(),
+            None,
+            Some(exe),
+        ))
+        .expect("settings");
+        assert!(s.get("permissions").is_none());
+        let cmd = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.ends_with("/plans'"), "{cmd}");
+        assert!(!cmd.contains("/data/spaces/a1"), "{cmd}");
 
         req.mode = AgentMode::ReadOnly;
         let args = build_args_guarded(&req, &Default::default(), None, Some(exe));

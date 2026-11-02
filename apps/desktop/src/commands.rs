@@ -911,59 +911,6 @@ pub async fn space_fix_ci(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn account_status(
-    op: crate::op::Op,
-    core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<theodore_contract::AccountStatus, CommandError> {
-    op.run(async move { core.account_status().await }).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn account_sign_in_start(
-    op: crate::op::Op,
-    req: theodore_contract::AccountSignInRequest,
-    core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<theodore_contract::AccountSignInStart, CommandError> {
-    op.run(async move { core.account_sign_in_start(req).await })
-        .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn account_sign_in_poll(
-    op: crate::op::Op,
-    core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<theodore_contract::AccountSignInState, CommandError> {
-    op.run(async move { core.account_sign_in_poll().await })
-        .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn account_sign_in_cancel(
-    op: crate::op::Op,
-    core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<(), CommandError> {
-    op.run(async move { core.account_sign_in_cancel().await })
-        .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn account_sign_out(
-    op: crate::op::Op,
-    core: State<'_, Arc<dyn CoreApi>>,
-) -> Result<theodore_contract::AccountStatus, CommandError> {
-    op.run(async move { core.account_sign_out().await }).await
-}
-
-/// Brings the main window forward: the browser sign-in finishes in another
-/// app, and the user should land back in Theodore without hunting for it.
-#[tauri::command]
-#[specta::specta]
-pub async fn focus_window(op: crate::op::Op, app: AppHandle) -> Result<(), CommandError> {
-    op.run(async move {
 pub async fn approve_space_plan(
     op: crate::op::Op,
     space: String,
