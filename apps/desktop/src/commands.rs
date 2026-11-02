@@ -854,6 +854,9 @@ pub async fn abort_space_update(
     op.run(async move { core.abort_space_update(space).await })
         .await
 }
+
+#[tauri::command]
+#[specta::specta]
 pub async fn space_fix_ci(
     op: crate::op::Op,
     req: theodore_contract::SpaceFixCiRequest,

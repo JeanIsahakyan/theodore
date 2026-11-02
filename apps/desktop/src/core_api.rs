@@ -307,6 +307,8 @@ pub trait CoreApi: Send + Sync {
         &self,
         _space: String,
     ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
     /// "Fix with agent": the space PR's failing checks' logs as the next
     /// turn (docs/spaces.md "Fix CI").
     async fn space_fix_ci(
