@@ -342,6 +342,8 @@ pub struct SentFeedback {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SpaceFixCiRequest {
     pub space: String,
+}
+
 /// Merge a space's PR from the space page (docs/spaces.md §3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct MergeSpaceRequest {
