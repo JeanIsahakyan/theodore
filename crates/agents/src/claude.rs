@@ -81,6 +81,7 @@ pub fn build_args(
 }
 
 /// `build_args` with `guard` as the edit hook's binary (`edit_guard`).
+#[cfg(test)]
 fn build_args_guarded(
     req: &AgentRequest,
     cfg: &AgentBinaryConfig,
