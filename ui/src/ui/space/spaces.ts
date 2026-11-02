@@ -71,7 +71,10 @@ export function spacesIn(ws: WorkspaceId, spaces: Space[]): Space[] {
 /** Pinned before unpinned; within each, most recently active first. Pin
  *  itself never touches `updated_at`, so pinning a space doesn't make it
  *  read as a new turn. */
-function pinnedFirst(a: Pick<Space, 'pinned' | 'updated_at'>, b: Pick<Space, 'pinned' | 'updated_at'>): number {
+function pinnedFirst(
+  a: Pick<Space, 'pinned' | 'updated_at'>,
+  b: Pick<Space, 'pinned' | 'updated_at'>,
+): number {
   const pa = a.pinned ? 1 : 0;
   const pb = b.pinned ? 1 : 0;
   return pb - pa || b.updated_at - a.updated_at;

@@ -1084,7 +1084,9 @@ export const Inbox = observer(function Inbox() {
         <ListSearchBar
           query={query}
           onQueryChange={(q) => ui.setListSearchQuery(q)}
-          order={order(visibleGroups.filter((g) => g.id !== 'snoozed' && g.id !== 'done'))}
+          order={order(
+            visibleGroups.filter((g) => g.id !== 'snoozed' && g.id !== 'done'),
+          )}
           selected={ui.selected}
           onSelect={(id) => ui.select(id as PrId)}
           onOpen={(id) => ui.go({ name: 'review', pr: id as PrId })}

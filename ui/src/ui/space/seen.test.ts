@@ -33,11 +33,21 @@ describe('space seen marks', () => {
   it('writes through to localStorage, not just the in-memory map', () => {
     markSpaceSeen('s', 10);
     expect(
-      (JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') as Record<string, number>).s,
+      (
+        JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') as Record<
+          string,
+          number
+        >
+      ).s,
     ).toBe(10);
     markSpaceUnseen('s');
     expect(
-      (JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') as Record<string, number>).s,
+      (
+        JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') as Record<
+          string,
+          number
+        >
+      ).s,
     ).toBeUndefined();
   });
 });

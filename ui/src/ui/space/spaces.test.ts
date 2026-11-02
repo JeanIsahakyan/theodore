@@ -146,9 +146,10 @@ describe('spaces', () => {
     // `updated_at`, by asserting pin alone doesn't reorder by activity.
     const unpinned = space({ id: 'a', updated_at: 5 });
     const pinned = { ...space({ id: 'b', updated_at: 5 }), pinned: true };
-    expect(spacesIn('local:app', [unpinned, pinned]).map((s) => s.id)).toEqual(
-      ['b', 'a'],
-    );
+    expect(spacesIn('local:app', [unpinned, pinned]).map((s) => s.id)).toEqual([
+      'b',
+      'a',
+    ]);
   });
 
   it('"Mark as unread" only does something once there is a turn to flag and it is not already unseen', () => {

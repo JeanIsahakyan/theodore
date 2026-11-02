@@ -64,6 +64,8 @@ interface NavItem {
   onPress?: () => void;
   /** Right-click menu for this row, built lazily (`ContextMenu.tsx`). */
   contextMenu?: () => ContextMenuItem[];
+  /** A pinned space (docs/spaces.md §3): sorts first, marked with a small pin. */
+  pinned?: boolean;
 }
 
 /** Pin/unpin and "Mark as unread" (docs/spaces.md §3) — the sidebar's
@@ -74,7 +76,11 @@ export function spaceContextMenu(s: Space): ContextMenuItem[] {
     {
       id: 'pin',
       label: pinned ? 'Unpin' : 'Pin',
-      icon: pinned ? <PinSlash className="size-4" /> : <Pin className="size-4" />,
+      icon: pinned ? (
+        <PinSlash className="size-4" />
+      ) : (
+        <Pin className="size-4" />
+      ),
       onAction: () =>
         void api
           .setSpacePinned({ space: s.id, pinned: !pinned })
@@ -282,6 +288,7 @@ export const Sidebar = observer(function Sidebar() {
                 label: spaceTitle(s),
                 route: { name: 'space', id: s.id },
                 contextMenu: () => spaceContextMenu(s),
+                pinned: s.pinned ?? false,
               })),
               {
                 key: 'new-space',
@@ -365,6 +372,12 @@ export const Sidebar = observer(function Sidebar() {
                   <span className="min-w-0 flex-1 truncate" title={i.label}>
                     {i.label}
                   </span>
+                  {i.pinned && (
+                    <Pin
+                      className="size-3 shrink-0 text-muted"
+                      aria-label="Pinned"
+                    />
+                  )}
                   {i.n !== undefined && i.n !== 0 && (
                     <span className="shrink-0 text-xs tabular-nums text-muted">
                       {i.n}
@@ -418,6 +431,12 @@ export const Sidebar = observer(function Sidebar() {
                 <span className="min-w-0 flex-1 truncate" title={spaceTitle(s)}>
                   {spaceTitle(s)}
                 </span>
+                {s.pinned && (
+                  <Pin
+                    className="size-3 shrink-0 text-muted"
+                    aria-label="Pinned"
+                  />
+                )}
               </button>
             ))}
           </div>

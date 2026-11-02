@@ -62,7 +62,9 @@ describe('spaceSearchText', () => {
     const text = spaceSearchText(s);
     expect(matchesSearch(text, 'export')).toBe(true);
     expect(matchesSearch(text, 'fix-login')).toBe(true);
-    expect(() => spaceSearchText({ ...s, title: 'Retry exports' })).not.toThrow();
+    expect(() =>
+      spaceSearchText({ ...s, title: 'Retry exports' }),
+    ).not.toThrow();
   });
 });
 
@@ -73,7 +75,7 @@ describe('findScopeFor', () => {
     expect(findScopeFor('prs', false)).toBe('prs');
   });
 
-  it('leaves the key alone in a diff/text view, for the webview\'s own find', () => {
+  it("leaves the key alone in a diff/text view, for the webview's own find", () => {
     expect(findScopeFor('review', true)).toBeNull();
     expect(findScopeFor('space', true)).toBeNull();
   });

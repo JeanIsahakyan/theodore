@@ -9,10 +9,7 @@ import type { PrSummary, Space } from '../gen/contract';
 export type SearchScope = 'prs' | 'spaces';
 
 function normalize(s: string): string {
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase();
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
 /** Fuzzy-ish substring match: every word in `query` must appear somewhere

@@ -256,7 +256,7 @@ export const PullRequests = observer(function PullRequests() {
   const closed = Object.fromEntries(
     visibleGroups.map((g) => [
       g.id,
-      query === null ? toggled[`${filter}:${g.id}`] ?? g.collapsed : false,
+      query === null ? (toggled[`${filter}:${g.id}`] ?? g.collapsed) : false,
     ]),
   );
   const order = visibleGroups.flatMap((g) =>
