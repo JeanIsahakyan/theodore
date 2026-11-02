@@ -5617,7 +5617,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-code-intel"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "pretty_assertions",
@@ -5638,7 +5638,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-code-intel-lsp"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "lsp-types",
  "pretty_assertions",
@@ -5653,7 +5653,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-code-intel-syntax"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "futures",
  "hex",
@@ -5678,7 +5678,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-code-intel-toolchain"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "flate2",
  "hex",

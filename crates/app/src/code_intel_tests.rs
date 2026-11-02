@@ -154,7 +154,7 @@ fn a_bad_code_intel_section_is_dropped_alone_and_typos_are_unknown() {
         legacy: false,
         text: Some(text.into()),
     }]);
-    assert_eq!(m.config.spaces.ports, 2, "spaces still applies");
+    assert_eq!(m.config.spaces.ports, Some(2), "spaces still applies");
     assert_eq!(m.config.code_intel.install, InstallPolicy::Ask);
     assert_eq!(m.errors.len(), 1);
     assert_eq!(m.errors[0].0, "code_intel");
