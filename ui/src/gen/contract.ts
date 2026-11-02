@@ -200,6 +200,8 @@ export type ChatMessage = {
 	failed?: string | null,
 	/**  Files sent with your message; empty on replies and older rows. */
 	attachments?: Attachment[],
+	/**  A space message waiting for its turn (docs/spaces.md §8). */
+	queued?: QueuedSend | null,
 };
 
 export type Check = {
@@ -1033,6 +1035,33 @@ export type ProjectWorkingState = {
 	dirty_files: number,
 };
 
+/**  What to do with one queued message. */
+export type QueuedAction =
+/**  Run it now if the space is free; otherwise release it to the queue. */
+{ kind: "send" } |
+/**  Drop it from the transcript. */
+{ kind: "cancel" } |
+/**  Replace its text. */
+{ kind: "edit"; text: string };
+
+/**
+ *  On a `ChatMessage` of yours that hasn't run yet: what it was sent with
+ *  and where it stands. Cleared when its turn starts.
+ */
+export type QueuedSend = {
+	/**  Queue position: the queue sends lowest first. */
+	seq: number,
+	/**  The picks it was sent with; `None` = the space's when it runs. */
+	agent?: AgentId | null,
+	model?: string | null,
+	mode?: SpaceMode | null,
+	/**
+	 *  Waits for your "Send": the turn before it was stopped or failed,
+	 *  its own turn couldn't start, or Theodore restarted meanwhile.
+	 */
+	held?: boolean,
+};
+
 export type ReactRequest = {
 	pr: PrId,
 	comment: CommentId,
@@ -1557,6 +1586,13 @@ export type SpaceProgressStep = {
 	state: SpaceProgressState,
 };
 
+export type SpaceQueuedRequest = {
+	space: string,
+	/**  The queued `chat_message` id. */
+	message: string,
+	action: QueuedAction,
+};
+
 export type SpaceReviewRequest = {
 	space: string,
 	/**  Also group the diff by meaning (Review); `false` for the live diff. */
@@ -1680,6 +1716,11 @@ export type SpaceTurn = {
 	undone?: boolean,
 	/**  `spaces.check` after the turn, when it changed files. */
 	check?: SpaceCheck | null,
+	/**
+	 *  Messages of yours sent into it while it ran ("Send now"):
+	 *  `chat_message` ids, undone with it.
+	 */
+	steered?: string[],
 };
 
 /**
