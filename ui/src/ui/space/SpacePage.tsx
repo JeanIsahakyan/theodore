@@ -824,6 +824,7 @@ export const SpaceChat = observer(function SpaceChat({
     if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
     setText('');
+    setRevising(false);
     void (now ? api.spaceSendNow : api.spaceSend)({
       space: space.id,
       text: t,
@@ -834,17 +835,6 @@ export const SpaceChat = observer(function SpaceChat({
       mode: mode === space.mode ? null : mode,
       attachments: files.ids.length ? files.ids : null,
     })
-    setRevising(false);
-    void api
-      .spaceSend({
-        space: space.id,
-        text: t,
-        agent: agent === space.agent ? null : agent,
-        // The chip's model, so a change there reaches the next turn.
-        model: agentModel(store, agent),
-        mode: mode === space.mode ? null : mode,
-        attachments: files.ids.length ? files.ids : null,
-      })
       .then(() => files.clear())
       .catch(() => setText(t));
   };
@@ -967,9 +957,9 @@ export const SpaceChat = observer(function SpaceChat({
                   ? 'Setting up…'
                   : run
                     ? 'Queue a message for after this turn…'
-                  : revising
-                    ? 'What should change in the plan?'
-                    : 'Ask the agent to change something…'
+                    : revising
+                      ? 'What should change in the plan?'
+                      : 'Ask the agent to change something…'
             }
             disabled={space.status === 'archived' || settingUp(space)}
             running={!!run}
