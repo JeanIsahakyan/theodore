@@ -5,7 +5,9 @@
 //! `branch` and worktree start — everything else about creating a space is
 //! unchanged.
 
-use theodore_contract::{CreateSpaceRequest, Project, SpaceIssue, SpaceStart};
+use theodore_contract::{
+    CreateSpaceRequest, Project, ProjectIssuesRequest, SpaceIssue, SpaceStart,
+};
 use theodore_domain::{PrDetail, PrRef, Sha};
 use theodore_ports::{Fetched, TrackedIssue};
 
@@ -118,11 +120,11 @@ impl Core {
 
     /// New space's "From an issue" picker: the project's own open issues
     /// assigned to the viewer.
-    pub async fn project_issues(&self, project: &str) -> AppResult<Vec<SpaceIssue>> {
+    pub async fn project_issues(&self, req: ProjectIssuesRequest) -> AppResult<Vec<SpaceIssue>> {
         let project = self
-            .project_row(project)
+            .project_row(&req.project)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("project {project}")))?;
+            .ok_or_else(|| AppError::NotFound(format!("project {}", req.project)))?;
         let issues = self.0.deps.host.my_open_issues(&project.repo).await?;
         Ok(issues.into_iter().map(tracked_to_wire).collect())
     }
