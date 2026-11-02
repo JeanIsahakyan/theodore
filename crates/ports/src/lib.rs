@@ -17,6 +17,7 @@ pub mod secrets;
 pub mod space_agent_tools;
 pub mod space_tools;
 pub mod store;
+pub mod terminal;
 pub mod worktree_lease;
 
 pub use account::*;
@@ -32,4 +33,5 @@ pub use secrets::*;
 pub use space_agent_tools::*;
 pub use space_tools::*;
 pub use store::*;
+pub use terminal::*;
 pub use worktree_lease::*;

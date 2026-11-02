@@ -830,6 +830,42 @@ impl CoreApi for AppCore {
     ) -> Result<Vec<theodore_contract::SpaceLogLine>, CommandError> {
         self.core.space_logs(&space).await.map_err(err)
     }
+    async fn open_space_terminal(
+        &self,
+        req: theodore_contract::OpenTerminalRequest,
+    ) -> Result<theodore_contract::SpaceTerminalInfo, CommandError> {
+        self.core
+            .open_space_terminal(&req.space, req.cols, req.rows)
+            .await
+            .map_err(err)
+    }
+    async fn write_space_terminal(
+        &self,
+        req: theodore_contract::WriteTerminalRequest,
+    ) -> Result<(), CommandError> {
+        self.core
+            .write_space_terminal(&req.terminal, &req.data)
+            .await
+            .map_err(err)
+    }
+    async fn resize_space_terminal(
+        &self,
+        req: theodore_contract::ResizeTerminalRequest,
+    ) -> Result<(), CommandError> {
+        self.core
+            .resize_space_terminal(&req.terminal, req.cols, req.rows)
+            .await
+            .map_err(err)
+    }
+    async fn close_space_terminal(&self, terminal: String) -> Result<(), CommandError> {
+        self.core.close_space_terminal(&terminal).await.map_err(err)
+    }
+    async fn list_space_terminals(
+        &self,
+        space: String,
+    ) -> Result<Vec<theodore_contract::SpaceTerminalInfo>, CommandError> {
+        self.core.list_space_terminals(&space).await.map_err(err)
+    }
     async fn project_config(
         &self,
         project: String,
