@@ -575,7 +575,7 @@ impl GitPort for GitCli {
         repo: &Path,
         space: &str,
         to: &Sha,
-        from: Option<&Sha>,
+        from: &Sha,
     ) -> GitResult<Vec<String>> {
         self.mirror_sync_op(folder, repo, space, to, from).await
     }
@@ -585,21 +585,19 @@ impl GitPort for GitCli {
         folder: &Path,
         repo: &Path,
         space: &str,
-        from: &Sha,
         to: &Sha,
+        paths: &[String],
     ) -> GitResult<Vec<String>> {
-        self.mirror_edited_op(folder, repo, space, from, to).await
+        self.mirror_edited_op(folder, repo, space, to, paths).await
     }
 
     async fn mirror_restore(
         &self,
         folder: &Path,
-        repo: &Path,
-        space: &str,
         from: &Sha,
-        to: &Sha,
+        paths: &[String],
     ) -> GitResult<Vec<String>> {
-        self.mirror_restore_op(folder, repo, space, from, to).await
+        self.mirror_restore_op(folder, from, paths).await
     }
 
     async fn commit_file(

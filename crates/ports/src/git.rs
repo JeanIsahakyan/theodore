@@ -575,52 +575,54 @@ pub trait GitPort: Send + Sync {
 
     /// Writes the space's checkpoint `to` into `folder`'s working tree
     /// (docs/spaces.md "Mirror into a local folder"): only the paths that
-    /// differ between `from` (`None` the first time, meaning every path in
-    /// `to`) and `to` are rewritten or removed. The folder's own index,
-    /// branch and `HEAD` are never touched — a temporary index does the
-    /// lookup. Returns the paths written or removed.
+    /// differ between `from` and `to` are rewritten or removed (the first
+    /// sync passes the space's own `base_sha`, so only what the agent
+    /// actually changed is written, not the whole tree). The folder's own
+    /// index, branch and `HEAD` are never touched — a temporary index does
+    /// the lookup. Returns the paths written or removed, for the caller to
+    /// fold into the running set mirroring has ever touched (`mirror_edited`
+    /// / `mirror_restore` work from that set, not from a single diff: a
+    /// path the agent added and then removed again has no net difference
+    /// between the session's endpoints, but still needs to be watched and
+    /// restored).
     async fn mirror_sync(
         &self,
         folder: &Path,
         repo: &Path,
         space: &str,
         to: &Sha,
-        from: Option<&Sha>,
+        from: &Sha,
     ) -> GitResult<Vec<String>> {
         let _ = (folder, repo, space, to, from);
         Err(GitError::Unsupported("mirror_sync"))
     }
 
-    /// Paths mirrored between `from` and `to` (`git diff --name-only`)
-    /// whose content in `folder`'s working tree no longer matches what
-    /// mirroring wrote there — checked against each path's actual bytes,
-    /// never a timestamp. `from` is usually the folder's own remembered
-    /// `HEAD`; `to`, the last checkpoint mirrored.
+    /// Which of `paths` (the running set `mirror_sync` has ever touched) no
+    /// longer match what mirroring wrote there, checked against `to`'s
+    /// tree (the last checkpoint mirrored) by content — never a timestamp.
     async fn mirror_edited(
         &self,
         folder: &Path,
         repo: &Path,
         space: &str,
-        from: &Sha,
         to: &Sha,
+        paths: &[String],
     ) -> GitResult<Vec<String>> {
-        let _ = (folder, repo, space, from, to);
+        let _ = (folder, repo, space, to, paths);
         Err(GitError::Unsupported("mirror_edited"))
     }
 
-    /// Restores every path mirrored between `from` and `to` to its content
-    /// at `from`, and touches nothing else: the folder's branch, `HEAD`
-    /// and index stay exactly as they were. Returns the paths restored or
-    /// removed.
+    /// Restores every path in `paths` to its content at `from` (the
+    /// folder's own remembered `HEAD`, already local — no fetch needed)
+    /// and touches nothing else: the folder's branch, `HEAD` and index
+    /// stay exactly as they were. Returns the paths restored or removed.
     async fn mirror_restore(
         &self,
         folder: &Path,
-        repo: &Path,
-        space: &str,
         from: &Sha,
-        to: &Sha,
+        paths: &[String],
     ) -> GitResult<Vec<String>> {
-        let _ = (folder, repo, space, from, to);
+        let _ = (folder, from, paths);
         Err(GitError::Unsupported("mirror_restore"))
     }
 

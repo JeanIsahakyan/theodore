@@ -103,6 +103,15 @@ fn require_ok(out: RawOutput, args: &str) -> GitResult<Vec<u8>> {
     }
 }
 
+/// A path under the OS temp dir no other call in this process can collide
+/// with: the pid plus a counter, not a timestamp (two calls can land in
+/// the same nanosecond).
+fn temp_index_path() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("theodore-mirror-index-{}-{n}", std::process::id()))
+}
+
 /// `-z`-terminated plain paths (`diff --name-only -z`, `ls-tree -z
 /// --name-only`): split on NUL, drop the trailing empty field.
 fn parse_paths_z(out: &[u8]) -> Vec<String> {
@@ -198,14 +207,16 @@ impl GitCli {
         Ok(parse_paths_z(&out))
     }
 
-    /// Checks out `paths` (already validated as safe components) from
-    /// `tree` into `folder`'s working tree, through a temporary index that
-    /// only this call ever opens. Paths absent from `tree` are left alone
-    /// by this step — the caller removes those itself.
-    async fn checkout_from_tree(&self, folder: &Path, tree: &Sha, paths: &[&str]) -> GitResult<()> {
-        if paths.is_empty() {
-            return Ok(());
-        }
+    /// Builds a temporary index at `tree`, runs `with_index` against it
+    /// (`GIT_DIR`/`GIT_WORK_TREE` pointing at `folder`, `GIT_INDEX_FILE` at
+    /// a path only this call uses), then removes the index file. The
+    /// folder's own index is never opened.
+    async fn with_tree_index<T>(
+        &self,
+        folder: &Path,
+        tree: &Sha,
+        with_index: impl AsyncFnOnce(&[(&str, &str)]) -> GitResult<T>,
+    ) -> GitResult<T> {
         let askpass = self.ensure_askpass()?;
         let git_dir = proc(
             folder,
@@ -220,14 +231,7 @@ impl GitCli {
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 folder path".to_string()))?
             .to_string();
-        let index = std::env::temp_dir().join(format!(
-            "theodore-mirror-index-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let index = temp_index_path();
         let index_str = index
             .to_str()
             .ok_or_else(|| GitError::Parse("non-utf8 temp index path".to_string()))?
@@ -240,19 +244,33 @@ impl GitCli {
         let result = async {
             let out = run_env(folder, &["read-tree", tree.as_str()], &envs).await?;
             require_ok(out, "read-tree")?;
-            let mut args: Vec<&str> = vec!["checkout-index", "-f", END_OF_OPTIONS];
-            args.extend(paths.iter().copied());
-            let out = run_env(folder, &args, &envs).await?;
-            require_ok(out, "checkout-index").map(|_| ())
+            with_index(&envs).await
         }
         .await;
         let _ = std::fs::remove_file(&index);
         result
     }
 
+    /// Checks out `paths` (already validated as safe components) from
+    /// `tree` into `folder`'s working tree, through a temporary index that
+    /// only this call ever opens. Paths absent from `tree` are left alone
+    /// by this step — the caller removes those itself.
+    async fn checkout_from_tree(&self, folder: &Path, tree: &Sha, paths: &[&str]) -> GitResult<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.with_tree_index(folder, tree, async |envs| {
+            let mut args: Vec<&str> = vec!["checkout-index", "-f", END_OF_OPTIONS];
+            args.extend(paths.iter().copied());
+            let out = run_env(folder, &args, envs).await?;
+            require_ok(out, "checkout-index").map(|_| ())
+        })
+        .await
+    }
+
     /// `paths` in `folder`'s working tree whose content no longer matches
     /// `tree` (a temporary index of `tree`, then `git diff --name-only -z`
-    /// against the working tree: no args but a pathspec, the default
+    /// against the working tree: no revision but a pathspec, the default
     /// "index vs worktree" comparison).
     async fn differs_from_tree(
         &self,
@@ -263,49 +281,14 @@ impl GitCli {
         if paths.is_empty() {
             return Ok(Vec::new());
         }
-        let askpass = self.ensure_askpass()?;
-        let git_dir = proc(
-            folder,
-            &askpass,
-            &["rev-parse", "--path-format=absolute", "--git-dir"],
-        )
-        .run_text()
-        .await?
-        .trim()
-        .to_string();
-        let work_tree = folder
-            .to_str()
-            .ok_or_else(|| GitError::Parse("non-utf8 folder path".to_string()))?
-            .to_string();
-        let index = std::env::temp_dir().join(format!(
-            "theodore-mirror-check-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        let index_str = index
-            .to_str()
-            .ok_or_else(|| GitError::Parse("non-utf8 temp index path".to_string()))?
-            .to_string();
-        let envs = [
-            ("GIT_DIR", git_dir.as_str()),
-            ("GIT_WORK_TREE", work_tree.as_str()),
-            ("GIT_INDEX_FILE", index_str.as_str()),
-        ];
-        let result: GitResult<Vec<String>> = async {
-            let out = run_env(folder, &["read-tree", tree.as_str()], &envs).await?;
-            require_ok(out, "read-tree")?;
+        self.with_tree_index(folder, tree, async |envs| {
             let mut args: Vec<&str> = vec!["diff", "--name-only", "-z", END_OF_OPTIONS];
             args.extend(paths.iter().copied());
-            let out = run_env(folder, &args, &envs).await?;
+            let out = run_env(folder, &args, envs).await?;
             let bytes = require_ok(out, "diff")?;
             Ok(parse_paths_z(&bytes))
-        }
-        .await;
-        let _ = std::fs::remove_file(&index);
-        result
+        })
+        .await
     }
 
     /// Removes `path` from `folder`'s working tree, pruning now-empty
@@ -325,35 +308,43 @@ impl GitCli {
         }
     }
 
+    /// `changed`, split into paths present in `tree` (to check out) and
+    /// paths absent from it (to remove) — the one membership lookup every
+    /// op here needs after it has its path list.
+    async fn split_by_tree<'a>(
+        &self,
+        folder: &Path,
+        tree: &Sha,
+        changed: &'a [String],
+    ) -> GitResult<(Vec<&'a str>, Vec<&'a str>)> {
+        let present = self.tree_paths(folder, tree).await?;
+        let present: std::collections::HashSet<&str> = present.iter().map(String::as_str).collect();
+        Ok(changed
+            .iter()
+            .map(String::as_str)
+            .partition(|p| present.contains(p)))
+    }
+
     pub(crate) async fn mirror_sync_op(
         &self,
         folder: &Path,
         repo: &Path,
         space: &str,
         to: &Sha,
-        from: Option<&Sha>,
+        from: &Sha,
     ) -> GitResult<Vec<String>> {
         check_space(space)?;
         self.verify_folder(folder).await?;
         self.fetch_space_ref(folder, repo, space).await?;
         let _folder = crate::locks::lock(folder).await;
-        let present = self.tree_paths(folder, to).await?;
-        let changed = match from {
-            Some(f) => self.mirror_diff(folder, f, to).await?,
-            None => present.clone(),
-        };
+        let changed = self.mirror_diff(folder, from, to).await?;
         if changed.is_empty() {
             return Ok(Vec::new());
         }
         for p in &changed {
             segments(p)?;
         }
-        use std::collections::HashSet;
-        let present: HashSet<&str> = present.iter().map(String::as_str).collect();
-        let (to_checkout, to_delete): (Vec<&str>, Vec<&str>) = changed
-            .iter()
-            .map(String::as_str)
-            .partition(|p| present.contains(p));
+        let (to_checkout, to_delete) = self.split_by_tree(folder, to, &changed).await?;
         self.checkout_from_tree(folder, to, &to_checkout).await?;
         for p in &to_delete {
             self.remove_mirrored(folder, p);
@@ -366,26 +357,19 @@ impl GitCli {
         folder: &Path,
         repo: &Path,
         space: &str,
-        from: &Sha,
         to: &Sha,
+        paths: &[String],
     ) -> GitResult<Vec<String>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
         check_space(space)?;
         self.verify_folder(folder).await?;
         self.fetch_space_ref(folder, repo, space).await?;
-        let changed = self.mirror_diff(folder, from, to).await?;
-        if changed.is_empty() {
-            return Ok(Vec::new());
-        }
-        for p in &changed {
+        for p in paths {
             segments(p)?;
         }
-        let present = self.tree_paths(folder, to).await?;
-        use std::collections::HashSet;
-        let present: HashSet<&str> = present.iter().map(String::as_str).collect();
-        let (tracked, deleted): (Vec<&str>, Vec<&str>) = changed
-            .iter()
-            .map(String::as_str)
-            .partition(|p| present.contains(p));
+        let (tracked, deleted) = self.split_by_tree(folder, to, paths).await?;
         let mut edited = self.differs_from_tree(folder, to, &tracked).await?;
         for p in deleted {
             if folder.join(p).exists() {
@@ -400,34 +384,23 @@ impl GitCli {
     pub(crate) async fn mirror_restore_op(
         &self,
         folder: &Path,
-        repo: &Path,
-        space: &str,
         from: &Sha,
-        to: &Sha,
+        paths: &[String],
     ) -> GitResult<Vec<String>> {
-        check_space(space)?;
-        self.verify_folder(folder).await?;
-        self.fetch_space_ref(folder, repo, space).await?;
-        let _folder = crate::locks::lock(folder).await;
-        let changed = self.mirror_diff(folder, from, to).await?;
-        if changed.is_empty() {
+        if paths.is_empty() {
             return Ok(Vec::new());
         }
-        for p in &changed {
+        self.verify_folder(folder).await?;
+        for p in paths {
             segments(p)?;
         }
-        let present = self.tree_paths(folder, from).await?;
-        use std::collections::HashSet;
-        let present: HashSet<&str> = present.iter().map(String::as_str).collect();
-        let (to_checkout, to_delete): (Vec<&str>, Vec<&str>) = changed
-            .iter()
-            .map(String::as_str)
-            .partition(|p| present.contains(p));
+        let _folder = crate::locks::lock(folder).await;
+        let (to_checkout, to_delete) = self.split_by_tree(folder, from, paths).await?;
         self.checkout_from_tree(folder, from, &to_checkout).await?;
         for p in &to_delete {
             self.remove_mirrored(folder, p);
         }
-        Ok(changed)
+        Ok(paths.to_vec())
     }
 }
 
