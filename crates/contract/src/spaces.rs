@@ -200,6 +200,7 @@ pub struct SpaceBaseStatus {
     pub base_tip: Sha,
     /// Commits on the base since `base_sha`.
     pub behind: u32,
+}
 
 /// One merged round of a continued space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
