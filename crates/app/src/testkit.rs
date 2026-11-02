@@ -691,6 +691,11 @@ impl FakeGit {
             .insert(name.to_string(), sha);
     }
 
+    /// What `name` resolves to now (a space's checkpoint ref, say).
+    pub fn resolve_ref_of(&self, name: &str) -> Option<Sha> {
+        self.resolve_refs.lock().unwrap().get(name).cloned()
+    }
+
     pub fn set_commit(&self, sha: Sha, commit: CommitLog) {
         self.commits.lock().unwrap().insert(sha.0.clone(), commit);
     }
@@ -1039,6 +1044,12 @@ impl GitPort for FakeGit {
 
     async fn space_snapshot(&self, worktree: &Path) -> GitResult<Sha> {
         if let Some(sha) = self.ship.lock().unwrap().snapshot.clone() {
+            // Resolvable by its sha, as git would, for a live diff.
+            self.resolve_refs
+                .lock()
+                .unwrap()
+                .insert(sha.0.clone(), sha.clone());
+            self.ensure_commit(&sha, "snapshot of the worktree");
             return Ok(sha);
         }
         // The space is the worktree's last path component (`space_worktree`).
