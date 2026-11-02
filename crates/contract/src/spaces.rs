@@ -153,6 +153,14 @@ pub struct Space {
     /// set while its merge conflicts (docs/spaces.md §6).
     #[serde(default)]
     pub updating: Option<SpaceUpdate>,
+    /// Earlier rounds, oldest first: each PR of the space that merged
+    /// before "Continue" moved it to a new branch (docs/spaces.md §7).
+    #[serde(default)]
+    pub rounds: Vec<SpaceRound>,
+    /// Told to the agent at the start of the next turn, then cleared: the
+    /// previous PR merged and the work goes on on a new branch.
+    #[serde(default)]
+    pub continue_note: Option<String>,
 }
 
 /// A merge of the base into the space, left in progress on conflicts
@@ -178,14 +186,6 @@ pub struct SpaceBaseStatus {
     pub base_tip: Sha,
     /// Commits on the base since `base_sha`.
     pub behind: u32,
-    /// Earlier rounds, oldest first: each PR of the space that merged
-    /// before "Continue" moved it to a new branch (docs/spaces.md §7).
-    #[serde(default)]
-    pub rounds: Vec<SpaceRound>,
-    /// Told to the agent at the start of the next turn, then cleared: the
-    /// previous PR merged and the work goes on on a new branch.
-    #[serde(default)]
-    pub continue_note: Option<String>,
 }
 
 /// One merged round of a continued space.

@@ -11,7 +11,7 @@ use theodore_contract::{
 };
 use theodore_domain::{PrRef, PrState, RepoRef, Sha, Usage};
 use theodore_ports::{
-    AgentEvent, MergeMethod, MergeState, MergeStatus, NewAction, Store, SyncActionCode,
+    AgentEvent, MergeMethod, MergeState, MergeStatus, NewAction, SpaceMerge, Store, SyncActionCode,
 };
 
 use crate::testkit::{Fixtures, fixtures, sample_pr_detail};
@@ -167,6 +167,14 @@ fn base_moved(f: &Fixtures, tip: &str) {
     f.git.set_resolve(tip, Sha::new(tip));
 }
 
+/// The PR-description fill (a one-shot call), not a background naming or
+/// handoff call that could take its script first.
+fn is_fill(r: &theodore_ports::AgentRequest) -> bool {
+    r.system
+        .as_deref()
+        .is_some_and(|s| s.contains("pull request descriptions"))
+}
+
 fn body_of_the_opened_pr(f: &Fixtures) -> String {
     let calls = f.host.create_pr_calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
@@ -216,13 +224,19 @@ async fn open_pr_fills_the_repos_template_and_links_back_to_the_space() {
         .unwrap();
     let s = idle(&f, &s.id).await;
     // The fill: the template with its headings kept.
-    f.agents.push_script(done(
-        "```markdown\n## Summary\nRetries 429s with backoff.\n\n## Testing\n- [x] tests\n```",
-    ));
+    f.agents.push_tagged(
+        is_fill,
+        done("```markdown\n## Summary\nRetries 429s with backoff.\n\n## Testing\n- [x] tests\n```"),
+    );
     core.ship_space(open_pr(&s)).await.unwrap();
     wait_until(|| space(&f, &s.id).pr.is_some()).await;
 
-    let fill = f.agents.last_request().unwrap();
+    let fill = f
+        .agents
+        .utility_requests()
+        .into_iter()
+        .find(is_fill)
+        .expect("the template was filled in");
     assert_eq!(fill.mode, theodore_ports::AgentMode::ReadOnly);
     assert_eq!(fill.model.as_deref(), Some("haiku"), "the cheap model");
     assert!(fill.prompt.contains("## Testing"), "{}", fill.prompt);
@@ -255,7 +269,7 @@ async fn a_fill_that_drops_the_template_keeps_the_template_and_the_goal() {
         TEMPLATE.as_bytes(),
     );
     let s = one_turn(&f, &core, &project, "Retry on 429").await;
-    f.agents.push_script(done("ok"));
+    f.agents.push_tagged(is_fill, done("ok"));
     core.ship_space(open_pr(&s)).await.unwrap();
     wait_until(|| space(&f, &s.id).pr.is_some()).await;
     let body = body_of_the_opened_pr(&f);
@@ -518,4 +532,26 @@ async fn an_archived_space_must_be_unarchived_before_it_continues() {
     core.archive_space(&s.id).await.unwrap();
     let err = core.continue_space(&s.id).await.unwrap_err();
     assert!(err.to_string().contains("unarchive"), "{err}");
+}
+
+#[tokio::test]
+async fn an_update_from_base_still_merging_must_finish_before_it_continues() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    merge_on_host(&f, &core, 100).await;
+    base_moved(&f, "main222");
+    f.git.set_resolve("main", Sha::new("main222"));
+    f.git
+        .push_merge_result(SpaceMerge::Conflicts(vec!["a.txt".into()]));
+    f.git
+        .push_merge_result(SpaceMerge::Conflicts(vec!["a.txt".into()]));
+    f.agents.push_script(done("Tried."));
+    core.update_space_from_base(&s.id).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert!(s.updating.is_some(), "still resolving");
+
+    let err = core.continue_space(&s.id).await.unwrap_err();
+    assert!(err.to_string().contains("update from the base"), "{err}");
+    assert_eq!(space(&f, &s.id).branch, s.branch, "nothing moved");
 }

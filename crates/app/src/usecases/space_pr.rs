@@ -230,6 +230,11 @@ impl Core {
             }
             SpaceStatus::Idle | SpaceStatus::Failed => {}
         }
+        if space.updating.is_some() {
+            return Err(AppError::Invalid(
+                "an update from the base is still merging; complete or abort it first".into(),
+            ));
+        }
         let pr = space.pr.clone().ok_or_else(|| {
             AppError::Invalid("only a space whose PR merged can continue on a new branch".into())
         })?;
@@ -280,6 +285,8 @@ impl Core {
                         head: head.clone(),
                         parent: tip.clone(),
                         replay_from: Some(pushed),
+                        // The new parent is the base's tip itself.
+                        merge_parent: None,
                         message: format!("{}: turns after the merged PR", space.name),
                         author: Identity {
                             name: "Theodore".into(),
