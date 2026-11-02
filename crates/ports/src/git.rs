@@ -571,6 +571,59 @@ pub trait GitPort: Send + Sync {
         Err(GitError::Unsupported("write_folder_branch"))
     }
 
+    // ── mirroring a space into a local folder (docs/spaces.md) ───────────
+
+    /// Writes the space's checkpoint `to` into `folder`'s working tree
+    /// (docs/spaces.md "Mirror into a local folder"): only the paths that
+    /// differ between `from` (`None` the first time, meaning every path in
+    /// `to`) and `to` are rewritten or removed. The folder's own index,
+    /// branch and `HEAD` are never touched — a temporary index does the
+    /// lookup. Returns the paths written or removed.
+    async fn mirror_sync(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        to: &Sha,
+        from: Option<&Sha>,
+    ) -> GitResult<Vec<String>> {
+        let _ = (folder, repo, space, to, from);
+        Err(GitError::Unsupported("mirror_sync"))
+    }
+
+    /// Paths mirrored between `from` and `to` (`git diff --name-only`)
+    /// whose content in `folder`'s working tree no longer matches what
+    /// mirroring wrote there — checked against each path's actual bytes,
+    /// never a timestamp. `from` is usually the folder's own remembered
+    /// `HEAD`; `to`, the last checkpoint mirrored.
+    async fn mirror_edited(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        from: &Sha,
+        to: &Sha,
+    ) -> GitResult<Vec<String>> {
+        let _ = (folder, repo, space, from, to);
+        Err(GitError::Unsupported("mirror_edited"))
+    }
+
+    /// Restores every path mirrored between `from` and `to` to its content
+    /// at `from`, and touches nothing else: the folder's branch, `HEAD`
+    /// and index stay exactly as they were. Returns the paths restored or
+    /// removed.
+    async fn mirror_restore(
+        &self,
+        folder: &Path,
+        repo: &Path,
+        space: &str,
+        from: &Sha,
+        to: &Sha,
+    ) -> GitResult<Vec<String>> {
+        let _ = (folder, repo, space, from, to);
+        Err(GitError::Unsupported("mirror_restore"))
+    }
+
     // ── saving a project's config (docs/config.md) ───────────────────────
 
     /// Writes one commit on top of `parent` in the bare cache `repo` whose
