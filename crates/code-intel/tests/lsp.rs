@@ -51,13 +51,18 @@ async fn trusted_space_routes_to_the_ready_server() {
     assert_eq!(found.items[0].range.start.line, 2);
 
     // `helper();` on line 3: the fake answers its first occurrence, plus a
-    // location outside the worktree, which is dropped.
+    // location outside the worktree, which stays out of the items (their
+    // paths are repo-relative) and is named in the note.
     let def = ci
         .definition(wt.path(), "src/lib.rs", at(3, 14))
         .await
         .unwrap();
     assert_eq!(def.source, Source::Lsp);
     assert_eq!(def.items.len(), 1);
+    assert_eq!(
+        def.note.as_deref(),
+        Some("1 result outside the worktree (std / dependencies): /outside/lib.rs")
+    );
     assert_eq!(def.items[0].location.path, "src/lib.rs");
     assert_eq!(def.items[0].location.range.start.line, 2);
     assert_eq!(def.items[0].preview.lines().nth(1), Some("fn helper() {}"));

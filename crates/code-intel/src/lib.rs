@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use theodore_code_intel_lsp::{LspPool, LspSession, SessionOptions};
+use theodore_code_intel_lsp::{Located, LspPool, LspSession, SessionOptions};
 use theodore_code_intel_syntax::{
     Indexer, IndexerConfig, SyntaxIndex, byte_offset, file_entry, git_snapshot, preview,
     text_search,
@@ -698,8 +698,11 @@ impl CodeIntel {
         let mut notes = Notes::default();
         match self.route(&w, lang.as_ref()).await {
             Route::Ready(s) => match s.definition(&w.root, &path, at).await {
-                Ok(locs) if !locs.is_empty() => {
-                    let hits = self.lsp_hits(&w, locs, true).await;
+                // Only outside the worktree (std, a dependency): the server's
+                // answer still stands; a same-named local symbol would be wrong.
+                Ok(found) if !found.items.is_empty() || found.external_count > 0 => {
+                    notes.extend(external_note(&found, true));
+                    let hits = self.lsp_hits(&w, found.items, true).await;
                     return Ok(self.answer(&w, hits, Source::Lsp, notes));
                 }
                 Ok(_) => notes.push(format!("{}: no definition; matched by name", s.server())),
@@ -748,8 +751,9 @@ impl CodeIntel {
         let mut notes = Notes::default();
         match self.route(&w, lang.as_ref()).await {
             Route::Ready(s) => match s.references(&w.root, &path, at, true).await {
-                Ok(locs) if !locs.is_empty() => {
-                    let hits = self.lsp_hits(&w, locs, false).await;
+                Ok(found) if !found.items.is_empty() => {
+                    notes.extend(external_note(&found, false));
+                    let hits = self.lsp_hits(&w, found.items, false).await;
                     return Ok(self.answer(&w, hits, Source::Lsp, notes));
                 }
                 Ok(_) => notes.push(format!("{}: no references; matched by name", s.server())),
@@ -1037,6 +1041,35 @@ impl CodeIntel {
         });
         Ok(out)
     }
+}
+
+/// Paths an external-results note names at most.
+const NOTE_EXTERNAL: usize = 3;
+
+/// "2 results outside the worktree (std / dependencies): /…/vec.rs, …":
+/// their paths are not repo-relative, so they stay out of `items`.
+/// `name`: list the first few paths (definitions); references only count.
+fn external_note(found: &Located, name: bool) -> Option<String> {
+    let n = found.external_count;
+    if n == 0 {
+        return None;
+    }
+    let what = if n == 1 { "result" } else { "results" };
+    let mut note = format!("{n} {what} outside the worktree (std / dependencies)");
+    if name && !found.external.is_empty() {
+        let shown: Vec<&str> = found
+            .external
+            .iter()
+            .take(NOTE_EXTERNAL)
+            .map(String::as_str)
+            .collect();
+        note.push_str(": ");
+        note.push_str(&shown.join(", "));
+        if n > shown.len() {
+            note.push_str(", …");
+        }
+    }
+    Some(note)
 }
 
 /// The best layer that contributed.
