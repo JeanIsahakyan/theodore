@@ -55,7 +55,9 @@ export function revertItems(space: Space, file: FileDiff): ContextMenuItem[] {
       ? 'The agent is still working'
       : space.status === 'archived'
         ? 'Archived'
-        : undefined;
+        : space.updating
+          ? 'Finish or abort the update from base first'
+          : undefined;
   const revert = (from: 'base' | 'last_turn') => () =>
     void api.revertSpaceFile({ space: space.id, paths, from }).catch(() => {});
   const items: ContextMenuItem[] = [

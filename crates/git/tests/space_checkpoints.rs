@@ -378,6 +378,7 @@ async fn shipping_squashes_the_snapshot_tree_onto_the_base() {
                 head: cp.sha.clone(),
                 parent: s.base.clone(),
                 replay_from: None,
+                merge_parent: None,
                 message: "Ship it".into(),
                 author: Identity {
                     name: "Ada".into(),

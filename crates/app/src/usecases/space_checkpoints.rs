@@ -28,6 +28,7 @@ impl Core {
     /// refusals as Undo.
     pub async fn rewind_space(&self, req: RewindSpaceRequest) -> AppResult<Space> {
         let space = self.space_row(&req.space).await?;
+        refusal(&space).map_err(AppError::Invalid)?;
         let log = &space.turn_log;
         let k = log
             .iter()
@@ -47,8 +48,9 @@ impl Core {
         space: &str,
         from: Option<usize>,
     ) -> AppResult<Space> {
-        // Not while a ship reads the checkpoint.
+        // Not while a ship reads the checkpoint, or a queued send starts.
         let _guard = self.0.ship_lock.lock().await;
+        let _queue = self.space_queue_lock(space).await;
         let space = self.space_row(space).await?;
         let i = rewindable(&space, from).map_err(AppError::Invalid)?;
         let turn = space.turn_log[i].clone();
@@ -78,11 +80,10 @@ impl Core {
         for t in log[i..].iter_mut() {
             t.undone = true;
         }
-        self.apply(vec![NewAction {
-            model: models::SPACE.into(),
-            model_id: space.id.clone(),
-            action: SyncActionCode::C,
-            data: Some(serde_json::json!({
+        // A turn that completed an update from base: the base before the
+        // earliest one undone is back.
+        let base_before = log[i..].iter().find_map(|t| t.base_before.clone());
+        let mut data = serde_json::json!({
                 "status": SpaceStatus::Idle,
                 "head_sha": to.sha,
                 "worktree_head": turn.before_head,
@@ -93,7 +94,15 @@ impl Core {
                 // them out.
                 "agent_session": null,
                 "updated_at": self.0.deps.clock.now(),
-            })),
+        });
+        if let Some(base) = base_before {
+            data["base_sha"] = serde_json::json!(base);
+        }
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: space.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(data),
         }])
         .await?;
         if to.sha != space.head_sha {
@@ -112,7 +121,13 @@ impl Core {
     /// the next turn's prompt tells the agent not to redo it.
     pub async fn revert_space_file(&self, req: RevertSpaceFileRequest) -> AppResult<Space> {
         let _guard = self.0.ship_lock.lock().await;
+        let _queue = self.space_queue_lock(&req.space).await;
         let space = self.space_row(&req.space).await?;
+        if space.updating.is_some() {
+            return Err(AppError::Invalid(
+                "finish or abort the update from base first".into(),
+            ));
+        }
         match space.status {
             SpaceStatus::Running => {
                 return Err(AppError::Invalid(
@@ -188,6 +203,7 @@ impl Core {
             at: now,
             failed: None,
             attachments: vec![],
+            queued: None,
         };
         let mut log = space.turn_log.clone();
         log.push(SpaceTurn {
@@ -197,6 +213,8 @@ impl Core {
             after: cp.sha.clone(),
             undone: false,
             check: None,
+            steered: vec![],
+            base_before: None,
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),
             reverted: paths,
@@ -250,11 +268,9 @@ fn quoted(paths: &[String]) -> String {
         .join(", ")
 }
 
-/// The index in `turn_log` a rewind would start undoing at — `from`, or
-/// the last turn not undone yet — or why it can't: not while a turn runs,
-/// not on an archived space, not once the space moved past its last turn,
-/// and not over a turn that already shipped.
-pub(crate) fn rewindable(space: &Space, from: Option<usize>) -> Result<usize, String> {
+/// Why the space can't go back at all now: a turn runs, it is archived,
+/// or an update from base is resolving.
+fn refusal(space: &Space) -> Result<(), String> {
     match space.status {
         SpaceStatus::Running => {
             return Err("the agent is still working; stop it before undoing".into());
@@ -262,6 +278,18 @@ pub(crate) fn rewindable(space: &Space, from: Option<usize>) -> Result<usize, St
         SpaceStatus::Archived => return Err("this space is archived".into()),
         SpaceStatus::Idle | SpaceStatus::Failed => {}
     }
+    if space.updating.is_some() {
+        return Err("finish or abort the update from base first".into());
+    }
+    Ok(())
+}
+
+/// The index in `turn_log` a rewind would start undoing at — `from`, or
+/// the last turn not undone yet — or why it can't: not while a turn runs,
+/// not on an archived space, not once the space moved past its last turn,
+/// and not over a turn that already shipped.
+pub(crate) fn rewindable(space: &Space, from: Option<usize>) -> Result<usize, String> {
+    refusal(space)?;
     let log = &space.turn_log;
     let last = log
         .iter()

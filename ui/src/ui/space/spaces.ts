@@ -369,7 +369,8 @@ export function undoState(s: RewindFields): UndoState {
 type RewindFields = Pick<
   Space,
   'status' | 'turn_log' | 'head_sha' | 'shipped' | 'base_sha'
->;
+> &
+  Partial<Pick<Space, 'updating'>>;
 
 function lastLive(log: SpaceTurn[]): number {
   let i = log.length - 1;
@@ -384,6 +385,7 @@ function rewindReason(s: RewindFields, i: number): string | null {
   const log = s.turn_log ?? [];
   if (s.status === 'running') return 'The agent is still working';
   if (s.status === 'archived') return 'Archived';
+  if (s.updating) return 'Finish or abort the update from base first';
   const last = lastLive(log);
   if (i < 0 || last < 0) return 'No turn to undo';
   if (log[last]!.after !== s.head_sha) {
