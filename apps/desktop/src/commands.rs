@@ -986,6 +986,143 @@ pub async fn account_sign_out(
 #[specta::specta]
 pub async fn focus_window(op: crate::op::Op, app: AppHandle) -> Result<(), CommandError> {
     op.run(async move {
+pub async fn mirror_space(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.mirror_space(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn sync_mirror(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.sync_mirror(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn unmirror_space(
+    op: crate::op::Op,
+    req: theodore_contract::UnmirrorSpaceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.unmirror_space(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_send_feedback(
+    op: crate::op::Op,
+    req: theodore_contract::SpaceFeedbackRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    op.run(async move { core.space_send_feedback(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_base_status(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::SpaceBaseStatus, CommandError> {
+    op.run(async move { core.space_base_status(space).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_space_from_base(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.update_space_from_base(space).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn abort_space_update(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.abort_space_update(space).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_fix_ci(
+    op: crate::op::Op,
+    req: theodore_contract::SpaceFixCiRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    op.run(async move { core.space_fix_ci(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_status(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_status().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_start(
+    op: crate::op::Op,
+    req: theodore_contract::AccountSignInRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountSignInStart, CommandError> {
+    op.run(async move { core.account_sign_in_start(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_poll(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountSignInState, CommandError> {
+    op.run(async move { core.account_sign_in_poll().await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_cancel(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.account_sign_in_cancel().await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_out(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_sign_out().await }).await
+}
+
+/// Brings the main window forward: the browser sign-in finishes in another
+/// app, and the user should land back in Theodore without hunting for it.
+#[tauri::command]
+#[specta::specta]
+pub async fn focus_window(op: crate::op::Op, app: AppHandle) -> Result<(), CommandError> {
+    op.run(async move {
         focus_main(&app).map_err(|e| CommandError {
             code: "internal".into(),
             message: e.to_string(),
