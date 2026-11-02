@@ -444,6 +444,11 @@ pub struct FakeShip {
     pub dirty: Option<Vec<String>>,
     /// `(folder, paths, message)` of every `commit_paths`.
     pub folder_commits: Vec<(PathBuf, Vec<String>, String)>,
+    /// `space_snapshot`'s answer (uncommitted edits); `None`: the space's
+    /// checkpoint, as with a clean worktree.
+    pub snapshot: Option<Sha>,
+    /// `(base, head)` of every `diff`.
+    pub diff_calls: Vec<(Sha, Sha)>,
 }
 
 /// `GitResult` isn't `Clone` (`GitError` holds a `std::io::Error`); a fake
@@ -727,10 +732,15 @@ impl GitPort for FakeGit {
     async fn diff(
         &self,
         _repo: &Path,
-        _base: &Sha,
-        _head: &Sha,
+        base: &Sha,
+        head: &Sha,
         _opts: &DiffOptions,
     ) -> GitResult<Revision> {
+        self.ship
+            .lock()
+            .unwrap()
+            .diff_calls
+            .push((base.clone(), head.clone()));
         Ok(self.revision.lock().unwrap().clone())
     }
     async fn show(&self, _repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>> {
@@ -904,6 +914,24 @@ impl GitPort for FakeGit {
         drop(refs);
         self.ensure_commit(&head, message);
         Ok(head)
+    }
+
+    async fn space_snapshot(&self, worktree: &Path) -> GitResult<Sha> {
+        if let Some(sha) = self.ship.lock().unwrap().snapshot.clone() {
+            return Ok(sha);
+        }
+        // The space is the worktree's last path component (`space_worktree`).
+        let name = worktree
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let space = name.strip_prefix("theodore-fake-space-").unwrap_or(name);
+        self.resolve_refs
+            .lock()
+            .unwrap()
+            .get(&theodore_ports::space_ref(space))
+            .cloned()
+            .ok_or_else(|| GitError::Parse(format!("no space {space}")))
     }
 
     async fn space_reset(&self, _worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {

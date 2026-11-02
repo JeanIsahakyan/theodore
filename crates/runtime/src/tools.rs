@@ -12,10 +12,11 @@ use theodore_domain::{
     SkillId,
 };
 use theodore_mcp::{
-    AppStatus, BackendError, CheckOutcome, CodeEditOutcome, CodeTools, CodeToolsBackend,
-    FileSummary, GroupSummary, GroupWithHunks, LogTail, McpHandle, McpServer, NewFinding, NewPatch,
-    PrContext, ReviewToolsBackend, RunContext, SpaceCommandName, SpaceInfo, SpaceToolError,
-    SpaceToolsBackend, ToolSet,
+    AppStatus, BackendError, BaseChange, CheckOutcome, CodeEditOutcome, CodeTools,
+    CodeToolsBackend, FileSummary, GroupSummary, GroupWithHunks, LogTail, McpHandle, McpServer,
+    NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReviewItem,
+    ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
+    SpaceInfo, SpaceToolError, SpaceToolsBackend, ToolSet,
 };
 use theodore_ports::{
     Answer, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic, LanguageStatus, McpEndpoint, Position,
@@ -207,6 +208,68 @@ impl SpaceToolsBackend for CoreTools {
 
     async fn space_info(&self, space: &str) -> Result<SpaceInfo, SpaceToolError> {
         self.space_core()?.space_tool_info(space).await
+    }
+
+    async fn ship(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        action: ShipToolAction,
+        title: Option<String>,
+    ) -> Result<ShipOutcome, SpaceToolError> {
+        self.space_core()?
+            .space_tool_ship(space, &run_id.0, action, title)
+            .await
+    }
+
+    async fn space_diff(
+        &self,
+        space: &str,
+        file: Option<&str>,
+    ) -> Result<SpaceDiff, SpaceToolError> {
+        self.space_core()?.space_tool_diff(space, file).await
+    }
+
+    async fn review_comments(
+        &self,
+        space: &str,
+        file: Option<&str>,
+    ) -> Result<Vec<ReviewItem>, SpaceToolError> {
+        self.space_core()?.space_tool_comments(space, file).await
+    }
+
+    async fn add_review_comment(
+        &self,
+        space: &str,
+        agent: AgentId,
+        comment: NewReviewComment,
+    ) -> Result<FindingId, SpaceToolError> {
+        self.space_core()?
+            .space_tool_comment(space, agent, comment)
+            .await
+    }
+
+    async fn set_base(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        branch: &str,
+    ) -> Result<BaseChange, SpaceToolError> {
+        self.space_core()?
+            .space_tool_set_base(space, &run_id.0, branch)
+            .await
+    }
+
+    async fn update_progress(
+        &self,
+        space: &str,
+        run_id: &RunId,
+        steps: Vec<ProgressStep>,
+        note: Option<String>,
+    ) -> Result<(), SpaceToolError> {
+        self.space_core()?
+            .space_tool_progress(space, &run_id.0, steps, note)
+            .await
     }
 }
 

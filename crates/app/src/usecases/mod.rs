@@ -20,6 +20,7 @@ pub mod review_config;
 pub mod revision;
 pub mod ship;
 pub mod skills;
+pub mod space_agent_tools;
 pub mod space_commands;
 pub mod space_feedback;
 pub(crate) mod space_handoff;

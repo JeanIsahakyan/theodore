@@ -29,6 +29,8 @@ mod sandbox;
 pub use sandbox::*;
 mod project_state;
 pub use project_state::*;
+mod space_progress;
+pub use space_progress::*;
 mod spaces;
 pub use spaces::*;
 mod config;

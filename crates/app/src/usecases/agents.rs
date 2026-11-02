@@ -579,13 +579,17 @@ fn tool_target(input: &serde_json::Value) -> Option<String> {
     } else if let Some(p) = s("file_path")
         .or_else(|| s("path"))
         .or_else(|| s("notebook_path"))
+        .or_else(|| s("file"))
     {
         let parts: Vec<&str> = p.trim_end_matches('/').rsplit('/').take(2).collect();
         parts.into_iter().rev().collect::<Vec<_>>().join("/")
     } else {
         s("pattern")
             .or_else(|| s("query"))
-            .or_else(|| s("url"))?
+            .or_else(|| s("url"))
+            // Theodore's `set_base` and `ship`.
+            .or_else(|| s("branch"))
+            .or_else(|| s("action"))?
             .trim()
             .to_string()
     };
@@ -614,6 +618,12 @@ pub(crate) fn tool_log_line(name: &str) -> String {
         "app_status" => "app status",
         "read_logs" => "read the logs",
         "space_info" => "space info",
+        "ship" => "ship the change",
+        "get_space_diff" => "read the diff",
+        "get_review_comments" => "read the review comments",
+        "add_review_comment" => "leave a review comment",
+        "set_base" => "change the base branch",
+        "update_progress" => "update the progress",
         "get_pr_context" => "read the PR",
         "get_group" => "read a group",
         "get_base_file" => "read a file before the change",
@@ -845,6 +855,37 @@ mod tool_label_tests {
                 .count(),
             "tool: Bash · ".chars().count() + 80
         );
+        assert_eq!(
+            tool_log_line_with(
+                "mcp__space-tools__ship",
+                &serde_json::json!({ "action": "open_pr" })
+            ),
+            "tool: ship the change · open_pr"
+        );
+        assert_eq!(
+            tool_log_line_with(
+                "space-tools__get_space_diff",
+                &serde_json::json!({ "file": "src/auth/login.ts" })
+            ),
+            "tool: read the diff · auth/login.ts"
+        );
+        assert_eq!(
+            tool_log_line_with(
+                "mcp__space-tools__set_base",
+                &serde_json::json!({ "branch": "release" })
+            ),
+            "tool: change the base branch · release"
+        );
+        for (name, label) in [
+            ("get_review_comments", "read the review comments"),
+            ("add_review_comment", "leave a review comment"),
+            ("update_progress", "update the progress"),
+        ] {
+            assert_eq!(
+                tool_log_line(&format!("mcp__space-tools__{name}")),
+                format!("tool: {label}")
+            );
+        }
         assert_eq!(
             tool_log_line("mcp__other__run_check"),
             "tool: mcp__other__run_check",

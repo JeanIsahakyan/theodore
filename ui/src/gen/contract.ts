@@ -1506,6 +1506,11 @@ export type Space = {
 	 *  the whole transcript (docs/spaces.md §5 "One session per space").
 	 */
 	handoff_summary?: string | null,
+	/**
+	 *  The running turn's progress tracker (`update_progress`); cleared
+	 *  when the turn ends.
+	 */
+	progress?: SpaceProgress | null,
 };
 
 /**  `check` after a turn that changed files. */
@@ -1590,6 +1595,20 @@ export type SpaceProcess = {
 	 *  pid since reused by something else — before touching it.
 	 */
 	script?: string | null,
+};
+
+/**  `Space::progress`: the steps the agent last reported in this turn. */
+export type SpaceProgress = {
+	steps: SpaceProgressStep[],
+	note?: string | null,
+	at: number,
+};
+
+export type SpaceProgressState = "pending" | "active" | "done";
+
+export type SpaceProgressStep = {
+	label: string,
+	state: SpaceProgressState,
 };
 
 export type SpaceReviewRequest = {

@@ -486,6 +486,10 @@ impl GitPort for GitCli {
         self.worktree_busy_op(worktree).await
     }
 
+    async fn space_snapshot(&self, worktree: &Path) -> GitResult<Sha> {
+        self.space_snapshot_op(worktree).await
+    }
+
     async fn remove_space_worktree(&self, repo: &Path, space: &str) -> GitResult<()> {
         self.remove_space_worktree_op(repo, space).await
     }

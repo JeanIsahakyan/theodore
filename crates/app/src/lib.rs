@@ -52,6 +52,8 @@ mod review_config_tests;
 #[cfg(test)]
 mod ship_tests;
 #[cfg(test)]
+mod space_agent_tools_tests;
+#[cfg(test)]
 mod space_commands_tests;
 #[cfg(test)]
 mod space_tools_tests;

@@ -139,6 +139,10 @@ pub struct Space {
     /// the whole transcript (docs/spaces.md §5 "One session per space").
     #[serde(default)]
     pub handoff_summary: Option<String>,
+    /// The running turn's progress tracker (`update_progress`); cleared
+    /// when the turn ends.
+    #[serde(default)]
+    pub progress: Option<crate::SpaceProgress>,
 }
 
 /// One agent CLI session a space's turns continue (docs/spaces.md §5

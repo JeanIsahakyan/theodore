@@ -65,6 +65,11 @@ impl SpaceGit<'_> {
         Ok(String::from_utf8_lossy(&self.run(args).await?).into_owned())
     }
 
+    /// `run` with extra variables on the child (`GIT_INDEX_FILE`).
+    pub(crate) async fn run_env(&self, args: &[&str], env: &[(&str, &Path)]) -> GitResult<Vec<u8>> {
+        self.proc(args).run_env_below(&self.ceiling, env).await
+    }
+
     pub(crate) async fn run_raw(&self, args: &[&str]) -> GitResult<RawOutput> {
         self.proc(args).run_raw_below(&self.ceiling).await
     }

@@ -356,8 +356,8 @@ every line commented, the layers explained, an example of each section.
 ## 7. Tools the agent gets
 
 Each agent turn in a space gets the `space-tools` MCP server: the space's
-configured commands as tools, and nothing else. No tool runs a command the
-agent writes; there is no shell tool.
+configured commands as tools, plus the tools that act on the change (below).
+No tool runs a command the agent writes; there is no shell tool.
 
 | Tool | Does |
 | --- | --- |
@@ -387,7 +387,7 @@ agent ─▶ run_check / start_app ─▶ set? ─no──▶ error: no `spaces.
 - **Scoped to the space.** Each turn gets its own token, revoked when the
   agent exits; it reaches only that space. The agent never names a space.
 - **Told in the prompt.** The turn's system prompt lists the tools: use
-  `run_check` after changes, `start_app` to try the app.
+  `run_check` after changes, `start_app` to try the app, `ship` when asked.
 - **A space's PR.** Chat, skills and fixes on a space's review (or the PR
   it shipped as) keep `review-tools` and also get the read-only `read_logs`
   and `app_status`. Any other PR is unchanged.
@@ -396,6 +396,33 @@ agent ─▶ run_check / start_app ─▶ set? ─no──▶ error: no `spaces.
 - **Ask mode too.** A turn in Ask mode may call `run_check` and
   `start_app` (owner decision, 2026-10-23: "if it needs to run, it can
   run"). They run the configured commands only, under the same trust.
+
+The change itself (docs/spaces.md §5):
+
+| Tool | Takes | Returns |
+| --- | --- | --- |
+| `ship` | `action`: `open_pr · open_draft_pr · push · merge_locally · keep_branch`; `title?` | `branch`, `sha`, `pr_number`, `pr_url`, a one-line `summary` |
+| `get_space_diff` | `file?`, `stat?` | `base`, `base_sha` (merge-base), `head`, `uncommitted`, `files` (status, +/−), `diff` (unified, at most 120 000 chars; `truncated`) |
+| `get_review_comments` | `file?` | `items`: `kind` (`draft · finding · thread`), `on` (`space · pr`), `location`, `state` (`draft · open · resolved · outdated`), `severity`, `title`, `comments` (`author`: `you`, an agent or a login) |
+| `add_review_comment` | `file`, `line` (new side, 1-based), `body`, `severity?` (`info` default · `warn` · `high`) | `finding_id` |
+| `set_base` | `branch` | `base`, `base_sha`, `previous`, `note` (an open PR is not retargeted) |
+| `update_progress` | `steps` (`label`, `state`: `pending · active · done`; at most 20), `note?` | `ok` |
+
+```
+ship ─▶ same turn? ─no──▶ error: the agent is still working
+          └─yes─▶ ship_space: checkpoint ─▶ squash (you) ─▶ push / merge / branch
+                     └─ refused (local folder vs host, nothing new, branch taken,
+                        conflict, no identity) ─▶ the reason, nothing changed
+```
+
+- **Ship on request only.** The prompt and the tool say: call `ship` when
+  the user asks to push, open a PR or merge; never `git push` or `gh pr
+  create`. Open PR waits up to 15 s for the host and returns the PR; after
+  that it says the PR is on its way (the outbox finishes it).
+- **Ignored and drafted findings** are left out of `get_review_comments`;
+  the agent's own comments are findings of skill `space-agent`.
+- **`set_base`** refuses an unknown branch, the space's own branch, an
+  archived space, or a space another run holds.
 
 **Code tools.** With code intelligence on for the project (§2b), both
 `review-tools` and `space-tools` also list `find_symbol`, `get_symbol`,

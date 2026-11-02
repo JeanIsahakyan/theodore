@@ -118,7 +118,7 @@ fn code_result<T: serde::Serialize>(
     }
 }
 
-fn space_result<T: serde::Serialize>(
+pub(crate) fn space_result<T: serde::Serialize>(
     result: Result<T, SpaceToolError>,
 ) -> Result<CallToolResult, ErrorData> {
     match result {
@@ -130,7 +130,7 @@ fn space_result<T: serde::Serialize>(
 }
 
 /// The space a run was registered for; the agent never names one.
-fn run_space(parts: &http::request::Parts) -> Result<(RunContext, String), ErrorData> {
+pub(crate) fn run_space(parts: &http::request::Parts) -> Result<(RunContext, String), ErrorData> {
     let run = run_context(parts)?;
     let space = run
         .space
@@ -153,9 +153,9 @@ fn request_run(context: &RequestContext<RoleServer>) -> Option<RunContext> {
 /// One server for both tool sets: the run's token decides which tools it
 /// lists and may call ([`RunContext::allows`]).
 #[derive(Clone)]
-struct ReviewToolsServer {
+pub(crate) struct ReviewToolsServer {
     backend: Arc<dyn ReviewToolsBackend>,
-    spaces: Arc<dyn SpaceToolsBackend>,
+    pub(crate) spaces: Arc<dyn SpaceToolsBackend>,
     code: Arc<dyn CodeToolsBackend>,
     tool_router: ToolRouter<Self>,
 }
@@ -171,7 +171,10 @@ impl ReviewToolsServer {
             backend,
             spaces,
             code,
-            tool_router: Self::review_router() + Self::space_router() + Self::code_router(),
+            tool_router: Self::review_router()
+                + Self::space_router()
+                + Self::space_agent_router()
+                + Self::code_router(),
         }
     }
 

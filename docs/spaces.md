@@ -380,10 +380,12 @@ remaining prompts and limits.
   - The agent's cwd is `~/.theodore/spaces/<id>`, a worktree of Theodore's own
     cache. The user's checkout and its `.git` are never written. A local
     folder project uses the existing mirror.
-  - Theodore never pushes, opens a PR or writes into a local folder without
-    an explicit click.
-  - The prompt tells the agent to stay in its directory and not to push or
-    switch branches. After each turn Theodore points the space ref at
+  - Theodore never pushes, opens a PR or writes into a local folder unless
+    you ask: a click, or asking the agent, which calls the `ship` tool
+    (below). Either way it is the same ship, with the same guarantees.
+  - The prompt tells the agent to stay in its directory, to ship only
+    through `ship`, and never to run `git push`, `gh pr create` or switch
+    branches itself. After each turn Theodore points the space ref at
     whatever `HEAD` is; a `HEAD` that no longer descends from the base is
     flagged instead of silently recorded.
   - Theodore's secrets are stripped from the agent env (existing).
@@ -466,15 +468,31 @@ configured commands, never a shell of the agent's choosing.
 | `start_app` / `stop_app` / `app_status` | the `run` command: start, stop, running?, ports, `http://localhost:<port>` |
 | `read_logs` | the tail of `setup`, `run`, `check` or `archive` output (bounded) |
 | `space_info` | name, branch, base, worktree, ports, env variable names (not values), which commands are set |
+| `ship` | Open PR / Open as draft / Push / Merge locally / Keep as branch, as the Ship menu does (§6): PR number and URL, or why it was refused |
+| `get_space_diff` | the change vs the merge-base with the base, uncommitted edits included; one `file`, or `stat` for +/− per file |
+| `get_review_comments` | drafts, findings and threads on the space's review and its PR: `path:line`, who (you, an agent, a reviewer), state |
+| `add_review_comment` | a finding on a line of the space's review: shows in Review, "Send to agent" sends it back |
+| `set_base` | a new base branch: fetched, the diff is vs the merge-base from then on |
+| `update_progress` | the turn's plan as steps (pending · active · done) above the composer |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
-  │                                  └─▶ start_app ─▶ run   ─▶ URLs   ─▶ agent tries it
-  └─ agent exits ─▶ token revoked
+  │                                  ├─▶ start_app ─▶ run   ─▶ URLs   ─▶ agent tries it
+  │                                  └─▶ ship ─▶ ship_space (as the turn) ─▶ PR #n ─▶ agent tells you
+  └─ agent exits ─▶ token revoked, progress cleared
 ```
 
 - The system prompt names them: use `run_check` after changes, `start_app`
-  to try the app.
+  to try the app, `ship` only when you ask to push, open a PR or merge.
+- `ship` from the turn runs while that turn holds the space; any other
+  caller still waits for the turn. It checkpoints the edits so far first,
+  so they ship too; the turn's own checkpoint follows when it ends.
+- `get_space_diff` snapshots the worktree through a temporary index: no
+  ref moves, the worktree's own index stays as it was.
+- `set_base` keeps the worktree and the turns; a PR that is already open
+  keeps its target (the tool says so). Undo doesn't move the base back.
+- The tracker is the turn's: each call replaces it, no steps clears it,
+  and it goes when the turn ends.
 - Trust holds: a repo command not allowed yet is refused with "not allowed
   by the user yet" and never runs.
 - The turn lists its tool calls while it runs and after (this session),
@@ -604,6 +622,7 @@ New synced model `space` (core-owned, written only by commands):
 | `turn_log` | per turn: your message and the reply (`chat_message` ids), checkpoint `before` / `after`, `undone` |
 | `title` | the chat agent's proposed title (§3 "New space"); `None` until it lands |
 | `handoff_summary` | the earlier conversation, summarized once and cached (§5 "One session per space") |
+| `progress` | the running turn's tracker (`update_progress`): `steps` (label, `pending · active · done`), `note`, `at`; `null` once the turn ends |
 
 | Data | Where |
 | --- | --- |
@@ -693,7 +712,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`); `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent" |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; sidebar section; space page with chat + diff; Review opens the grouped review; crash → failed. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch) and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`. "Send to agent" on a space PR's / own review's threads, drafts and findings; Undo last turn (`turn_log`); Unarchive; one agent session per space (Claude Code `--resume`, Codex `exec resume`); background notifications and the dock badge (`spaces.notify`); names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`); `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent"; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" and "Fix with agent"; the agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer) |
 | **v2** | My PRs "Drafting" group and the sidebar's `⎇ #n` glyph; "Send all to agent" footer and feedback tracked as tasks; Threads / Checks tabs on the space page; `space_run` rows and per-turn diffs; Delete and ref GC; queue + `max_parallel` |
 | **Later** | OS sandbox for agents; live diff during a turn (snapshot the working tree through a temporary index); signed shipped commits; spaces started from an issue or a failing check; several agents racing one goal, pick the best diff |
 
