@@ -345,6 +345,13 @@ impl Secrets for FakeSecrets {
 
 // ── git ───────────────────────────────────────────────────────────────────
 
+/// `(folder, space, to, from)`.
+pub type MirrorSyncCall = (PathBuf, String, Sha, Sha);
+/// `(folder, space, to, paths)`.
+pub type MirrorEditedCall = (PathBuf, String, Sha, Vec<String>);
+/// `(folder, from, paths)`.
+pub type MirrorRestoreCall = (PathBuf, Sha, Vec<String>);
+
 pub struct FakeGit {
     pub repo_path: PathBuf,
     /// What `grep` returns for any pattern; `None`: `Unsupported`, like
@@ -404,13 +411,13 @@ pub struct FakeGit {
     // ── mirroring a space into a local folder (docs/spaces.md) ──────────
     /// `(folder, space, to, from)` of every `mirror_sync`; empty queue: it
     /// answers `Ok(vec![])` (nothing changed).
-    pub mirror_syncs: Mutex<Vec<(PathBuf, String, Sha, Sha)>>,
+    pub mirror_syncs: Mutex<Vec<MirrorSyncCall>>,
     mirror_sync_responses: Mutex<VecDeque<GitResult<Vec<String>>>>,
     /// `(folder, space, to, paths)` of every `mirror_edited`.
-    pub mirror_edited_calls: Mutex<Vec<(PathBuf, String, Sha, Vec<String>)>>,
+    pub mirror_edited_calls: Mutex<Vec<MirrorEditedCall>>,
     mirror_edited_value: Mutex<GitResult<Vec<String>>>,
     /// `(folder, from, paths)` of every `mirror_restore`.
-    pub mirror_restores: Mutex<Vec<(PathBuf, Sha, Vec<String>)>>,
+    pub mirror_restores: Mutex<Vec<MirrorRestoreCall>>,
     mirror_restore_value: Mutex<GitResult<Vec<String>>>,
     // ── offline (a PR opened from its local copy) ──────────────────────
     /// `cached_repo` finds the clone on disk (default `true`).
@@ -621,7 +628,7 @@ impl FakeGit {
     }
 
     /// Every `mirror_sync` call so far, oldest first.
-    pub fn mirror_syncs(&self) -> Vec<(PathBuf, String, Sha, Sha)> {
+    pub fn mirror_syncs(&self) -> Vec<MirrorSyncCall> {
         self.mirror_syncs.lock().unwrap().clone()
     }
 
