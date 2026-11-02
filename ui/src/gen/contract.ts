@@ -2261,6 +2261,15 @@ export type UiEvent =
  */
 { event: "onboarding_step"; step: string };
 
+export type UnmirrorSpaceRequest = {
+	space: string,
+	/**
+	 *  Overwrite edits made in the folder while mirroring was on, instead
+	 *  of refusing and naming them.
+	 */
+	discard?: boolean,
+};
+
 export type UpdateInfo = {
 	version: string,
 	notes: string,
