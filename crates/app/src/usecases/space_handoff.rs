@@ -116,6 +116,7 @@ mod tests {
             at,
             failed: None,
             attachments: vec![],
+            queued: None,
         }
     }
 
