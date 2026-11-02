@@ -1555,8 +1555,8 @@ impl FakeAgent {
             .unwrap()
             .push((Box::new(matches), events));
     }
-    /// The next `run()` call never emits anything and never closes, until
-    /// the whole fake is dropped.
+    /// The next turn's `run()` never emits anything and never closes, until
+    /// the whole fake is dropped. Utility one-shots don't take it.
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
     }
@@ -1603,7 +1603,9 @@ impl AgentPort for FakeAgent {
             self.utility_requests.lock().unwrap().push(req);
         }
         let (tx, rx) = tokio::sync::mpsc::channel(64);
-        let hang = std::mem::take(&mut *self.hang_next.lock().unwrap());
+        // Only a turn hangs: a utility one-shot (a space's name, a summary)
+        // running in the background never takes the hang meant for it.
+        let hang = stream_text && std::mem::take(&mut *self.hang_next.lock().unwrap());
         if hang {
             self.kept_alive.lock().unwrap().push(tx);
         } else {
