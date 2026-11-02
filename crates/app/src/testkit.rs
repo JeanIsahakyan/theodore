@@ -1608,8 +1608,9 @@ impl FakeAgent {
     pub fn last_utility_request(&self) -> Option<AgentRequest> {
         self.utility_requests.lock().unwrap().last().cloned()
     }
-    /// The next run plays its script only once the returned sender fires:
-    /// a turn that is "running" for as long as a test needs.
+    /// The next turn plays its script only once the returned sender fires:
+    /// a turn that is "running" for as long as a test needs. Utility
+    /// one-shots don't take it.
     pub fn pause_next_run(&self) -> tokio::sync::oneshot::Sender<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         *self.paused.lock().unwrap() = Some(rx);
@@ -1672,7 +1673,12 @@ impl AgentPort for FakeAgent {
                     default_done()
                 }
             });
-            let paused = self.paused.lock().unwrap().take();
+            // Like the hang: only a turn waits, never a utility one-shot.
+            let paused = if stream_text {
+                self.paused.lock().unwrap().take()
+            } else {
+                None
+            };
             tokio::spawn(async move {
                 if let Some(go) = paused
                     && go.await.is_err()
