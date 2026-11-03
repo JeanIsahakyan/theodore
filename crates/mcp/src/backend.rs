@@ -9,8 +9,7 @@ pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
     LanguageStatus, LogTail, NewReviewComment, Position, ProgressStep, ProgressStepState,
     ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
-    SpaceToolError, UserAnswer, UserQuestion,
-    SpaceToolError, TerminalTail,
+    SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.

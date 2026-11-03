@@ -39,13 +39,8 @@ use crate::tools::{
     CodeAnswerResult, CodeEditResult, CodeStatusResult, DiagnosticItem, DiagnosticsParams,
     FindSymbolParams, GetBaseFileParams, GetGroupParams, GetSymbolParams, GroupResult, HitItem,
     InsertAfterSymbolParams, PositionParams, PrContextResult, ProposePatchParams,
-    ProposePatchResult, ReadLogsParams, RenameSymbolParams, ReplaceSymbolBodyParams,
-    SymbolBodyResult, SymbolItem,
-    AddFindingParams, AddFindingResult, BaseFileResult, CodeAnswerResult, CodeEditResult,
-    CodeStatusResult, DiagnosticItem, DiagnosticsParams, FindSymbolParams, GetBaseFileParams,
-    GetGroupParams, GetSymbolParams, GroupResult, HitItem, InsertAfterSymbolParams, PositionParams,
-    PrContextResult, ProposePatchParams, ProposePatchResult, ReadLogsParams, ReadTerminalParams,
-    RenameSymbolParams, ReplaceSymbolBodyParams, SymbolBodyResult, SymbolItem,
+    ProposePatchResult, ReadLogsParams, ReadTerminalParams, RenameSymbolParams,
+    ReplaceSymbolBodyParams, SymbolBodyResult, SymbolItem,
 };
 
 /// Live run registrations: bearer token → run context. Shared between the auth
