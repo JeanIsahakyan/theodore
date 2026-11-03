@@ -102,12 +102,18 @@ async fn tsgo_resolves_definition_references_and_symbols() {
 
     s.shutdown().await;
 
-    let defs = defs.expect("tsgo: definition request errored").items;
-    assert!(!defs.is_empty(), "tsgo: definition returned no results");
-    assert_eq!(defs[0].path, "a.ts");
+    let defs = defs.expect("tsgo: definition request errored");
+    assert!(
+        !defs.items.is_empty(),
+        "tsgo: definition returned no results"
+    );
+    assert_eq!(defs.items[0].path, "a.ts");
 
-    let refs = refs.expect("tsgo: references request errored").items;
-    assert!(!refs.is_empty(), "tsgo: references returned no results");
+    let refs = refs.expect("tsgo: references request errored");
+    assert!(
+        !refs.items.is_empty(),
+        "tsgo: references returned no results"
+    );
 
     let syms = syms.expect("tsgo: documentSymbol request errored");
     assert!(

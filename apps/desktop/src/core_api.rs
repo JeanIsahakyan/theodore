@@ -19,7 +19,8 @@ use theodore_contract::{
     TriageRequest, UpdateInfo,
 };
 use theodore_contract::{
-    OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, WriteTerminalRequest,
+    OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, TerminalMention,
+    WriteTerminalRequest,
 };
 use theodore_contract::{SandboxFaultRequest, SandboxStatus};
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
@@ -296,6 +297,22 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// "Back to here": the space back to right after a turn; later turns
+    /// undone (docs/spaces.md §3).
+    async fn rewind_space(
+        &self,
+        _req: theodore_contract::RewindSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Revert one file of the space's diff to the base or to before the
+    /// last turn, as an undoable entry (docs/spaces.md §3).
+    async fn revert_space_file(
+        &self,
+        _req: theodore_contract::RevertSpaceFileRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
     /// Recreates an archived space's worktree from its checkpoint ref.
     async fn unarchive_space(
         &self,
@@ -345,6 +362,33 @@ pub trait CoreApi: Send + Sync {
         &self,
         _req: theodore_contract::SpaceFixCiRequest,
     ) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    /// Approve on a plan card: the next turn implements the plan.
+    async fn approve_space_plan(&self, _space: String) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    /// Your answers to the agent's `ask_user` questions.
+    async fn answer_space_question(
+        &self,
+        _req: theodore_contract::SpaceAnswerRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// "Mirror into `<folder>`": on fresh, or resuming a paused one.
+    async fn mirror_space(&self, _space: String) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Sync now": re-syncs a mirrored space into its folder by hand.
+    async fn sync_mirror(&self, _space: String) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Mirror off": restores the folder, refused (unless `discard`) if it
+    /// was edited meanwhile.
+    async fn unmirror_space(
+        &self,
+        _req: theodore_contract::UnmirrorSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
     // ── project config (docs/config.md) ──────────────────────────────────
@@ -424,6 +468,14 @@ pub trait CoreApi: Send + Sync {
         &self,
         _space: String,
     ) -> Result<Vec<SpaceTerminalInfo>, CommandError> {
+        Err(not_ready())
+    }
+    /// `@terminal` in the composer: the space's most recently active
+    /// terminal's last lines, `None` when it has none open.
+    async fn space_terminal_mention(
+        &self,
+        _space: String,
+    ) -> Result<Option<TerminalMention>, CommandError> {
         Err(not_ready())
     }
     /// A project's merged config, with each value's file.
