@@ -31,6 +31,8 @@ mod project_state;
 pub use project_state::*;
 mod space_progress;
 pub use space_progress::*;
+mod space_checkpoints;
+pub use space_checkpoints::*;
 mod spaces;
 pub use spaces::*;
 mod space_queue;
@@ -852,6 +854,9 @@ pub fn types() -> specta::Types {
         .register::<MergeSpaceResult>()
         .register::<SpaceRound>()
         .register::<SpaceTurn>()
+        .register::<RewindSpaceRequest>()
+        .register::<SpaceRevertFrom>()
+        .register::<RevertSpaceFileRequest>()
         .register::<AgentSession>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
@@ -862,6 +867,13 @@ pub fn types() -> specta::Types {
         .register::<SpaceBaseStatus>()
         .register::<SpaceFixCiRequest>()
         .register::<SetSpacePinnedRequest>()
+        .register::<SpaceQuestion>()
+        .register::<SpaceQuestionItem>()
+        .register::<SpaceAnswerRequest>()
+        .register::<SpaceAnswerItem>()
+        .register::<MirrorStatus>()
+        .register::<SpaceMirror>()
+        .register::<UnmirrorSpaceRequest>()
         .register::<ConfigLayer>()
         .register::<ConfigFile>()
         .register::<ConfigEntry>()
@@ -913,7 +925,8 @@ pub fn types() -> specta::Types {
         .register::<SpaceTerminalInfo>()
         .register::<OpenTerminalRequest>()
         .register::<WriteTerminalRequest>()
-        .register::<ResizeTerminalRequest>();
+        .register::<ResizeTerminalRequest>()
+        .register::<TerminalMention>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

@@ -1039,6 +1039,21 @@ export type MergeSpaceResult = {
 
 export type MergeState = "clean" | "blocked" | "behind" | "dirty" | "unstable" | "unknown";
 
+/**
+ *  Mirroring into a local folder project ("Try in my folder" — some
+ *  projects can't run from a separate worktree: fixed ports, one local
+ *  database, a docker compose stack, an IDE run config bound to the
+ *  folder's own path).
+ */
+export type MirrorStatus =
+/**  Writing into the folder after every turn and on "Sync now". */
+"on" |
+/**
+ *  Was on when Theodore last closed; nothing is written until you
+ *  resume it (never auto-writing into your folder on startup).
+ */
+"paused";
+
 export type MutationOp = { op: "create"; model: string; id: string; data: unknown } |
 /**  `data` holds changed fields only. */
 { op: "update"; model: string; id: string; data: unknown } | { op: "archive"; model: string; id: string } | { op: "delete"; model: string; id: string };
@@ -1329,6 +1344,18 @@ export type ResolveRequest = {
 };
 
 /**
+ *  "Revert to base" / "Revert the last turn's change" on a file of the
+ *  space's diff: the files are restored, checkpointed as an entry of the
+ *  turn log (undoable), and the next turn's prompt says so.
+ */
+export type RevertSpaceFileRequest = {
+	space: string,
+	/**  The file, and for a rename its old path too. */
+	paths: string[],
+	from: SpaceRevertFrom,
+};
+
+/**
  *  Host-level rollup of the PR's reviews (GitHub's `reviewDecision`; GitLab
  *  has no 1:1 equivalent — derived best-effort from approvals).
  */
@@ -1361,6 +1388,16 @@ export type Revision = {
 export type RevisionRequest = {
 	pr: PrId,
 	head: Sha,
+};
+
+/**
+ *  "Back to here" on an agent reply: the space goes back to right after
+ *  that turn; every later turn is marked undone.
+ */
+export type RewindSpaceRequest = {
+	space: string,
+	/**  `SpaceTurn::reply` of the turn to keep. */
+	reply: string,
 };
 
 export type RunSkillRequest = {
@@ -1712,6 +1749,43 @@ export type Space = {
 	 *  Set only by `set_space_pinned`, never by a client transaction.
 	 */
 	pinned?: boolean,
+	/**
+	 *  The mode that writes, Edit or Run, a turn last ran in: what an
+	 *  approved plan is implemented in. `None` = Edit.
+	 */
+	build_mode?: SpaceMode | null,
+	/**
+	 *  The agent's `ask_user` questions waiting for your answer; the turn
+	 *  is paused on them.
+	 */
+	question?: SpaceQuestion | null,
+	/**
+	 *  Mirroring into the project's local folder (docs/spaces.md "Mirror
+	 *  into a local folder"); `None` when it was never turned on, or after
+	 *  Mirror off. At most one space of a project mirrors at a time.
+	 */
+	mirror?: SpaceMirror | null,
+	/**
+	 *  The worktree's own `HEAD` when `head_sha` was taken (a checkpoint
+	 *  is a snapshot on top of it); `None`: `head_sha` is that `HEAD`
+	 *  (a new space, or a checkpoint from before snapshots).
+	 */
+	worktree_head?: Sha | null,
+};
+
+export type SpaceAnswerItem = {
+	/**  The options picked, as written. */
+	selected?: string[],
+	/**  Free text under "Other". */
+	other?: string | null,
+};
+
+/**  Your answers to a [`SpaceQuestion`], one per question, in order. */
+export type SpaceAnswerRequest = {
+	space: string,
+	/**  `SpaceQuestion::id`. */
+	question: string,
+	answers: SpaceAnswerItem[],
 };
 
 /**
@@ -1792,6 +1866,33 @@ export type SpaceLogLine = {
 	at: number,
 };
 
+/**
+ *  `Space::mirror`: the folder's own state before mirroring began (what
+ *  Mirror off restores), and the running set of paths mirroring has ever
+ *  touched there (what Mirror off only needs to look at or rewrite).
+ */
+export type SpaceMirror = {
+	status: MirrorStatus,
+	/**  The folder's `HEAD` when mirroring turned on. */
+	remembered_head: Sha,
+	/**  The folder's checked-out branch at that point, for display only. */
+	remembered_branch?: string | null,
+	/**
+	 *  The last space checkpoint written into the folder; `None` before
+	 *  the first sync lands.
+	 */
+	mirrored_head?: Sha | null,
+	/**
+	 *  Every path a sync has ever written or removed in the folder, oldest
+	 *  first, deduplicated: what Mirror off restores or checks for edits,
+	 *  even a path the space added and then removed again (no net
+	 *  difference between the remembered `HEAD` and the latest checkpoint,
+	 *  but still touched).
+	 */
+	touched?: string[],
+	updated_at: number,
+};
+
 /**  What the agent may do in a turn (docs/spaces.md §5). */
 export type SpaceMode =
 /**  Read, grep, MCP; no writes. */
@@ -1802,7 +1903,12 @@ export type SpaceMode =
  *  Edit, plus run shell commands (tests, installs) without asking. No
  *  sandbox of Theodore's own: the agent CLI runs as configured.
  */
-"run";
+"run" |
+/**
+ *  Read and explore, no edits; the turn ends with a plan you approve
+ *  (the next turn implements it in `Space::build_mode`) or revise.
+ */
+"plan";
 
 /**  The space's long-running `run` command. */
 export type SpaceProcess = {
@@ -1840,12 +1946,36 @@ export type SpaceProgressStep = {
 	state: SpaceProgressState,
 };
 
+/**  Questions the agent asked mid-turn (`ask_user` on `space-tools`). */
+export type SpaceQuestion = {
+	id: string,
+	/**  The turn that asked (`Space::run`). */
+	run: string,
+	/**  1–3, each with 2–4 options; "Other" is always offered too. */
+	questions: SpaceQuestionItem[],
+	asked_at: number,
+};
+
+export type SpaceQuestionItem = {
+	question: string,
+	options: string[],
+	/**  Several options may be picked. */
+	multi?: boolean,
+};
+
 export type SpaceQueuedRequest = {
 	space: string,
 	/**  The queued `chat_message` id. */
 	message: string,
 	action: QueuedAction,
 };
+
+/**  Where "Revert" takes a file back to. */
+export type SpaceRevertFrom =
+/**  As it is in the base: the space's change to it is gone. */
+"base" |
+/**  As it was before the last agent turn: only that turn's change goes. */
+"last_turn";
 
 export type SpaceReviewRequest = {
 	space: string,
@@ -2015,6 +2145,22 @@ export type SpaceTurn = {
 	 *  which Undo puts back.
 	 */
 	base_before?: Sha | null,
+	/**
+	 *  A Plan-mode turn's plan: the reply shows as a plan card with
+	 *  Approve / Revise.
+	 */
+	plan?: string | null,
+	/**
+	 *  The worktree's `HEAD` at `before` and at `after` (a checkpoint is a
+	 *  snapshot on top of it); `None`: that checkpoint is `HEAD` itself.
+	 */
+	before_head?: Sha | null,
+	after_head?: Sha | null,
+	/**
+	 *  Not an agent turn but your Revert of these files in the diff: its
+	 *  `reply` is its own `message`, and the next turn's prompt says so.
+	 */
+	reverted?: string[],
 };
 
 /**
@@ -2155,6 +2301,19 @@ export type TelemetryStatus = {
 	never_sent: string[],
 };
 
+/**
+ *  `@terminal` in the space composer (docs/spaces.md §3, §11): the space's
+ *  most recently active terminal's last lines, attached to the message as
+ *  a text file the way any other attachment is. `None` when the space has
+ *  no terminal open.
+ */
+export type TerminalMention = {
+	id: string,
+	title: string,
+	/**  Oldest first, ANSI stripped. */
+	lines: string[],
+};
+
 export type TerminalStatus = "running" |
 /**  The shell exited; `exit_code` says how. */
 "exited";
@@ -2208,6 +2367,15 @@ export type UiEvent =
  *  `agents`, `projects`, `done`.
  */
 { event: "onboarding_step"; step: string };
+
+export type UnmirrorSpaceRequest = {
+	space: string,
+	/**
+	 *  Overwrite edits made in the folder while mirroring was on, instead
+	 *  of refusing and naming them.
+	 */
+	discard?: boolean,
+};
 
 export type UpdateInfo = {
 	version: string,
