@@ -356,6 +356,8 @@ pub trait CoreApi: Send + Sync {
         &self,
         _req: theodore_contract::SpaceAnswerRequest,
     ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
     /// "Mirror into `<folder>`": on fresh, or resuming a paused one.
     async fn mirror_space(&self, _space: String) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
