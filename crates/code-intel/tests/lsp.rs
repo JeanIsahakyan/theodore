@@ -99,8 +99,13 @@ async fn trusted_space_routes_to_the_ready_server() {
     );
 
     // Spaces get the trusted options.
-    let hover = ci.hover(wt.path(), "src/lib.rs", at(1, 1)).await.unwrap();
-    let report: serde_json::Value = serde_json::from_str(&hover.unwrap()).unwrap();
+    let hover = ci
+        .hover(wt.path(), "src/lib.rs", at(1, 1))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(hover.source, Source::Lsp);
+    let report: serde_json::Value = serde_json::from_str(&hover.text).unwrap();
     assert_eq!(report["init_options"]["mode"], "trusted");
 
     ci.close(wt.path()).await;
@@ -256,7 +261,7 @@ async fn review_sessions_get_review_options_and_their_own_process() {
         let (ci, root) = (ci.clone(), root.to_path_buf());
         async move {
             let hover = ci.hover(&root, "src/lib.rs", at(1, 1)).await.unwrap();
-            let report: serde_json::Value = serde_json::from_str(&hover.unwrap()).unwrap();
+            let report: serde_json::Value = serde_json::from_str(&hover.unwrap().text).unwrap();
             report["init_options"]["mode"].as_str().unwrap().to_string()
         }
     };

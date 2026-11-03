@@ -452,6 +452,18 @@ pub trait CoreApi: Send + Sync {
     async fn code_intel_decline(&self, _language: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
+    /// Settings → Languages → Remove: deletes a language's server and
+    /// grammar.
+    async fn code_intel_remove(&self, _language: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Hover in a PR's diff.
+    async fn code_intel_hover(
+        &self,
+        _req: theodore_contract::CodeHoverRequest,
+    ) -> Result<Option<theodore_contract::CodeHover>, CommandError> {
+        Err(not_ready())
+    }
     /// Same, created from a commented template when missing.
     async fn ensure_global_config(
         &self,

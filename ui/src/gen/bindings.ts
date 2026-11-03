@@ -172,6 +172,25 @@ export const commands = {
 	/**  An install suggestion's No: not suggested again. */
 	codeIntelDecline: (language: string) => typedError<null, CommandError>(__TAURI_INVOKE("code_intel_decline", { language })),
 	/**
+	 *  Settings → Languages → Remove: deletes what was downloaded for a
+	 *  language (its server and grammar). Refused while a review or a space
+	 *  with the language is open; afterwards it counts as declined.
+	 */
+	codeIntelRemove: (language: string) => typedError<null, CommandError>(__TAURI_INVOKE("code_intel_remove", { language })),
+	/**
+	 *  Hover in a PR's diff: the language server's text, else the signature
+	 *  of a definition with the name under the pointer. `null`: nothing.
+	 */
+	codeIntelHover: (req: CodeHoverRequest) => typedError<{
+	/**  Markdown. */
+	text: string,
+	/**
+	 *  `lsp`: the language server's hover. `syntax`: the signature of a
+	 *  definition with that name (matched by name: may be another symbol).
+	 */
+	source: SymbolSource,
+} | null, CommandError>(__TAURI_INVOKE("code_intel_hover", { req })),
+	/**
 	 *  Settings → Projects → Config: each layer's file and YAML generated from
 	 *  the project's settings.
 	 */
@@ -443,6 +462,29 @@ export type ClientLog = {
 
 export type ClientLogLevel = "error" | "warn" | "info";
 
+export type CodeHover = {
+	/**  Markdown. */
+	text: string,
+	/**
+	 *  `lsp`: the language server's hover. `syntax`: the signature of a
+	 *  definition with that name (matched by name: may be another symbol).
+	 */
+	source: SymbolSource,
+};
+
+/**
+ *  `code_intel_hover`: the identifier under the pointer in a PR's diff, at
+ *  the PR's head.
+ */
+export type CodeHoverRequest = {
+	pr: PrId,
+	/**  Repo-relative. */
+	path: string,
+	/**  1-based line and char column. */
+	line: number,
+	col: number,
+};
+
 /**  Where a grammar or a server stands. */
 export type CodeInstall =
 /**  Not on disk; can be downloaded. */
@@ -456,8 +498,19 @@ export type CodeInstall =
 /**  You said no to the install suggestion. */
 { state: "declined" } | { state: "failed"; error: string };
 
+/**  What an install is downloading (`Ephemeral::CodeIntelProgress`). */
+export type CodeInstallItem = "grammar" | "server";
+
 /**  `code_intel.install`. */
 export type CodeInstallPolicy = "ask" | "always" | "never";
+
+/**
+ *  One step of an install: `downloading` a few times a second at most,
+ *  then `installed` or `failed` once per item.
+ */
+export type CodeInstallProgress = { kind: "downloading"; received: number;
+/**  `None` when the server didn't say. */
+total: number | null } | { kind: "installed" } | { kind: "failed"; error: string };
 
 /**  `code_intel_set_lsp`: Settings → Languages' toggles. */
 export type CodeIntelLspRequest = {
@@ -761,6 +814,19 @@ url: string } |
 project: string | null; language: string;
 /**  The server that would be downloaded (`clangd`). */
 server: string } |
+/**
+ *  An install (`code_intel_install`, or `code_intel.install: always`)
+ *  downloading `language`'s grammar or server: `downloading` at most
+ *  four times a second per item, then `installed` or `failed`.
+ */
+{ type: "code_intel_progress";
+/**  The project whose worktree asked for it; `None` from Settings. */
+project: string | null; language: string; what: CodeInstallItem;
+/**
+ *  The grammar package (`tree-sitter-rust`) or server
+ *  (`rust-analyzer`).
+ */
+name: string; state: CodeInstallProgress } |
 /**
  *  Raw PTY output of a space's terminal (docs/spaces.md "Terminal"),
  *  base64 (control sequences and all) so a chunk split mid UTF-8 still

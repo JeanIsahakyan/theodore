@@ -143,6 +143,8 @@ impl Core {
         let r#where = crate::usecases::telemetry::wire_str(&req.layer);
         let result = self.save_config_inner(req).await;
         if result.is_ok() {
+            // A new global file may change the machine-wide limits.
+            self.apply_code_limits().await;
             theodore_telemetry::product(theodore_telemetry::ProductEvent::ConfigSaved { r#where });
         }
         result

@@ -967,3 +967,182 @@ async fn find_symbol_asks_code_intel_first_and_greps_when_it_has_nothing() {
     let grep = core.find_symbol(find(&pr)).await.unwrap();
     assert_eq!(grep[0].line, 9);
 }
+
+// ── hover, limits, remove, progress ────────────────────────────────────────
+
+#[tokio::test]
+async fn hover_asks_at_the_prs_head_worktree() {
+    let f = fixtures();
+    let (core, _recv, pr) = open_pr_with_code(&f).await;
+    *f.code_intel.hover.lock().unwrap() = Some(theodore_ports::Hover {
+        text: "```rust\nfn helper()\n```".into(),
+        source: Source::Syntax,
+    });
+    let req = theodore_contract::CodeHoverRequest {
+        pr: pr.clone(),
+        path: "src/lib.rs".into(),
+        line: 3,
+        col: 5,
+    };
+    let got = core.code_intel_hover(req.clone()).await.unwrap().unwrap();
+    assert_eq!(got.text, "```rust\nfn helper()\n```");
+    assert_eq!(got.source, SymbolSource::Syntax);
+    assert!(
+        f.code_intel
+            .calls()
+            .contains(&"hover src/lib.rs:3:5".to_string())
+    );
+
+    *f.code_intel.hover.lock().unwrap() = None;
+    assert_eq!(core.code_intel_hover(req.clone()).await.unwrap(), None);
+    let outside = theodore_contract::CodeHoverRequest {
+        path: "../etc/passwd".into(),
+        ..req
+    };
+    assert!(matches!(
+        core.code_intel_hover(outside).await,
+        Err(AppError::Invalid(_))
+    ));
+}
+
+#[tokio::test]
+async fn limits_come_from_the_global_file_only_and_apply_when_it_changes() {
+    let f = fixtures();
+    let global = f.data_dir.path().join("config.yaml");
+    std::fs::write(&global, "code_intel:\n  max_servers: 2\n  cache_mb: 100\n").unwrap();
+    let (core, _recv, _pr) = open_pr_with_code(&f).await;
+    let applied = |f: &Fixtures| -> Vec<String> {
+        f.code_intel
+            .calls()
+            .into_iter()
+            .filter(|c| c.starts_with("set_limits"))
+            .collect()
+    };
+    wait_until(|| !applied(&f).is_empty()).await;
+    assert_eq!(applied(&f), ["set_limits 2 10 1024 100"]);
+
+    // Unchanged: not sent again.
+    core.apply_code_limits().await;
+    assert_eq!(applied(&f).len(), 1);
+
+    std::fs::write(&global, "code_intel:\n  max_file_kb: 64\n").unwrap();
+    core.apply_code_limits().await;
+    assert_eq!(
+        applied(&f),
+        ["set_limits 2 10 1024 100", "set_limits 4 10 64 512"]
+    );
+
+    // A repo or local file setting one is warned about: it has no effect.
+    use crate::config::editor::validate_layer;
+    use theodore_contract::ConfigLayer;
+    let text = "code_intel:\n  max_servers: 9\n";
+    for layer in [ConfigLayer::Repo, ConfigLayer::Local] {
+        let p = validate_layer(text, layer);
+        assert!(
+            p.iter().any(|p| p.line == Some(2)
+                && p.message
+                    .starts_with("`code_intel.max_servers`: ignored here")),
+            "{layer:?}: {p:?}"
+        );
+    }
+    assert!(validate_layer(text, ConfigLayer::Global).is_empty());
+}
+
+#[tokio::test]
+async fn remove_closes_the_settings_worktree_and_counts_as_declined() {
+    let e = code_env().await;
+    *e.f.code_intel.status.lock().unwrap() = vec![missing_server("rust", "rust-analyzer")];
+    let folder = e.project.path.clone().unwrap();
+    // Settings → Languages opens the folder itself.
+    e.core.code_intel_status(&e.project.id).await.unwrap();
+    assert!(opened(&e, &format!("open {folder}")));
+
+    // Refused by the port: the error comes back, nothing is declined.
+    *e.f.code_intel.remove_error.lock().unwrap() = Some(CodeIntelError::Other(
+        "rust is in use by an open worktree (/x)".into(),
+    ));
+    let err = e.core.code_intel_remove("rust").await.unwrap_err();
+    assert!(err.to_string().contains("in use"), "{err}");
+    let calls = e.f.code_intel.calls();
+    let close = calls.iter().position(|c| *c == format!("close {folder}"));
+    let remove = calls.iter().position(|c| c == "remove rust");
+    assert!(close.is_some() && close < remove, "{calls:?}");
+    let status = e.core.code_intel_status(&e.project.id).await.unwrap();
+    assert_eq!(
+        status.languages[0].server.as_ref().unwrap().install,
+        theodore_contract::CodeInstall::Missing
+    );
+
+    *e.f.code_intel.remove_error.lock().unwrap() = None;
+    e.core.code_intel_remove("rust").await.unwrap();
+    let status = e.core.code_intel_status(&e.project.id).await.unwrap();
+    assert_eq!(
+        status.languages[0].server.as_ref().unwrap().install,
+        theodore_contract::CodeInstall::Declined
+    );
+    // `install: always` leaves a removed language alone too.
+    let before = e.f.code_intel.calls().len();
+    e.core
+        .code_install_flow(Path::new("/tmp/wt"), InstallPolicy::Always, None)
+        .await;
+    assert!(
+        !e.f.code_intel.calls()[before..]
+            .iter()
+            .any(|c| c.starts_with("install")),
+        "{:?}",
+        e.f.code_intel.calls()
+    );
+}
+
+#[tokio::test]
+async fn install_progress_reaches_the_ui() {
+    use theodore_contract::{CodeInstallItem, CodeInstallProgress};
+    use theodore_ports::{InstallItem, InstallProgress, InstallProgressState};
+    let mut e = code_env().await;
+    let step = |state| InstallProgress {
+        language: LanguageId::new("rust"),
+        what: InstallItem::Server,
+        name: "rust-analyzer".into(),
+        state,
+    };
+    *e.f.code_intel.progress.lock().unwrap() = vec![
+        step(InstallProgressState::Downloading {
+            received: 10,
+            total: Some(100),
+        }),
+        step(InstallProgressState::Installed),
+    ];
+    e.core.code_intel_install("rust").await.unwrap();
+    let mut got = Vec::new();
+    while got.len() < 2 {
+        let ev = tokio::time::timeout(Duration::from_secs(2), e.recv.ephemeral.recv())
+            .await
+            .expect("an event")
+            .unwrap();
+        if let Ephemeral::CodeIntelProgress { .. } = ev {
+            got.push(ev);
+        }
+    }
+    assert_eq!(
+        got,
+        [
+            Ephemeral::CodeIntelProgress {
+                project: None,
+                language: "rust".into(),
+                what: CodeInstallItem::Server,
+                name: "rust-analyzer".into(),
+                state: CodeInstallProgress::Downloading {
+                    received: 10,
+                    total: Some(100)
+                },
+            },
+            Ephemeral::CodeIntelProgress {
+                project: None,
+                language: "rust".into(),
+                what: CodeInstallItem::Server,
+                name: "rust-analyzer".into(),
+                state: CodeInstallProgress::Installed,
+            },
+        ]
+    );
+}

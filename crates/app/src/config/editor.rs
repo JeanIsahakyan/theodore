@@ -77,9 +77,13 @@ const CODE_INTEL_KEYS: &[(&str, &str)] = &[
         "languages: [typescript, rust]   # empty: detected",
     ),
     ("servers", "servers: { python: pyright }"),
-    ("max_servers", "max_servers: 4"),
+    (
+        "max_servers",
+        "max_servers: 4          # these four: global file only",
+    ),
     ("idle_minutes", "idle_minutes: 10"),
     ("max_file_kb", "max_file_kb: 1024"),
+    ("cache_mb", "cache_mb: 512"),
     (
         "lsp",
         "lsp:                    # global / local files only, never the repo's\n  spaces: true\n  review: false         # true: a PR's code may run during reviews",
@@ -161,10 +165,12 @@ fn has_value(v: Option<&Value>) -> bool {
 }
 
 /// `validate`, plus a warning for each key `layer` may not set (the repo's
-/// file can't turn on language servers, `config::repo_may_not_set`).
+/// file can't turn on language servers, `config::repo_may_not_set`; only
+/// the global file sets the machine-wide limits, `config::MACHINE_WIDE`).
 pub fn validate_layer(text: &str, layer: theodore_contract::ConfigLayer) -> Vec<ConfigProblem> {
+    use theodore_contract::ConfigLayer;
     let mut problems = validate(text);
-    if layer != theodore_contract::ConfigLayer::Repo {
+    if layer == ConfigLayer::Global {
         return problems;
     }
     let Ok(value @ Value::Object(_)) = serde_yaml::from_str::<Value>(text) else {
@@ -174,7 +180,17 @@ pub fn validate_layer(text: &str, layer: theodore_contract::ConfigLayer) -> Vec<
     let mut leaves = Vec::new();
     flatten(String::new(), &normalize(value), &mut leaves);
     for (key, _) in leaves {
-        if super::repo_may_not_set(&key) {
+        if super::MACHINE_WIDE.contains(&key.as_str()) {
+            problems.push(ConfigProblem {
+                level: ConfigProblemLevel::Warning,
+                line: line_of(&lines, &key),
+                column: None,
+                message: format!(
+                    "`{key}`: ignored here; it is one setting for the whole app, set in your \
+                     global file"
+                ),
+            });
+        } else if layer == ConfigLayer::Repo && super::repo_may_not_set(&key) {
             problems.push(ConfigProblem {
                 level: ConfigProblemLevel::Warning,
                 line: line_of(&lines, &key),

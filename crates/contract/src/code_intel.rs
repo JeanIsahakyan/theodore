@@ -118,3 +118,48 @@ pub enum CodeServerState {
     Ready,
     Failed,
 }
+
+/// What an install is downloading (`Ephemeral::CodeIntelProgress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum CodeInstallItem {
+    Grammar,
+    Server,
+}
+
+/// One step of an install: `downloading` a few times a second at most,
+/// then `installed` or `failed` once per item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodeInstallProgress {
+    Downloading {
+        received: u64,
+        /// `None` when the server didn't say.
+        total: Option<u64>,
+    },
+    Installed,
+    Failed {
+        error: String,
+    },
+}
+
+/// `code_intel_hover`: the identifier under the pointer in a PR's diff, at
+/// the PR's head.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CodeHoverRequest {
+    pub pr: theodore_domain::PrId,
+    /// Repo-relative.
+    pub path: String,
+    /// 1-based line and char column.
+    pub line: u32,
+    pub col: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CodeHover {
+    /// Markdown.
+    pub text: String,
+    /// `lsp`: the language server's hover. `syntax`: the signature of a
+    /// definition with that name (matched by name: may be another symbol).
+    pub source: crate::SymbolSource,
+}

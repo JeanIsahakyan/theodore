@@ -1204,6 +1204,33 @@ pub async fn code_intel_decline(
         .await
 }
 
+/// Settings → Languages → Remove: deletes what was downloaded for a
+/// language (its server and grammar). Refused while a review or a space
+/// with the language is open; afterwards it counts as declined.
+#[tauri::command]
+#[specta::specta]
+pub async fn code_intel_remove(
+    op: crate::op::Op,
+    language: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.code_intel_remove(language).await })
+        .await
+}
+
+/// Hover in a PR's diff: the language server's text, else the signature
+/// of a definition with the name under the pointer. `null`: nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn code_intel_hover(
+    op: crate::op::Op,
+    req: theodore_contract::CodeHoverRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Option<theodore_contract::CodeHover>, CommandError> {
+    op.run(async move { core.code_intel_hover(req).await })
+        .await
+}
+
 /// Settings → Projects → Config: each layer's file and YAML generated from
 /// the project's settings.
 #[tauri::command]
