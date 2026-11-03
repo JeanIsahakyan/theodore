@@ -155,24 +155,24 @@ export const commands = {
 	/**  A project's merged config, with each value's file. */
 	projectConfig: (project: string) => typedError<EffectiveConfig, CommandError>(__TAURI_INVOKE("project_config", { project })),
 	/**
-	 *  Settings → Languages: each language of a project, its grammar, server
+	 *  Project settings → Languages: each language of a project, its grammar, server
 	 *  and index progress (docs/code-intel.md §9).
 	 */
 	codeIntelStatus: (project: string) => typedError<CodeIntelStatus, CommandError>(__TAURI_INVOKE("code_intel_status", { project })),
 	/**
 	 *  Downloads a language's grammar and server (an install suggestion's
-	 *  Yes, or Settings → Languages → Install).
+	 *  Yes, or project settings → Languages → Install).
 	 */
 	codeIntelInstall: (language: string) => typedError<null, CommandError>(__TAURI_INVOKE("code_intel_install", { language })),
 	/**
-	 *  Settings → Languages: language servers in reviews (a PR's code may
-	 *  run) or in spaces, on or off. A global or local config file wins.
+	 *  Project settings → Languages: one project's language servers in reviews (a PR's code may
+	 *  run) or in spaces, on or off: written to its local config file.
 	 */
 	codeIntelSetLsp: (req: CodeIntelLspRequest) => typedError<null, CommandError>(__TAURI_INVOKE("code_intel_set_lsp", { req })),
 	/**  An install suggestion's No: not suggested again. */
 	codeIntelDecline: (language: string) => typedError<null, CommandError>(__TAURI_INVOKE("code_intel_decline", { language })),
 	/**
-	 *  Settings → Languages → Remove: deletes what was downloaded for a
+	 *  Project settings → Languages → Remove: deletes what was downloaded for a
 	 *  language (its server and grammar). Refused while a review or a space
 	 *  with the language is open; afterwards it counts as declined.
 	 */
@@ -512,8 +512,13 @@ export type CodeInstallProgress = { kind: "downloading"; received: number;
 /**  `None` when the server didn't say. */
 total: number | null } | { kind: "installed" } | { kind: "failed"; error: string };
 
-/**  `code_intel_set_lsp`: Settings → Languages' toggles. */
+/**
+ *  `code_intel_set_lsp`: project settings → Languages' switches. Writes
+ *  `code_intel.lsp.<scope>` into the project's local config file
+ *  (`config.local.yaml`), never the repo's.
+ */
 export type CodeIntelLspRequest = {
+	project: string,
 	scope: CodeLspScope,
 	on: boolean,
 };
@@ -556,10 +561,15 @@ export type CodeLsp = {
 export type CodeLspScope = "review" | "spaces";
 
 export type CodeLspToggle = {
+	/**
+	 *  Effective for the project: its local file, else your global file,
+	 *  else the default.
+	 */
 	on: boolean,
 	/**
-	 *  The global or local config file that sets it: the file wins over
-	 *  the toggle until the line is removed. A repo's file never does.
+	 *  The global or local config file that sets it; `None`: the default.
+	 *  A repo's file never does. The switch writes the local file, so it
+	 *  wins over the global one.
 	 */
 	from_config: string | null,
 };

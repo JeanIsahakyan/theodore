@@ -286,7 +286,8 @@ code_intel:
 - `lsp.*` is honoured only from your global and local files. A repo's file
   setting it is ignored, with a toast, and the editor warns on that line:
   a repo turning servers on for reviews of its own PRs would run their
-  authors' code. Unset, the Settings → Languages toggles apply.
+  authors' code. Each project's switches (Settings → Projects → ⟨project⟩
+  → Languages) write its local file; unset there, your global file applies.
 
 - Read like the rest of the repo layer: at the base, never at a PR's head,
   so a PR can't change what gets downloaded or run.

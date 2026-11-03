@@ -75,7 +75,7 @@ impl GrammarSource for Toolchain {
     }
 }
 
-/// Languages you removed (Settings → Languages → Remove): their grammar is
+/// Languages you removed (project settings → Languages → Remove): their grammar is
 /// not fetched on its own again — grammars otherwise download without
 /// asking — until `install()`. Kept in `<data dir>/removed.json`, so it
 /// holds across restarts.

@@ -1,6 +1,6 @@
-//! Code intelligence for the UI (docs/code-intel.md §5.1, §9): Settings →
-//! Languages lists each language of a project with its grammar, server and
-//! index progress; `code_intel.install: ask` raises an install suggestion
+//! Code intelligence for the UI (docs/code-intel.md §5.1, §9): project
+//! settings → Languages lists each language of a project with its grammar,
+//! server and index progress; `code_intel.install: ask` raises an install suggestion
 //! (`Ephemeral::CodeIntelSuggest`) the user accepts or declines.
 //!
 //! ```text
@@ -35,15 +35,21 @@ pub struct CodeLsp {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct CodeLspToggle {
+    /// Effective for the project: its local file, else your global file,
+    /// else the default.
     pub on: bool,
-    /// The global or local config file that sets it: the file wins over
-    /// the toggle until the line is removed. A repo's file never does.
+    /// The global or local config file that sets it; `None`: the default.
+    /// A repo's file never does. The switch writes the local file, so it
+    /// wins over the global one.
     pub from_config: Option<String>,
 }
 
-/// `code_intel_set_lsp`: Settings → Languages' toggles.
+/// `code_intel_set_lsp`: project settings → Languages' switches. Writes
+/// `code_intel.lsp.<scope>` into the project's local config file
+/// (`config.local.yaml`), never the repo's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct CodeIntelLspRequest {
+    pub project: String,
     pub scope: CodeLspScope,
     pub on: bool,
 }

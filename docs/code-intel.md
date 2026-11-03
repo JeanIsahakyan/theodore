@@ -268,10 +268,10 @@ install(rust) ─▶ grammar tree-sitter-rust ─▶ downloading{received, total
 
 ### 5.1.1 Remove
 
-Settings → Languages → Remove (`code_intel_remove(language)`):
+Project settings → Languages → Remove (`code_intel_remove(language)`, §9.1):
 
 ```
-close worktrees opened only for Settings ─▶ an open review or space has the language? ── yes ─▶ refused, names the worktree
+close worktrees opened only for the settings ─▶ an open review or space has the language? ── yes ─▶ refused, names the worktree
                                                      └─ no ─▶ stop the server's sessions (every worktree)
                                                               ─▶ delete servers/<name>/ (every version) and the grammar package
                                                               ─▶ both Missing; language "removed" + declined
@@ -395,6 +395,12 @@ hover(path, line, col) ─▶ server ready? ── yes ─▶ its hover text    
                                                          none ─▶ null
 ```
 
+In the diff (`ui/src/ui/symbols/hover.ts`): the pointer rests 0.5 s on an
+identifier of a head-side line (⌘ held: 80 ms), one call per position
+(`pr@head:path:line:col`, cached, a failure retried), the markdown shown in
+a card under the word; a `syntax` answer is marked "from the parser".
+Leaving, scrolling, a click or Esc hides it.
+
 ### 7.2 Spaces (`space-tools`)
 
 Everything above, plus edits in modes that allow them (`AgentMode::Edit`,
@@ -457,8 +463,8 @@ Some servers run code from the project they open.
 | `code_intel.idle_minutes` | `10` | idle server shutdown; global file only ¹ |
 | `code_intel.max_file_kb` | `1024` | larger files are not indexed; global file only ¹ |
 | `code_intel.cache_mb` | `512` | `index.sqlite` size cap, LRU (§5.2); at least 16; global file only ¹ |
-| `code_intel.lsp.review` | `false` | language servers in review runs: a PR's code may run (§8); global / local file only, never the repo's |
-| `code_intel.lsp.spaces` | `true` | language servers in spaces (§8); global / local file only |
+| `code_intel.lsp.review` | `false` | language servers in review runs: a PR's code may run (§8); global / local file only, never the repo's; the project's switch writes its local file (§9.1) |
+| `code_intel.lsp.spaces` | `true` | language servers in spaces (§8); global / local file only; switch: §9.1 |
 
 ¹ Machine-wide: the app has one server pool and one index for every
 project, so only `~/.theodore/config.yaml` sets these; a repo's or a local
@@ -466,15 +472,47 @@ file's value is ignored, and the config editor warns about it. Read at
 startup and applied live (no restart) when the file changes: after a save
 in the config editor, or by the next worktree opened after a hand edit.
 
-Settings → Languages lists each detected language with its grammar, server
-(found / downloaded / not available), index progress, and Install
-(progress events, §5.1) / Remove (§5.1.1).
+### 9.1 Project settings → Languages
+
+Settings → Projects → ⟨project⟩ → Languages: one project's switches and
+languages, next to its other settings and its config editor.
+
+```
+Language servers in reviews   [ ]   off by default: a PR's code can run on this Mac
+Language servers in spaces    [x]
+  switch ─▶ code_intel.lsp.<review|spaces> in the project's local file
+            (<folder>/.theodore/config.local.yaml, gitignored; a host project's
+             <data dir>/projects/<host>/<owner>/<name>/config.local.yaml)
+
+Rust · 214 files    Grammar Installed   rust-analyzer System  Ready   100% indexed   [Remove]
+C++  · 3 files      Grammar Installed   clangd Downloading
+                    clangd · 12.3 of 40 MB ▓▓▓▓░░░░░                     40% indexed
+```
+
+| Switch's value | Comes from |
+| --- | --- |
+| the project's local file sets it | that file (what the switch writes) |
+| else your global file sets it | `~/.theodore/config.yaml`: the default under every project |
+| else | the app-wide switch of earlier versions, if you flipped it, else the default |
+
+- The switch edits the one line (`code_intel.lsp.review: true`) and keeps
+  the rest of the file, comments included. A shape a line edit can't
+  handle (a flow mapping, a dotted key) is refused with the file untouched:
+  set it in the config editor. Never the repo's file (§8).
+- Each language: grammar, server (found / downloaded / not available),
+  run state, index progress; Install, Decline (a missing server) and
+  Remove (what Theodore downloaded, §5.1.1; asks first, and shows the
+  refusal when a review or a space uses the language).
+- Install progress comes from `Ephemeral::CodeIntelProgress` (§5.1): the
+  row shows the bar and reads the status again once an item settles. The
+  status is polled (every 5 s) only while a server warms up, or a download
+  shows no events.
 
 ## 10. Rollout
 
 ```
 S1  syntax layer + toolchain/manifest + grammar CI + review-tools   ✓
-    Settings → Languages                                            ✓
+    project settings → Languages (was a global Settings page)       ✓
 S2  LSP client + pool + trust switches + space-tools edits          ✓
     reindex after each space turn (the checkpoint's diff)           ✓
 S3  eval with and without the tools; limits; Grep decision          open

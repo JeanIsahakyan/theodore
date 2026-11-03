@@ -1,7 +1,7 @@
 //! Code intelligence above the port (docs/code-intel.md): which worktrees
 //! are open on `CodeIntelPort`, under which trust, the install flow, the
-//! MCP tools' calls (queries, and edits applied here), and Settings →
-//! Languages.
+//! MCP tools' calls (queries, and edits applied here), and project
+//! settings → Languages.
 //!
 //! ```text
 //! PR opened / review run ─▶ open(PR worktree, Review) ─┐
@@ -44,12 +44,15 @@ use crate::settings::SCOPE_USER;
 /// The setting holding the languages whose server you declined
 /// (`code_intel.install: ask`).
 pub(crate) const DECLINED_KEY: &str = "code_intel.declined";
-/// Settings → Languages' toggles, below a global or local config file.
+/// The config keys of the two switches. Also the app-wide setting rows
+/// the old Settings → Languages page wrote: still read, below the files,
+/// so a switch flipped there keeps its value until a file sets the key.
 pub(crate) const LSP_REVIEW_KEY: &str = "code_intel.lsp.review";
 pub(crate) const LSP_SPACES_KEY: &str = "code_intel.lsp.spaces";
 
-/// Where language servers may run (`code_intel.lsp`), resolved: your
-/// global / local file, else the Settings toggle, else the default. The
+/// Where language servers may run (`code_intel.lsp`), resolved: the
+/// project's local file (where its switches write), else your global
+/// file, else an app-wide switch from before, else the default. The
 /// repo's file never sets it (`config::repo_may_not_set`).
 /// Handed to the port per workspace (`Workspace::lsp`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +69,7 @@ struct Opened {
     project: Option<String>,
     /// Language servers may serve it (`LspPolicy`).
     lsp: bool,
-    /// Opened only for Settings → Languages (a local folder's checkout):
+    /// Opened only for project settings → Languages (a local folder's checkout):
     /// closed before a Remove, reopened by the next status.
     settings: bool,
 }
@@ -185,7 +188,8 @@ impl Core {
         self.merge_cached(&layers).config.code_intel.clone()
     }
 
-    /// `cfg.lsp` with the Settings toggles and defaults under it.
+    /// `cfg.lsp` (the merged files) with the old app-wide switches and the
+    /// defaults under it.
     pub(crate) async fn lsp_policy(&self, cfg: &CodeIntelConfig) -> LspPolicy {
         let setting = |key: &'static str| async move {
             self.setting_value_scoped(key, None)
@@ -521,7 +525,7 @@ impl Core {
             .unwrap_or_default()
     }
 
-    // ── Settings → Languages ────────────────────────────────────────────
+    // ── project settings → Languages ────────────────────────────────────
 
     /// Each language of `project`: from a worktree of it already open,
     /// else (a local folder) the folder itself, read-only.
@@ -597,15 +601,53 @@ impl Core {
         })
     }
 
-    /// Settings → Languages: one LSP toggle, for every project. A global
-    /// or local file setting the key still wins.
+    /// Project settings → Languages: one switch of one project, written as
+    /// `code_intel.lsp.<scope>` into its local file — the folder's
+    /// `.theodore/config.local.yaml` (gitignored), or a host project's in
+    /// the data directory. Never the repo's file (docs/code-intel.md §8).
+    /// The local layer wins over the global file, which stays the
+    /// default under it. Worktrees open under the old value reopen on
+    /// their next use (`open_code_workspace`).
+    ///
+    /// ```text
+    /// switch ─▶ local file: line edit (comments kept) ─▶ checked ─▶ written
+    ///                      └─ a shape a line edit can't handle ─▶ refused, nothing written
+    /// ```
     pub async fn code_intel_set_lsp(&self, req: CodeIntelLspRequest) -> AppResult<()> {
-        let key = match req.scope {
-            CodeLspScope::Review => LSP_REVIEW_KEY,
-            CodeLspScope::Spaces => LSP_SPACES_KEY,
+        let leaf = match req.scope {
+            CodeLspScope::Review => "review",
+            CodeLspScope::Spaces => "spaces",
         };
-        self.write_user_setting(key, serde_json::json!(req.on))
-            .await
+        // One writer at a time with the config editor's save.
+        let _guard = self.0.ship_lock.lock().await;
+        let project = self
+            .project_row(&req.project)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("project {}", req.project)))?;
+        let folder = project.path.as_deref().map(Path::new);
+        let path = match folder {
+            Some(folder) => folder.join(crate::config::LOCAL_FILE),
+            None => crate::config::host_local_path(&self.0.deps.data_dir, &project.repo),
+        };
+        let text = tokio::fs::read_to_string(&path).await.ok();
+        let next = crate::config::editor::set_leaf(
+            text.as_deref(),
+            &["code_intel", "lsp", leaf],
+            if req.on { "true" } else { "false" },
+        )
+        .map_err(|why| {
+            AppError::Invalid(format!(
+                "couldn't edit {}: {why}. Set code_intel.lsp.{leaf} there by hand",
+                path.display()
+            ))
+        })?;
+        crate::usecases::config_editor::write_file(&path, &next).await?;
+        if let Some(folder) = folder
+            && self.0.deps.git.is_repo(folder).await.unwrap_or(false)
+        {
+            crate::usecases::config_editor::ensure_gitignored(folder).await?;
+        }
+        Ok(())
     }
 
     /// "Install": downloads `language`'s grammar and server, and forgets
@@ -652,7 +694,7 @@ impl Core {
         })
     }
 
-    /// Settings → Languages → Remove: deletes what was downloaded for
+    /// Project settings → Languages → Remove: deletes what was downloaded for
     /// `language` (its server, its grammar). Worktrees opened only for this
     /// page close first; a review or a space with the language open makes
     /// the port refuse. Afterwards it counts as declined: not suggested,

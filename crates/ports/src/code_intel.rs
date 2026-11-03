@@ -267,7 +267,7 @@ pub struct ServerStatus {
     pub state: ServerState,
 }
 
-/// One language of a workspace, for `status()` and Settings → Languages.
+/// One language of a workspace, for `status()` and project settings → Languages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageStatus {
     pub language: LanguageId,

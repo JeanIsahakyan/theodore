@@ -430,7 +430,7 @@ pub trait CoreApi: Send + Sync {
     async fn global_config(&self) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
         Err(not_ready())
     }
-    /// Settings → Languages: each language of a project (docs/code-intel.md §9).
+    /// Project settings → Languages: each language of a project (docs/code-intel.md §9).
     async fn code_intel_status(
         &self,
         _project: String,
@@ -441,7 +441,7 @@ pub trait CoreApi: Send + Sync {
     async fn code_intel_install(&self, _language: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
-    /// Settings → Languages: language servers in reviews / in spaces.
+    /// Project settings → Languages: a project's language servers in reviews / in spaces.
     async fn code_intel_set_lsp(
         &self,
         _req: theodore_contract::CodeIntelLspRequest,
@@ -452,7 +452,7 @@ pub trait CoreApi: Send + Sync {
     async fn code_intel_decline(&self, _language: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
-    /// Settings → Languages → Remove: deletes a language's server and
+    /// Project settings → Languages → Remove: deletes a language's server and
     /// grammar.
     async fn code_intel_remove(&self, _language: String) -> Result<(), CommandError> {
         Err(not_ready())

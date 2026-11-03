@@ -293,8 +293,13 @@ export type CodeInstallProgress = { kind: "downloading"; received: number;
 /**  `None` when the server didn't say. */
 total: number | null } | { kind: "installed" } | { kind: "failed"; error: string };
 
-/**  `code_intel_set_lsp`: Settings → Languages' toggles. */
+/**
+ *  `code_intel_set_lsp`: project settings → Languages' switches. Writes
+ *  `code_intel.lsp.<scope>` into the project's local config file
+ *  (`config.local.yaml`), never the repo's.
+ */
 export type CodeIntelLspRequest = {
+	project: string,
 	scope: CodeLspScope,
 	on: boolean,
 };
@@ -337,10 +342,15 @@ export type CodeLsp = {
 export type CodeLspScope = "review" | "spaces";
 
 export type CodeLspToggle = {
+	/**
+	 *  Effective for the project: its local file, else your global file,
+	 *  else the default.
+	 */
 	on: boolean,
 	/**
-	 *  The global or local config file that sets it: the file wins over
-	 *  the toggle until the line is removed. A repo's file never does.
+	 *  The global or local config file that sets it; `None`: the default.
+	 *  A repo's file never does. The switch writes the local file, so it
+	 *  wins over the global one.
 	 */
 	from_config: string | null,
 };
