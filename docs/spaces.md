@@ -795,6 +795,10 @@ PR's revisions). A checkpoint is a snapshot, not a commit in the worktree:
 | Undo | `reset --hard` + `clean -fd`: every file touched | mixed reset + only the files that differ |
 | unchanged file's mtime | bumped | kept |
 
+Update from base is the one step that moves `HEAD`: the edits so far
+become a commit (the checkpoint itself) and the merge goes on top, so a
+turn that completed it records the merge commit as both `after` and
+`after_head`.
 Old checkpoints are commits that were `HEAD`, so a `turn_log` entry without
 heads goes back with `HEAD` = the checkpoint itself; nothing is rewritten.
 Shipping squashes the checkpoint's tree, so it ships both kinds the same
@@ -847,7 +851,8 @@ still squashes):
 
 ```
 Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
-  └─▶ checkpoint "edits before updating from main" (= from)
+  └─▶ checkpoint "edits before updating from main" (= from, a snapshot)
+      └─▶ mixed reset to from: its edits become HEAD's own, no file written
       └─▶ git merge --no-edit --ff <tip>   (Theodore's identity, no hooks, merge.conflictStyle=diff3)
             ├─ clean ─────▶ merge commit = checkpoint "merge main" ─▶ base_sha = tip ─▶ diff vs tip
             └─ conflicts ─▶ merge left in progress, space.updating = { base_tip, from, conflicts, started_at }
