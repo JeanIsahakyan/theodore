@@ -86,6 +86,7 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project, goal: &str) -> S
             base: None,
             agent: None,
             model: None,
+            start_from: None,
         })
         .await
         .unwrap();
@@ -272,6 +273,7 @@ async fn switching_restores_the_first_space_then_mirrors_the_second() {
             base: None,
             agent: None,
             model: None,
+            start_from: None,
         })
         .await
         .unwrap();
@@ -307,6 +309,7 @@ async fn switching_is_refused_while_the_other_folder_was_edited() {
             base: None,
             agent: None,
             model: None,
+            start_from: None,
         })
         .await
         .unwrap();

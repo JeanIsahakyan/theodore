@@ -481,6 +481,8 @@ pub struct MergeSpaceResult {
 pub struct SetSpacePinnedRequest {
     pub space: String,
     pub pinned: bool,
+}
+
 /// Mirroring into a local folder project ("Try in my folder" — some
 /// projects can't run from a separate worktree: fixed ports, one local
 /// database, a docker compose stack, an IDE run config bound to the
