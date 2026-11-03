@@ -413,6 +413,8 @@ pub struct MergeSpaceResult {
     pub auto: bool,
     /// Added to the base branch's merge queue instead.
     pub queue: bool,
+}
+
 /// "Pin"/"Unpin" on a space (docs/spaces.md §3): sidebar context menu and
 /// ⌘K.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
