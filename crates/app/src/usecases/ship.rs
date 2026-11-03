@@ -168,6 +168,7 @@ impl Core {
                 let body = self
                     .space_pr_body(&space, &repo_path, &head, pr_body(&space.goal))
                     .await;
+                let body = with_closes(body, space.issue);
                 let payload = CreateSpacePrPayload {
                     space: space.id.clone(),
                     repo: project.repo.clone(),
@@ -176,7 +177,6 @@ impl Core {
                         base: space.base.clone(),
                         title,
                         body,
-                        body: ship_pr_body(&space.goal, space.issue),
                         draft: req.action == ShipAction::OpenDraftPr,
                     },
                 };
@@ -636,11 +636,10 @@ fn pr_body(goal: &str) -> String {
     }
 }
 
-/// `pr_body`, plus "Closes #<n>" when the space started from a host issue
+/// The PR body, plus "Closes #<n>" when the space started from a host issue
 /// (`Space::issue`, docs/spaces.md §3 "New space from an issue"): the host
 /// closes it itself once the PR merges, same as typing it by hand.
-fn ship_pr_body(goal: &str, issue: Option<u64>) -> String {
-    let body = pr_body(goal);
+fn with_closes(body: String, issue: Option<u64>) -> String {
     match issue {
         None => body,
         Some(n) if body.is_empty() => format!("Closes #{n}"),
@@ -681,10 +680,10 @@ mod tests {
 
     #[test]
     fn closes_is_appended_only_when_the_space_has_an_issue() {
-        assert_eq!(ship_pr_body("Retry", None), "");
-        assert_eq!(ship_pr_body("Retry", Some(42)), "Closes #42");
+        assert_eq!(with_closes(String::new(), None), "");
+        assert_eq!(with_closes(String::new(), Some(42)), "Closes #42");
         assert_eq!(
-            ship_pr_body("Retry\nwith backoff", Some(42)),
+            with_closes("Retry\nwith backoff".into(), Some(42)),
             "Retry\nwith backoff\n\nCloses #42"
         );
     }
