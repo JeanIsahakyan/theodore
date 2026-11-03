@@ -85,6 +85,11 @@ pub struct EvalToolsArgs {
     /// asks first; servers already on the machine are used either way).
     #[arg(long)]
     pub install_servers: bool,
+    /// Load the code tools up front (`ENABLE_TOOL_SEARCH=false`) instead
+    /// of behind Claude Code's ToolSearch, where an agent that already has
+    /// Grep tends never to look for them.
+    #[arg(long)]
+    pub eager_tools: bool,
     /// Leave each run's worktree in place.
     #[arg(long)]
     pub keep_worktrees: bool,
@@ -162,7 +167,13 @@ pub fn agent_request(
         model: args.model.clone(),
         effort: args.effort.clone(),
         stall_after_ms: task.timeout_s * 1000,
-        env,
+        env: {
+            let mut env = env;
+            if condition == Condition::On && args.eager_tools {
+                env.push(("ENABLE_TOOL_SEARCH".to_string(), "false".to_string()));
+            }
+            env
+        },
         user_mcp: false,
         attachments: vec![],
         resume: None,
