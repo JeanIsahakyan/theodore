@@ -257,9 +257,10 @@ code_intel:
   install: ask               # ask | always | never: language servers
   languages: [typescript, rust]   # empty: detected
   servers: { python: pyright }    # preferred server per language
-  max_servers: 4
+  max_servers: 4              # these four: your global file only
   idle_minutes: 10
   max_file_kb: 1024
+  cache_mb: 512              # index.sqlite size cap
   lsp:                       # your global / local file only
     spaces: true
     review: false            # true: a PR's code may run during reviews
@@ -274,9 +275,14 @@ code_intel:
 | `max_servers` | `4` | language servers alive at once |
 | `idle_minutes` | `10` | an idle server is shut down after this |
 | `max_file_kb` | `1024` | larger files are not indexed |
+| `cache_mb` | `512` | the symbol index is kept under this, least recently used first |
 | `lsp.spaces` | `true` | language servers serve your spaces (an untrusted space only with `lsp.review` too) |
 | `lsp.review` | `false` | language servers serve review runs on PRs. **A PR's code may run** (build scripts, macros, plugins), written by whoever opened the PR |
 
+- `max_servers`, `idle_minutes`, `max_file_kb` and `cache_mb` are one
+  setting for the whole app (one server pool, one index): only your global
+  file sets them, the editor warns on them elsewhere. A change applies
+  without a restart.
 - `lsp.*` is honoured only from your global and local files. A repo's file
   setting it is ignored, with a toast, and the editor warns on that line:
   a repo turning servers on for reviews of its own PRs would run their
