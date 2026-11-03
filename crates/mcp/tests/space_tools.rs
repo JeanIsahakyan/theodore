@@ -427,6 +427,9 @@ async fn approve_tool_lets_mcp_tools_through_and_denies_the_rest() {
         }
         drop(client);
     }
+    handle.shutdown().await;
+}
+
 #[tokio::test]
 async fn ask_user_returns_the_answers_and_refuses_bad_questions() {
     let spaces = FakeSpaces::new(true);

@@ -486,13 +486,13 @@ impl Core {
             system: self
                 .space_review_rules(&space, &project, &wt.path)
                 .await
-                .with_system(Some(system_prompt(
-                    &space,
-                    self.0.deps.tools.is_some(),
-                    code,
-                    self.user_mcp_allowed().await,
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
-                    system_prompt(&space, self.0.deps.tools.is_some(), code),
+                    system_prompt(
+                        &space,
+                        self.0.deps.tools.is_some(),
+                        code,
+                        self.user_mcp_allowed().await,
+                    ),
                     mode,
                 )))
                 .unwrap_or_default(),
