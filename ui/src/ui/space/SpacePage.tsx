@@ -1021,8 +1021,7 @@ export const SpaceChat = observer(function SpaceChat({
               m={m}
               className={undone.has(m.id) ? 'space-undone opacity-50' : ''}
               badges={
-                undoneReply || undoHere || plan ? (
-                undoneReply || undoHere || backHere ? (
+                undoneReply || undoHere || backHere || plan ? (
                   <>
                     {plan && (
                       <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
