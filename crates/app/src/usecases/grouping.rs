@@ -1011,8 +1011,8 @@ mod link_tests {
     use async_trait::async_trait;
     use theodore_domain::{FileDiff, HunkId, Sha};
     use theodore_ports::{
-        Answer, CodeHit, CodeIntelResult, Diagnostic, LanguageId, LanguageStatus, Location,
-        Position, Range, Source, TextEdit, Workspace,
+        Answer, CodeHit, CodeIntelLimits, CodeIntelResult, Diagnostic, Hover, InstallProgressFn,
+        LanguageId, LanguageStatus, Location, Position, Range, Source, TextEdit, Workspace,
     };
 
     use super::*;
@@ -1134,9 +1134,25 @@ mod link_tests {
         ) -> CodeIntelResult<Vec<TextEdit>> {
             unsupported()
         }
-        async fn install(&self, _language: &LanguageId) -> CodeIntelResult<()> {
+        async fn hover(
+            &self,
+            _root: &Path,
+            _path: &str,
+            _at: Position,
+        ) -> CodeIntelResult<Option<Hover>> {
+            Ok(None)
+        }
+        async fn install(
+            &self,
+            _language: &LanguageId,
+            _progress: Option<InstallProgressFn>,
+        ) -> CodeIntelResult<()> {
             Ok(())
         }
+        async fn remove(&self, _language: &LanguageId) -> CodeIntelResult<()> {
+            Ok(())
+        }
+        async fn set_limits(&self, _limits: CodeIntelLimits) {}
         async fn file_changed(&self, _root: &Path, _path: &str) {}
         async fn status(&self, _root: &Path) -> CodeIntelResult<Vec<LanguageStatus>> {
             Ok(Vec::new())
