@@ -218,6 +218,7 @@ impl Core {
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),
             reverted: paths,
+            plan: None,
         });
         self.apply(vec![
             NewAction {
