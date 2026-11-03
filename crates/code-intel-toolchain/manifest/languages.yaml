@@ -18,6 +18,8 @@
 #   `/` matches the repo-relative path. First language whose glob matches wins.
 #   tags_extends  a language whose tags query is prepended to this one's
 #              (upstream TypeScript tags.scm is written to extend JavaScript's).
+#   prose      data or prose, not code (Markdown, JSON, YAML, TOML): never
+#              searched by a code query's text fallback.
 
 servers:
   - name: rust-analyzer
@@ -251,13 +253,17 @@ languages:
     globs: ["*.lua"]
     servers: [lua-language-server]
   - id: json
+    prose: true
     globs: ["*.json", "*.jsonc"]
   - id: yaml
+    prose: true
     globs: ["*.yaml", "*.yml"]
   - id: toml
+    prose: true
     globs: ["*.toml"]
     servers: [taplo]
   - id: markdown
+    prose: true
     globs: ["*.md", "*.markdown"]
     servers: [marksman]
   - id: terraform
