@@ -389,6 +389,8 @@ impl Core {
             "model": model,
             "mode": mode,
             "error": null,
+            // Said once, in this turn's prompt.
+            "continue_note": null,
             "updated_at": now,
         });
         if matches!(mode, SpaceMode::Edit | SpaceMode::Run) {
@@ -411,17 +413,6 @@ impl Core {
                 model: models::SPACE.into(),
                 model_id: space.id.clone(),
                 action: SyncActionCode::C,
-                data: Some(serde_json::json!({
-                    "status": SpaceStatus::Running,
-                    "run": run_id,
-                    "agent": agent,
-                    "model": model,
-                    "mode": mode,
-                    "error": null,
-                    // Said once, in this turn's prompt.
-                    "continue_note": null,
-                    "updated_at": now,
-                })),
                 data: Some(patch),
             },
         ])

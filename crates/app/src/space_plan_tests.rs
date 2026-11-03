@@ -66,6 +66,7 @@ async fn new_space(core: &Core, project: &Project) -> Space {
         base: None,
         agent: None,
         model: None,
+        start_from: None,
     })
     .await
     .unwrap()
