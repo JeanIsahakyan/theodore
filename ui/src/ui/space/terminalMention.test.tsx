@@ -53,7 +53,8 @@ function fakeAttachments(): Attachments & { added: unknown[] } {
 }
 
 function decodeBase64(data: string): string {
-  return Buffer.from(data, 'base64').toString('utf8');
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 describe('attachTerminalMention', () => {
