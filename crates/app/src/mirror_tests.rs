@@ -162,6 +162,14 @@ async fn a_turn_resyncs_automatically_and_the_touched_set_accumulates() {
 
     f.git.push_mirror_sync(Ok(vec!["a.txt".into()]));
     let s2 = turn(&f, &core, &s, "edit a.txt more", "turn222").await;
+    // The re-sync follows the turn's end (idle comes first).
+    wait_until(|| {
+        space(&f, &s2.id)
+            .mirror
+            .is_some_and(|m| m.mirrored_head == Some(Sha::new("turn222")))
+    })
+    .await;
+    let s2 = space(&f, &s2.id);
 
     let m = s2.mirror.expect("still mirroring");
     assert_eq!(m.mirrored_head, Some(Sha::new("turn222")));
