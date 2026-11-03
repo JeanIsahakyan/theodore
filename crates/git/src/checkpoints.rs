@@ -350,6 +350,14 @@ impl GitCli {
             .await?;
         git.run(&["update-ref", &space_ref(id), to.sha.as_str()])
             .await?;
+        // A target no checkpoint made (Continue's replay onto a new base)
+        // is kept reachable like one.
+        git.run(&[
+            "update-ref",
+            &space_checkpoint_ref(id, &to.sha),
+            to.sha.as_str(),
+        ])
+        .await?;
         Ok(())
     }
 

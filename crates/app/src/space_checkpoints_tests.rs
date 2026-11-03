@@ -111,6 +111,7 @@ async fn empty_space(f: &Fixtures, core: &Core, project: &Project) -> Space {
             base: None,
             agent: None,
             model: None,
+            start_from: None,
         })
         .await
         .unwrap();

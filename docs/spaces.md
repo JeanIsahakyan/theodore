@@ -774,7 +774,8 @@ Merge     ─▶ (local folder) fetch <cache> <shipped ref> ─▶ git merge int
 Keep      ─▶ (local folder) fetch <cache> <shipped ref>:refs/heads/space/<slug>
 Keep      ─▶ (local folder) git -C <folder> fetch <cache> <ref>:refs/heads/<branch>
 Continue  ─▶ ls-remote + fetch <base> ─▶ tip ─▶ (turns not pushed) commit-tree 3-way onto tip
-          ─▶ reset --hard + clean -fd the worktree, update-ref refs/theodore/spaces/<id>
+          ─▶ as Undo: HEAD = tip (mixed reset), files = that commit (only what differs),
+             the unpushed turns uncommitted on it; update-ref refs/theodore/spaces/<id>
 ```
 
 Why detached plus a private ref, not a real branch in the cache:
@@ -1013,9 +1014,7 @@ New synced model `space` (core-owned, written only by commands):
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
 | `shipped` | the last ship: `how` (`pr · merged_locally · branch`), `branch`, `sha` (the squashed commit), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
 | `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch; cleared by Continue |
-| `turn_log` | per turn: your message and the reply (`chat_message` ids), messages steered into it (`steered`), checkpoint `before` / `after`, `undone`; `base_before` when the turn completed an Update from base (Undo puts that base back) |
-| `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch |
-| `turn_log` | per turn: your message and the reply (`chat_message` ids), checkpoint `before` / `after` and the worktree's `HEAD` under each (`before_head` / `after_head`, none on old entries), `undone`; a Revert is an entry too, with `reverted` paths and its own message as `reply` |
+| `turn_log` | per turn: your message and the reply (`chat_message` ids), messages steered into it (`steered`), checkpoint `before` / `after` and the worktree's `HEAD` under each (`before_head` / `after_head`, none on old entries), `undone`; `base_before` when the turn completed an Update from base (Undo puts that base back); a Revert is an entry too, with `reverted` paths and its own message as `reply` |
 | `worktree_head` | the worktree's `HEAD` under `head_sha` (none: `head_sha` is `HEAD`) |
 | `title` | the chat agent's proposed title (§3 "New space"); `None` until it lands |
 | `handoff_summary` | the earlier conversation, summarized once and cached (§5 "One session per space") |

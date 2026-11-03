@@ -1087,11 +1087,10 @@ impl GitPort for FakeGit {
         self.resolve_refs
             .lock()
             .unwrap()
-            .insert(theodore_ports::space_ref(space), to.clone());
+            .insert(theodore_ports::space_ref(space), to.sha.clone());
         // A reset can land on a commit no checkpoint made (Continue's new
         // base): `describe_branch` still finds it.
-        self.ensure_commit(to, "reset");
-            .insert(theodore_ports::space_ref(space), to.sha.clone());
+        self.ensure_commit(&to.sha, "reset");
         Ok(())
     }
 
