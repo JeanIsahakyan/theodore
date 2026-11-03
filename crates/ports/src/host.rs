@@ -18,6 +18,9 @@ pub struct Capabilities {
     pub merge_queue: bool,
     pub auto_merge: bool,
     pub reactions: bool,
+    /// A cheap read of the project's own issues (`my_open_issues`,
+    /// `get_issue`): New space "From an issue" offers the option only here.
+    pub issues: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +156,10 @@ pub struct MergeStatus {
     pub auto_merge_allowed: bool,
     /// The base branch merges through a merge queue.
     pub merge_queue: bool,
+    /// The method the host would pick (GitHub `viewerDefaultMergeMethod`);
+    /// `None` when it doesn't say.
+    #[serde(default)]
+    pub default_method: Option<MergeMethod>,
 }
 
 // ── create ───────────────────────────────────────────────────────────────
@@ -169,6 +176,19 @@ pub struct NewPr {
     pub body: String,
     /// Open as a draft (GitHub/Bitbucket draft flag, GitLab `Draft:` title).
     pub draft: bool,
+}
+
+/// One issue read from a host's tracker (docs/spaces.md "New space from an
+/// issue"): enough to seed a space's goal and, later, its PR body ("Closes
+/// #<number>"). Only a host whose issues are a cheap REST read implements
+/// it (`Capabilities::issues`); others leave the `HostAdapter` defaults and
+/// the option hides.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrackedIssue {
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
 }
 
 #[async_trait]
@@ -232,6 +252,17 @@ pub trait HostAdapter: Send + Sync {
     /// (callers then look it up with `find_open_pr`).
     async fn create_pr(&self, _repo: &RepoRef, _pr: &NewPr) -> HostResult<PrRef> {
         Err(HostError::Unsupported("create_pr"))
+    }
+
+    // issues (docs/spaces.md "New space from an issue")
+    /// The viewer's own open issues in `repo`, for the New space picker.
+    async fn my_open_issues(&self, _repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
+        Err(HostError::Unsupported("my_open_issues"))
+    }
+    /// One issue by number, read for its title/body/url to seed a space's
+    /// goal (a pasted URL or `#<number>` resolves to this).
+    async fn get_issue(&self, _repo: &RepoRef, _number: u64) -> HostResult<TrackedIssue> {
+        Err(HostError::Unsupported("get_issue"))
     }
 
     // reviews
@@ -345,6 +376,17 @@ pub trait HostAdapter: Send + Sync {
     /// Actions rerun-failed-jobs) without a second round trip to look it up.
     async fn rerun_check(&self, _pr: &PrRef, _check: &Check) -> HostResult<()> {
         Err(HostError::Unsupported("rerun_check"))
+    }
+
+    /// The tail of a failed check's log (docs/spaces.md "Fix CI"), trimmed
+    /// to the part worth putting in an agent's prompt (ANSI and per-line
+    /// timestamps stripped, last few hundred lines). Same idea as
+    /// `rerun_check`: the whole `Check` goes in so the adapter can resolve
+    /// the right API from its id/url itself. `Ok(None)` means this check has
+    /// no log to fetch — an external status context, or any check the host
+    /// can't read logs for — callers fall back to its name and `url`.
+    async fn check_log(&self, _pr: &PrRef, _check: &Check) -> HostResult<Option<String>> {
+        Err(HostError::Unsupported("check_log"))
     }
 
     /// Cheap single-repo metadata fetch (plan "projects"): description,

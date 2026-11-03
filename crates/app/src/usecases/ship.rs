@@ -9,7 +9,8 @@
 //! ```
 //!
 //! and, once the change is done (PR merged, merged locally, kept as a
-//! branch), archived after `spaces.auto_archive_days`.
+//! branch), archived after `spaces.auto_archive_days` — unless a merged
+//! PR's space continues on a new branch (`space_pr.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -117,6 +118,9 @@ impl Core {
 
         let repo_path = self.ensure_project_cache(&project).await?;
         // Edits made by hand in the worktree since the last turn ship too.
+        // A checkpoint is a snapshot (docs/spaces.md §6): its tree is what
+        // ships, whatever the agent committed itself or left uncommitted.
+        let mut worktree_head = space.worktree_head.clone();
         let head = if Path::new(&space.worktree).exists() {
             let saved = self
                 .0
@@ -129,7 +133,10 @@ impl Core {
                 )
                 .await;
             match saved {
-                Ok(head) => head,
+                Ok(cp) => {
+                    worktree_head = Some(cp.head);
+                    cp.sha
+                }
                 // Its `.git` is gone: the last checkpoint is what ships.
                 Err(GitError::NotAWorktree(_)) => space.head_sha.clone(),
                 // A rebase or conflict mid-way: nothing half-done ships.
@@ -139,9 +146,10 @@ impl Core {
             space.head_sha.clone()
         };
         if head != space.head_sha {
-            self.apply(vec![
-                self.patch(&space.id, serde_json::json!({ "head_sha": head })),
-            ])
+            self.apply(vec![self.patch(
+                &space.id,
+                serde_json::json!({ "head_sha": head, "worktree_head": worktree_head }),
+            )])
             .await?;
         }
         if head == space.base_sha {
@@ -163,6 +171,11 @@ impl Core {
                 let shipped = self
                     .push_squashed(&space, &project, &repo_path, &head, &message, &author)
                     .await?;
+                // The repo's PR template when it has one, and a link back.
+                let body = self
+                    .space_pr_body(&space, &repo_path, &head, pr_body(&space.goal))
+                    .await;
+                let body = with_closes(body, space.issue);
                 let payload = CreateSpacePrPayload {
                     space: space.id.clone(),
                     repo: project.repo.clone(),
@@ -170,7 +183,7 @@ impl Core {
                         head: space.branch.clone(),
                         base: space.base.clone(),
                         title,
-                        body: pr_body(&space.goal),
+                        body,
                         draft: req.action == ShipAction::OpenDraftPr,
                     },
                 };
@@ -231,6 +244,12 @@ impl Core {
     /// | `s` | moved to `t` | `t` + the turns since `s.head` (3-way) |
     ///
     /// Nothing new since `s` (a retried Open PR) pushes nothing.
+    ///
+    /// A space adopted from an existing branch or PR (`Space::fork_sha`,
+    /// docs/spaces.md §3 "New space from an issue/branch/PR") never has a
+    /// `none`: its fork point stands in for `s` from the very first ship,
+    /// so the squash lands on top of it (or 3-ways past it, if the branch
+    /// moved on since) instead of being refused as "already exists".
     async fn push_squashed(
         &self,
         space: &Space,
@@ -244,7 +263,19 @@ impl Core {
         let tip = git
             .remote_branch(repo_path, &project.repo, &space.branch)
             .await?;
-        let last = space.shipped.as_ref().filter(|s| s.how == ShipKind::Pr);
+        let synthetic = space.fork_sha.as_ref().map(|fork_sha| SpaceShipped {
+            how: ShipKind::Pr,
+            branch: space.branch.clone(),
+            sha: fork_sha.clone(),
+            head: fork_sha.clone(),
+            pushes: 0,
+            at: space.created_at,
+        });
+        let last = space
+            .shipped
+            .as_ref()
+            .filter(|s| s.how == ShipKind::Pr)
+            .or(synthetic.as_ref());
         let commit = |parent: &Sha, replay_from: Option<Sha>| SpaceCommit {
             head: head.clone(),
             parent: parent.clone(),
@@ -463,13 +494,11 @@ impl Core {
                 {
                     self.refresh_pr(pr, &pr_ref).await;
                 }
-                if self.pr_state(pr).await == Some(PrState::Merged) {
+                // Not if Continue moved the space to a new branch meanwhile.
+                if self.pr_state(pr).await == Some(PrState::Merged)
+                    && self.mark_space_done(&space.id, pr, now).await
+                {
                     done_at = Some(now);
-                    let _ = self
-                        .apply(vec![
-                            self.patch(&space.id, serde_json::json!({ "done_at": now })),
-                        ])
-                        .await;
                 }
             }
             if let Some(done) = done_at
@@ -501,7 +530,7 @@ impl Core {
         })
     }
 
-    async fn pr_state(&self, pr: &theodore_domain::PrId) -> Option<PrState> {
+    pub(crate) async fn pr_state(&self, pr: &theodore_domain::PrId) -> Option<PrState> {
         let data = self.get_row(models::PR, &pr.0).await.ok()??;
         serde_json::from_value::<PrSummary>(data)
             .ok()
@@ -614,6 +643,17 @@ fn pr_body(goal: &str) -> String {
     }
 }
 
+/// The PR body, plus "Closes #<n>" when the space started from a host issue
+/// (`Space::issue`, docs/spaces.md §3 "New space from an issue"): the host
+/// closes it itself once the PR merges, same as typing it by hand.
+fn with_closes(body: String, issue: Option<u64>) -> String {
+    match issue {
+        None => body,
+        Some(n) if body.is_empty() => format!("Closes #{n}"),
+        Some(n) => format!("{body}\n\nCloses #{n}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,6 +682,16 @@ mod tests {
         assert_eq!(
             commit_message("Retry", "Retry\nwith backoff"),
             "Retry\n\nRetry\nwith backoff"
+        );
+    }
+
+    #[test]
+    fn closes_is_appended_only_when_the_space_has_an_issue() {
+        assert_eq!(with_closes(String::new(), None), "");
+        assert_eq!(with_closes(String::new(), Some(42)), "Closes #42");
+        assert_eq!(
+            with_closes("Retry\nwith backoff".into(), Some(42)),
+            "Retry\nwith backoff\n\nCloses #42"
         );
     }
 }

@@ -866,6 +866,12 @@ impl CoreApi for AppCore {
     ) -> Result<Vec<theodore_contract::SpaceTerminalInfo>, CommandError> {
         self.core.list_space_terminals(&space).await.map_err(err)
     }
+    async fn space_terminal_mention(
+        &self,
+        space: String,
+    ) -> Result<Option<theodore_contract::TerminalMention>, CommandError> {
+        self.core.space_terminal_mention(&space).await.map_err(err)
+    }
     async fn project_config(
         &self,
         project: String,
@@ -892,6 +898,15 @@ impl CoreApi for AppCore {
     }
     async fn code_intel_decline(&self, language: String) -> Result<(), CommandError> {
         self.core.code_intel_decline(&language).await.map_err(err)
+    }
+    async fn code_intel_remove(&self, language: String) -> Result<(), CommandError> {
+        self.core.code_intel_remove(&language).await.map_err(err)
+    }
+    async fn code_intel_hover(
+        &self,
+        req: theodore_contract::CodeHoverRequest,
+    ) -> Result<Option<theodore_contract::CodeHover>, CommandError> {
+        self.core.code_intel_hover(req).await.map_err(err)
     }
     async fn ensure_global_config(
         &self,
@@ -921,6 +936,12 @@ impl CoreApi for AppCore {
         req: theodore_contract::CreateSpaceRequest,
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.create_space(req).await.map_err(err)
+    }
+    async fn project_issues(
+        &self,
+        req: theodore_contract::ProjectIssuesRequest,
+    ) -> Result<Vec<theodore_contract::SpaceIssue>, CommandError> {
+        self.core.project_issues(req).await.map_err(err)
     }
     async fn list_spaces(
         &self,
@@ -967,17 +988,50 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.ship_space(req).await.map_err(err)
     }
+    async fn merge_space(
+        &self,
+        req: theodore_contract::MergeSpaceRequest,
+    ) -> Result<theodore_contract::MergeSpaceResult, CommandError> {
+        self.core.merge_space(req).await.map_err(err)
+    }
+    async fn continue_space(
+        &self,
+        space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.continue_space(&space).await.map_err(err)
+    }
     async fn undo_space_turn(
         &self,
         space: String,
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.undo_space_turn(&space).await.map_err(err)
     }
+    async fn rewind_space(
+        &self,
+        req: theodore_contract::RewindSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.rewind_space(req).await.map_err(err)
+    }
+    async fn revert_space_file(
+        &self,
+        req: theodore_contract::RevertSpaceFileRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.revert_space_file(req).await.map_err(err)
+    }
     async fn unarchive_space(
         &self,
         space: String,
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.unarchive_space(&space).await.map_err(err)
+    }
+    async fn set_space_pinned(
+        &self,
+        req: theodore_contract::SetSpacePinnedRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core
+            .set_space_pinned(&req.space, req.pinned)
+            .await
+            .map_err(err)
     }
     async fn space_send_feedback(
         &self,
@@ -1002,6 +1056,33 @@ impl CoreApi for AppCore {
         space: String,
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.abort_space_update(&space).await.map_err(err)
+    }
+    async fn space_fix_ci(
+        &self,
+        req: theodore_contract::SpaceFixCiRequest,
+    ) -> Result<String, CommandError> {
+        self.core.space_fix_ci(req).await.map_err(err)
+    }
+    async fn approve_space_plan(&self, space: String) -> Result<String, CommandError> {
+        self.core.approve_space_plan(&space).await.map_err(err)
+    }
+    async fn answer_space_question(
+        &self,
+        req: theodore_contract::SpaceAnswerRequest,
+    ) -> Result<(), CommandError> {
+        self.core.answer_space_question(req).await.map_err(err)
+    }
+    async fn mirror_space(&self, space: String) -> Result<theodore_contract::Space, CommandError> {
+        self.core.mirror_space(&space).await.map_err(err)
+    }
+    async fn sync_mirror(&self, space: String) -> Result<theodore_contract::Space, CommandError> {
+        self.core.sync_mirror(&space).await.map_err(err)
+    }
+    async fn unmirror_space(
+        &self,
+        req: theodore_contract::UnmirrorSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.unmirror_space(req).await.map_err(err)
     }
     async fn account_status(&self) -> Result<AccountStatus, CommandError> {
         self.core.account_status().await.map_err(err)

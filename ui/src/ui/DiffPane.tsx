@@ -18,6 +18,8 @@ import {
   ArrowRight,
   Check,
   CircleExclamation,
+  ChevronDown,
+  ChevronRight,
   ChevronsDown,
   ChevronsUp,
   CircleCheckFill,
@@ -99,6 +101,7 @@ import { diffFiles, isCollapsed, showsOnlyOutliers } from './review/hunks';
 import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
+import { CodeHoverHost } from './symbols/CodeHoverHost';
 import { identifierAt } from './symbols/extract';
 
 export interface ComposerState {
@@ -272,6 +275,8 @@ export const DiffPane = observer(function DiffPane({
   /** Asking the AI about a line or hunk (it opens the AI panel); off where
    *  the diff has no AI panel next to it (a space's live diff). */
   askAi = true,
+  /** More items for a file's menu (a space's diff: Revert). */
+  fileItems,
 }: {
   pr: PrId;
   rev: Revision;
@@ -287,6 +292,7 @@ export const DiffPane = observer(function DiffPane({
   expandHunk?: { hunk: HunkId; nonce: number } | null;
   nextGroup?: boolean;
   askAi?: boolean;
+  fileItems?: (file: FileDiff) => ContextMenuItem[];
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -338,8 +344,9 @@ export const DiffPane = observer(function DiffPane({
         rangeStart.current = r;
       },
       askAi,
+      fileItems,
     }),
-    [setComposer, diffPaths, findHunk, askAi],
+    [setComposer, diffPaths, findHunk, askAi, fileItems],
   );
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
@@ -506,6 +513,7 @@ export const DiffPane = observer(function DiffPane({
         onScroll={(e) => ui.setReviewScroll(pr, e.currentTarget.scrollTop)}
         className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
       >
+        <CodeHoverHost pr={pr} rev={rev.head} root={mainRef} />
         {splitDowngraded && (
           <Alert status="default" className="split-note mb-4">
             <Alert.Content>
@@ -1038,6 +1046,8 @@ interface LineActions {
   /** The diff has an AI panel next to it: offer asking about lines and
    *  hunks, and the ways into the panel. */
   askAi: boolean;
+  /** More items for a file's menu, after the built-in ones. */
+  fileItems?: (file: FileDiff) => ContextMenuItem[];
 }
 
 type DraftRow = ModelRows['draft'];
@@ -1162,10 +1172,50 @@ function FileBlockInner({
   const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
   const fileSince = sinceCountsFor(file.hunks, since);
   const fileSinceCount = fileSince.new + fileSince.changed;
-  const [shown, setShown] = useState(false);
+  // A jump here (J/K, `E`, `C`, a peek) needs its hunk in the DOM.
+  const arrival =
+    [
+      focusHunk,
+      expandHunk && `${expandHunk.hunk}:${expandHunk.nonce}`,
+      composer && `c:${composer.side}:${composer.line}`,
+      peek && `p:${peek.line}`,
+    ]
+      .filter(Boolean)
+      .join('|') || null;
+  // Generated, deleted and Viewed files start folded (#51); the chevron,
+  // menu and "Show diff" override that until Viewed flips, or a jump moves
+  // on a hand-folded file. Checked in render: a plain focus move costs no
+  // extra render.
+  const [fold, setFold] = useState<{
+    closed: boolean;
+    viewed: boolean;
+    arrival: string | null;
+  } | null>(null);
+  if (
+    fold &&
+    (fold.viewed !== isViewed || (fold.closed && fold.arrival !== arrival))
+  ) {
+    setFold(null);
+  }
+  const foldTo = (closed: boolean) =>
+    setFold({ closed, viewed: isViewed, arrival });
+  // Where focus was when Viewed last flipped: a file marked Viewed while
+  // one of its hunks has focus (a click in it, J/K, `V`) still folds; only
+  // a jump after that opens it. On mount nothing is "seen" yet, so a jump
+  // that brings a Viewed file into view opens it.
+  const [seen, setSeen] = useState<{
+    viewed: boolean;
+    arrival: string | null;
+  }>({ viewed: isViewed, arrival: null });
+  if (seen.viewed !== isViewed) setSeen({ viewed: isViewed, arrival });
+  const jumpedIn = arrival !== null && arrival !== seen.arrival;
   const md = isMarkdown(file.path) && file.status !== 'deleted';
   const [preview, setPreview] = useState(false);
   const generatedFlag = file.flags.find((f) => f.kind === 'generated');
+  const collapsedFile = fold
+    ? fold.closed
+    : ((!!generatedFlag || file.status === 'deleted') && !arrival) ||
+      (isViewed && !jumpedIn);
   // Built when the menu opens, not on every render.
   const fileMenu = (e: React.MouseEvent) =>
     contextMenuHandler(store.ui, (): ContextMenuItem[] => {
@@ -1189,13 +1239,12 @@ function FileBlockInner({
           onAction: () => openExternal(`${summaryForMenu.url}/files`),
         });
       }
-      if (generatedFlag || file.status === 'deleted') {
-        items.push({
-          id: 'collapse',
-          label: shown ? 'Collapse' : 'Expand',
-          onAction: () => setShown((v) => !v),
-        });
-      }
+      items.push({
+        id: 'collapse',
+        label: collapsedFile ? 'Expand' : 'Collapse',
+        onAction: () => foldTo(!collapsedFile),
+      });
+      items.push(...(actions.fileItems?.(file) ?? []));
       return items;
     })(e);
 
@@ -1217,8 +1266,6 @@ function FileBlockInner({
     );
   }
 
-  const collapsedFile =
-    (!!generatedFlag || file.status === 'deleted') && !shown;
   const gaps = gapsAbove(file.hunks);
   const last = file.hunks[file.hunks.length - 1];
 
@@ -1228,6 +1275,21 @@ function FileBlockInner({
         className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm"
         onContextMenu={fileMenu}
       >
+        <Button
+          isIconOnly
+          size="sm"
+          variant="ghost"
+          aria-label={collapsedFile ? 'Expand file' : 'Collapse file'}
+          aria-expanded={!collapsedFile}
+          className="fold-file -ml-1 size-6 min-w-6 shrink-0 text-muted"
+          onPress={() => foldTo(!collapsedFile)}
+        >
+          {collapsedFile ? (
+            <ChevronRight className="size-3.5" />
+          ) : (
+            <ChevronDown className="size-3.5" />
+          )}
+        </Button>
         <FileCode className="size-4 shrink-0 text-muted" />
         {/* `dir="rtl"` truncates from the start so the filename (the end of
          *  the path) stays visible; the inner `dir="ltr"` keeps old→new
@@ -1361,7 +1423,25 @@ function FileBlockInner({
           {local ? 'Read' : 'Viewed'}
         </ToggleButton>
       </header>
-      {md && preview ? (
+      {collapsedFile ? (
+        <div className="collapsed-file flex items-center gap-3 bg-surface-secondary px-4 py-3 text-sm text-muted">
+          <span className="flex-1">
+            {generatedFlag
+              ? `Generated file — ${generatedFlag.reason}`
+              : file.status === 'deleted'
+                ? `Whole file deleted: ${plural(file.deletions, 'line', 'lines')}`
+                : `${plural(file.hunks.length, 'hunk', 'hunks')} hidden`}
+          </span>
+          <Button
+            size="sm"
+            variant="tertiary"
+            className="show-file"
+            onPress={() => foldTo(false)}
+          >
+            Show diff
+          </Button>
+        </div>
+      ) : md && preview ? (
         <MarkdownDiff
           pr={pr}
           base={base}
@@ -1369,22 +1449,6 @@ function FileBlockInner({
           path={file.path}
           oldPath={file.old_path}
         />
-      ) : collapsedFile ? (
-        <div className="collapsed-file flex items-center gap-3 bg-surface-secondary px-4 py-3 text-sm text-muted">
-          <span className="flex-1">
-            {generatedFlag
-              ? `Generated file — ${generatedFlag.reason}`
-              : `Whole file deleted: ${plural(file.deletions, 'line', 'lines')}`}
-          </span>
-          <Button
-            size="sm"
-            variant="tertiary"
-            className="show-file"
-            onPress={() => setShown(true)}
-          >
-            Show diff
-          </Button>
-        </div>
       ) : !mounted ? (
         <div
           aria-hidden
@@ -1821,6 +1885,9 @@ const Line = memo(function Line(props: LineProps) {
     <>
       <div
         className={`ln t-${l.kind}${lineAsk?.status === 'asking' ? ' ln-asking' : ''}`}
+        // For the hover (`CodeHoverHost`): head-side lines only.
+        data-path={l.new_no != null ? path : undefined}
+        data-line={l.new_no ?? undefined}
         onClick={(e) => {
           if (!(e.metaKey || e.ctrlKey)) return;
           const name = symbolAt(e);

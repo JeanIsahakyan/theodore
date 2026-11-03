@@ -10,10 +10,10 @@ use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, CreatedIssue, Fetched, HostAdapter, HostError, HostResult,
     InboxSection, IssueTracker, MergeMethod, MergeState, MergeStatus, NewIssue, NewPr,
-    ReviewComment, ReviewSubmission, SubmittedReview,
+    ReviewComment, ReviewSubmission, SubmittedReview, TrackedIssue,
 };
 
-use crate::{anchor, graphql, pagination, rest, time};
+use crate::{anchor, graphql, logs, pagination, rest, time};
 
 /// `HostAdapter` for github.com and GitHub Enterprise Server.
 pub struct GithubAdapter {
@@ -273,6 +273,7 @@ impl HostAdapter for GithubAdapter {
             merge_queue: true,
             auto_merge: true,
             reactions: true,
+            issues: true,
         }
     }
 
@@ -355,6 +356,17 @@ impl HostAdapter for GithubAdapter {
     async fn create_pr(&self, repo: &RepoRef, pr: &NewPr) -> HostResult<PrRef> {
         let pull = rest::create_pull(&self.rest, &repo.owner, &repo.name, pr).await?;
         Ok(pull_to_pr_ref(repo, pull))
+    }
+
+    async fn my_open_issues(&self, repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
+        let me = self.viewer().await?.login;
+        let issues = rest::list_assigned_issues(&self.rest, &repo.owner, &repo.name, &me).await?;
+        Ok(issues.into_iter().map(gh_issue_to_tracked).collect())
+    }
+
+    async fn get_issue(&self, repo: &RepoRef, number: u64) -> HostResult<TrackedIssue> {
+        let issue = rest::get_issue(&self.rest, &repo.owner, &repo.name, number).await?;
+        Ok(gh_issue_to_tracked(issue))
     }
 
     async fn set_viewed(&self, pr: &PrRef, path: &str, viewed: bool) -> HostResult<()> {
@@ -560,6 +572,12 @@ impl HostAdapter for GithubAdapter {
             required_approvals: None,
             auto_merge_allowed: settings.auto_merge_allowed,
             merge_queue: status.is_merge_queue_enabled,
+            default_method: match settings.viewer_default_merge_method.as_deref() {
+                Some("MERGE") => Some(MergeMethod::Merge),
+                Some("SQUASH") => Some(MergeMethod::Squash),
+                Some("REBASE") => Some(MergeMethod::Rebase),
+                _ => None,
+            },
         })
     }
 
@@ -612,6 +630,18 @@ impl HostAdapter for GithubAdapter {
         Err(HostError::Unsupported(
             "this check has no re-runnable REST resource",
         ))
+    }
+
+    async fn check_log(&self, pr: &PrRef, check: &Check) -> HostResult<Option<String>> {
+        let (owner, repo) = (pr.repo.owner.as_str(), pr.repo.name.as_str());
+        // Only an Actions job's log is ours to fetch; anything else (a
+        // third-party check-run app, a plain commit status) links out to
+        // wherever it runs — `check.url` is all a caller can show for it.
+        let Some(job_id) = check.url.as_deref().and_then(actions_job_id) else {
+            return Ok(None);
+        };
+        let log = rest::job_log(&self.rest, owner, repo, job_id).await?;
+        Ok(Some(logs::tail(&log, logs::DEFAULT_TAIL_LINES)))
     }
 
     async fn repo_info(&self, repo: &RepoRef) -> HostResult<HostRepo> {
@@ -668,6 +698,16 @@ impl IssueTracker for GithubAdapter {
 fn actions_run_id(url: &str) -> Option<&str> {
     let (_, rest) = url.split_once("/actions/runs/")?;
     rest.split('/').next().filter(|s| !s.is_empty())
+}
+
+/// Pulls `{job_id}` out of an Actions check-run `detailsUrl`
+/// (`.../actions/runs/{run_id}/job/{job_id}`), the id `check_log` needs for
+/// `GET .../actions/jobs/{job_id}/logs` — the run id alone isn't enough,
+/// the logs endpoint is per-job.
+fn actions_job_id(url: &str) -> Option<&str> {
+    let (_, rest) = url.split_once("/job/")?;
+    let id = rest.split(['/', '#', '?']).next()?;
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_digit())).then_some(id)
 }
 
 // ── mapping helpers ─────────────────────────────────────────────────────
@@ -915,6 +955,15 @@ fn pull_to_pr_ref(repo: &RepoRef, pull: rest::GhPull) -> PrRef {
         repo: repo.clone(),
         number: pull.number,
         host_id: pull.node_id,
+    }
+}
+
+fn gh_issue_to_tracked(issue: rest::GhIssueFull) -> TrackedIssue {
+    TrackedIssue {
+        number: issue.number,
+        title: issue.title,
+        body: issue.body.unwrap_or_default(),
+        url: issue.html_url,
     }
 }
 

@@ -5604,7 +5604,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-account-workos"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5623,7 +5623,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-agents"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -5643,7 +5643,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-app"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5673,7 +5673,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-cli"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5703,11 +5703,13 @@ dependencies = [
 
 [[package]]
 name = "theodore-code-intel"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
+ "hex",
  "pretty_assertions",
  "serde_json",
+ "sha2",
  "tempfile",
  "theodore-code-intel-lsp",
  "theodore-code-intel-syntax",
@@ -5720,11 +5722,12 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "wiremock",
 ]
 
 [[package]]
 name = "theodore-code-intel-lsp"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "lsp-types",
  "pretty_assertions",
@@ -5739,7 +5742,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-code-intel-syntax"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "futures",
  "hex",
@@ -5756,15 +5759,20 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-json",
+ "tree-sitter-md",
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-tags",
+ "tree-sitter-toml-ng",
  "tree-sitter-typescript",
+ "tree-sitter-yaml",
 ]
 
 [[package]]
 name = "theodore-code-intel-toolchain"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "flate2",
  "hex",
@@ -5777,6 +5785,7 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
+ "theodore-code-intel-lsp",
  "theodore-ports",
  "tokio",
  "tracing",
@@ -5790,7 +5799,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-contract"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "serde",
  "serde_json",
@@ -5803,7 +5812,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-desktop"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "mac-notification-sys",
@@ -5838,7 +5847,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-domain"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "hex",
  "pretty_assertions",
@@ -5852,7 +5861,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-fixtures"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "hex",
@@ -5874,7 +5883,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-git"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "pretty_assertions",
@@ -5889,7 +5898,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-grouping"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "futures",
@@ -5905,7 +5914,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-host-bitbucket"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "pretty_assertions",
@@ -5924,7 +5933,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-host-github"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "cynic",
@@ -5944,7 +5953,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-host-gitlab"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "hex",
@@ -5965,7 +5974,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-host-http"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "pretty_assertions",
@@ -5982,7 +5991,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-linear"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "pretty_assertions",
  "regex",
@@ -5997,7 +6006,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-mcp"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "axum",
@@ -6018,7 +6027,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-ports"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "serde",
@@ -6031,7 +6040,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-runtime"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6066,7 +6075,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-sandbox"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6085,7 +6094,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-secrets"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "serde_json",
  "theodore-ports",
@@ -6093,7 +6102,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-store"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -6103,7 +6112,7 @@ dependencies = [
 
 [[package]]
 name = "theodore-telemetry"
-version = "0.1.9"
+version = "0.1.12"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -6540,6 +6549,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-bash"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e5ec769279cc91b561d3df0d8a5deb26b0ad40d183127f409494d6d8fc53062"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-javascript"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6550,10 +6569,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-json"
+version = "0.24.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d727acca406c0020cffc6cf35516764f36c8e3dc4408e5ebe2cb35a947ec471"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-language"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
+
+[[package]]
+name = "tree-sitter-md"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ed661bfe3c264961425f77cd89ad2998bf5d629e71ce8bab1e5d7e940d6246e"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "tree-sitter-python"
@@ -6589,10 +6628,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-toml-ng"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9adc2c898ae49730e857d75be403da3f92bb81d8e37a2f918a08dd10de5ebb1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-typescript"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-yaml"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97"
 dependencies = [
  "cc",
  "tree-sitter-language",

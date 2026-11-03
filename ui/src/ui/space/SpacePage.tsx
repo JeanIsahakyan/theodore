@@ -16,6 +16,7 @@ import {
   CodeMerge,
   CodePullRequest,
   Folder,
+  FolderOpen,
   LayoutSideContentRight,
   Pencil,
 } from '@gravity-ui/icons';
@@ -38,14 +39,16 @@ import {
 import { observer } from 'mobx-react-lite';
 import type {
   AgentId,
+  FileDiff,
   HunkId,
   ShipAction,
   SkillInfo,
   Space,
   SpaceConfigView,
   SpaceMode,
+  SpaceStart,
 } from '../../gen/contract';
-import { api } from '../../core/api';
+import { api, CommandFailure } from '../../core/api';
 import { STORAGE_NS } from '../../stores/UiStore';
 import { ALL } from '../../core/workspaces';
 import { FEATURES } from '../../features';
@@ -61,12 +64,14 @@ import { useAttachments } from '../attachments';
 import { ChatEmpty, ChatLive, ChatLog, ChatMessage } from '../ChatTurn';
 import { QueuedMessages } from './QueuedMessages';
 import { canSendNow, splitQueue } from './queue';
+import { attachTerminalMention, stripTerminalMention } from './terminalMention';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
 import { agentModel } from '../agentModel';
 import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
+import { useProjectIssues } from './useProjectIssues';
 import {
   checksByReply,
   runControl,
@@ -77,6 +82,8 @@ import {
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
+import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
+import { BackToHere, revertItems } from './SpaceRewind';
 import {
   CheckChip,
   LogsDrawer,
@@ -91,6 +98,7 @@ import {
   useSpaceLogsSeed,
 } from './SpaceCommands';
 import { TerminalDrawer, TerminalToggle } from './Terminal';
+import { PlanActions, QuestionCard } from './SpacePlan';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
@@ -99,8 +107,10 @@ import {
   autoArchiveDays,
   defaultTitle,
   diffStat,
+  actionablePlan,
   nextMode,
   notifyOn,
+  plansByReply,
   spaceKeyAction,
   spaceChatKey,
   spaceStage,
@@ -113,6 +123,11 @@ import {
 /** What the agent may do in a turn (docs/spaces.md §5). */
 const MODES: { id: SpaceMode; label: string; hint: string }[] = [
   { id: 'ask', label: 'Ask', hint: 'Read only, no edits' },
+  {
+    id: 'plan',
+    label: 'Plan',
+    hint: 'Explore, then a plan to approve before any edit',
+  },
   { id: 'edit', label: 'Edit', hint: 'Edit files in the space' },
   { id: 'run', label: 'Run', hint: 'Edit and run any command' },
 ];
@@ -346,7 +361,14 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         {showChanges && (
           <section className="flex min-w-0 flex-1 flex-col">
             {opened || !live ? (
-              <SpaceChanges space={space} />
+              space.pr ? (
+                <SpacePrPane
+                  pr={space.pr}
+                  changes={<SpaceChanges space={space} />}
+                />
+              ) : (
+                <SpaceChanges space={space} />
+              )
             ) : (
               <div className="grid flex-1 place-items-center text-muted">
                 <Spinner />
@@ -365,7 +387,16 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           onClose={() => setTerminalOpen(false)}
         />
       )}
+      {space.mirror && (
+        <MirrorBanner
+          space={space}
+          folder={
+            store.models.projects.get(space.project)?.path ?? 'the folder'
+          }
+        />
+      )}
       {space.status === 'archived' && <ArchivedBanner space={space} />}
+      <MergedBanner space={space} />
       <Hints>
         <K>C</K> message the agent <K>M</K> mode <K>D</K> changes <K>⌃`</K>{' '}
         terminal <K>⌘.</K> stop <K>R</K> review <K>P</K>{' '}
@@ -469,7 +500,8 @@ const SpaceHeader = observer(function SpaceHeader({
         </span>
       )}
       <span className="flex-1" />
-      <BaseMoved space={space} />
+      {/* Once its PR merged, Continue moves it onto the new base. */}
+      {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
       <RunButton space={space} config={config} />
       <PortChips space={space} />
       <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
@@ -484,6 +516,7 @@ const SpaceHeader = observer(function SpaceHeader({
           handle={ship}
         />
       )}
+      {!archived && space.pr && <SpaceMergeButton space={space} />}
       {space.pr && (
         <Button
           size="sm"
@@ -493,6 +526,9 @@ const SpaceHeader = observer(function SpaceHeader({
           <CodePullRequest className="size-3.5" />
           PR
         </Button>
+      )}
+      {!archived && project?.path != null && (
+        <MirrorToggle space={space} folder={project.path} />
       )}
       <Tooltip>
         <Button
@@ -724,6 +760,139 @@ const ShipControls = observer(function ShipControls({
   );
 });
 
+/** "Mirror into `<folder>`" (docs/spaces.md "Mirror into a local folder"):
+ *  turns it on, fresh or resuming a paused one. Once it's on, the banner
+ *  below the header is where you sync or turn it off — this button just
+ *  shows that it's on. */
+const MirrorToggle = observer(function MirrorToggle({
+  space,
+  folder,
+}: {
+  space: Space;
+  folder: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const mirror = space.mirror;
+  const on = mirror != null;
+  const name = folder.split('/').filter(Boolean).pop() ?? folder;
+  return (
+    <Tooltip>
+      <ToggleButton
+        isIconOnly
+        size="sm"
+        aria-label="Mirror into the folder"
+        className="space-mirror shrink-0"
+        isSelected={on}
+        isDisabled={busy || on}
+        onChange={() => {
+          if (on) return;
+          setBusy(true);
+          void api
+            .mirrorSpace(space.id)
+            .catch(() => {
+              // toasted by api.ts
+            })
+            .finally(() => setBusy(false));
+        }}
+      >
+        {on ? <FolderOpen className="size-4" /> : <Folder className="size-4" />}
+      </ToggleButton>
+      <Tooltip.Content>
+        {on
+          ? mirror?.status === 'paused'
+            ? `Mirroring into ${name} is paused`
+            : `Mirroring into ${name} — see the banner below`
+          : `Mirror into ${name}: write this space's changes into your own checkout so you can run it there`}
+      </Tooltip.Content>
+    </Tooltip>
+  );
+});
+
+/** While a space mirrors into a local folder: its state, "Sync now" /
+ *  "Resume", and "Mirror off" — refused, with the edited paths named, if
+ *  the folder disagrees with what mirroring wrote there, until you
+ *  Discard. Edits made in the folder are never synced back into the
+ *  space. */
+const MirrorBanner = observer(function MirrorBanner({
+  space,
+  folder,
+}: {
+  space: Space;
+  folder: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const mirror = space.mirror;
+  if (!mirror) return null;
+  const paused = mirror.status === 'paused';
+
+  const off = async (discard: boolean) => {
+    setBusy(true);
+    try {
+      await api.unmirrorSpace({ space: space.id, discard });
+      setRefusal(null);
+    } catch (e) {
+      setRefusal(
+        e instanceof CommandFailure ? e.message : 'Mirror off failed.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resumeOrSync = async () => {
+    setBusy(true);
+    try {
+      await (paused ? api.mirrorSpace(space.id) : api.syncMirror(space.id));
+    } catch {
+      // toasted by api.ts
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Alert status={refusal ? 'danger' : 'accent'} className="m-3 items-center">
+      <Alert.Content>
+        <Alert.Description>
+          {refusal ??
+            (paused
+              ? `Mirroring into ${folder} is paused — nothing is written until you resume it.`
+              : `Mirroring into ${folder}. Edits made there aren't synced back.`)}
+        </Alert.Description>
+      </Alert.Content>
+      {refusal ? (
+        <Button
+          size="sm"
+          variant="danger"
+          isPending={busy}
+          onPress={() => void off(true)}
+        >
+          Discard and turn off
+        </Button>
+      ) : (
+        <>
+          <Button
+            size="sm"
+            variant="secondary"
+            isPending={busy}
+            onPress={() => void resumeOrSync()}
+          >
+            {paused ? 'Resume' : 'Sync now'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            isPending={busy}
+            onPress={() => void off(false)}
+          >
+            Mirror off
+          </Button>
+        </>
+      )}
+    </Alert>
+  );
+});
+
 /** The space's chat: its turns, the live one, the composer. */
 export const SpaceChat = observer(function SpaceChat({
   space,
@@ -748,6 +917,12 @@ export const SpaceChat = observer(function SpaceChat({
   const undone = undoneMessages(space);
   const undo = undoState(space);
   const checks = checksByReply(space.turn_log);
+  const plans = plansByReply(space.turn_log);
+  const planHere = actionablePlan(space);
+  const [revising, setRevising] = useState(false);
+  useEffect(() => {
+    if (planHere == null) setRevising(false);
+  }, [planHere]);
   const turnRuns = runsByReply(space.id, space.turn_log);
   // A finished turn's tool calls, kept for this session; the turn still
   // running (its check) shows them below instead.
@@ -797,6 +972,7 @@ export const SpaceChat = observer(function SpaceChat({
     if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
     setText('');
+    setRevising(false);
     void (now ? api.spaceSendNow : api.spaceSend)({
       space: space.id,
       text: t,
@@ -817,6 +993,20 @@ export const SpaceChat = observer(function SpaceChat({
   })
     ? () => send(true)
     : undefined;
+  // `@terminal ` attaches the space's most recently active terminal's
+  // tail (docs/spaces.md §3, §11) the way a dropped file would, instead
+  // of becoming literal message text.
+  const onComposerChange = (next: string) => {
+    const stripped = stripTerminalMention(next);
+    if (stripped.found) {
+      setText(stripped.text);
+      void attachTerminalMention(space.id, files, (text) =>
+        store.ephemeral.toast(text, 'info'),
+      );
+      return;
+    }
+    setText(next);
+  };
 
   return (
     <>
@@ -838,14 +1028,21 @@ export const SpaceChat = observer(function SpaceChat({
           const undoneReply = agent && undone.has(m.id);
           const undoHere =
             undo.turn?.reply === m.id && space.status !== 'archived';
+          const plan = agent && plans.has(m.id) && !undoneReply;
+          const backHere = agent && !undoneReply && !undoHere;
           return (
             <ChatMessage
               key={m.id}
               m={m}
               className={undone.has(m.id) ? 'space-undone opacity-50' : ''}
               badges={
-                undoneReply || undoHere ? (
+                undoneReply || undoHere || backHere || plan ? (
                   <>
+                    {plan && (
+                      <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
+                        plan
+                      </span>
+                    )}
                     {undoneReply && (
                       <span className="rounded-full bg-default px-1.5 text-[10px] text-muted">
                         undone
@@ -857,6 +1054,7 @@ export const SpaceChat = observer(function SpaceChat({
                         reason={undo.ok ? null : undo.reason}
                       />
                     )}
+                    {backHere && <BackToHere space={space} reply={m.id} />}
                   </>
                 ) : undefined
               }
@@ -866,6 +1064,16 @@ export const SpaceChat = observer(function SpaceChat({
                     {turnTools(m.id)}
                     {checks.has(m.id) && (
                       <CheckChip check={checks.get(m.id)!} />
+                    )}
+                    {planHere === m.id && (
+                      <PlanActions
+                        space={space}
+                        onRevise={() => {
+                          setMode('plan');
+                          setRevising(true);
+                          input.current?.focus();
+                        }}
+                      />
                     )}
                   </>
                 ) : undefined
@@ -882,6 +1090,13 @@ export const SpaceChat = observer(function SpaceChat({
           />
         )}
         <QueuedMessages space={space} queued={queued} />
+        {run && space.question?.run === run && (
+          <QuestionCard
+            key={space.question.id}
+            space={space}
+            question={space.question}
+          />
+        )}
       </ChatLog>
       <div className="chat-input px-4 pb-3 pt-1">
         <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
@@ -897,7 +1112,7 @@ export const SpaceChat = observer(function SpaceChat({
           <Composer
             inputRef={input}
             value={text}
-            onChange={setText}
+            onChange={onComposerChange}
             onSubmit={() => send()}
             placeholder={
               space.status === 'archived'
@@ -906,7 +1121,9 @@ export const SpaceChat = observer(function SpaceChat({
                   ? 'Setting up…'
                   : run
                     ? 'Queue a message for after this turn…'
-                    : 'Ask the agent to change something…'
+                    : revising
+                      ? 'What should change in the plan?'
+                      : 'Ask the agent to change something…'
             }
             disabled={space.status === 'archived' || settingUp(space)}
             running={!!run}
@@ -986,6 +1203,11 @@ const SpaceChanges = observer(function SpaceChanges({
   const [focusHunk, setFocusHunk] = useState<HunkId | null>(null);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const setMode = useMemo(() => () => {}, []);
+  // Read when a file's menu opens, so the space's state is current then.
+  const fileItems = useMemo(
+    () => (file: FileDiff) => revertItems(space, file),
+    [space],
+  );
   const rev = revision?.status === 'ready' ? revision.data : null;
   return (
     <>
@@ -998,7 +1220,7 @@ const SpaceChanges = observer(function SpaceChanges({
           {space.turns ? `after turn ${space.turns}` : 'no turns yet'}
         </span>
         {space.status === 'running' && (
-          <span>· refreshes when the turn ends</span>
+          <span>· live, follows the agent's edits</span>
         )}
       </div>
       {!review || !summary || !revision ? (
@@ -1033,15 +1255,30 @@ const SpaceChanges = observer(function SpaceChanges({
           setComposer={setComposer}
           nextGroup={false}
           askAi={false}
+          fileItems={fileItems}
         />
       )}
     </>
   );
 });
 
+/** `goal`: the plain, usual case. `issue` / `branch` / `pr` adopt something
+ *  that already exists on the host (docs/spaces.md §3 "New space") instead
+ *  of forking a fresh branch from the goal. */
+type StartKind = 'goal' | 'issue' | 'branch' | 'pr';
+
+const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
+  { id: 'goal', label: 'A new branch', hint: 'from the goal' },
+  { id: 'issue', label: 'An existing issue' },
+  { id: 'branch', label: 'An existing branch' },
+  { id: 'pr', label: 'An existing PR' },
+];
+
 /** New space: a composer, not a form — say what you want; the project,
  *  agent and base sit as chips around it. ⏎ creates and sends it as the
- *  first turn; the space opens on that turn. */
+ *  first turn; the space opens on that turn. Picking "An existing issue /
+ *  branch / PR" adopts it instead: the worktree starts on its tip, and
+ *  shipping pushes back to it rather than a fresh `<login>/<slug>`. */
 export const NewSpaceModal = observer(function NewSpaceModal() {
   const store = useRootStore();
   const ui = useUi();
@@ -1054,9 +1291,35 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   const [goal, setGoal] = useState('');
   const [agent, setAgent] = useState<AgentId | null>(null);
   const [busy, setBusy] = useState(false);
+  const [startKind, setStartKind] = useState<StartKind>('goal');
+  const [issueId, setIssueId] = useState<string | null>(null);
+  const [startText, setStartText] = useState('');
   const chosen = ready.find((p) => p.id === project);
+  const issues = useProjectIssues(startKind === 'issue' ? project : null);
+  // Switching project, or away from "issue"/"branch"/"PR", drops whatever
+  // was picked/typed for the previous one rather than silently reusing it.
+  useEffect(() => {
+    setIssueId(null);
+    setStartText('');
+  }, [project, startKind]);
+  const prNumber = Number(startText.trim());
+  const startFrom: SpaceStart | null =
+    startKind === 'issue' && issueId
+      ? { kind: 'issue', value: issueId }
+      : startKind === 'branch' && startText.trim()
+        ? { kind: 'branch', value: startText.trim() }
+        : startKind === 'pr' &&
+            startText.trim() &&
+            Number.isInteger(prNumber) &&
+            prNumber > 0
+          ? { kind: 'pr', value: prNumber }
+          : null;
+  // A plain goal needs the text; an adopted issue/branch/PR needs that
+  // picked/typed instead — the goal becomes an optional extra note.
+  const canStart =
+    startKind === 'goal' ? goal.trim() !== '' : startFrom !== null;
   const start = async () => {
-    if (!project || !goal.trim() || busy) return;
+    if (!project || !canStart || busy) return;
     setBusy(true);
     try {
       const s = await api.createSpace({
@@ -1068,6 +1331,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
         agent,
         // The agent's model setting applies at each turn.
         model: null,
+        start_from: startFrom,
       });
       ui.closeModal();
       ui.go({ name: 'space', id: s.id });
@@ -1113,16 +1377,30 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             value={goal}
             onChange={setGoal}
             onSubmit={() => void start()}
-            placeholder="What do you want to work on?"
+            placeholder={
+              startKind === 'goal'
+                ? 'What do you want to work on?'
+                : 'Anything else the agent should know? (optional)'
+            }
             rows={5}
             quiet
             autoFocus
             disabled={busy || !project}
+            canSubmitEmpty={startKind !== 'goal' && startFrom !== null}
             submit={busy ? 'Creating…' : 'Create'}
             chips={
               <>
                 <AgentChip value={agent} onChange={setAgent} />
-                {chosen?.default_branch && (
+                <ChipMenu
+                  ariaLabel="Start from"
+                  label={
+                    START_KIND_ITEMS.find((i) => i.id === startKind)?.label
+                  }
+                  items={START_KIND_ITEMS}
+                  selected={startKind}
+                  onSelect={setStartKind}
+                />
+                {startKind === 'goal' && chosen?.default_branch && (
                   <span className="flex items-center gap-1 px-2 text-xs text-muted">
                     <BranchesRight className="size-3.5" />
                     from {chosen.default_branch}
@@ -1131,9 +1409,72 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
               </>
             }
           />
+          {startKind === 'issue' && (
+            <div className="flex flex-wrap items-center gap-1.5 px-2">
+              {issues.length === 0 ? (
+                <span className="text-xs text-muted">
+                  No open issues assigned to you on this project's host.
+                </span>
+              ) : (
+                <ChipMenu
+                  ariaLabel="Issue"
+                  label={
+                    issueId
+                      ? `#${issueId} ${
+                          issues.find((i) => String(i.number) === issueId)
+                            ?.title ?? ''
+                        }`
+                      : 'Pick an issue'
+                  }
+                  items={issues.map((i) => ({
+                    id: String(i.number),
+                    label: `#${i.number} ${i.title}`,
+                  }))}
+                  selected={issueId ?? ''}
+                  onSelect={setIssueId}
+                />
+              )}
+            </div>
+          )}
+          {(startKind === 'branch' || startKind === 'pr') && (
+            <div className="flex items-center gap-1.5 px-2">
+              <TextField
+                value={startText}
+                onChange={setStartText}
+                aria-label={
+                  startKind === 'branch' ? 'Branch name' : 'PR number'
+                }
+                autoFocus
+              >
+                <InputGroup className="w-56 rounded-xl">
+                  {startKind === 'pr' && (
+                    <InputGroup.Prefix className="text-xs text-muted">
+                      #
+                    </InputGroup.Prefix>
+                  )}
+                  <InputGroup.Input
+                    placeholder={
+                      startKind === 'branch' ? 'feature/retry-export' : '123'
+                    }
+                    inputMode={startKind === 'pr' ? 'numeric' : 'text'}
+                    className="w-full text-sm"
+                  />
+                </InputGroup>
+              </TextField>
+            </div>
+          )}
           <span className="px-2 text-xs text-muted">
-            The agent works in its own worktree — your checkout is never
-            touched. <K>⇧⏎</K> new line.
+            {startKind === 'goal' ? (
+              <>
+                The agent works in its own worktree — your checkout is never
+                touched. <K>⇧⏎</K> new line.
+              </>
+            ) : (
+              <>
+                The worktree starts on its tip; shipping pushes back to the same
+                branch.
+              </>
+            )}
           </span>
         </Modal.Dialog>
       </Modal.Container>

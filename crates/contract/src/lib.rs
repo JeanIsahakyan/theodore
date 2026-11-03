@@ -31,6 +31,8 @@ mod project_state;
 pub use project_state::*;
 mod space_progress;
 pub use space_progress::*;
+mod space_checkpoints;
+pub use space_checkpoints::*;
 mod spaces;
 pub use spaces::*;
 mod space_queue;
@@ -474,6 +476,10 @@ pub struct MergeInfo {
     pub auto_merge_allowed: bool,
     #[serde(default)]
     pub merge_queue: bool,
+    /// The method the host would pick (GitHub: your last one, else the
+    /// repo's default); `None` when it doesn't say.
+    #[serde(default)]
+    pub default_method: Option<MergeMethod>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -611,6 +617,19 @@ pub enum Ephemeral {
         language: String,
         /// The server that would be downloaded (`clangd`).
         server: String,
+    },
+    /// An install (`code_intel_install`, or `code_intel.install: always`)
+    /// downloading `language`'s grammar or server: `downloading` at most
+    /// four times a second per item, then `installed` or `failed`.
+    CodeIntelProgress {
+        /// The project whose worktree asked for it; `None` from Settings.
+        project: Option<String>,
+        language: String,
+        what: CodeInstallItem,
+        /// The grammar package (`tree-sitter-rust`) or server
+        /// (`rust-analyzer`).
+        name: String,
+        state: CodeInstallProgress,
     },
     /// Raw PTY output of a space's terminal (docs/spaces.md "Terminal"),
     /// base64 (control sequences and all) so a chunk split mid UTF-8 still
@@ -803,6 +822,10 @@ pub fn types() -> specta::Types {
         .register::<CodeServer>()
         .register::<CodeInstall>()
         .register::<CodeServerState>()
+        .register::<CodeInstallItem>()
+        .register::<CodeInstallProgress>()
+        .register::<CodeHoverRequest>()
+        .register::<CodeHover>()
         .register::<StackInfo>()
         .register::<ReactionCount>()
         .register::<DiffSide>()
@@ -818,13 +841,22 @@ pub fn types() -> specta::Types {
         .register::<SpaceStatus>()
         .register::<SpaceMode>()
         .register::<CreateSpaceRequest>()
+        .register::<SpaceStart>()
+        .register::<ProjectIssuesRequest>()
+        .register::<SpaceIssue>()
         .register::<SpaceSendRequest>()
         .register::<SpaceReviewRequest>()
         .register::<ShipKind>()
         .register::<SpaceShipped>()
         .register::<ShipAction>()
         .register::<ShipSpaceRequest>()
+        .register::<MergeSpaceRequest>()
+        .register::<MergeSpaceResult>()
+        .register::<SpaceRound>()
         .register::<SpaceTurn>()
+        .register::<RewindSpaceRequest>()
+        .register::<SpaceRevertFrom>()
+        .register::<RevertSpaceFileRequest>()
         .register::<AgentSession>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
@@ -833,6 +865,15 @@ pub fn types() -> specta::Types {
         .register::<SpaceQueuedRequest>()
         .register::<SpaceUpdate>()
         .register::<SpaceBaseStatus>()
+        .register::<SpaceFixCiRequest>()
+        .register::<SetSpacePinnedRequest>()
+        .register::<SpaceQuestion>()
+        .register::<SpaceQuestionItem>()
+        .register::<SpaceAnswerRequest>()
+        .register::<SpaceAnswerItem>()
+        .register::<MirrorStatus>()
+        .register::<SpaceMirror>()
+        .register::<UnmirrorSpaceRequest>()
         .register::<ConfigLayer>()
         .register::<ConfigFile>()
         .register::<ConfigEntry>()
@@ -884,7 +925,8 @@ pub fn types() -> specta::Types {
         .register::<SpaceTerminalInfo>()
         .register::<OpenTerminalRequest>()
         .register::<WriteTerminalRequest>()
-        .register::<ResizeTerminalRequest>();
+        .register::<ResizeTerminalRequest>()
+        .register::<TerminalMention>();
     // JS numbers: ids, counts and unix-ms timestamps stay far below 2^53.
     use specta::datatype::Primitive as P;
     specta_util::Remapper::new()

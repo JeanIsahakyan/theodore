@@ -699,6 +699,16 @@ pub async fn create_space(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn project_issues(
+    op: crate::op::Op,
+    req: theodore_contract::ProjectIssuesRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::SpaceIssue>, CommandError> {
+    op.run(async move { core.project_issues(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn list_spaces(
     op: crate::op::Op,
     project: Option<String>,
@@ -789,6 +799,29 @@ pub async fn ship_space(
     op.run(async move { core.ship_space(req).await }).await
 }
 
+/// Merge the space's PR from the space page (docs/spaces.md §3).
+#[tauri::command]
+#[specta::specta]
+pub async fn merge_space(
+    op: crate::op::Op,
+    req: theodore_contract::MergeSpaceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::MergeSpaceResult, CommandError> {
+    op.run(async move { core.merge_space(req).await }).await
+}
+
+/// Continue after merge: a new branch on the base's fresh tip (§7).
+#[tauri::command]
+#[specta::specta]
+pub async fn continue_space(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.continue_space(space).await })
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn undo_space_turn(
@@ -802,6 +835,27 @@ pub async fn undo_space_turn(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn rewind_space(
+    op: crate::op::Op,
+    req: theodore_contract::RewindSpaceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.rewind_space(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn revert_space_file(
+    op: crate::op::Op,
+    req: theodore_contract::RevertSpaceFileRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.revert_space_file(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn unarchive_space(
     op: crate::op::Op,
     space: String,
@@ -809,6 +863,47 @@ pub async fn unarchive_space(
 ) -> Result<theodore_contract::Space, CommandError> {
     op.run(async move { core.unarchive_space(space).await })
         .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_space_pinned(
+    op: crate::op::Op,
+    req: theodore_contract::SetSpacePinnedRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.set_space_pinned(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mirror_space(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.mirror_space(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn sync_mirror(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.sync_mirror(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn unmirror_space(
+    op: crate::op::Op,
+    req: theodore_contract::UnmirrorSpaceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.unmirror_space(req).await }).await
 }
 
 #[tauri::command]
@@ -852,6 +947,38 @@ pub async fn abort_space_update(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<theodore_contract::Space, CommandError> {
     op.run(async move { core.abort_space_update(space).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_fix_ci(
+    op: crate::op::Op,
+    req: theodore_contract::SpaceFixCiRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    op.run(async move { core.space_fix_ci(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn approve_space_plan(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<String, CommandError> {
+    op.run(async move { core.approve_space_plan(space).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn answer_space_question(
+    op: crate::op::Op,
+    req: theodore_contract::SpaceAnswerRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.answer_space_question(req).await })
         .await
 }
 
@@ -1098,6 +1225,19 @@ pub async fn list_space_terminals(
         .await
 }
 
+/// `@terminal` in the composer (docs/spaces.md §3, §11): the space's most
+/// recently active terminal's last lines, `None` when it has none open.
+#[tauri::command]
+#[specta::specta]
+pub async fn space_terminal_mention(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Option<theodore_contract::TerminalMention>, CommandError> {
+    op.run(async move { core.space_terminal_mention(space).await })
+        .await
+}
+
 /// A project's merged config, with each value's file.
 #[tauri::command]
 #[specta::specta]
@@ -1110,7 +1250,7 @@ pub async fn project_config(
         .await
 }
 
-/// Settings → Languages: each language of a project, its grammar, server
+/// Project settings → Languages: each language of a project, its grammar, server
 /// and index progress (docs/code-intel.md §9).
 #[tauri::command]
 #[specta::specta]
@@ -1124,7 +1264,7 @@ pub async fn code_intel_status(
 }
 
 /// Downloads a language's grammar and server (an install suggestion's
-/// Yes, or Settings → Languages → Install).
+/// Yes, or project settings → Languages → Install).
 #[tauri::command]
 #[specta::specta]
 pub async fn code_intel_install(
@@ -1136,8 +1276,8 @@ pub async fn code_intel_install(
         .await
 }
 
-/// Settings → Languages: language servers in reviews (a PR's code may
-/// run) or in spaces, on or off. A global or local config file wins.
+/// Project settings → Languages: one project's language servers in reviews (a PR's code may
+/// run) or in spaces, on or off: written to its local config file.
 #[tauri::command]
 #[specta::specta]
 pub async fn code_intel_set_lsp(
@@ -1158,6 +1298,33 @@ pub async fn code_intel_decline(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<(), CommandError> {
     op.run(async move { core.code_intel_decline(language).await })
+        .await
+}
+
+/// Project settings → Languages → Remove: deletes what was downloaded for a
+/// language (its server and grammar). Refused while a review or a space
+/// with the language is open; afterwards it counts as declined.
+#[tauri::command]
+#[specta::specta]
+pub async fn code_intel_remove(
+    op: crate::op::Op,
+    language: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.code_intel_remove(language).await })
+        .await
+}
+
+/// Hover in a PR's diff: the language server's text, else the signature
+/// of a definition with the name under the pointer. `null`: nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn code_intel_hover(
+    op: crate::op::Op,
+    req: theodore_contract::CodeHoverRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Option<theodore_contract::CodeHover>, CommandError> {
+    op.run(async move { core.code_intel_hover(req).await })
         .await
 }
 

@@ -11,8 +11,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use theodore_domain::{
-    CheckRollup, Comment, CommentId, FileViewed, HostRepo, InboxReason, Person, PrDetail, PrRef,
-    PrState, PrSummary, RepoRef, Reviewer, ReviewerState, Sha, ThreadId, ViewedState,
+    Check, CheckRollup, CheckStatus, Comment, CommentId, FileViewed, HostRepo, InboxReason, Person,
+    PrDetail, PrRef, PrState, PrSummary, RepoRef, Reviewer, ReviewerState, Sha, ThreadId,
+    ViewedState,
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
@@ -108,6 +109,7 @@ impl HostAdapter for FixtureHost {
             merge_queue: true,
             auto_merge: true,
             reactions: true,
+            issues: false,
         }
     }
 
@@ -662,6 +664,7 @@ impl HostAdapter for FixtureHost {
             required_approvals: detail.summary.required_approvals,
             auto_merge_allowed: true,
             merge_queue: false,
+            default_method: Some(MergeMethod::Squash),
         })
     }
 
@@ -718,5 +721,24 @@ impl HostAdapter for FixtureHost {
             details: String::new(),
         });
         Ok(())
+    }
+
+    /// A made-up log for a failing check (docs/spaces.md "Fix CI"): enough
+    /// for a `theodore eval` / demo scenario to exercise the attachment and
+    /// prompt, never a real CI's output.
+    async fn check_log(&self, pr: &PrRef, check: &Check) -> HostResult<Option<String>> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(HostCall {
+            method: "check_log".to_string(),
+            pr_id: Some(pr.id().to_string()),
+            details: format!("check={}", check.id),
+        });
+        if check.status != CheckStatus::Fail {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "[fixture] simulated log for check {0:?}\nError: {0} failed.\n",
+            check.name
+        )))
     }
 }

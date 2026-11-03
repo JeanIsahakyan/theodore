@@ -21,7 +21,7 @@ use theodore_ports::{
     DeviceSignInPoll, DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter, HostError,
     HostResult, InboxSection, IncomingCallback, MergeMethod, MergeStatus, ModelRow, NewAction,
     OutboxItem, OutboxStatus, ReviewSubmission, Secrets, SecretsError, Store, StoreError,
-    StoreResult, SubmittedReview, SyncAction, SyncActionCode, Worktree,
+    StoreResult, SubmittedReview, SyncAction, SyncActionCode, TrackedIssue, Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -345,6 +345,13 @@ impl Secrets for FakeSecrets {
 
 // ── git ───────────────────────────────────────────────────────────────────
 
+/// `(folder, space, to, from)`.
+pub type MirrorSyncCall = (PathBuf, String, Sha, Sha);
+/// `(folder, space, to, paths)`.
+pub type MirrorEditedCall = (PathBuf, String, Sha, Vec<String>);
+/// `(folder, from, paths)`.
+pub type MirrorRestoreCall = (PathBuf, Sha, Vec<String>);
+
 pub struct FakeGit {
     pub repo_path: PathBuf,
     /// What `grep` returns for any pattern; `None`: `Unsupported`, like
@@ -399,8 +406,28 @@ pub struct FakeGit {
     /// `abort` with the checkpoint.
     merge_results: Mutex<VecDeque<theodore_ports::SpaceMerge>>,
     pub merge_calls: Mutex<Vec<(&'static str, String, Sha)>>,
+    /// The `HEAD` every `space_reset` moved the worktree to.
+    pub reset_heads: Mutex<Vec<Sha>>,
+    /// A space worktree's own `HEAD` (`SpaceCheckpoint::head`); unset: the
+    /// checkpoint itself, as before snapshots.
+    pub space_heads: Mutex<HashMap<String, Sha>>,
+    /// `(paths, from)` of every `space_restore_paths`.
+    pub restored: Mutex<Vec<(Vec<String>, Sha)>>,
+    /// `space_fingerprint`'s answer.
+    pub fingerprint: Mutex<String>,
     /// Shipping a space: identity, squashed commits, pushes, folder ops.
     pub ship: Mutex<FakeShip>,
+    // ── mirroring a space into a local folder (docs/spaces.md) ──────────
+    /// `(folder, space, to, from)` of every `mirror_sync`; empty queue: it
+    /// answers `Ok(vec![])` (nothing changed).
+    pub mirror_syncs: Mutex<Vec<MirrorSyncCall>>,
+    mirror_sync_responses: Mutex<VecDeque<GitResult<Vec<String>>>>,
+    /// `(folder, space, to, paths)` of every `mirror_edited`.
+    pub mirror_edited_calls: Mutex<Vec<MirrorEditedCall>>,
+    mirror_edited_value: Mutex<GitResult<Vec<String>>>,
+    /// `(folder, from, paths)` of every `mirror_restore`.
+    pub mirror_restores: Mutex<Vec<MirrorRestoreCall>>,
+    mirror_restore_value: Mutex<GitResult<Vec<String>>>,
     // ── offline (a PR opened from its local copy) ──────────────────────
     /// `cached_repo` finds the clone on disk (default `true`).
     cached: Mutex<bool>,
@@ -511,6 +538,10 @@ impl FakeGit {
             resets: Mutex::new(Vec::new()),
             merge_results: Mutex::new(VecDeque::new()),
             merge_calls: Mutex::new(Vec::new()),
+            reset_heads: Mutex::new(Vec::new()),
+            space_heads: Mutex::new(HashMap::new()),
+            restored: Mutex::new(Vec::new()),
+            fingerprint: Mutex::new(String::new()),
             ship: Mutex::new(FakeShip {
                 identity: Some(theodore_ports::Identity {
                     name: "Ada Lovelace".into(),
@@ -518,6 +549,12 @@ impl FakeGit {
                 }),
                 ..FakeShip::default()
             }),
+            mirror_syncs: Mutex::new(Vec::new()),
+            mirror_sync_responses: Mutex::new(VecDeque::new()),
+            mirror_edited_calls: Mutex::new(Vec::new()),
+            mirror_edited_value: Mutex::new(Ok(Vec::new())),
+            mirror_restores: Mutex::new(Vec::new()),
+            mirror_restore_value: Mutex::new(Ok(Vec::new())),
             cached: Mutex::new(true),
             missing_commits: Mutex::new(std::collections::HashSet::new()),
             network_calls: Mutex::new(Vec::new()),
@@ -598,6 +635,26 @@ impl FakeGit {
         self.push_responses.lock().unwrap().push_back(r);
     }
 
+    /// The next `mirror_sync` answers `r` instead of `Ok(vec![])`.
+    pub fn push_mirror_sync(&self, r: GitResult<Vec<String>>) {
+        self.mirror_sync_responses.lock().unwrap().push_back(r);
+    }
+
+    /// Every `mirror_sync` call so far, oldest first.
+    pub fn mirror_syncs(&self) -> Vec<MirrorSyncCall> {
+        self.mirror_syncs.lock().unwrap().clone()
+    }
+
+    /// Makes `mirror_edited` answer `value` instead of the default `Ok(vec![])`.
+    pub fn set_mirror_edited(&self, value: GitResult<Vec<String>>) {
+        *self.mirror_edited_value.lock().unwrap() = value;
+    }
+
+    /// Makes `mirror_restore` answer `value` instead of the default `Ok(vec![])`.
+    pub fn set_mirror_restore(&self, value: GitResult<Vec<String>>) {
+        *self.mirror_restore_value.lock().unwrap() = value;
+    }
+
     pub fn set_head(&self, head: Sha) {
         *self.head.lock().unwrap() = head;
     }
@@ -632,6 +689,11 @@ impl FakeGit {
             .lock()
             .unwrap()
             .insert(name.to_string(), sha);
+    }
+
+    /// What `name` resolves to now (a space's checkpoint ref, say).
+    pub fn resolve_ref_of(&self, name: &str) -> Option<Sha> {
+        self.resolve_refs.lock().unwrap().get(name).cloned()
     }
 
     pub fn set_commit(&self, sha: Sha, commit: CommitLog) {
@@ -929,7 +991,7 @@ impl GitPort for FakeGit {
         _worktree: &Path,
         space: &str,
         message: &str,
-    ) -> GitResult<Sha> {
+    ) -> GitResult<theodore_ports::SpaceCheckpoint> {
         self.checkpoints
             .lock()
             .unwrap()
@@ -949,11 +1011,45 @@ impl GitPort for FakeGit {
             .ok_or_else(|| GitError::Parse(format!("no space {space}")))?;
         drop(refs);
         self.ensure_commit(&head, message);
-        Ok(head)
+        let wt_head = self
+            .space_heads
+            .lock()
+            .unwrap()
+            .get(space)
+            .cloned()
+            .unwrap_or_else(|| head.clone());
+        Ok(theodore_ports::SpaceCheckpoint {
+            sha: head,
+            head: wt_head,
+        })
+    }
+
+    async fn space_restore_paths(
+        &self,
+        _worktree: &Path,
+        paths: &[String],
+        from: &Sha,
+    ) -> GitResult<()> {
+        self.restored
+            .lock()
+            .unwrap()
+            .push((paths.to_vec(), from.clone()));
+        Ok(())
+    }
+
+    async fn space_fingerprint(&self, worktree: &Path) -> GitResult<String> {
+        let _ = worktree;
+        Ok(self.fingerprint.lock().unwrap().clone())
     }
 
     async fn space_snapshot(&self, worktree: &Path) -> GitResult<Sha> {
         if let Some(sha) = self.ship.lock().unwrap().snapshot.clone() {
+            // Resolvable by its sha, as git would, for a live diff.
+            self.resolve_refs
+                .lock()
+                .unwrap()
+                .insert(sha.0.clone(), sha.clone());
+            self.ensure_commit(&sha, "snapshot of the worktree");
             return Ok(sha);
         }
         // The space is the worktree's last path component (`space_worktree`).
@@ -970,15 +1066,31 @@ impl GitPort for FakeGit {
             .ok_or_else(|| GitError::Parse(format!("no space {space}")))
     }
 
-    async fn space_reset(&self, _worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
+    async fn space_reset(
+        &self,
+        _worktree: &Path,
+        space: &str,
+        to: &theodore_ports::SpaceCheckpoint,
+    ) -> GitResult<()> {
+        if let Some(e) = self.checkpoint_errors.lock().unwrap().pop_front() {
+            return Err(e);
+        }
         self.resets
             .lock()
             .unwrap()
-            .push((space.to_string(), to.clone()));
+            .push((space.to_string(), to.sha.clone()));
+        self.reset_heads.lock().unwrap().push(to.head.clone());
+        self.space_heads
+            .lock()
+            .unwrap()
+            .insert(space.to_string(), to.head.clone());
         self.resolve_refs
             .lock()
             .unwrap()
-            .insert(theodore_ports::space_ref(space), to.clone());
+            .insert(theodore_ports::space_ref(space), to.sha.clone());
+        // A reset can land on a commit no checkpoint made (Continue's new
+        // base): `describe_branch` still finds it.
+        self.ensure_commit(&to.sha, "reset");
         Ok(())
     }
 
@@ -1095,6 +1207,58 @@ impl GitPort for FakeGit {
         Ok(())
     }
 
+    async fn mirror_sync(
+        &self,
+        folder: &Path,
+        _repo: &Path,
+        space: &str,
+        to: &Sha,
+        from: &Sha,
+    ) -> GitResult<Vec<String>> {
+        self.mirror_syncs.lock().unwrap().push((
+            folder.to_path_buf(),
+            space.to_string(),
+            to.clone(),
+            from.clone(),
+        ));
+        self.mirror_sync_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(Vec::new()))
+    }
+
+    async fn mirror_edited(
+        &self,
+        folder: &Path,
+        _repo: &Path,
+        space: &str,
+        to: &Sha,
+        paths: &[String],
+    ) -> GitResult<Vec<String>> {
+        self.mirror_edited_calls.lock().unwrap().push((
+            folder.to_path_buf(),
+            space.to_string(),
+            to.clone(),
+            paths.to_vec(),
+        ));
+        clone_git_result(&self.mirror_edited_value.lock().unwrap())
+    }
+
+    async fn mirror_restore(
+        &self,
+        folder: &Path,
+        from: &Sha,
+        paths: &[String],
+    ) -> GitResult<Vec<String>> {
+        self.mirror_restores.lock().unwrap().push((
+            folder.to_path_buf(),
+            from.clone(),
+            paths.to_vec(),
+        ));
+        clone_git_result(&self.mirror_restore_value.lock().unwrap())
+    }
+
     async fn commit_file(
         &self,
         _repo: &Path,
@@ -1187,6 +1351,9 @@ pub struct FakeHost {
     pub rerun_check_responses: Mutex<VecDeque<HostResult<()>>>,
     /// Every check id `rerun_check` was called with, for assertions.
     pub rerun_check_calls: Mutex<Vec<String>>,
+    pub check_log_responses: Mutex<VecDeque<HostResult<Option<String>>>>,
+    /// Every check id `check_log` was called with, for assertions.
+    pub check_log_calls: Mutex<Vec<String>>,
     pub repo_info_responses: Mutex<VecDeque<HostResult<HostRepo>>>,
     /// Open PRs `create_pr` made, by head branch.
     pub created_prs: Mutex<HashMap<String, PrRef>>,
@@ -1197,6 +1364,8 @@ pub struct FakeHost {
     /// (a timeout after the host did open it).
     pub create_pr_errors: Mutex<VecDeque<HostError>>,
     pub create_pr_lands: Mutex<bool>,
+    pub get_issue_responses: Mutex<VecDeque<HostResult<TrackedIssue>>>,
+    pub my_open_issues_responses: Mutex<VecDeque<HostResult<Vec<TrackedIssue>>>>,
 }
 
 impl FakeHost {
@@ -1290,8 +1459,20 @@ impl FakeHost {
     pub fn rerun_check_calls(&self) -> Vec<String> {
         self.rerun_check_calls.lock().unwrap().clone()
     }
+    pub fn push_check_log(&self, r: HostResult<Option<String>>) {
+        self.check_log_responses.lock().unwrap().push_back(r);
+    }
+    pub fn check_log_calls(&self) -> Vec<String> {
+        self.check_log_calls.lock().unwrap().clone()
+    }
     pub fn push_repo_info(&self, r: HostResult<HostRepo>) {
         self.repo_info_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_get_issue(&self, r: HostResult<TrackedIssue>) {
+        self.get_issue_responses.lock().unwrap().push_back(r);
+    }
+    pub fn push_my_open_issues(&self, r: HostResult<Vec<TrackedIssue>>) {
+        self.my_open_issues_responses.lock().unwrap().push_back(r);
     }
 }
 
@@ -1338,6 +1519,7 @@ impl HostAdapter for FakeHost {
             merge_queue: false,
             auto_merge: false,
             reactions: true,
+            issues: true,
         }
     }
     async fn changed_since(&self, _cursor: Option<&str>) -> HostResult<Changes> {
@@ -1369,6 +1551,20 @@ impl HostAdapter for FakeHost {
     }
     async fn list_repos(&self) -> HostResult<Vec<theodore_domain::HostRepo>> {
         Ok(vec![])
+    }
+    async fn get_issue(&self, _repo: &RepoRef, _number: u64) -> HostResult<TrackedIssue> {
+        self.get_issue_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(HostError::NotFound("no fixture queued".into())))
+    }
+    async fn my_open_issues(&self, _repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
+        self.my_open_issues_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(vec![]))
     }
     async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
         self.get_pr_calls
@@ -1581,6 +1777,18 @@ impl HostAdapter for FakeHost {
             .unwrap()
             .pop_front()
             .unwrap_or(Ok(()))
+    }
+    async fn check_log(
+        &self,
+        _pr: &PrRef,
+        check: &theodore_domain::Check,
+    ) -> HostResult<Option<String>> {
+        self.check_log_calls.lock().unwrap().push(check.id.clone());
+        self.check_log_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(None))
     }
     async fn repo_info(&self, repo: &RepoRef) -> HostResult<HostRepo> {
         self.repo_info_responses
@@ -2661,6 +2869,14 @@ pub struct FakeCodeIntel {
     pub hits: Mutex<Vec<theodore_ports::CodeHit>>,
     pub diagnostics: Mutex<Vec<theodore_ports::Diagnostic>>,
     pub renames: Mutex<Vec<theodore_ports::TextEdit>>,
+    /// `hover`'s answer.
+    pub hover: Mutex<Option<theodore_ports::Hover>>,
+    /// Sent to `install`'s progress listener, in order.
+    pub progress: Mutex<Vec<theodore_ports::InstallProgress>>,
+    /// `remove` fails with this, when set.
+    pub remove_error: Mutex<Option<theodore_ports::CodeIntelError>>,
+    /// Every `set_limits`, in order.
+    pub limits: Mutex<Vec<theodore_ports::CodeIntelLimits>>,
     /// Every query fails with this, when set.
     pub fail: Mutex<Option<theodore_ports::CodeIntelError>>,
 }
@@ -2821,12 +3037,45 @@ impl theodore_ports::CodeIntelPort for FakeCodeIntel {
         self.check()?;
         Ok(self.renames.lock().unwrap().clone())
     }
+    async fn hover(
+        &self,
+        _root: &Path,
+        path: &str,
+        at: theodore_ports::Position,
+    ) -> theodore_ports::CodeIntelResult<Option<theodore_ports::Hover>> {
+        self.record(format!("hover {path}:{}:{}", at.line, at.col));
+        self.check()?;
+        Ok(self.hover.lock().unwrap().clone())
+    }
     async fn install(
         &self,
         language: &theodore_ports::LanguageId,
+        progress: Option<theodore_ports::InstallProgressFn>,
     ) -> theodore_ports::CodeIntelResult<()> {
         self.record(format!("install {language}"));
+        if let Some(sink) = progress {
+            for p in self.progress.lock().unwrap().iter() {
+                sink(p.clone());
+            }
+        }
         Ok(())
+    }
+    async fn remove(
+        &self,
+        language: &theodore_ports::LanguageId,
+    ) -> theodore_ports::CodeIntelResult<()> {
+        self.record(format!("remove {language}"));
+        match self.remove_error.lock().unwrap().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+    async fn set_limits(&self, limits: theodore_ports::CodeIntelLimits) {
+        self.record(format!(
+            "set_limits {} {} {} {}",
+            limits.max_servers, limits.idle_minutes, limits.max_file_kb, limits.cache_mb
+        ));
+        self.limits.lock().unwrap().push(limits);
     }
     async fn file_changed(&self, root: &Path, path: &str) {
         self.record(format!("file_changed {} {path}", root.display()));

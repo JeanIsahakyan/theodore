@@ -895,8 +895,12 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 - The user's own MCP servers (`agents.user_mcp`, on by default, issue #16),
   in **spaces only** — review runs (grouping, chat, skills, fixes) never
   get them: Claude space turns load the user's Claude Code servers (`~/.claude.json`, the
-  repo's `.mcp.json`, claude.ai connectors) next to Theodore's, and their
-  tools (`mcp__*`) are pre-approved; the read-only denylist still applies.
+  repo's `.mcp.json`, claude.ai connectors) next to Theodore's. Their
+  tools can't be pre-approved by name (a connector is named only once
+  loaded; `--allowedTools mcp__*` matches no server), so Ask and Edit turns
+  route permission prompts to Theodore's `approve_tool`
+  (`--permission-prompt-tool`), which allows `mcp__…` tools and denies the
+  rest; the read-only denylist still applies (issue #83).
   Off: `--strict-mcp-config`, only Theodore's own server. Codex and Gemini
   have no such flag and ignore the setting: Codex's `-c` overrides add to
   `~/.codex/config.toml`, so its servers load either way; Gemini's
@@ -1024,7 +1028,7 @@ platforms later.
 
 | Step | Now (ad-hoc) | With Developer ID (later) |
 | --- | --- | --- |
-| Code signature | `codesign -s -` (ad-hoc, required on Apple Silicon) | Developer ID Application + hardened runtime |
+| Code signature | `codesign -s - -o runtime` (ad-hoc, hardened runtime; `disable-library-validation` so downloaded grammars load, docs/code-intel.md §4.1) | Developer ID Application + hardened runtime |
 | Notarization | none | `notarytool` + staple, app and DMG |
 | First install | Gatekeeper blocks it: System Settings → Privacy & Security → "Open Anyway", or `xattr -dr com.apple.quarantine /Applications/Theodore.app` | opens normally |
 | Updates | work: the updater downloads outside the browser, so no quarantine flag, and checks its own signature | same |

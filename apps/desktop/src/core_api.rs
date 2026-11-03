@@ -19,7 +19,8 @@ use theodore_contract::{
     TriageRequest, UpdateInfo,
 };
 use theodore_contract::{
-    OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, WriteTerminalRequest,
+    OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, TerminalMention,
+    WriteTerminalRequest,
 };
 use theodore_contract::{SandboxFaultRequest, SandboxStatus};
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
@@ -214,6 +215,15 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// New space's "From an issue" picker: the project's own open issues
+    /// assigned to the viewer (`Capabilities::issues`; empty when the host
+    /// doesn't support it).
+    async fn project_issues(
+        &self,
+        _req: theodore_contract::ProjectIssuesRequest,
+    ) -> Result<Vec<theodore_contract::SpaceIssue>, CommandError> {
+        Err(not_ready())
+    }
     /// Spaces of one project, or all.
     async fn list_spaces(
         &self,
@@ -266,6 +276,20 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// Merges the space's PR: default method, auto-merge when blocked.
+    async fn merge_space(
+        &self,
+        _req: theodore_contract::MergeSpaceRequest,
+    ) -> Result<theodore_contract::MergeSpaceResult, CommandError> {
+        Err(not_ready())
+    }
+    /// Continue after merge: a new branch on the base's fresh tip.
+    async fn continue_space(
+        &self,
+        _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
     /// Undo last turn: back to the previous checkpoint (docs/spaces.md §7).
     async fn undo_space_turn(
         &self,
@@ -273,10 +297,33 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// "Back to here": the space back to right after a turn; later turns
+    /// undone (docs/spaces.md §3).
+    async fn rewind_space(
+        &self,
+        _req: theodore_contract::RewindSpaceRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Revert one file of the space's diff to the base or to before the
+    /// last turn, as an undoable entry (docs/spaces.md §3).
+    async fn revert_space_file(
+        &self,
+        _req: theodore_contract::RevertSpaceFileRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
     /// Recreates an archived space's worktree from its checkpoint ref.
     async fn unarchive_space(
         &self,
         _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// Pin/unpin a space: pinned ones sort first (docs/spaces.md §3).
+    async fn set_space_pinned(
+        &self,
+        _req: theodore_contract::SetSpacePinnedRequest,
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
@@ -306,6 +353,41 @@ pub trait CoreApi: Send + Sync {
     async fn abort_space_update(
         &self,
         _space: String,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Fix with agent": the space PR's failing checks' logs as the next
+    /// turn (docs/spaces.md "Fix CI").
+    async fn space_fix_ci(
+        &self,
+        _req: theodore_contract::SpaceFixCiRequest,
+    ) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    /// Approve on a plan card: the next turn implements the plan.
+    async fn approve_space_plan(&self, _space: String) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    /// Your answers to the agent's `ask_user` questions.
+    async fn answer_space_question(
+        &self,
+        _req: theodore_contract::SpaceAnswerRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// "Mirror into `<folder>`": on fresh, or resuming a paused one.
+    async fn mirror_space(&self, _space: String) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Sync now": re-syncs a mirrored space into its folder by hand.
+    async fn sync_mirror(&self, _space: String) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// "Mirror off": restores the folder, refused (unless `discard`) if it
+    /// was edited meanwhile.
+    async fn unmirror_space(
+        &self,
+        _req: theodore_contract::UnmirrorSpaceRequest,
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
@@ -388,6 +470,14 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<Vec<SpaceTerminalInfo>, CommandError> {
         Err(not_ready())
     }
+    /// `@terminal` in the composer: the space's most recently active
+    /// terminal's last lines, `None` when it has none open.
+    async fn space_terminal_mention(
+        &self,
+        _space: String,
+    ) -> Result<Option<TerminalMention>, CommandError> {
+        Err(not_ready())
+    }
     /// A project's merged config, with each value's file.
     async fn project_config(
         &self,
@@ -399,7 +489,7 @@ pub trait CoreApi: Send + Sync {
     async fn global_config(&self) -> Result<theodore_contract::GlobalConfigInfo, CommandError> {
         Err(not_ready())
     }
-    /// Settings → Languages: each language of a project (docs/code-intel.md §9).
+    /// Project settings → Languages: each language of a project (docs/code-intel.md §9).
     async fn code_intel_status(
         &self,
         _project: String,
@@ -410,7 +500,7 @@ pub trait CoreApi: Send + Sync {
     async fn code_intel_install(&self, _language: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
-    /// Settings → Languages: language servers in reviews / in spaces.
+    /// Project settings → Languages: a project's language servers in reviews / in spaces.
     async fn code_intel_set_lsp(
         &self,
         _req: theodore_contract::CodeIntelLspRequest,
@@ -419,6 +509,18 @@ pub trait CoreApi: Send + Sync {
     }
     /// No to an install suggestion; remembered.
     async fn code_intel_decline(&self, _language: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Project settings → Languages → Remove: deletes a language's server and
+    /// grammar.
+    async fn code_intel_remove(&self, _language: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Hover in a PR's diff.
+    async fn code_intel_hover(
+        &self,
+        _req: theodore_contract::CodeHoverRequest,
+    ) -> Result<Option<theodore_contract::CodeHover>, CommandError> {
         Err(not_ready())
     }
     /// Same, created from a commented template when missing.
