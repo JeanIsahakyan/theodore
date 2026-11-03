@@ -40,6 +40,8 @@ const CLEAN_TAIL_LINES: usize = 2_000;
 /// How long `close_space_terminal` and the app-quit sweep wait for a killed
 /// shell to actually exit before giving up on it.
 const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Lines `@terminal` (`space_terminal_mention`) attaches.
+const TERMINAL_MENTION_LINES: usize = 200;
 
 /// One open terminal, keyed by its id in `Core::term_rt`.
 pub(crate) struct TerminalEntry {
@@ -301,6 +303,24 @@ impl Core {
             lines: st.clean_tail.iter().skip(n).cloned().collect(),
             note: None,
         })
+    }
+
+    /// `@terminal` in the space composer (docs/spaces.md §3, §11): `space`'s
+    /// most recently active terminal's last [`TERMINAL_MENTION_LINES`]
+    /// lines, for the UI to attach as a text file the way any other
+    /// attachment goes. `None` when the space has no terminal open.
+    pub async fn space_terminal_mention(
+        &self,
+        space: &str,
+    ) -> AppResult<Option<theodore_contract::TerminalMention>> {
+        let tail = self
+            .read_space_terminal(space, None, TERMINAL_MENTION_LINES)
+            .await?;
+        Ok(tail.id.map(|id| theodore_contract::TerminalMention {
+            id,
+            title: tail.title.unwrap_or_default(),
+            lines: tail.lines,
+        }))
     }
 
     /// Kills every terminal of `space`, waiting briefly for each — archive
