@@ -18,7 +18,7 @@
 //!                           (downloads only in install())
 //! ```
 //!
-//! Trust: [`LspPolicy`] has one switch per [`TrustMode`] — review runs
+//! Trust: [`LspPolicy`] has one switch per [`TrustMode`](theodore_ports::TrustMode) — review runs
 //! (off by default: most servers can run a PR's code) and spaces (on). The
 //! one gate is `servers::allowed`; [`CodeIntel::set_options`] applies a
 //! change live, stopping the sessions it no longer allows.
@@ -54,7 +54,7 @@ use theodore_ports::code_intel::{
     Answer, CodeHit, CodeIntelError, CodeIntelLimits, CodeIntelPort, CodeIntelResult, CodeSymbol,
     CodeSymbolKind, Diagnostic, Hover, InstallItem, InstallProgress, InstallProgressFn,
     InstallProgressState, InstallState, LanguageId, LanguageStatus, Location, LspPolicy, Position,
-    ServerState, ServerStatus, Source, TextEdit, TrustMode, Workspace,
+    ServerState, ServerStatus, Source, TextEdit, Workspace,
 };
 
 pub use grammars::GrammarSource;
@@ -199,6 +199,7 @@ impl CodeIntelBuilder {
                 removed,
                 evicting: AtomicBool::new(false),
                 workspaces: Mutex::default(),
+                prefer: Mutex::default(),
             }),
         };
         let weak = Arc::downgrade(&ci.inner);
@@ -235,6 +236,8 @@ struct Inner {
     evicting: AtomicBool,
     /// By canonical root.
     workspaces: Mutex<HashMap<PathBuf, Arc<Ws>>>,
+    /// `Workspace::servers` of each open root: language → preferred server.
+    prefer: Mutex<HashMap<PathBuf, BTreeMap<String, String>>>,
 }
 
 /// Where an LSP question goes.
@@ -327,18 +330,23 @@ impl CodeIntel {
             old_pool.shutdown_all().await;
         }
         let open: Vec<Arc<Ws>> = lock(&self.inner.workspaces).values().cloned().collect();
-        for w in open.into_iter().filter(|w| w.lsp.is_none()) {
+        for w in open.into_iter().filter(|w| lock(&w.lsp).is_none()) {
             let (was, now) = (allowed(old.lsp, w.trust), allowed(options.lsp, w.trust));
-            if !now {
-                if was {
-                    self.pool().release_root(&w.root).await;
-                }
-                for plan in lock(&w.servers).values_mut() {
-                    plan.resolved = None;
-                }
-            } else if !was || new_pool {
-                self.start_servers(&w).await;
+            self.apply_switch(&w, was, now, new_pool).await;
+        }
+    }
+
+    /// A worktree's policy went `was` → `now`: its servers follow.
+    async fn apply_switch(&self, w: &Ws, was: bool, now: bool, restart: bool) {
+        if !now {
+            if was {
+                self.pool().release_root(&w.root).await;
             }
+            for plan in lock(&w.servers).values_mut() {
+                plan.resolved = None;
+            }
+        } else if !was || restart {
+            self.start_servers(w).await;
         }
     }
 
@@ -419,7 +427,7 @@ impl CodeIntel {
 
     /// `w`'s own policy, else the default.
     fn policy_for(&self, w: &Ws) -> LspPolicy {
-        w.lsp.unwrap_or_else(|| self.policy())
+        lock(&w.lsp).unwrap_or_else(|| self.policy())
     }
 
     fn pool(&self) -> Arc<LspPool> {
@@ -462,7 +470,8 @@ impl CodeIntel {
         if let Ok(existing) = self.ws(&root) {
             let same = existing.repo_key == ws.repo_key
                 && existing.trust == ws.trust
-                && existing.requested == ws.languages;
+                && existing.requested == ws.languages
+                && lock(&self.inner.prefer).get(&root) == Some(&ws.servers);
             if same {
                 self.focus(&existing, focus);
                 return Ok(());
@@ -470,6 +479,7 @@ impl CodeIntel {
             self.close_ws(&root).await;
         }
 
+        let servers_wanted = ws.servers.clone();
         let only = (!ws.languages.is_empty()).then(|| ws.languages.iter().cloned().collect());
         let lang_of = language_of(self.inner.toolchain.manifest().clone(), only);
         let snapshot = {
@@ -482,7 +492,7 @@ impl CodeIntel {
             root: root.clone(),
             repo_key: ws.repo_key,
             trust: ws.trust,
-            lsp: ws.lsp,
+            lsp: Mutex::new(ws.lsp),
             requested: ws.languages,
             language_of: lang_of,
             servers: Mutex::default(),
@@ -497,6 +507,7 @@ impl CodeIntel {
             }
             map.insert(root.clone(), w.clone());
         }
+        lock(&self.inner.prefer).insert(root.clone(), servers_wanted);
         self.focus(&w, focus);
         tracing::info!(target: "code_intel", root = %root.display(), trust = ?w.trust, languages = ?w.languages(), "workspace open");
         self.start_servers(&w).await;
@@ -513,6 +524,32 @@ impl CodeIntel {
         for server in w.servers_by_name().into_keys() {
             self.attach(w, &server).await;
         }
+    }
+
+    /// [`CodeIntelPort::warm`]. Stops at the cap: warming must not push out
+    /// a server someone is using, only to be pushed out in turn.
+    async fn warm_ws(&self, root: &Path) {
+        let Ok(w) = self.ws(root) else { return };
+        if !allowed(self.policy_for(&w), w.trust) {
+            return;
+        }
+        let pool = self.pool();
+        for server in w.servers_by_name().into_keys() {
+            if pool.get(&w.pool_key, &w.root, &server).await.is_none() && pool.has_room().await {
+                self.attach(&w, &server).await;
+            }
+        }
+    }
+
+    /// [`CodeIntelPort::set_lsp`].
+    async fn set_ws_lsp(&self, root: &Path, on: bool) {
+        let Ok(w) = self.ws(root) else { return };
+        let was = allowed(self.policy_for(&w), w.trust);
+        *lock(&w.lsp) = Some(LspPolicy {
+            review: on,
+            spaces: on,
+        });
+        self.apply_switch(&w, was, on, false).await;
     }
 
     /// Index `paths` first, then files mentioning the names they define.
@@ -546,7 +583,18 @@ impl CodeIntel {
     /// (Re)decide `lang`'s server for `w`. Probes; downloads nothing.
     async fn plan_server(&self, w: &Ws, lang: &LanguageId) {
         let policy = self.policy_for(w);
-        let Some(plan) = servers::plan(&self.inner.toolchain, lang, &w.root, policy, w.trust).await
+        let prefer = lock(&self.inner.prefer)
+            .get(&w.root)
+            .and_then(|p| p.get(lang.as_str()).cloned());
+        let Some(plan) = servers::plan(
+            &self.inner.toolchain,
+            lang,
+            prefer.as_deref(),
+            &w.root,
+            policy,
+            w.trust,
+        )
+        .await
         else {
             return;
         };
@@ -583,6 +631,7 @@ impl CodeIntel {
             map.remove(root).or_else(|| map.remove(&canonical(root)))
         };
         if let Some(w) = w {
+            lock(&self.inner.prefer).remove(&w.root);
             w.shut();
             self.pool().release_root(&w.root).await;
             self.spawn_evict();
@@ -600,7 +649,7 @@ impl CodeIntel {
             return Route::Not(Some(denied_note(w.trust).into()));
         }
         if plan.resolved.is_none() {
-            return Route::Not(Some(format!("{name} not installed")));
+            return Route::Not(Some(servers::not_resolved_note(&plan)));
         }
         let session = match self.pool().get(&w.pool_key, &w.root, &name).await {
             Some(s) => s,
@@ -619,7 +668,7 @@ impl CodeIntel {
         match session.state() {
             ServerState::Ready => Route::Ready(session),
             ServerState::Warming => Route::Not(Some(format!("{name} warming up"))),
-            ServerState::NotRunning | ServerState::Failed => {
+            ServerState::Off | ServerState::NotRunning | ServerState::Failed => {
                 Route::Not(Some(format!("{name} not running")))
             }
         }
@@ -1091,20 +1140,24 @@ impl CodeIntel {
             first_error = Some(e);
         }
 
-        // The preferred server, downloaded only if it is not on the machine.
-        // Resolved outside any worktree: a worktree's own binaries are
-        // never what gets installed.
-        let neutral = tc.root().to_path_buf();
-        if let Some((server, state)) = tc
-            .server_for(language, None, &neutral, TrustMode::Review)
-            .await
-        {
-            let on_disk = matches!(
+        // The preferred server, downloaded only if it is not on the machine
+        // and can run here. A project that names one wins (the first open
+        // worktree of the language that does).
+        let prefer: Option<String> = lock(&self.inner.prefer)
+            .values()
+            .find_map(|p| p.get(language.as_str()).cloned());
+        let mut fetched: Option<String> = None;
+        if let Some((server, state)) = tc.server_to_install(language, prefer.as_deref()).await {
+            let fetch = !matches!(
                 state,
-                InstallState::System { .. } | InstallState::Installed { .. }
+                InstallState::System { .. }
+                    | InstallState::Installed { .. }
+                    | InstallState::NeedsRuntime { .. }
+                    | InstallState::TrustedOnly
             );
-            if !on_disk && server.download_for(tc.platform()).is_some() {
+            if fetch && server.download_for(tc.platform()).is_some() {
                 self.mark_downloading(&server.name);
+                fetched = Some(server.name.clone());
                 let report = Reporter::new(
                     progress.clone(),
                     language,
@@ -1123,16 +1176,27 @@ impl CodeIntel {
         // Every open workspace with the language picks both up.
         let open: Vec<Arc<Ws>> = lock(&self.inner.workspaces).values().cloned().collect();
         for w in open {
-            if !w.languages().contains(language) {
-                continue;
+            // `mark_downloading` marked every language of that server, in
+            // every worktree: each has to read where it stands now.
+            let sharing: Vec<LanguageId> = lock(&w.servers)
+                .iter()
+                .filter(|(l, p)| *l != language && Some(&p.spec.name) == fetched.as_ref())
+                .map(|(l, _)| l.clone())
+                .collect();
+            for l in &sharing {
+                self.plan_server(&w, l).await;
             }
-            let progress = w.index.progress();
-            if grammar_ok && progress.missing_languages.contains(language) {
-                w.index.refresh_grammar(language);
-            }
-            self.plan_server(&w, language).await;
-            if let Some(plan) = w.plan(language) {
-                self.attach(&w, &plan.spec.name).await;
+            if w.languages().contains(language) {
+                let progress = w.index.progress();
+                if grammar_ok && progress.missing_languages.contains(language) {
+                    w.index.refresh_grammar(language);
+                }
+                self.plan_server(&w, language).await;
+                if let Some(plan) = w.plan(language) {
+                    self.attach(&w, &plan.spec.name).await;
+                }
+            } else if let Some(server) = fetched.as_deref().filter(|_| !sharing.is_empty()) {
+                self.attach(&w, server).await;
             }
         }
         first_error.map_or(Ok(()), Err)
@@ -1301,13 +1365,14 @@ impl CodeIntel {
             .into_iter()
             .map(|(language, shas)| {
                 let server = w.plan(&language).map(|p| ServerStatus {
+                    hint: p.spec.hint.clone(),
                     state: if allowed(policy, w.trust) {
                         running
                             .get(&p.spec.name)
                             .copied()
                             .unwrap_or(ServerState::NotRunning)
                     } else {
-                        ServerState::NotRunning
+                        ServerState::Off
                     },
                     name: p.spec.name,
                     install: p.install,
@@ -1585,6 +1650,14 @@ impl CodeIntelPort for CodeIntel {
 
     async fn file_changed(&self, root: &Path, path: &str) {
         self.changed(root, path).await
+    }
+
+    async fn warm(&self, root: &Path) {
+        self.warm_ws(root).await
+    }
+
+    async fn set_lsp(&self, root: &Path, on: bool) {
+        self.set_ws_lsp(root, on).await
     }
 
     async fn status(&self, root: &Path) -> CodeIntelResult<Vec<LanguageStatus>> {

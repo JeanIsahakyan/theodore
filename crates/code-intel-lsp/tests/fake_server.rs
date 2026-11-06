@@ -31,6 +31,8 @@ fn config(env: &[(&str, &str)]) -> LaunchConfig {
         init_options: json!({"fake": {"a": 1, "nested": {"key": "v"}}, "top": true}),
         workspace_folders: false,
         language_ids: vec![(LanguageId::new("rust"), "rust".into(), vec!["rs".into()])],
+        start_timeout_secs: None,
+        ready_settle_secs: None,
     }
 }
 
@@ -147,6 +149,105 @@ async fn ready_after_max_wait_when_indexing_never_ends() {
         ServerState::Ready
     );
     assert!(t0.elapsed() >= Duration::from_millis(400));
+}
+
+/// A JVM importing a build answers `initialize` late. The session's default
+/// gives up on it; the server's own `start_timeout_secs` does not.
+#[tokio::test]
+async fn a_server_may_ask_for_a_longer_start() {
+    let wt = worktree();
+    let opts = SessionOptions {
+        init_timeout: Duration::from_millis(200),
+        ..options()
+    };
+    let slow = config(&[("FAKE_LSP_INIT_DELAY_MS", "700")]);
+
+    let s = LspSession::start(wt.path(), slow.clone(), opts.clone()).unwrap();
+    assert_eq!(
+        s.wait_ready(Duration::from_secs(5)).await,
+        ServerState::Failed,
+        "the default gives up"
+    );
+
+    let cfg = LaunchConfig {
+        start_timeout_secs: Some(10),
+        ..slow
+    };
+    let s = LspSession::start(wt.path(), cfg, opts).unwrap();
+    assert_eq!(
+        s.wait_ready(Duration::from_secs(5)).await,
+        ServerState::Ready
+    );
+    s.shutdown().await;
+}
+
+/// `start_timeout_secs` caps the warm-up too: an import that outlasts the
+/// session's default is still `Warming`, not `Ready` with empty answers.
+#[tokio::test]
+async fn the_start_timeout_also_replaces_the_wait_for_ready() {
+    let wt = worktree();
+    let opts = SessionOptions {
+        ready_max_wait: Duration::from_millis(100),
+        ..options()
+    };
+    let cfg = LaunchConfig {
+        start_timeout_secs: Some(10),
+        ..config(&[("FAKE_LSP_PROGRESS_MS", "600")])
+    };
+    let t0 = Instant::now();
+    let s = LspSession::start(wt.path(), cfg, opts).unwrap();
+    assert_eq!(
+        s.wait_ready(Duration::from_secs(5)).await,
+        ServerState::Ready
+    );
+    assert!(
+        t0.elapsed() >= Duration::from_millis(600),
+        "{:?}",
+        t0.elapsed()
+    );
+    s.shutdown().await;
+}
+
+/// A server that announces its work late: the default settle calls it ready
+/// first; its own `ready_settle_secs` waits for the announcement, then for
+/// the work.
+#[tokio::test]
+async fn a_late_announcement_needs_a_longer_settle() {
+    let wt = worktree();
+    let late = config(&[
+        ("FAKE_LSP_PROGRESS_DELAY_MS", "400"),
+        ("FAKE_LSP_PROGRESS_MS", "800"),
+    ]);
+
+    let t0 = Instant::now();
+    let s = LspSession::start(wt.path(), late.clone(), options()).unwrap();
+    assert_eq!(
+        s.wait_ready(Duration::from_secs(5)).await,
+        ServerState::Ready
+    );
+    assert!(
+        t0.elapsed() < Duration::from_millis(400),
+        "ready before the work began: {:?}",
+        t0.elapsed()
+    );
+    s.shutdown().await;
+
+    let cfg = LaunchConfig {
+        ready_settle_secs: Some(1),
+        ..late
+    };
+    let t0 = Instant::now();
+    let s = LspSession::start(wt.path(), cfg, options()).unwrap();
+    assert_eq!(
+        s.wait_ready(Duration::from_secs(5)).await,
+        ServerState::Ready
+    );
+    assert!(
+        t0.elapsed() >= Duration::from_millis(1200),
+        "ready once the work ended: {:?}",
+        t0.elapsed()
+    );
+    s.shutdown().await;
 }
 
 #[tokio::test]

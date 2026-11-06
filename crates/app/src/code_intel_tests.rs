@@ -94,6 +94,7 @@ fn missing_server(lang: &str, server: &str) -> LanguageStatus {
             name: server.into(),
             install: InstallState::Missing,
             state: ServerState::NotRunning,
+            hint: None,
         }),
         index_percent: 40,
     }
@@ -263,6 +264,21 @@ async fn code_intel_off_in_config_opens_nothing_and_lists_no_tools() {
     assert!(
         err.to_string().contains("code intelligence is off"),
         "{err}"
+    );
+}
+
+/// `code_intel.servers`: a preference in a config file reaches the port.
+#[tokio::test]
+async fn a_preferred_server_reaches_the_port() {
+    let e = code_env().await;
+    e.global("code_intel: {languages: [rust], servers: {python: pyright}}");
+    let s = e.create("").await;
+    let want = format!("open {} Trusted [rust]", s.worktree);
+    wait_until(|| e.f.code_intel.calls().contains(&want)).await;
+    let servers = e.f.code_intel.last_servers.lock().unwrap().clone();
+    assert_eq!(
+        servers,
+        std::collections::BTreeMap::from([("python".to_string(), "pyright".to_string())])
     );
 }
 
@@ -676,9 +692,9 @@ async fn the_old_app_wide_switch_still_counts_below_the_files() {
 }
 
 #[tokio::test]
-async fn a_switch_reopens_the_worktrees_it_changes() {
+async fn a_switch_reaches_the_worktrees_open_now() {
     let e = code_env().await;
-    // A space served once is reopened when its policy changes.
+    // A space keeps its index and only its servers follow the switch.
     let s = e.create("").await;
     let open = format!("open {} Trusted []", s.worktree);
     wait_until(|| e.f.code_intel.calls().contains(&open)).await;
@@ -692,17 +708,134 @@ async fn a_switch_reopens_the_worktrees_it_changes() {
             .count()
     };
     assert_eq!(count(&e), 1, "unchanged: not reopened");
+    let switched = |e: &Env, on: bool| {
+        let call = format!("set_lsp {} {on}", s.worktree);
+        e.f.code_intel
+            .calls()
+            .iter()
+            .filter(|c| **c == call)
+            .count()
+    };
     e.core
         .code_intel_set_lsp(set_lsp(&e.project.id, SPACES, false))
         .await
         .unwrap();
+    assert_eq!(switched(&e, false), 1, "{:?}", e.f.code_intel.calls());
+    // The next use finds it as the switch left it.
     e.core.code_status(&scope).await.unwrap();
-    assert_eq!(count(&e), 2, "{:?}", e.f.code_intel.calls());
-    assert!(
-        e.f.code_intel
-            .calls()
-            .contains(&format!("close {}", s.worktree))
-    );
+    assert_eq!(count(&e), 1, "{:?}", e.f.code_intel.calls());
+
+    // The review switch does not concern a trusted space.
+    e.core
+        .code_intel_set_lsp(set_lsp(&e.project.id, REVIEW, true))
+        .await
+        .unwrap();
+    assert_eq!(switched(&e, true), 0, "{:?}", e.f.code_intel.calls());
+
+    e.core
+        .code_intel_set_lsp(set_lsp(&e.project.id, SPACES, true))
+        .await
+        .unwrap();
+    assert_eq!(switched(&e, true), 1, "{:?}", e.f.code_intel.calls());
+}
+
+#[tokio::test]
+async fn using_a_worktree_again_brings_its_servers_back() {
+    let e = code_env().await;
+    let s = e.create("").await;
+    let open = format!("open {} Trusted []", s.worktree);
+    wait_until(|| e.f.code_intel.calls().contains(&open)).await;
+    let warm = format!("warm {}", s.worktree);
+    assert!(!e.f.code_intel.calls().contains(&warm));
+    e.core
+        .code_status(&CodeScope::Space(s.id.clone()))
+        .await
+        .unwrap();
+    wait_until(|| e.f.code_intel.calls().contains(&warm)).await;
+}
+
+#[tokio::test]
+async fn the_status_reads_every_worktree_of_the_project_and_warms_it() {
+    let e = code_env().await;
+    let (a, b) = (e.create("").await, e.create("").await);
+    for s in [&a, &b] {
+        let open = format!("open {} Trusted []", s.worktree);
+        wait_until(|| e.f.code_intel.calls().contains(&open)).await;
+    }
+    e.core.code_intel_status(&e.project.id).await.unwrap();
+    let calls = e.f.code_intel.calls();
+    for s in [&a, &b] {
+        for what in ["warm", "status"] {
+            let call = format!("{what} {}", s.worktree);
+            assert!(calls.contains(&call), "{call} not in {calls:?}");
+        }
+    }
+}
+
+#[test]
+fn a_language_shows_its_most_alive_server_and_its_largest_worktree() {
+    let with = |state, files, index_percent| LanguageStatus {
+        files,
+        index_percent,
+        server: Some(ServerStatus {
+            name: "rust-analyzer".into(),
+            install: InstallState::Installed {
+                version: "1".into(),
+            },
+            state,
+            hint: None,
+        }),
+        ..missing_server("rust", "rust-analyzer")
+    };
+    let state = |l: &LanguageStatus| l.server.as_ref().unwrap().state;
+    let merged = |pairs: Vec<LanguageStatus>| {
+        let mut out = Vec::new();
+        for l in pairs {
+            crate::usecases::code_intel::merge_statuses(&mut out, vec![l]);
+        }
+        assert_eq!(out.len(), 1);
+        out.remove(0)
+    };
+
+    // The review worktree's switch is off; the space's server answers.
+    let l = merged(vec![
+        with(ServerState::Off, 10, 100),
+        with(ServerState::Ready, 3, 50),
+    ]);
+    assert_eq!(state(&l), ServerState::Ready);
+    assert_eq!((l.files, l.index_percent), (10, 100));
+
+    for (a, b, want) in [
+        (
+            ServerState::Ready,
+            ServerState::NotRunning,
+            ServerState::Ready,
+        ),
+        (
+            ServerState::NotRunning,
+            ServerState::Warming,
+            ServerState::Warming,
+        ),
+        (
+            ServerState::Failed,
+            ServerState::NotRunning,
+            ServerState::Failed,
+        ),
+        (
+            ServerState::Off,
+            ServerState::NotRunning,
+            ServerState::NotRunning,
+        ),
+    ] {
+        let l = merged(vec![with(a, 1, 1), with(b, 1, 1)]);
+        assert_eq!(state(&l), want, "{a:?} + {b:?}");
+    }
+
+    // A review says "Spaces only"; the space can still install it.
+    let mut review = with(ServerState::NotRunning, 1, 1);
+    review.server.as_mut().unwrap().install = InstallState::TrustedOnly;
+    let l = merged(vec![review, missing_server("rust", "rust-analyzer")]);
+    assert_eq!(l.server.unwrap().install, InstallState::Missing);
 }
 
 #[tokio::test]
@@ -730,6 +863,68 @@ async fn the_lsp_policy_reads_review_and_spaces_apart() {
 
 // ── install ─────────────────────────────────────────────────────────────────
 
+/// A server that can't run here is neither downloaded nor offered: not by
+/// `always`, not by `ask`.
+#[tokio::test]
+async fn a_server_that_cannot_run_is_never_installed_or_suggested() {
+    let mut e = code_env().await;
+    let with = |lang: &str, name: &str, install: InstallState| LanguageStatus {
+        server: Some(ServerStatus {
+            name: name.into(),
+            install,
+            state: ServerState::NotRunning,
+            hint: None,
+        }),
+        ..missing_server(lang, name)
+    };
+    *e.f.code_intel.status.lock().unwrap() = vec![
+        with(
+            "java",
+            "jdtls",
+            InstallState::NeedsRuntime {
+                runtime: "java".into(),
+                min: "21".into(),
+                found: Some("17.0.2".into()),
+            },
+        ),
+        with("kotlin", "kotlin-lsp", InstallState::TrustedOnly),
+        with("ruby", "ruby-lsp", InstallState::Unavailable),
+    ];
+    let root = Path::new("/tmp/wt");
+
+    e.core
+        .code_install_flow(root, InstallPolicy::Always, None)
+        .await;
+    assert!(
+        !e.f.code_intel
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("install")),
+        "{:?}",
+        e.f.code_intel.calls()
+    );
+
+    e.core
+        .code_install_flow(root, InstallPolicy::Ask, None)
+        .await;
+    no_ephemeral(&mut e.recv, suggestion).await;
+
+    // What the row reads: the state and the hint, through the contract.
+    *e.f.code_intel.status.lock().unwrap() = vec![LanguageStatus {
+        server: Some(ServerStatus {
+            name: "ruby-lsp".into(),
+            install: InstallState::Unavailable,
+            state: ServerState::NotRunning,
+            hint: Some("gem install ruby-lsp".into()),
+        }),
+        ..missing_server("ruby", "ruby-lsp")
+    }];
+    let status = e.core.code_intel_status(&e.project.id).await.unwrap();
+    let server = status.languages[0].server.as_ref().unwrap();
+    assert_eq!(server.install, theodore_contract::CodeInstall::Unavailable);
+    assert_eq!(server.hint.as_deref(), Some("gem install ruby-lsp"));
+}
+
 #[tokio::test]
 async fn install_follows_the_policy_and_remembers_a_no() {
     let mut e = code_env().await;
@@ -743,6 +938,7 @@ async fn install_follows_the_policy_and_remembers_a_no() {
                     version: None,
                 },
                 state: ServerState::Ready,
+                hint: None,
             }),
             ..missing_server("python", "ty")
         },

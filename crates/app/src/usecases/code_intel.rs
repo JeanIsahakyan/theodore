@@ -62,16 +62,37 @@ pub struct LspPolicy {
     pub spaces: bool,
 }
 
+/// Why a worktree is open on the port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenedFor {
+    Review,
+    Space,
+    /// Only project settings → Languages (a local folder's checkout): closed
+    /// before a Remove, reopened by the next status.
+    Settings,
+}
+
+impl OpenedFor {
+    /// Whether language servers may serve it. An untrusted space is served
+    /// like a review, on top of the spaces switch.
+    fn lsp(self, trust: TrustMode, policy: LspPolicy) -> bool {
+        match (self, trust) {
+            (Self::Space, TrustMode::Trusted) => policy.spaces,
+            (Self::Space, TrustMode::Review) => policy.spaces && policy.review,
+            (_, TrustMode::Trusted) => policy.spaces,
+            (_, TrustMode::Review) => policy.review,
+        }
+    }
+}
+
 /// One worktree open on the port.
 #[derive(Debug, Clone, PartialEq)]
 struct Opened {
     trust: TrustMode,
     project: Option<String>,
-    /// Language servers may serve it (`LspPolicy`).
+    /// Language servers may serve it ([`OpenedFor::lsp`]).
     lsp: bool,
-    /// Opened only for project settings → Languages (a local folder's checkout):
-    /// closed before a Remove, reopened by the next status.
-    settings: bool,
+    purpose: OpenedFor,
 }
 
 /// In-memory: what is open, which languages were suggested this session,
@@ -219,7 +240,7 @@ impl Core {
             return CodeTools::Off;
         }
         let project = self.project_of_repo(&entry.pr_ref.repo).await.map(|p| p.id);
-        let lsp = self.lsp_policy(&cfg).await.review;
+        let lsp = OpenedFor::Review.lsp(TrustMode::Review, self.lsp_policy(&cfg).await);
         let ws = Workspace {
             repo_key: repo_key(&entry.pr_ref.repo),
             root: entry.worktree_path.clone(),
@@ -232,9 +253,10 @@ impl Core {
                 .map(|f| f.path.clone())
                 .collect(),
             lsp: None,
+            servers: cfg.servers.clone(),
         };
         if self
-            .open_code_workspace(ws, lsp, cfg.install, project, false)
+            .open_code_workspace(ws, lsp, cfg.install, project, OpenedFor::Review)
             .await
         {
             CodeTools::Read
@@ -264,23 +286,29 @@ impl Core {
             return false;
         }
         let trusted = !cfg.denied && cfg.repo.as_ref().is_none_or(|r| r.trusted);
-        // An untrusted space is served like a review.
-        let policy = self.lsp_policy(code).await;
-        let lsp = policy.spaces && (trusted || policy.review);
+        let trust = if trusted {
+            TrustMode::Trusted
+        } else {
+            TrustMode::Review
+        };
+        let lsp = OpenedFor::Space.lsp(trust, self.lsp_policy(code).await);
         let ws = Workspace {
             repo_key: repo_key(&project.repo),
             root: PathBuf::from(&space.worktree),
-            trust: if trusted {
-                TrustMode::Trusted
-            } else {
-                TrustMode::Review
-            },
+            trust,
             languages: languages(code),
             focus_paths: Vec::new(),
             lsp: None,
+            servers: code.servers.clone(),
         };
-        self.open_code_workspace(ws, lsp, code.install, Some(project.id.clone()), false)
-            .await
+        self.open_code_workspace(
+            ws,
+            lsp,
+            code.install,
+            Some(project.id.clone()),
+            OpenedFor::Space,
+        )
+        .await
     }
 
     /// `open_space_code` in the background: a space just created or
@@ -313,14 +341,15 @@ impl Core {
 
     /// `open` on the port unless `ws.root` is open already under the same
     /// trust and LSP policy (a change reopens it), then the install flow in
-    /// the background. `false` when the port refused.
+    /// the background. Already open: its servers come back if they went idle.
+    /// `false` when the port refused.
     async fn open_code_workspace(
         &self,
         ws: Workspace,
         lsp: bool,
         install: InstallPolicy,
         project: Option<String>,
-        settings: bool,
+        purpose: OpenedFor,
     ) -> bool {
         let Some(port) = self.code_port() else {
             return false;
@@ -331,7 +360,7 @@ impl Core {
             trust: ws.trust,
             project: project.clone(),
             lsp,
-            settings,
+            purpose,
         };
         let before = self
             .0
@@ -342,7 +371,11 @@ impl Core {
             .get(&ws.root)
             .cloned();
         match before {
-            Some(o) if o.trust == want.trust && o.lsp == want.lsp => return true,
+            Some(o) if o.trust == want.trust && o.lsp == want.lsp => {
+                let root = ws.root;
+                tokio::spawn(async move { port.warm(&root).await });
+                return true;
+            }
             Some(_) => port.close(&ws.root).await,
             None => {}
         }
@@ -527,8 +560,15 @@ impl Core {
 
     // ── project settings → Languages ────────────────────────────────────
 
-    /// Each language of `project`: from a worktree of it already open,
-    /// else (a local folder) the folder itself, read-only.
+    /// Each language of `project`, over every worktree of it open, else (a
+    /// local folder) the folder itself, read-only. Reading it starts what
+    /// the policy allows: a server stopped for being idle shows as warming,
+    /// not as dead.
+    ///
+    /// ```text
+    /// open roots ─▶ warm ─▶ status ─┐ per language: the most alive server,
+    ///                  …            ┴▶ the largest count of files
+    /// ```
     pub async fn code_intel_status(&self, project: &str) -> AppResult<CodeIntelStatus> {
         let p = self
             .project_row(project)
@@ -555,16 +595,18 @@ impl Core {
                 languages: Vec::new(),
             });
         };
-        let mut root = self
+        let mut roots: Vec<PathBuf> = self
             .0
             .code_intel
             .open
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .iter()
-            .find(|(_, o)| o.project.as_deref() == Some(project))
-            .map(|(r, _)| r.clone());
-        if root.is_none()
+            .filter(|(_, o)| o.project.as_deref() == Some(project))
+            .map(|(r, _)| r.clone())
+            .collect();
+        roots.sort();
+        if roots.is_empty()
             && let Some(folder) = &p.path
         {
             let ws = Workspace {
@@ -574,21 +616,46 @@ impl Core {
                 languages: languages(&cfg),
                 focus_paths: Vec::new(),
                 lsp: None,
+                servers: cfg.servers.clone(),
             };
             if self
-                .open_code_workspace(ws, policy.review, cfg.install, Some(p.id.clone()), true)
+                .open_code_workspace(
+                    ws,
+                    policy.review,
+                    cfg.install,
+                    Some(p.id.clone()),
+                    OpenedFor::Settings,
+                )
                 .await
             {
-                root = Some(PathBuf::from(folder));
+                roots.push(PathBuf::from(folder));
             }
         }
         let mut languages = Vec::new();
-        if let Some(root) = root {
+        if !roots.is_empty() {
+            let mut merged: Vec<LanguageStatus> = Vec::new();
+            let mut last_error = None;
+            let mut answered = false;
+            for root in &roots {
+                port.warm(root).await;
+                match port.status(root).await {
+                    Ok(statuses) => {
+                        answered = true;
+                        merge_statuses(&mut merged, statuses);
+                    }
+                    Err(e) => last_error = Some(e),
+                }
+            }
+            if !answered && let Some(e) = last_error {
+                return Err(code_err(e));
+            }
+            merged.sort_by(|a, b| {
+                b.files
+                    .cmp(&a.files)
+                    .then_with(|| a.language.cmp(&b.language))
+            });
             let declined = self.declined_languages().await;
-            languages = port
-                .status(&root)
-                .await
-                .map_err(code_err)?
+            languages = merged
                 .into_iter()
                 .map(|l| language_view(l, &declined))
                 .collect();
@@ -606,12 +673,12 @@ impl Core {
     /// `.theodore/config.local.yaml` (gitignored), or a host project's in
     /// the data directory. Never the repo's file (docs/code-intel.md §8).
     /// The local layer wins over the global file, which stays the
-    /// default under it. Worktrees open under the old value reopen on
-    /// their next use (`open_code_workspace`).
+    /// default under it. Worktrees of the project open now follow at once.
     ///
     /// ```text
     /// switch ─▶ local file: line edit (comments kept) ─▶ checked ─▶ written
-    ///                      └─ a shape a line edit can't handle ─▶ refused, nothing written
+    ///              │       └─ a shape a line edit can't handle ─▶ refused, nothing written
+    ///              └─▶ open worktrees whose answer changed ─▶ servers stop / start
     /// ```
     pub async fn code_intel_set_lsp(&self, req: CodeIntelLspRequest) -> AppResult<()> {
         let leaf = match req.scope {
@@ -653,7 +720,38 @@ impl Core {
                 .exclude_locally(folder, crate::config::LOCAL_FILE)
                 .await?;
         }
+        drop(_guard);
+        self.apply_lsp_switch(&project).await;
         Ok(())
+    }
+
+    /// `project`'s open worktrees take its switches as they are now.
+    async fn apply_lsp_switch(&self, project: &Project) {
+        let Some(port) = self.code_port() else {
+            return;
+        };
+        let layers = self.project_layers(project, None).await;
+        let merged = self.merge_cached(&layers);
+        let policy = self.lsp_policy(&merged.config.code_intel).await;
+        let changed: Vec<(PathBuf, bool)> = self
+            .0
+            .code_intel
+            .open
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter_mut()
+            .filter(|(_, o)| o.project.as_deref() == Some(project.id.as_str()))
+            .filter_map(|(root, o)| {
+                let on = o.purpose.lsp(o.trust, policy);
+                (on != o.lsp).then(|| {
+                    o.lsp = on;
+                    (root.clone(), on)
+                })
+            })
+            .collect();
+        for (root, on) in changed {
+            port.set_lsp(&root, on).await;
+        }
     }
 
     /// "Install": downloads `language`'s grammar and server, and forgets
@@ -718,7 +816,7 @@ impl Core {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .iter()
-            .filter(|(_, o)| o.settings)
+            .filter(|(_, o)| o.purpose == OpenedFor::Settings)
             .map(|(r, _)| r.clone())
             .collect();
         for root in settings_only {
@@ -1141,8 +1239,60 @@ fn install_view(s: InstallState, declined: bool) -> CodeInstall {
         },
         InstallState::Installed { version } => CodeInstall::Installed { version },
         InstallState::Unavailable => CodeInstall::Unavailable,
+        InstallState::NeedsRuntime {
+            runtime,
+            min,
+            found,
+        } => CodeInstall::NeedsRuntime {
+            runtime,
+            min,
+            found,
+        },
+        InstallState::TrustedOnly => CodeInstall::TrustedOnly,
         InstallState::Declined => CodeInstall::Declined,
         InstallState::Failed { error } => CodeInstall::Failed { error },
+    }
+}
+
+/// How alive a server is, for choosing what one language shows across
+/// worktrees.
+fn liveness(state: ServerState) -> u8 {
+    match state {
+        ServerState::Off => 0,
+        ServerState::NotRunning => 1,
+        ServerState::Failed => 2,
+        ServerState::Warming => 3,
+        ServerState::Ready => 4,
+    }
+}
+
+/// One worktree's statuses into `into`. Per language: the server of the
+/// worktree where it is most alive, and the files and index of the worktree
+/// with the most files.
+pub(crate) fn merge_statuses(into: &mut Vec<LanguageStatus>, statuses: Vec<LanguageStatus>) {
+    for next in statuses {
+        let Some(have) = into.iter_mut().find(|l| l.language == next.language) else {
+            into.push(next);
+            continue;
+        };
+        let alive = |l: &LanguageStatus| l.server.as_ref().map(|s| liveness(s.state));
+        let spaces_only = |l: &LanguageStatus| {
+            l.server
+                .as_ref()
+                .is_some_and(|s| s.install == InstallState::TrustedOnly)
+        };
+        // Equally alive: what a space can install says more than a review's
+        // "Spaces only".
+        if alive(&next) > alive(have)
+            || (alive(&next) == alive(have) && spaces_only(have) && !spaces_only(&next))
+        {
+            have.server = next.server;
+        }
+        if next.files > have.files {
+            have.files = next.files;
+            have.index_percent = next.index_percent;
+            have.grammar = next.grammar;
+        }
     }
 }
 
@@ -1154,8 +1304,10 @@ fn language_view(l: LanguageStatus, declined: &[String]) -> CodeLanguage {
         grammar: install_view(l.grammar, false),
         server: l.server.map(|s| CodeServer {
             name: s.name,
+            hint: s.hint,
             install: install_view(s.install, was_declined),
             state: match s.state {
+                ServerState::Off => CodeServerState::Off,
                 ServerState::NotRunning => CodeServerState::NotRunning,
                 ServerState::Warming => CodeServerState::Warming,
                 ServerState::Ready => CodeServerState::Ready,

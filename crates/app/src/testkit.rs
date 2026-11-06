@@ -2910,6 +2910,8 @@ pub struct FakeCodeIntel {
     pub limits: Mutex<Vec<theodore_ports::CodeIntelLimits>>,
     /// Every query fails with this, when set.
     pub fail: Mutex<Option<theodore_ports::CodeIntelError>>,
+    /// `Workspace::servers` of the last `open`.
+    pub last_servers: Mutex<std::collections::BTreeMap<String, String>>,
 }
 
 impl FakeCodeIntel {
@@ -2945,6 +2947,7 @@ impl FakeCodeIntel {
 #[async_trait]
 impl theodore_ports::CodeIntelPort for FakeCodeIntel {
     async fn open(&self, ws: theodore_ports::Workspace) -> theodore_ports::CodeIntelResult<()> {
+        self.last_servers.lock().unwrap().clone_from(&ws.servers);
         let langs: Vec<&str> = ws.languages.iter().map(|l| l.as_str()).collect();
         self.record(format!(
             "open {} {:?} [{}]",
@@ -3110,6 +3113,12 @@ impl theodore_ports::CodeIntelPort for FakeCodeIntel {
     }
     async fn file_changed(&self, root: &Path, path: &str) {
         self.record(format!("file_changed {} {path}", root.display()));
+    }
+    async fn warm(&self, root: &Path) {
+        self.record(format!("warm {}", root.display()));
+    }
+    async fn set_lsp(&self, root: &Path, on: bool) {
+        self.record(format!("set_lsp {} {on}", root.display()));
     }
     async fn status(
         &self,

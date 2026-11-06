@@ -14,7 +14,9 @@
 //! Positions count UTF-16 units unless `FAKE_LSP_ENCODING=utf-8`.
 //!
 //! Environment:
+//! `FAKE_LSP_INIT_DELAY_MS` (a slow `initialize`),
 //! `FAKE_LSP_PROGRESS_MS` (indexing token for that long; `never`),
+//! `FAKE_LSP_PROGRESS_DELAY_MS` (only announced after that long),
 //! `FAKE_LSP_CRASH_ON` / `FAKE_LSP_HANG_ON` (a method),
 //! `FAKE_LSP_FLAT_SYMBOLS`, `FAKE_LSP_RENAME_CHANGES`, `FAKE_LSP_PULL`,
 //! `FAKE_LSP_FOLDERS`, `FAKE_LSP_IGNORE_EXIT`, `FAKE_LSP_PID_FILE`.
@@ -234,6 +236,9 @@ impl Server {
         let uri = p["textDocument"]["uri"].as_str().unwrap_or("").to_string();
         match method {
             "initialize" => {
+                if let Some(ms) = env("FAKE_LSP_INIT_DELAY_MS") {
+                    std::thread::sleep(Duration::from_millis(ms.parse().unwrap_or(0)));
+                }
                 self.init_options = p["initializationOptions"].clone();
                 self.folders = p["workspaceFolders"]
                     .as_array()
@@ -432,23 +437,27 @@ impl Server {
         }
         if msg["id"] == json!(3) {
             // The progress token exists now.
-            send(
-                &self.out,
-                json!({"jsonrpc": "2.0", "method": "$/progress", "params":
-                       {"token": "index", "value": {"kind": "begin", "title": "Indexing"}}}),
-            );
+            let delay = env("FAKE_LSP_PROGRESS_DELAY_MS")
+                .and_then(|ms| ms.parse().ok())
+                .unwrap_or(0);
             let ms = env("FAKE_LSP_PROGRESS_MS").unwrap_or_default();
-            if let Ok(ms) = ms.parse::<u64>() {
-                let out = self.out.clone();
-                std::thread::spawn(move || {
+            let out = self.out.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(delay));
+                send(
+                    &out,
+                    json!({"jsonrpc": "2.0", "method": "$/progress", "params":
+                           {"token": "index", "value": {"kind": "begin", "title": "Indexing"}}}),
+                );
+                if let Ok(ms) = ms.parse::<u64>() {
                     std::thread::sleep(Duration::from_millis(ms));
                     send(
                         &out,
                         json!({"jsonrpc": "2.0", "method": "$/progress", "params":
                                {"token": "index", "value": {"kind": "end"}}}),
                     );
-                });
-            }
+                }
+            });
         }
     }
 }
