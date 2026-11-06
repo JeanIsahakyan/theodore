@@ -41,6 +41,24 @@ describe('resourceCache', () => {
     expect(res.error).toBe('boom');
   });
 
+  it('finishes a load it had to go over the limit for, then gets back under', async () => {
+    const cache = resourceCache<string>({ limit: 1 });
+    let land = (_: string) => {};
+    const slow = cache.get(
+      'slow',
+      () => new Promise<string>((resolve) => (land = resolve)),
+    );
+    cache.get('quick', () => Promise.resolve('q'));
+    await flush();
+    expect(cache.peek('slow')).toBeUndefined();
+    land('s');
+    await flush();
+    expect(slow.data).toBe('s');
+    expect(
+      [cache.peek('slow'), cache.peek('quick')].filter(Boolean),
+    ).toHaveLength(1);
+  });
+
   it('evicts the least recently touched key once over the limit', async () => {
     const cache = resourceCache<string>({ limit: 2 });
     cache.get('a', () => Promise.resolve('a'));
