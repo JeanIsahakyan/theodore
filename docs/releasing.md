@@ -200,7 +200,7 @@ A staging build polls only
 `updates.channel` says, and Settings → Updates shows **Staging** instead of
 the channel picker. Any other build resolves `updates.channel` to `stable`
 or `beta` and never to staging (`effective_channel` in
-`apps/desktop/src/updater.rs`).
+`apps/desktop/src/updater.rs`); a nightly polls nothing (below).
 
 - **Beta channel**: `updates.channel` = `"beta"` resolves to
   `.../releases/download/channel-beta/latest.json` instead of
@@ -217,6 +217,11 @@ holding `Theodore Nightly.app` (its own app and data, see "One identity
 per build" below). The number only grows, one per commit. Nothing is
 tagged or published, and the version files keep the release version; a
 dirty tree is refused, so every nightly maps to exactly one commit.
+
+A nightly doesn't update itself: no feed publishes one, and the stable feed
+would replace it with a production app (`self_updates` in
+`apps/desktop/src/updater.rs`). So it checks nothing, Settings → Updates says
+so, and it doesn't offer the move to Applications. Build a new one to move ahead.
 
 It bakes in the account's client id like a release, so it needs
 `THEODORE_WORKOS_CLIENT_ID` set and stops with a message when it isn't:
@@ -425,8 +430,9 @@ verifies its own signature rather than relying on Gatekeeper.
 
 The updater replaces the bundle in place, so it can't update an app run from
 the disk image or from a copy macOS translocated (a quarantined app opened
-where it was downloaded): both are read-only. The first launch outside an
-Applications folder asks once (`apps/desktop/src/relocate.rs`):
+where it was downloaded): both are read-only. The first launch of a production
+or staging build outside an Applications folder asks once
+(`apps/desktop/src/relocate.rs`):
 
 ```
 launch, not in /Applications or ~/Applications, never asked

@@ -97,6 +97,13 @@ struct Failure {
     message: String,
 }
 
+/// Whether a build updates itself. Not a nightly: it is built by hand from a
+/// commit and no feed publishes one, so the stable feed would replace it with
+/// a production app (docs/releasing.md "Local nightly builds").
+pub fn self_updates(build_env: &str) -> bool {
+    build_env != "nightly"
+}
+
 /// The channel a build updates from: a staging build only ever from
 /// `staging`, whatever the setting says; any other build from the
 /// `updates.channel` setting, `stable` or `beta`, never `staging`
@@ -163,6 +170,11 @@ async fn try_check<R: Runtime>(
     // A sandbox window never reaches the network (docs/sandbox.md).
     if !core.updates_enabled().await {
         return Ok(None);
+    }
+    if !self_updates(build_info::BUILD_ENV) {
+        return Err(other(
+            "a nightly build doesn't update itself; build a new one".into(),
+        ));
     }
     // The install would fail after the whole download (relocate.rs).
     if let Some(why) = crate::relocate::blocks_updates() {
@@ -365,6 +377,14 @@ mod tests {
         assert_eq!(failure_reason(&E::Network("down".into())), "network");
         assert_eq!(failure_reason(&E::MissingSignedVersion), "signature");
         assert_eq!(failure_reason(&E::ReleaseNotFound), "other");
+    }
+
+    #[test]
+    fn only_a_nightly_stays_off_the_update_feeds() {
+        assert!(!self_updates("nightly"));
+        for env in ["production", "staging", "dev"] {
+            assert!(self_updates(env), "{env}");
+        }
     }
 
     #[test]

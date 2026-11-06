@@ -123,7 +123,9 @@ fn home() -> Option<PathBuf> {
 /// On the first launch outside Applications, asks to move there (on a
 /// background thread: the dialog blocks). `data_dir` keeps the answer.
 pub fn offer<R: Runtime>(app: &AppHandle<R>, data_dir: PathBuf) {
-    if !cfg!(target_os = "macos") || crate::build_info::BUILD_ENV == "dev" {
+    // The question is about updates: a nightly has none to lose.
+    let env = crate::build_info::BUILD_ENV;
+    if !cfg!(target_os = "macos") || env == "dev" || !crate::updater::self_updates(env) {
         return;
     }
     let Some(Location::Elsewhere { bundle, from }) = current() else {
