@@ -1001,10 +1001,11 @@ merge to main @ 0.3.0 (no v0.3.0 yet)
                     latest.json {version, notes, url, signature}
                     └─▶ GitHub Release v0.3.0 on JeanIsahakyan/theodore (public)
 
-app ──▶ on launch + every 6 h
+app ──▶ on launch + every 6 h (wall clock, so sleep doesn't stretch it)
         GET github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json
         newer? ─▶ download in background ─▶ verify signature
-               ─▶ "Restart to update" (never forced)
+               ─▶ "Restart to update" (never forced); a notification again
+                  every 24 h while it waits, window in the background
                ─▶ restart waits until: no agent running, no outbox item
                   pending (failed ones don't count)
 ```

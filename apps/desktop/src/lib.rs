@@ -13,6 +13,7 @@ pub mod gate;
 pub mod menu;
 pub mod notify;
 pub mod op;
+pub mod relocate;
 pub mod shell_path;
 pub mod updater;
 
@@ -210,11 +211,13 @@ fn storage_namespace(sandbox: bool, env: theodore_runtime::BuildEnv) -> &'static
 /// `forward` receives the event emitter once the app is up, to pipe the
 /// core's sync and ephemeral streams to the UI. `auto_update` starts the
 /// launch-time and periodic update check (the menu's "Check for updates"
-/// works either way).
+/// works either way). `offer_move`: the data dir, to offer moving the app
+/// to Applications once (`relocate`); `None` never offers.
 pub fn run(
     core: Arc<dyn CoreApi>,
     sandbox: bool,
     auto_update: bool,
+    offer_move: Option<std::path::PathBuf>,
     forward: impl FnOnce(CoreEvents<tauri::Wry>) + Send + 'static,
 ) {
     let builder = specta_builder();
@@ -249,6 +252,7 @@ pub fn run(
         .invoke_handler(gate::guard_core(core.clone(), builder.invoke_handler()))
         .manage(core.clone())
         .manage(updater::UpdateState::default())
+        .manage(updater::Notices::default())
         // The title bar's size reaches the page as CSS variables (`chrome`).
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Finished
@@ -275,6 +279,9 @@ pub fn run(
             app.manage(notify::for_app(&handle));
             forward(emitter(handle.clone()));
             deep_link::listen(&handle, core.clone());
+            if let Some(data_dir) = offer_move {
+                relocate::offer(&handle, data_dir);
+            }
             if auto_update {
                 updater::spawn_periodic_check(handle, core.clone());
             }

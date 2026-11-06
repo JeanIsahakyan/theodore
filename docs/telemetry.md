@@ -76,6 +76,9 @@ fixed set — never code, paths, titles or comment text. The wire shape is pinne
 | `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`) |
 | `config_saved` | `where` (`global`, `repo`, `local`) |
 | `problem_reported` | `mode` (`issue`, `issue_with_logs`, `logs_only`) |
+| `update_installed` | `version` (the update now on disk; the running one is `app_version`) |
+| `update_failed` | `reason` (`read_only`, `network`, `signature`, `other`) |
+| `move_to_applications` | `choice` (`moved`, `declined`, `failed`), `from` (`volume`, `translocated`, `folder`) |
 
 Every PostHog event also carries `app_version`, `os`, `channel` (the update channel), `commit`
 and `build_env` (`production`, `staging`, `nightly`, `dev`; docs/releasing.md "Build stamp").

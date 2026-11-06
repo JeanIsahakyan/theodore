@@ -422,3 +422,21 @@ Without a Developer ID, Gatekeeper blocks the first launch of a downloaded
 After that first launch, the app updates itself normally — downloads happen
 outside the browser, so no quarantine flag is ever attached, and the updater
 verifies its own signature rather than relying on Gatekeeper.
+
+The updater replaces the bundle in place, so it can't update an app run from
+the disk image or from a copy macOS translocated (a quarantined app opened
+where it was downloaded): both are read-only. The first launch outside an
+Applications folder asks once (`apps/desktop/src/relocate.rs`):
+
+```
+launch, not in /Applications or ~/Applications, never asked
+  └─▶ "Move Theodore to Applications?"
+        Not Now ──▶ never asked again (marker in the data dir)
+        Move    ──▶ ditto → /Applications (~/Applications if not writable)
+                    an existing copy there → Trash; quarantine flag stripped
+                    original → Trash (a plain folder only)
+                    quit ──▶ reopen from Applications ──▶ eject the image
+```
+
+Declined, the updater skips the download and says why ("move it to
+Applications to get updates") instead of failing on every check.
