@@ -203,7 +203,8 @@ export const api = {
   openPr: (req: OpenPrRequest) => call<OpenPrResponse>('open_pr', { req }),
   getRevision: (req: RevisionRequest) =>
     call<Revision>('get_revision', { req }),
-  getFile: (req: FileRequest) => call<string | null>('get_file', { req }),
+  getFile: (req: FileRequest, quiet = false) =>
+    call<string | null>('get_file', { req }, quiet),
   regroup: (pr: PrId) => call<null>('regroup', { pr }),
   runSkill: (req: RunSkillRequest) => call<string>('run_skill', { req }),
   ask: (req: AskRequest) => call<string>('ask', { req }),

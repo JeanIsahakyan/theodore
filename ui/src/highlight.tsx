@@ -7,11 +7,12 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
-import type { HighlighterCore } from 'shiki/core';
+import type { GrammarState, HighlighterCore, ThemedToken } from 'shiki/core';
 import { findColors, type ColorHit } from './colors';
 
 export type Lang =
   | 'ts'
+  | 'tsx'
   | 'sql'
   | 'prisma'
   | 'yaml'
@@ -45,16 +46,19 @@ export type Lang =
 
 /** Extension → language, lower-cased, without the dot. `.h`/`.hpp`/`.cc`/
  *  `.mm` are grouped under `cpp` (plain C and Objective-C get their own
- *  extensions); `.tl` is explicitly plain, not a guess. */
+ *  extensions); `.tl` is explicitly plain, not a guess. JavaScript of any
+ *  kind reads as `tsx`, since a `.js` file may hold JSX: the plain TypeScript
+ *  grammar can't follow it, and past the first JSX it stays lost for the rest
+ *  of the file, which `tokenizeFile` would show. */
 const EXT_LANG: Record<string, Lang> = {
   ts: 'ts',
-  tsx: 'ts',
+  tsx: 'tsx',
   mts: 'ts',
   cts: 'ts',
-  js: 'ts',
-  jsx: 'ts',
-  mjs: 'ts',
-  cjs: 'ts',
+  js: 'tsx',
+  jsx: 'tsx',
+  mjs: 'tsx',
+  cjs: 'tsx',
   sql: 'sql',
   prisma: 'prisma',
   yml: 'yaml',
@@ -118,8 +122,11 @@ const CURLY_KW =
 /** Fallback keyword regex per language, used only while Shiki is still
  *  loading (or hasn't learned that grammar yet). Approximate on purpose —
  *  real highlighting takes over once the grammar loads. */
+const TS_KW =
+  /^(import|from|export|const|let|async|await|function|return|if|for|of|in|throw|new|class|extends|public|type|enum|void|true|false|null|undefined|this)$/;
 const KW: Partial<Record<Lang, RegExp>> = {
-  ts: /^(import|from|export|const|let|async|await|function|return|if|for|of|in|throw|new|class|extends|public|type|enum|void|true|false|null|undefined|this)$/,
+  ts: TS_KW,
+  tsx: TS_KW,
   sql: /^(CREATE|TABLE|TYPE|AS|ENUM|NOT|NULL|REFERENCES|ON|DELETE|CASCADE|PRIMARY|KEY|ALTER|ADD|COLUMN|DEFAULT|INDEX|TEXT|INTEGER)$/,
   prisma: /^(model|enum|String|Int|DateTime|Boolean)$/,
   css: /^(display|grid|flex|color|background|border|padding|margin|important)$/,
@@ -196,6 +203,7 @@ function regexTokens(src: string, lang: Lang): Tok[] {
 /** Shiki's own grammar id for each language. */
 const SHIKI: Record<Exclude<Lang, 'plain'>, string> = {
   ts: 'typescript',
+  tsx: 'tsx',
   sql: 'sql',
   prisma: 'prisma',
   yaml: 'yaml',
@@ -233,6 +241,7 @@ const SHIKI: Record<Exclude<Lang, 'plain'>, string> = {
  *  bundler can split it into its own lazy chunk. */
 const EAGER_LANGS: Exclude<Lang, 'plain'>[] = [
   'ts',
+  'tsx',
   'sql',
   'prisma',
   'yaml',
@@ -240,6 +249,7 @@ const EAGER_LANGS: Exclude<Lang, 'plain'>[] = [
 ];
 const LANG_LOADER = {
   ts: () => import('shiki/langs/typescript.mjs'),
+  tsx: () => import('shiki/langs/tsx.mjs'),
   sql: () => import('shiki/langs/sql.mjs'),
   prisma: () => import('shiki/langs/prisma.mjs'),
   yaml: () => import('shiki/langs/yaml.mjs'),
@@ -275,6 +285,17 @@ let shiki: HighlighterCore | null = null;
 let readyPromise: Promise<void> | null = null;
 let version = 0;
 const listeners = new Set<() => void>();
+/** Longest file, and longest line in one, tokenized whole; past either a
+ *  diff keeps tokenizing only what it shows. A line this long is minified or
+ *  generated: many times slower per character, and nobody is reading it. */
+const WHOLE_FILE_MAX_CHARS = 512 * 1024;
+const WHOLE_FILE_MAX_LINE = 2000;
+/** How long tokenizing a whole file may hold the main thread: at a stretch,
+ *  and in all, after which it gives up on the file. */
+const WHOLE_FILE_SLICE_MS = 8;
+const WHOLE_FILE_BUDGET_MS = 2000;
+/** The file being tokenized whole, for the next one to wait for. */
+let wholeFileQueue: Promise<unknown> = Promise.resolve();
 /** Single lines, tokenized alone (Patch/SymbolViewer previews, and the
  *  instant fallback). Keyed by lang + the line's own text. */
 const cache = new Map<string, Tok[]>();
@@ -340,6 +361,15 @@ function ensureLang(lang: Lang): void {
   pendingLangs.set(id, p);
 }
 
+/** Shiki's tokens for one line, as `Code` renders them. */
+function toToks(line: ThemedToken[]): Tok[] {
+  return line.map((x) => ({
+    s: x.content,
+    c: x.color,
+    i: !!((x.fontStyle ?? 0) & 1),
+  }));
+}
+
 /** One line, tokenized alone — the instant fallback, and the single-line
  *  call sites (a patch preview, a symbol-viewer line) that don't carry
  *  cross-line grammar state anyway. */
@@ -355,11 +385,7 @@ export function tokens(src: string, lang: Lang): Tok[] {
       lang: SHIKI[lang],
       theme: 'heroui',
     });
-    t = line.map((x) => ({
-      s: x.content,
-      c: x.color,
-      i: !!((x.fontStyle ?? 0) & 1),
-    }));
+    t = toToks(line);
     cache.set(key, t);
   }
   return t;
@@ -381,16 +407,66 @@ export function tokenizeLines(src: string, lang: Lang): Tok[][] {
       lang: SHIKI[lang],
       theme: 'heroui',
     });
-    t = lines.map((line) =>
-      line.map((x) => ({
-        s: x.content,
-        c: x.color,
-        i: !!((x.fontStyle ?? 0) & 1),
-      })),
-    );
+    t = lines.map(toToks);
     blockCache.set(key, t);
   }
   return t;
+}
+
+/** Whether `tokenizeFile` can run yet: `lang`'s grammar is in. */
+export const grammarReady = (lang: Lang): boolean => langReady(lang);
+
+/** Every line of a file, tokenized from its top, or `null` for a file too
+ *  long, minified or slow to be worth it. A hunk or a context gap can start
+ *  anywhere, so only the whole file knows whether its first line sits inside
+ *  a string or a comment (#133): tokenized alone, the string's closing quote
+ *  reads as an opening one. Indexed by line number − 1, as git counts lines.
+ *
+ *  One file at a time, so a PR's worth of them don't all wake at once. */
+export function tokenizeFile(
+  text: string,
+  lang: Lang,
+): Promise<Tok[][] | null> {
+  const run = wholeFileQueue.then(() => tokenizeInSlices(text, lang));
+  wholeFileQueue = run.catch(() => null);
+  return run;
+}
+
+/** A line at a time, so a slice can stop on time however slow its lines:
+ *  a line of minified code can take a hundred times one of prose, and the
+ *  extra calls cost next to nothing. The UI gets a turn before each slice,
+ *  the first too, as this starts during a render. No tighter
+ *  `tokenizeTimeLimit` than Shiki's: a line cut short loses whatever it
+ *  opened, and a cold grammar in WebKit can take 50 ms on the first lines. */
+async function tokenizeInSlices(
+  text: string,
+  lang: Lang,
+): Promise<Tok[][] | null> {
+  if (text.length > WHOLE_FILE_MAX_CHARS) return null;
+  const lines = text.split(/\r?\n/);
+  if (lines.some((l) => l.length > WHOLE_FILE_MAX_LINE)) return null;
+  const out: Tok[][] = [];
+  let grammarState: GrammarState | undefined;
+  let spent = 0;
+  for (let at = 0; at < lines.length;) {
+    if (spent >= WHOLE_FILE_BUDGET_MS) return null;
+    await new Promise((resolve) => setTimeout(resolve));
+    const started = performance.now();
+    do {
+      const line = shiki!.codeToTokensBase(lines[at++]!, {
+        lang: SHIKI[lang as Exclude<Lang, 'plain'>],
+        theme: 'heroui',
+        grammarState,
+      });
+      grammarState = shiki!.getLastGrammarState(line);
+      out.push(toToks(line[0] ?? []));
+    } while (
+      at < lines.length &&
+      performance.now() - started < WHOLE_FILE_SLICE_MS
+    );
+    spent += performance.now() - started;
+  }
+  return out;
 }
 
 /** A hunk's lines, split into the side each belongs to: context and
@@ -416,13 +492,52 @@ export function splitHunkSides<
   };
 }
 
+/** The hunk's two versions of the file, tokenized whole (`tokenizeFile`);
+ *  absent until they load, or when they aren't tokenized at all. */
+export interface FileSides {
+  head?: Tok[][] | null;
+  base?: Tok[][] | null;
+}
+
+/** `l`'s tokens from its whole file. `undefined` unless they're for exactly
+ *  this text: `Code` cuts the line by token lengths, so a line that doesn't
+ *  match would render wrong, not just coloured wrong. Git keeps a CRLF
+ *  file's `\r` in the line; `tokenizeFile` drops it. */
+function fileLineTokens(
+  l: {
+    kind: 'ctx' | 'add' | 'del';
+    text: string;
+    old_no?: number | null;
+    new_no?: number | null;
+  },
+  file: FileSides,
+): Tok[] | undefined {
+  const no = l.kind === 'del' ? l.old_no : l.new_no;
+  const toks = no ? (l.kind === 'del' ? file.base : file.head)?.[no - 1] : null;
+  if (!toks) return undefined;
+  const text = toks.map((t) => t.s).join('');
+  return text === l.text.replace(/\r$/, '') ? toks : undefined;
+}
+
+const sameToks = (a: Tok[], b: Tok[]) =>
+  a.length === b.length &&
+  a.every((t, i) => t.s === b[i]!.s && t.c === b[i]!.c && t.i === b[i]!.i);
+
 /** Per-line tokens for a whole hunk, tokenizing each side once instead of
  *  each line alone: context and added lines take the new side's tokens,
- *  deleted lines take the old side's — so a hunk inside a multi-line
- *  comment or string keeps its grammar's state, in either view. */
+ *  deleted lines take the old side's. With `file`, a line coloured differently
+ *  in its whole file takes that instead, so a hunk starting inside a
+ *  multi-line comment or string knows it. Any other line keeps its array, so
+ *  its memoized row doesn't re-render for nothing: that's nearly all of them,
+ *  and React keeps a second fiber for each row that does. */
 export function hunkLineTokens<
-  T extends { kind: 'ctx' | 'add' | 'del'; text: string },
->(lines: readonly T[], lang: Lang): Tok[][] {
+  T extends {
+    kind: 'ctx' | 'add' | 'del';
+    text: string;
+    old_no?: number | null;
+    new_no?: number | null;
+  },
+>(lines: readonly T[], lang: Lang, file: FileSides = {}): Tok[][] {
   const { oldIdx, newIdx, oldText, newText } = splitHunkSides(lines);
   const oldToks = tokenizeLines(oldText, lang);
   const newToks = tokenizeLines(newText, lang);
@@ -436,7 +551,10 @@ export function hunkLineTokens<
   oldIdx.forEach((li, k) => {
     if (lines[li]!.kind === 'del') out[li] = oldToks[k] ?? [];
   });
-  return out;
+  return out.map((own, i) => {
+    const whole = fileLineTokens(lines[i]!, file);
+    return whole && !sameToks(whole, own) ? whole : own;
+  });
 }
 
 const subscribe = (f: () => void) => {
