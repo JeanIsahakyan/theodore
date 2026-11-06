@@ -275,6 +275,14 @@ describe('texts', () => {
     expect(languageName('cpp')).toBe('C++');
     expect(languageName('typescript')).toBe('TypeScript');
     expect(languageName('zig')).toBe('Zig');
+    expect(languageName('php')).toBe('PHP');
+    expect(languageName('csharp')).toBe('C#');
+    expect(languageName('objective-c')).toBe('Objective-C');
+    expect(languageName('html')).toBe('HTML');
+    expect(languageName('scss')).toBe('SCSS');
+    expect(languageName('sql')).toBe('SQL');
+    // Not in the table: capitalised.
+    expect(languageName('nim')).toBe('Nim');
   });
   it('words the install suggestion', () => {
     expect(suggestText('cpp', 'clangd')).toBe(

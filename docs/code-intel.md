@@ -136,6 +136,20 @@ small Rust hook next to their entry.
   manifest ships with a Theodore release; there is no "latest".
 - The app carries no grammar and no server of its own. Everything is
   downloaded for the languages a project actually uses.
+- A language needs neither: an entry with only `globs` (Scala, Elixir, Dart,
+  SQL, Dockerfile, ...) is **text-only**. Its files are code the text
+  fallback (§5.2) searches by name; nothing is downloaded for it, and a
+  query's note says `scala: no grammar yet, text search`. Adding a grammar or
+  a server later is the same entry plus one line in `grammars.toml` or
+  `servers:`.
+- `prose: true` marks data and markup (Markdown, JSON, YAML, TOML, HTML):
+  symbols and servers may serve it, the text fallback never searches it. A
+  language is code when it is in the manifest and not prose. HTML is prose
+  because a name in it is text or an attribute, not a definition; CSS, SCSS
+  and SQL are code (classes, mixins, tables, functions are defined there).
+- The first language whose glob matches a path owns it, so a new entry goes
+  at the end of `languages:` and cannot take files from an older one (`*.h`
+  stays C, `*.kts` Kotlin, `*.m` is Objective-C).
 
 ### 3.1 Which languages a project gets
 
@@ -168,7 +182,7 @@ code_intel:
 | --- | --- |
 | `tree-sitter-typescript` | `typescript` + `tsx` |
 | `tree-sitter-markdown` | `markdown` + `markdown_inline` |
-| `tree-sitter-php` | `php` + `php_only` |
+| `tree-sitter-php` | `php` (its `php_only` grammar is not built: no manifest language owns it) |
 | `tree-sitter-python` | `python` |
 
 ```
@@ -184,16 +198,22 @@ grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64
   line in `grammars.toml`.
 - The tags query (`tags.scm`, defs and refs) ships next to its dylib. Most
   come from upstream; a few languages ship none (json, yaml, toml, bash,
-  markdown — `markdown_inline` has nothing of its own to tag and stays
-  without one on purpose), so `scripts/build-grammars.sh` falls back to our
-  own, hand-written against that language's own node types:
+  markdown, kotlin — `markdown_inline` has nothing of its own to tag and
+  stays without one on purpose), so `scripts/build-grammars.sh` falls back to
+  our own, hand-written against that language's own node types:
   `crates/code-intel-toolchain/queries/<id>-tags.scm`. A grammar can also
   name one of these explicitly (`tags_query_local` in `grammars.toml`) to
   **replace** upstream's query or **append** to it
   (`tags_query_local_mode`) — rust uses `append` to add scoped calls
   (`Foo::new()`) and generic/scoped impl containers (`impl Foo<T> for X`,
   `impl fmt::Display for X`) that upstream's query misses, on top of
-  upstream's own definitions. The release tag CI publishes under
+  upstream's own definitions. php appends enums, nullsafe calls, constants
+  and the plain `helper()` / `new Foo()` calls upstream's query misses; java
+  appends enums, records and annotation types. c-sharp **replaces** upstream:
+  its `tags.scm` ends with a `@module` capture tree-sitter-tags rejects, so it
+  does not compile as shipped; ours keeps its valid patterns and adds
+  structs, enums, records, properties, local functions, file-scoped and
+  dotted namespaces and plain calls. The release tag CI publishes under
   (content-addressed from `grammars.toml`) also hashes every file in that
   queries directory, so editing one of our own queries alone still
   produces a new release.
@@ -331,6 +351,15 @@ new PR revision           ─▶ only changed blobs are parsed
 
 - Queries never wait for the index: they answer from what is indexed and say
   `index: 62%`, and fill gaps with a text search for the name.
+- The text search covers every code file the syntax layer does not: files of
+  a language with no grammar (text-only ones included, §3), and files not
+  indexed yet. Prose is left out. A hit counts as a definition (what
+  `find_symbol` returns) when the line says so: a keyword right before the
+  name (`def foo`, `class Foo`, `fn`, `fun`, `func`, `sub`, `defmodule`,
+  `(defn`, `CREATE TABLE`, `contract`, ...), a typed signature
+  (`void foo(int x) {`), or the language's own form (Erlang `foo(X) ->`,
+  Haskell `foo ::`, R `foo <- function`). Calls (`x = foo(1)`, `self.foo()`) are not; they
+  show up in `references`. Best effort, and the kind is always `other`.
 - Skipped: `.gitignore`d, `linguist-generated`, vendored, files over
   `code_intel.max_file_kb`. A larger limit, set while worktrees are open,
   retries the files skipped under the old one.

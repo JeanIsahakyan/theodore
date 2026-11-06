@@ -599,6 +599,33 @@ mod tests {
             "yaml",
             "toml",
             "markdown",
+            "bash",
+            "php",
+            "ruby",
+            "java",
+            "kotlin",
+            "csharp",
+            // text-only: no grammar, no server
+            "scala",
+            "elixir",
+            "dart",
+            "vue",
+            "svelte",
+            "html",
+            "css",
+            "scss",
+            "sql",
+            "objective-c",
+            "perl",
+            "haskell",
+            "ocaml",
+            "clojure",
+            "erlang",
+            "r",
+            "julia",
+            "groovy",
+            "powershell",
+            "solidity",
         ] {
             assert!(m.language(&LanguageId::new(id)).is_some(), "{id}");
         }
@@ -621,6 +648,114 @@ mod tests {
                 "{id}"
             );
         }
+    }
+
+    /// Languages with neither a grammar nor a server are still languages
+    /// (their files are searched by name); `prose` ones are the exception.
+    #[test]
+    fn text_only_languages_are_code_unless_prose() {
+        let m = Manifest::builtin();
+        for id in [
+            "scala",
+            "elixir",
+            "dart",
+            "vue",
+            "svelte",
+            "css",
+            "scss",
+            "sql",
+            "objective-c",
+            "perl",
+            "haskell",
+            "ocaml",
+            "clojure",
+            "erlang",
+            "r",
+            "julia",
+            "groovy",
+            "powershell",
+            "solidity",
+            "dockerfile",
+        ] {
+            assert!(!m.language(&LanguageId::new(id)).unwrap().prose, "{id}");
+        }
+        // HTML is markup, not code: the one new language that is prose.
+        assert!(m.language(&LanguageId::new("html")).unwrap().prose);
+        for id in ["json", "yaml", "toml", "markdown"] {
+            assert!(m.language(&LanguageId::new(id)).unwrap().prose, "{id}");
+        }
+    }
+
+    /// A text-only language has no grammar to fetch: asking for it fails at
+    /// once, with no download attempted (no tempdir contents, no network).
+    #[tokio::test]
+    async fn a_text_only_language_never_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let tc = crate::Toolchain::new(dir.path());
+        for id in ["scala", "dockerfile", "sql", "html"] {
+            let id = LanguageId::new(id);
+            assert_eq!(
+                tc.grammar_state(&id),
+                theodore_ports::code_intel::InstallState::Unavailable,
+                "{id}"
+            );
+            let e = tc.ensure_grammar(&id).await.unwrap_err().to_string();
+            assert!(e.contains("no grammar in the manifest"), "{id}: {e}");
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// New globs are appended after the old ones: the first match wins, so
+    /// an earlier language keeps every file it had.
+    #[test]
+    fn new_globs_do_not_take_files_from_earlier_languages() {
+        let m = Manifest::builtin();
+        for (path, id) in [
+            ("include/a.h", "c"),
+            ("src/a.hpp", "cpp"),
+            ("build.gradle.kts", "kotlin"),
+            ("Foo.cs", "csharp"),
+            ("a.phtml", "php"),
+            ("Rakefile", "ruby"),
+            ("Foo.scala", "scala"),
+            ("build.sbt", "scala"),
+            ("lib/a.ex", "elixir"),
+            ("test/a.exs", "elixir"),
+            ("lib/main.dart", "dart"),
+            ("ui/App.vue", "vue"),
+            ("ui/App.svelte", "svelte"),
+            ("public/index.html", "html"),
+            ("a/b.css", "css"),
+            ("a/b.scss", "scss"),
+            ("db/001.sql", "sql"),
+            ("ios/AppDelegate.m", "objective-c"),
+            ("ios/Foo.mm", "objective-c"),
+            ("bin/x.pl", "perl"),
+            ("lib/X.pm", "perl"),
+            ("src/Main.hs", "haskell"),
+            ("src/main.ml", "ocaml"),
+            ("src/main.mli", "ocaml"),
+            ("src/core.clj", "clojure"),
+            ("src/core.cljs", "clojure"),
+            ("src/a.erl", "erlang"),
+            ("include/a.hrl", "erlang"),
+            ("analysis.R", "r"),
+            ("analysis.r", "r"),
+            ("src/a.jl", "julia"),
+            ("build.gradle", "groovy"),
+            ("Jenkins.groovy", "groovy"),
+            ("scripts/x.ps1", "powershell"),
+            ("contracts/Token.sol", "solidity"),
+        ] {
+            assert_eq!(
+                m.language_for_path(path).map(|l| l.id.as_str()),
+                Some(id),
+                "{path}"
+            );
+        }
+        // Not code, and no language owns it.
+        assert!(m.language_for_path("LICENSE").is_none());
+        assert!(m.language_for_path("notes.txt").is_none());
     }
 
     #[test]

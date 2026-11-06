@@ -288,3 +288,60 @@ languages:
     # is not in scope here); the grammar (when CI builds one — another
     # agent's grammars.toml entry) and text search still work without one.
     globs: ["*.sh", "*.bash", ".bashrc", ".bash_profile", ".bash_aliases"]
+
+  # Text-only languages: no grammar and no server (yet), listed so their
+  # files are code the text fallback searches (a code query finds `def
+  # foo`, `sub foo`, `defmodule Foo` by name, docs/code-intel.md §3). Adding
+  # a grammar or a server later is the same entry plus one line elsewhere.
+  # Appended after every language above: the first language whose glob
+  # matches wins, so none of these can take a file from an earlier one
+  # (`*.h` stays C, `*.kts` Kotlin).
+  - id: scala
+    globs: ["*.scala", "*.sc", "*.sbt"]
+  - id: elixir
+    globs: ["*.ex", "*.exs"]
+  - id: dart
+    globs: ["*.dart"]
+  - id: vue
+    globs: ["*.vue"]
+  - id: svelte
+    globs: ["*.svelte"]
+  - id: html
+    # Markup and content, not code: a name in an HTML file is almost always
+    # text or an attribute, never the definition of a symbol, so a text hit
+    # there is noise. Not searched by a code query.
+    prose: true
+    globs: ["*.html", "*.htm"]
+  - id: css
+    # Code, unlike HTML: class names, custom properties and keyframes are
+    # defined here and used from other languages' files.
+    globs: ["*.css"]
+  - id: scss
+    # Mixins, functions and variables are real definitions.
+    globs: ["*.scss", "*.sass"]
+  - id: sql
+    # Code: tables, views, functions and procedures are defined here (and
+    # migrations are a large part of what a change touches).
+    globs: ["*.sql"]
+  - id: objective-c
+    globs: ["*.m", "*.mm"]
+  - id: perl
+    globs: ["*.pl", "*.pm"]
+  - id: haskell
+    globs: ["*.hs", "*.lhs"]
+  - id: ocaml
+    globs: ["*.ml", "*.mli"]
+  - id: clojure
+    globs: ["*.clj", "*.cljs", "*.cljc"]
+  - id: erlang
+    globs: ["*.erl", "*.hrl"]
+  - id: r
+    globs: ["*.r", "*.R"]
+  - id: julia
+    globs: ["*.jl"]
+  - id: groovy
+    globs: ["*.groovy", "*.gvy", "*.gradle"]
+  - id: powershell
+    globs: ["*.ps1", "*.psm1", "*.psd1"]
+  - id: solidity
+    globs: ["*.sol"]
