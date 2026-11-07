@@ -79,6 +79,26 @@ fn check_space(id: &str) -> GitResult<()> {
 }
 
 /// The `Refused` text for a folder whose checkout can't take a merge.
+/// What a push refused for a missing `workflow` scope tells the user.
+pub(crate) const WORKFLOW_SCOPE_REFUSAL: &str = "GitHub needs the workflow permission to push \
+    changes under .github/workflows. Sign in again with it, or push that file yourself.";
+
+/// A push the host turned away for a reason the user can act on, from git's
+/// stderr: the branch moved, or GitHub wants the `workflow` scope for a file
+/// under `.github/workflows/` ("refusing to allow an OAuth App to create or
+/// update workflow … without `workflow` scope").
+pub(crate) fn push_refusal(stderr: &str, branch: &str) -> Option<String> {
+    if stderr.contains("without `workflow` scope")
+        || (stderr.contains("refusing to allow") && stderr.contains("workflow"))
+    {
+        return Some(WORKFLOW_SCOPE_REFUSAL.to_string());
+    }
+    (stderr.contains("non-fast-forward")
+        || stderr.contains("fetch first")
+        || stderr.contains("[rejected]"))
+    .then(|| format!("{branch} changed on the host since the last push; nothing was overwritten"))
+}
+
 pub(crate) fn folder_refusal(state: &WorkingState) -> Option<String> {
     if state.current_branch.is_none() {
         return Some("the folder has a detached HEAD; check out a branch first".into());
@@ -343,15 +363,14 @@ impl GitCli {
         .run()
         .await;
         match out {
-            Err(GitError::Command { stderr, .. })
-                if stderr.contains("non-fast-forward")
-                    || stderr.contains("fetch first")
-                    || stderr.contains("[rejected]") =>
-            {
-                Err(GitError::Refused(format!(
-                    "{branch} changed on the host since the last push; nothing was overwritten"
-                )))
-            }
+            Err(GitError::Command { args, code, stderr }) => match push_refusal(&stderr, branch) {
+                Some(why) => {
+                    // The raw text stays in the log; the user gets the reason.
+                    tracing::info!(stderr = %stderr, branch, "push refused by the host");
+                    Err(GitError::Refused(why))
+                }
+                None => Err(GitError::Command { args, code, stderr }),
+            },
             other => other.map(|_| ()),
         }
     }
@@ -514,6 +533,24 @@ mod tests {
                 .unwrap()
                 .contains("2 uncommitted changes")
         );
+    }
+
+    #[test]
+    fn a_push_refused_for_the_workflow_scope_says_so() {
+        let stderr = "To https://github.com/o/r.git\n ! [remote rejected] abc -> ada/x \
+            (refusing to allow an OAuth App to create or update workflow \
+            `.github/workflows/ci.yml` without `workflow` scope)\n\
+            error: failed to push some refs to 'https://github.com/o/r.git'";
+        assert_eq!(
+            push_refusal(stderr, "ada/x").as_deref(),
+            Some(WORKFLOW_SCOPE_REFUSAL)
+        );
+        assert!(
+            push_refusal(" ! [rejected] abc -> ada/x (non-fast-forward)", "ada/x")
+                .unwrap()
+                .contains("changed on the host")
+        );
+        assert_eq!(push_refusal("fatal: unable to access", "ada/x"), None);
     }
 
     #[test]

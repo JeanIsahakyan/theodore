@@ -949,6 +949,14 @@ Continue  ─▶ ls-remote + fetch <base> ─▶ tip ─▶ (turns not pushed) c
              the unpushed turns uncommitted on it; update-ref refs/theodore/spaces/<id>
 ```
 
+A push the host refuses says why, as an error toast; git's own text stays in
+the log:
+
+| git's stderr | The toast |
+| --- | --- |
+| `non-fast-forward`, `fetch first`, `[rejected]` | `<branch>` changed on the host since the last push; nothing was overwritten |
+| `refusing to allow … workflow … without \`workflow\` scope` | GitHub needs the workflow permission to push changes under .github/workflows. Sign in again with it, or push that file yourself. |
+
 Why detached plus a private ref, not a real branch in the cache:
 
 | A branch under `refs/heads/` would… | Because |

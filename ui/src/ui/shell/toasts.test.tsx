@@ -64,6 +64,21 @@ describe('showToast', () => {
     expect(button('Not now')).toBeUndefined();
   });
 
+  it('an error is a danger toast, not a neutral one', async () => {
+    m = await mount(<Toast.Provider />);
+    act(() => {
+      showToast({ id: 5, level: 'error', text: 'Push failed' });
+      showToast({ id: 6, level: 'info', text: 'Pushed' });
+    });
+    await settle();
+    const of = (text: string) =>
+      [...document.body.querySelectorAll('[data-slot="toast"]')].find((t) =>
+        t.textContent?.includes(text),
+      );
+    expect(of('Push failed')?.className).toMatch(/danger/);
+    expect(of('Pushed')?.className).not.toMatch(/danger|warning/);
+  });
+
   it('a newer toast of a group closes the older one', async () => {
     m = await mount(<Toast.Provider />);
     const show = (id: number, text: string) =>

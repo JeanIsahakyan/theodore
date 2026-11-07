@@ -18,9 +18,17 @@ export function showToast(t: Toast): string {
   return key;
 }
 
+/** A failed command is red, a warning amber; news stays neutral. */
+const VARIANT = {
+  info: 'default',
+  warn: 'warning',
+  error: 'danger',
+} as const satisfies Record<Toast['level'], string>;
+
 function showOne(t: Toast): string {
   if (!t.secondary) {
     return toast(t.text, {
+      variant: VARIANT[t.level],
       timeout: t.action ? 5000 : 3200,
       actionProps: t.action
         ? { children: t.action.label, onPress: t.action.onAction }
