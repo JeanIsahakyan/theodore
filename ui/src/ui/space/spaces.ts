@@ -272,7 +272,8 @@ function cutAtWord(text: string): string {
 
 /** A commit subject from an agent's reply, as the core makes it
  *  (`ship.rs` `subject_of`): its first sentence of three words or more,
- *  markdown marks off, no closing period, cut at a word. */
+ *  markdown marks off, no closing period, cut at a word. Push's commit
+ *  subject is made the same way in the core. */
 export function subjectOf(reply: string): string | null {
   for (const para of reply.split('\n\n')) {
     const flat = para
@@ -284,16 +285,21 @@ export function subjectOf(reply: string): string | null {
           .replace(/^[-*>]+/, '')
           .trim(),
       )
-      .join(' ')
+      .join('\n')
       .replace(/`/g, '')
       .replace(/\*\*|__/g, '');
     const sentences: { text: string; leadIn: boolean }[] = [];
     let start = 0;
     for (let i = 0; i < flat.length; i++) {
       const c = flat[i]!;
-      const atEnd = i + 1 >= flat.length || /\s/.test(flat[i + 1]!);
-      if ('.!?:'.includes(c) && atEnd) {
-        sentences.push({ text: flat.slice(start, i), leadIn: c === ':' });
+      const next = flat[i + 1];
+      // "Here's what changed:" ending its line only leads in to a list.
+      const leadIn = c === ':' && (next === undefined || next === '\n');
+      if (
+        leadIn ||
+        ('.!?'.includes(c) && (next === undefined || /\s/.test(next)))
+      ) {
+        sentences.push({ text: flat.slice(start, i), leadIn });
         start = i + 1;
       }
     }
@@ -301,8 +307,8 @@ export function subjectOf(reply: string): string | null {
       sentences.push({ text: flat.slice(start), leadIn: false });
     const hit = sentences
       .filter((s) => !s.leadIn)
-      .map((s) => s.text.trim())
-      .find((s) => s.split(/\s+/).filter(Boolean).length >= 3);
+      .map((s) => s.text.split(/\s+/).filter(Boolean).join(' '))
+      .find((s) => s.split(' ').length >= 3);
     if (hit) return cutAtWord(hit);
   }
   return null;

@@ -441,7 +441,8 @@ async fn push_adds_one_commit_on_top_of_the_pr_branch() {
         let c = &ship.commits[1].1;
         assert_eq!(c.parent, Sha::new("squash1"), "on top, not a rewrite");
         assert_eq!(c.replay_from, None);
-        assert_eq!(c.message, "Use jitter in the backoff");
+        // The agent's "ok" says nothing; your message never goes in.
+        assert_eq!(c.message, format!("Update {}", s.name));
         assert_eq!(ship.pushes[1], (s.branch.clone(), Sha::new("squash2")));
     }
     let err = core
@@ -449,6 +450,58 @@ async fn push_adds_one_commit_on_top_of_the_pr_branch() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("nothing new"), "{err}");
+}
+
+/// Push's commit says what the turns since the last push changed, from the
+/// agent's replies: never a chat message, a feedback or a Fix CI prompt.
+#[tokio::test]
+async fn a_push_commit_says_what_changed_not_what_was_said() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+
+    f.clock.advance(1_000);
+    let say = |reply: &str, head: &str| {
+        f.agents.push_script(done(reply, 0.0));
+        f.git.push_checkpoint(Sha::new(head));
+    };
+    let send = |text: &str| {
+        core.space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: text.into(),
+            agent: None,
+            model: None,
+            mode: None,
+            attachments: None,
+        })
+    };
+    say(
+        "Done. The dead-state message now reads \"Your pet has passed on\".",
+        "turn222",
+    );
+    send("Yes, change the dead-state message to something gentler")
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+    f.clock.advance(1_000);
+    say(
+        "Fixed the failing test: the hunger timer now starts at zero.",
+        "turn333",
+    );
+    send("This pull request's check is failing:\n\n- test (exit 1)")
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    core.ship_space(ship(&s, ShipAction::Push)).await.unwrap();
+
+    let ship = f.git.ship.lock().unwrap();
+    assert_eq!(
+        ship.commits[1].1.message,
+        "The dead-state message now reads \"Your pet has passed on\"\n\n\
+         - Fixed the failing test: the hunger timer now starts at zero"
+    );
 }
 
 #[tokio::test]

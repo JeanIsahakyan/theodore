@@ -506,26 +506,17 @@ impl Core {
         }
     }
 
-    /// The default Push message: your latest message since the last push.
+    /// The default Push message: what the turns since the last push changed
+    /// (`turn_subjects`), the first as the subject and the others listed
+    /// under it; `Update <name>` when no reply says.
     async fn push_title(&self, space: &Space) -> String {
         let since = space.shipped.as_ref().map_or(0, |s| s.at);
-        let store = self.0.deps.store.clone();
-        let key = crate::usecases::spaces::space_chat_key(&space.id).0;
-        let rows =
-            tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
-        let latest = rows
-            .into_iter()
-            .filter_map(|r| serde_json::from_value::<theodore_contract::ChatMessage>(r.data).ok())
-            .filter(|m| m.author == Author::Me && m.at >= since)
-            .max_by_key(|m| m.at);
-        latest
-            .map(|m| first_line(&m.text))
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| format!("Update {}", space.name))
+        let subjects = self.turn_subjects(space, since).await;
+        match subjects.split_first() {
+            None => format!("Update {}", space.name),
+            Some((first, [])) => first.clone(),
+            Some((first, rest)) => format!("{first}\n\n{}", bullets(rest)),
+        }
     }
 
     /// The outbox opened (or found) the space's PR: link it and fetch it so
@@ -736,7 +727,7 @@ fn paragraph_subject(para: &str) -> Option<String> {
                 .trim()
         })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join("\n")
         .replace(['`'], "")
         .replace("**", "")
         .replace("__", "");
@@ -744,9 +735,11 @@ fn paragraph_subject(para: &str) -> Option<String> {
     let mut start = 0;
     let chars: Vec<(usize, char)> = flat.char_indices().collect();
     for (k, &(i, c)) in chars.iter().enumerate() {
-        let at_end = chars.get(k + 1).is_none_or(|&(_, n)| n.is_whitespace());
-        if matches!(c, '.' | '!' | '?' | ':') && at_end {
-            sentences.push((&flat[start..i], c == ':'));
+        let next = chars.get(k + 1).map(|&(_, n)| n);
+        // "Here's what changed:" ending its line only leads in to a list.
+        let lead_in = c == ':' && next.is_none_or(|n| n == '\n');
+        if lead_in || (matches!(c, '.' | '!' | '?') && next.is_none_or(char::is_whitespace)) {
+            sentences.push((&flat[start..i], lead_in));
             start = i + c.len_utf8();
         }
     }
@@ -755,11 +748,10 @@ fn paragraph_subject(para: &str) -> Option<String> {
     }
     sentences
         .into_iter()
-        // "Here's what changed:" only leads in.
         .filter(|(_, lead_in)| !lead_in)
-        .map(|(s, _)| s.trim())
-        .find(|s| s.split_whitespace().count() >= 3)
-        .map(cut_at_word)
+        .map(|(s, _)| s.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|s| s.split(' ').count() >= 3)
+        .map(|s| cut_at_word(&s))
 }
 
 /// An edited title, else the goal's first line, else the space's name.

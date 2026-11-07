@@ -1124,6 +1124,12 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   | moved (someone pushed to it) | parent = their tip, tree = their tip + the turns since the last push (three-way, no worktree); refused if that conflicts |
   | gone | parent = last push, pushed again |
 
+  Its message says what changed, never what was said: the subject is the
+  first sentence (three words or more) of the agent's reply to the first
+  turn since the last push that changed files, cut at a word; the other
+  turns' are listed under it. No reply says → `Update <name>`. Your
+  messages, a feedback prompt or a Fix CI prompt never go into git.
+
 - *Merge locally*: refused, folder untouched, on a dirty working tree
   (untracked files count), a detached `HEAD`, or a merge that would
   conflict (checked first with `git merge-tree`, before the index or any
