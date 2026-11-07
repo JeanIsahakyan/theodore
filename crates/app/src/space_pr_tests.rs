@@ -615,3 +615,43 @@ async fn a_merged_space_continues_rather_than_updating_from_base() {
     let err = core.update_space_from_base(&s.id).await.unwrap_err();
     assert!(err.to_string().contains("Continue"), "{err}");
 }
+
+/// Continue moves the worktree onto the base's tip without a turn: the same
+/// stop as a clean update.
+#[tokio::test]
+async fn back_to_here_stops_at_continue() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    let send = |text: &str| theodore_contract::SpaceSendRequest {
+        space: s.id.clone(),
+        text: text.into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    };
+    f.agents.push_script(done("done"));
+    f.git.push_checkpoint(Sha::new("turn222"));
+    core.space_send(send("not pushed")).await.unwrap();
+    idle(&f, &s.id).await;
+    merge_on_host(&f, &core, 100).await;
+    base_moved(&f, "main222");
+    core.continue_space(&s.id).await.unwrap();
+    f.agents.push_script(done("done"));
+    f.git.push_checkpoint(Sha::new("turn333"));
+    core.space_send(send("next round")).await.unwrap();
+    idle(&f, &s.id).await;
+    let s = space(&f, &s.id);
+
+    // Right after the first turn: across Continue.
+    let err = core
+        .rewind_space(theodore_contract::RewindSpaceRequest {
+            space: s.id.clone(),
+            reply: s.turn_log[0].reply.clone(),
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("can't go back past"), "{err}");
+    assert_eq!(space(&f, &s.id).head_sha, Sha::new("turn333"));
+}

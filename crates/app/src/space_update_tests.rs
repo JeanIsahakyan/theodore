@@ -439,3 +439,59 @@ async fn back_to_here_over_an_update_restores_the_base_and_waits_for_it() {
     assert_eq!(s.base_sha, Sha::new("base000"));
     assert!(s.turn_log[1..].iter().all(|t| t.undone));
 }
+
+/// One more finished turn at `head`.
+async fn next_turn(f: &Fixtures, core: &Core, s: &Space, head: &str) -> Space {
+    f.agents.push_script(done("done"));
+    f.git.push_checkpoint(Sha::new(head));
+    core.space_send(theodore_contract::SpaceSendRequest {
+        space: s.id.clone(),
+        text: "more".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    idle(f, &s.id).await
+}
+
+/// A clean update has no turn of its own: going back over it would put the
+/// old tree on the new base, and the next ship would revert the base's
+/// commits.
+#[tokio::test]
+async fn back_to_here_stops_at_a_clean_update() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project).await;
+    let s = next_turn(&f, &core, &s, "turn222").await;
+    base_moves(&f);
+    let s = core.update_space_from_base(&s.id).await.unwrap();
+    let s = next_turn(&f, &core, &s, "turn333").await;
+
+    let err = core
+        .rewind_space(theodore_contract::RewindSpaceRequest {
+            space: s.id.clone(),
+            reply: s.turn_log[0].reply.clone(),
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("can't go back past"), "{err}");
+    assert!(f.git.resets.lock().unwrap().is_empty(), "nothing moved");
+    let now = space(&f, &s.id);
+    assert_eq!(now.head_sha, Sha::new("turn333"));
+    assert!(now.turn_log.iter().all(|t| !t.undone));
+
+    // Back to the turn right before the update: only the later one goes,
+    // to the merge it started from.
+    let s = core
+        .rewind_space(theodore_contract::RewindSpaceRequest {
+            space: s.id.clone(),
+            reply: s.turn_log[1].reply.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(s.head_sha, Sha::new("merged-base222"));
+    assert_eq!(s.base_sha, Sha::new("base222"));
+}

@@ -403,7 +403,9 @@ Revert a.ts ─▶ a.ts restored ─▶ ckpt D, a turn_log entry of its own (Und
 - Refused while a turn runs, on an archived space, with a rebase or merge
   unfinished in the worktree, and once the turn shipped (pushed, merged
   locally, or kept as a branch) — then ask the agent to revert it instead.
-  A revert is refused while a turn runs, on an archived space, and when the
+  Undo and Back to here also stop at a clean Update from base or a Continue:
+  neither is a turn, and going back over one would put the old tree on the
+  new base. A revert is refused while a turn runs, on an archived space, and when the
   file already is as asked.
 
 **Update from base**: when the base branch has commits the space doesn't,
