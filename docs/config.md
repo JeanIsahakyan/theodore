@@ -240,6 +240,23 @@ archive ─▶ stop run ─▶ checkpoint ─▶ archive ─▶ remove worktree 
   output, asking it to fix the script or the config. Setup itself is left
   `failed` — Retry and Continue without setup stay put, and a Retry that
   later succeeds still fires the goal it was waiting on.
+- **Retry reads the worktree's file.** So a command fixed in the space can
+  run before it ships. The one exception to "at the base":
+
+  ```
+  Retry ─▶ worktree's .theodore/config.yaml sets the setup, differs from the base's?
+             ├─ no (no file, no setup in it, same commands) ─▶ the base's, as before
+             └─ yes ─▶ allowed? ─yes─▶ runs
+                         └─no─▶ "Run commands from this repo?" shows the changed set
+                                  Allow   ─▶ runs; the base's set stays allowed too
+                                  Not now ─▶ setup skipped; the base's commands untouched
+  ```
+
+  | Read from | |
+  | --- | --- |
+  | the worktree, for a Retry only | the repo layer of that setup: its command and `env` |
+  | the base, as ever | `run`, `check`, `archive`, ports, `copy` |
+  | never a worktree | the personal local file |
 - **Check** is part of the turn: the space stays running until it ends, and
   Stop stops it too. A turn that changed nothing runs no check. Passed /
   failed shows as a chip on the turn, expandable to the output.
@@ -365,6 +382,9 @@ repo commands in effect ─▶ sha256 ─▶ allowed for this project? ─yes─
   `env`) are skipped, everything else works, and the space shows that they
   were skipped with a way to review and allow them later.
 - A value your local or global file overrides is not part of the set.
+- A Retry of setup asks about the set in the worktree's own file when it
+  differs from the base's (§2 "Retry reads the worktree's file"), with the
+  same fingerprint rule; nothing else is read from a worktree.
 
 ## 6. Global template
 

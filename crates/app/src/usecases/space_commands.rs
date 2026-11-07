@@ -207,6 +207,65 @@ impl Core {
             .await
     }
 
+    /// The config with the repo layer read from the space's own worktree
+    /// (the personal file stays the checkout's), when that file sets the
+    /// effective `spaces.setup`. Only for setup's Retry (docs/config.md §2):
+    /// `run`, `check` and `archive` stay on `space_config_of`.
+    async fn worktree_setup_config(&self, space: &Space, project: &Project) -> Option<SpaceConfig> {
+        let layer = config::read_repo_layer(Path::new(&space.worktree)).await;
+        layer.text.as_ref()?;
+        let mut layers = self.project_layers(project, Some(&space.base_sha)).await;
+        match layers.iter().position(|l| l.layer == ConfigLayer::Repo) {
+            Some(repo) => layers[repo] = layer,
+            // After the global file, always first.
+            None => layers.insert(1.min(layers.len()), layer),
+        }
+        // A denial was about the base's commands, and a set it allowed
+        // still has to match by hash.
+        let cfg = self.config_with_trust(&layers, project, false).await;
+        (cfg.merged.layer_of(&command_key(SpaceCommandKind::Setup)) == Some(ConfigLayer::Repo))
+            .then_some(cfg)
+    }
+
+    /// What a Retry of setup runs with: the worktree's config when its repo
+    /// commands differ from the base's (`true`), else the base's.
+    pub(crate) async fn retry_setup_config(
+        &self,
+        space: &Space,
+        project: &Project,
+    ) -> (SpaceConfig, bool) {
+        let base = self.space_config_of(space, project).await;
+        let hash = |c: &SpaceConfig| c.repo.as_ref().map(|r| r.hash.clone());
+        match self.worktree_setup_config(space, project).await {
+            Some(own) if hash(&own) != hash(&base) => (own, true),
+            _ => (base, false),
+        }
+    }
+
+    /// The config `setup` runs with: the base's, or after a Retry that took
+    /// it from there, the worktree's (the base's once that file is gone).
+    pub(crate) async fn setup_config_of(&self, space: &Space, project: &Project) -> SpaceConfig {
+        if space.setup.as_ref().is_some_and(|s| s.from_worktree)
+            && let Some(own) = self.worktree_setup_config(space, project).await
+        {
+            return own;
+        }
+        self.space_config_of(space, project).await
+    }
+
+    /// The config "Run commands from this repo?" asks about for `space`.
+    pub(crate) async fn prompt_config_of(&self, space: &Space, project: &Project) -> SpaceConfig {
+        let waiting = space
+            .setup
+            .as_ref()
+            .is_some_and(|s| s.status == theodore_contract::SetupStatus::Waiting);
+        if waiting {
+            self.setup_config_of(space, project).await
+        } else {
+            self.space_config_of(space, project).await
+        }
+    }
+
     pub(crate) async fn config_with_trust(
         &self,
         layers: &[LayerText],
