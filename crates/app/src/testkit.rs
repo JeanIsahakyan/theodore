@@ -1416,7 +1416,12 @@ pub struct FakeHost {
     /// Every `(path, viewed)` a `set_viewed` call was made with.
     pub set_viewed_calls: Mutex<Vec<(String, bool)>>,
     pub submit_review_responses: Mutex<VecDeque<HostResult<SubmittedReview>>>,
+    /// Every review a `submit_review` call reached the "host" with.
+    pub submit_review_calls: Mutex<Vec<ReviewSubmission>>,
     pub find_marker_responses: Mutex<VecDeque<HostResult<Option<theodore_domain::CommentId>>>>,
+    /// Markers already in a comment on the PR: `find_marker` finds these
+    /// before it looks at `find_marker_responses`.
+    pub posted_markers: Mutex<std::collections::HashSet<String>>,
     pub changed_since_responses: Mutex<VecDeque<HostResult<Changes>>>,
     pub search_responses: Mutex<VecDeque<HostResult<Vec<PrSummary>>>>,
     /// Searches answer `complete: true`. Off by default: a test seeding a row
@@ -1701,8 +1706,12 @@ impl HostAdapter for FakeHost {
     async fn submit_review(
         &self,
         _pr: &PrRef,
-        _review: &ReviewSubmission,
+        review: &ReviewSubmission,
     ) -> HostResult<SubmittedReview> {
+        self.submit_review_calls
+            .lock()
+            .unwrap()
+            .push(review.clone());
         self.submit_review_responses
             .lock()
             .unwrap()
@@ -1715,8 +1724,13 @@ impl HostAdapter for FakeHost {
     async fn find_marker(
         &self,
         _pr: &PrRef,
-        _marker: &str,
+        marker: &str,
     ) -> HostResult<Option<theodore_domain::CommentId>> {
+        if self.posted_markers.lock().unwrap().contains(marker) {
+            return Ok(Some(theodore_domain::CommentId::new(format!(
+                "posted-{marker}"
+            ))));
+        }
         self.find_marker_responses
             .lock()
             .unwrap()

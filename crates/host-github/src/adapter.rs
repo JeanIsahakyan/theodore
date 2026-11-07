@@ -454,6 +454,29 @@ impl HostAdapter for GithubAdapter {
         Ok(None)
     }
 
+    async fn find_markers(
+        &self,
+        pr: &PrRef,
+        markers: &[String],
+    ) -> HostResult<std::collections::HashSet<String>> {
+        if markers.is_empty() {
+            return Ok(Default::default());
+        }
+        let threads = self
+            .fetch_all_threads(&pr.repo.owner, &pr.repo.name, pr.number)
+            .await?;
+        Ok(markers
+            .iter()
+            .filter(|m| {
+                let tag = marker_tag(m);
+                threads
+                    .iter()
+                    .any(|t| t.comments.iter().any(|c| c.body.contains(&tag)))
+            })
+            .cloned()
+            .collect())
+    }
+
     async fn reply(&self, _pr: &PrRef, thread: &ThreadId, body: &str) -> HostResult<CommentId> {
         let id = graphql::add_review_thread_reply(&self.graphql, thread.as_str(), body).await?;
         Ok(CommentId::new(id))

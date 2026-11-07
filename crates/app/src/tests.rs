@@ -23,7 +23,7 @@ use theodore_domain::{
 use theodore_ports::{
     AgentEvent, BranchInfo, Clock, CommitLog, ConflictEntry, ConflictKind as PortConflictKind,
     DevicePoll, Fetched, GitError, HostError, MergeMethod as PortMergeMethod, MergeState,
-    MergeStatus, NewAction, OutboxStatus, Secrets, Store, SyncActionCode,
+    MergeStatus, NewAction, OutboxStatus, Secrets, Store, SubmittedReview, SyncActionCode,
 };
 
 use crate::testkit::{self, Fixtures, fixtures};
@@ -2019,6 +2019,123 @@ async fn submit_review_skips_outdated_drafts_with_a_toast() {
         "the outdated draft must not reach the host write"
     );
     assert_eq!(comments[0]["draft_id"], json!("d-ok"));
+}
+
+fn put_draft(f: &Fixtures, pr: &PrId, id: &str, outdated: bool) {
+    put_model_row(
+        f,
+        models::DRAFT,
+        id,
+        json!({
+            "id": id, "pr": pr.0, "anchor": testkit::sample_anchor("src/lib.rs", 2),
+            "body": format!("body of {id}"), "source": {"kind": "me"}, "outdated": outdated,
+        }),
+    );
+}
+
+fn draft_archived(f: &Fixtures, id: &str) -> bool {
+    f.store
+        .get(models::DRAFT, id)
+        .ok()
+        .flatten()
+        .is_some_and(|r| r.archived)
+}
+
+fn submitted_markers(f: &Fixtures) -> Vec<Vec<String>> {
+    f.host
+        .submit_review_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let mut m: Vec<String> = r.comments.iter().map(|c| c.marker.clone()).collect();
+            m.sort();
+            m
+        })
+        .collect()
+}
+
+async fn submit_and_wait(f: &Fixtures, core: &Core, pr: &PrId) {
+    let before = f.host.submit_review_calls.lock().unwrap().len();
+    core.submit_review(SubmitReviewRequest {
+        pr: pr.clone(),
+        event: ReviewEvent::Comment,
+        body: "notes".into(),
+    })
+    .await
+    .expect("submit_review");
+    wait_until(|| {
+        f.host.submit_review_calls.lock().unwrap().len() > before
+            && f.store
+                .outbox_snapshot()
+                .iter()
+                .filter(|i| i.op == "submit_review")
+                .all(|i| i.status == OutboxStatus::Done)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_submitted_draft_is_never_posted_again_by_a_later_submit() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+
+    put_draft(&f, &pr, "d-first", false);
+    // An old submitted draft whose anchor a push outdated long ago.
+    put_draft(&f, &pr, "d-old", true);
+    f.store
+        .apply(vec![NewAction {
+            model: models::DRAFT.into(),
+            model_id: "d-old".into(),
+            action: SyncActionCode::A,
+            data: None,
+        }])
+        .unwrap();
+    // The host posts it, but its thread isn't listed back yet.
+    f.host.push_submit_review(Ok(SubmittedReview {
+        review_id: "r1".into(),
+        threads: vec![],
+    }));
+    submit_and_wait(&f, &core, &pr).await;
+    wait_until(|| draft_archived(&f, "d-first")).await;
+
+    put_draft(&f, &pr, "d-a", false);
+    put_draft(&f, &pr, "d-b", false);
+    put_draft(&f, &pr, "d-c", false);
+    submit_and_wait(&f, &core, &pr).await;
+
+    assert_eq!(
+        submitted_markers(&f),
+        vec![
+            vec!["d-first".to_string()],
+            vec!["d-a".to_string(), "d-b".to_string(), "d-c".to_string()],
+        ],
+        "only drafts not yet submitted reach the host"
+    );
+    while let Ok(e) = recv.ephemeral.try_recv() {
+        assert!(
+            !matches!(&e, Ephemeral::Toast { text, .. } if text.contains("skipped")),
+            "archived drafts aren't skipped drafts: {e:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_submit_leaves_out_a_draft_whose_marker_is_already_on_the_pr() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    put_draft(&f, &pr, "d-posted", false);
+    put_draft(&f, &pr, "d-new", false);
+    f.host
+        .posted_markers
+        .lock()
+        .unwrap()
+        .insert("d-posted".into());
+    submit_and_wait(&f, &core, &pr).await;
+
+    assert_eq!(submitted_markers(&f), vec![vec!["d-new".to_string()]]);
+    wait_until(|| draft_archived(&f, "d-posted") && draft_archived(&f, "d-new")).await;
 }
 
 // ── reply_thread / resolve_thread ────────────────────────────────────────────

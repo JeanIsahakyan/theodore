@@ -26,6 +26,9 @@ impl Core {
         let mut outdated = 0usize;
         let comments: Vec<DraftComment> = rows
             .iter()
+            // A submitted draft is archived, not deleted: it was posted
+            // already and is neither sent again nor counted as skipped.
+            .filter(|r| !r.archived)
             .filter_map(|r| {
                 let draft: Draft = serde_json::from_value(r.data.clone()).ok()?;
                 if draft.outdated {

@@ -452,8 +452,11 @@ It isn't any one GitHub page's number: github.com/pulls lists only what you wrot
   has no batch (Bitbucket), comments are posted one by one and the outbox
   resumes from the last confirmed step.
 - No idempotency keys on GitHub: each comment body carries
-  `<!-- theodore:<draft-id> -->` (invisible when rendered). After a timeout the
-  outbox looks for it before retrying, so nothing is posted twice.
+  `<!-- theodore:<draft-id> -->` (invisible when rendered). Every submit
+  attempt first reads which of its markers are on the PR already (one pass
+  over the threads) and leaves those out, so nothing is posted twice. A
+  submitted review archives all its drafts, and a later submit sends only
+  drafts that aren't archived.
 - One error type for all adapters:
   `Auth · Forbidden · RateLimited{reset_at} · NotFound · Conflict · Validation · Network · Unsupported · Protocol`.
   The outbox decides from it: wait, retry, or roll back with a compensating action.

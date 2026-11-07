@@ -386,22 +386,34 @@ async fn do_submit_review(core: &Core, item: &OutboxItem) -> Result<(), Outcome>
         .await
         .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
 
-    // After a timeout, a comment may already have been posted: look it up
-    // by its marker before posting it again (plan §6.7).
-    let mut comments = Vec::with_capacity(payload.comments.len());
-    for c in &payload.comments {
-        if item.attempts > 0 {
-            match core.0.deps.host.find_marker(&pr_ref, &c.marker).await {
-                Ok(Some(_)) => continue,
-                Ok(None) => {}
-                Err(e) => return Err(classify_host_error(core, item, e).await),
-            }
-        }
-        comments.push(ReviewComment {
+    // A comment whose marker is already on the PR was posted before (a
+    // timeout, an earlier submit that kept its draft): never post it
+    // again (plan §6.7). One read of the PR's comments per attempt.
+    let markers: Vec<String> = payload.comments.iter().map(|c| c.marker.clone()).collect();
+    let posted = match core.0.deps.host.find_markers(&pr_ref, &markers).await {
+        Ok(found) => found,
+        Err(e) => return Err(classify_host_error(core, item, e).await),
+    };
+    let comments: Vec<ReviewComment> = payload
+        .comments
+        .iter()
+        .filter(|c| !posted.contains(&c.marker))
+        .map(|c| ReviewComment {
             anchor: c.anchor.clone(),
             body: c.body.clone(),
             marker: c.marker.clone(),
-        });
+        })
+        .collect();
+    // Every comment of a body-less Comment review is on the PR already:
+    // there is nothing left to post, and an empty review is refused.
+    if comments.is_empty()
+        && !payload.comments.is_empty()
+        && payload.body.trim().is_empty()
+        && payload.event == ReviewEvent::Comment
+    {
+        archive_drafts(core, payload.comments.iter().map(|c| c.draft_id.clone())).await;
+        refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+        return Ok(());
     }
 
     let submission = ReviewSubmission {
@@ -780,17 +792,15 @@ async fn apply_submitted_review(
     payload: &SubmitReviewPayload,
     submitted: &SubmittedReview,
 ) {
-    let mut actions = Vec::new();
+    // Every draft of the payload is on the PR now, posted by this review or
+    // found by its marker: archive them all, not only those whose thread the
+    // host listed back (a thread read right after the write can miss it,
+    // and a draft left behind went out again with the next submit).
+    let mut actions = draft_archive_actions(payload.comments.iter().map(|c| c.draft_id.clone()));
     for (marker, thread_id) in &submitted.threads {
         let Some(c) = payload.comments.iter().find(|c| &c.marker == marker) else {
             continue;
         };
-        actions.push(NewAction {
-            model: models::DRAFT.into(),
-            model_id: c.draft_id.clone(),
-            action: SyncActionCode::A,
-            data: None,
-        });
         let row = ThreadRow {
             pr: payload.pr.clone(),
             thread: theodore_domain::Thread {
@@ -821,4 +831,18 @@ async fn apply_submitted_review(
         });
     }
     let _ = core.apply(actions).await;
+}
+
+fn draft_archive_actions(ids: impl Iterator<Item = String>) -> Vec<NewAction> {
+    ids.map(|id| NewAction {
+        model: models::DRAFT.into(),
+        model_id: id,
+        action: SyncActionCode::A,
+        data: None,
+    })
+    .collect()
+}
+
+async fn archive_drafts(core: &Core, ids: impl Iterator<Item = String>) {
+    let _ = core.apply(draft_archive_actions(ids)).await;
 }

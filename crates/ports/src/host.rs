@@ -316,6 +316,22 @@ pub trait HostAdapter: Send + Sync {
     ) -> HostResult<SubmittedReview>;
     /// Find a comment previously posted with `marker` (outbox retry after timeout).
     async fn find_marker(&self, pr: &PrRef, marker: &str) -> HostResult<Option<CommentId>>;
+    /// Which of `markers` are already in a comment on the PR, so a submit
+    /// never posts a draft twice. Default: `find_marker` for each; a host
+    /// that reads every comment in one pass should override it.
+    async fn find_markers(
+        &self,
+        pr: &PrRef,
+        markers: &[String],
+    ) -> HostResult<std::collections::HashSet<String>> {
+        let mut found = std::collections::HashSet::new();
+        for marker in markers {
+            if self.find_marker(pr, marker).await?.is_some() {
+                found.insert(marker.clone());
+            }
+        }
+        Ok(found)
+    }
 
     // threads
     async fn reply(&self, pr: &PrRef, thread: &ThreadId, body: &str) -> HostResult<CommentId>;

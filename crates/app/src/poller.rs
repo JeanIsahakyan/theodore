@@ -479,11 +479,13 @@ async fn remap_model_anchors(
         };
     let mut actions = Vec::new();
     for row in rows {
-        if row
-            .data
-            .get("outdated")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+        // Archived: a submitted draft, a closed finding: nothing to move.
+        if row.archived
+            || row
+                .data
+                .get("outdated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
         {
             continue; // already outdated; nothing more to remap
         }
