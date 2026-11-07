@@ -14,8 +14,8 @@
 //!              └─no──────────────────────────────────────┴─▶ grep
 //! ```
 
-use std::collections::HashSet;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path};
 
 use theodore_contract::{DiffSide, FindSymbolRequest, SymbolHit, SymbolKind, SymbolSource};
 use theodore_ports::{CodeHit, CodeIntelPort, GitPort, Position, Source};
@@ -26,6 +26,10 @@ use crate::error::{AppError, AppResult};
 /// Cap on hits returned to the UI — a peek popover, not a search results
 /// page.
 const MAX_HITS: usize = 50;
+
+/// Files past this aren't read for a hit's line; its preview is guessed
+/// from the port's block instead.
+const MAX_PREVIEW_FILE_BYTES: u64 = 1 << 20;
 
 /// One language's file extensions and declaration heuristics. Each pattern
 /// is an extended-regex fragment with `{}` standing in for the escaped
@@ -286,23 +290,65 @@ fn source_of(s: Source) -> SymbolSource {
     }
 }
 
-fn hit_of(h: CodeHit) -> SymbolHit {
-    SymbolHit {
-        path: h.location.path,
-        line: h.location.range.start.line,
-        kind: if h.is_definition {
-            SymbolKind::Definition
-        } else {
-            SymbolKind::Reference
-        },
-        preview: h
-            .preview
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_string(),
-        source: Some(source_of(h.source)),
+/// A hit's own line for its preview. The port's preview is a block: the
+/// line with its non-blank neighbours, so its first line is often the one
+/// above. The worktree's file says which line is the hit's; each is read
+/// once. Without it (unreadable, too big): the middle of three lines, else
+/// the first; a two-line block whose hit is the second can't be told apart.
+struct HitLines<'a> {
+    root: &'a Path,
+    files: HashMap<String, Option<String>>,
+}
+
+impl<'a> HitLines<'a> {
+    fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            files: HashMap::new(),
+        }
+    }
+
+    async fn read(&self, path: &str) -> Option<String> {
+        let rel = Path::new(path);
+        if !rel
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            return None;
+        }
+        let file = self.root.join(rel);
+        if tokio::fs::metadata(&file).await.ok()?.len() > MAX_PREVIEW_FILE_BYTES {
+            return None;
+        }
+        tokio::fs::read_to_string(file).await.ok()
+    }
+
+    async fn hit(&mut self, h: CodeHit) -> SymbolHit {
+        let path = h.location.path;
+        let line = h.location.range.start.line;
+        if !self.files.contains_key(&path) {
+            let text = self.read(&path).await;
+            self.files.insert(path.clone(), text);
+        }
+        let own = self.files[&path]
+            .as_deref()
+            .and_then(|t| t.lines().nth(line.checked_sub(1)? as usize));
+        let preview = own.unwrap_or_else(|| {
+            let block: Vec<&str> = h.preview.lines().collect();
+            let at = if block.len() == 3 { 1 } else { 0 };
+            block.get(at).copied().unwrap_or_default()
+        });
+        SymbolHit {
+            preview: preview.trim().to_string(),
+            path,
+            line,
+            kind: if h.is_definition {
+                SymbolKind::Definition
+            } else {
+                SymbolKind::Reference
+            },
+            source: Some(source_of(h.source)),
+        }
     }
 }
 
@@ -317,6 +363,7 @@ async fn intel_hits(
     req: &FindSymbolRequest,
 ) -> Result<Vec<SymbolHit>, theodore_ports::CodeIntelError> {
     let mut hits: Vec<SymbolHit> = Vec::new();
+    let mut lines = HitLines::new(root);
     let position = match req.side {
         Some(DiffSide::Base) => None,
         _ => req.line.zip(req.col),
@@ -325,12 +372,14 @@ async fn intel_hits(
         (Some(path), Some((line, col))) => {
             let at = Position { line, col };
             let defs = port.definition(root, path, at).await?;
-            hits.extend(defs.items.into_iter().map(|mut h| {
+            for mut h in defs.items {
                 h.is_definition = true;
-                hit_of(h)
-            }));
+                hits.push(lines.hit(h).await);
+            }
             let refs = port.references(root, path, at).await?;
-            hits.extend(refs.items.into_iter().map(hit_of));
+            for h in refs.items {
+                hits.push(lines.hit(h).await);
+            }
         }
         _ => {
             let defs = port.find_symbol(root, &req.name, None).await?;
@@ -354,7 +403,9 @@ async fn intel_hits(
             }));
             if let Some(s) = first {
                 let refs = port.references(root, &s.path, s.name_range.start).await?;
-                hits.extend(refs.items.into_iter().map(hit_of));
+                for h in refs.items {
+                    hits.push(lines.hit(h).await);
+                }
             }
         }
     }
@@ -658,6 +709,72 @@ mod tests {
         let ranked = rank(hits, None, req.from_path.as_deref());
         assert_eq!(ranked[0].path, "util.ts");
         assert_eq!(ranked[0].kind, SymbolKind::Definition);
+    }
+
+    /// A reference as the port gives it: the preview is the hit's line
+    /// with its non-blank neighbours, dedented (`code-intel-syntax`'s
+    /// `preview`).
+    fn reference(line: u32, preview: &str) -> CodeHit {
+        CodeHit {
+            location: theodore_ports::Location {
+                path: "main.ts".into(),
+                range: code_range(line, 1, 5),
+            },
+            preview: preview.into(),
+            is_definition: false,
+            source: Source::Lsp,
+        }
+    }
+
+    const MAIN_TS: &str = "import { greet } from './util';\ngreet('a');\n\ngreet('b');\nconst x = 1;\nfunction f() {\n  greet('c');\n}\n";
+
+    /// Previews in every shape: line 1 (no line above), a blank line
+    /// below, a blank line above, both neighbours.
+    fn references_in_main() -> Vec<CodeHit> {
+        vec![
+            reference(1, "import { greet } from './util';\ngreet('a');"),
+            reference(2, "import { greet } from './util';\ngreet('a');"),
+            reference(4, "greet('b');\nconst x = 1;"),
+            reference(7, "function f() {\n  greet('c');\n}"),
+        ]
+    }
+
+    async fn previews(root: &Path) -> Vec<(u32, String)> {
+        let port = crate::testkit::FakeCodeIntel::new();
+        *port.hits.lock().unwrap() = references_in_main();
+        let req = FindSymbolRequest {
+            from_path: Some("main.ts".into()),
+            ..click(Some(theodore_contract::DiffSide::Head))
+        };
+        intel_hits(&*port, root, &req)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|h| (h.line, h.preview))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_reference_previews_its_own_line() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("main.ts"), MAIN_TS).unwrap();
+        assert_eq!(
+            previews(tmp.path()).await,
+            vec![
+                (1, "import { greet } from './util';".to_string()),
+                (2, "greet('a');".to_string()),
+                (4, "greet('b');".to_string()),
+                (7, "greet('c');".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn without_the_file_a_preview_still_skips_the_line_above() {
+        let tmp = TempDir::new().unwrap();
+        let got = previews(&tmp.path().join("gone")).await;
+        assert_eq!(got[0], (1, "import { greet } from './util';".to_string()));
+        assert_eq!(got[3], (7, "greet('c');".to_string()));
     }
 
     #[test]
