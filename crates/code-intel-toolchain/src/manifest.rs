@@ -715,6 +715,69 @@ mod tests {
         }
     }
 
+    /// Who may run what: changing one of these is a decision (docs §8).
+    #[test]
+    fn builtin_servers_of_the_jvm_and_scripting_languages() {
+        let (m, _) = Manifest::parse(BUILTIN_LANGUAGES, BUILTIN_GRAMMARS).unwrap();
+        let servers = |id: &str| -> Vec<String> {
+            m.language(&LanguageId::new(id))
+                .unwrap()
+                .servers
+                .iter()
+                .map(|s| s.name.clone())
+                .collect()
+        };
+        assert_eq!(servers("php"), ["intelephense", "phpactor"]);
+        assert_eq!(servers("ruby"), ["ruby-lsp"]);
+        assert_eq!(servers("java"), ["jdtls"]);
+        assert_eq!(servers("kotlin"), ["kotlin-lsp"]);
+        assert_eq!(servers("csharp"), ["csharp-ls"]);
+        assert_eq!(servers("javascript")[0], "tsgo");
+
+        let trusted_only: Vec<&str> = m
+            .servers()
+            .iter()
+            .filter(|s| s.trusted_only)
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(
+            trusted_only,
+            ["phpactor", "ruby-lsp", "kotlin-lsp", "csharp-ls"]
+        );
+
+        let needs = |name: &str| {
+            let r = m.server(name).unwrap().requires.clone().unwrap();
+            format!("{} {}", r.runtime, r.min)
+        };
+        assert_eq!(needs("pyright"), "node 14");
+        assert_eq!(needs("typescript-language-server"), "node 18");
+        assert_eq!(needs("intelephense"), "node 20");
+        assert_eq!(needs("phpactor"), "php 8.2");
+        assert_eq!(needs("ruby-lsp"), "ruby 3");
+        assert_eq!(needs("jdtls"), "java 21");
+        assert_eq!(needs("csharp-ls"), "dotnet-sdk 10");
+        assert!(
+            m.server("kotlin-lsp").unwrap().requires.is_none(),
+            "bundled"
+        );
+
+        // Review options that stop jdtls running a build.
+        let jdtls = m.server("jdtls").unwrap();
+        let review = &jdtls.review_init_options["settings"]["java"];
+        assert_eq!(review["import"]["gradle"]["enabled"], false);
+        assert_eq!(review["import"]["maven"]["enabled"], false);
+        assert_eq!(review["autobuild"]["enabled"], false);
+        assert!(!jdtls.workspace_folders, "one -data per worktree");
+
+        // A detect-only server says how to get it, or Unavailable says
+        // "no download" for a thing that was never going to have one.
+        for s in m.servers() {
+            if s.download.is_none() {
+                assert!(s.hint.is_some(), "{}: detect-only with no hint", s.name);
+            }
+        }
+    }
+
     #[test]
     fn tags_extends_must_name_a_plain_language() {
         let yaml = r#"

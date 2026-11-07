@@ -229,6 +229,161 @@ servers:
     launch: ["{bin}", "serve"]
     workspace_folders: true
 
+  - name: intelephense
+    # Detect-only on purpose. Its licence is proprietary ("personal,
+    # non-transferable", "by installing this software you agree"), for an
+    # individual using it with an IDE or editor: yours to accept, not a
+    # download behind Theodore's prompt or `install: always`. Parses PHP in
+    # JavaScript and runs none of the project's code, so it may serve
+    # reviews (a phpactor-tripping vendor/composer does nothing here).
+    # Keeps an index under ~/.config/intelephense, which Remove can't touch.
+    # `intelephense --version` waits on stdio: only check it exists.
+    detect: [["intelephense"]]
+    launch: ["{bin}", "--stdio"]
+    requires: { runtime: node, min: 20 }
+    hint: npm install -g intelephense
+
+  - name: phpactor
+    # MIT. A phar with a php shebang, so `{bin}` runs for a download and a
+    # system install alike; PATH brings the php that passed the check. Needs
+    # 8.2 (its vendor/composer/platform_check.php).
+    # Trusted only: it `require`s the project's vendor/composer/autoload_*.php
+    # (a marker file in them is written). `composer.enable: false`, through
+    # initializationOptions or --config-extra, did not stop that. A project's
+    # .phpactor.json it loads only after a trust prompt, and we answer none.
+    version: "2026.10.07.0"
+    detect: [["phpactor", "--version"]]
+    download:
+      darwin-arm64:
+        url: https://github.com/phpactor/phpactor/releases/download/2026.10.07.0/phpactor.phar
+        sha256: b28bf6166e016d539fc2f2aec18ef918b12590e436a6f1ccbdf30b5bbdbdb16b
+        size: 4815663
+        format: binary
+        bin: phpactor.phar
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+    # The index goes under {data}, not ~/.cache/phpactor: Remove deletes it.
+    launch: ["{bin}", "language-server", '--config-extra={"indexer.index_path": "{data}/index"}']
+    requires: { runtime: php, min: "8.2" }
+    trusted_only: true
+
+  - name: ruby-lsp
+    # A gem with native dependencies and no standalone build: detect-only.
+    # Trusted only: on start it composes .ruby-lsp/Gemfile, runs Bundler and
+    # evaluates the project's Gemfile (a marker file in it is written), and
+    # loads add-ons from the bundle; there is no option to turn that off.
+    # That first start installs gems, hence the long timeout. A Gemfile with
+    # no Gemfile.lock makes it exit: the syntax layer answers.
+    detect: [["ruby-lsp", "--version"]]
+    launch: ["{bin}"]
+    requires: { runtime: ruby, min: 3 }
+    hint: gem install ruby-lsp
+    trusted_only: true
+    start_timeout_secs: 300
+
+  - name: jdtls
+    # Eclipse JDT LS, EPL-2.0. Pure Java, so the same tarball runs anywhere a
+    # JVM does; config_mac_arm makes this entry arm64 only. No `detect`: a
+    # system jdtls is a Python wrapper with another command line.
+    # `-configuration` must be writable and a running instance locks it, so
+    # the shipped one is a read-only parent of one per worktree. One process
+    # per worktree: Eclipse project names would collide across folders.
+    version: "1.63.0"
+    download:
+      darwin-arm64:
+        url: https://download.eclipse.org/jdtls/milestones/1.63.0/jdt-language-server-1.63.0-202610191322.tar.gz
+        sha256: b1f2abe0b3cccb462cf64fb4a5587c7d09df60cf8be7748b152cbd89d018bdc4
+        size: 51143565
+        format: tar.gz
+        bin: plugins/org.eclipse.equinox.launcher_1.8.0.v20260804-1928.jar
+    launch:
+      - "{runtime}"
+      - -Declipse.application=org.eclipse.jdt.ls.core.id1
+      - -Dosgi.bundles.defaultStartLevel=4
+      - -Declipse.product=org.eclipse.jdt.ls.core.product
+      - -Dosgi.sharedConfiguration.area={dir}/config_mac_arm
+      - -Dosgi.sharedConfiguration.area.readOnly=true
+      - -Dosgi.checkConfiguration=true
+      - -Dosgi.configuration.cascaded=true
+      # Without it .project, .classpath and .settings land in the worktree. A
+      # JVM property: as a setting in init_options it does nothing.
+      - -Djava.import.generatesMetadataFilesAtProjectRoot=false
+      - -Xmx1G
+      - --add-modules=ALL-SYSTEM
+      - --add-opens
+      - java.base/java.util=ALL-UNNAMED
+      - --add-opens
+      - java.base/java.lang=ALL-UNNAMED
+      - -jar
+      - "{bin}"
+      - -configuration
+      - "{data}/config"
+      - -data
+      - "{data}/workspace"
+    requires: { runtime: java, min: 21 }
+    start_timeout_secs: 600
+    # With its defaults it evaluates build.gradle and settings.gradle, and
+    # runs an annotation processor a .factorypath names; marker files in them
+    # are written. With these, neither is, and definition and references
+    # still answer: sources are read as loose files, with no dependencies.
+    review_init_options:
+      settings:
+        java:
+          import:
+            gradle: { enabled: false, wrapper: { enabled: false } }
+            maven: { enabled: false }
+            exclusions: ["**"]
+          autobuild: { enabled: false }
+
+  - name: kotlin-lsp
+    # JetBrains', Apache-2.0 repository, alpha, and "partially closed-source"
+    # by its README: the archive is theirs, fetched from their CDN. Brings
+    # its own JBR, so no `requires`, at a price: 360 MB down, 1.1 GB unpacked.
+    # `.sit` here is a plain zip. Sends nothing (--data-sharing defaults to none).
+    # Trusted only: it imports through Gradle or Maven, which evaluates the
+    # build (a marker file in settings.gradle.kts is written), with no
+    # documented switch.
+    version: "263.7084.0"
+    detect: [["kotlin-lsp", "--version"]]
+    download:
+      darwin-arm64:
+        url: https://download.jetbrains.com/language-server/kotlin-server/263.7084.0/kotlin-server-263.7084.0-aarch64.sit
+        sha256: b403bf8a54bd458e3ba6731cf8abb3340be08b439c03576dfc02b13faf3694b8
+        size: 360201117
+        format: zip
+        bin: kotlin-server-263.7084.0/bin/intellij-server
+        redirect_hosts: [download-cdn.jetbrains.com]
+    launch: ["{bin}", "--stdio", "--system-path={data}/system"]
+    trusted_only: true
+    start_timeout_secs: 600
+
+  - name: csharp-ls
+    # MIT, razzmatazz/csharp-language-server, a dotnet tool: its nupkg is a
+    # zip with a framework-dependent, any-architecture dll. Chosen because it
+    # is the one seen answering over plain stdio with an SDK alone. OmniSharp
+    # 2.0.0's arm64 build wants an arm64 .NET, and the machine tried had x64
+    # (Rosetta); Roslyn's roslyn-language-server is prerelease only, per
+    # platform, and its thin client did not start through `dotnet`. Neither
+    # was seen to answer, which says little against them on another machine.
+    # MSBuild needs an SDK, not just the runtime.
+    # No `detect`: a system tool has another command line.
+    # Trusted only: MSBuild evaluates the project and runs its targets (an
+    # <Exec> marker in a .csproj is written), and writes bin/ and obj/ into
+    # the worktree; there is no option to turn that off. It announces loading
+    # about 1.3 s after `initialized`: too close to the default settle.
+    version: "0.28.0"
+    download:
+      darwin-arm64:
+        url: https://api.nuget.org/v3-flatcontainer/csharp-ls/0.28.0/csharp-ls.0.28.0.nupkg
+        sha256: 8f815e4f22674106a8244beba07e4b4b062e31528e404aa8489312effb8c0e0c
+        size: 21643814
+        format: zip
+        bin: tools/net10.0/any/CSharpLanguageServer.dll
+    launch: ["{runtime}", "{bin}"]
+    requires: { runtime: dotnet-sdk, min: 10 }
+    trusted_only: true
+    start_timeout_secs: 300
+    ready_settle_secs: 5
+
 languages:
   - id: rust
     globs: ["*.rs"]
@@ -268,23 +423,23 @@ languages:
     servers: [lua-language-server]
   - id: php
     globs: ["*.php", "*.phtml"]
-    servers: []
+    servers: [intelephense, phpactor]
 
   - id: ruby
     globs: ["*.rb", "*.rake", "*.gemspec", "*.ru", "Gemfile", "Rakefile"]
-    servers: []
+    servers: [ruby-lsp]
 
   - id: java
     globs: ["*.java"]
-    servers: []
+    servers: [jdtls]
 
   - id: kotlin
     globs: ["*.kt", "*.kts"]
-    servers: []
+    servers: [kotlin-lsp]
 
   - id: csharp
     globs: ["*.cs", "*.csx"]
-    servers: []
+    servers: [csharp-ls]
 
   - id: json
     prose: true
