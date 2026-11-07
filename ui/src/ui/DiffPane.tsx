@@ -41,17 +41,21 @@ import {
   Tooltip,
   Typography,
 } from '@heroui/react';
+import { when } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import {
   Code,
+  fitsWholeFile,
+  grammarReady,
   hunkLineTokens,
   langOf,
   rich,
+  tokenizeFile,
   tokenizeLines,
   useShikiVersion,
   type Tok,
 } from '../highlight';
-import { api } from '../core/api';
+import { api, COMMIT_NOT_FOUND, CommandFailure } from '../core/api';
 import { countRender } from '../core/perf';
 import type {
   Anchor,
@@ -61,7 +65,9 @@ import type {
   HunkId,
   InterdiffEntry,
   PrId,
+  PrSummary,
   Revision,
+  DiffSide,
   Severity,
   Side,
 } from '../gen/contract';
@@ -73,6 +79,7 @@ import {
   markHunkRead,
   openLineAnswer,
   referenceLine,
+  setCheckTicked,
   setFileViewed,
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
@@ -102,7 +109,15 @@ import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 import { CodeHoverHost } from './symbols/CodeHoverHost';
-import { identifierAt } from './symbols/extract';
+import { identifierColAt } from './symbols/extract';
+
+/** The PR's Files page on the host; `null` for a review with no host PR
+ *  behind it (a space's branch before it is pushed, a local branch). */
+export function hostFilesUrl(
+  summary: Pick<PrSummary, 'url'> | undefined,
+): string | null {
+  return summary?.url ? `${summary.url}/files` : null;
+}
 
 export interface ComposerState {
   path: string;
@@ -149,13 +164,19 @@ function hunkRange(h: Hunk): string {
   return `lines ${h.new_start}–${h.new_start + h.new_lines - 1}`;
 }
 
-/** The identifier under the pointer, from the text node the browser hit. */
-function symbolAt(e: React.MouseEvent): string | null {
+/** The identifier under the pointer and its 1-based char column in the
+ *  line, from the text node the browser hit (as the hover's `targetAt`). */
+function symbolAt(e: React.MouseEvent): { name: string; col: number } | null {
   if ((e.target as HTMLElement).closest('.ln-act, .no, .mark')) return null;
   const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
   const node = range?.startContainer;
-  if (!range || !node || node.nodeType !== 3) return null;
-  return identifierAt(node.textContent ?? '', range.startOffset);
+  const code = e.currentTarget.querySelector('code.src');
+  if (!range || !node || node.nodeType !== 3 || !code?.contains(node))
+    return null;
+  const before = document.createRange();
+  before.setStart(code, 0);
+  before.setEnd(node, range.startOffset);
+  return identifierColAt(code.textContent ?? '', before.toString().length);
 }
 
 const sevBg: Record<Severity, string> = {
@@ -277,6 +298,9 @@ export const DiffPane = observer(function DiffPane({
   askAi = true,
   /** More items for a file's menu (a space's diff: Revert). */
   fileItems,
+  /** The baseline's commit is gone (force-pushed away, a fresh clone):
+   *  `Review` forgets it, quietly. */
+  onBaselineGone,
 }: {
   pr: PrId;
   rev: Revision;
@@ -293,6 +317,7 @@ export const DiffPane = observer(function DiffPane({
   nextGroup?: boolean;
   askAi?: boolean;
   fileItems?: (file: FileDiff) => ContextMenuItem[];
+  onBaselineGone?: () => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -348,6 +373,8 @@ export const DiffPane = observer(function DiffPane({
     }),
     [setComposer, diffPaths, findHunk, askAi, fileItems],
   );
+  const baselineGone = useRef(onBaselineGone);
+  baselineGone.current = onBaselineGone;
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
   >(null);
@@ -363,7 +390,12 @@ export const DiffPane = observer(function DiffPane({
     api
       .interdiff({ pr, base_sha: baselineSha, file: null })
       .then((entries) => live && setInterdiffEntries(entries))
-      .catch(() => live && setInterdiffEntries(null));
+      .catch((e: unknown) => {
+        if (!live) return;
+        setInterdiffEntries(null);
+        if (e instanceof CommandFailure && e.code === COMMIT_NOT_FOUND)
+          baselineGone.current?.();
+      });
     return () => {
       live = false;
     };
@@ -649,7 +681,10 @@ const GroupCard = observer(function GroupCard({
 }) {
   const store = useRootStore();
   const g = store.models.groupsOf(pr).find((x) => x.id === groupId);
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  // Ticks are synced rows, like read marks: a tab switch or a restart
+  // keeps them. Per revision and group: a push or a regroup starts over.
+  const tickScope = `${rev.base}:${rev.head}:${groupId}`;
+  const ticked = store.models.checkTicks.ticked(pr, tickScope);
   const occurrences = new Map<string, number>();
   const checks = (g?.check ?? []).map((text) => {
     const occurrence = occurrences.get(text) ?? 0;
@@ -657,13 +692,10 @@ const GroupCard = observer(function GroupCard({
     return { key: JSON.stringify([text, occurrence]), text };
   });
   const range = useCheckboxRange({
-    scopeKey: `checks:${pr}:${rev.base}:${rev.head}:${groupId}`,
+    scopeKey: `checks:${pr}:${tickScope}`,
     orderedKeys: checks.map((check) => check.key),
     onChange: (keys, value) =>
-      setChecked((current) => ({
-        ...current,
-        ...Object.fromEntries(keys.map((key) => [key, value])),
-      })),
+      setCheckTicked(store, pr, tickScope, keys, value),
   });
   if (!g) return null;
   // Same sequence `GroupsPane` numbers groups in — includes hidden groups
@@ -725,7 +757,7 @@ const GroupCard = observer(function GroupCard({
             <ChecklistItem
               key={key}
               text={text}
-              checked={!!checked[key]}
+              checked={ticked.has(key)}
               onPick={(value, modifiers) =>
                 range.activate(key, value, modifiers)
               }
@@ -749,22 +781,34 @@ function ChecklistItem({
   const rangeEvents = useCheckboxRangeEvents(onPick);
   return (
     <span
-      className="contents"
+      className="flex items-start gap-2 text-sm"
       onClickCapture={rangeEvents.onClickCapture}
       onBlurCapture={rangeEvents.onBlurCapture}
       onKeyDownCapture={rangeEvents.onKeyDownCapture}
     >
-      <Checkbox isSelected={checked} onChange={rangeEvents.onCheckboxChange}>
-        <Checkbox.Content className={checked ? 'text-muted line-through' : ''}>
+      <Checkbox
+        aria-label={text}
+        isSelected={checked}
+        onChange={rangeEvents.onCheckboxChange}
+      >
+        <Checkbox.Content>
           <Checkbox.Control>
             <Checkbox.Indicator />
           </Checkbox.Control>
-          {/* `Checkbox.Content` is `select-none` so a click anywhere in the
-              row toggles the box; the text itself should still be
-              drag-selectable for copy, so it opts back into selection. */}
-          <span className="select-text">{rich(text)}</span>
         </Checkbox.Content>
       </Checkbox>
+      {/* Outside the checkbox: its press takes over the mouse, so dragging
+          across the text would tick the box instead of selecting. A plain
+          click still toggles; the end of a drag doesn't. */}
+      <span
+        className={`select-text ${checked ? 'text-muted line-through' : ''}`}
+        onClick={(e) => {
+          if (window.getSelection()?.isCollapsed === false) return;
+          onPick(!checked, { shiftKey: e.shiftKey });
+        }}
+      >
+        {rich(text)}
+      </span>
     </span>
   );
 }
@@ -834,6 +878,120 @@ function Expander({
   );
 }
 
+/** Whole-file tokens go by content: a live diff's next snapshot is a new
+ *  revision of mostly the same files. */
+const tokensKey = (text: string, lang: ReturnType<typeof langOf>) =>
+  `${lang}\0${text}`;
+
+/** `path` at `rev`, tokenized whole, for a gap that may show any part of it.
+ *  `null` while that loads, and for good if the file is gone or not worth
+ *  tokenizing: the gap then tokenizes what it shows, which only goes wrong
+ *  when that starts inside a string or a comment. Reading this in a render
+ *  keeps the tokens for as long as the gap is revealed, whatever the cache
+ *  evicts, so hunks use `loadFileTokens` instead. */
+function useFileTokens(
+  pr: PrId,
+  rev: string,
+  path: string,
+  lang: ReturnType<typeof langOf>,
+  wanted: boolean,
+): Tok[][] | null {
+  const store = useRootStore();
+  useShikiVersion(); // Re-renders once `grammarReady` turns true.
+  if (!wanted || !grammarReady(lang)) return null;
+  const text = store.files.get(`${pr}@${rev}:${path}`, () =>
+    api.getFile({ pr, rev, path }),
+  ).data;
+  // Before the cache key: past the limits it would be a copy of the file.
+  if (text == null || !fitsWholeFile(text)) return null;
+  return (
+    store.fileTokens.get(tokensKey(text, lang), () => tokenizeFile(text, lang))
+      .data ?? null
+  );
+}
+
+/** `path` at `rev`, tokenized whole, for a hunk to take its lines from. Runs
+ *  outside any render, so nothing stays subscribed to the file: a PR's worth
+ *  of hunks don't each keep theirs. The fetch is a local `git show` nobody
+ *  asked for, so it fails without a toast. */
+async function loadFileTokens(
+  store: ReturnType<typeof useRootStore>,
+  pr: PrId,
+  rev: string,
+  path: string,
+  lang: ReturnType<typeof langOf>,
+): Promise<Tok[][] | null> {
+  const file = store.files.get(`${pr}@${rev}:${path}`, () =>
+    api.getFile({ pr, rev, path }, true),
+  );
+  await when(() => file.status !== 'loading');
+  const text = file.data;
+  if (text == null || !fitsWholeFile(text)) return null;
+  const toks = store.fileTokens.get(tokensKey(text, lang), () =>
+    tokenizeFile(text, lang),
+  );
+  await when(() => toks.status !== 'loading');
+  return toks.data ?? null;
+}
+
+/** A hunk's per-line tokens: its own side's until the files land, then the
+ *  files'. Each side's file is fetched only if the hunk shows lines of it and
+ *  doesn't start at its top, where tokenizing the hunk alone is already
+ *  right: a new file never needs one. */
+function useHunkTokens({
+  pr,
+  rev,
+  base,
+  path,
+  oldPath,
+  h,
+  lang,
+}: Pick<HunkProps, 'pr' | 'rev' | 'base' | 'path' | 'oldPath' | 'h' | 'lang'>) {
+  const store = useRootStore();
+  // Recomputed once Shiki (or this hunk's grammar) finishes loading.
+  const shikiVersion = useShikiVersion();
+  const own = useMemo(
+    () => hunkLineTokens(h.lines, lang),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
+    [h.lines, lang, shikiVersion],
+  );
+  const [fromFile, setFromFile] = useState<{
+    lines: Hunk['lines'];
+    toks: Tok[][];
+  } | null>(null);
+  const ready = grammarReady(lang);
+  const wantHead = h.new_start > 1 && h.lines.some((l) => l.kind !== 'del');
+  const wantBase = h.old_start > 1 && h.lines.some((l) => l.kind === 'del');
+  useEffect(() => {
+    if (!ready || (!wantHead && !wantBase)) return;
+    let live = true;
+    void Promise.all([
+      wantHead ? loadFileTokens(store, pr, rev, path, lang) : null,
+      wantBase ? loadFileTokens(store, pr, base, oldPath ?? path, lang) : null,
+    ]).then(([head, old]) => {
+      if (!live || (!head && !old)) return;
+      const toks = hunkLineTokens(h.lines, lang, { head, base: old });
+      setFromFile({ lines: h.lines, toks });
+    });
+    return () => {
+      live = false;
+    };
+  }, [
+    store,
+    pr,
+    rev,
+    base,
+    path,
+    oldPath,
+    h.lines,
+    lang,
+    ready,
+    wantHead,
+    wantBase,
+  ]);
+  return fromFile?.lines === h.lines ? fromFile.toks : own;
+}
+
 /** A collapsed run of unchanged lines above a hunk; fetches the file lazily
  *  (unlike the prototype's eagerly-mocked `sources`) and reveals it in
  *  `STEP`-sized bites from the hunk outward, closest lines first. */
@@ -845,6 +1003,8 @@ const ContextGap = observer(function ContextGap({
   lang,
   expand,
   onFullyRevealed,
+  shown,
+  setShown,
 }: {
   pr: PrId;
   rev: Revision['head'];
@@ -860,9 +1020,12 @@ const ContextGap = observer(function ContextGap({
    *  reveal mechanics themselves (#52: its header hint is redundant once
    *  every line above it is visible). */
   onFullyRevealed?: (full: boolean) => void;
+  /** Lines revealed so far, kept by the file: folding it and opening it
+   *  again doesn't drop them. */
+  shown: number;
+  setShown: (n: number) => void;
 }) {
   const store = useRootStore();
-  const [shown, setShown] = useState(0);
   const total = gap.to - gap.from + 1;
   const appliedExpand = useRef<number | null>(null);
   useEffect(() => {
@@ -870,7 +1033,7 @@ const ContextGap = observer(function ContextGap({
       appliedExpand.current = expand;
       setShown(total);
     }
-  }, [expand, total]);
+  }, [expand, total, setShown]);
   const key = `${pr}@${rev}:${path}`;
   const res =
     shown > 0
@@ -886,14 +1049,15 @@ const ContextGap = observer(function ContextGap({
   }, [ready, shown, total]);
   const from = gap.to - shown + 1;
   const slice = ready ? res!.data!.split('\n').slice(from - 1, gap.to) : [];
-  // Tokenized as one block (not line by line): a gap can land mid-comment
+  // From the whole file (not this slice alone): a gap can land mid-comment
   // or mid-string, same as a hunk's own lines.
+  const file = useFileTokens(pr, rev, path, lang, shown > 0);
   const shikiVersion = useShikiVersion();
   const sideText = slice.join('\n');
   const toks = useMemo(
-    () => tokenizeLines(sideText, lang),
+    () => file?.slice(from - 1, gap.to) ?? tokenizeLines(sideText, lang),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [sideText, lang, shikiVersion],
+    [file, from, gap.to, sideText, lang, shikiVersion],
   );
   if (ready) {
     const left = total - shown;
@@ -904,7 +1068,7 @@ const ContextGap = observer(function ContextGap({
             <Expander
               left={left}
               dir="up"
-              onReveal={(n) => setShown((s) => Math.min(total, s + n))}
+              onReveal={(n) => setShown(Math.min(total, shown + n))}
             />
           </div>
         )}
@@ -944,15 +1108,19 @@ const FileTail = observer(function FileTail({
   path,
   hunks,
   lang,
+  shown,
+  setShown,
 }: {
   pr: PrId;
   rev: Revision['head'];
   path: string;
   hunks: Hunk[];
   lang: ReturnType<typeof langOf>;
+  /** As `ContextGap`'s: kept by the file across a fold. */
+  shown: number;
+  setShown: (n: number) => void;
 }) {
   const store = useRootStore();
-  const [shown, setShown] = useState(0);
   const key = `${pr}@${rev}:${path}`;
   const res =
     shown > 0
@@ -962,14 +1130,16 @@ const FileTail = observer(function FileTail({
   const allLines = ready ? res!.data!.split('\n') : [];
   const gap = gapTail(hunks, allLines.length);
   const to = gap ? Math.min(gap.to, gap.from + shown - 1) : 0;
-  const slice = gap ? allLines.slice(gap.from - 1, to) : [];
-  // Tokenized as one block (not line by line): see `ContextGap`.
+  const first = gap ? gap.from - 1 : 0;
+  const slice = gap ? allLines.slice(first, to) : [];
+  // From the whole file: see `ContextGap`.
+  const file = useFileTokens(pr, rev, path, lang, shown > 0);
   const shikiVersion = useShikiVersion();
   const sideText = slice.join('\n');
   const toks = useMemo(
-    () => tokenizeLines(sideText, lang),
+    () => file?.slice(first, to) ?? tokenizeLines(sideText, lang),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [sideText, lang, shikiVersion],
+    [file, first, to, sideText, lang, shikiVersion],
   );
   if (ready) {
     if (!gap) return null;
@@ -994,7 +1164,7 @@ const FileTail = observer(function FileTail({
             <Expander
               left={left}
               dir="down"
-              onReveal={(n) => setShown((s) => Math.min(total, s + n))}
+              onReveal={(n) => setShown(Math.min(total, shown + n))}
             />
             <span>to end of file</span>
           </div>
@@ -1074,6 +1244,9 @@ function anchorSide(l: DiffLine): { side: Side; line: number } | null {
 
 /** The line number a symbol peek is pinned to (see `Line`'s ⌘-click). */
 const peekLineNo = (l: DiffLine) => l.new_no ?? l.old_no ?? 0;
+/** The side `peekLineNo` counts on: a deletion exists only in the base. */
+const peekSide = (l: DiffLine): DiffSide =>
+  l.new_no != null ? 'head' : 'base';
 
 const hunkHasAnchor = (h: Hunk, side: Side, line: number) =>
   h.lines.some((l) => {
@@ -1159,6 +1332,16 @@ function FileBlockInner({
       !!current[id] === full ? current : { ...current, [id]: full },
     );
   }, []);
+  // Context lines revealed per gap (a hunk id, or `tail`): kept here, not
+  // in the gaps, so a fold — which unmounts them — keeps what was loaded.
+  const [revealed, setRevealed] = useState<Record<string, number>>({});
+  const reveal = useCallback(
+    (key: string, n: number) =>
+      setRevealed((current) =>
+        current[key] === n ? current : { ...current, [key]: n },
+      ),
+    [],
+  );
   const cardRef = useRef<HTMLDivElement>(null);
   // Anything that jumps here (J/K focus, `E`, `C`, a peek) forces the hunks
   // in first so the jump finds its `H-<id>` element.
@@ -1193,9 +1376,13 @@ function FileBlockInner({
   } | null>(null);
   if (
     fold &&
-    (fold.viewed !== isViewed || (fold.closed && fold.arrival !== arrival))
+    (fold.viewed !== isViewed ||
+      (fold.closed && arrival !== null && fold.arrival !== arrival))
   ) {
     setFold(null);
+  } else if (fold?.closed && arrival === null && fold.arrival !== null) {
+    // Focus left: a hand fold stays, and coming back is a jump again.
+    setFold({ ...fold, arrival: null });
   }
   const foldTo = (closed: boolean) =>
     setFold({ closed, viewed: isViewed, arrival });
@@ -1208,6 +1395,9 @@ function FileBlockInner({
     arrival: string | null;
   }>({ viewed: isViewed, arrival: null });
   if (seen.viewed !== isViewed) setSeen({ viewed: isViewed, arrival });
+  // Focus left: coming back to the same hunk is a jump again.
+  else if (arrival === null && seen.arrival !== null)
+    setSeen({ viewed: isViewed, arrival: null });
   const jumpedIn = arrival !== null && arrival !== seen.arrival;
   const md = isMarkdown(file.path) && file.status !== 'deleted';
   const [preview, setPreview] = useState(false);
@@ -1216,6 +1406,10 @@ function FileBlockInner({
     ? fold.closed
     : ((!!generatedFlag || file.status === 'deleted') && !arrival) ||
       (isViewed && !jumpedIn);
+  const foldedDrafts = collapsedFile
+    ? store.models.drafts.byPr(pr).filter((d) => d.anchor.path === file.path)
+        .length
+    : 0;
   // Built when the menu opens, not on every render.
   const fileMenu = (e: React.MouseEvent) =>
     contextMenuHandler(store.ui, (): ContextMenuItem[] => {
@@ -1232,11 +1426,12 @@ function FileBlockInner({
           onAction: () => void navigator.clipboard.writeText(file.path),
         },
       ];
-      if (summaryForMenu) {
+      const filesUrl = hostFilesUrl(summaryForMenu);
+      if (filesUrl) {
         items.push({
           id: 'open-github',
           label: 'Open on GitHub',
-          onAction: () => openExternal(`${summaryForMenu.url}/files`),
+          onAction: () => openExternal(filesUrl),
         });
       }
       items.push({
@@ -1272,7 +1467,10 @@ function FileBlockInner({
   return (
     <Card ref={cardRef} className="file mb-4 gap-0 overflow-hidden p-0">
       <header
-        className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm"
+        // In a narrow pane (a space's Changes) the controls wrap under the
+        // name instead of being cut off at the card's edge; the name keeps
+        // room for itself.
+        className="file-h sticky top-0 z-[2] flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-separator bg-surface px-4 py-2.5 text-sm"
         onContextMenu={fileMenu}
       >
         <Button
@@ -1295,7 +1493,7 @@ function FileBlockInner({
          *  the path) stays visible; the inner `dir="ltr"` keeps old→new
          *  order correct for renames regardless of the outer direction. */}
         <span
-          className="min-w-0 truncate font-mono text-[13px]"
+          className="file-name min-w-[6rem] flex-[1_1_0%] truncate text-left font-mono text-[13px]"
           dir="rtl"
           title={file.old_path ? `${file.old_path} → ${file.path}` : file.path}
         >
@@ -1385,7 +1583,6 @@ function FileBlockInner({
             ))}
           </span>
         )}
-        <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
           <Chip size="sm" variant="soft" color="warning" className="shrink-0">
             changed since viewed
@@ -1432,6 +1629,13 @@ function FileBlockInner({
                 ? `Whole file deleted: ${plural(file.deletions, 'line', 'lines')}`
                 : `${plural(file.hunks.length, 'hunk', 'hunks')} hidden`}
           </span>
+          {/* Your pending comments are inside: say so, or a Viewed file
+              hides them until you happen to open it. */}
+          {foldedDrafts > 0 && (
+            <span className="folded-drafts font-medium text-accent">
+              {plural(foldedDrafts, 'draft', 'drafts')}
+            </span>
+          )}
           <Button
             size="sm"
             variant="tertiary"
@@ -1471,12 +1675,16 @@ function FileBlockInner({
                     lang={lang}
                     expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
                     onFullyRevealed={(full) => reportGapRevealed(h.id, full)}
+                    shown={revealed[h.id] ?? 0}
+                    setShown={(n) => reveal(h.id, n)}
                   />
                 )}
                 <HunkComponent
                   pr={pr}
                   rev={rev}
+                  base={base}
                   path={file.path}
+                  oldPath={file.old_path}
                   h={h}
                   lang={lang}
                   since={since?.get(h.id)}
@@ -1498,6 +1706,8 @@ function FileBlockInner({
               path={file.path}
               hunks={file.hunks}
               lang={lang}
+              shown={revealed.tail ?? 0}
+              setShown={(n) => reveal('tail', n)}
             />
           )}
         </>
@@ -1509,7 +1719,10 @@ function FileBlockInner({
 interface HunkProps {
   pr: PrId;
   rev: Revision['head'];
+  base: Revision['base'];
   path: string;
+  /** Where a renamed file was at `base`. */
+  oldPath?: string | null;
   h: Hunk;
   lang: ReturnType<typeof langOf>;
   since?: SinceKind;
@@ -1526,14 +1739,52 @@ interface HunkProps {
   gapFullyRevealed?: boolean;
 }
 
+/** `lineSlice` for a line shown without its annotations: a split diff's
+ *  left copy of a context line. */
+const BARE_SLICE = {
+  threads: NO_IDS,
+  drafts: NO_DRAFTS,
+  findings: NO_FINDINGS,
+  lineAsk: undefined,
+  composer: null,
+  composerCode: '',
+  peek: null,
+};
+
+/** The head-side code a suggestion on the composer's line or range would
+ *  replace: every new-side line from `startLine` to `line`, deletions left
+ *  out (a suggestion can't touch them). Nothing for an old-side comment. */
+function suggestionCode(lines: readonly DiffLine[], c: ComposerState): string {
+  if (c.side !== 'new') return '';
+  const from = c.startLine ?? c.line;
+  return lines
+    .filter(
+      (l) =>
+        l.kind !== 'del' &&
+        l.new_no != null &&
+        l.new_no >= from &&
+        l.new_no <= c.line,
+    )
+    .map((l) => l.text)
+    .join('\n');
+}
+
 /** A line's annotations and per-line slices of the hunk's props, read from
  *  the per-line indexes — the hunk observes them, the line just renders. */
 function lineSlice(
   store: ReturnType<typeof useRootStore>,
-  { pr, path, composer, peek, actions }: HunkProps,
+  { pr, path, h, composer, peek, actions }: HunkProps,
   l: DiffLine,
 ) {
   const a = anchorSide(l);
+  const composerHere =
+    a &&
+    composer &&
+    composer.path === path &&
+    composer.side === a.side &&
+    composer.line === a.line
+      ? composer
+      : null;
   return {
     threads: a ? store.models.threadIdsAt(pr, path, a.side, a.line) : NO_IDS,
     drafts: a ? store.models.drafts.at(pr, path, a.side, a.line) : NO_DRAFTS,
@@ -1545,16 +1796,15 @@ function lineSlice(
       a && actions.askAi
         ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
         : undefined,
-    composer:
-      a &&
-      composer &&
-      composer.path === path &&
-      composer.side === a.side &&
-      composer.line === a.line
-        ? composer
-        : null,
+    composer: composerHere,
+    composerCode: composerHere ? suggestionCode(h.lines, composerHere) : '',
     peek:
-      peek && peek.path === path && peek.line === peekLineNo(l) ? peek : null,
+      peek &&
+      peek.path === path &&
+      peek.line === peekLineNo(l) &&
+      peek.side === peekSide(l)
+        ? peek
+        : null,
   };
 }
 
@@ -1620,15 +1870,7 @@ function HunkViewInner(props: HunkProps) {
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
-  // One Shiki call per side (not per line), so grammar state — an open
-  // comment, a template literal — carries across lines; recomputed once
-  // Shiki (or this hunk's grammar) finishes loading.
-  const shikiVersion = useShikiVersion();
-  const toks = useMemo(
-    () => hunkLineTokens(h.lines, lang),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [h.lines, lang, shikiVersion],
-  );
+  const toks = useHunkTokens(props);
   return (
     <div
       id={`H-${h.id}`}
@@ -1707,15 +1949,11 @@ function SplitHunkViewInner(props: HunkProps) {
   const rows = useMemo(() => splitRows(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
-  // Same per-side tokenizing as the unified view (see `HunkViewInner`) — the
-  // old/new split here is purely a layout difference, not a second pass.
-  const shikiVersion = useShikiVersion();
-  const toks = useMemo(
-    () => hunkLineTokens(h.lines, lang),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [h.lines, lang, shikiVersion],
-  );
-  const cell = (i: number | null | undefined) => {
+  const toks = useHunkTokens(props);
+  // A context line sits on both sides but is one anchor (`anchorSide`:
+  // the new side): its threads, drafts and composer show once, on the
+  // right, not once per side.
+  const cell = (i: number | null | undefined, bare = false) => {
     if (i == null) return null;
     const l = h.lines[i]!;
     return (
@@ -1728,7 +1966,7 @@ function SplitHunkViewInner(props: HunkProps) {
         marks={marks.get(i)}
         toks={toks[i]}
         actions={props.actions}
-        {...lineSlice(store, props, l)}
+        {...(bare ? BARE_SLICE : lineSlice(store, props, l))}
       />
     );
   };
@@ -1740,6 +1978,7 @@ function SplitHunkViewInner(props: HunkProps) {
     >
       <div
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
+        onContextMenu={(e) => openHunkMenu(e, store, props)}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
         {h.header && !gapFullyRevealed && (
@@ -1771,7 +2010,7 @@ function SplitHunkViewInner(props: HunkProps) {
       <div className="lines split-lines">
         {rows.map((row, i) => (
           <div key={i} className="split-row grid grid-cols-2">
-            <div className="split-col">{cell(row.l)}</div>
+            <div className="split-col">{cell(row.l, row.l === row.r)}</div>
             <div className="split-col">{cell(row.r)}</div>
           </div>
         ))}
@@ -1851,6 +2090,9 @@ interface LineProps {
   lineAsk: LineAsk | undefined;
   /** Only set when the composer is open on this very line. */
   composer: ComposerState | null;
+  /** The code the composer's line or range covers, for its Suggestion;
+   *  `''` on every other line. */
+  composerCode: string;
   /** Only set when the symbol peek is pinned to this very line. */
   peek: SymbolPeekTarget | null;
   actions: LineActions;
@@ -1873,6 +2115,7 @@ const Line = memo(function Line(props: LineProps) {
     findings,
     lineAsk,
     composer,
+    composerCode,
     peek,
     actions,
   } = props;
@@ -1890,10 +2133,16 @@ const Line = memo(function Line(props: LineProps) {
         data-line={l.new_no ?? undefined}
         onClick={(e) => {
           if (!(e.metaKey || e.ctrlKey)) return;
-          const name = symbolAt(e);
-          if (!name) return;
+          const at = symbolAt(e);
+          if (!at) return;
           e.preventDefault();
-          actions.setPeek({ name, path, line: lineNo });
+          actions.setPeek({
+            name: at.name,
+            path,
+            line: lineNo,
+            col: at.col,
+            side: peekSide(l),
+          });
         }}
         onContextMenu={(e) => openLineMenu(e, store, props, anchor)}
       >
@@ -1979,12 +2228,12 @@ const Line = memo(function Line(props: LineProps) {
         lineAsk ||
         composer ||
         peek) && (
-        <div className="flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
+        <div className="ln-notes flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
           {peek && (
             <SymbolPeek
               // A fresh click target gets a fresh mount, so its search
               // state starts clean instead of being reset imperatively.
-              key={`${peek.path}:${peek.line}:${peek.name}`}
+              key={`${peek.side}:${peek.path}:${peek.line}:${peek.col}:${peek.name}`}
               pr={pr}
               rev={rev}
               target={peek}
@@ -2015,7 +2264,7 @@ const Line = memo(function Line(props: LineProps) {
               key={`${composerAnchor.path}:${composerAnchor.start_line}:${composerAnchor.line}`}
               pr={pr}
               anchor={composerAnchor}
-              lineText={l.kind !== 'del' ? l.text : ''}
+              lineText={composerCode}
               askAi={actions.askAi}
               onClose={() => actions.setComposer(null)}
             />

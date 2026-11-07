@@ -57,18 +57,20 @@ export class ResourceCache<T> {
 
     const res = new Resource<T>();
     this.entries.set(key, res);
-    this.evictIfNeeded();
 
     const promise =
       this.inFlight.get(key) ?? load().finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, promise);
+    this.evictIfNeeded();
 
     promise.then(
-      (data) =>
+      (data) => {
         runInAction(() => {
           res.status = 'ready';
           res.data = data;
-        }),
+        });
+        this.evictIfNeeded();
+      },
       (e: unknown) => {
         // Only the entry still cached for the key may be marked for retry.
         if (this.entries.get(key) === res) this.failedAt.set(key, Date.now());
@@ -111,13 +113,18 @@ export class ResourceCache<T> {
     this.order.push(key);
   }
 
+  /** A key still loading stays, and stays in line: dropped from `order` it
+   *  could never be evicted once it lands. */
   private evictIfNeeded(): void {
-    while (this.order.length > this.limit) {
-      const oldest = this.order.shift();
-      if (oldest !== undefined && !this.inFlight.has(oldest)) {
-        this.entries.delete(oldest);
-        this.failedAt.delete(oldest);
+    for (let i = 0; i < this.order.length && this.order.length > this.limit;) {
+      const key = this.order[i]!;
+      if (this.inFlight.has(key)) {
+        i++;
+        continue;
       }
+      this.order.splice(i, 1);
+      this.entries.delete(key);
+      this.failedAt.delete(key);
     }
   }
 }

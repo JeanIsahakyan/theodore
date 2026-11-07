@@ -2,6 +2,7 @@ import { getTransport } from '../core/transport';
 import { resourceCache, type ResourceCache } from '../core/resource';
 import { SyncClient, modelAccessors, type ModelAccessors } from '../sync';
 import type { Ephemeral, Revision, UpdateInfo } from '../gen/contract';
+import type { Tok } from '../highlight';
 import { reaction } from 'mobx';
 import { loadAccount, loadAppInfo, loadViewer } from '../actions';
 import { windowTitle } from '../ui/sandbox/sandbox';
@@ -26,6 +27,12 @@ export class RootStore {
   readonly revisions: ResourceCache<Revision> = resourceCache({ limit: 50 });
   /** File contents at `<rev>:<path>`; immutable once fetched. */
   readonly files: ResourceCache<string | null> = resourceCache({ limit: 500 });
+  /** Those files tokenized whole, by their content; `null` when a file
+   *  isn't. Far heavier than the text and rebuilt from it on demand, so far
+   *  fewer are kept. */
+  readonly fileTokens: ResourceCache<Tok[][] | null> = resourceCache({
+    limit: 64,
+  });
 
   private unlistenEphemeral: (() => void) | undefined;
   private unlistenUpdate: (() => void) | undefined;
@@ -37,7 +44,7 @@ export class RootStore {
 
   async start(): Promise<void> {
     setCommandFailureHandler((f) =>
-      this.ephemeral.handle({ type: 'toast', level: 'warn', text: f.message }),
+      this.ephemeral.handle({ type: 'toast', level: 'error', text: f.message }),
     );
     // A command turned away for want of a sign-in: the session ended and
     // its event got lost, so ask again; the gate then shows.
