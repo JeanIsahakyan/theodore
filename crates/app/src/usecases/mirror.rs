@@ -89,14 +89,41 @@ impl Core {
             project.path.clone().map(PathBuf::from).ok_or_else(|| {
                 AppError::Invalid("mirroring needs a local folder project".into())
             })?;
-        let state = self.0.deps.git.working_state(&folder).await?;
-        if let Some(why) = dirty_folder_refusal(state.dirty_files) {
-            return Err(AppError::Invalid(why));
-        }
-
+        // First: what another space mirrored here isn't the folder's own
+        // change, and it refuses if the folder was edited meanwhile.
         for other in self.list_spaces(Some(project.id.clone())).await? {
             if other.id != space.id && other.mirror.is_some() {
                 self.unmirror_space_inner(&other, &folder, false).await?;
+            }
+        }
+        let state = self.0.deps.git.working_state(&folder).await?;
+        match &space.mirror {
+            // Resuming: the folder holds this space's own files, as git sees
+            // it dirty. Only what was edited since stands in the way.
+            Some(mirror) => {
+                let repo_path = self.ensure_project_cache(&project).await?;
+                let to = mirror
+                    .mirrored_head
+                    .as_ref()
+                    .unwrap_or(&mirror.remembered_head);
+                let edited = self
+                    .0
+                    .deps
+                    .git
+                    .mirror_edited(&folder, &repo_path, &space.id, to, &mirror.touched)
+                    .await
+                    .map_err(refused)?;
+                if !edited.is_empty() {
+                    return Err(AppError::Invalid(format!(
+                        "the folder was edited since mirroring: {}; commit or undo that first",
+                        path_list(&edited)
+                    )));
+                }
+            }
+            None => {
+                if let Some(why) = dirty_folder_refusal(state.dirty_files) {
+                    return Err(AppError::Invalid(why));
+                }
             }
         }
 

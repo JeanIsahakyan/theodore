@@ -1256,6 +1256,10 @@ impl GitPort for FakeGit {
             from.clone(),
             paths.to_vec(),
         ));
+        // What mirroring wrote is gone: the folder reads clean again.
+        if let Some(state) = self.working_state_value.lock().unwrap().as_mut() {
+            state.dirty_files = 0;
+        }
         clone_git_result(&self.mirror_restore_value.lock().unwrap())
     }
 
@@ -1830,6 +1834,7 @@ pub struct FakeAgent {
     /// test that cares inspects these with `utility_requests`.
     utility_requests: Mutex<Vec<AgentRequest>>,
     /// `run_steerable` gives a steer handle (as Claude Code's runner does).
+    hang_after_script: Mutex<bool>,
     steerable: std::sync::atomic::AtomicBool,
     /// Messages steered into runs, in order.
     steered: Arc<Mutex<Vec<String>>>,
@@ -1870,6 +1875,11 @@ impl FakeAgent {
     /// emits anything and never closes, until the whole fake is dropped.
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
+    }
+    /// The next turn sends `events`, then hangs: an agent cut off mid-reply.
+    pub fn push_script_then_hang(&self, events: Vec<AgentEvent>) {
+        *self.hang_after_script.lock().unwrap() = true;
+        self.push_script(events);
     }
     pub fn requests(&self) -> Vec<AgentRequest> {
         self.requests.lock().unwrap().clone()
@@ -1953,6 +1963,8 @@ impl AgentPort for FakeAgent {
             let paused = stream_text
                 .then(|| self.paused.lock().unwrap().take())
                 .flatten();
+            let hang_after =
+                stream_text && std::mem::take(&mut *self.hang_after_script.lock().unwrap());
             tokio::spawn(async move {
                 if let Some(go) = paused
                     && go.await.is_err()
@@ -1966,6 +1978,10 @@ impl AgentPort for FakeAgent {
                     if tx.send(e).await.is_err() {
                         break;
                     }
+                }
+                if hang_after {
+                    let _keep = tx;
+                    std::future::pending::<()>().await;
                 }
             });
         }
