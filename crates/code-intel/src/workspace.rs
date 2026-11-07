@@ -44,6 +44,9 @@ pub(crate) struct Ws {
     pub language_of: LanguageOf,
     pub index: WorkspaceIndex,
     pub servers: Mutex<BTreeMap<LanguageId, ServerPlan>>,
+    /// What `git status` listed at the last name question: a path gone
+    /// from it since (deleted, reverted) is read again too.
+    pub dirty: Mutex<HashSet<String>>,
     /// Background work (mention scans), aborted on close.
     pub tasks: Mutex<Vec<JoinHandle<()>>>,
 }

@@ -46,8 +46,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use theodore_code_intel_lsp::{Located, LspPool, LspSession, SessionOptions};
 use theodore_code_intel_syntax::{
-    Indexer, IndexerConfig, SyntaxIndex, byte_offset, file_entry, git_snapshot, preview,
-    text_search,
+    Indexer, IndexerConfig, SyntaxIndex, byte_offset, dirty_paths, file_entry, git_snapshot,
+    preview, text_search,
 };
 use theodore_code_intel_toolchain::{OnBytes, Toolchain};
 use theodore_ports::code_intel::{
@@ -72,6 +72,8 @@ const MAX_HITS: usize = 200;
 const INDEX_WAIT: Duration = Duration::from_secs(2);
 /// Names from the focus files used to promote files that mention them.
 const MAX_FOCUS_NAMES: usize = 64;
+/// Files `git status` lists that a name question hashes again, at most.
+const MAX_DIRTY: usize = 2000;
 
 /// How often the index is checked against its size cap, besides on every
 /// open and close.
@@ -504,6 +506,7 @@ impl CodeIntel {
             requested: ws.languages,
             language_of: lang_of,
             servers: Mutex::default(),
+            dirty: Mutex::default(),
             tasks: Mutex::default(),
         });
         {
@@ -717,6 +720,68 @@ impl CodeIntel {
         }
     }
 
+    /// Files written since the snapshot and never reported (a new file of
+    /// this turn, an edit by the agent's own tool): what `git status` lists
+    /// now, and what it listed last time, is hashed again; changed ones go
+    /// into the snapshot and are indexed first (briefly waited for). Ignored
+    /// files stay out, as in the snapshot itself.
+    async fn refresh_dirty(&self, w: &Ws) {
+        let before: Vec<String> = lock(&w.dirty).iter().cloned().collect();
+        let (root, lang_of) = (w.root.clone(), w.language_of.clone());
+        let read = blocking(move || {
+            let now = dirty_paths(&root).map_err(CodeIntelError::from)?;
+            let mut paths: Vec<String> = now.clone();
+            paths.extend(before.into_iter().filter(|p| !now.contains(p)));
+            paths.truncate(MAX_DIRTY);
+            let entries = paths
+                .into_iter()
+                .map(|p| {
+                    let e = file_entry(&root, &p, &*lang_of).ok().flatten();
+                    (p, e)
+                })
+                .collect::<Vec<_>>();
+            Ok((now, entries))
+        })
+        .await;
+        let (now, entries) = match read {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(target: "code_intel", error = %e, "git status");
+                return;
+            }
+        };
+        *lock(&w.dirty) = now.into_iter().collect();
+        let snap = w.index.snapshot();
+        let mut files: BTreeMap<String, theodore_code_intel_syntax::FileEntry> = snap
+            .files()
+            .iter()
+            .map(|f| (f.path.clone(), f.clone()))
+            .collect();
+        let mut changed = Vec::new();
+        for (path, entry) in entries {
+            let had = files.get(&path).map(|f| f.blob_sha.clone());
+            match entry {
+                Some(e) if had.as_ref() != Some(&e.blob_sha) => {
+                    changed.push(path.clone());
+                    files.insert(path, e);
+                }
+                None if had.is_some() => {
+                    files.remove(&path);
+                }
+                _ => {}
+            }
+        }
+        if files.len() == snap.files().len() && changed.is_empty() {
+            return;
+        }
+        w.index
+            .update_snapshot(theodore_code_intel_syntax::Snapshot::new(
+                snap.root().to_path_buf(),
+                files.into_values().collect(),
+            ));
+        let _ = tokio::time::timeout(INDEX_WAIT, w.index.index_now(&changed)).await;
+    }
+
     /// Wait (briefly) until `path`, as it is on disk now, is indexed.
     async fn wait_indexed(&self, w: &Ws, path: &str) {
         self.refresh_file(w, path).await;
@@ -772,6 +837,7 @@ impl CodeIntel {
         kind: Option<CodeSymbolKind>,
     ) -> CodeIntelResult<Answer<CodeSymbol>> {
         let w = self.ws(root)?;
+        self.refresh_dirty(&w).await;
         let mut notes = Notes::default();
         let mut lsp: Vec<CodeSymbol> = Vec::new();
         let mut answered: HashSet<LanguageId> = HashSet::new();

@@ -441,6 +441,11 @@ new PR revision           ─▶ only changed blobs are parsed
   (`void foo(int x) {`), or the language's own form (Erlang `foo(X) ->`,
   Haskell `foo ::`, R `foo <- function`). Calls (`x = foo(1)`, `self.foo()`) are not; they
   show up in `references`. Best effort, and the kind is always `other`.
+- A name question (`find_symbol`) first asks `git status` what changed
+  since the snapshot: new untracked files (not ignored) and edits nobody
+  reported are hashed, added and indexed first (≤ 2 s), so a file written
+  earlier in the same turn is found, by the syntax layer or the text search.
+  At most 2000 such paths per question.
 - Skipped: `.gitignore`d, `linguist-generated`, vendored, files over
   `code_intel.max_file_kb`. A larger limit, set while worktrees are open,
   retries the files skipped under the old one.

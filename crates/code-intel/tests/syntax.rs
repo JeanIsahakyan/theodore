@@ -150,6 +150,51 @@ async fn text_search_covers_a_language_without_grammar() {
     assert_eq!(rust.source, Source::Syntax);
 }
 
+/// Files written in the same turn, untracked and never reported: a name
+/// question sees them, through the syntax layer when the language has a
+/// grammar and through the text search when it has none. An ignored file
+/// stays out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_untracked_file_is_found_by_name() {
+    let env = Env::new();
+    let wt = repo(&[
+        ("src/a.rs", "fn rusty() {}\n"),
+        ("main.go", "package main\n"),
+        (".gitignore", "out/\n"),
+    ]);
+    let ci = env.facade(StaticGrammars::without(&["go"]));
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    indexed(&ci, wt.path()).await;
+    std::fs::write(wt.path().join("src/extra.rs"), "pub fn brand_new_fn() {}\n").unwrap();
+    std::fs::write(
+        wt.path().join("extra.go"),
+        "package main\n\nfunc BrandNew() {}\n",
+    )
+    .unwrap();
+    std::fs::create_dir(wt.path().join("out")).unwrap();
+    std::fs::write(wt.path().join("out/gen.rs"), "pub fn brand_new_fn() {}\n").unwrap();
+
+    let rust = ci
+        .find_symbol(wt.path(), "brand_new_fn", None)
+        .await
+        .unwrap();
+    let paths: Vec<(&str, Source)> = rust
+        .items
+        .iter()
+        .map(|s| (s.path.as_str(), s.source))
+        .collect();
+    assert_eq!(paths, vec![("src/extra.rs", Source::Syntax)]);
+    let go = ci.find_symbol(wt.path(), "BrandNew", None).await.unwrap();
+    let paths: Vec<(&str, Source)> = go
+        .items
+        .iter()
+        .map(|s| (s.path.as_str(), s.source))
+        .collect();
+    assert_eq!(paths, vec![("extra.go", Source::Text)]);
+}
+
 /// Upstream TypeScript tags.scm has no class or function patterns of its
 /// own; the facade prepends JavaScript's (manifest `tags_extends`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
