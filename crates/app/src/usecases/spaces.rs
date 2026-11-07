@@ -75,7 +75,7 @@ impl Core {
             None => {
                 let siblings = self.list_spaces(Some(project.id.clone())).await?;
                 let taken: Vec<&str> = siblings.iter().map(|s| s.name.as_str()).collect();
-                unique_name(&slug(&req.goal), &taken)
+                unique_name(&slug(name_seed(&req.goal, start.title.as_deref())), &taken)
             }
         };
         let branch = match (&start.adopt, req.branch.clone()) {
@@ -188,7 +188,9 @@ impl Core {
             created_at: now,
             updated_at: now,
             attention_at: None,
-            title: None,
+            // An adopted branch or PR with no note has no goal to title it
+            // by: it is called by its branch, or by "#<n> <title>".
+            title: if has_goal { None } else { start.title.clone() },
             handoff_summary: None,
             progress: None,
             updating: None,
@@ -252,7 +254,7 @@ impl Core {
         // A better name and a chat title, from the chat agent (never turn
         // 1's own, which the dialog may have overridden): backgrounded, so
         // it never delays turn 1 (`space_naming`).
-        if !space.goal.is_empty() {
+        if crate::usecases::space_naming::has_something_to_name(&space.goal) {
             let configured = self
                 .setting_agent_scoped("agents.chat", Some(&project.repo.slug()), AgentId::Claude)
                 .await;
@@ -1447,6 +1449,17 @@ pub(crate) fn is_space_ref(host_id: &str) -> bool {
     host_id.starts_with(SPACE_REF_PREFIX)
 }
 
+/// What a space's instant name is made of: the goal, or, with none (a
+/// branch or PR started without a note), what the start resolved to.
+/// Without either, an empty seed, which `slug` turns into "space".
+pub(crate) fn name_seed<'a>(goal: &'a str, started_as: Option<&'a str>) -> &'a str {
+    if goal.trim().is_empty() {
+        started_as.unwrap_or("")
+    } else {
+        goal
+    }
+}
+
 /// The first few words of `text`, lowercased and dash-joined:
 /// "Retry the export on 429s!" → "retry-the-export-on-429s". Cyrillic is
 /// transliterated ("исправить логин" → "ispravit-login") and accented
@@ -1655,6 +1668,23 @@ mod tests {
     fn ultracode_opens_the_prompt_only_when_on() {
         assert_eq!(with_ultracode("Fix it".into(), true), "ultracode\n\nFix it");
         assert_eq!(with_ultracode("Fix it".into(), false), "Fix it");
+    }
+
+    #[test]
+    fn a_noteless_start_is_named_after_its_branch_or_pr() {
+        assert_eq!(
+            slug(name_seed("", Some("alice/fix-login"))),
+            "alice-fix-login"
+        );
+        assert_eq!(
+            slug(name_seed("  ", Some("#118 Fix login"))),
+            "118-fix-login"
+        );
+        assert_eq!(
+            slug(name_seed("Fix the thing", Some("alice/x"))),
+            "fix-the-thing"
+        );
+        assert_eq!(slug(name_seed("", None)), "space");
     }
 
     #[test]

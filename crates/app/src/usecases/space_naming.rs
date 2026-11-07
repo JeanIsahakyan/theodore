@@ -52,6 +52,11 @@ pub(crate) async fn apply(
     user_named: bool,
     user_branched: bool,
 ) {
+    // Nothing to name from (a branch or PR started without a note): keep
+    // the name and title the start gave it, and spend no agent call.
+    if !has_something_to_name(&goal) {
+        return;
+    }
     let Some(identity) = propose(core, agent, &goal, &cwd).await else {
         return;
     };
@@ -86,6 +91,12 @@ pub(crate) async fn apply(
             data: Some(patch),
         }])
         .await;
+}
+
+/// `false` for an empty or blank goal: there is nothing to propose a name
+/// from, and the agent would answer with whatever it made up.
+pub(crate) fn has_something_to_name(goal: &str) -> bool {
+    !goal.trim().is_empty()
 }
 
 /// `<host login>/<slug>`, or `space/<slug>` for a local folder or a host
@@ -167,6 +178,13 @@ fn sanitize_title(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_blank_goal_is_not_named() {
+        assert!(!has_something_to_name(""));
+        assert!(!has_something_to_name(" \n\t "));
+        assert!(has_something_to_name("Fix login"));
+    }
 
     #[test]
     fn the_goal_goes_as_something_to_name_not_a_task() {

@@ -36,6 +36,10 @@ pub(crate) struct StartResolution {
     /// `ship_space`'s PR body can say "Closes #<n>".
     pub issue: Option<u64>,
     pub adopt: Option<Adopted>,
+    /// What an adopted branch or PR is called until the user says more: the
+    /// PR's "#<n> <title>", or the branch's own name. A space started this
+    /// way often has no goal to title it by.
+    pub title: Option<String>,
 }
 
 impl Core {
@@ -65,6 +69,7 @@ impl Core {
                 Ok(StartResolution {
                     issue: Some(number),
                     adopt: None,
+                    title: None,
                 })
             }
             SpaceStart::Branch(branch) => {
@@ -89,6 +94,7 @@ impl Core {
                     .map(|r| (r, None));
                 Ok(StartResolution {
                     issue: None,
+                    title: Some(branch.clone()),
                     adopt: Some(Adopted {
                         branch,
                         pr,
@@ -113,6 +119,7 @@ impl Core {
                     .get_or_insert_with(|| detail.summary.base_ref.clone());
                 Ok(StartResolution {
                     issue: None,
+                    title: Some(pr_title(number, &detail.summary.title)),
                     adopt: Some(Adopted {
                         branch: detail.summary.head_ref.clone(),
                         fork_sha: detail.summary.head_sha.clone(),
@@ -156,6 +163,14 @@ fn issue_goal(issue: &TrackedIssue) -> String {
     out.push_str("\n\n");
     out.push_str(&issue.url);
     out
+}
+
+/// "#118 Fix the login redirect": a PR's number and title in one line.
+fn pr_title(number: u64, title: &str) -> String {
+    match title.trim() {
+        "" => format!("#{number}"),
+        t => format!("#{number} {t}"),
+    }
 }
 
 /// The issue number out of a pasted URL (`.../issues/123`, any host's
@@ -206,6 +221,12 @@ mod tests {
             "#123 Fix the login redirect\n\nIt sends people to /undefined.\n\n\
              https://github.com/acme/widgets/issues/123"
         );
+    }
+
+    #[test]
+    fn a_pr_is_titled_by_its_number_and_title() {
+        assert_eq!(pr_title(118, " Fix login "), "#118 Fix login");
+        assert_eq!(pr_title(118, "  "), "#118");
     }
 
     #[test]

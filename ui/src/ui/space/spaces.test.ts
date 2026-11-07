@@ -267,6 +267,13 @@ describe('shipping', () => {
       'Retry on 429s',
     );
     expect(defaultTitle({ goal: '', name: 'tidy' })).toBe('tidy');
+    // a space started from a branch with no note: the branch, not "space"
+    expect(
+      defaultTitle({ goal: '', name: 'space', branch: 'alice/fix-login' }),
+    ).toBe('alice/fix-login');
+    expect(
+      defaultTitle({ goal: 'Do it', name: 'space', branch: 'alice/x' }),
+    ).toBe('Do it');
   });
 });
 
@@ -317,6 +324,13 @@ describe('space keys', () => {
 });
 
 describe('spaceTitle', () => {
+  it('shows the branch of a noteless space, a stored title first', () => {
+    const base = { name: 'space', goal: '', branch: 'alice/fix-login' };
+    expect(spaceTitle(base)).toBe('alice/fix-login');
+    expect(spaceTitle({ ...base, title: '#118 Fix login' })).toBe(
+      '#118 Fix login',
+    );
+  });
   it('is the first line of the goal, without a trailing period', () => {
     expect(spaceTitle({ name: 'x', goal: 'Fix the login.\nMore text' })).toBe(
       'Fix the login',

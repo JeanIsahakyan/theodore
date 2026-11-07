@@ -195,7 +195,9 @@ export function unshipped(
  *  name. The slug (`name`) is only for its branch; the goal's first line
  *  is still what Open PR / Merge locally defaults their own title to
  *  (`defaultTitle`, unrelated to this one). */
-export function spaceTitle(s: Pick<Space, 'goal' | 'name' | 'title'>): string {
+export function spaceTitle(
+  s: Pick<Space, 'goal' | 'name' | 'title'> & { branch?: string },
+): string {
   const proposed = s.title?.trim();
   const raw = proposed && proposed.length > 0 ? proposed : defaultTitle(s);
   // Short enough for a sidebar row or a notification: no trailing period
@@ -207,12 +209,16 @@ export function spaceTitle(s: Pick<Space, 'goal' | 'name' | 'title'>): string {
   return `${(word > 30 ? cut.slice(0, word) : cut).replace(/[,;:]$/, '')}…`;
 }
 
-export function defaultTitle(s: Pick<Space, 'goal' | 'name'>): string {
+/** The goal's first line; with no goal (a space started from a branch with
+ *  no note) the branch's name, else the slug. */
+export function defaultTitle(
+  s: Pick<Space, 'goal' | 'name'> & { branch?: string },
+): string {
   const line = s.goal
     .split('\n')
     .map((l) => l.trim())
     .find((l) => l.length > 0);
-  return line ?? s.name;
+  return line ?? (s.branch?.trim() || s.name);
 }
 
 /** "3 files +42 −7" for the changes pane header. */
