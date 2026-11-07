@@ -846,10 +846,46 @@ impl Core {
         for root in settings_only {
             self.close_code_root(&root).await;
         }
-        port.remove(&LanguageId::new(language))
-            .await
-            .map_err(code_err)?;
+        match port.remove(&LanguageId::new(language)).await {
+            Ok(()) => {}
+            Err(CodeIntelError::InUse { language, roots }) => {
+                return Err(AppError::Invalid(self.in_use(&language, &roots).await));
+            }
+            Err(e) => return Err(code_err(e)),
+        }
         self.code_intel_decline(language).await
+    }
+
+    /// Why Remove was refused, by what the user knows: spaces by name,
+    /// reviews counted. A worktree path may be another project's.
+    async fn in_use(&self, language: &str, roots: &[PathBuf]) -> String {
+        let store = self.0.deps.store.clone();
+        let spaces: Vec<Space> = tokio::task::spawn_blocking(move || store.all(models::SPACE))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<Space>(r.data).ok())
+            .collect();
+        let mut parts: Vec<String> = Vec::new();
+        let mut reviews = 0;
+        for root in roots {
+            match spaces.iter().find(|s| Path::new(&s.worktree) == root) {
+                Some(s) => parts.push(format!("space “{}”", s.name)),
+                None => reviews += 1,
+            }
+        }
+        match reviews {
+            0 => {}
+            1 => parts.push("1 review".into()),
+            n => parts.push(format!("{n} reviews")),
+        }
+        format!(
+            "{language} is in use: a space or review is using it ({}); close them, or \
+             remove it later",
+            parts.join(" and ")
+        )
     }
 
     /// Hover in a PR's diff (docs/code-intel.md §7.1): at the PR's current

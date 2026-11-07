@@ -395,6 +395,12 @@ pub enum CodeIntelError {
     NoSymbol { path: String, name: String },
     #[error("{0}")]
     Unsupported(String),
+    /// Remove refused: open worktrees (`roots`) have files of `language`.
+    #[error("{language} is in use by {} open worktree(s); close them, or remove it later", roots.len())]
+    InUse {
+        language: String,
+        roots: Vec<PathBuf>,
+    },
     #[error("download failed: {0}")]
     Download(String),
     #[error("checksum mismatch for {0}")]

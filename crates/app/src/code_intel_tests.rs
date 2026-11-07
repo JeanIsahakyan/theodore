@@ -1629,6 +1629,33 @@ async fn limits_come_from_the_global_file_only_and_apply_when_it_changes() {
     assert!(validate_layer(text, ConfigLayer::Global).is_empty());
 }
 
+/// A refused Remove names the space using the language, never a worktree
+/// path (which may be another project's).
+#[tokio::test]
+async fn a_refused_remove_names_the_space_not_its_path() {
+    let e = code_env().await;
+    let s = e.create("").await;
+    *e.f.code_intel.remove_error.lock().unwrap() = Some(CodeIntelError::InUse {
+        language: "typescript".into(),
+        roots: vec![PathBuf::from(&s.worktree), PathBuf::from("/tmp/review-wt")],
+    });
+    let err = e
+        .core
+        .code_intel_remove("typescript")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        err,
+        format!(
+            "invalid request: typescript is in use: a space or review is using it \
+             (space “{}” and 1 review); close them, or remove it later",
+            s.name
+        )
+    );
+    assert!(!err.contains(&s.worktree), "{err}");
+}
+
 #[tokio::test]
 async fn remove_closes_the_settings_worktree_and_counts_as_declined() {
     let e = code_env().await;

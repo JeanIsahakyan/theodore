@@ -1379,23 +1379,19 @@ impl CodeIntel {
             parsed.push(language.clone());
         }
         let open: Vec<Arc<Ws>> = lock(&self.inner.workspaces).values().cloned().collect();
-        let users: Vec<String> = open
+        let users: Vec<PathBuf> = open
             .iter()
             .filter(|w| {
                 let langs = w.languages();
                 parsed.iter().any(|l| langs.contains(l))
             })
-            .map(|w| w.root.display().to_string())
+            .map(|w| w.root.clone())
             .collect();
-        if let Some(first) = users.first() {
-            let more = match users.len() {
-                1 => String::new(),
-                n => format!(" and {} more", n - 1),
-            };
-            return Err(CodeIntelError::Other(format!(
-                "{language} is in use by an open worktree ({first}{more}); \
-                 close it, or remove the language later"
-            )));
+        if !users.is_empty() {
+            return Err(CodeIntelError::InUse {
+                language: language.to_string(),
+                roots: users,
+            });
         }
 
         // Servers: every one of the language Theodore downloads. Their

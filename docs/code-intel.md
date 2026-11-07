@@ -391,7 +391,7 @@ install(rust) ─▶ grammar tree-sitter-rust ─▶ downloading{received, total
 Project settings → Languages → Remove (`code_intel_remove(language)`, §9.1):
 
 ```
-close worktrees opened only for the settings ─▶ an open review or space has the language? ── yes ─▶ refused, names the worktree
+close worktrees opened only for the settings ─▶ an open review or space has the language? ── yes ─▶ refused: "a space or review is using it (space “…”, 1 review)"
                                                      └─ no ─▶ stop the server's sessions (every worktree)
                                                               ─▶ delete servers/<name>/ (every version) and the grammar package
                                                               ─▶ both Missing; language "removed" + declined

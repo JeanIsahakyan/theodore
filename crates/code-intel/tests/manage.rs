@@ -173,7 +173,10 @@ async fn remove_is_refused_while_a_worktree_uses_it_and_sticks_until_install() {
         .await
         .unwrap();
     let err = ci.remove(&rust).await.unwrap_err().to_string();
-    assert!(err.contains("in use by an open worktree"), "{err}");
+    assert!(
+        err.contains("rust is in use by 1 open worktree(s)"),
+        "{err}"
+    );
 
     ci.close(wt.path()).await;
     ci.remove(&rust).await.unwrap();
