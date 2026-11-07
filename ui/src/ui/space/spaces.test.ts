@@ -36,6 +36,7 @@ import {
   mergeLine,
   prPollMs,
   canContinue,
+  toggleDrawer,
 } from './spaces';
 import type { MergeInfo } from '../../gen/contract';
 
@@ -665,5 +666,14 @@ describe('withPrNumber', () => {
     // #1130 is another number.
     expect(withPrNumber(113, '#1130 other')).toBe('#113 #1130 other');
     expect(withPrNumber(undefined, 'Draft')).toBe('Draft');
+  });
+});
+
+describe('the drawers under a space page', () => {
+  it('are one at a time: opening one closes the other', () => {
+    expect(toggleDrawer(null, 'logs')).toBe('logs');
+    expect(toggleDrawer('logs', 'terminal')).toBe('terminal');
+    expect(toggleDrawer('terminal', 'logs')).toBe('logs');
+    expect(toggleDrawer('logs', 'logs')).toBeNull();
   });
 });

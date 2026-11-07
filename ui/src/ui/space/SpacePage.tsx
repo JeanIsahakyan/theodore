@@ -108,6 +108,8 @@ import {
   liveTurns,
   spaceTitle,
   plainError,
+  toggleDrawer,
+  type Drawer,
 } from './spaces';
 
 /** What the agent may do in a turn (docs/spaces.md §5). */
@@ -173,7 +175,6 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const chat = useRef<ChatHandle | null>(null);
   const ship = useRef<ShipHandle | null>(null);
   const { config, refresh: refreshConfig } = useSpaceConfig(id, space);
-  const [logsOpen, setLogsOpen] = useState(false);
   // The changes pane can be hidden for a chat-only page; remembered for
   // every space (it's a way of working, not a per-space thing).
   const [showChanges, setShowChanges] = useState(
@@ -191,32 +192,37 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     localStorage.setItem(LS_SPACE_CHANGES, '1');
     setShowChanges(true);
   }, [changesFocus]);
-  // Same idea for the terminal drawer, default closed and remembered per
-  // space (`terminalOpen.ts`): its shells live in the core regardless, so
-  // reopening it (or navigating back to the page) just re-lists and
-  // re-attaches them. The page is keyed by space, so this reads once.
-  const [terminalOpen, setTerminalOpenState] = useState(() =>
-    terminalOpenFor(id),
+  // One drawer at a time under the page, so the chat keeps its height. The
+  // terminal one is remembered per space (`terminalOpen.ts`), default
+  // closed: its shells live in the core regardless, so reopening it (or
+  // navigating back to the page) just re-lists and re-attaches them. The
+  // page is keyed by space, so this reads once.
+  const [drawer, setDrawer] = useState<Drawer | null>(() =>
+    terminalOpenFor(id) ? 'terminal' : null,
   );
-  const setTerminalOpen = (open: boolean) => {
-    setTerminalOpenFor(id, open);
-    setTerminalOpenState(open);
-  };
-  const toggleTerminal = () => setTerminalOpen(!terminalOpen);
+  const toggle = useCallback(
+    (which: Drawer) =>
+      setDrawer((d) => {
+        const next = toggleDrawer(d, which);
+        setTerminalOpenFor(id, next === 'terminal');
+        return next;
+      }),
+    [id],
+  );
+  const logsOpen = drawer === 'logs';
+  const terminalOpen = drawer === 'terminal';
+  const toggleTerminal = () => toggle('terminal');
   // ⌃` toggles it from anywhere on the page, composer included — the same
   // reach as ⌘.'s stop, below.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.key !== '`') return;
       e.preventDefault();
-      setTerminalOpenState((v) => {
-        setTerminalOpenFor(id, !v);
-        return !v;
-      });
+      toggle('terminal');
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [id]);
+  }, [toggle]);
   useSpaceLogsSeed(id);
   const run = space ? runControl(config, space) : null;
 
@@ -323,7 +329,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         ship={ship}
         config={config}
         logsOpen={logsOpen}
-        onToggleLogs={() => setLogsOpen((v) => !v)}
+        onToggleLogs={() => toggle('logs')}
         terminalOpen={terminalOpen}
         onToggleTerminal={toggleTerminal}
         showChanges={showChanges}
@@ -370,14 +376,12 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           </section>
         )}
       </div>
-      {logsOpen && (
-        <LogsDrawer space={space} onClose={() => setLogsOpen(false)} />
-      )}
+      {logsOpen && <LogsDrawer space={space} onClose={() => toggle('logs')} />}
       {terminalOpen && live && (
         <TerminalDrawer
           space={space.id}
           open={terminalOpen}
-          onClose={() => setTerminalOpen(false)}
+          onClose={() => toggle('terminal')}
         />
       )}
       {space.mirror && (

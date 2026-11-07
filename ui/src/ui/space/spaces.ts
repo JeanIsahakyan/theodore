@@ -796,3 +796,15 @@ export function actionablePlan(
   const last = log[log.length - 1];
   return last?.plan ? last.reply : null;
 }
+
+/** The drawers under a space page. */
+export type Drawer = 'logs' | 'terminal';
+
+/** One drawer at a time: opening one closes the other, its own toggle
+ *  closes it. */
+export function toggleDrawer(
+  current: Drawer | null,
+  which: Drawer,
+): Drawer | null {
+  return current === which ? null : which;
+}
