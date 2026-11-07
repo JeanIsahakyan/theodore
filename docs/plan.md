@@ -1001,10 +1001,11 @@ merge to main @ 0.3.0 (no v0.3.0 yet)
                     latest.json {version, notes, url, signature}
                     └─▶ GitHub Release v0.3.0 on JeanIsahakyan/theodore (public)
 
-app ──▶ on launch + every 6 h
+app ──▶ on launch + every 6 h (wall clock, so sleep doesn't stretch it)
         GET github.com/JeanIsahakyan/theodore/releases/latest/download/latest.json
         newer? ─▶ download in background ─▶ verify signature
-               ─▶ "Restart to update" (never forced)
+               ─▶ "Restart to update" (never forced); a notification again
+                  every 24 h while it waits, window in the background
                ─▶ restart waits until: no agent running, no outbox item
                   pending (failed ones don't count)
 ```
@@ -1013,7 +1014,7 @@ app ──▶ on launch + every 6 h
 | --- | --- |
 | Mechanism | `tauri-plugin-updater` + `tauri-plugin-process`; manifest from GitHub Releases, no server |
 | Signing key | generated once, private key + password in CI secrets, public key in `tauri.conf.json`. **Never rotated**: a new key orphans every installed build |
-| Channels | `stable` = `/releases/latest/` (GitHub skips pre-releases there); `beta` = a fixed pre-release tag `channel-beta` whose `latest.json` is overwritten. Setting `updates.channel`. `staging` = pre-release `channel-staging`, rebuilt on every push to `staging`: the only channel of a staging build, never offered to any other |
+| Channels | `stable` = `/releases/latest/` (GitHub skips pre-releases there); `beta` = a fixed pre-release tag `channel-beta` whose `latest.json` is overwritten. Setting `updates.channel`. `staging` = pre-release `channel-staging`, rebuilt on every push to `staging`: the only channel of a staging build, never offered to any other. A nightly polls nothing: no feed publishes one |
 | Versioning | semver; the tag must equal the version in `Cargo.toml` and `tauri.conf.json` (CI check) |
 | Tags | never re-tag a published release; ship a new patch instead |
 | Data | SQLite migrations forward-only; DB copied to `theodore.db.bak-<version>` before migrating; downgrade not supported |

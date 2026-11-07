@@ -825,6 +825,16 @@ const UpdatesPage = observer(function UpdatesPage() {
       })
       .finally(() => setChecking(false));
   };
+  if (store.ephemeral.appInfo?.build_env === 'nightly') {
+    return (
+      <section className="flex flex-col gap-2">
+        <Typography.Heading level={6}>Updates</Typography.Heading>
+        <Card variant="secondary" className="px-4 py-3 text-sm text-muted">
+          A nightly build doesn't update itself. Build a new one to move ahead.
+        </Card>
+      </section>
+    );
+  }
   return (
     <>
       <section className="flex flex-col gap-2">
