@@ -222,7 +222,7 @@ languages:
     servers: [tsgo, typescript-language-server]
   - id: javascript
     globs: ["*.js", "*.mjs", "*.cjs", "*.jsx"]
-    servers: [typescript-language-server]
+    servers: [tsgo, typescript-language-server]
   - id: python
     globs: ["*.py", "*.pyi"]
     servers: [ty, pyright]
@@ -244,6 +244,26 @@ languages:
   - id: lua
     globs: ["*.lua"]
     servers: [lua-language-server]
+  - id: php
+    globs: ["*.php", "*.phtml"]
+    servers: []
+
+  - id: ruby
+    globs: ["*.rb", "*.rake", "*.gemspec", "*.ru", "Gemfile", "Rakefile"]
+    servers: []
+
+  - id: java
+    globs: ["*.java"]
+    servers: []
+
+  - id: kotlin
+    globs: ["*.kt", "*.kts"]
+    servers: []
+
+  - id: csharp
+    globs: ["*.cs", "*.csx"]
+    servers: []
+
   - id: json
     prose: true
     globs: ["*.json", "*.jsonc"]
