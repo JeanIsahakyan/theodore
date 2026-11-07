@@ -1457,6 +1457,33 @@ async fn a_handed_in_plan_leaves_the_written_text_in_the_steps() {
     assert_eq!(reply.activity, vec![text_step("Writing the plan.")]);
 }
 
+/// A plan made of the text it wrote is the reply, not steps that may fold.
+#[tokio::test]
+async fn a_plan_in_its_text_blocks_stays_the_reply() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    f.agents.push_script(vec![said("1. Do it"), finished("")]);
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "Plan it".into(),
+        agent: None,
+        model: None,
+        mode: Some(SpaceMode::Plan),
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    let s = idle(&f, &s.id).await;
+
+    let reply = transcript(&f, &s.id)
+        .into_iter()
+        .find(|m| m.text == "1. Do it" && m.author != Author::Me)
+        .unwrap();
+    assert!(!reply.text_in_steps);
+    assert!(reply.activity.is_empty());
+}
+
 /// Rows stored before steps existed still load.
 #[test]
 fn an_older_chat_row_has_no_steps() {

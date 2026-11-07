@@ -1165,8 +1165,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // Without a final text the blocks are the reply, unless a plan took over.
     let blocks = (!answered).then(|| text.clone());
     let text = plan.clone().unwrap_or(text);
-    let (activity, text_in_steps) =
-        steps.finish((blocks.as_ref() != Some(&text)).then_some(text.as_str()));
+    // A plan shows as the reply, even when its blocks are all it is.
+    let told_apart = plan.is_some() || blocks.as_ref() != Some(&text);
+    let (activity, text_in_steps) = steps.finish(told_apart.then_some(text.as_str()));
     // The session this turn ran in is the one the next turn continues. A
     // resumed run that reported none (it failed to start) leaves it as is;
     // a new one that reported none (Gemini) means there is none to continue.
