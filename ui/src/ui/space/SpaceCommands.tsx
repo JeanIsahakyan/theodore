@@ -20,7 +20,8 @@ import {
   StopFill,
   Terminal,
   Xmark,
-  ArrowUpRightFromSquare,
+  Globe,
+  PlugConnection,
 } from '@gravity-ui/icons';
 import { Button, Card, Chip, Tabs, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
@@ -470,7 +471,11 @@ export const PortChips = observer(function PortChips({
             aria-label={i === 0 ? 'Open app' : `Port ${p}`}
             onPress={() => openExternal(portUrl(p))}
           >
-            <ArrowUpRightFromSquare className="size-3.5" />
+            {i === 0 ? (
+              <Globe className="size-3.5" />
+            ) : (
+              <PlugConnection className="size-3.5" />
+            )}
             <span className="btn-label">
               {i === 0 ? 'Open app' : `Port ${p}`}
             </span>
