@@ -497,6 +497,12 @@ pub trait GitPort: Send + Sync {
         Ok(None)
     }
 
+    /// Whether two commits hold the same tree. By the shas by default (fakes).
+    async fn same_tree(&self, repo: &Path, a: &Sha, b: &Sha) -> GitResult<bool> {
+        let _ = repo;
+        Ok(a == b)
+    }
+
     /// Keeps `paths` (relative to the worktree) out of every checkpoint: the
     /// ones git would otherwise pick up, untracked and not ignored, are
     /// excluded for the cache's worktrees. Tracked and ignored ones are left

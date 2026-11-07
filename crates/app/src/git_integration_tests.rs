@@ -13,7 +13,7 @@ use theodore_contract::{
 use theodore_domain::{
     Anchor, Comment, CommentId, HostKind, Person, RepoRef, Sha, Side, Thread, ThreadId,
 };
-use theodore_ports::{AgentPort, CredentialSource, Fetched, Store};
+use theodore_ports::{AgentPort, CredentialSource, Fetched, GitPort, Store};
 
 use crate::Core;
 use crate::testkit::{self, fixtures};
@@ -365,4 +365,104 @@ async fn copied_env_files_stay_out_of_checkpoints_and_commits() {
     assert!(kept.contains(&"a.txt".to_string()), "{kept:?}");
     assert!(!kept.iter().any(|p| p == ".env"), "{kept:?}");
     assert!(!kept.iter().any(|p| p == ".env.local"), "{kept:?}");
+}
+
+/// Quit right after the push, before `shipped` is on the row: the host has
+/// the branch, and it is this space's own.
+#[tokio::test]
+async fn open_pr_finds_its_own_push_after_a_quit_before_the_row() {
+    let fx = setup();
+    let f = fixtures();
+    let url = format!("file://{}", fx.origin.display());
+    let cli = |url: String| {
+        theodore_git::GitCli::new(fx.root.clone(), std::sync::Arc::new(NoAuth))
+            .with_remote_urls(std::sync::Arc::new(move |_r: &RepoRef| Some(url.clone())))
+    };
+    let deps = crate::Deps {
+        git: std::sync::Arc::new(cli(url.clone())),
+        ..f.deps()
+    };
+    let (core, _recv) = Core::start(deps);
+    let project = theodore_contract::Project {
+        id: "github:acme/widget".into(),
+        repo: fx.repo.clone(),
+        path: None,
+        status: theodore_contract::ProjectStatus::Ready,
+        error: None,
+        default_branch: Some("main".into()),
+        added_at: 0,
+        description: None,
+        private: false,
+        pushed_at: None,
+        last_fetched_at: Some(0),
+    };
+    core.apply(vec![theodore_ports::NewAction {
+        model: models::PROJECT.into(),
+        model_id: project.id.clone(),
+        action: theodore_ports::SyncActionCode::I,
+        data: Some(serde_json::to_value(&project).unwrap()),
+    }])
+    .await
+    .unwrap();
+    let cache = fx.root.join("repos/github/acme/widget.git");
+    git(&cache, &["config", "user.email", "a@b.com"]);
+    git(&cache, &["config", "user.name", "test"]);
+
+    let s = core.create_space(no_goal(&project.id)).await.unwrap();
+    std::fs::write(Path::new(&s.worktree).join("new.txt"), "new\n").unwrap();
+    f.agents.push_script(vec![theodore_ports::AgentEvent::Done {
+        final_text: "done".into(),
+        usage: Default::default(),
+    }]);
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "go".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    wait_for("the turn ends", || {
+        space_row(&f, &s.id).status != SpaceStatus::Running
+    })
+    .await;
+    let row = space_row(&f, &s.id);
+
+    // What the quit left: the commit on the host, nothing on the row.
+    let direct = cli(url.clone());
+    let identity = theodore_ports::Identity {
+        name: "test".into(),
+        email: "a@b.com".into(),
+    };
+    let commit = theodore_ports::SpaceCommit {
+        head: row.head_sha.clone(),
+        parent: row.base_sha.clone(),
+        replay_from: None,
+        merge_parent: None,
+        message: "squash".into(),
+        author: identity,
+    };
+    let sha = direct.space_commit(&cache, &s.id, &commit).await.unwrap();
+    direct
+        .push_branch(&cache, &fx.repo, &sha, &row.branch)
+        .await
+        .unwrap();
+    assert!(row.shipped.is_none());
+
+    core.ship_space(ShipSpaceRequest {
+        space: s.id.clone(),
+        action: ShipAction::OpenPr,
+        title: None,
+    })
+    .await
+    .expect("its own branch isn't a name taken by someone else");
+    wait_for("the PR opens", || space_row(&f, &s.id).pr.is_some()).await;
+    let tip = git_out(
+        &fx.origin,
+        &["rev-parse", &format!("refs/heads/{}", row.branch)],
+    );
+    assert_eq!(tip, sha.as_str(), "no new turns: nothing new pushed");
+    assert_eq!(space_row(&f, &s.id).shipped.unwrap().sha, sha);
 }

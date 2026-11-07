@@ -20,7 +20,9 @@ use theodore_contract::{
     ToastLevel, models,
 };
 use theodore_domain::{Author, HostKind, PrRef, PrState, PrSummary, RepoRef, Sha};
-use theodore_ports::{GitError, Identity, NewAction, NewPr, SpaceCommit, SyncActionCode};
+use theodore_ports::{
+    GitError, Identity, NewAction, NewPr, SpaceCommit, SyncActionCode, shipped_ref,
+};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
@@ -171,6 +173,12 @@ impl Core {
                 let shipped = self
                     .push_squashed(&space, &project, &repo_path, &head, &message, &author)
                     .await?;
+                // On record before the fill, which can take a minute: quit
+                // now and a retry finds its own push, not a branch name taken.
+                self.apply(vec![
+                    self.patch(&space.id, serde_json::json!({ "shipped": shipped })),
+                ])
+                .await?;
                 // The repo's PR template when it has one, and a link back.
                 let body = self
                     .space_pr_body(&space, &repo_path, &head, pr_body(&space.goal))
@@ -187,12 +195,8 @@ impl Core {
                         draft: req.action == ShipAction::OpenDraftPr,
                     },
                 };
-                self.apply_with_outbox(
-                    vec![self.patch(&space.id, serde_json::json!({ "shipped": shipped }))],
-                    "create_space_pr",
-                    to_json(&payload)?,
-                )
-                .await?;
+                self.apply_with_outbox(vec![], "create_space_pr", to_json(&payload)?)
+                    .await?;
             }
             ShipAction::Push => {
                 let Some(pr) = space.pr.clone() else {
@@ -239,6 +243,7 @@ impl Core {
     /// | last ship | remote branch | new commit |
     /// | --- | --- | --- |
     /// | none | absent | `base` + head's tree |
+    /// | none | exists, at the space's own last squash | as `s` = that squash |
     /// | none | exists | refused: the name is taken |
     /// | `s` | at `s.sha` or absent | `s.sha` + head's tree |
     /// | `s` | moved to `t` | `t` + the turns since `s.head` (3-way) |
@@ -276,6 +281,28 @@ impl Core {
             .as_ref()
             .filter(|s| s.how == ShipKind::Pr)
             .or(synthetic.as_ref());
+        // Quit between a push and writing `shipped`: the tip is this space's
+        // own squash, and new turns go on top of it.
+        let interrupted = match (last, &tip) {
+            (None, Some(t))
+                if git
+                    .resolve_ref(repo_path, &shipped_ref(&space.id))
+                    .await
+                    .is_ok_and(|own| &own == t) =>
+            {
+                let same = git.same_tree(repo_path, t, head).await.unwrap_or(false);
+                Some(SpaceShipped {
+                    how: ShipKind::Pr,
+                    branch: space.branch.clone(),
+                    sha: t.clone(),
+                    head: if same { head.clone() } else { t.clone() },
+                    pushes: 1,
+                    at: space.created_at,
+                })
+            }
+            _ => None,
+        };
+        let last = last.or(interrupted.as_ref());
         let commit = |parent: &Sha, replay_from: Option<Sha>| SpaceCommit {
             head: head.clone(),
             parent: parent.clone(),

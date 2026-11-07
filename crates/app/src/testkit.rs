@@ -1866,6 +1866,8 @@ pub struct FakeAgent {
     /// (`stream_text: true`, never matched here).
     tagged: Mutex<Vec<TaggedScript>>,
     hang_next: Mutex<bool>,
+    /// The next one-shot utility call (`stream_text: false`) hangs likewise.
+    hang_next_utility: Mutex<bool>,
     /// Keeps a run's sender alive forever so its `events.recv()` never
     /// resolves (used to test cancellation deterministically).
     kept_alive: Mutex<Vec<tokio::sync::mpsc::Sender<AgentEvent>>>,
@@ -1920,6 +1922,10 @@ impl FakeAgent {
     /// emits anything and never closes, until the whole fake is dropped.
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
+    }
+    /// The next one-shot utility call hangs.
+    pub fn hang_next_utility(&self) {
+        *self.hang_next_utility.lock().unwrap() = true;
     }
     /// The next turn sends `events`, then hangs: an agent cut off mid-reply.
     pub fn push_script_then_hang(&self, events: Vec<AgentEvent>) {
@@ -1987,7 +1993,11 @@ impl AgentPort for FakeAgent {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         // Only a turn / skill / ask hangs: a background one-shot call
         // (naming, handoff) must not take the hang meant for it.
-        let hang = stream_text && std::mem::take(&mut *self.hang_next.lock().unwrap());
+        let hang = if stream_text {
+            std::mem::take(&mut *self.hang_next.lock().unwrap())
+        } else {
+            std::mem::take(&mut *self.hang_next_utility.lock().unwrap())
+        };
         if hang {
             self.kept_alive.lock().unwrap().push(tx);
         } else {

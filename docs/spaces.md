@@ -986,9 +986,11 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   already taken on the host, nothing is pushed. After the push the outbox
   item `create_space_pr` asks the host for an open PR from that branch
   first and only then creates one; a create the host refuses as a
-  duplicate is looked up again. So a retry — after a timeout, a crash, or
-  clicking Open PR again after a failure — never opens a second PR, and a
-  retry with no new turns pushes nothing.
+  duplicate is looked up again. The push is on record before the body is
+  filled in, and a branch whose tip is the space's own last squash isn't a
+  name taken. So a retry — after a timeout, a crash, or clicking Open PR again
+  after a failure — never opens a second PR, and a retry with no new turns
+  pushes nothing.
 - *PR body*: the repo's PR template when the change has one, else the
   goal (when it says more than the title); then a link back to the space.
 

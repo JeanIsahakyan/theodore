@@ -540,6 +540,15 @@ impl GitPort for GitCli {
             .await
     }
 
+    async fn same_tree(&self, repo: &Path, a: &Sha, b: &Sha) -> GitResult<bool> {
+        if a == b {
+            return Ok(true);
+        }
+        let tree = |sha: &Sha| format!("{}^{{tree}}", sha.as_str());
+        Ok(self.resolve_ref_op(repo, &tree(a)).await?
+            == self.resolve_ref_op(repo, &tree(b)).await?)
+    }
+
     async fn space_exclude(&self, worktree: &Path, paths: &[String]) -> GitResult<()> {
         self.space_exclude_op(worktree, paths).await
     }

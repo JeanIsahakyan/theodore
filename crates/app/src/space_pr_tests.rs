@@ -655,3 +655,54 @@ async fn back_to_here_stops_at_continue() {
     assert!(err.to_string().contains("can't go back past"), "{err}");
     assert_eq!(space(&f, &s.id).head_sha, Sha::new("turn333"));
 }
+
+// ── Open PR interrupted ───────────────────────────────────────────────────
+
+/// Theodore quits while the agent fills the PR template: the branch is on
+/// the host, the outbox item isn't written yet.
+#[tokio::test]
+async fn open_pr_interrupted_during_the_fill_can_be_retried() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    f.git.put_file(
+        &Sha::new("turn111"),
+        ".github/pull_request_template.md",
+        TEMPLATE.as_bytes(),
+    );
+    f.agents.push_script(done("done"));
+    f.git.push_checkpoint(Sha::new("turn111"));
+    let s = core
+        .create_space(CreateSpaceRequest {
+            project: project.id.clone(),
+            goal: "Retry on 429".into(),
+            name: None,
+            branch: None,
+            base: None,
+            agent: None,
+            model: None,
+            start_from: None,
+        })
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+
+    f.agents.hang_next_utility();
+    let interrupted = {
+        let (core, req) = (core.clone(), open_pr(&s));
+        tokio::spawn(async move { core.ship_space(req).await })
+    };
+    wait_until(|| !f.git.ship.lock().unwrap().pushes.is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    interrupted.abort();
+    let _ = interrupted.await;
+    assert!(space(&f, &s.id).pr.is_none());
+
+    core.ship_space(open_pr(&s))
+        .await
+        .expect("a retry after an interrupted Open PR is safe");
+    wait_until(|| space(&f, &s.id).pr.is_some()).await;
+    let ship = f.git.ship.lock().unwrap();
+    assert_eq!(ship.commits.len(), 1, "the same squashed commit");
+    assert_eq!(ship.pushes.len(), 1, "already on the host");
+    assert_eq!(f.host.create_pr_calls.lock().unwrap().len(), 1);
+}
