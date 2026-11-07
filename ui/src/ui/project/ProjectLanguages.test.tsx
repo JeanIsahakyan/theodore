@@ -127,6 +127,21 @@ describe('ProjectLanguages', () => {
     expect(transport.calls[0]!.args).toEqual({ project: PROJECT.id });
   });
 
+  it('a server off for reviews says so while spaces are on', async () => {
+    const [rust] = STATUS.languages;
+    transport.onCall('code_intel_status', () => ({
+      ...STATUS,
+      languages: [{ ...rust!, server: { ...rust!.server!, state: 'off' } }],
+    }));
+    await render();
+    const chip = [...m!.host.querySelectorAll('[title]')].find(
+      (e) => e.textContent === 'Off for reviews',
+    );
+    expect(chip?.getAttribute('title')).toBe(
+      'Language servers start in this project’s spaces',
+    );
+  });
+
   it('a switch writes this project’s setting', async () => {
     transport.onCall('code_intel_status', () => STATUS);
     transport.onCall('code_intel_set_lsp', () => null);

@@ -682,7 +682,9 @@ C++  · 3 files      Grammar Installed   clangd Downloading
 
   | Run state | Means |
   | --- | --- |
-  | Off | the switch above keeps servers off in the worktrees open now |
+  | Off | both switches are off |
+  | Off for reviews | only reviews' worktrees are open, and the reviews switch is off. With no space open, the page reads the project's checkout (a local folder), served like a review: servers start in a space |
+  | Off in spaces | only spaces are open, and the spaces switch is off |
   | Warming up → Ready | started; reading this section starts what went idle |
   | Not running | allowed, but `max_servers` is full (or a server crashed once and returns on the next question) |
   | Failed | crashed twice in that worktree; not restarted |

@@ -14,6 +14,7 @@ import {
 import { observer } from 'mobx-react-lite';
 import type {
   CodeLanguage,
+  CodeLsp,
   CodeLspScope,
   CodeLspToggle,
   Project,
@@ -23,7 +24,6 @@ import { Shell, Spinner } from '../bits';
 import {
   INSTALL_POLICY_TEXT,
   LanguagesModel,
-  SERVER_STATE,
   canDecline,
   canInstall,
   canRemove,
@@ -35,6 +35,7 @@ import {
   languageName,
   lspNote,
   removeText,
+  runView,
   type InstallView,
   type LanguageProgress,
 } from './languages';
@@ -121,6 +122,7 @@ export const ProjectLanguages = observer(function ProjectLanguages({
               <LanguageRow
                 key={l.language}
                 lang={l}
+                lsp={status.lsp}
                 progress={model.progress.get(l.language)}
                 pending={model.pending.has(l.language)}
                 onInstall={() => void model.install(l.language)}
@@ -200,16 +202,22 @@ function LspRow({
   );
 }
 
-function StateChip({ view }: { view: Pick<InstallView, 'label' | 'tone'> }) {
-  return (
+function StateChip({
+  view,
+}: {
+  view: Pick<InstallView, 'label' | 'tone'> & { title?: string | null };
+}) {
+  const chip = (
     <Chip size="sm" variant="soft" color={view.tone} className="shrink-0">
       {view.label}
     </Chip>
   );
+  return view.title ? <span title={view.title}>{chip}</span> : chip;
 }
 
 function LanguageRow({
   lang,
+  lsp,
   progress,
   pending,
   onInstall,
@@ -217,6 +225,7 @@ function LanguageRow({
   onDecline,
 }: {
   lang: CodeLanguage;
+  lsp: CodeLsp;
   progress: LanguageProgress | undefined;
   pending: boolean;
   onInstall: () => void;
@@ -236,7 +245,7 @@ function LanguageRow({
   const server = lang.server
     ? installView(lang.server.install, lang.server.hint)
     : null;
-  const running = lang.server ? SERVER_STATE[lang.server.state] : null;
+  const running = lang.server ? runView(lang.server.state, lsp) : null;
   const download = downloadOf(progress);
   const downloading = isDownloading(lang, progress);
   const busy = pending || downloading;

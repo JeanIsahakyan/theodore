@@ -22,6 +22,7 @@ import {
   lspNote,
   needsPoll,
   removeText,
+  runView,
   settled,
   suggestManyText,
   suggestText,
@@ -343,6 +344,25 @@ describe('texts', () => {
     expect(suggestManyText(['cpp', 'tsx', 'rust'])).toBe(
       'C++, TSX and Rust: download language servers for exact references?',
     );
+  });
+  it('says which switch keeps a server off', () => {
+    const lsp = (review: boolean, spaces: boolean) => ({
+      review: { on: review, from_config: null },
+      spaces: { on: spaces, from_config: null },
+    });
+    // No space open: the checkout is read like a review.
+    expect(runView('off', lsp(false, true))).toEqual({
+      label: 'Off for reviews',
+      tone: 'default',
+      title: 'Language servers start in this project’s spaces',
+    });
+    expect(runView('off', lsp(true, false)).label).toBe('Off in spaces');
+    expect(runView('off', lsp(false, false)).label).toBe('Off');
+    expect(runView('ready', lsp(false, true))).toEqual({
+      label: 'Ready',
+      tone: 'success',
+      title: null,
+    });
   });
   it('notes the file that sets a switch', () => {
     expect(lspNote({ on: true, from_config: null })).toBeNull();

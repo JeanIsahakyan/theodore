@@ -18,6 +18,7 @@ import type {
   CodeInstallProgress,
   CodeIntelStatus,
   CodeLanguage,
+  CodeLsp,
   CodeLspScope,
   CodeLspToggle,
   CodeServerState,
@@ -184,7 +185,7 @@ export function installView(
   }
 }
 
-export const SERVER_STATE: Record<
+const SERVER_STATE: Record<
   CodeServerState,
   { label: string; tone: InstallTone }
 > = {
@@ -194,6 +195,25 @@ export const SERVER_STATE: Record<
   ready: { label: 'Ready', tone: 'success' },
   failed: { label: 'Failed', tone: 'danger' },
 };
+
+/** The run chip. `off` names the switch that keeps the server off: with no
+ *  space open, the worktree read is the project's checkout (or a PR's),
+ *  served like a review, so the spaces switch alone doesn't start it. */
+export function runView(
+  state: CodeServerState,
+  lsp: CodeLsp,
+): { label: string; tone: InstallTone; title: string | null } {
+  if (state === 'off' && lsp.review.on !== lsp.spaces.on) {
+    return lsp.spaces.on
+      ? {
+          label: 'Off for reviews',
+          tone: 'default',
+          title: 'Language servers start in this project’s spaces',
+        }
+      : { label: 'Off in spaces', tone: 'default', title: null };
+  }
+  return { ...SERVER_STATE[state], title: null };
+}
 
 /** Something that `code_intel_install` could still fetch. */
 const FETCHABLE: CodeInstall['state'][] = ['missing', 'declined', 'failed'];
