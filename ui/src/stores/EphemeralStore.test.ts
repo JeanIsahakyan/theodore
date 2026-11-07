@@ -370,6 +370,16 @@ describe('EphemeralStore run steps', () => {
     }) as const;
   const textBreak = { type: 'run_text_break', run: 'r1' } as const;
 
+  it('a background launch stays marked when its report comes', () => {
+    const e = new EphemeralStore();
+    e.handle(step(tool('ag')));
+    e.handle({ ...done('ag', true), background: true });
+    e.handle(done('ag', null, 'Found it.'));
+    expect(e.runSteps.get('r1')).toEqual([
+      { ...tool('ag'), ok: true, summary: 'Found it.', background: true },
+    ]);
+  });
+
   it('keeps text, tools and thinking in the order they came', () => {
     const e = new EphemeralStore();
     e.handle(delta('Look'));

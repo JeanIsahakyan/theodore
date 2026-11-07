@@ -1029,6 +1029,7 @@ fn tool_step(name: &str, target: Option<&str>, ok: Option<bool>) -> TurnStep {
         summary: None,
         added: None,
         removed: None,
+        background: false,
     }
 }
 

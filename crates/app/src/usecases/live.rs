@@ -37,7 +37,9 @@ use theodore_ports::AgentEvent;
 
 use crate::core::Core;
 use crate::usecases::agents::{tool_label, tool_log_line_with};
-use crate::usecases::turn_steps::{THINKING_MAX, call_step, capped, handback, result_summary};
+use crate::usecases::turn_steps::{
+    THINKING_MAX, call_step, capped, handback, launched_in_background, result_summary,
+};
 
 /// One run's live view: maps its `AgentEvent`s to the `Ephemeral`s the UI
 /// shows under `run`.
@@ -155,6 +157,7 @@ impl LiveRun {
                     id: of.to_string(),
                     ok: None,
                     summary: Some(report),
+                    background: false,
                 }],
                 _ => vec![],
             };
@@ -171,7 +174,9 @@ impl LiveRun {
         if self.hidden.contains(id) {
             return vec![];
         }
-        let summary = self.tools.get(id).and_then(|t| result_summary(t, output));
+        let tool = self.tools.get(id);
+        let summary = tool.and_then(|t| result_summary(t, output));
+        let background = tool.is_some_and(|t| launched_in_background(t, output));
         vec![
             self.log(format!("tool result ok={ok}")),
             Ephemeral::RunStepDone {
@@ -179,6 +184,7 @@ impl LiveRun {
                 id: id.to_string(),
                 ok: Some(ok),
                 summary,
+                background,
             },
         ]
     }
@@ -436,6 +442,7 @@ mod tests {
                 id: "r".into(),
                 ok: Some(true),
                 summary: Some("2 lines".into()),
+                background: false,
             }
         );
     }
@@ -488,6 +495,7 @@ mod tests {
                 id: "ag".into(),
                 ok: None,
                 summary: Some("All fine.".into()),
+                background: false,
             }]
         );
         let out = l.map(&AgentEvent::ToolResult {
@@ -496,6 +504,33 @@ mod tests {
             output: "{}".into(),
         });
         assert!(out.is_empty());
+    }
+
+    /// The launch note is the CLI's plumbing: it says a subagent runs in the
+    /// background, and no text of it reaches the row.
+    #[test]
+    fn a_background_launch_is_marked_and_says_nothing() {
+        let mut l = live();
+        l.map(&AgentEvent::ToolCall {
+            id: "ag".into(),
+            name: "Agent".into(),
+            input: serde_json::json!({ "description": "Read it", "run_in_background": true }),
+        });
+        let out = l.map(&AgentEvent::ToolResult {
+            id: "ag".into(),
+            ok: true,
+            output: "Async agent launched successfully.\nagentId: a1\n(This tool result is intended for the agent.)".into(),
+        });
+        assert_eq!(
+            out[1],
+            Ephemeral::RunStepDone {
+                run: "r1".into(),
+                id: "ag".into(),
+                ok: Some(true),
+                summary: None,
+                background: true,
+            }
+        );
     }
 
     #[test]

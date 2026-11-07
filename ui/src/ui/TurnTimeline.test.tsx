@@ -201,6 +201,52 @@ describe('a subagent', () => {
     expect(m!.host.querySelector('button.turn-agent-line')).toBeNull();
     expect(m!.host.textContent).toContain('Look around');
   });
+
+  it('launched in the background says so, not what the CLI wrote', async () => {
+    const launched: TurnStep = {
+      ...agent,
+      id: 'bg',
+      ok: true,
+      background: true,
+    };
+    await render(<TimelineRows steps={[launched]} running />);
+    const row = m!.host.querySelector('.turn-agent')!;
+    expect(row.querySelector('.turn-agent-note')?.textContent).toBe(
+      'running in background',
+    );
+    expect(row.querySelector('[role="progressbar"], .spinner')).not.toBeNull();
+  });
+
+  it('launched in the background and left behind by its turn does not spin', async () => {
+    const launched: TurnStep = {
+      ...agent,
+      id: 'bg2',
+      ok: true,
+      background: true,
+    };
+    await render(<TimelineRows steps={[launched]} />);
+    const row = m!.host.querySelector('.turn-agent')!;
+    expect(row.querySelector('.turn-agent-note')?.textContent).toBe(
+      'ran in background',
+    );
+    expect(row.querySelector('[role="progressbar"], .spinner')).toBeNull();
+  });
+
+  it('launched in the background shows its report once it comes', async () => {
+    const reported: TurnStep = {
+      ...agent,
+      id: 'bg3',
+      ok: true,
+      background: true,
+      summary: 'Heading is Foo.',
+    };
+    await render(<TimelineRows steps={[reported]} running />);
+    const row = m!.host.querySelector('.turn-agent')!;
+    expect(row.querySelector('.turn-agent-note')?.textContent).toBe(
+      'Heading is Foo.',
+    );
+    expect(row.querySelector('[role="progressbar"], .spinner')).toBeNull();
+  });
 });
 
 describe('a finished reply', () => {

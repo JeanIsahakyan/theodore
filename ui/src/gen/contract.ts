@@ -656,7 +656,12 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
  */
 { type: "run_step"; run: string; step: TurnStep } |
 /**  The tool call `id` of `run` ended, or (`ok` none) learned its summary. */
-{ type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null } |
+{ type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null;
+/**
+ *  The call was a subagent launched in the background: its result
+ *  only says it started.
+ */
+background?: boolean } |
 /**  The next `AgentDelta` of `run` starts a new text row. */
 { type: "run_text_break"; run: string } |
 /**
@@ -2453,7 +2458,12 @@ detail?: string | null;
  */
 summary?: string | null;
 /**  Lines an edit adds and removes, from its input. */
-added?: number | null; removed?: number | null };
+added?: number | null; removed?: number | null;
+/**
+ *  A subagent launched in the background: its result only says it
+ *  started, its report (`summary`) comes later, or never.
+ */
+background?: boolean };
 
 /**
  *  A product event the UI reports (`track_ui`). Typed like the core's own:

@@ -580,6 +580,10 @@ pub enum Ephemeral {
         id: String,
         ok: Option<bool>,
         summary: Option<String>,
+        /// The call was a subagent launched in the background: its result
+        /// only says it started.
+        #[serde(default)]
+        background: bool,
     },
     /// The next `AgentDelta` of `run` starts a new text row.
     RunTextBreak {
@@ -766,6 +770,10 @@ pub enum TurnStep {
         added: Option<u32>,
         #[serde(default)]
         removed: Option<u32>,
+        /// A subagent launched in the background: its result only says it
+        /// started, its report (`summary`) comes later, or never.
+        #[serde(default)]
+        background: bool,
     },
 }
 

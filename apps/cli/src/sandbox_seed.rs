@@ -105,6 +105,7 @@ fn steps(n: usize) -> Vec<TurnStep> {
         summary: None,
         added: None,
         removed: None,
+        background: false,
     };
     let mut steps = vec![TurnStep::Text {
         text: "Reading the module first.".into(),

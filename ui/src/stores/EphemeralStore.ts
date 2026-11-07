@@ -617,7 +617,7 @@ export class EphemeralStore {
           return;
         case 'run_step_done':
           this.flushRun(e.run);
-          this.markStep(e.run, e.id, e.ok, e.summary);
+          this.markStep(e.run, e.id, e.ok, e.summary, e.background);
           this.clearStalled(e.run);
           return;
         case 'run_text_break':
@@ -901,6 +901,7 @@ export class EphemeralStore {
     id: string,
     ok: boolean | null,
     summary: string | null,
+    background?: boolean,
   ): void {
     const steps = this.runSteps.get(run);
     if (!steps) return;
@@ -912,6 +913,7 @@ export class EphemeralStore {
         ...step,
         ok: ok ?? step.ok,
         summary: summary ?? step.summary,
+        ...(background ? { background: true } : {}),
       };
       this.runSteps.set(run, next);
       return;

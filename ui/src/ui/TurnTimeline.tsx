@@ -294,10 +294,14 @@ const AgentRow = memo(
       step.id ? `agent:${step.id}` : keptAs && `agent:${keptAs}`,
     );
     const steady = useSteadyChange();
-    const busy = running && step.ok == null;
+    // A background launch answers at once, its report comes later or never.
+    const waiting = !!step.background && !step.summary;
+    const busy = running && (step.ok == null || waiting);
     const view = toolView(step, running);
     const hasMore = own.length > 0 || !!step.summary;
-    const beside = busy ? latestOf(own) : step.summary;
+    const beside = busy
+      ? (latestOf(own) ?? (waiting ? 'running in background' : null))
+      : (step.summary ?? (step.background ? 'ran in background' : null));
     const line = (
       <>
         <StepIcon busy={busy}>

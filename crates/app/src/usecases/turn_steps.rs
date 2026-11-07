@@ -38,6 +38,16 @@ pub(crate) const THINKING_MAX: usize = 1000;
 /// no step of its work. The `Agent` call's own result only points at it.
 const HANDBACK: &str = "SubagentHandback";
 
+/// What the result of an `Agent` call that runs in the background opens with:
+/// the CLI's note to the agent that it started, no report.
+const LAUNCHED: &str = "Async agent launched successfully";
+
+/// Whether `output` is the acknowledgment of a subagent launched in the
+/// background, not its result. `tool` is the call's label.
+pub(crate) fn launched_in_background(tool: &str, output: &str) -> bool {
+    matches!(tool, "Agent" | "Task") && output.trim_start().starts_with(LAUNCHED)
+}
+
 /// The step a tool call starts as. `name` is what the agent called it.
 pub(crate) fn call_step(
     id: &str,
@@ -56,6 +66,7 @@ pub(crate) fn call_step(
         summary: None,
         added,
         removed,
+        background: false,
     }
 }
 
@@ -195,7 +206,7 @@ pub(crate) async fn changed_files(
 /// The first line a subagent's result says of its work. `None` when it only
 /// points at its handback, or holds only the CLI's bookkeeping.
 fn agent_report(output: &str) -> Option<String> {
-    if output.contains("report was delivered") {
+    if output.contains("report was delivered") || launched_in_background("Agent", output) {
         return None;
     }
     output
@@ -265,8 +276,13 @@ impl TurnSteps {
                 ok: result,
                 output,
             } if !self.hidden.contains(id) => {
-                let summary = self.tool_of(id).and_then(|t| result_summary(t, output));
+                let tool = self.tool_of(id);
+                let summary = tool.and_then(|t| result_summary(t, output));
+                let background = tool.is_some_and(|t| launched_in_background(t, output));
                 self.set_result(id, Some(*result), summary);
+                if background {
+                    self.set_background(id);
+                }
             }
             _ => {}
         }
@@ -293,6 +309,17 @@ impl TurnSteps {
             }
             if report.is_some() {
                 *summary = report;
+            }
+        }
+    }
+
+    fn set_background(&mut self, call: &str) {
+        for step in self.steps.iter_mut().rev() {
+            if let TurnStep::Tool { id, background, .. } = step
+                && id.as_deref() == Some(call)
+            {
+                *background = true;
+                return;
             }
         }
     }
@@ -610,6 +637,73 @@ mod tests {
                 parent: Some("ag".into())
             }
         );
+    }
+
+    #[test]
+    fn a_background_launch_is_marked_and_its_note_is_no_summary() {
+        let agent = AgentEvent::ToolCall {
+            id: "ag".into(),
+            name: "Agent".into(),
+            input: json!({ "description": "Read it", "run_in_background": true }),
+        };
+        let launched = result(
+            "ag",
+            true,
+            "Async agent launched successfully.\nagentId: a1\n(This tool result is intended for the agent.)",
+        );
+        let back = AgentEvent::ToolCall {
+            id: "h".into(),
+            name: HANDBACK.into(),
+            input: json!({ "message": "Heading is Foo." }),
+        };
+        let (kept, _) = recorded(&[agent.clone(), launched.clone()]).finish(Some(""));
+        let [
+            TurnStep::Tool {
+                ok,
+                summary,
+                background,
+                ..
+            },
+        ] = kept.as_slice()
+        else {
+            panic!("{kept:?}");
+        };
+        assert_eq!(
+            (*ok, summary.as_deref(), *background),
+            (Some(true), None, true)
+        );
+
+        // Its report comes later, under the call.
+        let (kept, _) = recorded(&[agent, launched, nested("ag", back)]).finish(Some(""));
+        let [
+            TurnStep::Tool {
+                summary,
+                background,
+                ..
+            },
+        ] = kept.as_slice()
+        else {
+            panic!("{kept:?}");
+        };
+        assert_eq!(
+            (summary.as_deref(), *background),
+            (Some("Heading is Foo."), true)
+        );
+
+        // A foreground one is not marked.
+        let (kept, _) = recorded(&[
+            AgentEvent::ToolCall {
+                id: "fg".into(),
+                name: "Agent".into(),
+                input: json!({}),
+            },
+            result("fg", true, "All fine."),
+        ])
+        .finish(Some(""));
+        let [TurnStep::Tool { background, .. }] = kept.as_slice() else {
+            panic!("{kept:?}");
+        };
+        assert!(!background);
     }
 
     #[test]

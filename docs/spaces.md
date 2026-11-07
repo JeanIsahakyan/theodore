@@ -332,7 +332,12 @@ marks what it does with `parent_tool_use_id` (2.1.319, recorded in
 and tools are `AgentEvent::Nested`, stored with `parent` and shown under the
 row: its newest step beside it while it runs, all of them when opened. They
 never reach the reply. Its `SubagentHandback` call is no row: its message is the
-row's summary. Codex and Gemini report no nested steps.
+row's summary. A call that runs in the background gets only the CLI's launch
+note back, which is plumbing for the agent and shows nowhere: the step is marked
+`background` and the row says `running in background` (spinner) until its
+report comes, `ran in background` once its turn is over. A note beside a row is
+one line; the full report shows when the row is opened. Codex and Gemini report
+no nested steps.
 
 **The files** of a turn come from git between its checkpoints (`before`..`after`,
 at most 200) when it ends; a failure leaves them empty and never fails the
