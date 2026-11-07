@@ -569,12 +569,24 @@ impl Core {
         }
         let project = self.space_project(&space).await?;
         let repo_path = self.ensure_project_cache(&project).await?;
+        let worktree_exists = Path::new(&space.worktree).exists();
+        // Refused over a rebase or merge left unfinished: said before anything
+        // stops, so the commands and terminals go on while you finish it.
+        if worktree_exists
+            && let Ok(Some(busy)) = self
+                .0
+                .deps
+                .git
+                .worktree_busy(Path::new(&space.worktree))
+                .await
+        {
+            return Err(theodore_ports::GitError::Busy(busy).into());
+        }
         // docs/config.md: stop `run`, checkpoint, `archive`, then remove.
         self.stop_space_commands(&space.id).await;
         // docs/spaces.md "Terminal": a shell must not keep writing into a
         // worktree about to be removed.
         self.close_space_terminals(&space.id).await;
-        let worktree_exists = Path::new(&space.worktree).exists();
         if worktree_exists {
             let saved = self
                 .0

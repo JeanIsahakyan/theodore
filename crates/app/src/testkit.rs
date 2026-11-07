@@ -1065,6 +1065,17 @@ impl GitPort for FakeGit {
         })
     }
 
+    async fn worktree_busy(
+        &self,
+        _worktree: &Path,
+    ) -> GitResult<Option<theodore_ports::WorktreeBusy>> {
+        // What the next checkpoint would be refused for.
+        Ok(match self.checkpoint_errors.lock().unwrap().front() {
+            Some(GitError::Busy(busy)) => Some(*busy),
+            _ => None,
+        })
+    }
+
     async fn space_restore_paths(
         &self,
         _worktree: &Path,

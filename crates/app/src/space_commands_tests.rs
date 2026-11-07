@@ -987,3 +987,46 @@ async fn a_committed_local_file_gets_the_repos_limits() {
         "its commands wait for your Allow"
     );
 }
+
+// ── a refused archive ─────────────────────────────────────────────────────
+
+/// Archive refused over an unfinished rebase: nothing is half-done, so the
+/// dev server keeps running.
+#[tokio::test]
+async fn a_refused_archive_leaves_the_running_commands_alone() {
+    let e = started().await;
+    e.global("spaces: {run: pnpm dev}");
+    e.f.commands.on(
+        "pnpm dev",
+        FakeScript::Hang {
+            lines: vec!["up".into()],
+        },
+    );
+    let s = e.create("").await;
+    e.core
+        .space_run(SpaceRunRequest {
+            space: s.id.clone(),
+            start: true,
+        })
+        .await
+        .unwrap();
+    e.until(&s.id, |s| {
+        s.process
+            .as_ref()
+            .is_some_and(|p| p.status == ProcessStatus::Running)
+    })
+    .await;
+    e.f.git
+        .push_checkpoint_error(theodore_ports::GitError::Busy(
+            theodore_ports::WorktreeBusy::Rebase,
+        ));
+    assert!(e.core.archive_space(&s.id).await.is_err());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let row = e.space(&s.id);
+    assert_ne!(row.status, SpaceStatus::Archived);
+    assert_eq!(
+        row.process.map(|p| p.status),
+        Some(ProcessStatus::Running),
+        "still serving"
+    );
+}

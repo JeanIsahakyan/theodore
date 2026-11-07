@@ -934,7 +934,7 @@ unfinished there (`GitPort::worktree_busy`, one `WorktreeBusy`):
 | --- | --- |
 | a turn ends | answer kept, no checkpoint, no `turn_log` entry; space `failed` with "checkpoint skipped: rebase in progress" |
 | Undo | refused: "can't undo: … finish or abort it first" |
-| Archive, Ship | refused with the same reason; nothing half-done is committed |
+| Archive, Ship | refused with the same reason; nothing half-done is committed, and a refused Archive leaves `run` and the terminals running |
 | next turn after it's finished | checkpoints as usual |
 
 That is for an operation nobody told Theodore about (the agent ran `git
