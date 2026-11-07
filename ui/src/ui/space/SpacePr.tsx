@@ -439,7 +439,7 @@ export const MergedBanner = observer(function MergedBanner({
   const days = autoArchiveDays(store.models.settings.all());
   const number = summary ? `#${summary.pr.number}` : 'The PR';
   return (
-    <Alert status="success" className="space-merged m-3 w-auto items-center">
+    <Alert status="success" className="space-merged m-3 w-auto shrink-0 items-center">
       <Alert.Content className="min-w-0">
         <Alert.Description>
           {number} merged into {space.base}. Continue here on a new branch from

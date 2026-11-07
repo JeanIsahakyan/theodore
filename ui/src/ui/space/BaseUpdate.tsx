@@ -134,7 +134,7 @@ export const UpdatingBanner = observer(function UpdatingBanner({
   return (
     <Alert
       status="warning"
-      className="space-updating mx-3 mt-3 w-auto items-center"
+      className="space-updating mx-3 mt-3 w-auto shrink-0 items-center"
     >
       <Alert.Content>
         <Alert.Description>

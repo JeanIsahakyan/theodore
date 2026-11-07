@@ -411,7 +411,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
 function ArchivedBanner({ space }: { space: Space }) {
   const [busy, setBusy] = useState(false);
   return (
-    <Alert status="accent" className="m-3 w-auto items-center">
+    <Alert status="accent" className="m-3 w-auto shrink-0 items-center">
       <Alert.Content>
         <Alert.Description>
           Archived. The transcript and the checkpoint ref are kept.
@@ -470,7 +470,7 @@ const SpaceHeader = observer(function SpaceHeader({
     // The title keeps 9rem (plus the stage chip's room) on the first line;
     // the actions drop to a line of their own when they don't fit beside
     // it, and give up their labels first (`.space-header`, styles.css).
-    <header className="space-header flex min-h-14 flex-wrap items-center gap-x-2 gap-y-1 border-b border-separator px-6 py-2 [&>button]:shrink-0">
+    <header className="space-header flex min-h-14 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-separator px-6 py-2 [&>button]:shrink-0">
       <div
         className={`flex flex-1 basis-0 items-center gap-2 ${stage === 'drafting' ? 'min-w-[9rem]' : 'min-w-[18rem]'}`}
       >
@@ -495,7 +495,7 @@ const SpaceHeader = observer(function SpaceHeader({
           </span>
         )}
       </div>
-      <div className="ml-auto flex flex-wrap items-center justify-end gap-2 [&>button]:shrink-0">
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 [&>button]:shrink-0">
         {/* Once its PR merged, Continue moves it onto the new base. */}
         {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
         <RunButton space={space} config={config} />
@@ -853,7 +853,7 @@ const MirrorBanner = observer(function MirrorBanner({
   return (
     <Alert
       status={refusal ? 'danger' : 'accent'}
-      className="m-3 w-auto items-center"
+      className="m-3 w-auto shrink-0 items-center"
     >
       <Alert.Content>
         <Alert.Description>
