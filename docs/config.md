@@ -32,7 +32,9 @@ global ──▶ repo ──▶ local ──▶ effective config
   ```
 
   It is read only from a local folder project's own checkout, never from a
-  space's worktree (where the agent could write it). A host project has no
+  space's worktree (where the agent could write it). Committed, it isn't
+  personal: it gets the repo layer's limits (no `lsp`, commands wait for
+  Allow). A host project has no
   checkout, so its local file lives in Theodore's data directory:
   `~/.theodore/projects/<host>/<owner>/<name>/config.local.yaml`.
 
@@ -287,7 +289,9 @@ code_intel:
   setting it is ignored, with a toast, and the editor warns on that line:
   a repo turning servers on for reviews of its own PRs would run their
   authors' code. Each project's switches (Settings → Projects → ⟨project⟩
-  → Languages) write its local file; unset there, your global file applies.
+  → Languages) write its local file, ignored through the checkout's own
+  `info/exclude` so the checkout stays clean; unset there, your global file
+  applies.
 
 - Read like the rest of the repo layer: at the base, never at a PR's head,
   so a PR can't change what gets downloaded or run.

@@ -542,9 +542,13 @@ async fn a_switch_writes_the_projects_local_file_over_the_global_default() {
     );
     assert!(status.lsp.spaces.on && status.lsp.spaces.from_config.is_none());
     assert_eq!(
-        std::fs::read_to_string(folder.join(".gitignore")).unwrap(),
-        ".theodore/config.local.yaml\n",
+        *e.f.git.excluded.lock().unwrap(),
+        vec![".theodore/config.local.yaml".to_string()],
         "the personal file stays out of commits"
+    );
+    assert!(
+        !folder.join(".gitignore").exists(),
+        "a switch changes nothing in the checkout"
     );
     assert_eq!(
         std::fs::read_to_string(&global).unwrap(),

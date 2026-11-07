@@ -234,6 +234,20 @@ pub trait GitPort: Send + Sync {
         Err(GitError::Unsupported("ensure_local_mirror"))
     }
 
+    /// Whether git tracks `path` (relative to `folder`), so whoever can
+    /// commit to the repo decides what it holds.
+    async fn is_tracked(&self, folder: &Path, path: &str) -> GitResult<bool> {
+        let _ = (folder, path);
+        Err(GitError::Unsupported("is_tracked"))
+    }
+
+    /// Ignores `pattern` in `folder`'s own `info/exclude`: this checkout
+    /// only, nothing to commit, no file in the working tree changes.
+    async fn exclude_locally(&self, folder: &Path, pattern: &str) -> GitResult<()> {
+        let _ = (folder, pattern);
+        Err(GitError::Unsupported("exclude_locally"))
+    }
+
     /// Whether `path` is (inside) a git working copy or bare repository.
     async fn is_repo(&self, path: &Path) -> GitResult<bool> {
         let _ = path;

@@ -498,3 +498,28 @@ async fn mirroring_never_touches_a_repository_above_a_moved_folder() {
         .unwrap_err();
     assert!(matches!(err, GitError::NotAWorktree(_)), "{err}");
 }
+
+#[tokio::test]
+async fn is_tracked_and_exclude_locally_leave_the_checkout_clean() {
+    let e = env().await;
+    assert!(e.git.is_tracked(&e.folder, "a.txt").await.unwrap());
+    assert!(!e.git.is_tracked(&e.folder, "nope.txt").await.unwrap());
+
+    std::fs::write(e.folder.join("mine.yaml"), "x").unwrap();
+    assert_ne!(git(&e.folder, &["status", "--porcelain"]), "");
+    e.git.exclude_locally(&e.folder, "mine.yaml").await.unwrap();
+    e.git.exclude_locally(&e.folder, "mine.yaml").await.unwrap();
+    assert_eq!(
+        git(&e.folder, &["status", "--porcelain"]),
+        "",
+        "ignored, no .gitignore"
+    );
+    assert_eq!(
+        std::fs::read_to_string(e.folder.join(".git/info/exclude"))
+            .unwrap()
+            .matches("mine.yaml")
+            .count(),
+        1,
+        "once"
+    );
+}

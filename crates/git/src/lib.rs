@@ -413,6 +413,14 @@ impl GitPort for GitCli {
         self.is_repo_op(path).await
     }
 
+    async fn is_tracked(&self, folder: &Path, path: &str) -> GitResult<bool> {
+        self.is_tracked_op(folder, path).await
+    }
+
+    async fn exclude_locally(&self, folder: &Path, pattern: &str) -> GitResult<()> {
+        self.exclude_locally_op(folder, pattern).await
+    }
+
     async fn remove_repo(&self, repo: &RepoRef) -> GitResult<()> {
         self.remove_repo_op(repo).await
     }

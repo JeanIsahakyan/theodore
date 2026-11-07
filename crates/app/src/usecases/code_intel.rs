@@ -645,7 +645,13 @@ impl Core {
         if let Some(folder) = folder
             && self.0.deps.git.is_repo(folder).await.unwrap_or(false)
         {
-            crate::usecases::config_editor::ensure_gitignored(folder).await?;
+            // Not the repo's `.gitignore`: a switch must leave the checkout
+            // clean, or mirroring and merging locally refuse it as dirty.
+            self.0
+                .deps
+                .git
+                .exclude_locally(folder, crate::config::LOCAL_FILE)
+                .await?;
         }
         Ok(())
     }

@@ -948,3 +948,42 @@ async fn fix_with_agent_refuses_when_setup_has_not_failed() {
     let err = e.core.space_fix_setup(&s.id).await.unwrap_err();
     assert!(err.to_string().contains("hasn't failed"), "{err}");
 }
+
+#[tokio::test]
+async fn a_committed_local_file_gets_the_repos_limits() {
+    let e = started().await;
+    let folder = Path::new(e.project.path.as_deref().unwrap());
+    std::fs::create_dir_all(folder.join(".theodore")).unwrap();
+    std::fs::write(
+        folder.join(".theodore/config.local.yaml"),
+        "code_intel: {lsp: {review: true}}\nspaces: {setup: \"touch pwned\"}\n",
+    )
+    .unwrap();
+
+    // Untracked: it's yours, nothing to ask.
+    let layers = e.core.project_layers(&e.project, None).await;
+    let cfg = e.core.config_with_trust(&layers, &e.project, false).await;
+    assert!(cfg.merged.config.code_intel.lsp.review.unwrap_or(false));
+    assert!(
+        cfg.runnable(theodore_contract::SpaceCommandKind::Setup)
+            .is_some()
+    );
+
+    // Committed: anyone who can push wrote it.
+    e.f.git
+        .tracked
+        .lock()
+        .unwrap()
+        .push(".theodore/config.local.yaml".into());
+    let layers = e.core.project_layers(&e.project, None).await;
+    let cfg = e.core.config_with_trust(&layers, &e.project, false).await;
+    assert!(
+        !cfg.merged.config.code_intel.lsp.review.unwrap_or(false),
+        "a repo can't turn servers on"
+    );
+    assert_eq!(
+        cfg.runnable(theodore_contract::SpaceCommandKind::Setup),
+        None,
+        "its commands wait for your Allow"
+    );
+}

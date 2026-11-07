@@ -372,6 +372,10 @@ pub struct FakeGit {
     mirror_path: PathBuf,
     mirror_calls: Mutex<Vec<(PathBuf, RepoRef)>>,
     is_repo_value: Mutex<bool>,
+    /// Paths `is_tracked` says git has.
+    pub tracked: Mutex<Vec<String>>,
+    /// What `exclude_locally` was asked to ignore.
+    pub excluded: Mutex<Vec<String>>,
     default_branch_value: Mutex<Option<String>>,
     branches_value: Mutex<Vec<BranchInfo>>,
     resolve_refs: Mutex<HashMap<String, Sha>>,
@@ -518,6 +522,8 @@ impl FakeGit {
             mirror_path: PathBuf::from("/tmp/theodore-fake-mirror"),
             mirror_calls: Mutex::new(Vec::new()),
             is_repo_value: Mutex::new(true),
+            tracked: Mutex::new(Vec::new()),
+            excluded: Mutex::new(Vec::new()),
             default_branch_value: Mutex::new(Some("main".into())),
             branches_value: Mutex::new(Vec::new()),
             resolve_refs: Mutex::new(HashMap::new()),
@@ -874,6 +880,15 @@ impl GitPort for FakeGit {
 
     async fn is_repo(&self, _path: &Path) -> GitResult<bool> {
         Ok(*self.is_repo_value.lock().unwrap())
+    }
+
+    async fn is_tracked(&self, _folder: &Path, path: &str) -> GitResult<bool> {
+        Ok(self.tracked.lock().unwrap().iter().any(|p| p == path))
+    }
+
+    async fn exclude_locally(&self, _folder: &Path, pattern: &str) -> GitResult<()> {
+        self.excluded.lock().unwrap().push(pattern.to_string());
+        Ok(())
     }
 
     async fn default_branch(&self, _repo: &Path) -> GitResult<Option<String>> {

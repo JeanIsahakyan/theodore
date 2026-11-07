@@ -163,7 +163,9 @@ impl Core {
         let data_dir = self.0.deps.data_dir.clone();
         if let Some(folder) = &project.path {
             let folder = Path::new(folder);
-            return config::read_layers(&data_dir, Some(folder), Some(folder)).await;
+            let mut layers = config::read_layers(&data_dir, Some(folder), None).await;
+            layers.push(self.folder_local_layer(folder).await);
+            return layers;
         }
         let mut layers = config::read_layers(&data_dir, None, None).await;
         if let Some(rev) = rev
@@ -177,6 +179,24 @@ impl Core {
         let local = config::host_local_path(&data_dir, &project.repo);
         layers.push(config::read_local_layer(&local).await);
         layers
+    }
+
+    /// A local folder's personal file. Committed, it isn't personal: anyone
+    /// who can push wrote it, so it counts as the repo's and gets the repo's
+    /// limits (no `lsp`, commands wait for "Run commands from this repo?").
+    pub(crate) async fn folder_local_layer(&self, folder: &Path) -> LayerText {
+        let mut layer = config::read_local_layer(&folder.join(config::LOCAL_FILE)).await;
+        if self
+            .0
+            .deps
+            .git
+            .is_tracked(folder, config::LOCAL_FILE)
+            .await
+            .unwrap_or(false)
+        {
+            layer.layer = ConfigLayer::Repo;
+        }
+        layer
     }
 
     /// The config a space runs with: its project's layers (a host
