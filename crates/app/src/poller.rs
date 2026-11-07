@@ -597,6 +597,28 @@ async fn dismiss_files(
     let _ = core.apply(actions).await;
 }
 
+/// Any refresh about to write `pr`'s row (inbox, project, one PR) calls
+/// this first: a head that moved from the stored one is a push, which wakes
+/// a `NextPush` snooze, whether or not the PR is open this session.
+pub(crate) async fn wake_if_pushed(core: &Core, pr: &PrId, new_head: &Sha) {
+    let store = core.0.deps.store.clone();
+    let pr_s = pr.0.clone();
+    let stored_head = tokio::task::spawn_blocking(move || store.get(models::PR, &pr_s))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten()
+        .and_then(|r| {
+            r.data
+                .get("head_sha")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    if stored_head.is_some_and(|h| h != new_head.as_str()) {
+        wake_next_push(core, pr).await;
+    }
+}
+
 async fn wake_next_push(core: &Core, pr: &PrId) {
     let store = core.0.deps.store.clone();
     let pr_s = pr.0.clone();

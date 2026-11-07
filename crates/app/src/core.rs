@@ -469,6 +469,8 @@ impl Core {
         detail: &theodore_domain::PrDetail,
     ) -> crate::error::AppResult<()> {
         let pr_s = detail.summary.pr.id().0.clone();
+        crate::poller::wake_if_pushed(self, &detail.summary.pr.id(), &detail.summary.head_sha)
+            .await;
         let mut summary_data = serde_json::to_value(&detail.summary)
             .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
         self.keep_inbox_reasons(&pr_s, &mut summary_data).await;

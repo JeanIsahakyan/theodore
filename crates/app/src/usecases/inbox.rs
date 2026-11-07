@@ -66,6 +66,7 @@ impl Core {
                         data: Some(serde_json::json!({ "reasons": summary.reasons })),
                     });
                 } else {
+                    crate::poller::wake_if_pushed(self, &pr_id, &summary.head_sha).await;
                     let data = serde_json::to_value(&summary)
                         .map_err(|e| AppError::Invalid(e.to_string()))?;
                     actions.push(NewAction {

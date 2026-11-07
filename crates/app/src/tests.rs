@@ -1633,6 +1633,51 @@ async fn refresh_inbox_writes_pr_rows_and_seeds_inbox_state_once() {
 }
 
 #[tokio::test]
+async fn an_inbox_refresh_that_sees_a_new_head_wakes_a_next_push_snooze() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    // Never opened this session: not in `current_head`, so the open-PR
+    // poller never sees its pushes.
+    let pr_ref = fixture_pr_ref();
+    let pr_id = pr_ref.id();
+    let mut summary = testkit::sample_pr_summary(&pr_ref, &Sha::new("old-head"));
+    summary.updated_at = 1;
+    put_model_row(
+        &f,
+        models::PR,
+        &pr_id.0,
+        serde_json::to_value(&summary).unwrap(),
+    );
+    let snoozed = |snooze: serde_json::Value| json!({"pr": pr_id, "done": false, "snooze": snooze});
+    put_model_row(
+        &f,
+        models::INBOX_STATE,
+        &pr_id.0,
+        snoozed(json!({"kind": "next_push"})),
+    );
+
+    // Same head: stays snoozed.
+    summary.updated_at = 2;
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![summary.clone()]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    let state = f.store.get(models::INBOX_STATE, &pr_id.0).unwrap().unwrap();
+    assert!(!state.data["snooze"].is_null(), "no push, no wake");
+
+    summary.head_sha = Sha::new("new-head");
+    summary.updated_at = 3;
+    for _ in 0..4 {
+        f.host.push_search(Ok(vec![summary.clone()]));
+    }
+    core.refresh_inbox().await.expect("refresh_inbox");
+    let state = f.store.get(models::INBOX_STATE, &pr_id.0).unwrap().unwrap();
+    assert!(state.data["snooze"].is_null(), "a push wakes it: {state:?}");
+}
+
+#[tokio::test]
 async fn refresh_inbox_links_stacked_prs_in_the_same_repo() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps());

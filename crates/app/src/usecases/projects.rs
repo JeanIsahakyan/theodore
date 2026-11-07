@@ -236,6 +236,7 @@ impl Core {
                 if self.is_stale_summary(&id, summary.updated_at).await {
                     continue;
                 }
+                crate::poller::wake_if_pushed(self, &summary.pr.id(), &summary.head_sha).await;
                 let mut data =
                     serde_json::to_value(&summary).map_err(|e| AppError::Invalid(e.to_string()))?;
                 self.keep_inbox_reasons(&id, &mut data).await;
