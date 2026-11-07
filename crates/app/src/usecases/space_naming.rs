@@ -107,8 +107,17 @@ pub(crate) async fn branch_for(core: &Core, project: &Project, name: &str) -> St
 }
 
 async fn propose(core: &Core, agent: AgentId, goal: &str, cwd: &Path) -> Option<Identity> {
-    let answer = one_shot::run(core, agent, IDENTITY_SYSTEM, goal, cwd).await?;
+    let answer = one_shot::run(core, agent, IDENTITY_SYSTEM, &identity_prompt(goal), cwd).await?;
     parse(&answer)
+}
+
+/// The goal as data to name. On its own it reads as a task, and an agent
+/// with tools starts doing it instead of answering.
+fn identity_prompt(goal: &str) -> String {
+    format!(
+        "Don't carry out this request and don't use any tools. Only name it, \
+         as two lines: NAME: and TITLE:.\n\n<request>\n{goal}\n</request>"
+    )
 }
 
 fn parse(answer: &str) -> Option<Identity> {
@@ -158,6 +167,13 @@ fn sanitize_title(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_goal_goes_as_something_to_name_not_a_task() {
+        let prompt = identity_prompt("Add a Troubleshooting section");
+        assert!(prompt.contains("Don't carry out this request"), "{prompt}");
+        assert!(prompt.contains("Add a Troubleshooting section"), "{prompt}");
+    }
 
     #[test]
     fn parses_both_lines_case_insensitively() {
