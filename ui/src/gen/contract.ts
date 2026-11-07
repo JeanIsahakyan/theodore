@@ -1725,6 +1725,14 @@ export type Space = {
 	created_at: number,
 	updated_at: number,
 	/**
+	 *  When the space last had something for you: a turn ended or failed
+	 *  (a plan is ready when its turn ends), or a question came. The ●
+	 *  compares this, not `updated_at`, which other writes bump too. Always
+	 *  written with `updated_at`, which the page's seen mark stores. `None`
+	 *  on spaces with no such event since it was added.
+	 */
+	attention_at?: number | null,
+	/**
 	 *  A short chat title the chat agent proposed from the goal, shown
 	 *  instead of its raw first line (`ui/src/ui/space/spaces.ts`'s
 	 *  `defaultTitle`); `None` until that run lands or when it failed.

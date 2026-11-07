@@ -21,6 +21,7 @@ import {
   labsVisible,
   spaceChatKey,
   spaceGlyph,
+  waitingSpaces,
   spacesIn,
   spaceTitle,
   nextMode,
@@ -123,6 +124,31 @@ describe('spaces', () => {
     expect(spaceGlyph({ ...s, turns: 0 }, undefined)).toBe('idle');
     expect(spaceGlyph({ ...s, status: 'running' }, 99)).toBe('running');
     expect(spaceGlyph({ ...s, status: 'failed' }, 99)).toBe('failed');
+  });
+
+  it('reads only news as unread, not every write that bumps updated_at', () => {
+    // Seen after the turn ended; a PR opened or the base moved since.
+    const s = space({ id: 's', turns: 1, attention_at: 10, updated_at: 30 });
+    expect(spaceGlyph(s, 20)).toBe('idle');
+    expect(waitingSpaces([s], () => 20)).toBe(0);
+    // A newer turn is news again; the page's seen mark (`updated_at`) covers it.
+    const next = { ...s, attention_at: 40, updated_at: 40 };
+    expect(spaceGlyph(next, 30)).toBe('unseen');
+    expect(waitingSpaces([next], () => 30)).toBe(1);
+    expect(spaceGlyph(next, next.updated_at)).toBe('idle');
+  });
+
+  it('"Mark as unread" works off the news time, whatever bumped updated_at', () => {
+    const s = space({ id: 's', turns: 1, attention_at: 10, updated_at: 30 });
+    expect(canMarkUnread(s, 20)).toBe(true);
+    expect(spaceGlyph(s, undefined)).toBe('unseen');
+    expect(waitingSpaces([s], () => undefined)).toBe(1);
+  });
+
+  it('a space with no news time yet falls back to updated_at', () => {
+    const s = space({ id: 's', turns: 1, attention_at: null, updated_at: 10 });
+    expect(spaceGlyph(s, 9)).toBe('unseen');
+    expect(spaceGlyph(s, 10)).toBe('idle');
   });
 
   it('sorts pinned spaces first, newest activity first within each group', () => {

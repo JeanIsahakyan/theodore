@@ -1313,3 +1313,45 @@ async fn a_steps_file_is_named_from_the_worktree_not_by_its_directory() {
         reply.activity
     );
 }
+
+/// The ● (docs/spaces.md §3): only a turn's end is news, not every write
+/// that bumps `updated_at`.
+#[tokio::test]
+async fn only_a_turn_ending_stamps_attention() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    assert_eq!(s.attention_at, None);
+
+    f.clock.advance(1_000);
+    turn(&f, &core, &s.id, "go", "done", "head1").await;
+    wait_until(|| space(&f, &s.id).attention_at.is_some()).await;
+    let ended = space(&f, &s.id);
+    assert_eq!(ended.attention_at, Some(ended.updated_at));
+
+    f.clock.advance(1_000);
+    core.set_space_pinned(&s.id, true).await.unwrap();
+    core.space_pr_opened(&s.id, &crate::testkit::sample_pr_ref("o", "r", 7))
+        .await;
+    let later = space(&f, &s.id);
+    assert_eq!(later.attention_at, ended.attention_at);
+    assert!(later.updated_at > ended.updated_at, "the write did bump it");
+
+    f.clock.advance(1_000);
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "boom".into(),
+        stderr_tail: String::new(),
+    }]);
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "again".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    wait_until(|| space(&f, &s.id).status == SpaceStatus::Failed).await;
+    wait_until(|| space(&f, &s.id).attention_at > ended.attention_at).await;
+}

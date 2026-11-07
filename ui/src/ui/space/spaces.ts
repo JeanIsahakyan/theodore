@@ -91,23 +91,34 @@ export function archivedSpacesIn(ws: WorkspaceId, spaces: Space[]): Space[] {
 
 export type SpaceGlyph = 'running' | 'unseen' | 'idle' | 'failed';
 
+type UnreadFields = Pick<Space, 'status' | 'updated_at' | 'turns'> &
+  Partial<Pick<Space, 'attention_at'>>;
+
+/** Whether something asked for you since `seenAt`: a turn ended or failed, a
+ *  plan or a question came. Not any write: a PR opening or an Update from
+ *  base isn't news. A space with no such event since `attention_at` was added
+ *  falls back to `updated_at`, as it did. */
+function hasNews(s: UnreadFields, seenAt: number | undefined): boolean {
+  return s.turns > 0 && (seenAt ?? 0) < (s.attention_at ?? s.updated_at);
+}
+
 /** What the sidebar shows next to a space (docs/spaces.md §3): a finished
  *  turn you haven't looked at reads as waiting for you. `seenAt` is when
  *  the space page was last open, kept locally. */
 export function spaceGlyph(
-  s: Pick<Space, 'status' | 'updated_at' | 'turns'>,
+  s: UnreadFields,
   seenAt: number | undefined,
 ): SpaceGlyph {
   if (s.status === 'running') return 'running';
   if (s.status === 'failed') return 'failed';
-  if (s.turns > 0 && (seenAt ?? 0) < s.updated_at) return 'unseen';
+  if (hasNews(s, seenAt)) return 'unseen';
   return 'idle';
 }
 
 /** Whether "Mark as unread" would do anything: there's a turn to flag, and
  *  it doesn't already show as waiting for you. */
 export function canMarkUnread(
-  s: Pick<Space, 'status' | 'updated_at' | 'turns'>,
+  s: UnreadFields,
   seenAt: number | undefined,
 ): boolean {
   return s.turns > 0 && spaceGlyph(s, seenAt) !== 'unseen';
@@ -496,15 +507,13 @@ export function questionAsked(
  *  (finished or failed), and spaces whose agent waits on your answer;
  *  archived ones aside. */
 export function waitingSpaces(
-  spaces: Pick<Space, 'id' | 'status' | 'updated_at' | 'turns' | 'question'>[],
+  spaces: (UnreadFields & Pick<Space, 'id' | 'question'>)[],
   seen: (id: string) => number | undefined,
 ): number {
   return spaces.filter(
     (s) =>
       (s.status === 'running' && !!s.question) ||
-      ((s.status === 'idle' || s.status === 'failed') &&
-        s.turns > 0 &&
-        (seen(s.id) ?? 0) < s.updated_at),
+      ((s.status === 'idle' || s.status === 'failed') && hasNews(s, seen(s.id))),
   ).length;
 }
 

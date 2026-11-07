@@ -185,6 +185,7 @@ impl Core {
             sent_feedback: Vec::new(),
             created_at: now,
             updated_at: now,
+            attention_at: None,
             title: None,
             handoff_summary: None,
             progress: None,

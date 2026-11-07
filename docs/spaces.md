@@ -108,7 +108,7 @@ a separate feature island.
 | Glyph | Meaning | Source |
 | --- | --- | --- |
 | ◐ | agent running | `space.status = running` |
-| ● | turn finished since you last looked | `space.updated_at` > last seen (UI-local) |
+| ● | a turn ended or a question came since you last looked; a plan is ready when its turn ends | `space.attention_at` > last seen (UI-local); other writes that bump `updated_at` (PR opened, Update from base, undo, archive) don't light it |
 | ○ | idle | `idle` |
 | ✕ | last turn failed or was interrupted | `failed` |
 | ⎇ #n | has a PR; tinted by its checks (green · red · amber), the merge icon once merged | `space.pr` + its `pr` row (`checks`, `state`) |
@@ -132,8 +132,8 @@ a row, or type "pin"/"unread" in ⌘K.
 | Pin | `space.pinned` (synced) | `set_space_pinned` only — never a client transaction, like the rest of `space` |
 | Mark as unread | the UI-local seen mark (`seen.ts`) | forgets the space was seen, so it reads ● again and counts toward the dock badge, without waiting for a new turn |
 
-Pinning never touches `updated_at`, so pinning alone doesn't make a space
-read as a new turn. Pinned spaces sort first, then by activity, in both
+Unread comes from `attention_at`, not `updated_at`, so pinning (or any other
+write) doesn't make a space read as a new turn. Pinned spaces sort first, then by activity, in both
 the sidebar and ⌘K.
 
 **Archive from the row**: hovering a space row (or focusing it with the
@@ -1103,6 +1103,7 @@ New synced model `space` (core-owned, written only by commands):
 | `review_pr` | the branch review the diff and Review use |
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
+| `attention_at` | when something last asked for you: a turn ended or failed, or a question came. Drives the ● and the dock badge. Written with `updated_at`, the value the page's seen mark stores, so looking at the page always covers it; empty on spaces with no such event yet (they fall back to `updated_at`) |
 | `shipped` | the last ship: `how` (`pr · merged_locally · branch`), `branch`, `sha` (the squashed commit), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
 | `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch; cleared by Continue |
 | `turn_log` | per turn: your message and the reply (`chat_message` ids), messages steered into it (`steered`), checkpoint `before` / `after` and the worktree's `HEAD` under each (`before_head` / `after_head`, none on old entries), `undone`; `base_before` when the turn completed an Update from base (Undo puts that base back); a Revert is an entry too, with `reverted` paths and its own message as `reply` |
