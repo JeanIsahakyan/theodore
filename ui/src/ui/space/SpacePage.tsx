@@ -3,7 +3,7 @@
  * with the agent on the left, the live diff vs base on the right), the
  * New space dialog, Settings → Labs, and the "turn done" notices.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 
 import {
@@ -60,7 +60,7 @@ import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
-import { ChatEmpty, ChatLive, ChatLog, ChatMessage } from '../ChatTurn';
+import { ChatEmpty, ChatLive, ChatLog } from '../ChatTurn';
 import { QueuedMessages } from './QueuedMessages';
 import { canSendNow, splitQueue } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
@@ -71,20 +71,14 @@ import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
-import {
-  checksByReply,
-  runControl,
-  runsByReply,
-  settingUp,
-  setupView,
-} from './commands';
+import { runControl, runsByReply, settingUp, setupView } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
-import { BackToHere, revertItems } from './SpaceRewind';
+import { revertItems } from './SpaceRewind';
+import { SpaceMessage } from './SpaceMessage';
 import {
-  CheckChip,
   LogsDrawer,
   LogsToggle,
   PortChips,
@@ -97,7 +91,7 @@ import {
   useSpaceLogsSeed,
 } from './SpaceCommands';
 import { TerminalDrawer, TerminalToggle } from './Terminal';
-import { PlanActions, QuestionCard } from './SpacePlan';
+import { QuestionCard } from './SpacePlan';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
@@ -109,12 +103,9 @@ import {
   actionablePlan,
   nextMode,
   notifyOn,
-  plansByReply,
   spaceKeyAction,
   spaceChatKey,
   spaceStage,
-  undoState,
-  undoneMessages,
   unshipped,
   spaceTitle,
 } from './spaces';
@@ -166,15 +157,6 @@ export function archive(ui: Ui, space: Space) {
   void api
     .archiveSpace(space.id)
     .then(() => ui.goBack())
-    .catch(() => {});
-}
-
-/** Undo last turn (button on the reply, palette). Errors are toasted by
- *  api.ts. */
-export function undoLastTurn(space: Pick<Space, 'id'>): Promise<void> {
-  return api
-    .undoSpaceTurn(space.id)
-    .then(() => {})
     .catch(() => {});
 }
 
@@ -892,7 +874,8 @@ const MirrorBanner = observer(function MirrorBanner({
   );
 });
 
-/** The space's chat: its turns, the live one, the composer. */
+/** The space's chat: its turns, the live one, the composer. The two are
+ *  siblings: what you type re-renders the composer, never the turns. */
 export const SpaceChat = observer(function SpaceChat({
   space,
   config,
@@ -903,29 +886,87 @@ export const SpaceChat = observer(function SpaceChat({
   /** `C` / `M` on the page. */
   handle: MutableRefObject<ChatHandle | null>;
 }) {
+  const revise = useRef<(() => void) | null>(null);
+  const onRevise = useCallback(() => revise.current?.(), []);
+  return (
+    <>
+      <SpaceLog space={space} config={config} onRevise={onRevise} />
+      <SpaceComposer space={space} handle={handle} revise={revise} />
+    </>
+  );
+});
+
+const SpaceLog = observer(function SpaceLog({
+  space,
+  config,
+  onRevise,
+}: {
+  space: Space;
+  config: SpaceConfigView | null;
+  onRevise: () => void;
+}) {
   const store = useRootStore();
-  const [text, setText] = useState('');
-  const files = useAttachments();
-  const input = useRef<HTMLTextAreaElement>(null);
   // Queued messages wait under the running turn, in the order they send.
   const { sent: messages, queued } = splitQueue([
     ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
   ]);
   const run = space.status === 'running' ? space.run : null;
-  const undone = undoneMessages(space);
-  const undo = undoState(space);
-  const checks = checksByReply(space.turn_log);
-  const plans = plansByReply(space.turn_log);
-  const planHere = actionablePlan(space);
-  const [revising, setRevising] = useState(false);
-  useEffect(() => {
-    if (planHere == null) setRevising(false);
-  }, [planHere]);
   const turnRuns = runsByReply(space.id, space.turn_log);
   const setupStage = setupView(space) === 'stage';
   // A turn whose check still runs has its reply stored already: its steps
   // and text show there, the check under them.
   const replied = run != null && [...turnRuns.values()].includes(run);
+  return (
+    <ChatLog scope={space.id}>
+      <SetupStage space={space} />
+      <SetupNote space={space} />
+      {messages.length === 0 && !run && !setupStage && (
+        <>
+          <ChatEmpty
+            icon={<Pencil />}
+            title="Tell the agent what to change"
+            hint="It works in its own worktree; your checkout is never touched."
+          />
+          <SpaceSetupAssistHint space={space} config={config} />
+        </>
+      )}
+      {messages.map((m) => (
+        <SpaceMessage key={m.id} spaceId={space.id} m={m} onRevise={onRevise} />
+      ))}
+      {run && !replied && <ChatLive run={run} agent={space.agent} timeline />}
+      <QueuedMessages space={space} queued={queued} />
+      {run && space.question?.run === run && (
+        <QuestionCard
+          key={space.question.id}
+          space={space}
+          question={space.question}
+        />
+      )}
+    </ChatLog>
+  );
+});
+
+/** The box under the chat, and everything that changes as you type in it. */
+const SpaceComposer = observer(function SpaceComposer({
+  space,
+  handle,
+  revise,
+}: {
+  space: Space;
+  handle: MutableRefObject<ChatHandle | null>;
+  /** Revise on a plan: asks here what should change. */
+  revise: MutableRefObject<(() => void) | null>;
+}) {
+  const store = useRootStore();
+  const [text, setText] = useState('');
+  const files = useAttachments();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const run = space.status === 'running' ? space.run : null;
+  const planHere = actionablePlan(space);
+  const [revising, setRevising] = useState(false);
+  useEffect(() => {
+    if (planHere == null) setRevising(false);
+  }, [planHere]);
 
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
@@ -951,6 +992,11 @@ export const SpaceChat = observer(function SpaceChat({
   handle.current = {
     focus: () => input.current?.focus(),
     cycleMode: () => !locked && setMode((m) => nextMode(m)),
+  };
+  revise.current = () => {
+    setMode('plan');
+    setRevising(true);
+    input.current?.focus();
   };
 
   const send = (now = false) => {
@@ -995,171 +1041,62 @@ export const SpaceChat = observer(function SpaceChat({
   };
 
   return (
-    <>
-      <ChatLog scope={space.id}>
-        <SetupStage space={space} />
-        <SetupNote space={space} />
-        {messages.length === 0 && !run && !setupStage && (
-          <>
-            <ChatEmpty
-              icon={<Pencil />}
-              title="Tell the agent what to change"
-              hint="It works in its own worktree; your checkout is never touched."
-            />
-            <SpaceSetupAssistHint space={space} config={config} />
-          </>
+    <div className="chat-input px-4 pb-3 pt-1">
+      <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
+        {space.status === 'failed' && space.error && (
+          <span
+            className="truncate px-2 text-xs text-danger"
+            title={space.error}
+          >
+            {space.error}
+          </span>
         )}
-        {messages.map((m) => {
-          const agent = m.author.kind === 'agent';
-          const undoneReply = agent && undone.has(m.id);
-          const undoHere =
-            undo.turn?.reply === m.id && space.status !== 'archived';
-          const plan = agent && plans.has(m.id) && !undoneReply;
-          const backHere = agent && !undoneReply && !undoHere;
-          return (
-            <ChatMessage
-              key={m.id}
-              m={m}
-              className={undone.has(m.id) ? 'space-undone opacity-50' : ''}
-              badges={
-                undoneReply || undoHere || backHere || plan ? (
-                  <>
-                    {plan && (
-                      <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
-                        plan
-                      </span>
-                    )}
-                    {undoneReply && (
-                      <span className="rounded-full bg-default px-1.5 text-[10px] text-muted">
-                        undone
-                      </span>
-                    )}
-                    {undoHere && (
-                      <UndoTurn
-                        space={space}
-                        reason={undo.ok ? null : undo.reason}
-                      />
-                    )}
-                    {backHere && <BackToHere space={space} reply={m.id} />}
-                  </>
-                ) : undefined
-              }
-              after={
-                agent ? (
-                  <>
-                    {checks.has(m.id) && (
-                      <CheckChip check={checks.get(m.id)!} />
-                    )}
-                    {planHere === m.id && (
-                      <PlanActions
-                        space={space}
-                        onRevise={() => {
-                          setMode('plan');
-                          setRevising(true);
-                          input.current?.focus();
-                        }}
-                      />
-                    )}
-                  </>
-                ) : undefined
-              }
-            />
-          );
-        })}
-        {run && !replied && <ChatLive run={run} agent={space.agent} timeline />}
-        <QueuedMessages space={space} queued={queued} />
-        {run && space.question?.run === run && (
-          <QuestionCard
-            key={space.question.id}
-            space={space}
-            question={space.question}
-          />
-        )}
-      </ChatLog>
-      <div className="chat-input px-4 pb-3 pt-1">
-        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-2">
-          {space.status === 'failed' && space.error && (
-            <span
-              className="truncate px-2 text-xs text-danger"
-              title={space.error}
-            >
-              {space.error}
-            </span>
-          )}
-          <SpaceProgress space={space} />
-          <Composer
-            inputRef={input}
-            value={text}
-            onChange={onComposerChange}
-            onSubmit={() => send()}
-            placeholder={
-              space.status === 'archived'
-                ? 'Archived'
-                : settingUp(space)
-                  ? 'Setting up…'
-                  : run
-                    ? 'Queue a message for after this turn…'
-                    : revising
-                      ? 'What should change in the plan?'
-                      : 'Ask the agent to change something…'
-            }
-            disabled={space.status === 'archived' || settingUp(space)}
-            running={!!run}
-            onStop={() => void api.spaceStop(space.id).catch(() => {})}
-            onSendNow={sendNow}
-            queueWhileRunning
-            skills={skills}
-            attachments={files}
-            chips={
-              <>
-                <AgentChip
-                  value={agent}
-                  onChange={setAgent}
-                  isDisabled={locked}
-                />
-                <ChipMenu
-                  ariaLabel="Mode"
-                  label={MODES.find((m) => m.id === mode)?.label ?? mode}
-                  items={MODES}
-                  selected={mode}
-                  onSelect={setMode}
-                  isDisabled={locked}
-                />
-              </>
-            }
-          />
-        </div>
+        <SpaceProgress space={space} />
+        <Composer
+          inputRef={input}
+          value={text}
+          onChange={onComposerChange}
+          onSubmit={() => send()}
+          placeholder={
+            space.status === 'archived'
+              ? 'Archived'
+              : settingUp(space)
+                ? 'Setting up…'
+                : run
+                  ? 'Queue a message for after this turn…'
+                  : revising
+                    ? 'What should change in the plan?'
+                    : 'Ask the agent to change something…'
+          }
+          disabled={space.status === 'archived' || settingUp(space)}
+          running={!!run}
+          onStop={() => void api.spaceStop(space.id).catch(() => {})}
+          onSendNow={sendNow}
+          queueWhileRunning
+          skills={skills}
+          attachments={files}
+          chips={
+            <>
+              <AgentChip
+                value={agent}
+                onChange={setAgent}
+                isDisabled={locked}
+              />
+              <ChipMenu
+                ariaLabel="Mode"
+                label={MODES.find((m) => m.id === mode)?.label ?? mode}
+                items={MODES}
+                selected={mode}
+                onSelect={setMode}
+                isDisabled={locked}
+              />
+            </>
+          }
+        />
       </div>
-    </>
+    </div>
   );
 });
-
-/** Undo last turn, on the agent's reply that ended it. `reason` set:
- *  shown disabled with why (still running, already shipped…). */
-function UndoTurn({ space, reason }: { space: Space; reason: string | null }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <Tooltip>
-      <Button
-        size="sm"
-        variant="ghost"
-        className="space-undo h-5 gap-1 px-1.5 text-[11px]"
-        isDisabled={reason != null}
-        isPending={busy}
-        onPress={() => {
-          setBusy(true);
-          void undoLastTurn(space).finally(() => setBusy(false));
-        }}
-      >
-        <ArrowUturnCcwLeft className="size-3" />
-        Undo
-      </Button>
-      <Tooltip.Content>
-        {reason ?? 'Back to the checkpoint before this turn; the chat keeps it'}
-      </Tooltip.Content>
-    </Tooltip>
-  );
-}
 
 const SpaceChanges = observer(function SpaceChanges({
   space,

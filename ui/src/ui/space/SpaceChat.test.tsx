@@ -66,6 +66,7 @@ async function render(s: Space) {
   transport.onCall('answer_space_question', () => null);
   setTransport(transport);
   const store = new RootStore();
+  store.sync.pool.put('space', s.id, s);
   store.sync.pool.put(
     'chat_message',
     'u1',
@@ -127,7 +128,10 @@ describe('the space chat', () => {
     const s = space({ status: 'running', run });
     const store = await render(s);
     const event = (e: Parameters<typeof store.ephemeral.handle>[0]) =>
-      act(() => store.ephemeral.handle(e));
+      act(() => {
+        store.ephemeral.handle(e);
+        store.ephemeral.flushDeltas();
+      });
     event({ type: 'agent_delta', run, agent: 'claude', text: 'Looking.' });
     event({ type: 'run_log', run, agent: 'claude', line: 'tool: Read · a.rs' });
     event({ type: 'agent_delta', run, agent: 'claude', text: 'All done.' });
@@ -138,6 +142,18 @@ describe('the space chat', () => {
     expect(live.querySelector('.turn-tool')?.textContent).toContain('a.rs');
 
     // The reply lands while its check still runs: it holds the turn now.
+    const replied: Space = {
+      ...s,
+      turn_log: [
+        {
+          message: 'u2',
+          reply: 'a2',
+          before: 'b',
+          after: 'h',
+          check: { status: 'running' },
+        } as never,
+      ],
+    };
     act(() => {
       store.sync.pool.put(
         'chat_message',
@@ -153,26 +169,12 @@ describe('the space chat', () => {
           duration_ms: 5000,
         }),
       );
+      store.sync.pool.put('space', s.id, replied);
     });
     await act(async () =>
       m!.root.render(
         <RootStoreProvider store={store}>
-          <SpaceChat
-            space={{
-              ...s,
-              turn_log: [
-                {
-                  message: 'u2',
-                  reply: 'a2',
-                  before: 'b',
-                  after: 'h',
-                  check: { status: 'running' },
-                } as never,
-              ],
-            }}
-            config={null}
-            handle={createRef()}
-          />
+          <SpaceChat space={replied} config={null} handle={createRef()} />
         </RootStoreProvider>,
       ),
     );

@@ -1,5 +1,5 @@
 import { autorun } from 'mobx';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AppInfo } from '../gen/contract';
 import { setTransport } from '../core/transport';
 import { FakeTransport } from '../test/fakeTransport';
@@ -227,6 +227,7 @@ describe('EphemeralStore agent text', () => {
     e.handle(delta('r1', 'Hel'));
     e.handle(delta('r2', 'Other'));
     e.handle(delta('r1', 'lo'));
+    e.flushDeltas();
     expect(e.agentText.get('r1')).toBe('Hello');
     expect(e.agentText.get('r2')).toBe('Other');
   });
@@ -240,8 +241,10 @@ describe('EphemeralStore agent text', () => {
     });
     e.handle(delta('r2', 'a'));
     e.handle(delta('r2', 'b'));
+    e.flushDeltas();
     expect(runs).toBe(1);
     e.handle(delta('r1', 'c'));
+    e.flushDeltas();
     expect(runs).toBe(2);
     stop();
   });
@@ -252,9 +255,62 @@ describe('EphemeralStore agent text', () => {
     e.handle(delta('r2', 'b'));
     e.handle({ type: 'run_log', run: 'r1', agent: 'claude', line: 'tool: x' });
     e.clearRun('r1');
+    e.flushDeltas();
     expect(e.agentText.has('r1')).toBe(false);
     expect(e.runLog.has('r1')).toBe(false);
     expect(e.agentText.get('r2')).toBe('b');
+  });
+
+  it('a burst shows once per frame, the first piece at once', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    try {
+      const e = new EphemeralStore();
+      let runs = 0;
+      const stop = autorun(() => {
+        e.agentText.get('r1');
+        runs += 1;
+      });
+      e.handle(delta('r1', 'a'));
+      expect(e.agentText.get('r1')).toBe('a');
+      expect(runs).toBe(2);
+      for (const piece of ['b', 'c', 'd']) e.handle(delta('r1', piece));
+      expect(e.agentText.get('r1')).toBe('a');
+      expect(runs).toBe(2);
+      frames.shift()!(0);
+      expect(e.agentText.get('r1')).toBe('abcd');
+      expect(runs).toBe(3);
+      stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('a hidden window, with no frames, still gets its text soon', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', () => 1);
+    try {
+      const e = new EphemeralStore();
+      e.handle(delta('r1', 'a'));
+      e.handle(delta('r1', 'b'));
+      vi.advanceTimersByTime(100);
+      expect(e.agentText.get('r1')).toBe('ab');
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it('clearRun drops what still waits for a frame', () => {
+    const e = new EphemeralStore();
+    e.handle(delta('r1', 'a'));
+    e.handle(delta('r1', 'b'));
+    e.clearRun('r1');
+    e.flushDeltas();
+    expect(e.agentText.has('r1')).toBe(false);
   });
 });
 
@@ -275,6 +331,7 @@ describe('EphemeralStore run steps', () => {
     e.handle(log('tool: mcp__github__create_issue'));
     e.handle(log('tool result ok=false'));
     e.handle(delta('Done', 'r2'));
+    e.flushDeltas();
     expect(e.runSteps.get('r1')).toEqual([
       { kind: 'text', text: 'Looking.' },
       { kind: 'tool', name: 'Read', target: 'src/a.rs', ok: true },
@@ -320,6 +377,7 @@ describe('EphemeralStore run steps', () => {
     e.handle(delta('A'));
     e.handle(log('tool: Bash · a'));
     e.handle(delta('B'));
+    e.flushDeltas();
     expect(e.agentText.get('r1')).toBe('AB');
     expect(e.runLog.get('r1')).toEqual(['tool: Bash · a']);
   });
@@ -340,8 +398,10 @@ describe('EphemeralStore run steps', () => {
       runs += 1;
     });
     e.handle(delta('a', 'r2'));
+    e.flushDeltas();
     expect(runs).toBe(1);
     e.handle(delta('b'));
+    e.flushDeltas();
     expect(runs).toBe(2);
     stop();
   });

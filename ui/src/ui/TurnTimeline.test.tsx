@@ -191,14 +191,15 @@ describe('a finished reply', () => {
 
 describe('ChatLive', () => {
   const delta = (text: string) =>
-    act(() =>
+    act(() => {
       store.ephemeral.handle({
         type: 'agent_delta',
         run: 'r1',
         agent: 'claude',
         text,
-      }),
-    );
+      });
+      store.ephemeral.flushDeltas();
+    });
   const log = (line: string) =>
     act(() =>
       store.ephemeral.handle({

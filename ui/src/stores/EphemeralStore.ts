@@ -133,9 +133,26 @@ export interface HostStatus {
   authOk: boolean;
 }
 
+/** The next frame, or soon when there is none: a hidden window gets no
+ *  frames, and its text must not wait for one. */
+function nextFrame(run: () => void): void {
+  let done = false;
+  const once = () => {
+    if (done) return;
+    done = true;
+    run();
+  };
+  requestAnimationFrame(once);
+  setTimeout(once, 100);
+}
+
 export class EphemeralStore {
+  /** Pieces that came since the last frame, by run: at most one update of
+   *  a streaming view per frame, however fast the agent writes. */
+  private readonly heldText = new Map<string, string>();
+  private frameWaiting = false;
   /** Streaming text per run id, appended as `agent_delta` events arrive
-   *  (a piece at a time while the agent writes). Observable per key: a
+   *  (one update per frame while the agent writes). Observable per key: a
    *  view reading one run re-renders only when that run grows. */
   readonly agentText: ObservableMap<string, string> = observable.map(
     {},
@@ -539,11 +556,12 @@ export class EphemeralStore {
     runInAction(() => {
       switch (e.type) {
         case 'agent_delta':
-          this.agentText.set(e.run, (this.agentText.get(e.run) ?? '') + e.text);
-          this.addStepText(e.run, e.text);
+          this.addDelta(e.run, e.text);
           this.clearStalled(e.run);
           return;
         case 'run_log': {
+          // What it wrote before this line comes before it in the steps.
+          this.flushRun(e.run);
           this.addLogStep(e.run, e.line);
           // Thinking is a step, never a line of the tool log.
           if (thinkingOf(e.line) == null) {
@@ -647,6 +665,45 @@ export class EphemeralStore {
     });
   }
 
+  /** The first piece shows at once; the rest wait for the next frame. */
+  private addDelta(run: string, text: string): void {
+    if (!this.frameWaiting) {
+      this.showText(run, text);
+      this.waitForFrame();
+      return;
+    }
+    this.heldText.set(run, (this.heldText.get(run) ?? '') + text);
+  }
+
+  private showText(run: string, text: string): void {
+    this.agentText.set(run, (this.agentText.get(run) ?? '') + text);
+    this.addStepText(run, text);
+  }
+
+  private flushRun(run: string): void {
+    const text = this.heldText.get(run);
+    if (text === undefined) return;
+    this.heldText.delete(run);
+    this.showText(run, text);
+  }
+
+  private waitForFrame(): void {
+    this.frameWaiting = true;
+    nextFrame(() => {
+      this.frameWaiting = false;
+      if (this.heldText.size === 0) return;
+      this.flushDeltas();
+      this.waitForFrame();
+    });
+  }
+
+  /** Shows every piece still waiting for a frame. */
+  flushDeltas(): void {
+    runInAction(() => {
+      for (const run of [...this.heldText.keys()]) this.flushRun(run);
+    });
+  }
+
   /** The core's tail (`space_logs`) for a space, merged with the live
    *  lines that arrived while it was fetched. */
   seedSpaceLogs(space: string, lines: SpaceLogLine[]): void {
@@ -677,6 +734,7 @@ export class EphemeralStore {
   /** A run is done (or cancelled/failed): its streaming text and log no longer grow. */
   clearRun(run: string): void {
     runInAction(() => {
+      this.heldText.delete(run);
       this.agentText.delete(run);
       this.runLog.delete(run);
       this.runSteps.delete(run);
