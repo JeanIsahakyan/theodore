@@ -92,7 +92,8 @@ describe('the container rules', () => {
   it('name the classes the header and composer carry', () => {
     for (const rule of [
       '.space-header {',
-      '.space-header .btn-label,',
+      '.space-header .btn-label {',
+      '.space-header .base-moved-lead,',
       '.space-header .btn-label-narrow {',
       '.composer-suffix {',
       '.composer-suffix .send-now-label {',
@@ -101,6 +102,10 @@ describe('the container rules', () => {
       expect(css, rule).toContain(rule);
     }
     expect(css).toContain('@container space-header (max-width: 74rem)');
+    // The base chip keeps its words longer than the other labels do.
+    const baseRule = css.indexOf('.space-header .base-moved-lead,');
+    const query = css.lastIndexOf('@container space-header', baseRule);
+    expect(css.slice(query, baseRule)).toContain('(max-width: 56rem)');
     expect(css).toContain('@container composer-suffix (max-width: 32rem)');
   });
 });

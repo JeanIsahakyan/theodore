@@ -41,12 +41,20 @@ export function resolvingText(
 }
 
 /** The base's distance, re-read when the space or its project's copy
- *  changes (a turn, an update, the poller's fetch). */
-function useBaseStatus(space: Space): SpaceBaseStatus | null {
+ *  changes (a turn, an update, the poller's fetch) and when the window
+ *  comes back to the front: a local folder's base moves with a commit made
+ *  there, which nothing else tells. */
+export function useBaseStatus(space: Space): SpaceBaseStatus | null {
   const store = useRootStore();
   const fetchedAt = store.models.projects.get(space.project)?.last_fetched_at;
   const [status, setStatus] = useState<SpaceBaseStatus | null>(null);
+  const [focused, setFocused] = useState(0);
   const live = space.status !== 'archived' && space.status !== 'running';
+  useEffect(() => {
+    const again = () => setFocused((n) => n + 1);
+    window.addEventListener('focus', again);
+    return () => window.removeEventListener('focus', again);
+  }, []);
   useEffect(() => {
     if (!live) return;
     let on = true;
@@ -57,7 +65,7 @@ function useBaseStatus(space: Space): SpaceBaseStatus | null {
     return () => {
       on = false;
     };
-  }, [space.id, space.base_sha, space.head_sha, fetchedAt, live]);
+  }, [space.id, space.base_sha, space.head_sha, fetchedAt, live, focused]);
   return status;
 }
 
