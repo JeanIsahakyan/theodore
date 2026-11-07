@@ -72,6 +72,8 @@ const MAX_HITS: usize = 200;
 const INDEX_WAIT: Duration = Duration::from_secs(2);
 /// Names from the focus files used to promote files that mention them.
 const MAX_FOCUS_NAMES: usize = 64;
+/// Files over the size limit read for an empty answer's note, at most.
+const NOTE_SKIPPED_SCAN: usize = 20;
 /// Files `git status` lists that a name question hashes again, at most.
 const MAX_DIRTY: usize = 2000;
 
@@ -889,7 +891,54 @@ impl CodeIntel {
         items.extend(syntax);
         items.extend(text);
         items.truncate(MAX_HITS);
+        if items.is_empty() {
+            notes.extend(self.skipped_mentions(&w, name).await);
+        }
         Ok(self.answer(&w, items, source, notes))
+    }
+
+    /// "not searched, over code_intel.max_file_kb: a.ts, …": the code files
+    /// left out for their size that mention `name`, so an empty answer
+    /// doesn't read as "defined nowhere".
+    async fn skipped_mentions(&self, w: &Ws, name: &str) -> Option<String> {
+        let manifest = self.inner.toolchain.manifest();
+        let big: Vec<String> = w
+            .index
+            .progress()
+            .too_large
+            .into_iter()
+            .filter(|p| w.language(p).is_some_and(|l| is_code(manifest, &l)))
+            .take(NOTE_SKIPPED_SCAN)
+            .collect();
+        if big.is_empty() || name.is_empty() {
+            return None;
+        }
+        let (root, name) = (w.root.clone(), name.to_string());
+        let found = blocking(move || {
+            Ok(big
+                .into_iter()
+                .filter(|p| read_inside(&root, p).is_ok_and(|t| t.contains(&name)))
+                .collect::<Vec<_>>())
+        })
+        .await
+        .unwrap_or_default();
+        if found.is_empty() {
+            return None;
+        }
+        let shown: Vec<&str> = found
+            .iter()
+            .take(NOTE_EXTERNAL)
+            .map(String::as_str)
+            .collect();
+        let more = if found.len() > shown.len() {
+            ", …"
+        } else {
+            ""
+        };
+        Some(format!(
+            "not searched, over code_intel.max_file_kb: {}{more}",
+            shown.join(", ")
+        ))
     }
 
     async fn file_symbols_in(

@@ -448,7 +448,9 @@ new PR revision           ─▶ only changed blobs are parsed
   At most 2000 such paths per question.
 - Skipped: `.gitignore`d, `linguist-generated`, vendored, files over
   `code_intel.max_file_kb`. A larger limit, set while worktrees are open,
-  retries the files skipped under the old one.
+  retries the files skipped under the old one. An empty `find_symbol` says
+  which skipped code files mention the name (`not searched, over
+  code_intel.max_file_kb: src/big.ts`).
 - Eviction: `index.sqlite` is kept under `code_intel.cache_mb`, least
   recently used blob first. A blob is used when it is indexed, found cached
   by a worktree opening, or answers a query.

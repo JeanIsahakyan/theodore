@@ -83,6 +83,20 @@ async fn limits_apply_live_and_a_larger_file_limit_reindexes() {
     indexed(&ci, wt.path()).await;
     let syms = ci.file_symbols(wt.path(), "src/big.rs").await.unwrap();
     assert!(syms.items.is_empty(), "over the limit: not indexed");
+    // A name only there: the answer says which skipped file has it.
+    let found = ci.find_symbol(wt.path(), "f3", None).await.unwrap();
+    assert!(found.items.is_empty());
+    let note = found.note.unwrap_or_default();
+    assert!(
+        note.contains("not searched, over code_intel.max_file_kb: src/big.rs"),
+        "{note}"
+    );
+    // One no skipped file mentions: nothing about them.
+    let none = ci.find_symbol(wt.path(), "nowhere", None).await.unwrap();
+    assert!(
+        !none.note.unwrap_or_default().contains("max_file_kb"),
+        "only files that mention the name"
+    );
 
     ci.set_limits(CodeIntelLimits {
         max_file_kb: 64,
