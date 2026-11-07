@@ -477,8 +477,14 @@ async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
     let reply = chat.iter().find(|m| m.author != Author::Me).unwrap();
     assert_eq!(reply.failed.as_deref(), Some("stopped"));
     // Stop holds the queue: it waits for you, nothing runs on its own.
-    let queued = chat.iter().find(|m| m.id == queued_id).unwrap();
-    assert!(queued.queued.as_ref().is_some_and(|q| q.held));
+    // Written right after the space goes idle.
+    wait_until(|| {
+        transcript(&f, &s.id)
+            .iter()
+            .find(|m| m.id == queued_id)
+            .is_some_and(|m| m.queued.as_ref().is_some_and(|q| q.held))
+    })
+    .await;
     assert_eq!(f.agents.requests().len(), 1);
     // Edits made before the stop are still checkpointed.
     assert!(
