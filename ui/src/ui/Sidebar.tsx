@@ -280,16 +280,10 @@ export const Sidebar = observer(function Sidebar() {
                     ? `#${pr.pr.number} ${spaceTitle(s)}`
                     : spaceTitle(s),
                   route: { name: 'space', id: s.id },
+                  contextMenu: () => spaceContextMenu(s),
+                  pinned: s.pinned ?? false,
                 };
               }),
-              ...spaces.map((s): NavItem => ({
-                key: routeKey({ name: 'space', id: s.id }),
-                icon: <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />,
-                label: spaceTitle(s),
-                route: { name: 'space', id: s.id },
-                contextMenu: () => spaceContextMenu(s),
-                pinned: s.pinned ?? false,
-              })),
               {
                 key: 'new-space',
                 icon: <Plus />,
