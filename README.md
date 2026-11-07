@@ -102,8 +102,9 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 - Groupings are versioned: one from an older algorithm is redone on open; ↻ regroups from scratch.
 - Interdiff: after a push only new or changed hunks are flagged, with a "what changed" view.
 - Markdown diffs get a rendered Preview; image diffs show side by side, swipe or onion skin.
-- ⌘-click an identifier for definitions and references across the worktree (`git grep` plus
-  per-language patterns, not a language server).
+- ⌘-click an identifier for definitions and references across the worktree: code intelligence
+  for that exact symbol when it is on, else `git grep` plus per-language patterns; the peek says
+  which answered.
 - The header is two rows: number, title, status and actions, then the Overview / Checks / Commits /
   Code tabs. Overview holds the full title, branches, reviewers and approvals, labels and the
   description.

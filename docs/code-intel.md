@@ -540,6 +540,13 @@ The UI uses the same port: go-to-definition (`find_symbol`) and hover
 the diff. Grouping can use references to link "changed here" with "called
 there" without an LLM call.
 
+⌘-click in the diff (`SymbolPeek`): a head-side line sends its position
+(`line`, `col`, `side: head`), so the answer is that exact symbol; a
+base-side line has no head-worktree position and goes by name (references
+at the clicked file's definition). Definitions rank first, then hits in the
+clicked file. The chip names the least trusted source of the hits shown:
+language server, parser or text search.
+
 ```
 hover(path, line, col) ─▶ server ready? ── yes ─▶ its hover text         source: lsp
                                         └─ no / empty ─▶ definition by name ─▶ its signature lines   source: syntax

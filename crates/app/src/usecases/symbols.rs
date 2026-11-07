@@ -7,8 +7,9 @@
 //! same-language/near-path hits first.
 //!
 //! ```text
-//! click ─▶ code intel on? ─yes─▶ at a position: definition + references
-//!              │                  else: find_symbol + references at the first one
+//! click ─▶ code intel on? ─yes─▶ head-side position: definition + references
+//!              │                  else (base side, none): find_symbol + references
+//!              │                        at the clicked file's one, else the first
 //!              │                     └─ nothing / error ─┐
 //!              └─no──────────────────────────────────────┴─▶ grep
 //! ```
@@ -16,7 +17,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use theodore_contract::{FindSymbolRequest, SymbolHit, SymbolKind, SymbolSource};
+use theodore_contract::{DiffSide, FindSymbolRequest, SymbolHit, SymbolKind, SymbolSource};
 use theodore_ports::{CodeHit, CodeIntelPort, GitPort, Position, Source};
 
 use crate::core::Core;
@@ -224,8 +225,9 @@ pub(crate) async fn search_symbol(
 }
 
 /// Orders `hits`: every `Definition` before any `Reference`; within that,
-/// the clicked language's own file extensions before others, then the
-/// closest directory to `from_path`, then path/line for a stable order.
+/// `from_path` itself first, then the clicked language's own file
+/// extensions, then the closest directory to `from_path`, then path/line
+/// for a stable order.
 /// Caps at `MAX_HITS`.
 pub(crate) fn rank(
     mut hits: Vec<SymbolHit>,
@@ -243,8 +245,8 @@ pub(crate) fn rank(
     });
 
     hits.sort_by(|a, b| {
-        let a_key = sort_key(a, want_lang.as_deref(), from_dir.as_deref());
-        let b_key = sort_key(b, want_lang.as_deref(), from_dir.as_deref());
+        let a_key = sort_key(a, want_lang.as_deref(), from_path, from_dir.as_deref());
+        let b_key = sort_key(b, want_lang.as_deref(), from_path, from_dir.as_deref());
         a_key.cmp(&b_key)
     });
     hits.truncate(MAX_HITS);
@@ -254,8 +256,9 @@ pub(crate) fn rank(
 fn sort_key(
     h: &SymbolHit,
     want_lang: Option<&str>,
+    from_path: Option<&str>,
     from_dir: Option<&Path>,
-) -> (bool, bool, u32, String, u32) {
+) -> (bool, bool, bool, u32, String, u32) {
     let hit_lang = Path::new(&h.path)
         .extension()
         .and_then(|e| e.to_str())
@@ -267,6 +270,7 @@ fn sort_key(
     let distance = from_dir.map(|d| dir_distance(d, &h.path)).unwrap_or(0);
     (
         h.kind != SymbolKind::Definition,
+        from_path != Some(h.path.as_str()),
         !same_lang,
         distance,
         h.path.clone(),
@@ -303,16 +307,22 @@ fn hit_of(h: CodeHit) -> SymbolHit {
 }
 
 /// The port's answer for a click: at the clicked position when the UI
-/// sent one, else the definitions of the name and the references of the
-/// first. One hit per line, definitions first.
+/// sent a head-side one, else the definitions of the name and the
+/// references of the one in the clicked file (else the first). A base-side
+/// position is a line of the base revision, not of the head worktree the
+/// port reads, so it goes by name. One hit per line, definitions first.
 async fn intel_hits(
     port: &dyn CodeIntelPort,
     root: &Path,
     req: &FindSymbolRequest,
 ) -> Result<Vec<SymbolHit>, theodore_ports::CodeIntelError> {
     let mut hits: Vec<SymbolHit> = Vec::new();
-    match (req.from_path.as_deref(), req.line, req.col) {
-        (Some(path), Some(line), Some(col)) => {
+    let position = match req.side {
+        Some(DiffSide::Base) => None,
+        _ => req.line.zip(req.col),
+    };
+    match (req.from_path.as_deref(), position) {
+        (Some(path), Some((line, col))) => {
             let at = Position { line, col };
             let defs = port.definition(root, path, at).await?;
             hits.extend(defs.items.into_iter().map(|mut h| {
@@ -324,7 +334,12 @@ async fn intel_hits(
         }
         _ => {
             let defs = port.find_symbol(root, &req.name, None).await?;
-            let first = defs.items.first().cloned();
+            let first = defs
+                .items
+                .iter()
+                .find(|s| req.from_path.as_deref() == Some(s.path.as_str()))
+                .or(defs.items.first())
+                .cloned();
             hits.extend(defs.items.into_iter().map(|s| {
                 SymbolHit {
                     path: s.path,
@@ -560,6 +575,119 @@ mod tests {
         let ranked = rank(hits, None, Some("src/caller.rs"));
         assert!(ranked[0].path.ends_with(".rs"));
         assert!(ranked[1].path.ends_with(".rs"));
+    }
+
+    fn pos(line: u32, col: u32) -> Position {
+        Position { line, col }
+    }
+
+    fn code_range(line: u32, col: u32, len: u32) -> theodore_ports::Range {
+        theodore_ports::Range {
+            start: pos(line, col),
+            end: pos(line, col + len),
+        }
+    }
+
+    fn code_symbol(path: &str, line: u32, col: u32) -> theodore_ports::CodeSymbol {
+        theodore_ports::CodeSymbol {
+            name: "greet".into(),
+            kind: theodore_ports::CodeSymbolKind::Function,
+            range: code_range(line, 1, 30),
+            name_range: code_range(line, col, 5),
+            path: path.into(),
+            container: None,
+            source: Source::Syntax,
+        }
+    }
+
+    /// `greet` in `util.ts:1` and a method `Greeter.greet` in `other.ts`,
+    /// which sorts first by path and comes first from the port.
+    fn two_greets() -> Arc<crate::testkit::FakeCodeIntel> {
+        let port = crate::testkit::FakeCodeIntel::new();
+        *port.symbols.lock().unwrap() = vec![
+            theodore_ports::CodeSymbol {
+                container: Some("Greeter".into()),
+                ..code_symbol("other.ts", 3, 3)
+            },
+            code_symbol("util.ts", 1, 17),
+        ];
+        port
+    }
+
+    fn click(side: Option<theodore_contract::DiffSide>) -> FindSymbolRequest {
+        FindSymbolRequest {
+            pr: theodore_domain::PrId::new("pr"),
+            name: "greet".into(),
+            lang: None,
+            from_path: Some("util.ts".into()),
+            line: Some(1),
+            col: Some(17),
+            side,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_head_click_asks_at_its_position() {
+        let port = two_greets();
+        let req = click(Some(theodore_contract::DiffSide::Head));
+        intel_hits(&*port, Path::new("/wt"), &req).await.unwrap();
+        let calls = port.calls();
+        assert!(
+            calls.contains(&"definition util.ts:1:17".into()),
+            "{calls:?}"
+        );
+        assert!(!calls.iter().any(|c| c.starts_with("find_symbol")));
+    }
+
+    #[tokio::test]
+    async fn a_base_click_goes_by_name_and_ranks_the_clicked_file_first() {
+        let port = two_greets();
+        let req = click(Some(theodore_contract::DiffSide::Base));
+        let hits = intel_hits(&*port, Path::new("/wt"), &req).await.unwrap();
+        let calls = port.calls();
+        // No head-worktree position from a base-side line ...
+        assert!(
+            !calls.iter().any(|c| c.starts_with("definition")),
+            "{calls:?}"
+        );
+        // ... and the references are the clicked file's symbol's.
+        assert!(
+            calls.contains(&"references util.ts:1:17".into()),
+            "{calls:?}"
+        );
+        let ranked = rank(hits, None, req.from_path.as_deref());
+        assert_eq!(ranked[0].path, "util.ts");
+        assert_eq!(ranked[0].kind, SymbolKind::Definition);
+    }
+
+    #[test]
+    fn rank_puts_the_clicked_file_first_after_definitions() {
+        let hit = |path: &str, kind| SymbolHit {
+            path: path.into(),
+            line: 1,
+            kind,
+            preview: String::new(),
+            source: None,
+        };
+        let hits = vec![
+            hit("other.ts", SymbolKind::Reference),
+            hit("util.ts", SymbolKind::Reference),
+            hit("other.ts", SymbolKind::Definition),
+            hit("util.ts", SymbolKind::Definition),
+        ];
+        let ranked: Vec<_> = rank(hits, None, Some("util.ts"))
+            .into_iter()
+            .map(|h| (h.path, h.kind))
+            .collect();
+        assert_eq!(
+            ranked,
+            vec![
+                ("util.ts".into(), SymbolKind::Definition),
+                ("other.ts".into(), SymbolKind::Definition),
+                ("util.ts".into(), SymbolKind::Reference),
+                ("other.ts".into(), SymbolKind::Reference),
+            ]
+        );
     }
 
     #[test]

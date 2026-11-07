@@ -63,6 +63,7 @@ import type {
   PrId,
   PrSummary,
   Revision,
+  DiffSide,
   Severity,
   Side,
 } from '../gen/contract';
@@ -103,7 +104,7 @@ import { InterdiffPanel } from './review/InterdiffPanel';
 import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 import { CodeHoverHost } from './symbols/CodeHoverHost';
-import { identifierAt } from './symbols/extract';
+import { identifierColAt } from './symbols/extract';
 
 /** The PR's Files page on the host; `null` for a review with no host PR
  *  behind it (a space's branch before it is pushed, a local branch). */
@@ -158,13 +159,19 @@ function hunkRange(h: Hunk): string {
   return `lines ${h.new_start}–${h.new_start + h.new_lines - 1}`;
 }
 
-/** The identifier under the pointer, from the text node the browser hit. */
-function symbolAt(e: React.MouseEvent): string | null {
+/** The identifier under the pointer and its 1-based char column in the
+ *  line, from the text node the browser hit (as the hover's `targetAt`). */
+function symbolAt(e: React.MouseEvent): { name: string; col: number } | null {
   if ((e.target as HTMLElement).closest('.ln-act, .no, .mark')) return null;
   const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
   const node = range?.startContainer;
-  if (!range || !node || node.nodeType !== 3) return null;
-  return identifierAt(node.textContent ?? '', range.startOffset);
+  const code = e.currentTarget.querySelector('code.src');
+  if (!range || !node || node.nodeType !== 3 || !code?.contains(node))
+    return null;
+  const before = document.createRange();
+  before.setStart(code, 0);
+  before.setEnd(node, range.startOffset);
+  return identifierColAt(code.textContent ?? '', before.toString().length);
 }
 
 const sevBg: Record<Severity, string> = {
@@ -1095,6 +1102,9 @@ function anchorSide(l: DiffLine): { side: Side; line: number } | null {
 
 /** The line number a symbol peek is pinned to (see `Line`'s ⌘-click). */
 const peekLineNo = (l: DiffLine) => l.new_no ?? l.old_no ?? 0;
+/** The side `peekLineNo` counts on: a deletion exists only in the base. */
+const peekSide = (l: DiffLine): DiffSide =>
+  l.new_no != null ? 'head' : 'base';
 
 const hunkHasAnchor = (h: Hunk, side: Side, line: number) =>
   h.lines.some((l) => {
@@ -1596,7 +1606,12 @@ function lineSlice(
         ? composer
         : null,
     peek:
-      peek && peek.path === path && peek.line === peekLineNo(l) ? peek : null,
+      peek &&
+      peek.path === path &&
+      peek.line === peekLineNo(l) &&
+      peek.side === peekSide(l)
+        ? peek
+        : null,
   };
 }
 
@@ -1936,10 +1951,16 @@ const Line = memo(function Line(props: LineProps) {
         data-line={l.new_no ?? undefined}
         onClick={(e) => {
           if (!(e.metaKey || e.ctrlKey)) return;
-          const name = symbolAt(e);
-          if (!name) return;
+          const at = symbolAt(e);
+          if (!at) return;
           e.preventDefault();
-          actions.setPeek({ name, path, line: lineNo });
+          actions.setPeek({
+            name: at.name,
+            path,
+            line: lineNo,
+            col: at.col,
+            side: peekSide(l),
+          });
         }}
         onContextMenu={(e) => openLineMenu(e, store, props, anchor)}
       >
@@ -2030,7 +2051,7 @@ const Line = memo(function Line(props: LineProps) {
             <SymbolPeek
               // A fresh click target gets a fresh mount, so its search
               // state starts clean instead of being reset imperatively.
-              key={`${peek.path}:${peek.line}:${peek.name}`}
+              key={`${peek.side}:${peek.path}:${peek.line}:${peek.col}:${peek.name}`}
               pr={pr}
               rev={rev}
               target={peek}

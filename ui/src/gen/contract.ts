@@ -779,6 +779,11 @@ export type FindSymbolRequest = {
 	 */
 	line?: number | null,
 	col?: number | null,
+	/**
+	 *  The diff side the click was on. `line`/`col` are head-worktree
+	 *  positions only: a `Base` click goes by name.
+	 */
+	side?: DiffSide | null,
 };
 
 export type Finding = {

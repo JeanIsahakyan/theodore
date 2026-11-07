@@ -1387,6 +1387,7 @@ fn find(pr: &theodore_domain::PrId) -> FindSymbolRequest {
         from_path: Some("src/lib.rs".into()),
         line: None,
         col: None,
+        side: None,
     }
 }
 
