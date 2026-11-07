@@ -197,7 +197,13 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const baselineKey = baselineSha ? `${pr}@${baselineSha}` : null;
   const baselineRevision = baselineKey
     ? store.revisions.get(baselineKey, () =>
-        api.getRevision({ pr, head: baselineSha! }),
+        // Its commit may be gone (a force-push, a fresh clone): then there's
+        // nothing to compare with, which isn't worth an error.
+        api.getRevision({ pr, head: baselineSha! }, true).catch((e) => {
+          localStorage.removeItem(baselineKeyOf(pr));
+          setBaselineSha(null);
+          throw e;
+        }),
       )
     : null;
   // Memoized so `DiffPane`/`GroupsPane` (both memoized) see the same map
