@@ -40,6 +40,19 @@ export function resolvingText(
     : `Resolving conflicts with ${space.base}${where}`;
 }
 
+/** The success toast after Update, Complete merge or Abort; `null` while
+ *  it still resolves (the banner says so). */
+export function updateOutcome(
+  which: 'update' | 'complete' | 'abort',
+  after: Pick<Space, 'base' | 'updating'>,
+): string | null {
+  if (which === 'abort') return 'Update aborted: back where it started';
+  if (after.updating) return null;
+  return which === 'update'
+    ? `Updated from ${after.base}`
+    : `Merged ${after.base} into the space`;
+}
+
 /** The base's distance, re-read when the space or its project's copy
  *  changes (a turn, an update, the poller's fetch) and when the window
  *  comes back to the front: a local folder's base moves with a commit made
@@ -90,6 +103,7 @@ export const BaseMoved = observer(function BaseMoved({
 }: {
   space: Space;
 }) {
+  const store = useRootStore();
   const status = useBaseStatus(space);
   const [busy, setBusy] = useState(false);
   const label = baseMovedLabel(space, status);
@@ -106,6 +120,10 @@ export const BaseMoved = observer(function BaseMoved({
           setBusy(true);
           void api
             .updateSpaceFromBase(space.id)
+            .then((s) => {
+              const done = updateOutcome('update', s);
+              if (done) store.ephemeral.toast(done, 'info');
+            })
             .catch(() => {})
             .finally(() => setBusy(false));
         }}
@@ -127,6 +145,7 @@ export const UpdatingBanner = observer(function UpdatingBanner({
 }: {
   space: Space;
 }) {
+  const store = useRootStore();
   const [busy, setBusy] = useState<'complete' | 'abort' | null>(null);
   const text = resolvingText(space);
   if (!text) return null;
@@ -137,7 +156,13 @@ export const UpdatingBanner = observer(function UpdatingBanner({
       which === 'complete'
         ? api.updateSpaceFromBase(space.id)
         : api.abortSpaceUpdate(space.id);
-    void call.catch(() => {}).finally(() => setBusy(null));
+    void call
+      .then((s) => {
+        const done = updateOutcome(which, s);
+        if (done) store.ephemeral.toast(done, 'info');
+      })
+      .catch(() => {})
+      .finally(() => setBusy(null));
   };
   return (
     <Alert
