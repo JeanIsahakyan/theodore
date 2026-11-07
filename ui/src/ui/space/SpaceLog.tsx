@@ -7,6 +7,7 @@ import { Pencil } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { ChatMessage, Space, SpaceConfigView } from '../../gen/contract';
 import { useRootStore } from '../../stores/context';
+import type { SpaceSend } from '../../stores/EphemeralStore';
 import { ChatEmpty, ChatLive, ChatLog } from '../ChatTurn';
 import {
   chatRows,
@@ -18,12 +19,14 @@ import { runsByReply, setupView } from './commands';
 import { SpaceSetupAssistHint } from './ConfigSection';
 import { QueuedMessages } from './QueuedMessages';
 import { splitQueue } from './queue';
+import { sendingMessage } from './send';
 import { SetupNote, SetupStage } from './SpaceCommands';
 import { SpaceMessage } from './SpaceMessage';
 import { QuestionCard } from './SpacePlan';
 import { spaceChatKey } from './spaces';
 import { VirtualChat } from './VirtualChat';
 
+const EMPTY_SENDS: readonly SpaceSend[] = [];
 const isPinned = (row: ChatRow) => row.kind === 'head' || row.kind === 'tail';
 
 export const SpaceLog = observer(function SpaceLog({
@@ -37,17 +40,23 @@ export const SpaceLog = observer(function SpaceLog({
 }) {
   const store = useRootStore();
   // Queued messages wait under the running turn, in the order they send.
-  const { sent, queued } = splitQueue([
+  const stored = splitQueue([
     ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
   ]);
-  const turns = pairTurns(sent);
+  // What you just sent shows at once, last, until its row takes over.
+  const sends = store.ephemeral.spaceSends.get(space.id) ?? EMPTY_SENDS;
+  const sending = sends.map((s) => sendingMessage(space.id, s));
+  const sent = [...stored.sent, ...sending.filter((m) => !m.queued)];
+  const queued = [...stored.queued, ...sending.filter((m) => m.queued)];
+  const keyOf = (id: string) => store.ephemeral.turnKeys.get(id) ?? id;
+  const turns = pairTurns(sent, keyOf);
   const run = space.status === 'running' ? space.run : null;
   // A turn whose check still runs has its reply stored already: its steps
   // and text show there, the check under them.
   const replied =
     run != null &&
     [...runsByReply(space.id, space.turn_log).values()].includes(run);
-  const live = run != null && !replied;
+  const live = run != null ? !replied : sends.some((s) => !s.queued);
   const setup = setupView(space);
   const asking = run != null && space.question?.run === run;
   const head = (
@@ -58,7 +67,7 @@ export const SpaceLog = observer(function SpaceLog({
   );
   const tail = (
     <>
-      <QueuedMessages space={space} queued={queued} />
+      <QueuedMessages space={space} queued={queued} keyOf={keyOf} />
       {asking && space.question && (
         <QuestionCard
           key={space.question.id}
@@ -70,7 +79,7 @@ export const SpaceLog = observer(function SpaceLog({
   );
 
   const renderRow = useRowRenderer(space.id, onRevise, head, tail);
-  if (turns.length === 0 && !run) {
+  if (turns.length === 0 && !run && !live) {
     return (
       <ChatLog scope={space.id}>
         {head}
@@ -150,9 +159,10 @@ const TurnRow = memo(
   }) {
     return (
       <>
-        {messages.map((m) => (
+        {/* Yours keeps its row when the core's copy replaces what you sent. */}
+        {messages.map((m, i) => (
           <SpaceMessage
-            key={m.id}
+            key={i === 0 ? 'first' : m.id}
             spaceId={spaceId}
             m={m}
             onRevise={onRevise}
@@ -175,8 +185,22 @@ const SpaceLive = observer(function SpaceLive({
 }: {
   spaceId: string;
 }) {
-  const space = useRootStore().models.spaces.get(spaceId);
-  const run = space?.status === 'running' ? space.run : null;
-  if (!space || !run) return null;
-  return <ChatLive run={run} agent={space.agent} timeline />;
+  const { models, ephemeral } = useRootStore();
+  const space = models.spaces.get(spaceId);
+  if (!space) return null;
+  const run = space.status === 'running' ? (space.run ?? null) : null;
+  // Before its run starts: the agent you picked for it.
+  const sending = ephemeral.spaceSends.get(spaceId)?.find((s) => !s.queued);
+  return (
+    <ChatLive
+      run={run}
+      agent={run ? space.agent : (sending?.agent ?? space.agent)}
+      timeline
+      badges={
+        run && ephemeral.stoppingRuns.has(run) ? (
+          <span className="space-stopping text-xs text-muted">Stopping…</span>
+        ) : undefined
+      }
+    />
+  );
 });

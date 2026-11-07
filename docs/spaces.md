@@ -325,6 +325,17 @@ space), by the turn and the offset into it, so turns that came or grew since
 don't move your place; any input of yours ends the restore. Left at the bottom,
 or opened for the first time, it opens at the bottom.
 
+**What you do shows before the core answers**, in the row it belongs to:
+
+```
+send ──▶ your message + working dots, at once       (starting a turn can take a while)
+           ├─ its row arrives ─▶ takes over in the same chat row, nothing remounts
+           └─ refused ─────────▶ gone, the text and files back in the box
+send while it runs ──▶ in the queue at once, marked sending, its Edit and Cancel once stored
+Stop ──▶ "Stopping…" on the running turn ─▶ the reply replaces it, in one update
+queued Cancel / Edit / Send ──▶ gone / new text / sending, undone if the core refuses
+```
+
 Opening or closing a turn's activity, a thinking row or a check is instant and
 moves nothing: the row you clicked stays where it is, also at the bottom, where
 the sizer holds the room a closed row gave back until you scroll up or new

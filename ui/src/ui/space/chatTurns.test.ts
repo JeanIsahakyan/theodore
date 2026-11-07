@@ -50,6 +50,13 @@ describe('pairTurns', () => {
     ]);
   });
 
+  it('a message sent from here keeps the key it was shown under', () => {
+    const turns = pairTurns([me('u1'), agent('a1')], (id) =>
+      id === 'u1' ? 'sending-1' : id,
+    );
+    expect(turns[0]?.key).toBe('sending-1');
+  });
+
   it('nothing said: no turns', () => {
     expect(pairTurns([])).toEqual([]);
   });

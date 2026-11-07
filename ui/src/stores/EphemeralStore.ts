@@ -16,6 +16,7 @@ import type {
   AgentId,
   Anchor,
   AppInfo,
+  Attachment,
   CommentId,
   Ephemeral,
   Person,
@@ -133,6 +134,18 @@ export interface HostStatus {
   authOk: boolean;
 }
 
+/** A message you just sent to a space, until the core stored it. */
+export interface SpaceSend {
+  /** The chat row's key, from now on. */
+  key: string;
+  text: string;
+  attachments: Attachment[];
+  agent: AgentId;
+  at: number;
+  /** Shows in the queue: a turn runs or is about to. */
+  queued: boolean;
+}
+
 /** The next frame, or soon when there is none: a hidden window gets no
  *  frames, and its text must not wait for one. */
 function nextFrame(run: () => void): void {
@@ -166,6 +179,22 @@ export class EphemeralStore {
   /** A run's text, tool calls and thinking in the order they came: what a
    *  space's running turn shows, until its stored reply takes over. */
   readonly runSteps: ObservableMap<string, TurnStep[]> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** Sent and not stored yet, per space, in the order you sent them. */
+  readonly spaceSends: ObservableMap<string, SpaceSend[]> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** A stored message's id → the key its chat row got while it was being
+   *  sent: the row stays the same one when the message arrives. */
+  readonly turnKeys: ObservableMap<string, string> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** Runs you pressed Stop on, until their reply replaces them. */
+  readonly stoppingRuns: ObservableMap<string, true> = observable.map(
     {},
     { deep: false },
   );
@@ -662,6 +691,37 @@ export class EphemeralStore {
           return;
         }
       }
+    });
+  }
+
+  addSpaceSend(space: string, send: SpaceSend): void {
+    runInAction(() => {
+      this.spaceSends.set(space, [...(this.spaceSends.get(space) ?? []), send]);
+    });
+  }
+
+  dropSpaceSend(space: string, key: string): void {
+    runInAction(() => {
+      const left = (this.spaceSends.get(space) ?? []).filter(
+        (s) => s.key !== key,
+      );
+      if (left.length) this.spaceSends.set(space, left);
+      else this.spaceSends.delete(space);
+    });
+  }
+
+  /** Its row arrived, as `id`: that row keeps the key it was shown under. */
+  landSpaceSend(space: string, key: string, id: string): void {
+    runInAction(() => {
+      this.turnKeys.set(id, key);
+      this.dropSpaceSend(space, key);
+    });
+  }
+
+  markStopping(run: string, on: boolean): void {
+    runInAction(() => {
+      if (on) this.stoppingRuns.set(run, true);
+      else this.stoppingRuns.delete(run);
     });
   }
 

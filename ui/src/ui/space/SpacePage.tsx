@@ -60,6 +60,7 @@ import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
 import { SpaceLog } from './SpaceLog';
+import { sendToSpace, stopSpace } from './send';
 import { canSendNow } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
 import { latinKey, useViewKeys } from '../keys';
@@ -256,9 +257,10 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || latinKey(e) !== '.') return;
-      if (store.models.spaces.get(id)?.status !== 'running') return;
+      const current = store.models.spaces.get(id);
+      if (current?.status !== 'running') return;
       e.preventDefault();
-      void api.spaceStop(id).catch(() => {});
+      stopSpace(store, current);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -947,20 +949,28 @@ const SpaceComposer = observer(function SpaceComposer({
     const t = text.trim();
     if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
+    const attached = files.saved;
     setText('');
     setRevising(false);
-    void (now ? api.spaceSendNow : api.spaceSend)({
-      space: space.id,
-      text: t,
-      agent: agent === space.agent ? null : agent,
-      // The chip's model, so a change there reaches the next turn; "Send
-      // now" keeps the running turn's.
-      model: now ? null : agentModel(store, agent),
-      mode: mode === space.mode ? null : mode,
-      attachments: files.ids.length ? files.ids : null,
-    })
-      .then(() => files.clear())
-      .catch(() => setText(t));
+    files.clear();
+    sendToSpace(
+      store,
+      space,
+      {
+        space: space.id,
+        text: t,
+        agent: agent === space.agent ? null : agent,
+        // The chip's model, so a change there reaches the next turn; "Send
+        // now" keeps the running turn's.
+        model: now ? null : agentModel(store, agent),
+        mode: mode === space.mode ? null : mode,
+        attachments: attached.length ? attached.map((a) => a.id) : null,
+      },
+      { now, agent, attachments: attached },
+    ).catch(() => {
+      setText(t);
+      attached.forEach(files.addSaved);
+    });
   };
   const sendNow = canSendNow(space, {
     agent,
@@ -1014,7 +1024,7 @@ const SpaceComposer = observer(function SpaceComposer({
           }
           disabled={space.status === 'archived' || settingUp(space)}
           running={!!run}
-          onStop={() => void api.spaceStop(space.id).catch(() => {})}
+          onStop={() => stopSpace(store, space)}
           onSendNow={sendNow}
           queueWhileRunning
           skills={skills}

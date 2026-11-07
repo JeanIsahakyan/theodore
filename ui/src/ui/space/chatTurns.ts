@@ -25,13 +25,17 @@ export type ChatRow =
   | { kind: 'tail'; key: 'tail' };
 
 /** The transcript by time, as turns: each of your messages with the replies
- *  under it. A reply with no message before it starts its own. */
-export function pairTurns(sent: readonly ChatMessage[]): ChatTurn[] {
+ *  under it. A reply with no message before it starts its own. `keyOf`: a
+ *  message's row key, when it differs from its id. */
+export function pairTurns(
+  sent: readonly ChatMessage[],
+  keyOf: (id: string) => string = (id) => id,
+): ChatTurn[] {
   const turns: ChatTurn[] = [];
   for (const m of sent) {
     const last = turns.at(-1);
     if (m.author.kind === 'me' || !last) {
-      turns.push({ key: m.id, messages: [m] });
+      turns.push({ key: keyOf(m.id), messages: [m] });
     } else {
       last.messages.push(m);
     }
