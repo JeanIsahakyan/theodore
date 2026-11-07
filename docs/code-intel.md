@@ -80,7 +80,8 @@ question ─▶ language server ready? ── yes ─▶ semantic layer (LSP)   
 │  <data dir>/code-intel/                                                    │
 │   ├─ index.sqlite        symbols by blob sha · what is installed (a cache) │
 │   ├─ grammars/<pkg>-<ver>.dylib                                            │
-│   └─ servers/<name>/<ver>/                                                 │
+│   ├─ servers/<name>/<ver>/                                                 │
+│   └─ server-data/<name>/<hash>/   a server's {data}: per worktree and trust │
 │                                                                            │
 │  in the binary: the manifest only — no grammar, no server                  │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -126,9 +127,10 @@ small Rust hook next to their entry.
       download:
         darwin-arm64: { url: "…", sha256: "…", format: tar.gz, bin: ty }
       launch: ["{bin}", "server"]
-    - name: pyright                # only if the user has it; needs Node
-      detect: [["pyright-langserver", "--version"]]
-      launch: ["pyright-langserver", "--stdio"]
+    - name: pyright                # only if the user has it
+      detect: [["pyright-langserver"]]
+      launch: ["{bin}", "--stdio"]
+      requires: { runtime: node, min: 14 }   # checked by running it (§4.3)
 ```
 
 - The manifest is compiled into the binary. Its grammar entries are generated
@@ -244,30 +246,99 @@ manifest entry ─▶ download ─▶ sha256 (required) ─▶ unpack ─▶ ser
 
 | Question | Answer |
 | --- | --- |
-| Source | the server's own release, at a pinned version |
+| Source | the server's own release (GitHub, npm, NuGet, its vendor's CDN), at a pinned version |
 | Checksum | sha256 in the manifest, always. No hash → the entry is invalid |
 | Hosts | each entry names its host; a redirect elsewhere fails the download |
-| Formats | `tar.gz`, `zip`, `gz`, `binary`, npm `tgz`, wheel (a zip). Archive paths are checked: nothing escapes the target directory |
+| Formats | `tar.gz`, `zip` (a `.nupkg` and JetBrains' `.sit` are zips), `gz`, `binary`, npm `tgz`, wheel (a zip). Archive paths are checked: nothing escapes the target directory |
 | No macOS binary upstream | built in our CI and published as our asset (gopls: Go, cross-compiles, BSD) |
 | Upstream deletes a release | mirror into our assets (MIT / Apache / BSD allow it); policy open (§11) |
 | Signing | a server runs as a child process, so our hardened runtime does not apply to it. An unsigned arm64 binary does not start, so it gets an ad-hoc signature after download |
 | Updates | a new manifest version in a Theodore release. The old version stays until the new one has started once, then it is removed |
+| Licence | checked per entry, in the manifest's comment: nothing is fetched behind our prompt whose licence asks the user to accept it personally (intelephense stays detect-only) |
 
 ### 4.3 Server availability
 
-| Downloaded by Theodore (no runtime needed) | Used only if already installed |
-| --- | --- |
-| rust-analyzer, clangd, ty / pyrefly, tsgo, gopls (our build), lua-language-server, taplo, marksman, terraform-ls | sourcekit-lsp (Xcode), typescript-language-server / pyright (Node), zls¹, JDT LS (JVM), kotlin-lsp, Roslyn (.NET), ruby-lsp, ElixirLS, Metals |
+| Language | Server, in order | How it gets here | Runtime |
+| --- | --- | --- | --- |
+| Rust | rust-analyzer | download | none |
+| TypeScript, TSX, JavaScript | tsgo | download | none |
+| | typescript-language-server | found on the machine | Node 18+ |
+| Python | ty | download | none |
+| | pyright | found on the machine | Node 14+ |
+| Go | gopls | download (our build) | none |
+| C, C++ | clangd | download | none |
+| Lua, TOML, Markdown, Terraform | lua-language-server, taplo, marksman, terraform-ls | download | none |
+| Swift | sourcekit-lsp | found on the machine (Xcode) | none |
+| Zig | zls¹ | found on the machine | none |
+| Kotlin | kotlin-lsp | download, 360 MB, 1.1 GB unpacked | its own JBR |
+| Java | jdtls | download | Java 21+ |
+| C# | csharp-ls | download | .NET SDK 10+ |
+| PHP | intelephense² | found on the machine | Node 20+ |
+| | phpactor | download | PHP 8.2+ |
+| Ruby | ruby-lsp³ | found on the machine | Ruby 3+ |
 
 ¹ zigtools/zls only publishes darwin-arm64 as `.tar.xz`; `ArchiveFormat`
-(`crates/code-intel-toolchain/src/manifest.rs`) has no xz variant yet
-(`tar.gz`, `zip`, `gz`, `binary`, npm `tgz`, wheel), so zls is detect-only
-for now — found on the machine, not downloaded. Moves to the left column
-once that format exists.
+(`crates/code-intel-toolchain/src/manifest.rs`) has no xz variant yet, so zls
+is detect-only for now.
+
+² Its licence is proprietary and personal ("by installing this software you
+agree"), for one person using it with an editor. That is yours to accept, not
+a download behind our prompt or `install: always`.
+
+³ A gem with native dependencies and no standalone build.
+
+A server's runtime is real data: `requires: { runtime: java, min: 21 }` in the
+manifest, checked by running it, because `which` lies (macOS's `/usr/bin/java`
+exists with no JDK behind it).
+
+```
+requires ─▶ candidates ─▶ inside the worktree and a review? ─▶ skip
+   java: JAVA_HOME · java_home -v <min>+ · PATH · Homebrew's keg-only openjdk*
+   else: PATH
+         ─▶ run it (5 s; a review run's cwd is neutral: a PR's .tool-versions
+            or .ruby-version does not steer it) ─▶ parse the version
+               ├─ ≥ min ─▶ found      {runtime} in `launch`; JAVA_HOME or
+               │                      DOTNET_ROOT and PATH in the environment
+               ├─ < min ─▶ remembered, next
+               └─ fails ─▶ next
+```
+
+| Runtime | Probe |
+| --- | --- |
+| `node`, `ruby`, `php` | `--version`, then its own idea of where it is (`process.execPath`, `RbConfig.ruby`, `PHP_BINARY`), so a version manager's shim can't pick again from the server's cwd |
+| `java` | `-XshowSettings:properties -version`: stderr has the version and `java.home` |
+| `dotnet` | `--list-runtimes`, newest `Microsoft.NETCore.App` |
+| `dotnet-sdk` | the same, and `--list-sdks` not empty: MSBuild needs an SDK, a runtime can be alone |
+
+Choosing, per language (`Toolchain::server_for`):
+
+```
+each server, preferred first (code_intel.servers.<language>), else manifest order
+  ├─ trusted_only and a review run ─▶ skipped (§8)
+  ├─ runtime missing or too old    ─▶ skipped, remembered
+  └─ found on the machine or downloaded ─▶ this one: System | Installed
+none ─▶ the first runnable one with a download ─▶ Missing, Downloading, Failed
+     ─▶ else a remembered runtime              ─▶ NeedsRuntime { runtime, min, found }
+     ─▶ else skipped as trusted_only           ─▶ TrustedOnly
+     ─▶ else the first                         ─▶ Unavailable, with its hint
+```
+
+- A binary on the machine needs its runtime too: pyright with no Node is not
+  available.
+- Nothing is downloaded for a server that can't run: not by `install: ask`'s
+  suggestion, not by `install: always`, not by the Install button.
+- A runtime installed later is picked up the next time a worktree opens, or
+  when the app restarts. A worktree already open keeps its answer (an Install
+  of the language asks again).
+- `{data}` in `launch`: `server-data/<name>/<hash>/`, per worktree and trust
+  mode, so a review reads nothing a trusted session imported. Never in the
+  worktree. Remove deletes it; a launch drops the ones no launch touched in
+  14 days.
 
 Detection looks, in order: the manifest's `detect` commands on `PATH`,
 `rustup which`, `xcrun --find`, the repo's `node_modules/.bin`. A server found
-on the machine wins over a download.
+on the machine wins over a download. jdtls and csharp-ls have no `detect`:
+installed elsewhere they have another command line, and ours is the one tested.
 
 ## 5. Install and index
 
@@ -289,7 +360,9 @@ new language in a PR ─▶ toast "C++: download clangd for exact references?" �
 | `never` | downloaded | only ones already installed |
 
 Grammars are small and run nothing, so they are not asked about. Servers run
-as processes, so they are.
+as processes, so they are. A server whose runtime is missing is neither asked
+about nor downloaded (§4.3): its row says what it needs. Neither is one that
+never serves a review, while a review is what asks.
 
 - Downloads start when a repo is added, in the background, so the first PR
   does not wait.
@@ -325,6 +398,9 @@ close worktrees opened only for the settings ─▶ an open review or space has 
 - A grammar package takes all its languages: removing `typescript`
   removes `tsx`.
 - A server found on the machine is not ours: it stays, and still serves.
+- Remove takes a server's `{data}` too. What a server keeps elsewhere on its
+  own is not ours to find: intelephense under `~/.config/intelephense`, Gradle
+  and Maven under `~/.gradle` and `~/.m2`.
 
 ### 5.2 Index by blob, not by worktree
 
@@ -413,6 +489,17 @@ idle code_intel.idle_minutes ─▶ shutdown ─▶ exit ─▶ kill after 5 s
   server on the base is started only when a question needs it.
 - A server that crashes is restarted once per session; a second crash marks
   it failed for that worktree, and the syntax layer answers.
+- JVM servers start slowly and answer empty while they import. `warming` holds
+  until no `$/progress` token is in flight for `ready_settle` (1.5 s), so a
+  question meanwhile goes to the syntax layer, not to an empty answer. A slow
+  server sets its own in the manifest:
+
+  | | `initialize` + warm-up | settle | Why |
+  | --- | --- | --- | --- |
+  | default | 60 s + 180 s | 1.5 s | |
+  | jdtls, kotlin-lsp | 600 s | 1.5 s | a real build's import takes minutes |
+  | ruby-lsp | 300 s | 1.5 s | the first start installs a composed bundle before it answers `initialize` |
+  | csharp-ls | 300 s | 5 s | announces loading about 1.3 s after `initialized` |
 - Full precision needs the project's dependencies (`node_modules`,
   `cargo fetch`). A space has them after `setup`; a review worktree does not,
   and Theodore never installs them there (it is not our code to run), so
@@ -481,6 +568,20 @@ Some servers run code from the project they open.
 | rust-analyzer build scripts (`cargo.buildScripts.enable`) | off | on, after the repo's commands are trusted (`docs/config.md` §5) |
 | rust-analyzer proc macros (`procMacro.enable`) | off | same |
 | plugins named in project config (e.g. tsserver plugins) | off | same |
+| jdtls: Gradle and Maven import, a `.factorypath`'s annotation processors (`java.import.gradle.enabled`, `java.import.maven.enabled`, `java.autobuild.enabled`, `java.import.exclusions`) | off | same |
+
+Servers with no option that stops it are `trusted_only` in the manifest: never
+started in `TrustMode::Review`, even with `code_intel.lsp.review` on, and the
+answer says why. An untrusted space is served like a review, so neither there.
+
+| Server | What it runs, seen with a marker file (`tests/server_lsp.rs`) |
+| --- | --- |
+| kotlin-lsp | `settings.gradle.kts`, `build.gradle.kts`: Gradle or Maven import, no documented switch |
+| csharp-ls | a `.csproj`'s `<Exec>`: MSBuild evaluates the project and runs design-time targets |
+| ruby-lsp | the `Gemfile`: composes a bundle, runs Bundler, loads add-ons from it |
+| phpactor | `vendor/composer/autoload_*.php`, even with `composer.enable: false` by `initializationOptions` or `--config-extra` |
+
+intelephense parses PHP in JavaScript and ran no marker: it may serve reviews.
 
 - Each manifest entry lists the initialization options that turn these off;
   review runs always send them.
@@ -502,7 +603,8 @@ Some servers run code from the project they open.
 
 - A switch turned off stops the sessions it no longer allows; turned on, the
   servers already on disk start, in the worktrees open now. Answers say why a
-  server is not used.
+  server is not used: `needs java 21 or newer, found 17.0.2`, `serves spaces
+  and not reviews`.
 - Review sessions never share a process with a space's, even for one repo.
 
 ## 9. Settings
@@ -512,7 +614,7 @@ Some servers run code from the project they open.
 | `code_intel.enabled` | `true` | off: no downloads, no index, no tools |
 | `code_intel.install` | `ask` | `ask` / `always` / `never` (§5.1) |
 | `code_intel.languages` | `[]` | empty: detected |
-| `code_intel.servers.<language>` | — | preferred server name |
+| `code_intel.servers.<language>` | — | preferred server name: tried first, and skipped like any other if its runtime is missing (§4.3). The repo's layer is read at the base (§3.1); a worktree already open keeps its choice until it reopens |
 | `code_intel.max_servers` | `4` | alive at once; global file only ¹ |
 | `code_intel.idle_minutes` | `10` | idle server shutdown; global file only ¹ |
 | `code_intel.max_file_kb` | `1024` | larger files are not indexed; global file only ¹ |
@@ -553,8 +655,8 @@ C++  · 3 files      Grammar Installed   clangd Downloading
   the rest of the file, comments included. A shape a line edit can't
   handle (a flow mapping, a dotted key) is refused with the file untouched:
   set it in the config editor. Never the repo's file (§8).
-- Each language: grammar, server (found / downloaded / not available),
-  run state, index progress; Install, Decline (a missing server) and
+- Each language: grammar, server (found / downloaded / not available / what
+  it needs), run state, index progress; Install, Decline (a missing server) and
   Remove (what Theodore downloaded, §5.1.1; asks first, and shows the
   refusal when a review or a space uses the language).
 - Across every worktree of the project open now, not one of them: a language
@@ -566,6 +668,14 @@ C++  · 3 files      Grammar Installed   clangd Downloading
   | Warming up → Ready | started; reading this section starts what went idle |
   | Not running | allowed, but `max_servers` is full (or a server crashed once and returns on the next question) |
   | Failed | crashed twice in that worktree; not restarted |
+- A server with nothing to fetch says why, and offers no Install:
+
+  | State | Row | Under it |
+  | --- | --- | --- |
+  | `needs_runtime` | Needs Java 21+ | Found 17.0.2 (when one ran) |
+  | `unavailable` | Unavailable | the manifest's `hint` (`gem install ruby-lsp`), else No download for this Mac |
+  | `trusted_only` | Spaces only | Runs the project's build, so it does not start for reviews |
+
 - Install progress comes from `Ephemeral::CodeIntelProgress` (§5.1): the
   row shows the bar and reads the status again once an item settles. The
   status is polled (every 5 s) only while a server warms up, or a download
@@ -596,13 +706,19 @@ tools and without, docs/eval/agent-tools/README.md); the tools alone are
   `references` and `documentSymbol` from `tsgo --lsp --stdio`
   (`crates/code-intel-toolchain/tests/tsgo_lsp.rs`, `--ignored`); it is
   listed ahead of typescript-language-server for `typescript` / `tsx`.
+  It also serves plain `.js` with no tsconfig or jsconfig
+  (`tests/server_lsp.rs`), so it goes first for `javascript` too.
   Still open: diagnostics, rename, hover and large real-world projects
   (this crate's own fixture has no `node_modules`) — the eval (§10)
   decides whether it stays first for those.
 - Mirror every server into our assets, or only when upstream breaks?
 - `max_servers` and `idle_minutes` defaults: measured on a large repo, not
   guessed.
-- JVM languages (Java, Kotlin, Scala): supported only when installed, or not
-  at all — they need a build and start slowly.
+- JVM languages: resolved for Java and Kotlin. jdtls and kotlin-lsp download
+  on consent and answer through the same client (`tests/server_lsp.rs`). In a
+  review jdtls reads sources with the build off, so references stop at the
+  worktree's own files, and kotlin-lsp does not start at all (§8). Scala
+  (Metals) is not in the manifest; ElixirLS neither. Measured only on two-file
+  fixtures: a real build's import time and memory are the eval's (§10).
 - Grammars added by a repo or a user (not in the manifest): not planned. If
   they ever are, they load as WASM in a sandbox, not as native dylibs.

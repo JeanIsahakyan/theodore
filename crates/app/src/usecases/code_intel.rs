@@ -253,6 +253,7 @@ impl Core {
                 .map(|f| f.path.clone())
                 .collect(),
             lsp: None,
+            servers: cfg.servers.clone(),
         };
         if self
             .open_code_workspace(ws, lsp, cfg.install, project, OpenedFor::Review)
@@ -298,6 +299,7 @@ impl Core {
             languages: languages(code),
             focus_paths: Vec::new(),
             lsp: None,
+            servers: code.servers.clone(),
         };
         self.open_code_workspace(
             ws,
@@ -614,6 +616,7 @@ impl Core {
                 languages: languages(&cfg),
                 focus_paths: Vec::new(),
                 lsp: None,
+                servers: cfg.servers.clone(),
             };
             if self
                 .open_code_workspace(
@@ -1230,6 +1233,16 @@ fn install_view(s: InstallState, declined: bool) -> CodeInstall {
         },
         InstallState::Installed { version } => CodeInstall::Installed { version },
         InstallState::Unavailable => CodeInstall::Unavailable,
+        InstallState::NeedsRuntime {
+            runtime,
+            min,
+            found,
+        } => CodeInstall::NeedsRuntime {
+            runtime,
+            min,
+            found,
+        },
+        InstallState::TrustedOnly => CodeInstall::TrustedOnly,
         InstallState::Declined => CodeInstall::Declined,
         InstallState::Failed { error } => CodeInstall::Failed { error },
     }
@@ -1257,7 +1270,16 @@ pub(crate) fn merge_statuses(into: &mut Vec<LanguageStatus>, statuses: Vec<Langu
             continue;
         };
         let alive = |l: &LanguageStatus| l.server.as_ref().map(|s| liveness(s.state));
-        if alive(&next) > alive(have) {
+        let spaces_only = |l: &LanguageStatus| {
+            l.server
+                .as_ref()
+                .is_some_and(|s| s.install == InstallState::TrustedOnly)
+        };
+        // Equally alive: what a space can install says more than a review's
+        // "Spaces only".
+        if alive(&next) > alive(have)
+            || (alive(&next) == alive(have) && spaces_only(have) && !spaces_only(&next))
+        {
             have.server = next.server;
         }
         if next.files > have.files {
@@ -1276,6 +1298,7 @@ fn language_view(l: LanguageStatus, declined: &[String]) -> CodeLanguage {
         grammar: install_view(l.grammar, false),
         server: l.server.map(|s| CodeServer {
             name: s.name,
+            hint: s.hint,
             install: install_view(s.install, was_declined),
             state: match s.state {
                 ServerState::Off => CodeServerState::Off,

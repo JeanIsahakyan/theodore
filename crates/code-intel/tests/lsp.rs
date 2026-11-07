@@ -7,10 +7,11 @@ use std::path::Path;
 
 use common::{Env, eventually, indexed, repo, server_state, workspace};
 use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
 use theodore_code_intel::CodeIntel;
 use theodore_ports::code_intel::{
-    CodeIntelError, CodeIntelPort, DiagnosticSeverity, LspPolicy, Position, ServerState, Source,
-    TrustMode,
+    CodeIntelError, CodeIntelPort, DiagnosticSeverity, InstallState, LanguageId, LspPolicy,
+    Position, ServerState, Source, TrustMode,
 };
 
 const LIB: &str = "struct Store {}\nfn helper() {}\nfn main() { helper(); bad(); }\n";
@@ -404,4 +405,192 @@ async fn a_workspace_switch_applies_live() {
         server_state(&ci, &root, "rust").await == Some(ServerState::Off)
     })
     .await;
+}
+
+const BOTH_ON: LspPolicy = LspPolicy {
+    review: true,
+    spaces: true,
+};
+
+/// `code_intel.servers.<language>`: the project's preference goes first, and
+/// a change reopens the worktree on the other server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workspace_can_prefer_a_server() {
+    let yaml = r#"
+servers:
+  - name: first
+    detect: [["first-ls"]]
+    launch: ["{bin}"]
+  - name: second
+    detect: [["second-ls"]]
+    launch: ["{bin}"]
+languages:
+  - id: rust
+    globs: ["*.rs"]
+    servers: [first, second]
+"#;
+    let env = Env::new();
+    env.fake_server("first-ls");
+    env.fake_server("second-ls");
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.facade_with(yaml, LspPolicy::default());
+    let server_of = |status: Vec<theodore_ports::code_intel::LanguageStatus>| {
+        status[0].server.as_ref().unwrap().name.clone()
+    };
+
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    assert_eq!(server_of(ci.status(wt.path()).await.unwrap()), "first");
+
+    let mut ws = workspace(wt.path(), TrustMode::Trusted);
+    ws.servers = BTreeMap::from([("rust".to_string(), "second".to_string())]);
+    ci.open(ws).await.unwrap();
+    assert_eq!(server_of(ci.status(wt.path()).await.unwrap()), "second");
+}
+
+/// A runtime missing or too old: not started, status says so, the answer
+/// says why, and Install downloads nothing. Installed later, the next open
+/// picks it up, and the server gets the runtime that passed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_without_its_runtime_is_not_started_or_downloaded() {
+    let yaml = r#"
+servers:
+  - name: needs-java
+    version: "1.0"
+    detect: [["java-ls"]]
+    download:
+      darwin-arm64: { url: "https://example.invalid/j.gz", sha256: "8fb90cb58f5910d8d8b24ac1a93cca49f053365cbf0eb3c682144ad0a0027dcf", format: gz, bin: j }
+      linux-x64: { url: "https://example.invalid/j.gz", sha256: "8fb90cb58f5910d8d8b24ac1a93cca49f053365cbf0eb3c682144ad0a0027dcf", format: gz, bin: j }
+    launch: ["{bin}"]
+    requires: { runtime: java, min: 21 }
+languages:
+  - id: rust
+    globs: ["*.rs"]
+    servers: [needs-java]
+"#;
+    let env = Env::new();
+    env.fake_server("java-ls");
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.facade_with(yaml, LspPolicy::default());
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    indexed(&ci, wt.path()).await;
+    let status = ci.status(wt.path()).await.unwrap();
+    let server = status[0].server.as_ref().unwrap();
+    assert_eq!(
+        server.install,
+        InstallState::NeedsRuntime {
+            runtime: "java".into(),
+            min: "21".into(),
+            found: None
+        }
+    );
+    assert_eq!(env.launches(), Vec::<std::path::PathBuf>::new());
+
+    let answer = ci.file_symbols(wt.path(), "src/lib.rs").await.unwrap();
+    assert_eq!(answer.source, Source::Syntax);
+    let note = answer.note.unwrap_or_default();
+    assert!(note.contains("needs-java needs java 21"), "{note}");
+
+    // The URL can't resolve: an attempt would fail the install.
+    ci.install(&LanguageId::new("rust"), None).await.unwrap();
+
+    // A JDK appears; the next open of the worktree finds it.
+    let home = env.tmp.path().canonicalize().unwrap().join("jdk");
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    let java = home.join("bin/java");
+    std::fs::write(
+        &java,
+        format!(
+            "#!/bin/sh\necho '    java.home = {}' >&2\necho 'openjdk version \"21.0.5\"' >&2\n",
+            home.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&java, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(&java, env.bin.join("java")).unwrap();
+
+    ci.close(wt.path()).await;
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    ready(&ci, wt.path()).await;
+    assert_eq!(env.launches().len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(env.java_home_log()).unwrap().trim(),
+        home.display().to_string(),
+        "the server gets the JDK that passed"
+    );
+}
+
+/// No off switch for what it runs: a review never starts it, even with the
+/// review switch on; a space does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_trusted_only_server_never_serves_a_review() {
+    let yaml = r#"
+servers:
+  - name: builds
+    detect: [["build-ls"]]
+    launch: ["{bin}"]
+    trusted_only: true
+languages:
+  - id: rust
+    globs: ["*.rs"]
+    servers: [builds]
+"#;
+    let env = Env::new();
+    env.fake_server("build-ls");
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.facade_with(yaml, BOTH_ON);
+
+    ci.open(workspace(wt.path(), TrustMode::Review))
+        .await
+        .unwrap();
+    indexed(&ci, wt.path()).await;
+    let status = ci.status(wt.path()).await.unwrap();
+    let server = status[0].server.as_ref().unwrap();
+    assert_eq!(server.install, InstallState::TrustedOnly);
+    assert_eq!(server.state, ServerState::NotRunning);
+    assert_eq!(env.launches(), Vec::<std::path::PathBuf>::new());
+    let answer = ci.file_symbols(wt.path(), "src/lib.rs").await.unwrap();
+    assert_eq!(answer.source, Source::Syntax);
+    let note = answer.note.unwrap_or_default();
+    assert!(note.contains("serves spaces and not reviews"), "{note}");
+    assert_eq!(env.launches(), Vec::<std::path::PathBuf>::new());
+
+    ci.close(wt.path()).await;
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    ready(&ci, wt.path()).await;
+    assert_eq!(env.launches().len(), 1);
+}
+
+/// A hint reaches the status of a server nothing can fetch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hint_reaches_the_status() {
+    let yaml = r#"
+servers:
+  - name: gem-ls
+    detect: [["gem-ls"]]
+    launch: ["{bin}"]
+    hint: gem install gem-ls
+languages:
+  - id: rust
+    globs: ["*.rs"]
+    servers: [gem-ls]
+"#;
+    let env = Env::new();
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.facade_with(yaml, LspPolicy::default());
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    let status = ci.status(wt.path()).await.unwrap();
+    let server = status[0].server.as_ref().unwrap();
+    assert_eq!(server.install, InstallState::Unavailable);
+    assert_eq!(server.hint.as_deref(), Some("gem install gem-ls"));
 }

@@ -70,6 +70,20 @@ pub struct SessionOptions {
     pub diagnostics_wait: Duration,
 }
 
+impl SessionOptions {
+    /// These options with `config`'s own start timeout and settle time.
+    fn for_server(mut self, config: &LaunchConfig) -> Self {
+        if let Some(secs) = config.start_timeout_secs {
+            self.init_timeout = Duration::from_secs(secs);
+            self.ready_max_wait = Duration::from_secs(secs);
+        }
+        if let Some(secs) = config.ready_settle_secs {
+            self.ready_settle = Duration::from_secs(secs);
+        }
+        self
+    }
+}
+
 impl Default for SessionOptions {
     fn default() -> Self {
         Self {
@@ -292,6 +306,7 @@ impl LspSession {
         config: LaunchConfig,
         options: SessionOptions,
     ) -> CodeIntelResult<Arc<Self>> {
+        let options = options.for_server(&config);
         let server = config.server.clone();
         let err = |message: String| CodeIntelError::Server {
             server: server.clone(),

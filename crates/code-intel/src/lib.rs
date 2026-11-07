@@ -18,7 +18,7 @@
 //!                           (downloads only in install())
 //! ```
 //!
-//! Trust: [`LspPolicy`] has one switch per [`TrustMode`] — review runs
+//! Trust: [`LspPolicy`] has one switch per [`TrustMode`](theodore_ports::TrustMode) — review runs
 //! (off by default: most servers can run a PR's code) and spaces (on). The
 //! one gate is `servers::allowed`; [`CodeIntel::set_options`] applies a
 //! change live, stopping the sessions it no longer allows.
@@ -54,7 +54,7 @@ use theodore_ports::code_intel::{
     Answer, CodeHit, CodeIntelError, CodeIntelLimits, CodeIntelPort, CodeIntelResult, CodeSymbol,
     CodeSymbolKind, Diagnostic, Hover, InstallItem, InstallProgress, InstallProgressFn,
     InstallProgressState, InstallState, LanguageId, LanguageStatus, Location, LspPolicy, Position,
-    ServerState, ServerStatus, Source, TextEdit, TrustMode, Workspace,
+    ServerState, ServerStatus, Source, TextEdit, Workspace,
 };
 
 pub use grammars::GrammarSource;
@@ -199,6 +199,7 @@ impl CodeIntelBuilder {
                 removed,
                 evicting: AtomicBool::new(false),
                 workspaces: Mutex::default(),
+                prefer: Mutex::default(),
             }),
         };
         let weak = Arc::downgrade(&ci.inner);
@@ -235,6 +236,8 @@ struct Inner {
     evicting: AtomicBool,
     /// By canonical root.
     workspaces: Mutex<HashMap<PathBuf, Arc<Ws>>>,
+    /// `Workspace::servers` of each open root: language → preferred server.
+    prefer: Mutex<HashMap<PathBuf, BTreeMap<String, String>>>,
 }
 
 /// Where an LSP question goes.
@@ -467,7 +470,8 @@ impl CodeIntel {
         if let Ok(existing) = self.ws(&root) {
             let same = existing.repo_key == ws.repo_key
                 && existing.trust == ws.trust
-                && existing.requested == ws.languages;
+                && existing.requested == ws.languages
+                && lock(&self.inner.prefer).get(&root) == Some(&ws.servers);
             if same {
                 self.focus(&existing, focus);
                 return Ok(());
@@ -475,6 +479,7 @@ impl CodeIntel {
             self.close_ws(&root).await;
         }
 
+        let servers_wanted = ws.servers.clone();
         let only = (!ws.languages.is_empty()).then(|| ws.languages.iter().cloned().collect());
         let lang_of = language_of(self.inner.toolchain.manifest().clone(), only);
         let snapshot = {
@@ -502,6 +507,7 @@ impl CodeIntel {
             }
             map.insert(root.clone(), w.clone());
         }
+        lock(&self.inner.prefer).insert(root.clone(), servers_wanted);
         self.focus(&w, focus);
         tracing::info!(target: "code_intel", root = %root.display(), trust = ?w.trust, languages = ?w.languages(), "workspace open");
         self.start_servers(&w).await;
@@ -577,7 +583,18 @@ impl CodeIntel {
     /// (Re)decide `lang`'s server for `w`. Probes; downloads nothing.
     async fn plan_server(&self, w: &Ws, lang: &LanguageId) {
         let policy = self.policy_for(w);
-        let Some(plan) = servers::plan(&self.inner.toolchain, lang, &w.root, policy, w.trust).await
+        let prefer = lock(&self.inner.prefer)
+            .get(&w.root)
+            .and_then(|p| p.get(lang.as_str()).cloned());
+        let Some(plan) = servers::plan(
+            &self.inner.toolchain,
+            lang,
+            prefer.as_deref(),
+            &w.root,
+            policy,
+            w.trust,
+        )
+        .await
         else {
             return;
         };
@@ -614,6 +631,7 @@ impl CodeIntel {
             map.remove(root).or_else(|| map.remove(&canonical(root)))
         };
         if let Some(w) = w {
+            lock(&self.inner.prefer).remove(&w.root);
             w.shut();
             self.pool().release_root(&w.root).await;
             self.spawn_evict();
@@ -631,7 +649,7 @@ impl CodeIntel {
             return Route::Not(Some(denied_note(w.trust).into()));
         }
         if plan.resolved.is_none() {
-            return Route::Not(Some(format!("{name} not installed")));
+            return Route::Not(Some(servers::not_resolved_note(&plan)));
         }
         let session = match self.pool().get(&w.pool_key, &w.root, &name).await {
             Some(s) => s,
@@ -1122,19 +1140,21 @@ impl CodeIntel {
             first_error = Some(e);
         }
 
-        // The preferred server, downloaded only if it is not on the machine.
-        // Resolved outside any worktree: a worktree's own binaries are
-        // never what gets installed.
-        let neutral = tc.root().to_path_buf();
-        if let Some((server, state)) = tc
-            .server_for(language, None, &neutral, TrustMode::Review)
-            .await
-        {
-            let on_disk = matches!(
+        // The preferred server, downloaded only if it is not on the machine
+        // and can run here. A project that names one wins (the first open
+        // worktree of the language that does).
+        let prefer: Option<String> = lock(&self.inner.prefer)
+            .values()
+            .find_map(|p| p.get(language.as_str()).cloned());
+        if let Some((server, state)) = tc.server_to_install(language, prefer.as_deref()).await {
+            let fetch = !matches!(
                 state,
-                InstallState::System { .. } | InstallState::Installed { .. }
+                InstallState::System { .. }
+                    | InstallState::Installed { .. }
+                    | InstallState::NeedsRuntime { .. }
+                    | InstallState::TrustedOnly
             );
-            if !on_disk && server.download_for(tc.platform()).is_some() {
+            if fetch && server.download_for(tc.platform()).is_some() {
                 self.mark_downloading(&server.name);
                 let report = Reporter::new(
                     progress.clone(),
@@ -1332,6 +1352,7 @@ impl CodeIntel {
             .into_iter()
             .map(|(language, shas)| {
                 let server = w.plan(&language).map(|p| ServerStatus {
+                    hint: p.spec.hint.clone(),
                     state: if allowed(policy, w.trust) {
                         running
                             .get(&p.spec.name)

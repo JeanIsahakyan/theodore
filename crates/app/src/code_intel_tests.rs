@@ -94,6 +94,7 @@ fn missing_server(lang: &str, server: &str) -> LanguageStatus {
             name: server.into(),
             install: InstallState::Missing,
             state: ServerState::NotRunning,
+            hint: None,
         }),
         index_percent: 40,
     }
@@ -263,6 +264,21 @@ async fn code_intel_off_in_config_opens_nothing_and_lists_no_tools() {
     assert!(
         err.to_string().contains("code intelligence is off"),
         "{err}"
+    );
+}
+
+/// `code_intel.servers`: a preference in a config file reaches the port.
+#[tokio::test]
+async fn a_preferred_server_reaches_the_port() {
+    let e = code_env().await;
+    e.global("code_intel: {languages: [rust], servers: {python: pyright}}");
+    let s = e.create("").await;
+    let want = format!("open {} Trusted [rust]", s.worktree);
+    wait_until(|| e.f.code_intel.calls().contains(&want)).await;
+    let servers = e.f.code_intel.last_servers.lock().unwrap().clone();
+    assert_eq!(
+        servers,
+        std::collections::BTreeMap::from([("python".to_string(), "pyright".to_string())])
     );
 }
 
@@ -763,6 +779,7 @@ fn a_language_shows_its_most_alive_server_and_its_largest_worktree() {
                 version: "1".into(),
             },
             state,
+            hint: None,
         }),
         ..missing_server("rust", "rust-analyzer")
     };
@@ -809,6 +826,12 @@ fn a_language_shows_its_most_alive_server_and_its_largest_worktree() {
         let l = merged(vec![with(a, 1, 1), with(b, 1, 1)]);
         assert_eq!(state(&l), want, "{a:?} + {b:?}");
     }
+
+    // A review says "Spaces only"; the space can still install it.
+    let mut review = with(ServerState::NotRunning, 1, 1);
+    review.server.as_mut().unwrap().install = InstallState::TrustedOnly;
+    let l = merged(vec![review, missing_server("rust", "rust-analyzer")]);
+    assert_eq!(l.server.unwrap().install, InstallState::Missing);
 }
 
 #[tokio::test]
@@ -836,6 +859,68 @@ async fn the_lsp_policy_reads_review_and_spaces_apart() {
 
 // ── install ─────────────────────────────────────────────────────────────────
 
+/// A server that can't run here is neither downloaded nor offered: not by
+/// `always`, not by `ask`.
+#[tokio::test]
+async fn a_server_that_cannot_run_is_never_installed_or_suggested() {
+    let mut e = code_env().await;
+    let with = |lang: &str, name: &str, install: InstallState| LanguageStatus {
+        server: Some(ServerStatus {
+            name: name.into(),
+            install,
+            state: ServerState::NotRunning,
+            hint: None,
+        }),
+        ..missing_server(lang, name)
+    };
+    *e.f.code_intel.status.lock().unwrap() = vec![
+        with(
+            "java",
+            "jdtls",
+            InstallState::NeedsRuntime {
+                runtime: "java".into(),
+                min: "21".into(),
+                found: Some("17.0.2".into()),
+            },
+        ),
+        with("kotlin", "kotlin-lsp", InstallState::TrustedOnly),
+        with("ruby", "ruby-lsp", InstallState::Unavailable),
+    ];
+    let root = Path::new("/tmp/wt");
+
+    e.core
+        .code_install_flow(root, InstallPolicy::Always, None)
+        .await;
+    assert!(
+        !e.f.code_intel
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("install")),
+        "{:?}",
+        e.f.code_intel.calls()
+    );
+
+    e.core
+        .code_install_flow(root, InstallPolicy::Ask, None)
+        .await;
+    no_ephemeral(&mut e.recv, suggestion).await;
+
+    // What the row reads: the state and the hint, through the contract.
+    *e.f.code_intel.status.lock().unwrap() = vec![LanguageStatus {
+        server: Some(ServerStatus {
+            name: "ruby-lsp".into(),
+            install: InstallState::Unavailable,
+            state: ServerState::NotRunning,
+            hint: Some("gem install ruby-lsp".into()),
+        }),
+        ..missing_server("ruby", "ruby-lsp")
+    }];
+    let status = e.core.code_intel_status(&e.project.id).await.unwrap();
+    let server = status.languages[0].server.as_ref().unwrap();
+    assert_eq!(server.install, theodore_contract::CodeInstall::Unavailable);
+    assert_eq!(server.hint.as_deref(), Some("gem install ruby-lsp"));
+}
+
 #[tokio::test]
 async fn install_follows_the_policy_and_remembers_a_no() {
     let mut e = code_env().await;
@@ -849,6 +934,7 @@ async fn install_follows_the_policy_and_remembers_a_no() {
                     version: None,
                 },
                 state: ServerState::Ready,
+                hint: None,
             }),
             ..missing_server("python", "ty")
         },
