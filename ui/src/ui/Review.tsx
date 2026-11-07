@@ -664,7 +664,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
               className="merge-btn shrink-0"
               isIconOnly={compact}
               aria-label="Merge"
-              isDisabled={!FEATURES.hostWrites}
+              isDisabled={!FEATURES.hostWrites || summary?.state === 'draft'}
               onPress={() => setMergeOpen(true)}
             >
               {!compact && 'Merge'}
@@ -672,9 +672,11 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
             <Tooltip.Content>
               {!FEATURES.hostWrites
                 ? 'Not available yet'
-                : mergeBlock
-                  ? `Blocked: ${mergeBlock} — you can enable auto-merge`
-                  : 'Merge'}
+                : summary?.state === 'draft'
+                  ? 'Ready for review first'
+                  : mergeBlock
+                    ? `Blocked: ${mergeBlock} — you can enable auto-merge`
+                    : 'Merge'}
             </Tooltip.Content>
           </Tooltip>
         )}
