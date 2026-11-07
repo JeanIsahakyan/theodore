@@ -24,6 +24,22 @@ export type ChatRow =
   | { kind: 'live'; key: 'live' }
   | { kind: 'tail'; key: 'tail' };
 
+/** A transcript by time, as turns: each item that `begins` one, with what
+ *  follows it. Whatever comes first, with nothing before it, starts its own. */
+export function groupTurns<T>(
+  items: readonly T[],
+  begins: (item: T) => boolean,
+  keyOf: (item: T) => string,
+): { key: string; items: T[] }[] {
+  const turns: { key: string; items: T[] }[] = [];
+  for (const item of items) {
+    const last = turns.at(-1);
+    if (begins(item) || !last) turns.push({ key: keyOf(item), items: [item] });
+    else last.items.push(item);
+  }
+  return turns;
+}
+
 /** The transcript by time, as turns: each of your messages with the replies
  *  under it. A reply with no message before it starts its own. `keyOf`: a
  *  message's row key, when it differs from its id. */
@@ -31,16 +47,11 @@ export function pairTurns(
   sent: readonly ChatMessage[],
   keyOf: (id: string) => string = (id) => id,
 ): ChatTurn[] {
-  const turns: ChatTurn[] = [];
-  for (const m of sent) {
-    const last = turns.at(-1);
-    if (m.author.kind === 'me' || !last) {
-      turns.push({ key: keyOf(m.id), messages: [m] });
-    } else {
-      last.messages.push(m);
-    }
-  }
-  return turns;
+  return groupTurns(
+    sent,
+    (m) => m.author.kind === 'me',
+    (m) => keyOf(m.id),
+  ).map((t) => ({ key: t.key, messages: t.items }));
 }
 
 /** The rows, in the order the chat shows them. The live reply goes on the

@@ -14,6 +14,9 @@
  *
  * a row's toggle ─▶ the sizer holds its room ─▶ the row stays where it is;
  *                   the room melts away as you scroll up, or content fills it
+ *
+ * hidden (no height) ─▶ rows keep their sizes, nothing is measured or moved
+ *    └─shown again, left away─▶ restore turn + offset; at the bottom ─▶ the end
  * ```
  */
 import {
@@ -30,6 +33,7 @@ import { ArrowDown } from '@gravity-ui/icons';
 import { Button } from '@heroui/react';
 import {
   defaultRangeExtractor,
+  measureElement,
   useVirtualizer,
   type Range,
   type VirtualItem,
@@ -74,6 +78,9 @@ export function initialOffset<T extends { key: string }>(
 export interface VirtualChatControl {
   /** To the bottom, following again: you just sent something. */
   jumpToLatest: () => void;
+  /** Brings the row with this key into view, mounted or not. `false`: no
+   *  such row (yet). Where it lands is then yours to leave: not following. */
+  scrollToKey: (key: string, align?: 'start' | 'center' | 'end') => boolean;
 }
 
 function afterFrames(n: number, run: () => void) {
@@ -119,7 +126,11 @@ export function VirtualChat<T extends { key: string }>({
     steady: false,
     top: 0,
     max: 0,
+    /** The view had no height: nothing was measured, nothing moved. */
+    hidden: false,
   });
+  // A reopen restores like a first open does; this runs it again.
+  const [reopened, setReopened] = useState(0);
 
   const getItemKey = useCallback((i: number) => items[i]!.key, [items]);
   const estimateSize = useCallback(
@@ -139,6 +150,26 @@ export function VirtualChat<T extends { key: string }>({
     [items, isPinned],
   );
 
+  // Hidden, a row has no size: it would be measured as 0, and every row would
+  // fit the view. It keeps what it had.
+  const measureRow = useCallback(
+    (
+      el: HTMLDivElement,
+      entry: ResizeObserverEntry | undefined,
+      inst: Parameters<typeof measureElement<HTMLDivElement>>[2],
+    ) => {
+      if (scroller.current?.clientHeight !== 0) {
+        return measureElement(el, entry, inst);
+      }
+      const index = inst.indexFromElement(el);
+      return (
+        inst.itemSizeCache.get(inst.options.getItemKey(index)) ??
+        inst.options.estimateSize(index)
+      );
+    },
+    [],
+  );
+
   // It re-renders us itself, and we don't memoize what it returns.
   // eslint-disable-next-line react-hooks/incompatible-library
   const v = useVirtualizer<HTMLDivElement, HTMLDivElement>({
@@ -147,6 +178,7 @@ export function VirtualChat<T extends { key: string }>({
     estimateSize,
     getItemKey,
     rangeExtractor,
+    measureElement: measureRow,
     anchorTo: 'end',
     followOnAppend: true,
     // Pins to the end only while following; -1 is never at the end.
@@ -273,7 +305,7 @@ export function VirtualChat<T extends { key: string }>({
         window.removeEventListener(name, stop, { capture: true });
       }
     };
-  }, [v, finishRestore, land]);
+  }, [v, finishRestore, land, reopened]);
 
   // The content or the view changed size.
   const total = v.getTotalSize();
@@ -282,6 +314,19 @@ export function VirtualChat<T extends { key: string }>({
     const el = scroller.current;
     if (!el) return;
     const p = pos.current;
+    if (el.clientHeight === 0) {
+      p.hidden = true; // what was measured so far is still true
+      return;
+    }
+    if (p.hidden) {
+      // Shown again: a browser drops the scroll position of what it hid.
+      p.hidden = false;
+      const saved = p.following ? undefined : leftAt.get(scope);
+      if (saved && !p.restore) {
+        p.restore = saved;
+        setReopened((n) => n + 1);
+      }
+    }
     melt();
     if (p.restore) {
       land();
@@ -292,7 +337,7 @@ export function VirtualChat<T extends { key: string }>({
       if (max - top > 1) v.scrollToEnd();
     }
     Object.assign(p, measure(el));
-  }, [v, total, view, steadying, melt, land]);
+  }, [v, scope, total, view, steadying, melt, land]);
 
   const steady = useCallback<Steady>(
     (change) => {
@@ -343,7 +388,28 @@ export function VirtualChat<T extends { key: string }>({
     const el = scroller.current;
     if (el) Object.assign(p, measure(el));
   }, [v, scope, finishRestore]);
-  useImperativeHandle(control, () => ({ jumpToLatest: jump }), [jump]);
+  const scrollToKey = useCallback(
+    (key: string, align: 'start' | 'center' | 'end' = 'center') => {
+      const { count, getItemKey } = v.options;
+      let index = 0;
+      while (index < count && getItemKey(index) !== key) index += 1;
+      if (index >= count) return false;
+      finishRestore();
+      if (index < count - 1) {
+        // Not the end: nothing may pull the view back down meanwhile.
+        pos.current.following = false;
+        v.options.scrollEndThreshold = -1;
+        setAway(true);
+      }
+      v.scrollToIndex(index, { align });
+      return true;
+    },
+    [v, finishRestore],
+  );
+  useImperativeHandle(control, () => ({ jumpToLatest: jump, scrollToKey }), [
+    jump,
+    scrollToKey,
+  ]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">

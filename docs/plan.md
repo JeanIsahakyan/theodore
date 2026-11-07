@@ -962,6 +962,14 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 - A skill can run on several agents in parallel; findings merge (§4).
 - Chat: questions about the PR, a group, or a line; replies stream as ephemeral
   events and are stored when complete.
+- The AI panel's log is the space chat's virtual list (`VirtualChat`, docs/spaces.md
+  "Rows"), so a long thread stays fast: one row per turn (a question of yours
+  or a skill run, with the replies under it), keyed by its first message's id,
+  with the answer still being written as a pinned tail row. Only rows near the
+  view are mounted. It keeps its place per PR (turn and offset), and "Answered
+  · View" from the diff scrolls to the reply's row through the list, then the
+  message glows. Typing in the composer re-renders the composer only. A panel
+  with no height (hidden) keeps its rows and place, and reopens where it was.
 - Attachments: a question can carry files (images, PDFs, anything), same as
   a space's chat (docs/spaces.md "Attachments"). The stored question keeps
   them; the agent gets their paths listed after the question.

@@ -2,7 +2,15 @@
  *  your messages as bubbles apart from the agent's replies, and Stop in
  *  the composer — never on a bubble. */
 import { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { mount, settle, type Mounted } from '../test/dom';
 import type { ChatMessage, SkillRun } from '../gen/contract';
 import { askPending, askRunId } from '../actions';
@@ -10,10 +18,15 @@ import { setTransport } from '../core/transport';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
+import { installChatLayout, uninstallChatLayout } from '../test/chatLayout';
 import { SidePanel, newestRun } from './SidePanel';
 
 // jsdom lays nothing out: the chat's scroll-to-bottom has nowhere to go.
 Element.prototype.scrollIntoView ??= function () {};
+
+// The log is virtual: it needs a view to know which rows to mount.
+beforeAll(installChatLayout);
+afterAll(uninstallChatLayout);
 
 const PR = 'gh:acme/app#1';
 

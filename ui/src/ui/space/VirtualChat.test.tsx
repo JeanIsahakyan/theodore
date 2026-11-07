@@ -395,3 +395,124 @@ describe('a row toggled in place', () => {
     expect(row('t48')?.getAttribute('data-open')).toBe('true');
   });
 });
+
+describe('scrolling to a row by key', () => {
+  const withControl = async (n: number, id: string) => {
+    const control = createRef<VirtualChatControl>();
+    m?.unmount();
+    m = await mount(
+      <VirtualChat
+        scope={id}
+        items={rows(n)}
+        estimate={estimate}
+        renderItem={(item) => <Row id={item.key} />}
+        control={control}
+      />,
+    );
+    layoutRows();
+    await frames();
+    return control;
+  };
+
+  it('brings a row that is not mounted into view, and stays there', async () => {
+    const control = await withControl(200, scope());
+    expect(row('t20')).toBeNull();
+    let found = false;
+    await act(async () => {
+      found = control.current!.scrollToKey('t20', 'start');
+    });
+    layoutRows();
+    await frames();
+    expect(found).toBe(true);
+    expect(row('t20')).not.toBeNull();
+    expect(onScreen('t20')).toBe(0);
+    expect(pill()).not.toBeNull();
+    // New content below doesn't pull you off it.
+    chatLayout.heights.set(199, 900);
+    layoutRows();
+    await frames();
+    expect(onScreen('t20')).toBe(0);
+  });
+
+  it('says so when there is no such row', async () => {
+    const control = await withControl(20, scope());
+    const top = log().scrollTop;
+    expect(control.current!.scrollToKey('nope')).toBe(false);
+    expect(log().scrollTop).toBe(top);
+  });
+
+  it('the last row is the end: still following', async () => {
+    const control = await withControl(50, scope());
+    await act(async () => {
+      control.current!.scrollToKey('t49', 'center');
+    });
+    await frames();
+    expect(log().scrollTop).toBe(end());
+    expect(pill()).toBeNull();
+  });
+});
+
+describe('a hidden chat', () => {
+  /** What closing a panel does: no height, so every row measures 0. */
+  const hide = async () => {
+    chatLayout.view = 0;
+    chatLayout.rowHeight = 0;
+    layoutView();
+    layoutRows();
+    await frames();
+  };
+  const show = async () => {
+    chatLayout.view = 400;
+    chatLayout.rowHeight = 100;
+    layoutView();
+    layoutRows();
+    await frames(6);
+  };
+
+  it('keeps the rows it measured, not mounting every one as it has no size', async () => {
+    await open(rows(200), scope());
+    const size = () => (log().firstElementChild as HTMLElement).style.height;
+    const total = size();
+    await hide();
+    expect(size()).toBe(total);
+    expect(mounted().length).toBeLessThan(20);
+    await show();
+    expect(mounted().length).toBeLessThan(20);
+  });
+
+  it('reopens at the bottom when it was following', async () => {
+    await open(rows(50), scope());
+    await hide();
+    // The browser drops the scroll position of what it hid.
+    act(() => {
+      log().scrollTop = 0;
+    });
+    await show();
+    expect(log().scrollTop).toBe(end());
+    expect(pill()).toBeNull();
+  });
+
+  it('reopens where it was left when scrolled up', async () => {
+    await open(rows(50), scope());
+    userScroll(log(), 1030);
+    await hide();
+    act(() => {
+      log().scrollTop = 0;
+    });
+    await show();
+    expect(log().scrollTop).toBe(1030);
+    expect(pill()).not.toBeNull();
+  });
+
+  it('does not take a hidden scroll for leaving the bottom', async () => {
+    await open(rows(50), scope());
+    await hide();
+    act(() => {
+      log().scrollTop = 0;
+      log().dispatchEvent(new Event('scroll'));
+    });
+    await show();
+    expect(pill()).toBeNull();
+    expect(log().scrollTop).toBe(end());
+  });
+});

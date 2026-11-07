@@ -5,7 +5,7 @@
  * the live reply still being written. Each chat adds its own bits through
  * slots (file:line chips, undo, a turn's check); Stop is the composer's.
  */
-import { useState, type ReactNode, type RefObject } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   ArrowDown,
   Check,
@@ -38,12 +38,9 @@ import { useChatScroll } from './useChatScroll';
 /** The scrolling log (`useChatScroll`). A wide page keeps a reading width; a
  *  narrow panel uses all of it. */
 export function ChatLog({
-  end,
   scope,
   children,
 }: {
-  /** Marks the bottom, for a jump there from outside. */
-  end?: RefObject<HTMLDivElement | null>;
   /** Keeps the scroll position per this id. */
   scope?: string;
   children: ReactNode;
@@ -60,7 +57,6 @@ export function ChatLog({
           className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-5 px-4 py-5"
         >
           {children}
-          {end && <div ref={end} />}
         </div>
       </div>
       {away && (
