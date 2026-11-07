@@ -254,17 +254,17 @@ worktree's index isn't written (`status --no-optional-locks`).
 │      people back where they were…  │ ▾ src/auth/redirect.ts               +30 −5  │
 │                                    │   @@ -10,6 +10,12 @@                         │
 │ claude                    [Undo]   │   + const next = safeNext(params.get(…      │
-│   Worked 1m 12s · 6 steps ▸        │ ▾ src/routes/login.tsx               +12 −2  │
+│   ▸ 3 tool calls, 2 messages >_ ▤  │ ▾ src/routes/login.tsx               +12 −2  │
 │   I added a `next` param…          │   …                                         │
 │   ◆ turn 1 · a1b2c3 · 2 files      │                                             │
-│   copy · vote · 1m 12s · 14:03     │                                             │
-│                                    │                                             │
+│   1m 12s · 2:03 PM  copy  vote     │                                             │
+│   TS redirect.ts +30 −5  +1 more   │                                             │
 │ you  Also reject absolute URLs.    │                                             │
 │ claude                             │                                             │
 │   Looking at the checks.           │                                             │
 │   ▤ Read  auth/redirect.ts         │                                             │
 │   ⠋ Edit  auth/redirect.ts         │                                             │
-│                                    │                                             │
+│   12s                              │                                             │
 │ ┌────────────────────────────────┐ │                                             │
 │ │ Ask the agent…  @file  /skill  │ │                                             │
 │ └──────────────────── [Stop ⎋] ──┘ │                                             │
@@ -272,30 +272,86 @@ worktree's index isn't written (`status --no-optional-locks`).
 ```
 
 **A turn in the chat** is a timeline: what the agent wrote, one line per
-tool call (its kind, a label, the file or command) and its thinking, in the
-order they happened. It stays on the reply (`activity`, `duration_ms`), so it
-survives a restart, and it never goes into a prompt.
+tool call, its subagents and its thinking, strictly in the order they
+happened; rows never reorder. It stays on the reply (`activity`, `duration_ms`,
+`changed_files`, `model`), so it survives a restart, and it never goes into a
+prompt.
 
 ```
-running    rows open and growing, a spinner on the newest
-              AgentDelta ──▶ onto the last text row, or a new one
-              RunLog tool: ─▶ a tool row      tool result ok= ─▶ its mark
-              RunLog thinking: ─▶ a thinking row (never in the tool log)
+running    every row flat and growing, a spinner on each call still going
+              AgentDelta ──────▶ onto the last text row of the run's own
+              RunTextBreak ────▶ the next delta starts a new text row
+              RunStep ─────────▶ a tool, thinking or subagent row
+              RunStepDone id ──▶ marks that call, whichever is newest
+              12s under the rows: ticks through its node, no render
               │ the reply lands (its stored steps take over)
               ▼
-finished   Worked 1m 12s · 12 steps ▸   opens the rows; closed by default
+finished   ▸ 3 tool calls, 5 messages, 2 agents  >_ ▤   opens in place
+           ✗ Run  cargo test                            always a row
            the reply
-           copy · vote · 1m 12s · 14:03
+           6m 46s · 3:37 PM  copy  vote  RS a.rs +3 −1  +56 more +6672 −275
 ```
+
+`RunLog` stays what the AI panel reads (`summarizeTools`), one line per call,
+a subagent's too; the timeline doesn't read it.
+
+**The fold** (`turnRows.ts`). A running turn never folds.
+
+| In a finished turn | Shows as |
+| --- | --- |
+| a failed tool, a question asked, a plan | always a row |
+| the last text, when no reply text follows the steps | always a row |
+| all text, when the turn stopped or failed | always a row |
+| 3 or more others between those | one line: `3 tool calls, 5 messages, 2 agents` and each kind of tool's icon |
+| fewer than 3 | flat |
+
+Thinking isn't counted and goes with what's around it; a subagent's steps count
+for nothing either. What's closed isn't rendered. The open state is kept by row
+id, in memory.
+
+**A tool row**: an icon, a label, a muted monospace chip, one line, truncating
+with a tooltip.
+
+| Tool | Label | Chip / after it |
+| --- | --- | --- |
+| command | its `description`, or `Run` | the command |
+| read | `Read 120 lines` when the result says | the file |
+| grep, glob | `grep for 'x' in src` | `5 matches` |
+| edit | `Edit` | the file, `+3 −1` from the input |
+| write | `Write 12 lines` | the file |
+| question | `Waiting for your answer`, then `Asked you` | the question |
+| anything else | what it does | its target |
+
+Consecutive calls of one read-only tool, or to one MCP server, are one row once
+the turn is done: `Read 4 files` opens on them. Edits and commands stay a row
+each. Thinking is a muted one-line chip, opening as markdown.
+
+**A subagent** (`Agent`/`Task`) is a row with its description. Claude Code
+marks what it does with `parent_tool_use_id` (2.1.319, recorded in
+`crates/agents/tests/fixtures/claude_subagent.jsonl`), so its text, thinking
+and tools are `AgentEvent::Nested`, stored with `parent` and shown under the
+row: its newest step beside it while it runs, all of them when opened. They
+never reach the reply. Its `SubagentHandback` call is no row: its message is the
+row's summary. Codex and Gemini report no nested steps.
+
+**The files** of a turn come from git between its checkpoints (`before`..`after`,
+at most 200) when it ends; a failure leaves them empty and never fails the
+turn, and a turn that merged the base shows none. Up to 3 chips, then `+N more`
+with the total of the rest. A chip opens the Changes pane on its file, `+N more`
+the pane. On hover the time shows the model and start → end.
 
 | Run ended with | Reply | Text in the steps |
 | --- | --- | --- |
 | a final text | that text | what it wrote before; blocks the final text repeats leave |
-| no final text (stopped, failed, a CLI that only sends `Text`) | its text blocks, blank line between | none: all of it is the reply |
+| no final text (stopped, failed, a CLI that only sends `Text`) | its text blocks, blank line between | all of it, in place, the block cut off last (`text_in_steps`); only those show |
 | a handed-in plan | the plan | all it wrote |
 
-At most 500 steps, the newest kept; a text capped at 4000 characters, thinking
-at 1000. A run retried because its session is gone starts its steps over.
+At most 500 steps, the newest kept, and 100 per subagent; a text capped at 4000
+characters unless the steps are all that show it, thinking at 1000, a step's
+detail at 200, its summary at 300. If the bound took a text a no-final-text
+run wrote, the reply tells it all instead. A run retried because its session is
+gone starts its steps over. A CLI that reports no block starts gets one for each
+whole text it sends; a text block is a paragraph of its own either way.
 
 **Rows.** A space's chat is one row per turn, keyed by your message's id:
 your message, the reply with its timeline and cards, and the live reply while
@@ -320,7 +376,7 @@ page only sees mounted rows.
 
 **Scrolling** follows new content only while you are at the bottom (within
 80px). Scrolled up, nothing moves you and a "Jump to latest" pill takes you
-back. A space's chat reopens where you left it scrolled up (in memory, by
+back; only sending a message of your own also does. A space's chat reopens where you left it scrolled up (in memory, by
 space), by the turn and the offset into it, so turns that came or grew since
 don't move your place; any input of yours ends the restore. Left at the bottom,
 or opened for the first time, it opens at the bottom.
@@ -336,7 +392,7 @@ Stop ──▶ "Stopping…" on the running turn ─▶ the reply replaces it, i
 queued Cancel / Edit / Send ──▶ gone / new text / sending, undone if the core refuses
 ```
 
-Opening or closing a turn's activity, a thinking row or a check is instant and
+Opening or closing a fold, a group, a subagent, a thinking row or a check is instant and
 moves nothing: the row you clicked stays where it is, also at the bottom, where
 the sizer holds the room a closed row gave back until you scroll up or new
 content fills it. What is open survives scrolling away and leaving the space (in
@@ -1127,8 +1183,8 @@ New synced model `space` (core-owned, written only by commands):
 
 | Data | Where |
 | --- | --- |
-| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8); a reply carries its turn's `activity` and `duration_ms` (§3 "A turn in the chat") |
-| Streaming text, tool and thinking lines | `Ephemeral::AgentDelta` / `RunLog` with run id `space:<id>:<msg>`; not persisted (the reply's `activity` is) |
+| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8); a reply carries its turn's `activity`, `duration_ms`, `changed_files` and `model` (§3 "A turn in the chat") |
+| Streaming text, tool and thinking lines | `Ephemeral::AgentDelta` / `RunLog` / `RunStep` / `RunStepDone` / `RunTextBreak` with run id `space:<id>:<msg>`; not persisted (the reply's `activity` is) |
 | A turn | on the space row: `status`, `turns`, `head_sha`, and an entry in `turn_log` (what undo moves back to). Later: `space_run` rows (agent, mode, usage, session id) for per-turn diffs and native resume |
 | Code | the worktree and `refs/theodore/spaces/<id>` |
 
