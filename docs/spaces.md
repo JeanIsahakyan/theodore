@@ -1010,8 +1010,10 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   The footer is added once: an existing one (from the marker on) is
   replaced, never repeated. The link uses the build's own scheme
   (`theodore-staging://…`); opening it brings the window forward and
-  opens the space (`apps/desktop/src/deep_link.rs`). It's plain text, not
-  a markdown link: hosts don't make custom schemes clickable.
+  opens the space (`apps/desktop/src/deep_link.rs`), also when it launched
+  the app: the shell keeps it until the UI listens (`take_pending_space`).
+  It's plain text, not a markdown link: hosts don't make custom schemes
+  clickable.
 - *Continue* (§7): the new round's branch is the old one plus `-2` (a
   continued branch counts on: `-3`, `-4`), skipping a name another space,
   an earlier round or the host already has. Its base is the base branch's

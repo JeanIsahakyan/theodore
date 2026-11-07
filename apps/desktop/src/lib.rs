@@ -152,6 +152,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::account_sign_in_cancel,
             commands::account_sign_out,
             commands::focus_window,
+            commands::take_pending_space,
             commands::notify_space,
             commands::log_client,
             commands::track_ui,
@@ -253,6 +254,7 @@ pub fn run(
         .manage(core.clone())
         .manage(updater::UpdateState::default())
         .manage(updater::Notices::default())
+        .manage(deep_link::SpaceLinks::default())
         // The title bar's size reaches the page as CSS variables (`chrome`).
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Finished

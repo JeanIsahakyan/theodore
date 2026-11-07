@@ -241,6 +241,11 @@ export const commands = {
 	 */
 	focusWindow: () => typedError<null, CommandError>(__TAURI_INVOKE("focus_window")),
 	/**
+	 *  The UI listens for `open-space` from now on: the space a link asked for
+	 *  before that (a link that launched the app), if any.
+	 */
+	takePendingSpace: () => typedError<string | null, CommandError>(__TAURI_INVOKE("take_pending_space")),
+	/**
 	 *  Shows a space's "turn finished" notification while the window is in the
 	 *  background; a click brings the window forward and emits `open-space`
 	 *  with the space id. `true` when the click will be reported, `false` when

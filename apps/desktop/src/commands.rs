@@ -1045,6 +1045,16 @@ pub async fn focus_window(op: crate::op::Op, app: AppHandle) -> Result<(), Comma
     .await
 }
 
+/// The UI listens for `open-space` from now on: the space a link asked for
+/// before that (a link that launched the app), if any.
+#[tauri::command]
+#[specta::specta]
+pub fn take_pending_space(
+    links: State<'_, crate::deep_link::SpaceLinks>,
+) -> Result<Option<String>, CommandError> {
+    Ok(links.ui_listens())
+}
+
 /// Shows a space's "turn finished" notification while the window is in the
 /// background; a click brings the window forward and emits `open-space`
 /// with the space id. `true` when the click will be reported, `false` when
