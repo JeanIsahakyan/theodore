@@ -557,7 +557,9 @@ hover(path, line, col) ─▶ server ready? ── yes ─▶ its hover text    
 
 In the diff (`ui/src/ui/symbols/hover.ts`): the pointer rests 0.5 s on an
 identifier of a head-side line (⌘ held: 80 ms), one call per position
-(`pr@head:path:line:col`, cached, a failure retried), the markdown shown in
+(`pr@head:path:line:col`; only a server answer is cached: no answer, a
+by-name one or a failure is asked again, so a warming server gets its
+turn), the markdown shown in
 a card under the word; a `syntax` answer is marked "from the parser".
 Leaving, scrolling, a click or Esc hides it.
 
