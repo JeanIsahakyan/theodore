@@ -226,6 +226,18 @@ export function spaceTitle(
   return `${(word > 30 ? cut.slice(0, word) : cut).replace(/[,;:]$/, '')}…`;
 }
 
+/** A space row's label: its PR's number in front, unless the title
+ *  already opens with it (a space started from PR #113 is titled
+ *  "#113 …" itself). */
+export function withPrNumber(
+  number: number | undefined,
+  title: string,
+): string {
+  if (number == null) return title;
+  const tag = `#${number}`;
+  return new RegExp(`^${tag}(?!\\d)`).test(title) ? title : `${tag} ${title}`;
+}
+
 /** The goal's first line; with no goal the slug — or, when that is only the
  *  placeholder `space` / `space-2` (a space started from a branch with no
  *  note, before its start named it), the branch's name. */

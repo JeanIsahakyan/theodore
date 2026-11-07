@@ -52,6 +52,7 @@ import {
   canMarkUnread,
   spaceGlyph,
   spaceTitle,
+  withPrNumber,
   spacesIn,
   type SpaceGlyph,
 } from './space/spaces';
@@ -298,9 +299,7 @@ export const Sidebar = observer(function Sidebar() {
                     ) : (
                       <SpaceGlyphIcon g={g} />
                     ),
-                  label: pr
-                    ? `#${pr.pr.number} ${spaceTitle(s)}`
-                    : spaceTitle(s),
+                  label: withPrNumber(pr?.pr.number, spaceTitle(s)),
                   route: { name: 'space', id: s.id },
                   contextMenu: () => spaceContextMenu(s, ui),
                   pinned: s.pinned ?? false,

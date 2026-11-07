@@ -27,6 +27,7 @@ import {
   nextMode,
   spaceKeyAction,
   turnEnded,
+  withPrNumber,
   prTint,
   defaultMergeMethod,
   spaceMerge,
@@ -541,5 +542,17 @@ describe('a space in review', () => {
     expect(canContinue(s, 'open')).toBe(false);
     expect(canContinue({ ...s, status: 'archived' }, 'merged')).toBe(false);
     expect(canContinue({ ...s, pr: null }, 'merged')).toBe(false);
+  });
+});
+
+describe('withPrNumber', () => {
+  it("doesn't repeat a number the title already opens with", () => {
+    expect(withPrNumber(113, '#113 ABC-190 Retry')).toBe('#113 ABC-190 Retry');
+    expect(withPrNumber(113, 'Retry failed charges')).toBe(
+      '#113 Retry failed charges',
+    );
+    // #1130 is another number.
+    expect(withPrNumber(113, '#1130 other')).toBe('#113 #1130 other');
+    expect(withPrNumber(undefined, 'Draft')).toBe('Draft');
   });
 });
