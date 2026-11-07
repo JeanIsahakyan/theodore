@@ -509,7 +509,7 @@ export const LogsDrawer = observer(function LogsDrawer({
   const lines = store.ephemeral.spaceLogs.get(space.id) ?? EMPTY;
   const counts = logCounts(lines);
   return (
-    <section className="space-logs flex h-[260px] shrink-0 flex-col border-t border-separator">
+    <section className="space-logs flex h-[260px] max-h-[40vh] min-h-[140px] shrink-0 flex-col border-t border-separator bg-background">
       <div className="flex items-center gap-2 px-4 pt-2">
         <Tabs
           data-plain

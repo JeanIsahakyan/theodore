@@ -326,12 +326,14 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         onToggleChanges={toggleChanges}
       />
       <UpdatingBanner space={space} />
-      <div className="flex min-h-0 flex-1">
+      {/* The panes clip to this row, so a drawer below never sits under them;
+          the drawer is capped, so the chat keeps a usable height. */}
+      <div className="flex min-h-[200px] flex-1 overflow-hidden">
         <section
           className={
             showChanges
-              ? 'flex w-[40%] min-w-[340px] flex-col border-r border-separator bg-background'
-              : 'flex w-full min-w-0 flex-col bg-background'
+              ? 'flex min-h-0 w-[40%] min-w-[340px] flex-col border-r border-separator bg-background'
+              : 'flex min-h-0 w-full min-w-0 flex-col bg-background'
           }
         >
           <div className="mx-auto w-full max-w-[860px]">
@@ -344,7 +346,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           <SpaceChat space={space} config={config} handle={chat} />
         </section>
         {showChanges && (
-          <section className="flex min-w-0 flex-1 flex-col">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {opened || !live ? (
               space.pr ? (
                 <SpacePrPane

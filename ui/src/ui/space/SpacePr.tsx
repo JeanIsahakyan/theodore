@@ -142,13 +142,13 @@ export const SpacePrPane = observer(function SpacePrPane({
       onSelectionChange={(k) => setTab(k as Tab)}
       className="space-pr-tabs flex min-h-0 flex-1 flex-col [&>[role=tabpanel]]:border-t [&>[role=tabpanel]]:border-separator"
     >
-      <Tabs.ListContainer className="mx-5 my-2">
+      <Tabs.ListContainer className="mx-3 my-2">
         <Tabs.List aria-label="Space pane" className="w-fit">
-          <Tabs.Tab id="changes">
+          <Tabs.Tab id="changes" className="px-2.5">
             Changes
             <Tabs.Indicator />
           </Tabs.Tab>
-          <Tabs.Tab id="threads">
+          <Tabs.Tab id="threads" className="px-2.5">
             Threads
             {unresolved > 0 && (
               <Chip size="sm" variant="soft" color="warning" className="ml-1">
@@ -157,7 +157,7 @@ export const SpacePrPane = observer(function SpacePrPane({
             )}
             <Tabs.Indicator />
           </Tabs.Tab>
-          <Tabs.Tab id="checks" className="gap-1.5">
+          <Tabs.Tab id="checks" className="gap-1.5 px-2.5">
             <span className="grid size-3.5 place-items-center [&>svg]:size-3.5">
               <PrGlyph pr={summary} />
             </span>

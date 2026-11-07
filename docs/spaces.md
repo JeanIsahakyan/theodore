@@ -655,7 +655,9 @@ Retry. See `docs/config.md`.
 An interactive shell in the space's worktree, next to the agent's turns —
 for `git log`, a one-off script, poking at something the agent just wrote.
 Toggled from the header (and `⌃\``), it opens as a drawer under the page;
-`+` starts another tab, × closes one.
+`+` starts another tab, × closes one. It spans the page's full width, is at
+most 40% of the window's height (the chat keeps at least 200px), and the panes
+above it clip to their own row.
 
 ```
 ⌃`   ──▶ drawer ── [Terminal 1] [Terminal 2] [+] ────────────────┐
