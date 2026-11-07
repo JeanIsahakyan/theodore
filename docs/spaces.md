@@ -773,7 +773,8 @@ gone?  ─▶ "No conversation found" / "no rollout found"
 
 - Claude Code's system prompt (`--append-system-prompt`) and permissions go
   on every turn. Codex's thread already opens with the system prompt (folded
-  into its first message), so a resumed turn doesn't repeat it.
+  into its first message), so a resumed turn doesn't repeat it; a resumed Plan
+  turn does, as the thread may have opened without the Plan rules.
 - A turn that ran without a session (Gemini, or a switch) clears the stored
   one: the conversation moved on without it.
 - Review runs (AI panel, grouping, skills, fixes) don't keep sessions.
