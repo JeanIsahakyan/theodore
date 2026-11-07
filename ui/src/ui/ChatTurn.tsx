@@ -6,7 +6,13 @@
  * slots (file:line chips, undo, a turn's check); Stop is the composer's.
  */
 import { useState, type ReactNode, type RefObject } from 'react';
-import { Check, Copy, ThumbsDown, ThumbsUp } from '@gravity-ui/icons';
+import {
+  ArrowDown,
+  Check,
+  Copy,
+  ThumbsDown,
+  ThumbsUp,
+} from '@gravity-ui/icons';
 import { Alert, Button, Tooltip, Typography } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
@@ -20,22 +26,48 @@ import { MessageAttachments } from './attachments';
 import { AgentTag, Btn } from './bits';
 import { LiveText } from './RunLive';
 import { ToolCalls } from './ToolCalls';
+import { LiveTimeline, TurnActivity, TurnFooter } from './TurnTimeline';
+import { useChatScroll } from './useChatScroll';
 
-/** The scrolling log; `end` marks its bottom for scroll-to-latest. A wide
- *  page keeps a reading width; a narrow panel uses all of it. */
+/** The scrolling log (`useChatScroll`). A wide page keeps a reading width; a
+ *  narrow panel uses all of it. */
 export function ChatLog({
   end,
+  scope,
   children,
 }: {
-  end: RefObject<HTMLDivElement | null>;
+  /** Marks the bottom, for a jump there from outside. */
+  end?: RefObject<HTMLDivElement | null>;
+  /** Keeps the scroll position per this id. */
+  scope?: string;
   children: ReactNode;
 }) {
+  const { scroller, content, away, jump } = useChatScroll(scope);
   return (
-    <div className="chat-log flex min-h-0 flex-1 flex-col overflow-auto">
-      <div className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-5 px-4 py-5">
-        {children}
-        <div ref={end} />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scroller}
+        className="chat-log flex min-h-0 flex-1 flex-col overflow-auto"
+      >
+        <div
+          ref={content}
+          className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-5 px-4 py-5"
+        >
+          {children}
+          {end && <div ref={end} />}
+        </div>
       </div>
+      {away && (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="chat-jump absolute bottom-2 left-1/2 z-10 h-7 -translate-x-1/2 gap-1 rounded-full px-3 text-xs shadow-sm"
+          onPress={jump}
+        >
+          <ArrowDown className="size-3.5" />
+          Jump to latest
+        </Button>
+      )}
     </div>
   );
 }
@@ -227,8 +259,9 @@ export function UserBubble({
   );
 }
 
-/** One stored message. Yours: a `UserBubble`. The agent's: its tag, the markdown reply, its chips and files,
- *  `after` (a turn's steps, its check), then copy / vote. A run that
+/** One stored message. Yours: a `UserBubble`. The agent's: its tag, a space
+ *  turn's activity folded to a line, the markdown reply, its chips and files,
+ *  `after` (a turn's check), then copy / vote and how long it took. A run that
  *  failed shows why instead, with Retry when `onRetryFailed` is given. */
 export function ChatMessage({
   m,
@@ -271,6 +304,13 @@ export function ChatMessage({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={m.author.agent} badges={badges} />
+        {!!m.activity?.length && (
+          <TurnActivity
+            reply={m.id}
+            steps={m.activity}
+            durationMs={m.duration_ms}
+          />
+        )}
         {m.failed && m.text && (
           <div className="text-sm leading-relaxed">
             <Md text={m.text} />
@@ -302,23 +342,28 @@ export function ChatMessage({
           </>
         )}
         {after}
-        {!m.failed && <MessageActions text={m.text} onRetry={onAskAgain} />}
+        {(!m.failed || m.duration_ms != null) && (
+          <div className="flex items-center gap-2">
+            {!m.failed && <MessageActions text={m.text} onRetry={onAskAgain} />}
+            {m.duration_ms != null && (
+              <TurnFooter at={m.at} durationMs={m.duration_ms} />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/** The reply still being written: the agent's tag, its text as it streams
- *  (dots until there is some), its steps. Stalled: a note instead of the
- *  text, with Retry when `onRetry` is given. No Stop here — the composer
- *  has it. `text={false}`: the reply is stored already, only the steps
- *  still run. */
+/** The reply still being written: the agent's tag, then its text as it
+ *  streams (dots until there is some) and its steps, or with `timeline` both
+ *  as one list in the order they came. Stalled: a note under them, with Retry
+ *  when `onRetry` is given. No Stop here — the composer has it. */
 export const ChatLive = observer(function ChatLive({
   run,
   agent,
   badges,
-  text = true,
-  follow,
+  timeline = false,
   onRetry,
   className = '',
   data,
@@ -327,9 +372,8 @@ export const ChatLive = observer(function ChatLive({
   run: string | null;
   agent?: AgentId | null;
   badges?: ReactNode;
-  text?: boolean;
-  /** Kept in view as the text grows. */
-  follow?: RefObject<HTMLElement | null>;
+  /** A space turn: text and steps chronological. */
+  timeline?: boolean;
   onRetry?: () => void;
   className?: string;
   /** `data-*` attributes for the bubble. */
@@ -337,7 +381,8 @@ export const ChatLive = observer(function ChatLive({
 }) {
   const store = useRootStore();
   const stalled = run != null && store.ephemeral.stalled.has(run);
-  const tools = (run && store.ephemeral.runLog.get(run)) || [];
+  const tools = (!timeline && run && store.ephemeral.runLog.get(run)) || [];
+  const waiting = stalled ? null : <Dots />;
   return (
     <div
       data-variant="agent"
@@ -346,16 +391,17 @@ export const ChatLive = observer(function ChatLive({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={agent} badges={badges} />
-        {stalled ? (
-          <StalledHint />
-        ) : text && run ? (
-          <LiveText run={run} fallback={<Dots />} follow={follow} />
-        ) : tools.length === 0 ? (
-          <Dots />
-        ) : null}
+        {!run ? (
+          waiting
+        ) : timeline ? (
+          <LiveTimeline run={run} fallback={waiting} />
+        ) : (
+          <LiveText run={run} fallback={waiting} />
+        )}
         {run && tools.length > 0 && (
           <ToolCalls tools={tools} running turn={run} />
         )}
+        {stalled && <StalledHint />}
         {stalled && onRetry && (
           <Button
             size="sm"

@@ -1,11 +1,5 @@
 import { stripHtmlComments } from '../highlight';
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUp,
   Check,
@@ -183,12 +177,10 @@ const LineAskBubble = observer(function LineAskBubble({
   askKey,
   a,
   asked,
-  follow,
 }: {
   askKey: string;
   a: LineAsk;
   asked: boolean;
-  follow: RefObject<HTMLDivElement | null>;
 }) {
   const store = useRootStore();
   return (
@@ -200,7 +192,6 @@ const LineAskBubble = observer(function LineAskBubble({
         run={a.message ? askRunId(a.message) : null}
         agent={a.agent}
         badges={<Ref a={a.anchor} pr={a.pr} />}
-        follow={follow}
         className="line-ask"
         data={{ 'data-line-ask': askKey }}
         onRetry={() => {
@@ -673,9 +664,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
   );
   const runs = store.models.skillRuns.byPr(pr);
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, runs.length, pending]);
-  useEffect(() => {
     void api
       .listSkills(pr)
       .then(setSkills)
@@ -916,7 +904,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 <ChatLive
                   run={pending.run}
                   agent={pending.agent}
-                  follow={end}
                   className="chat-pending"
                   onRetry={() => {
                     const { question, agent } = pending;
@@ -938,7 +925,6 @@ const Chat = observer(function Chat({ pr }: { pr: PrId }) {
                 askKey={key}
                 a={a}
                 asked={stored(a.message)}
-                follow={end}
               />
             ))}
           </>

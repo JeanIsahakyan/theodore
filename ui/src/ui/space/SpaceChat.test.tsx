@@ -122,6 +122,74 @@ describe('the space chat', () => {
     });
   });
 
+  it('a running turn grows in order; its stored reply takes over with nothing told twice', async () => {
+    const run = 'space:s1:u2';
+    const s = space({ status: 'running', run });
+    const store = await render(s);
+    const event = (e: Parameters<typeof store.ephemeral.handle>[0]) =>
+      act(() => store.ephemeral.handle(e));
+    event({ type: 'agent_delta', run, agent: 'claude', text: 'Looking.' });
+    event({ type: 'run_log', run, agent: 'claude', line: 'tool: Read · a.rs' });
+    event({ type: 'agent_delta', run, agent: 'claude', text: 'All done.' });
+    const live = m!.host.querySelector('.chat-live')!;
+    expect(live.querySelector('.turn-timeline')?.textContent).toContain(
+      'Looking.',
+    );
+    expect(live.querySelector('.turn-tool')?.textContent).toContain('a.rs');
+
+    // The reply lands while its check still runs: it holds the turn now.
+    act(() => {
+      store.sync.pool.put(
+        'chat_message',
+        'a2',
+        message('a2', {
+          author: { kind: 'agent', agent: 'claude' },
+          text: 'All done.',
+          at: 3,
+          activity: [
+            { kind: 'text', text: 'Looking.' },
+            { kind: 'tool', name: 'Read', target: 'a.rs', ok: true },
+          ],
+          duration_ms: 5000,
+        }),
+      );
+    });
+    await act(async () =>
+      m!.root.render(
+        <RootStoreProvider store={store}>
+          <SpaceChat
+            space={{
+              ...s,
+              turn_log: [
+                {
+                  message: 'u2',
+                  reply: 'a2',
+                  before: 'b',
+                  after: 'h',
+                  check: { status: 'running' },
+                } as never,
+              ],
+            }}
+            config={null}
+            handle={createRef()}
+          />
+        </RootStoreProvider>,
+      ),
+    );
+    expect(m!.host.querySelector('.chat-live')).toBeNull();
+    const reply = m!.host.querySelector('.chat-message[data-msg="a2"]')!;
+    expect(
+      reply.querySelector('.turn-activity-summary')?.textContent,
+    ).toContain('Worked 5s · 2 steps');
+    expect(m!.host.querySelectorAll('.turn-tool')).toHaveLength(0);
+    expect(reply.querySelector('.space-check')).not.toBeNull();
+    expect(
+      [...m!.host.querySelectorAll('.chat-log p')].filter(
+        (p) => p.textContent === 'All done.',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('the last plan turn: a plan badge, Approve calls the core, Revise asks in the composer', async () => {
     await render(
       space({

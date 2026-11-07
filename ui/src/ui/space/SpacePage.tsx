@@ -59,7 +59,6 @@ import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
-import { ToolCalls } from '../ToolCalls';
 import { useAttachments } from '../attachments';
 import { ChatEmpty, ChatLive, ChatLog, ChatMessage } from '../ChatTurn';
 import { QueuedMessages } from './QueuedMessages';
@@ -908,7 +907,6 @@ export const SpaceChat = observer(function SpaceChat({
   const [text, setText] = useState('');
   const files = useAttachments();
   const input = useRef<HTMLTextAreaElement>(null);
-  const end = useRef<HTMLDivElement>(null);
   // Queued messages wait under the running turn, in the order they send.
   const { sent: messages, queued } = splitQueue([
     ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
@@ -924,22 +922,10 @@ export const SpaceChat = observer(function SpaceChat({
     if (planHere == null) setRevising(false);
   }, [planHere]);
   const turnRuns = runsByReply(space.id, space.turn_log);
-  // A finished turn's tool calls, kept for this session; the turn still
-  // running (its check) shows them below instead.
-  const turnTools = (reply: string) => {
-    const r = turnRuns.get(reply);
-    const tools = r && r !== run ? (store.ephemeral.runLog.get(r) ?? []) : [];
-    return r && tools.length > 0 ? (
-      <ToolCalls tools={tools} running={false} turn={r} />
-    ) : null;
-  };
   const setupStage = setupView(space) === 'stage';
-  // A turn whose check still runs has its reply stored already: its text
-  // shows there, not twice.
+  // A turn whose check still runs has its reply stored already: its steps
+  // and text show there, the check under them.
   const replied = run != null && [...turnRuns.values()].includes(run);
-  useEffect(() => {
-    end.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages.length, queued.length, run]);
 
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
@@ -1010,7 +996,7 @@ export const SpaceChat = observer(function SpaceChat({
 
   return (
     <>
-      <ChatLog end={end}>
+      <ChatLog scope={space.id}>
         <SetupStage space={space} />
         <SetupNote space={space} />
         {messages.length === 0 && !run && !setupStage && (
@@ -1061,7 +1047,6 @@ export const SpaceChat = observer(function SpaceChat({
               after={
                 agent ? (
                   <>
-                    {turnTools(m.id)}
                     {checks.has(m.id) && (
                       <CheckChip check={checks.get(m.id)!} />
                     )}
@@ -1081,14 +1066,7 @@ export const SpaceChat = observer(function SpaceChat({
             />
           );
         })}
-        {run && (
-          <ChatLive
-            run={run}
-            agent={space.agent}
-            text={!replied}
-            follow={end}
-          />
-        )}
+        {run && !replied && <ChatLive run={run} agent={space.agent} timeline />}
         <QueuedMessages space={space} queued={queued} />
         {run && space.question?.run === run && (
           <QuestionCard

@@ -24,10 +24,12 @@ import type {
   Side,
   SpaceLogLine,
   ToastLevel,
+  TurnStep,
   UpdateInfo,
 } from '../gen/contract';
 import { appendLogs, seedLogs } from '../ui/space/commands';
 import { appendChunk, type TerminalChunk } from '../ui/space/terminalBuffer';
+import { parseToolLine, thinkingOf, toolResultOk } from '../ui/toolSummary';
 import { configPrToast } from '../ui/project/configFile';
 import {
   suggestText,
@@ -39,6 +41,8 @@ import { openExternal } from '../core/openExternal';
 import { accountGate, type AccountGate } from '../core/accountGate';
 
 const LOG_LIMIT = 500;
+/** As many as the core keeps on the reply. */
+const STEP_LIMIT = 500;
 
 export interface ToastAction {
   label: string;
@@ -139,6 +143,12 @@ export class EphemeralStore {
   );
   /** Last lines of a run's log (its tool calls), per run id. */
   readonly runLog: ObservableMap<string, string[]> = observable.map(
+    {},
+    { deep: false },
+  );
+  /** A run's text, tool calls and thinking in the order they came: what a
+   *  space's running turn shows, until its stored reply takes over. */
+  readonly runSteps: ObservableMap<string, TurnStep[]> = observable.map(
     {},
     { deep: false },
   );
@@ -530,11 +540,16 @@ export class EphemeralStore {
       switch (e.type) {
         case 'agent_delta':
           this.agentText.set(e.run, (this.agentText.get(e.run) ?? '') + e.text);
+          this.addStepText(e.run, e.text);
           this.clearStalled(e.run);
           return;
         case 'run_log': {
-          const lines = [...(this.runLog.get(e.run) ?? []), e.line];
-          this.runLog.set(e.run, lines.slice(-LOG_LIMIT));
+          this.addLogStep(e.run, e.line);
+          // Thinking is a step, never a line of the tool log.
+          if (thinkingOf(e.line) == null) {
+            const lines = [...(this.runLog.get(e.run) ?? []), e.line];
+            this.runLog.set(e.run, lines.slice(-LOG_LIMIT));
+          }
           this.clearStalled(e.run);
           return;
         }
@@ -664,6 +679,7 @@ export class EphemeralStore {
     runInAction(() => {
       this.agentText.delete(run);
       this.runLog.delete(run);
+      this.runSteps.delete(run);
       this.clearStalled(run);
     });
   }
@@ -685,6 +701,55 @@ export class EphemeralStore {
       if (prev && prev !== run) this.clearRun(prev);
       this.taskRuns.set(task, run);
     });
+  }
+
+  private addStep(run: string, step: TurnStep): void {
+    const steps = [...(this.runSteps.get(run) ?? []), step];
+    this.runSteps.set(run, steps.slice(-STEP_LIMIT));
+  }
+
+  /** A piece of text goes on the text being written, or starts the next. */
+  private addStepText(run: string, text: string): void {
+    const steps = this.runSteps.get(run) ?? [];
+    const last = steps.at(-1);
+    if (last?.kind === 'text') {
+      this.runSteps.set(run, [
+        ...steps.slice(0, -1),
+        { kind: 'text', text: last.text + text },
+      ]);
+    } else {
+      this.addStep(run, { kind: 'text', text });
+    }
+  }
+
+  private addLogStep(run: string, line: string): void {
+    const thinking = thinkingOf(line);
+    if (thinking != null) {
+      this.addStep(run, { kind: 'thinking', text: thinking });
+      return;
+    }
+    const call = parseToolLine(line);
+    if (call) {
+      this.addStep(run, {
+        kind: 'tool',
+        name: call.tool,
+        target: call.target,
+        ok: null,
+      });
+      return;
+    }
+    const ok = toolResultOk(line);
+    if (ok == null) return;
+    // The line has no call id: it goes with the latest call, and the stored
+    // steps, which match by id, have the last word.
+    const steps = [...(this.runSteps.get(run) ?? [])];
+    for (let i = steps.length - 1; i >= 0; i -= 1) {
+      const step = steps[i];
+      if (step?.kind !== 'tool') continue;
+      steps[i] = { ...step, ok };
+      this.runSteps.set(run, steps);
+      return;
+    }
   }
 
   private clearStalled(run: string): void {

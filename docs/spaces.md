@@ -246,18 +246,55 @@ worktree's index isn't written (`status --no-optional-locks`).
 │ you  The login page should send    │ 3 files  +42 −7   vs main · after turn 2    │
 │      people back where they were…  │ ▾ src/auth/redirect.ts               +30 −5  │
 │                                    │   @@ -10,6 +10,12 @@                         │
-│ claude  I added a `next` param…    │   + const next = safeNext(params.get(…      │
-│   ▸ 6 tool calls          [Undo]   │ ▾ src/routes/login.tsx               +12 −2  │
-│   ◆ turn 1 · a1b2c3 · 2 files      │   …                                         │
+│ claude                    [Undo]   │   + const next = safeNext(params.get(…      │
+│   Worked 1m 12s · 6 steps ▸        │ ▾ src/routes/login.tsx               +12 −2  │
+│   I added a `next` param…          │   …                                         │
+│   ◆ turn 1 · a1b2c3 · 2 files      │                                             │
+│   copy · vote · 1m 12s · 14:03     │                                             │
 │                                    │                                             │
 │ you  Also reject absolute URLs.    │                                             │
-│ claude  ⠋ editing redirect.ts…     │                                             │
+│ claude                             │                                             │
+│   Looking at the checks.           │                                             │
+│   ▤ Read  auth/redirect.ts         │                                             │
+│   ⠋ Edit  auth/redirect.ts         │                                             │
 │                                    │                                             │
 │ ┌────────────────────────────────┐ │                                             │
 │ │ Ask the agent…  @file  /skill  │ │                                             │
 │ └──────────────────── [Stop ⎋] ──┘ │                                             │
 └────────────────────────────────────┴─────────────────────────────────────────────┘
 ```
+
+**A turn in the chat** is a timeline: what the agent wrote, one line per
+tool call (its kind, a label, the file or command) and its thinking, in the
+order they happened. It stays on the reply (`activity`, `duration_ms`), so it
+survives a restart, and it never goes into a prompt.
+
+```
+running    rows open and growing, a spinner on the newest
+              AgentDelta ──▶ onto the last text row, or a new one
+              RunLog tool: ─▶ a tool row      tool result ok= ─▶ its mark
+              RunLog thinking: ─▶ a thinking row (never in the tool log)
+              │ the reply lands (its stored steps take over)
+              ▼
+finished   Worked 1m 12s · 12 steps ▸   opens the rows; closed by default
+           the reply
+           copy · vote · 1m 12s · 14:03
+```
+
+| Run ended with | Reply | Text in the steps |
+| --- | --- | --- |
+| a final text | that text | what it wrote before; blocks the final text repeats leave |
+| no final text (stopped, failed, a CLI that only sends `Text`) | its text blocks, blank line between | none: all of it is the reply |
+| a handed-in plan | the plan | all it wrote |
+
+At most 500 steps, the newest kept; a text capped at 4000 characters, thinking
+at 1000. A run retried because its session is gone starts its steps over.
+
+**Scrolling** follows new content only while you are at the bottom (within
+80px). Scrolled up, nothing moves you and a "Jump to latest" pill takes you
+back. A space's chat reopens where you left it scrolled up (in memory, by
+space); left at the bottom, or opened for the first time, it opens at the
+bottom.
 
 `/skill` in a space's chat runs your Claude skills (`~/.claude/skills`, the
 repo's `.claude/skills`) as that turn's instructions; review built-ins aren't
@@ -750,8 +787,8 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
   and it goes when the turn ends.
 - Trust holds: a repo command not allowed yet is refused with "not allowed
   by the user yet" and never runs.
-- The turn lists its tool calls while it runs and after (this session),
-  Theodore's own by what they do.
+- The turn lists its tool calls while it runs and after (§3 "A turn in the
+  chat"), Theodore's own by what they do.
 - Review chat, skills and fixes on a space's PR also get the read-only
   `read_logs` and `app_status` next to `review-tools`.
 
@@ -1034,8 +1071,8 @@ New synced model `space` (core-owned, written only by commands):
 
 | Data | Where |
 | --- | --- |
-| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8) |
-| Streaming text, tool lines | `Ephemeral::AgentDelta` / `RunLog` with run id `space:<id>:<msg>`; not persisted |
+| Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8); a reply carries its turn's `activity` and `duration_ms` (§3 "A turn in the chat") |
+| Streaming text, tool and thinking lines | `Ephemeral::AgentDelta` / `RunLog` with run id `space:<id>:<msg>`; not persisted (the reply's `activity` is) |
 | A turn | on the space row: `status`, `turns`, `head_sha`, and an entry in `turn_log` (what undo moves back to). Later: `space_run` rows (agent, mode, usage, session id) for per-turn diffs and native resume |
 | Code | the worktree and `refs/theodore/spaces/<id>` |
 
