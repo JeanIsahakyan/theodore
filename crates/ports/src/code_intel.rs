@@ -143,6 +143,11 @@ pub struct TextEdit {
     pub path: String,
     pub range: Range,
     pub new_text: String,
+    /// What `range` held in the text the edit was computed from (a
+    /// server's copy of the file): applying it refuses a file that no
+    /// longer has that there. `None`: not checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<String>,
 }
 
 /// What a query returns: its items and how complete they are.

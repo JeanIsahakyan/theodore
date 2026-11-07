@@ -695,8 +695,23 @@ impl CodeIntel {
         notes
     }
 
-    /// Wait (briefly) until `path` is indexed.
+    /// `path` as it is on disk now: hashed again, and reindexed when its
+    /// content is not the snapshot's (or removed when gone). A file the
+    /// agent wrote with its own Edit tool reaches here unannounced.
+    async fn refresh_file(&self, w: &Ws, path: &str) {
+        let had = w.index.snapshot().get(path).map(|f| f.blob_sha.clone());
+        let (r, p, lang_of) = (w.root.clone(), path.to_string(), w.language_of.clone());
+        match blocking(move || file_entry(&r, &p, &*lang_of).map_err(CodeIntelError::from)).await {
+            Ok(Some(entry)) if had.as_ref() != Some(&entry.blob_sha) => w.index.update_file(entry),
+            Ok(None) if had.is_some() => w.index.remove_file(path),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(target: "code_intel", path, error = %e, "re-reading a file"),
+        }
+    }
+
+    /// Wait (briefly) until `path`, as it is on disk now, is indexed.
     async fn wait_indexed(&self, w: &Ws, path: &str) {
+        self.refresh_file(w, path).await;
         let paths = [path.to_string()];
         let _ = tokio::time::timeout(INDEX_WAIT, w.index.index_now(&paths)).await;
     }
@@ -1300,12 +1315,7 @@ impl CodeIntel {
             tracing::debug!(target: "code_intel", path, "file_changed: path outside the workspace");
             return;
         };
-        let (r, p, lang_of) = (w.root.clone(), path.clone(), w.language_of.clone());
-        match blocking(move || file_entry(&r, &p, &*lang_of).map_err(CodeIntelError::from)).await {
-            Ok(Some(entry)) => w.index.update_file(entry),
-            Ok(None) => w.index.remove_file(&path),
-            Err(e) => tracing::warn!(target: "code_intel", path, error = %e, "file_changed"),
-        }
+        self.refresh_file(&w, &path).await;
         // Tell a running server; do not start one for this.
         let Some(plan) = w.language(&path).and_then(|l| w.plan(&l)) else {
             return;

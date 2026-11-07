@@ -1193,8 +1193,13 @@ impl CodeRoot {
             path: path.to_string(),
             range: symbol.range,
             new_text: body.to_string(),
+            expect: None,
         };
-        apply_edits(&*self.port, &self.root, &[edit], Some(&text)).await
+        let check = Check {
+            range: symbol.range,
+            text,
+        };
+        apply_checked(&*self.port, &self.root, &[edit], Some(&check)).await
     }
 
     /// `text` on the line after `name`'s definition.
@@ -1215,6 +1220,7 @@ impl CodeRoot {
             path: path.to_string(),
             range: theodore_ports::Range { start: at, end: at },
             new_text: format!("\n{}", text.trim_end_matches('\n')),
+            expect: None,
         };
         let check = Check {
             range: symbol.range,
@@ -1244,7 +1250,7 @@ impl CodeRoot {
                 "nothing to rename here (no language server answered)".into(),
             ));
         }
-        apply_edits(&*self.port, &self.root, &edits, None).await
+        apply_checked(&*self.port, &self.root, &edits, None).await
     }
 }
 
@@ -1360,28 +1366,11 @@ struct Check {
     text: String,
 }
 
-/// `apply_checked` where the only edit's own range must still hold
-/// `expect`.
-async fn apply_edits(
-    port: &dyn CodeIntelPort,
-    root: &Path,
-    edits: &[TextEdit],
-    expect: Option<&str>,
-) -> AppResult<CodeEdits> {
-    let check = match (expect, edits) {
-        (Some(text), [one]) => Some(Check {
-            range: one.range,
-            text: text.to_string(),
-        }),
-        _ => None,
-    };
-    apply_checked(port, root, edits, check.as_ref()).await
-}
-
 /// Applies `edits` to files under `root`: every file is read and edited in
 /// memory first (back to front), then all are written, then the port hears
-/// of each. A path leaving the worktree, a stale range or overlapping
-/// edits fail the whole call before anything is written.
+/// of each. A path leaving the worktree, a stale range (`check`, or an
+/// edit's own `expect`) or overlapping edits fail the whole call before
+/// anything is written.
 async fn apply_checked(
     port: &dyn CodeIntelPort,
     root: &Path,
@@ -1399,14 +1388,25 @@ async fn apply_checked(
         let text = tokio::fs::read_to_string(&full)
             .await
             .map_err(|e| AppError::Invalid(format!("reading {path}: {e}")))?;
-        if let Some(c) = check {
-            let (s, e) = (offset(&text, c.range.start), offset(&text, c.range.end));
-            let current = s.zip(e).and_then(|(s, e)| text.get(s..e));
-            if current != Some(c.text.as_str()) {
-                return Err(AppError::Invalid(format!(
-                    "{path} changed since it was indexed; read the symbol again and retry"
-                )));
-            }
+        let held = |range: theodore_ports::Range| {
+            let (s, e) = (offset(&text, range.start), offset(&text, range.end));
+            s.zip(e).and_then(|(s, e)| text.get(s..e))
+        };
+        if let Some(c) = check
+            && held(c.range) != Some(c.text.as_str())
+        {
+            return Err(AppError::Invalid(format!(
+                "{path} changed since it was indexed; read the symbol again and retry"
+            )));
+        }
+        if es.iter().any(|e| {
+            e.expect
+                .as_deref()
+                .is_some_and(|want| held(e.range) != Some(want))
+        }) {
+            return Err(AppError::Invalid(format!(
+                "{path} changed since the language server read it; ask again"
+            )));
         }
         let new = splice(&text, es).map_err(|e| AppError::Invalid(format!("{path}: {e}")))?;
         out.push((path.to_string(), full, new));
@@ -1496,6 +1496,7 @@ mod tests {
                 end: pos(end.0, end.1),
             },
             new_text: new.into(),
+            expect: None,
         }
     }
 

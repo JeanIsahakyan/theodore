@@ -236,6 +236,32 @@ async fn file_changed_reindexes_and_removes() {
     assert_eq!(status_of(&ci, wt.path(), "rust").await.files, 1);
 }
 
+/// The agent's own Edit writes a file nobody reports: a question about
+/// that file hashes it again first, so a symbol's range and body are the
+/// file's as it is now, never the old ranges over the new bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_written_behind_our_back_is_reindexed_before_a_question_about_it() {
+    let env = Env::new();
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.facade(StaticGrammars::all());
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    indexed(&ci, wt.path()).await;
+    std::fs::write(
+        wt.path().join("src/lib.rs"),
+        format!("// a long explanatory comment\n// and its second line\n{LIB}"),
+    )
+    .unwrap();
+
+    let (sym, body) = ci
+        .symbol_body(wt.path(), "src/lib.rs", "helper")
+        .await
+        .unwrap();
+    assert_eq!(body, "pub fn helper() -> u32 {\n    1\n}");
+    assert_eq!(sym.range.start.line, 9);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn status_per_language() {
     let env = Env::new();

@@ -1304,7 +1304,56 @@ fn rename_edit(path: &str, line: u32, from: u32, to: u32) -> TextEdit {
         path: path.into(),
         range: range((line, from), (line, to)),
         new_text: "simple".into(),
+        expect: None,
     }
+}
+
+/// A rename's edits say what each range held in the server's copy of the
+/// file: one that moved since (the agent's own Edit) is refused, whole,
+/// before anything is written.
+#[tokio::test]
+async fn a_rename_is_refused_when_a_file_moved_under_the_server() {
+    let e = code_env().await;
+    let (s, root) = edit_space(&e).await;
+    let a = "// a comment the agent added\nlet naïve = 1;\n";
+    std::fs::write(root.join("a.rs"), a).unwrap();
+    std::fs::write(root.join("b.rs"), "naïve\n").unwrap();
+    let held = |mut edit: TextEdit| {
+        edit.expect = Some("naïve".into());
+        edit
+    };
+    *e.f.code_intel.renames.lock().unwrap() = vec![
+        held(rename_edit("b.rs", 1, 1, 6)),
+        held(rename_edit("a.rs", 1, 5, 10)),
+    ];
+    let err = e
+        .core
+        .code_rename_symbol(
+            &CodeScope::Space(s.id.clone()),
+            "a.rs",
+            Position { line: 2, col: 5 },
+            "simple",
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("a.rs changed since the language server read it; ask again"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read_to_string(root.join("a.rs")).unwrap(), a);
+    assert_eq!(
+        std::fs::read_to_string(root.join("b.rs")).unwrap(),
+        "naïve\n"
+    );
+    assert!(
+        !e.f.code_intel
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("file_changed")),
+        "{:?}",
+        e.f.code_intel.calls()
+    );
 }
 
 #[tokio::test]

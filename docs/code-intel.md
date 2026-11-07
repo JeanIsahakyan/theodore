@@ -472,6 +472,22 @@ behind. Abort diffs the merged base's tip against the checkpoint it goes
 back to: a superset of what the merge wrote. Hand edits are not watched:
 they reach the index with the next turn's checkpoint.
 
+The agent's own Edit tool writes mid-turn and tells nobody, so a question
+never trusts an earlier read of a file:
+
+```
+question about path ─▶ hash it again ─▶ not the indexed blob? ─▶ reindex it first
+any LSP request     ─▶ re-read every document open on the server in that worktree
+                       └─ differs ─▶ didChange (next version) · gone ─▶ didClose
+rename edits        ─▶ each carries what its range held in the server's copy
+apply (any edit)    ─▶ the file no longer holds that? ─▶ refused, nothing written:
+                       "changed since the language server read it; ask again"
+```
+
+`replace_symbol_body` / `insert_after_symbol` check the disk against the
+indexed blob the same way: a body is read only from the bytes its ranges
+were parsed from.
+
 ## 6. Language servers at run time
 
 ```

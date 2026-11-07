@@ -13,8 +13,11 @@
 //!
 //! Documents open lazily: a request on a file sends `didOpen` with its text
 //! from disk first, and the least recently used one is closed beyond
-//! `max_open_docs`. `file_changed` pushes the new text of an open file and
-//! tells servers that watch files through the client.
+//! `max_open_docs`. Every request reads the documents open in its worktree
+//! again first and pushes what changed (`didChange`): the agent's own edits
+//! reach the disk without telling us, and a position means the file as it
+//! is now. `file_changed` does the same for one file and tells servers that
+//! watch files through the client.
 //!
 //! Server→client requests are answered so servers never stall waiting on
 //! us: `workspace/configuration` from `init_options` (see
@@ -544,6 +547,71 @@ impl LspSession {
             .ok_or_else(|| CodeIntelError::NotOpen(root.to_path_buf()))
     }
 
+    /// [`folder`](Self::folder), with every document open under it read
+    /// again first: a request's positions are the file as it is on disk
+    /// now, and so must the server's copy be. Nobody tells us about the
+    /// agent's own Edit tool.
+    async fn synced(&self, root: &Path) -> CodeIntelResult<PathBuf> {
+        let root = self.folder(root)?;
+        let mut docs = self.docs.lock().await;
+        let open: Vec<PathBuf> = docs
+            .open
+            .keys()
+            .filter(|p| p.starts_with(&root))
+            .cloned()
+            .collect();
+        for abs in open {
+            self.sync_doc(&mut docs, &abs).await;
+        }
+        Ok(root)
+    }
+
+    /// The server keeps a copy of each open document (`textDocumentSync`
+    /// is not `None`), so it needs `didChange`.
+    fn syncs(&self) -> bool {
+        let caps = &self.info().caps;
+        let none = |v: Option<&Value>| matches!(v, Some(Value::Number(n)) if n.as_u64() == Some(0));
+        !none(caps.pointer("/textDocumentSync")) && !none(caps.pointer("/textDocumentSync/change"))
+    }
+
+    /// Reads the open document `abs` from disk again: new text goes to the
+    /// server (`didChange`, the next version), a file gone is closed.
+    /// `true` when the server's copy changed.
+    async fn sync_doc(&self, docs: &mut Docs, abs: &Path) -> bool {
+        let Some(doc) = docs.open.get_mut(abs) else {
+            return false;
+        };
+        match tokio::fs::read_to_string(abs).await {
+            Ok(text) if text == doc.text => false,
+            Ok(text) => {
+                doc.version += 1;
+                if self.syncs() {
+                    self.rpc.notify(
+                        "textDocument/didChange",
+                        json!({
+                            "textDocument": {"uri": text::file_uri(abs), "version": doc.version},
+                            "contentChanges": [{"text": text}],
+                        }),
+                    );
+                }
+                doc.text = text;
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                docs.open.remove(abs);
+                self.rpc.notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": text::file_uri(abs)}}),
+                );
+                true
+            }
+            Err(e) => {
+                tracing::debug!(server = %self.config.server, path = %abs.display(), "lsp: re-read: {e}");
+                false
+            }
+        }
+    }
+
     /// Open `abs` on the server if it is not yet, and return its text.
     async fn open_doc(&self, abs: &Path, rel: &str) -> CodeIntelResult<String> {
         let mut docs = self.docs.lock().await;
@@ -667,7 +735,7 @@ impl LspSession {
         at: Position,
     ) -> CodeIntelResult<Located> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let abs = text::resolve(&root, path)?;
         let text = self.open_doc(&abs, path).await?;
         let params = lsp_types::GotoDefinitionParams {
@@ -701,7 +769,7 @@ impl LspSession {
         include_decl: bool,
     ) -> CodeIntelResult<Located> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let abs = text::resolve(&root, path)?;
         let text = self.open_doc(&abs, path).await?;
         let params = lsp_types::ReferenceParams {
@@ -729,7 +797,7 @@ impl LspSession {
         path: &str,
     ) -> CodeIntelResult<Vec<CodeSymbol>> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let abs = text::resolve(&root, path)?;
         let text = self.open_doc(&abs, path).await?;
         let params = lsp_types::DocumentSymbolParams {
@@ -762,7 +830,7 @@ impl LspSession {
         query: &str,
     ) -> CodeIntelResult<Vec<CodeSymbol>> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let params = lsp_types::WorkspaceSymbolParams {
             query: query.to_string(),
             work_done_progress_params: Default::default(),
@@ -854,7 +922,7 @@ impl LspSession {
         path: Option<&str>,
     ) -> CodeIntelResult<Vec<Diagnostic>> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let files: Vec<PathBuf> = match path {
             Some(rel) => {
                 let abs = text::resolve(&root, rel)?;
@@ -941,7 +1009,8 @@ impl LspSession {
     /// The edits renaming the symbol at `at` to `new_name` would make,
     /// grouped by file, each file's edits last-first so they apply in
     /// order. Fails when the rename would also create, move or delete
-    /// files, or touch files outside `root`.
+    /// files, or touch files outside `root`. Each edit's `expect` is what
+    /// its range held in the server's copy of the file.
     pub async fn rename(
         &self,
         root: &Path,
@@ -950,7 +1019,7 @@ impl LspSession {
         new_name: &str,
     ) -> CodeIntelResult<Vec<TextEdit>> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let abs = text::resolve(&root, path)?;
         let text = self.open_doc(&abs, path).await?;
         let params = lsp_types::RenameParams {
@@ -978,10 +1047,14 @@ impl LspSession {
             let text = texts.get(&file).map(String::as_str).unwrap_or("");
             let mut edits: Vec<TextEdit> = edits
                 .into_iter()
-                .map(|e| TextEdit {
-                    path: rel.clone(),
-                    range: text::range_from_lsp(text, e.range, enc),
-                    new_text: e.new_text,
+                .map(|e| {
+                    let range = text::range_from_lsp(text, e.range, enc);
+                    TextEdit {
+                        path: rel.clone(),
+                        range,
+                        new_text: e.new_text,
+                        expect: text::slice(text, range).map(str::to_string),
+                    }
                 })
                 .collect();
             edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
@@ -998,7 +1071,7 @@ impl LspSession {
         at: Position,
     ) -> CodeIntelResult<Option<String>> {
         let _busy = self.begin().await?;
-        let root = self.folder(root)?;
+        let root = self.synced(root).await?;
         let abs = text::resolve(&root, path)?;
         let text = self.open_doc(&abs, path).await?;
         let params = lsp_types::HoverParams {
@@ -1017,43 +1090,10 @@ impl LspSession {
         let _busy = self.begin().await?;
         let root = self.folder(root)?;
         let abs = text::resolve(&root, path)?;
-        let now = tokio::fs::read_to_string(&abs).await.ok();
-        let syncs = !matches!(
-            self.info().caps.pointer("/textDocumentSync"),
-            Some(Value::Number(n)) if n.as_u64() == Some(0)
-        ) && !matches!(
-            self.info().caps.pointer("/textDocumentSync/change"),
-            Some(Value::Number(n)) if n.as_u64() == Some(0)
-        );
-        {
-            let mut docs = self.docs.lock().await;
-            match (docs.open.get_mut(&abs), &now) {
-                (Some(doc), Some(text)) if doc.text != *text => {
-                    doc.version += 1;
-                    doc.text = text.clone();
-                    if syncs {
-                        self.rpc.notify(
-                            "textDocument/didChange",
-                            json!({
-                                "textDocument": {"uri": text::file_uri(&abs), "version": doc.version},
-                                "contentChanges": [{"text": text}],
-                            }),
-                        );
-                    }
-                }
-                (Some(_), None) => {
-                    docs.open.remove(&abs);
-                    self.rpc.notify(
-                        "textDocument/didClose",
-                        json!({"textDocument": {"uri": text::file_uri(&abs)}}),
-                    );
-                }
-                _ => {}
-            }
-        }
+        self.sync_doc(&mut *self.docs.lock().await, &abs).await;
         if self.shared.watches_files.load(Ordering::SeqCst) {
             // 2 = changed, 3 = deleted.
-            let kind = if now.is_some() { 2 } else { 3 };
+            let kind = if abs.is_file() { 2 } else { 3 };
             self.rpc.notify(
                 "workspace/didChangeWatchedFiles",
                 json!({"changes": [{"uri": text::file_uri(&abs), "type": kind}]}),

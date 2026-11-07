@@ -441,6 +441,7 @@ async fn rename_handles_document_changes_and_changes() {
             path: path.into(),
             range: range(line, start, start + 6),
             new_text: "aim".into(),
+            expect: Some("target".into()),
         };
         assert_eq!(
             edits,
@@ -454,6 +455,46 @@ async fn rename_handles_document_changes_and_changes() {
         );
         s.shutdown().await;
     }
+}
+
+/// The agent's own Edit writes a file the server has open without
+/// telling anyone: the next request reads it again, so the rename's
+/// positions are the file as it is now, and each edit says what it
+/// replaces.
+#[tokio::test]
+async fn a_file_edited_behind_the_servers_back_is_read_again_before_a_rename() {
+    let wt = worktree();
+    let root = wt.path();
+    let s = start(root, &[]).await;
+    let target = Position { line: 4, col: 4 };
+    s.references(root, "src/lib.rs", target, true)
+        .await
+        .unwrap();
+    s.document_symbols(root, "src/other.rs").await.unwrap();
+    let lib = format!("// a long explanatory comment\n// and its second line\n{LIB}");
+    std::fs::write(root.join("src/lib.rs"), &lib).unwrap();
+
+    let call = col(LIB, 5, "target");
+    let edits = s
+        .rename(root, "src/lib.rs", Position { line: 7, col: call }, "aim")
+        .await
+        .unwrap();
+    let other = col(OTHER, 2, "target");
+    let edit = |path: &str, line, start| TextEdit {
+        path: path.into(),
+        range: range(line, start, start + 6),
+        new_text: "aim".into(),
+        expect: Some("target".into()),
+    };
+    assert_eq!(
+        edits,
+        vec![
+            edit("src/lib.rs", 7, call),
+            edit("src/lib.rs", 6, 4),
+            edit("src/other.rs", 2, other),
+        ]
+    );
+    s.shutdown().await;
 }
 
 #[tokio::test]
