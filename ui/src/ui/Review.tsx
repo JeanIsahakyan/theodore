@@ -112,6 +112,25 @@ export function layoutFor(width: number): ReviewLayout {
   };
 }
 
+/** The toolbar's submit button, or `null` without one: none on a merged or
+ *  closed PR or a branch review, none on a space's own review that isn't its
+ *  host PR ("Send to agent" takes its place). On your own PR it's "Comment":
+ *  the host won't take your approval. */
+export function submitLabel(o: {
+  finished: boolean;
+  branchReview: boolean;
+  /** The host PR of the space this review is, if it is one. */
+  spacePr: string | null;
+  pr: string;
+  mine: boolean;
+  compact: boolean;
+}): string | null {
+  if (o.finished || o.branchReview) return null;
+  if (o.spacePr !== null && o.spacePr !== o.pr) return null;
+  if (o.mine) return 'Comment';
+  return o.compact ? 'Submit' : 'Submit review';
+}
+
 export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const ui = useUi();
@@ -542,6 +561,14 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
   const mySpace = isBuildMode(store)
     ? spaceOfReview(store.models.spaces.all(), pr)
     : undefined;
+  const submit = submitLabel({
+    finished,
+    branchReview,
+    spacePr: mySpace ? (mySpace.pr ?? null) : null,
+    pr,
+    mine,
+    compact,
+  });
   const mergeBlock = !summary
     ? ''
     : local
@@ -617,13 +644,13 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
           </Btn>
         )}
         {/* A merged or closed PR takes no more reviews, reviewers or merges. */}
-        {!finished && !branchReview && !mySpace && (
+        {submit && (
           <Btn
             tone="primary"
             className="shrink-0"
             onPress={() => ui.openModal('submit')}
           >
-            {compact ? 'Submit' : 'Submit review'}
+            {submit}
           </Btn>
         )}
         {!local && !finished && FEATURES.hostWrites && (

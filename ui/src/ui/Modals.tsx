@@ -37,7 +37,14 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
   const [sending, setSending] = useState(false);
   if (ui.route.name !== 'review') return null;
   const pr = ui.route.pr;
-  const local = store.models.prSummaries.get(pr)?.pr.repo.host === 'local';
+  const summary = store.models.prSummaries.get(pr);
+  const local = summary?.pr.repo.host === 'local';
+  // Your own PR takes no verdict from you on the host: Comment only.
+  const mine =
+    !!summary && store.ephemeral.viewer?.login === summary.author.login;
+  const events = mine
+    ? EVENT_OPTS.filter(([v]) => v === 'COMMENT')
+    : EVENT_OPTS;
   const drafts = store.models.drafts.byPr(pr);
   const reads = new Set(store.models.hunkReads.byPr(pr).map((r) => r.hunk));
   // This PR's groups only — `groups.all()` spans every open PR.
@@ -80,7 +87,7 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
           orientation="horizontal"
           aria-label="Verdict"
         >
-          {EVENT_OPTS.map(([v, t, d]) => (
+          {events.map(([v, t, d]) => (
             <Radio
               key={v}
               value={v}
