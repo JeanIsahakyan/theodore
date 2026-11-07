@@ -426,3 +426,44 @@ async fn shipping_squashes_the_snapshot_tree_onto_the_base() {
         "one\ncommitted"
     );
 }
+
+#[tokio::test]
+async fn build_junk_stays_out_without_a_gitignore_but_tracked_files_stay_tracked() {
+    let s = space().await;
+    // The agent tracked one compiled file itself: it stays tracked.
+    s.write("keep.pyc", "v1\n");
+    git(&s.wt, &["add", "-f", "keep.pyc"]);
+    commit_all(&s.wt, "agent: keep a pyc");
+    s.write("keep.pyc", "v2\n");
+    s.write("game.py", "print('hi')\n");
+    s.write("__pycache__/game.cpython-312.pyc", "junk\n");
+    s.write("lib/__pycache__/x.pyc", "junk\n");
+    s.write("stray.pyc", "junk\n");
+    s.write("node_modules/left-pad/index.js", "junk\n");
+    s.write(".DS_Store", "junk\n");
+    s.write("sub/.DS_Store", "junk\n");
+    // No Cargo.toml: a `target/` is the repo's own.
+    s.write("target/notes.txt", "kept\n");
+
+    let cp = s.checkpoint("turn 1").await;
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", cp.sha.as_str()]);
+    assert_eq!(
+        files,
+        ".gitignore\na.txt\nb.txt\ngame.py\nkeep.pyc\ntarget/notes.txt"
+    );
+    assert_eq!(
+        git(
+            &s.cache,
+            &["show", &format!("{}:keep.pyc", cp.sha.as_str())]
+        ),
+        "v2"
+    );
+
+    // With a Cargo.toml at the root, `target/` is its build output.
+    s.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    s.write("target/debug/x", "junk\n");
+    let cp = s.checkpoint("turn 2").await;
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", cp.sha.as_str()]);
+    assert!(files.contains("Cargo.toml"));
+    assert!(!files.contains("target/debug/x"), "{files}");
+}

@@ -70,6 +70,7 @@ async fn must_rev(git: &SpaceGit<'_>, spec: &str) -> GitResult<String> {
 /// honored. Staged in a copy of the worktree's index, so `add` reuses its
 /// stat cache and the index itself is never written.
 async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResult<String> {
+    exclude_junk(git).await?;
     let index = TempIndex::new(git_dir, "theodore-snapshot.index");
     let real = git_dir.join("index");
     if real.exists() {
@@ -266,6 +267,55 @@ pub(crate) async fn commit_edits(git: &SpaceGit<'_>, id: &str, message: &str) ->
     Ok(sha)
 }
 
+/// Build output no repo means to ship, left out of checkpoints (so of what
+/// ships) even without a `.gitignore`. Untracked files only: a file the
+/// repo tracks stays tracked.
+const JUNK: &[&str] = &["__pycache__/", "*.py[co]", "node_modules/", ".DS_Store"];
+/// Cargo's build output, only with a `Cargo.toml` at the root.
+const CARGO_TARGET: &str = "/target/";
+
+/// Puts `JUNK` (and `CARGO_TARGET` for a Cargo repo) in the cache's
+/// `info/exclude`, the file the default `.env*` exclusion uses.
+async fn exclude_junk(git: &SpaceGit<'_>) -> GitResult<()> {
+    let mut lines: Vec<String> = JUNK.iter().map(|l| l.to_string()).collect();
+    if git.root().join("Cargo.toml").is_file() {
+        lines.push(CARGO_TARGET.to_string());
+    }
+    append_excludes(git, &lines).await
+}
+
+/// Adds the `lines` the worktree's `info/exclude` (the cache's, shared by
+/// its worktrees) doesn't have yet.
+async fn append_excludes(git: &SpaceGit<'_>, lines: &[String]) -> GitResult<()> {
+    let file = git
+        .run_text(&["rev-parse", "--git-path", "info/exclude"])
+        .await?;
+    let file = git.root().join(file.trim());
+    // Shared by the cache's worktrees.
+    let _file = crate::locks::lock(&file).await;
+    let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+    let known: Vec<&str> = text.lines().collect();
+    let new: Vec<&String> = lines
+        .iter()
+        .filter(|l| !known.contains(&l.as_str()))
+        .collect();
+    if new.is_empty() {
+        return Ok(());
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    for line in new {
+        text.push_str(line);
+        text.push('\n');
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&file, text)?;
+    Ok(())
+}
+
 /// `path` as one line of an exclude file: anchored at the worktree's root,
 /// nothing in it read as a pattern. `None` for a name a line can't hold.
 fn exclude_line(path: &str) -> Option<String> {
@@ -316,33 +366,7 @@ impl GitCli {
         if lines.is_empty() {
             return Ok(());
         }
-        let file = git
-            .run_text(&["rev-parse", "--git-path", "info/exclude"])
-            .await?;
-        let file = worktree.join(file.trim());
-        // Shared by the cache's worktrees.
-        let _file = crate::locks::lock(&file).await;
-        let mut text = std::fs::read_to_string(&file).unwrap_or_default();
-        let known: Vec<&str> = text.lines().collect();
-        let new: Vec<&String> = lines
-            .iter()
-            .filter(|l| !known.contains(&l.as_str()))
-            .collect();
-        if new.is_empty() {
-            return Ok(());
-        }
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
-        }
-        for line in new {
-            text.push_str(line);
-            text.push('\n');
-        }
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&file, text)?;
-        Ok(())
+        append_excludes(&git, &lines).await
     }
 
     pub(crate) async fn space_checkpoint_op(

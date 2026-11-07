@@ -335,6 +335,12 @@ Theodore's cache of the project, by name, so it never enters a checkpoint, the
 diff or what ships. A file the base tracks stays tracked: a copy that differs
 from the base shows in the diff like any edit.
 
+Build junk is left out the same way, even in a repo with no `.gitignore`:
+`__pycache__/`, `*.pyc`/`*.pyo`, `node_modules/` and `.DS_Store` always,
+`/target/` when the space has a `Cargo.toml` at its root. Untracked files
+only: a repo that tracks such a file keeps shipping its changes. `dist/` and
+`build/` aren't on the list; too many repos commit them.
+
 ## 4. Variables
 
 Set for every command and agent turn of a space:
