@@ -62,6 +62,20 @@ export const METHOD: Record<MergeMethod, string> = {
   rebase: 'Rebase and merge',
 };
 
+/** What `method` does, said of the PR's own base branch: a stacked PR
+ *  lands on another branch, not on main. */
+export function methodHint(method: MergeMethod, base: string): string {
+  const onto = base || 'the base branch';
+  switch (method) {
+    case 'squash':
+      return `one commit on ${onto}; branch history is squashed`;
+    case 'merge':
+      return `all commits + a merge commit on ${onto}`;
+    case 'rebase':
+      return `branch commits on top of ${onto}, no merge commit`;
+  }
+}
+
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 
 export const STATE_LABEL: Record<MergeInfo['state'], string> = {
@@ -444,11 +458,7 @@ export const MergeDialog = observer(function MergeDialog({
                     <div>
                       <b className="text-sm">{METHOD[m]}</b>
                       <div className="text-xs text-muted">
-                        {m === 'squash'
-                          ? 'one commit on main; branch history is squashed'
-                          : m === 'merge'
-                            ? 'all commits + a merge commit'
-                            : 'branch commits on top of main, no merge commit'}
+                        {methodHint(m, summary.base_ref)}
                       </div>
                     </div>
                   </Radio.Content>
