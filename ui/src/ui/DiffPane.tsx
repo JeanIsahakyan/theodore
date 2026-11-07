@@ -1291,7 +1291,10 @@ function FileBlockInner({
   return (
     <Card ref={cardRef} className="file mb-4 gap-0 overflow-hidden p-0">
       <header
-        className="file-h sticky top-0 z-[2] flex items-center gap-3 border-b border-separator bg-surface px-4 py-2.5 text-sm"
+        // In a narrow pane (a space's Changes) the controls wrap under the
+        // name instead of being cut off at the card's edge; the name keeps
+        // room for itself.
+        className="file-h sticky top-0 z-[2] flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-separator bg-surface px-4 py-2.5 text-sm"
         onContextMenu={fileMenu}
       >
         <Button
@@ -1314,7 +1317,7 @@ function FileBlockInner({
          *  the path) stays visible; the inner `dir="ltr"` keeps old→new
          *  order correct for renames regardless of the outer direction. */}
         <span
-          className="min-w-0 truncate font-mono text-[13px]"
+          className="file-name min-w-[6rem] flex-[1_1_0%] truncate text-left font-mono text-[13px]"
           dir="rtl"
           title={file.old_path ? `${file.old_path} → ${file.path}` : file.path}
         >
@@ -1404,7 +1407,6 @@ function FileBlockInner({
             ))}
           </span>
         )}
-        <span className="flex-1" />
         {viewed?.state === 'dismissed' && (
           <Chip size="sm" variant="soft" color="warning" className="shrink-0">
             changed since viewed

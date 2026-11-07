@@ -150,5 +150,13 @@ describe('split diff drafts', () => {
     expect(card.querySelector('.draft-label')!.className).toContain(
       'whitespace-nowrap',
     );
+
+    // A narrow pane wraps the file header's controls under the name
+    // instead of cutting them off; the name keeps room (layout is CSS).
+    const header = m.host.querySelector('.file-h')!;
+    expect(header.className).toContain('flex-wrap');
+    expect(header.querySelector('.file-name')!.className).toContain(
+      'min-w-[6rem]',
+    );
   });
 });

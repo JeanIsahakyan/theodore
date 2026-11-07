@@ -157,6 +157,10 @@ describe('AgentMenu', () => {
     setAgentEffort(store, 'claude', 'max');
     const chip = await render(store, ['claude']);
     expect(chip.textContent).toBe('Fable 5.1 Max');
+    // A running turn's Stop / Queue / Send now squeeze it, never to a bare
+    // chevron: it keeps room for a short name (layout itself is CSS).
+    expect(chip.className).toContain('min-w-[6.5rem]');
+    expect(chip.parentElement!.className).toContain('min-w-[6.5rem]');
   });
 
   it("never shows a default: an unset agent runs, and keeps, its first model and that model's effort", async () => {

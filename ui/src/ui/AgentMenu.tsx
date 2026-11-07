@@ -212,14 +212,16 @@ export const AgentMenu = observer(function AgentMenu({
   const extra = others.map((a) => AGENT_NAME[a]).join(' + ');
 
   return (
-    <span ref={chip} className="flex min-w-0 shrink">
+    <span ref={chip} className="flex min-w-[6.5rem] shrink">
       <Dropdown>
         <Button
           size="sm"
           variant="tertiary"
           aria-label="Model"
           isDisabled={isDisabled}
-          className="min-w-0 shrink gap-1.5 rounded-full px-3 text-xs"
+          // Squeezed by a running turn's Stop / Queue / Send now, it keeps
+          // enough room for a short model name, never a bare chevron.
+          className="min-w-[6.5rem] shrink gap-1.5 rounded-full px-3 text-xs"
         >
           <span className="min-w-0 truncate">
             {primary ? (cur?.model?.label ?? AGENT_NAME[primary]) : 'agent'}
