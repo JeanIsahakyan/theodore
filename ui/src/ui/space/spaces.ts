@@ -591,6 +591,15 @@ export function lastAgentTurn(s: Pick<Space, 'turn_log'>): SpaceTurn | null {
   return null;
 }
 
+/** Agent turns the space stands on: `turns` minus the undone ones (a
+ *  Revert of yours isn't a turn). "after turn N" in the changes pane. */
+export function liveTurns(s: Pick<Space, 'turns' | 'turn_log'>): number {
+  const undone = (s.turn_log ?? []).filter(
+    (t) => t.undone && !(t.reverted ?? []).length,
+  ).length;
+  return Math.max(0, s.turns - undone);
+}
+
 /** Message ids (yours and the agent's) of the space's undone turns. */
 export function undoneMessages(s: Pick<Space, 'turn_log'>): Set<string> {
   return new Set(

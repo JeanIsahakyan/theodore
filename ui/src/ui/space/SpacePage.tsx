@@ -105,6 +105,7 @@ import {
   spaceChatKey,
   spaceStage,
   unshipped,
+  liveTurns,
   spaceTitle,
   plainError,
 } from './spaces';
@@ -1157,7 +1158,7 @@ const SpaceChanges = observer(function SpaceChanges({
         </span>
         <span>
           vs {space.base} ·{' '}
-          {space.turns ? `after turn ${space.turns}` : 'no turns yet'}
+          {liveTurns(space) ? `after turn ${liveTurns(space)}` : 'no turns yet'}
         </span>
         {space.status === 'running' && (
           <span>· live, follows the agent's edits</span>
