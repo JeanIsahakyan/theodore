@@ -5791,6 +5791,7 @@ dependencies = [
  "tar",
  "tempfile",
  "theodore-code-intel-lsp",
+ "theodore-code-intel-syntax",
  "theodore-ports",
  "tokio",
  "tracing",
