@@ -2,7 +2,7 @@
  * A space's chat above the composer: nothing said yet is a plain page, the
  * rest is one row per turn in a `VirtualChat`.
  */
-import { memo, useCallback, type ReactNode } from 'react';
+import { memo, useCallback, type ReactNode, type Ref } from 'react';
 import { Pencil } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { ChatMessage, Space, SpaceConfigView } from '../../gen/contract';
@@ -24,7 +24,7 @@ import { SetupNote, SetupStage } from './SpaceCommands';
 import { SpaceMessage } from './SpaceMessage';
 import { QuestionCard } from './SpacePlan';
 import { spaceChatKey } from './spaces';
-import { VirtualChat } from './VirtualChat';
+import { VirtualChat, type VirtualChatControl } from './VirtualChat';
 
 const EMPTY_SENDS: readonly SpaceSend[] = [];
 const isPinned = (row: ChatRow) => row.kind === 'head' || row.kind === 'tail';
@@ -33,10 +33,12 @@ export const SpaceLog = observer(function SpaceLog({
   space,
   config,
   onRevise,
+  control,
 }: {
   space: Space;
   config: SpaceConfigView | null;
   onRevise: () => void;
+  control?: Ref<VirtualChatControl>;
 }) {
   const store = useRootStore();
   // Queued messages wait under the running turn, in the order they send.
@@ -109,6 +111,7 @@ export const SpaceLog = observer(function SpaceLog({
       estimate={estimateRowHeight}
       isPinned={isPinned}
       renderItem={renderRow}
+      control={control}
     />
   );
 });
@@ -168,7 +171,7 @@ const TurnRow = memo(
             onRevise={onRevise}
           />
         ))}
-        {live && <SpaceLive spaceId={spaceId} />}
+        {live && <SpaceLive spaceId={spaceId} since={messages[0]?.at} />}
       </>
     );
   },
@@ -182,8 +185,11 @@ const TurnRow = memo(
 
 const SpaceLive = observer(function SpaceLive({
   spaceId,
+  since,
 }: {
   spaceId: string;
+  /** When its turn started: your message's time. */
+  since?: number;
 }) {
   const { models, ephemeral } = useRootStore();
   const space = models.spaces.get(spaceId);
@@ -196,6 +202,7 @@ const SpaceLive = observer(function SpaceLive({
       run={run}
       agent={run ? space.agent : (sending?.agent ?? space.agent)}
       timeline
+      since={since}
       badges={
         run && ephemeral.stoppingRuns.has(run) ? (
           <span className="space-stopping text-xs text-muted">Stopping…</span>

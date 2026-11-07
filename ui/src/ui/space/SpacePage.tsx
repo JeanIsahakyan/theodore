@@ -4,7 +4,7 @@
  * New space dialog, Settings → Labs, and the "turn done" notices.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MutableRefObject } from 'react';
+import type { MutableRefObject, RefObject } from 'react';
 
 import {
   Archive,
@@ -61,6 +61,7 @@ import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
 import { SpaceLog } from './SpaceLog';
 import { sendToSpace, stopSpace } from './send';
+import type { VirtualChatControl } from './VirtualChat';
 import { canSendNow } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
 import { latinKey, useViewKeys } from '../keys';
@@ -180,6 +181,13 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
       localStorage.setItem(LS_SPACE_CHANGES, v ? '0' : '1');
       return !v;
     });
+  // A changed file's chip in the chat opens the pane; `SpaceChanges` aims it.
+  const changesFocus = store.ephemeral.spaceChangesFocus.get(id);
+  useEffect(() => {
+    if (!changesFocus) return;
+    localStorage.setItem(LS_SPACE_CHANGES, '1');
+    setShowChanges(true);
+  }, [changesFocus]);
   // Same idea for the terminal drawer, default closed: its shells live in
   // the core regardless, so reopening it (or navigating back to the page)
   // just re-lists and re-attaches them.
@@ -342,6 +350,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
                 <SpacePrPane
                   pr={space.pr}
                   changes={<SpaceChanges space={space} />}
+                  showChanges={changesFocus}
                 />
               ) : (
                 <SpaceChanges space={space} />
@@ -898,10 +907,16 @@ export const SpaceChat = observer(function SpaceChat({
 }) {
   const revise = useRef<(() => void) | null>(null);
   const onRevise = useCallback(() => revise.current?.(), []);
+  const log = useRef<VirtualChatControl | null>(null);
   return (
     <>
-      <SpaceLog space={space} config={config} onRevise={onRevise} />
-      <SpaceComposer space={space} handle={handle} revise={revise} />
+      <SpaceLog
+        space={space}
+        config={config}
+        onRevise={onRevise}
+        control={log}
+      />
+      <SpaceComposer space={space} handle={handle} revise={revise} log={log} />
     </>
   );
 });
@@ -911,11 +926,14 @@ const SpaceComposer = observer(function SpaceComposer({
   space,
   handle,
   revise,
+  log,
 }: {
   space: Space;
   handle: MutableRefObject<ChatHandle | null>;
   /** Revise on a plan: asks here what should change. */
   revise: MutableRefObject<(() => void) | null>;
+  /** The chat above: sending goes to the bottom of it. */
+  log: RefObject<VirtualChatControl | null>;
 }) {
   const store = useRootStore();
   const [text, setText] = useState('');
@@ -967,6 +985,7 @@ const SpaceComposer = observer(function SpaceComposer({
     setText('');
     setRevising(false);
     files.clear();
+    log.current?.jumpToLatest();
     sendToSpace(
       store,
       space,
@@ -1067,6 +1086,20 @@ const SpaceComposer = observer(function SpaceComposer({
   );
 });
 
+/** Scrolls to `id` at once, then again while what's above it mounts and moves
+ *  it. Returns how to stop. */
+function aimAt(id: string, frames = 30): () => void {
+  let frame = 0;
+  let left = frames;
+  const tick = () => {
+    document.getElementById(id)?.scrollIntoView({ block: 'center' });
+    left -= 1;
+    if (left > 0) frame = requestAnimationFrame(tick);
+  };
+  frame = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(frame);
+}
+
 const SpaceChanges = observer(function SpaceChanges({
   space,
 }: {
@@ -1093,6 +1126,21 @@ const SpaceChanges = observer(function SpaceChanges({
     [space],
   );
   const rev = revision?.status === 'ready' ? revision.data : null;
+  // A changed file's chip in the chat, once the diff it aims at is here. A
+  // file with no hunks (binary) has nothing to aim at: the pane is open.
+  const focus = store.ephemeral.spaceChangesFocus.get(space.id);
+  const stopAiming = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopAiming.current?.(), []);
+  useEffect(() => {
+    if (!focus || !rev) return;
+    store.ephemeral.spaceChangesOpened(space.id);
+    const file = rev.files.find((f) => f.path === focus.path);
+    const hunk = file?.hunks[0];
+    if (!hunk) return;
+    setFocusHunk(hunk.id);
+    stopAiming.current?.();
+    stopAiming.current = aimAt(`H-${hunk.id}`);
+  }, [store, space.id, focus, rev]);
   return (
     <>
       <div className="flex items-center gap-3 border-b border-separator px-5 py-2.5 text-xs text-muted">

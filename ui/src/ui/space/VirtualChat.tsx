@@ -6,7 +6,8 @@
  * ```text
  * at the bottom ──scroll up──▶ away     rows grow: nothing moves, pill shows
  *       ▲                        │
- *       └──scroll down, or pill──┘
+ *       └──scroll down, pill, ───┘
+ *          or you send a message
  *
  * reopen ──left away──▶ restore turn + offset ──settled, or any input──▶ away
  *        └─left at the bottom, or new─────────▶ at the bottom
@@ -17,10 +18,12 @@
  */
 import {
   useCallback,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
+  type Ref,
 } from 'react';
 import { flushSync } from 'react-dom';
 import { ArrowDown } from '@gravity-ui/icons';
@@ -67,6 +70,12 @@ export function initialOffset<T extends { key: string }>(
   return top;
 }
 
+/** What the page around a chat can ask of it. */
+export interface VirtualChatControl {
+  /** To the bottom, following again: you just sent something. */
+  jumpToLatest: () => void;
+}
+
 function afterFrames(n: number, run: () => void) {
   if (n <= 0) run();
   else requestAnimationFrame(() => afterFrames(n - 1, run));
@@ -78,6 +87,7 @@ export function VirtualChat<T extends { key: string }>({
   estimate,
   isPinned,
   renderItem,
+  control,
 }: {
   /** Keeps the place per this id. */
   scope: string;
@@ -88,6 +98,7 @@ export function VirtualChat<T extends { key: string }>({
   /** Stays mounted out of view: rows holding what you are typing. */
   isPinned?: (item: T) => boolean;
   renderItem: (item: T) => ReactNode;
+  control?: Ref<VirtualChatControl>;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const sizer = useRef<HTMLDivElement>(null);
@@ -332,6 +343,7 @@ export function VirtualChat<T extends { key: string }>({
     const el = scroller.current;
     if (el) Object.assign(p, measure(el));
   }, [v, scope, finishRestore]);
+  useImperativeHandle(control, () => ({ jumpToLatest: jump }), [jump]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">

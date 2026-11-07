@@ -30,7 +30,6 @@ import type {
 } from '../gen/contract';
 import { appendLogs, seedLogs } from '../ui/space/commands';
 import { appendChunk, type TerminalChunk } from '../ui/space/terminalBuffer';
-import { parseToolLine, thinkingOf, toolResultOk } from '../ui/toolSummary';
 import { configPrToast } from '../ui/project/configFile';
 import {
   suggestText,
@@ -45,6 +44,8 @@ import { accountGate, type AccountGate } from '../core/accountGate';
 const LOG_LIMIT = 500;
 /** As many as the core keeps on the reply. */
 const STEP_LIMIT = 500;
+/** Of one subagent, the same. */
+const NESTED_STEP_LIMIT = 100;
 
 export interface ToastAction {
   label: string;
@@ -188,6 +189,12 @@ export class EphemeralStore {
     {},
     { deep: false },
   );
+  /** Runs whose next piece of text starts a new row. */
+  private readonly textBreaks = new Set<string>();
+  /** A file's chip was clicked: the Changes pane opens on `path` (`null`: just
+   *  the pane), per space, until it has. */
+  readonly spaceChangesFocus: ObservableMap<string, { path: string | null }> =
+    observable.map({}, { deep: false });
   /** Sent and not stored yet, per space, in the order you sent them. */
   readonly spaceSends: ObservableMap<string, SpaceSend[]> = observable.map(
     {},
@@ -597,17 +604,26 @@ export class EphemeralStore {
           this.clearStalled(e.run);
           return;
         case 'run_log': {
-          // What it wrote before this line comes before it in the steps.
-          this.flushRun(e.run);
-          this.addLogStep(e.run, e.line);
-          // Thinking is a step, never a line of the tool log.
-          if (thinkingOf(e.line) == null) {
-            const lines = [...(this.runLog.get(e.run) ?? []), e.line];
-            this.runLog.set(e.run, lines.slice(-LOG_LIMIT));
-          }
+          const lines = [...(this.runLog.get(e.run) ?? []), e.line];
+          this.runLog.set(e.run, lines.slice(-LOG_LIMIT));
           this.clearStalled(e.run);
           return;
         }
+        case 'run_step':
+          // What it wrote before this comes before it in the steps.
+          this.flushRun(e.run);
+          this.addStep(e.run, e.step);
+          this.clearStalled(e.run);
+          return;
+        case 'run_step_done':
+          this.flushRun(e.run);
+          this.markStep(e.run, e.id, e.ok, e.summary);
+          this.clearStalled(e.run);
+          return;
+        case 'run_text_break':
+          this.flushRun(e.run);
+          this.textBreaks.add(e.run);
+          return;
         case 'run_stalled': {
           const next = new Set(this.stalled);
           next.add(e.run);
@@ -816,8 +832,17 @@ export class EphemeralStore {
       this.agentText.delete(run);
       this.runLog.delete(run);
       this.runSteps.delete(run);
+      this.textBreaks.delete(run);
       this.clearStalled(run);
     });
+  }
+
+  openSpaceChanges(space: string, path: string | null): void {
+    runInAction(() => this.spaceChangesFocus.set(space, { path }));
+  }
+
+  spaceChangesOpened(space: string): void {
+    runInAction(() => this.spaceChangesFocus.delete(space));
   }
 
   /** A terminal tab is closed: its buffered output and exit no longer
@@ -840,50 +865,55 @@ export class EphemeralStore {
   }
 
   private addStep(run: string, step: TurnStep): void {
-    const steps = [...(this.runSteps.get(run) ?? []), step];
-    this.runSteps.set(run, steps.slice(-STEP_LIMIT));
+    let steps = this.runSteps.get(run) ?? [];
+    // A long subagent gives way to itself, not to the turn's own rows.
+    if (step.parent) {
+      const of = step.parent;
+      const mine = steps.filter((s) => s.parent === of);
+      if (mine.length >= NESTED_STEP_LIMIT) {
+        steps = steps.filter((s) => s !== mine[0]);
+      }
+    }
+    this.runSteps.set(run, [...steps, step].slice(-STEP_LIMIT));
   }
 
-  /** A piece of text goes on the text being written, or starts the next. */
+  /** A piece of text goes on the run's own text being written, past what a
+   *  subagent did meanwhile, or starts the next: after anything else of the
+   *  run's, or at a block's start. */
   private addStepText(run: string, text: string): void {
     const steps = this.runSteps.get(run) ?? [];
-    const last = steps.at(-1);
-    if (last?.kind === 'text') {
-      this.runSteps.set(run, [
-        ...steps.slice(0, -1),
-        { kind: 'text', text: last.text + text },
-      ]);
+    const starts = this.textBreaks.delete(run);
+    let at = steps.length - 1;
+    while (at >= 0 && steps[at]?.parent) at -= 1;
+    const last = steps[at];
+    if (!starts && last?.kind === 'text') {
+      const next = [...steps];
+      next[at] = { ...last, text: last.text + text };
+      this.runSteps.set(run, next);
     } else {
       this.addStep(run, { kind: 'text', text });
     }
   }
 
-  private addLogStep(run: string, line: string): void {
-    const thinking = thinkingOf(line);
-    if (thinking != null) {
-      this.addStep(run, { kind: 'thinking', text: thinking });
-      return;
-    }
-    const call = parseToolLine(line);
-    if (call) {
-      this.addStep(run, {
-        kind: 'tool',
-        name: call.tool,
-        target: call.target,
-        ok: null,
-      });
-      return;
-    }
-    const ok = toolResultOk(line);
-    if (ok == null) return;
-    // The line has no call id: it goes with the latest call, and the stored
-    // steps, which match by id, have the last word.
-    const steps = [...(this.runSteps.get(run) ?? [])];
+  /** Marks the call `id`, and no other: parallel calls end in any order. */
+  private markStep(
+    run: string,
+    id: string,
+    ok: boolean | null,
+    summary: string | null,
+  ): void {
+    const steps = this.runSteps.get(run);
+    if (!steps) return;
     for (let i = steps.length - 1; i >= 0; i -= 1) {
       const step = steps[i];
-      if (step?.kind !== 'tool') continue;
-      steps[i] = { ...step, ok };
-      this.runSteps.set(run, steps);
+      if (step?.kind !== 'tool' || step.id !== id) continue;
+      const next = [...steps];
+      next[i] = {
+        ...step,
+        ok: ok ?? step.ok,
+        summary: summary ?? step.summary,
+      };
+      this.runSteps.set(run, next);
       return;
     }
   }

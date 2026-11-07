@@ -115,13 +115,19 @@ const isOpen = (s: PrSummary | undefined) =>
 export const SpacePrPane = observer(function SpacePrPane({
   pr,
   changes,
+  showChanges,
 }: {
   pr: PrId;
   /** The Changes tab: the space's live diff. */
   changes: ReactNode;
+  /** Set when something asks for that tab, from the chat. */
+  showChanges?: object;
 }) {
   const store = useRootStore();
   const [tab, setTab] = useState<Tab>('changes');
+  useEffect(() => {
+    if (showChanges) setTab('changes');
+  }, [showChanges]);
   // Threads and checks live on the PR's detail row.
   useEffect(() => {
     void store.sync.openPr(pr).catch(() => {});

@@ -1,7 +1,7 @@
 /** A long chat's scrolling: it follows new content only from the bottom,
  *  leaves you where you scrolled, reopens by row and offset, and a row's own
  *  toggle moves nothing. jsdom has no layout: `chatLayout` stands in for it. */
-import { act, useState } from 'react';
+import { act, createRef, useState } from 'react';
 import {
   afterAll,
   afterEach,
@@ -22,7 +22,7 @@ import {
   userScroll,
 } from '../../test/chatLayout';
 import { useKeptOpen, useSteadyChange } from '../rowState';
-import { VirtualChat } from './VirtualChat';
+import { VirtualChat, type VirtualChatControl } from './VirtualChat';
 
 let m: Mounted | null = null;
 let scopes = 0;
@@ -150,6 +150,35 @@ describe('a virtual chat', () => {
     expect(log().scrollTop).toBe(end());
     expect(pill()).toBeNull();
     chatLayout.heights.set(50, 700);
+    layoutRows();
+    await frames();
+    expect(log().scrollTop).toBe(end());
+  });
+
+  it('sending jumps to the bottom from anywhere, and follows again', async () => {
+    const id = scope();
+    const control = createRef<VirtualChatControl>();
+    m?.unmount();
+    m = await mount(
+      <VirtualChat
+        scope={id}
+        items={rows(50)}
+        estimate={estimate}
+        renderItem={(item) => <Row id={item.key} />}
+        control={control}
+      />,
+    );
+    layoutRows();
+    await frames();
+    userScroll(log(), 1000);
+    expect(pill()).not.toBeNull();
+
+    await act(async () => control.current!.jumpToLatest());
+    await frames();
+    expect(log().scrollTop).toBe(end());
+    expect(pill()).toBeNull();
+    // What you sent lands below: still followed.
+    chatLayout.heights.set(49, 700);
     layoutRows();
     await frames();
     expect(log().scrollTop).toBe(end());

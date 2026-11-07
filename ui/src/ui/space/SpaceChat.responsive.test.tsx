@@ -300,7 +300,11 @@ describe('while a turn runs', () => {
       act(() => store.ephemeral.handle(e));
     event({ type: 'agent_delta', run, agent: 'claude', text: 'Looking' });
     event({ type: 'agent_delta', run, agent: 'claude', text: ' first.' });
-    event({ type: 'run_log', run, agent: 'claude', line: 'tool: Read · a.rs' });
+    event({
+      type: 'run_step',
+      run,
+      step: { kind: 'tool', name: 'Read', target: 'a.rs', ok: null, id: 't1' },
+    });
     event({ type: 'agent_delta', run, agent: 'claude', text: 'Then this.' });
     act(() => store.ephemeral.flushDeltas());
     const rows = () => [
@@ -324,13 +328,15 @@ describe('a finished turn folded and opened', () => {
     activity: [
       { kind: 'text', text: 'Reading.' },
       { kind: 'tool', name: 'Read', target: 'a.rs', ok: true },
+      { kind: 'tool', name: 'Bash', target: 'ls', ok: true },
     ],
     duration_ms: 5000,
   });
 
   it('opens at once, with no panel to animate', async () => {
     await render({}, [message('u1'), finished]);
-    await click(m!.host.querySelector('.turn-activity-summary'));
+    expect(m!.host.querySelector('.turn-tool')).toBeNull();
+    await click(m!.host.querySelector('.turn-fold-line'));
     expect(m!.host.querySelector('.turn-tool')).not.toBeNull();
     expect(m!.host.querySelector('.disclosure__content')).toBeNull();
   });
@@ -340,7 +346,11 @@ describe('a finished turn folded and opened', () => {
       message(`x${i}`, { at: i * 2 }),
       reply(`y${i}`, {
         at: i * 2 + 1,
-        activity: [{ kind: 'tool', name: 'Read', target: 'a.rs', ok: true }],
+        activity: [
+          { kind: 'tool', name: 'Bash', target: 'a', ok: true },
+          { kind: 'tool', name: 'Bash', target: 'b', ok: true },
+          { kind: 'tool', name: 'Bash', target: 'c', ok: true },
+        ],
         duration_ms: 1000,
       }),
     ]).flat();
@@ -349,7 +359,7 @@ describe('a finished turn folded and opened', () => {
     await frames();
     const log = m!.host.querySelector<HTMLElement>('.chat-log')!;
     const reply59 = () => m!.host.querySelector('[data-msg="y59"]');
-    await click(reply59()!.querySelector('.turn-activity-summary'));
+    await click(reply59()!.querySelector('.turn-fold-line'));
     await frames();
     expect(reply59()?.querySelector('.turn-tool')).not.toBeNull();
 

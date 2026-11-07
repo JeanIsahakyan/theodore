@@ -1,6 +1,6 @@
 import { autorun } from 'mobx';
 import { describe, expect, it, vi } from 'vitest';
-import type { AppInfo } from '../gen/contract';
+import type { AppInfo, TurnStep } from '../gen/contract';
 import { setTransport } from '../core/transport';
 import { FakeTransport } from '../test/fakeTransport';
 import { EphemeralStore } from './EphemeralStore';
@@ -350,56 +350,109 @@ describe('EphemeralStore run steps', () => {
     ({ type: 'agent_delta', run, agent: 'claude', text }) as const;
   const log = (line: string, run = 'r1') =>
     ({ type: 'run_log', run, agent: 'claude', line }) as const;
+  const step = (step: TurnStep, run = 'r1') =>
+    ({ type: 'run_step', run, step }) as const;
+  const tool = (id: string, parent?: string): TurnStep => ({
+    kind: 'tool',
+    name: 'Bash',
+    target: id,
+    ok: null,
+    id,
+    parent,
+  });
+  const done = (id: string, ok: boolean | null, summary?: string) =>
+    ({
+      type: 'run_step_done',
+      run: 'r1',
+      id,
+      ok,
+      summary: summary ?? null,
+    }) as const;
+  const textBreak = { type: 'run_text_break', run: 'r1' } as const;
 
   it('keeps text, tools and thinking in the order they came', () => {
     const e = new EphemeralStore();
     e.handle(delta('Look'));
     e.handle(delta('ing.'));
-    e.handle(log('tool: Read · src/a.rs'));
-    e.handle(log('tool result ok=true'));
-    e.handle(log('thinking: Where next?'));
+    e.handle(step(tool('a')));
+    e.handle(done('a', true));
+    e.handle(step({ kind: 'thinking', text: 'Where next?' }));
     e.handle(delta('Found it.'));
-    e.handle(log('tool: mcp__github__create_issue'));
-    e.handle(log('tool result ok=false'));
     e.handle(delta('Done', 'r2'));
     e.flushDeltas();
     expect(e.runSteps.get('r1')).toEqual([
       { kind: 'text', text: 'Looking.' },
-      { kind: 'tool', name: 'Read', target: 'src/a.rs', ok: true },
+      { ...tool('a'), ok: true, summary: undefined },
       { kind: 'thinking', text: 'Where next?' },
       { kind: 'text', text: 'Found it.' },
-      { kind: 'tool', name: 'create issue', target: null, ok: false },
     ]);
     expect(e.runSteps.get('r2')).toEqual([{ kind: 'text', text: 'Done' }]);
   });
 
-  it('a result goes to the latest tool, past the text after it', () => {
+  it('a block boundary starts a new row, with no tool between them', () => {
     const e = new EphemeralStore();
-    e.handle(log('tool: Bash · a'));
-    e.handle(log('tool: Bash · b'));
-    e.handle(delta('Still going.'));
-    e.handle(log('tool result ok=false'));
+    e.handle(textBreak);
+    e.handle(delta('One.'));
+    e.handle(delta(' Still one.'));
+    e.handle(textBreak);
+    e.handle(delta('Two.'));
+    e.flushDeltas();
     expect(e.runSteps.get('r1')).toEqual([
-      { kind: 'tool', name: 'Bash', target: 'a', ok: null },
-      { kind: 'tool', name: 'Bash', target: 'b', ok: false },
-      { kind: 'text', text: 'Still going.' },
+      { kind: 'text', text: 'One. Still one.' },
+      { kind: 'text', text: 'Two.' },
     ]);
+    expect(e.agentText.get('r1')).toBe('One. Still one.Two.');
   });
 
-  it('a result with no tool, and a note, are no steps', () => {
+  it('a result marks its own call, whichever is newest', () => {
     const e = new EphemeralStore();
-    e.handle(log('tool result ok=true'));
+    e.handle(step(tool('a')));
+    e.handle(step(tool('b')));
+    e.handle(delta('Still going.'));
+    e.handle(done('a', false));
+    e.flushDeltas();
+    const [a, b] = e.runSteps.get('r1')!;
+    expect(a).toMatchObject({ id: 'a', ok: false });
+    expect(b).toMatchObject({ id: 'b', ok: null });
+  });
+
+  it('a result can bring what it found; a report alone leaves it running', () => {
+    const e = new EphemeralStore();
+    e.handle(step(tool('a')));
+    e.handle(done('a', null, 'Found it.'));
+    expect(e.runSteps.get('r1')![0]).toMatchObject({
+      ok: null,
+      summary: 'Found it.',
+    });
+    e.handle(done('a', true));
+    expect(e.runSteps.get('r1')![0]).toMatchObject({
+      ok: true,
+      summary: 'Found it.',
+    });
+  });
+
+  it('a result with no call is no step', () => {
+    const e = new EphemeralStore();
+    e.handle(done('gone', true));
     e.handle(log('stalled'));
     expect(e.runSteps.get('r1') ?? []).toEqual([]);
-    expect(e.runLog.get('r1')).toEqual(['tool result ok=true', 'stalled']);
+    expect(e.runLog.get('r1')).toEqual(['stalled']);
   });
 
-  it('thinking stays out of the tool log, and still counts as output', () => {
+  it('log lines stay the tool log and make no steps', () => {
     const e = new EphemeralStore();
     e.handle({ type: 'run_stalled', run: 'r1', agent: 'claude' });
     e.handle(log('tool: Bash'));
-    e.handle(log('thinking: hmm'));
-    expect(e.runLog.get('r1')).toEqual(['tool: Bash']);
+    e.handle(log('tool result ok=true'));
+    expect(e.runSteps.get('r1') ?? []).toEqual([]);
+    expect(e.runLog.get('r1')).toEqual(['tool: Bash', 'tool result ok=true']);
+    expect(e.stalled.has('r1')).toBe(false);
+  });
+
+  it('a step still counts as output', () => {
+    const e = new EphemeralStore();
+    e.handle({ type: 'run_stalled', run: 'r1', agent: 'claude' });
+    e.handle(step({ kind: 'thinking', text: 'hmm' }));
     expect(e.stalled.has('r1')).toBe(false);
   });
 
@@ -407,18 +460,39 @@ describe('EphemeralStore run steps', () => {
     const e = new EphemeralStore();
     e.handle(delta('A'));
     e.handle(log('tool: Bash · a'));
+    e.handle(step(tool('a')));
     e.handle(delta('B'));
     e.flushDeltas();
     expect(e.agentText.get('r1')).toBe('AB');
     expect(e.runLog.get('r1')).toEqual(['tool: Bash · a']);
   });
 
-  it('stays bounded, the newest kept', () => {
+  it('text goes on past what a subagent did meanwhile', () => {
     const e = new EphemeralStore();
-    for (let i = 0; i < 510; i += 1) e.handle(log(`tool: Bash · ${i}`));
+    e.handle(delta('Half'));
+    e.handle(step(tool('c', 'ag')));
+    e.handle(delta(' done.'));
+    e.flushDeltas();
+    expect(e.runSteps.get('r1')).toEqual([
+      { kind: 'text', text: 'Half done.' },
+      tool('c', 'ag'),
+    ]);
+  });
+
+  it('stays bounded, the newest kept; a subagent gives way to itself', () => {
+    const e = new EphemeralStore();
+    for (let i = 0; i < 510; i += 1) e.handle(step(tool(`${i}`)));
     const steps = e.runSteps.get('r1')!;
     expect(steps).toHaveLength(500);
     expect(steps.at(-1)).toMatchObject({ target: '509' });
+
+    const f = new EphemeralStore();
+    f.handle(step(tool('mine')));
+    for (let i = 0; i < 120; i += 1) f.handle(step(tool(`c${i}`, 'ag')));
+    const kept = f.runSteps.get('r1')!;
+    expect(kept).toHaveLength(101);
+    expect(kept[0]).toMatchObject({ id: 'mine' });
+    expect(kept[1]).toMatchObject({ id: 'c20' });
   });
 
   it('a reader of one run reacts to that run only', () => {
@@ -440,7 +514,12 @@ describe('EphemeralStore run steps', () => {
   it('clearRun drops them', () => {
     const e = new EphemeralStore();
     e.handle(delta('a'));
+    e.handle(textBreak);
     e.clearRun('r1');
     expect(e.runSteps.has('r1')).toBe(false);
+    e.handle(delta('b'));
+    e.handle(delta('c'));
+    e.flushDeltas();
+    expect(e.runSteps.get('r1')).toEqual([{ kind: 'text', text: 'bc' }]);
   });
 });

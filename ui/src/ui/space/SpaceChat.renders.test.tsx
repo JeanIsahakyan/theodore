@@ -122,6 +122,11 @@ describe('a message row', () => {
     expect(renders.size).toBe(0);
   });
 
+  it('does not re-render when a changed file chip opens the Changes pane', () => {
+    act(() => store.ephemeral.openSpaceChanges('s1', 'src/a.rs'));
+    expect(renders.size).toBe(0);
+  });
+
   it('re-renders for a change to itself, and only itself', () => {
     act(() => {
       store.sync.pool.put(

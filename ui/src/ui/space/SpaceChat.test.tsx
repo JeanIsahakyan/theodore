@@ -3,14 +3,21 @@
  *  turn as an agent bubble, Stop in the composer. */
 import { act, createRef } from 'react';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { mount, settle, type Mounted } from '../../test/dom';
+import { mount, settle, typeInto, type Mounted } from '../../test/dom';
 import type { ChatMessage, Space } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { FakeTransport } from '../../test/fakeTransport';
 import { SpaceChat } from './SpacePage';
-import { installChatLayout, uninstallChatLayout } from '../../test/chatLayout';
+import {
+  chatLayout,
+  frames,
+  installChatLayout,
+  layoutRows,
+  uninstallChatLayout,
+  userScroll,
+} from '../../test/chatLayout';
 import { spaceChatKey } from './spaces';
 
 Element.prototype.scrollIntoView ??= function () {};
@@ -66,6 +73,7 @@ async function render(s: Space) {
   transport.onCall('detect_agents', () => []);
   transport.onCall('space_skills', () => []);
   transport.onCall('space_stop', () => null);
+  transport.onCall('space_send', () => 'stored');
   transport.onCall('approve_space_plan', () => 'm2');
   transport.onCall('answer_space_question', () => null);
   setTransport(transport);
@@ -93,6 +101,62 @@ async function render(s: Space) {
   await settle();
   return store;
 }
+
+describe('sending', () => {
+  it('jumps to the bottom, though you had scrolled up', async () => {
+    chatLayout.rowHeight = 300;
+    try {
+      const store = await render(space());
+      const many = 30;
+      act(() => {
+        for (let i = 0; i < many; i += 1) {
+          store.sync.pool.put(
+            'chat_message',
+            `old${i}`,
+            message(`old${i}`, { text: `old ${i}`, at: 100 + i }),
+          );
+        }
+      });
+      layoutRows();
+      await frames();
+      const log = m!.host.querySelector<HTMLElement>('.chat-log')!;
+      const end = () => log.scrollHeight - log.clientHeight;
+      userScroll(log, 100);
+      expect(log.scrollTop).toBe(100);
+
+      const box = m!.host.querySelector('.chat-input textarea');
+      await typeInto(box, 'go on');
+      const send = m!.host.querySelector<HTMLButtonElement>(
+        '.chat-input button[aria-label="Send"]',
+      )!;
+      await act(async () => send.click());
+      layoutRows();
+      await frames();
+      expect(log.scrollTop).toBe(end());
+      expect(m!.host.querySelector('.chat-jump')).toBeNull();
+    } finally {
+      chatLayout.rowHeight = 100;
+    }
+  });
+});
+
+describe('the changed files of a reply', () => {
+  it('a chip asks the Changes pane to open on its file', async () => {
+    const store = await render(space());
+    act(() =>
+      store.sync.pool.merge('chat_message', 'a1', {
+        duration_ms: 1000,
+        changed_files: [{ path: 'src/a.rs', additions: 1, deletions: 0 }],
+      }),
+    );
+    await settle();
+    const chip = m!.host.querySelector<HTMLButtonElement>('.turn-file')!;
+    await act(async () => chip.click());
+    expect(store.ephemeral.spaceChangesFocus.get('s1')).toEqual({
+      path: 'src/a.rs',
+    });
+  });
+});
 
 describe('the space chat', () => {
   it('renders turns with the shared message component, as two bubble kinds', async () => {
@@ -137,7 +201,11 @@ describe('the space chat', () => {
         store.ephemeral.flushDeltas();
       });
     event({ type: 'agent_delta', run, agent: 'claude', text: 'Looking.' });
-    event({ type: 'run_log', run, agent: 'claude', line: 'tool: Read · a.rs' });
+    event({
+      type: 'run_step',
+      run,
+      step: { kind: 'tool', name: 'Read', target: 'a.rs', ok: null, id: 't1' },
+    });
     event({ type: 'agent_delta', run, agent: 'claude', text: 'All done.' });
     const live = m!.host.querySelector('.chat-live')!;
     expect(live.querySelector('.turn-timeline')?.textContent).toContain(
@@ -169,6 +237,7 @@ describe('the space chat', () => {
           activity: [
             { kind: 'text', text: 'Looking.' },
             { kind: 'tool', name: 'Read', target: 'a.rs', ok: true },
+            { kind: 'tool', name: 'Bash', target: 'x', ok: true },
           ],
           duration_ms: 5000,
         }),
@@ -184,9 +253,9 @@ describe('the space chat', () => {
     );
     expect(m!.host.querySelector('.chat-live')).toBeNull();
     const reply = m!.host.querySelector('.chat-message[data-msg="a2"]')!;
-    expect(
-      reply.querySelector('.turn-activity-summary')?.textContent,
-    ).toContain('Worked 5s · 2 steps');
+    expect(reply.querySelector('.turn-fold-line')?.textContent).toBe(
+      '2 tool calls, 1 message',
+    );
     expect(m!.host.querySelectorAll('.turn-tool')).toHaveLength(0);
     expect(reply.querySelector('.space-check')).not.toBeNull();
     expect(

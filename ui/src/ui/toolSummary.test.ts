@@ -5,7 +5,6 @@ import {
   readableTool,
   runningLine,
   summarizeTools,
-  thinkingOf,
   times,
   toolResultOk,
   toolRow,
@@ -151,9 +150,11 @@ describe('toolRow', () => {
 
   it('reads an unknown MCP tool by its name', () => {
     expect(toolRow('mcp__github__create_issue')).toEqual({
-      kind: 'other',
+      kind: 'mcp',
       label: 'Create issue',
     });
+    expect(toolRow('github__create_issue').kind).toBe('mcp');
+    expect(toolRow('Agent').kind).toBe('agent');
     expect(toolRow('testTool').label).toBe('TestTool');
     // Not a property of the table's prototype.
     expect(toolRow('constructor').label).toBe('Constructor');
@@ -170,11 +171,9 @@ describe('log lines', () => {
     expect(parseToolLine('stalled')).toBeNull();
   });
 
-  it('tells results and thinking from other lines', () => {
+  it('tells results from other lines', () => {
     expect(toolResultOk('tool result ok=false')).toBe(false);
     expect(toolResultOk('tool: Bash')).toBeNull();
-    expect(thinkingOf('thinking: where is it?')).toBe('where is it?');
-    expect(thinkingOf('tool: Bash')).toBeNull();
   });
 });
 

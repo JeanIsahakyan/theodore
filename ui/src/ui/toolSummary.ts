@@ -28,7 +28,6 @@ export type ToolSummary = {
 };
 
 const TOOL = 'tool: ';
-const THINKING = 'thinking: ';
 const RESULT = /^tool result ok=(true|false)$/;
 const TARGET_SEP = ' · ';
 export const TARGET_MAX = 60;
@@ -67,12 +66,8 @@ export function toolResultOk(line: string): boolean | null {
   return result ? result[1] === 'true' : null;
 }
 
-/** A `thinking: …` line's text; `null` for any other line. These stay out of
- *  a run's tool log (`EphemeralStore`), only its timeline shows them. */
-export const thinkingOf = (line: string): string | null =>
-  line.startsWith(THINKING) ? line.slice(THINKING.length) : null;
-
-export type ToolKind = 'read' | 'edit' | 'run' | 'search' | 'other';
+export type ToolKind =
+  'read' | 'edit' | 'run' | 'search' | 'agent' | 'mcp' | 'other';
 
 /** The agents' own tools, as a timeline row reads them. */
 const TOOL_ROWS = new Map<string, { kind: ToolKind; label: string }>(
@@ -103,8 +98,8 @@ const TOOL_ROWS = new Map<string, { kind: ToolKind; label: string }>(
       ['WebSearch', 'search', 'Search the web'],
       ['web_search', 'search', 'Search the web'],
       ['google_web_search', 'search', 'Search the web'],
-      ['Task', 'other', 'Run a subagent'],
-      ['Agent', 'other', 'Run a subagent'],
+      ['Task', 'agent', 'Run a subagent'],
+      ['Agent', 'agent', 'Run a subagent'],
       ['TodoWrite', 'other', 'Update the to-do list'],
     ] as const
   ).map(([name, kind, label]) => [name, { kind, label }]),
@@ -118,6 +113,12 @@ const PHRASE_KINDS: readonly [RegExp, ToolKind][] = [
   [/^(find|go to) /, 'search'],
 ];
 
+/** The MCP server of a tool named by one: `mcp__server__do_thing` (Codex:
+ *  `server__do_thing`) → `server`. */
+export function mcpServer(name: string): string | null {
+  return /^(?:mcp__)?(\S+?)__\S+$/.exec(name)?.[1] ?? null;
+}
+
 /** How a tool call reads as a row: `Bash` → Run, `ship the change` → Ship the
  *  change, `mcp__server__do_thing` → Do thing. */
 export function toolRow(name: string): { kind: ToolKind; label: string } {
@@ -125,7 +126,9 @@ export function toolRow(name: string): { kind: ToolKind; label: string } {
   if (known) return known;
   const read = readableTool(name);
   return {
-    kind: PHRASE_KINDS.find(([phrase]) => phrase.test(read))?.[1] ?? 'other',
+    kind: mcpServer(name)
+      ? 'mcp'
+      : (PHRASE_KINDS.find(([phrase]) => phrase.test(read))?.[1] ?? 'other'),
     label: read.charAt(0).toUpperCase() + read.slice(1),
   };
 }

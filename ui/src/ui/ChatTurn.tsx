@@ -26,7 +26,13 @@ import { MessageAttachments } from './attachments';
 import { AgentTag, Btn } from './bits';
 import { LiveText } from './RunLive';
 import { ToolCalls } from './ToolCalls';
-import { LiveTimeline, TurnActivity, TurnFooter } from './TurnTimeline';
+import {
+  LiveTimeline,
+  LiveTimer,
+  TurnActivity,
+  TurnFiles,
+  TurnFooter,
+} from './TurnTimeline';
 import { useChatScroll } from './useChatScroll';
 
 /** The scrolling log (`useChatScroll`). A wide page keeps a reading width; a
@@ -260,9 +266,9 @@ export function UserBubble({
 }
 
 /** One stored message. Yours: a `UserBubble`. The agent's: its tag, a space
- *  turn's activity folded to a line, the markdown reply, its chips and files,
- *  `after` (a turn's check), then copy / vote and how long it took. A run that
- *  failed shows why instead, with Retry when `onRetryFailed` is given. */
+ *  turn's activity, the markdown reply, its chips and files, `after` (a turn's
+ *  check), then how long it took, copy / vote and the files it changed. A run
+ *  that failed shows why instead, with Retry when `onRetryFailed` is given. */
 export function ChatMessage({
   m,
   refs,
@@ -270,6 +276,7 @@ export function ChatMessage({
   after,
   onAskAgain,
   onRetryFailed,
+  onOpenFile,
   className = '',
 }: {
   m: Message;
@@ -282,6 +289,8 @@ export function ChatMessage({
   /** "Ask again" under the agent's reply. */
   onAskAgain?: () => void;
   onRetryFailed?: () => void;
+  /** A changed file's chip: the Changes pane on it; `null`: just the pane. */
+  onOpenFile?: (path: string | null) => void;
   className?: string;
 }) {
   if (m.author.kind === 'me') {
@@ -308,10 +317,11 @@ export function ChatMessage({
           <TurnActivity
             reply={m.id}
             steps={m.activity}
-            durationMs={m.duration_ms}
+            pinLastText={!!m.text_in_steps || !m.text.trim()}
+            keepText={!!m.failed}
           />
         )}
-        {m.failed && m.text && (
+        {m.failed && m.text && !m.text_in_steps && (
           <div className="text-sm leading-relaxed">
             <Md text={m.text} />
           </div>
@@ -334,19 +344,29 @@ export function ChatMessage({
           </Alert>
         ) : (
           <>
-            <div className="text-sm leading-relaxed">
-              <Md text={m.text} />
-            </div>
+            {!m.text_in_steps && (
+              <div className="text-sm leading-relaxed">
+                <Md text={m.text} />
+              </div>
+            )}
             {refs && <div className="flex flex-wrap gap-1.5">{refs}</div>}
             <MessageAttachments attachments={m.attachments} />
           </>
         )}
         {after}
         {(!m.failed || m.duration_ms != null) && (
-          <div className="flex items-center gap-2">
-            {!m.failed && <MessageActions text={m.text} onRetry={onAskAgain} />}
+          <div className="flex flex-wrap items-center gap-2">
             {m.duration_ms != null && (
-              <TurnFooter at={m.at} durationMs={m.duration_ms} />
+              <TurnFooter
+                at={m.at}
+                durationMs={m.duration_ms}
+                model={m.model}
+                agent={m.author.agent}
+              />
+            )}
+            {!m.failed && <MessageActions text={m.text} onRetry={onAskAgain} />}
+            {!!m.changed_files?.length && (
+              <TurnFiles files={m.changed_files} onOpen={onOpenFile} />
             )}
           </div>
         )}
@@ -357,13 +377,15 @@ export function ChatMessage({
 
 /** The reply still being written: the agent's tag, then its text as it
  *  streams (dots until there is some) and its steps, or with `timeline` both
- *  as one list in the order they came. Stalled: a note under them, with Retry
- *  when `onRetry` is given. No Stop here — the composer has it. */
+ *  as one list in the order they came, the time so far under them. Stalled: a
+ *  note under them, with Retry when `onRetry` is given. No Stop here — the
+ *  composer has it. */
 export const ChatLive = observer(function ChatLive({
   run,
   agent,
   badges,
   timeline = false,
+  since,
   onRetry,
   className = '',
   data,
@@ -374,6 +396,8 @@ export const ChatLive = observer(function ChatLive({
   badges?: ReactNode;
   /** A space turn: text and steps chronological. */
   timeline?: boolean;
+  /** When a space turn started, for its timer. */
+  since?: number;
   onRetry?: () => void;
   className?: string;
   /** `data-*` attributes for the bubble. */
@@ -400,6 +424,9 @@ export const ChatLive = observer(function ChatLive({
         )}
         {run && tools.length > 0 && (
           <ToolCalls tools={tools} running turn={run} />
+        )}
+        {timeline && (run != null || since != null) && (
+          <LiveTimer run={run} since={since} />
         )}
         {stalled && <StalledHint />}
         {stalled && onRetry && (

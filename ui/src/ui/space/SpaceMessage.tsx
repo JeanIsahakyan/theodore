@@ -3,7 +3,7 @@
  * that message, or what the space says about it, changes. A progress tick, a
  * keystroke in the composer or a new turn elsewhere leaves it alone.
  */
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { ArrowUturnCcwLeft } from '@gravity-ui/icons';
 import { Button, Tooltip } from '@heroui/react';
 import { compareStructural, computed } from 'mobx';
@@ -54,9 +54,14 @@ export const SpaceMessage = memo(
     const v = view.get();
     const agent = m.author.kind === 'agent';
     const undoneReply = agent && v.undone;
+    const onOpenFile = useCallback(
+      (path: string | null) => store.ephemeral.openSpaceChanges(spaceId, path),
+      [store, spaceId],
+    );
     return (
       <ChatMessage
         m={m}
+        onOpenFile={onOpenFile}
         className={v.undone ? 'space-undone opacity-50' : ''}
         badges={
           undoneReply || v.undoHere || v.back || v.plan ? (
