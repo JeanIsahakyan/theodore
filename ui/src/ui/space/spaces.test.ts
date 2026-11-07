@@ -274,6 +274,13 @@ describe('shipping', () => {
     expect(
       defaultTitle({ goal: 'Do it', name: 'space', branch: 'alice/x' }),
     ).toBe('Do it');
+    // a real name wins over the branch
+    expect(defaultTitle({ goal: '', name: 'tidy', branch: 'alice/x' })).toBe(
+      'tidy',
+    );
+    expect(defaultTitle({ goal: '', name: 'space-2', branch: 'alice/x' })).toBe(
+      'alice/x',
+    );
   });
 });
 

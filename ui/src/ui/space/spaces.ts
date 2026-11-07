@@ -209,8 +209,9 @@ export function spaceTitle(
   return `${(word > 30 ? cut.slice(0, word) : cut).replace(/[,;:]$/, '')}…`;
 }
 
-/** The goal's first line; with no goal (a space started from a branch with
- *  no note) the branch's name, else the slug. */
+/** The goal's first line; with no goal the slug — or, when that is only the
+ *  placeholder `space` / `space-2` (a space started from a branch with no
+ *  note, before its start named it), the branch's name. */
 export function defaultTitle(
   s: Pick<Space, 'goal' | 'name'> & { branch?: string },
 ): string {
@@ -218,7 +219,9 @@ export function defaultTitle(
     .split('\n')
     .map((l) => l.trim())
     .find((l) => l.length > 0);
-  return line ?? (s.branch?.trim() || s.name);
+  if (line) return line;
+  const placeholder = /^space(-\d+)?$/.test(s.name);
+  return (placeholder && s.branch?.trim()) || s.name;
 }
 
 /** "3 files +42 −7" for the changes pane header. */
