@@ -63,4 +63,27 @@ describe('showToast', () => {
     expect(undo).toHaveBeenCalledOnce();
     expect(button('Not now')).toBeUndefined();
   });
+
+  it('a newer toast of a group closes the older one', async () => {
+    m = await mount(<Toast.Provider />);
+    const show = (id: number, text: string) =>
+      act(() => {
+        showToast({
+          id,
+          level: 'info',
+          text,
+          group: 'g',
+          action: { label: 'Yes', onAction: vi.fn() },
+          secondary: { label: 'Not now', onAction: vi.fn() },
+        });
+      });
+    show(3, 'First language: download?');
+    await settle();
+    show(4, 'Both languages: download?');
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(document.body.textContent).not.toContain('First language');
+    expect(document.body.textContent).toContain('Both languages');
+  });
 });

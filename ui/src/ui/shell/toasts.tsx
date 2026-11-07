@@ -5,7 +5,20 @@ import type { Toast } from '../../stores/EphemeralStore';
 /** A toast with two choices waits longer: it asks something. */
 export const CHOICE_TIMEOUT_MS = 15000;
 
+/** The open toast of each `group`. */
+const openInGroup = new Map<string, string>();
+
 export function showToast(t: Toast): string {
+  const key = showOne(t);
+  if (t.group) {
+    const older = openInGroup.get(t.group);
+    if (older && older !== key) toast.close(older);
+    openInGroup.set(t.group, key);
+  }
+  return key;
+}
+
+function showOne(t: Toast): string {
   if (!t.secondary) {
     return toast(t.text, {
       timeout: t.action ? 5000 : 3200,

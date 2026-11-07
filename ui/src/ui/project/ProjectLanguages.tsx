@@ -248,12 +248,21 @@ function LanguageRow({
     (lang.server.install.state === 'system' ||
       lang.server.install.state === 'installed');
   return (
-    <div className="code-language set-row flex items-center gap-4 border-b border-separator px-4 py-3 last:border-b-0">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+    // The buttons wrap under the text when the row is too narrow for both:
+    // three of them (Decline, Remove, Install) are wider than any fixed
+    // column, and the text column has a floor of its own.
+    <div className="code-language set-row flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-separator px-4 py-3 last:border-b-0">
+      <div className="flex min-w-[16rem] flex-1 flex-col gap-1">
         <span className="text-sm font-medium">
           {languageName(lang.language)}{' '}
           <span className="font-normal text-muted">
             · {lang.files} {lang.files === 1 ? 'file' : 'files'}
+            {!textOnly && (
+              <span className="tabular-nums" title="Files indexed">
+                {' '}
+                · {lang.index_percent}% indexed
+              </span>
+            )}
           </span>
         </span>
         <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
@@ -261,7 +270,9 @@ function LanguageRow({
           <StateChip view={grammar} />
           {lang.server ? (
             <>
-              <span className="ml-1.5 font-mono">{lang.server.name}</span>
+              <span className="ml-1.5 min-w-0 break-all font-mono">
+                {lang.server.name}
+              </span>
               <StateChip view={server!} />
               {serverReady && running && <StateChip view={running} />}
             </>
@@ -280,7 +291,9 @@ function LanguageRow({
         )}
         {(server?.tone === 'default' || server?.tone === 'warning') &&
           server.detail && (
-            <span className="text-xs text-muted">{server.detail}</span>
+            <span className="text-xs break-words text-muted">
+              {server.detail}
+            </span>
           )}
         {errors.map((e) => (
           <span key={e} className="text-xs break-words text-danger">
@@ -288,13 +301,7 @@ function LanguageRow({
           </span>
         ))}
       </div>
-      <span
-        className="w-20 shrink-0 text-right text-xs tabular-nums text-muted"
-        title="Files indexed"
-      >
-        {!textOnly && `${lang.index_percent}% indexed`}
-      </span>
-      <div className="flex w-40 shrink-0 items-center justify-end gap-1">
+      <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
         {busy ? (
           <span className="flex items-center gap-1.5 text-xs text-muted">
             <Spinner /> {downloading && !download && 'Downloading…'}

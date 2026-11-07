@@ -493,7 +493,7 @@ describe('a space in review', () => {
     });
   });
 
-  it('counts an adopted PR\'s new turns as not pushed', () => {
+  it("counts an adopted PR's new turns as not pushed", () => {
     const adopted = space({
       id: 'b',
       pr: 'github:o/r#2',

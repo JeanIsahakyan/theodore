@@ -205,6 +205,37 @@ describe('EphemeralStore code intelligence suggestion', () => {
     ]);
   });
 
+  it('several languages become one prompt that answers for all of them', async () => {
+    const t = new FakeTransport();
+    setTransport(t);
+    t.onCall('code_intel_install', () => null);
+    t.onCall('code_intel_decline', () => null);
+    const e = new EphemeralStore();
+    e.handle(suggest);
+    e.handle({
+      ...suggest,
+      language: 'tsx',
+      server: 'typescript-language-server',
+    });
+    e.handle({ ...suggest, language: 'cpp' }); // asked again: not twice
+    const last = e.toasts[e.toasts.length - 1]!;
+    expect(last.group).toBe('code_intel_suggest');
+    expect(last.text).toBe(
+      'TSX and C++: download language servers for exact references?',
+    );
+    last.action!.onAction();
+    await Promise.resolve();
+    expect(t.calls).toEqual([
+      { cmd: 'code_intel_install', args: { language: 'tsx' } },
+      { cmd: 'code_intel_install', args: { language: 'cpp' } },
+    ]);
+    // Answered: the next language starts a fresh prompt of its own.
+    e.handle({ ...suggest, language: 'rust', server: 'rust-analyzer' });
+    expect(e.toasts[e.toasts.length - 1]!.text).toBe(
+      'Rust: download rust-analyzer for exact references?',
+    );
+  });
+
   it('a failed install does not throw out of the toast', async () => {
     const t = new FakeTransport();
     setTransport(t);

@@ -23,6 +23,7 @@ import {
   needsPoll,
   removeText,
   settled,
+  suggestManyText,
   suggestText,
   withProgress,
   type InstallProgressMap,
@@ -333,6 +334,14 @@ describe('texts', () => {
   it('words the install suggestion', () => {
     expect(suggestText('cpp', 'clangd')).toBe(
       'C++: download clangd for exact references?',
+    );
+  });
+  it('words one suggestion for several languages', () => {
+    expect(suggestManyText(['cpp', 'tsx'])).toBe(
+      'C++ and TSX: download language servers for exact references?',
+    );
+    expect(suggestManyText(['cpp', 'tsx', 'rust'])).toBe(
+      'C++, TSX and Rust: download language servers for exact references?',
     );
   });
   it('notes the file that sets a switch', () => {

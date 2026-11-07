@@ -34,6 +34,7 @@ import { parseToolLine, thinkingOf, toolResultOk } from '../ui/toolSummary';
 import { configPrToast } from '../ui/project/configFile';
 import {
   suggestText,
+  suggestManyText,
   withProgress,
   type InstallProgressMap,
 } from '../ui/project/languages';
@@ -61,7 +62,12 @@ export interface Toast {
   /** A second choice next to `action` ("Not now"); either one closes the
    *  toast, which then stays up longer. */
   secondary?: ToastAction;
+  /** Only one toast of a group stays open: a new one closes the older. */
+  group?: string;
 }
+
+/** The group of install suggestions (`code_intel_suggest`). */
+export const SUGGEST_GROUP = 'code_intel_suggest';
 
 /** A question asked about one diff line, shown on the line itself while it
  *  runs and until its answer is opened or dismissed. */
@@ -286,6 +292,8 @@ export class EphemeralStore {
    *  its last event: project settings → Languages draws the bars from it
    *  and reads the status again once an item settles. */
   installProgress: InstallProgressMap = new Map();
+  /** Install suggestions not answered yet (not observed). */
+  private suggested: { language: string; server: string }[] = [];
 
   private nextToastId = 1;
   private nextFocusSeq = 1;
@@ -664,27 +672,37 @@ export class EphemeralStore {
           this.installProgress = withProgress(this.installProgress, e);
           return;
         case 'code_intel_suggest': {
-          // The core asks once per language per session (§5.1).
-          const { language } = e;
+          // The core asks once per language per session (§5.1), so a project
+          // with several languages asks several times. One toast stays up
+          // and asks for all of them, instead of a stack over the page.
+          const asked = this.suggested.filter((a) => a.language !== e.language);
+          asked.push({ language: e.language, server: e.server });
+          this.suggested = asked;
+          const each = (fn: (language: string) => Promise<unknown>) => () => {
+            this.suggested = [];
+            for (const { language } of asked) {
+              void fn(language).catch(() => {
+                // toasted by api.ts
+              });
+            }
+          };
           this.toasts = [
             ...this.toasts,
             {
               id: this.nextToastId++,
               level: 'info',
-              text: suggestText(language, e.server),
+              group: SUGGEST_GROUP,
+              text:
+                asked.length === 1
+                  ? suggestText(e.language, e.server)
+                  : suggestManyText(asked.map((a) => a.language)),
               action: {
                 label: 'Download',
-                onAction: () =>
-                  void api.codeIntelInstall(language).catch(() => {
-                    // toasted by api.ts
-                  }),
+                onAction: each((l) => api.codeIntelInstall(l)),
               },
               secondary: {
                 label: 'Not now',
-                onAction: () =>
-                  void api.codeIntelDecline(language).catch(() => {
-                    // toasted by api.ts
-                  }),
+                onAction: each((l) => api.codeIntelDecline(l)),
               },
             },
           ];

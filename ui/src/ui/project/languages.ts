@@ -355,6 +355,14 @@ export function suggestText(language: string, server: string): string {
   return `${languageName(language)}: download ${server} for exact references?`;
 }
 
+/** One suggestion for several languages at once. */
+export function suggestManyText(languages: string[]): string {
+  const names = languages.map(languageName);
+  const last = names.pop();
+  const list = names.length > 0 ? `${names.join(', ')} and ${last}` : last;
+  return `${list}: download language servers for exact references?`;
+}
+
 // ── the model ─────────────────────────────────────────────────────────────
 
 export interface Timers {
