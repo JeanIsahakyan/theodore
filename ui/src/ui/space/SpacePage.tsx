@@ -72,6 +72,7 @@ import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
 import { parseIssueRef, startFooter, type StartKind } from './newSpaceStart';
+import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection } from './ConfigSection';
 import { SpaceProgress } from './SpaceProgress';
@@ -126,7 +127,6 @@ const WHOLE_DIFF: ReviewMode = { mode: 'groups', group: null, file: null };
 type Store = ReturnType<typeof useRootStore>;
 
 const LS_SPACE_CHANGES = `${STORAGE_NS}theodore-space-changes`;
-const LS_SPACE_TERMINAL = `${STORAGE_NS}theodore-space-terminal`;
 type Ui = ReturnType<typeof useUi>;
 
 /** What the page's keys reach inside the chat and the ship controls. */
@@ -190,31 +190,32 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     localStorage.setItem(LS_SPACE_CHANGES, '1');
     setShowChanges(true);
   }, [changesFocus]);
-  // Same idea for the terminal drawer, default closed: its shells live in
-  // the core regardless, so reopening it (or navigating back to the page)
-  // just re-lists and re-attaches them.
-  const [terminalOpen, setTerminalOpen] = useState(
-    () => localStorage.getItem(LS_SPACE_TERMINAL) === '1',
+  // Same idea for the terminal drawer, default closed and remembered per
+  // space (`terminalOpen.ts`): its shells live in the core regardless, so
+  // reopening it (or navigating back to the page) just re-lists and
+  // re-attaches them. The page is keyed by space, so this reads once.
+  const [terminalOpen, setTerminalOpenState] = useState(() =>
+    terminalOpenFor(id),
   );
-  const toggleTerminal = () =>
-    setTerminalOpen((v) => {
-      localStorage.setItem(LS_SPACE_TERMINAL, v ? '0' : '1');
-      return !v;
-    });
+  const setTerminalOpen = (open: boolean) => {
+    setTerminalOpenFor(id, open);
+    setTerminalOpenState(open);
+  };
+  const toggleTerminal = () => setTerminalOpen(!terminalOpen);
   // ⌃` toggles it from anywhere on the page, composer included — the same
   // reach as ⌘.'s stop, below.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.key !== '`') return;
       e.preventDefault();
-      setTerminalOpen((v) => {
-        localStorage.setItem(LS_SPACE_TERMINAL, v ? '0' : '1');
+      setTerminalOpenState((v) => {
+        setTerminalOpenFor(id, !v);
         return !v;
       });
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  }, [id]);
   useSpaceLogsSeed(id);
   const run = space ? runControl(config, space) : null;
 
