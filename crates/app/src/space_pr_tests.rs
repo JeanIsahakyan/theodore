@@ -170,6 +170,18 @@ fn base_moved(f: &Fixtures, tip: &str) {
 
 /// The PR-description fill (a one-shot call), not a background naming or
 /// handoff call that could take its script first.
+/// `s` as if started from an existing PR, its tip at `fork`.
+fn patch_adopted(f: &Fixtures, id: &str, fork: &str, pr: &str) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: id.to_string(),
+            action: SyncActionCode::C,
+            data: Some(json!({ "fork_sha": fork, "pr": pr })),
+        }])
+        .unwrap();
+}
+
 fn is_fill(r: &theodore_ports::AgentRequest) -> bool {
     r.system
         .as_deref()
@@ -394,6 +406,40 @@ async fn merge_is_refused_with_turns_not_pushed_or_without_a_pr() {
         .unwrap_err();
     assert!(err.to_string().contains("aren't pushed"), "{err}");
     assert!(f.host.merge_calls().is_empty());
+}
+
+#[tokio::test]
+async fn an_adopted_prs_new_turns_must_be_pushed_before_it_merges() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    patch_adopted(&f, &s.id, "fork000", "github:acme/widget#1");
+    let err = core
+        .merge_space(MergeSpaceRequest {
+            space: s.id.clone(),
+            method: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("aren't pushed"), "{err}");
+    assert!(f.host.merge_calls().is_empty());
+}
+
+#[tokio::test]
+async fn continue_keeps_an_adopted_prs_unpushed_turns_and_leaves_its_branch() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    patch_adopted(&f, &s.id, "fork000", "github:acme/widget#1");
+    merge_on_host(&f, &core, 1).await;
+    base_moved(&f, "tip999");
+
+    let s = core.continue_space(&s.id).await.unwrap();
+    assert_eq!(s.fork_sha, None, "the new branch isn't the adopted one");
+    assert_ne!(
+        s.head_sha.0, "tip999",
+        "the turn nobody pushed is replayed, not dropped"
+    );
 }
 
 // ── Continue after merge ──────────────────────────────────────────────────

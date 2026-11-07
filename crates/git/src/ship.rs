@@ -27,6 +27,32 @@ fn proc<'a>(cwd: &'a Path, askpass: &'a Path, args: &'a [&'a str]) -> GitProc<'a
     }
 }
 
+/// `ancestor` is in `of`'s history.
+async fn is_ancestor(repo: &Path, askpass: &Path, ancestor: &Sha, of: &Sha) -> GitResult<bool> {
+    let out = proc(
+        repo,
+        askpass,
+        &[
+            "merge-base",
+            "--is-ancestor",
+            END_OF_OPTIONS,
+            ancestor.as_str(),
+            of.as_str(),
+        ],
+    )
+    .run_raw()
+    .await?;
+    match out.status {
+        0 => Ok(true),
+        1 => Ok(false),
+        code => Err(GitError::Command {
+            args: "merge-base --is-ancestor".into(),
+            code,
+            stderr: stderr_of(&out),
+        }),
+    }
+}
+
 fn stderr_of(out: &RawOutput) -> String {
     String::from_utf8_lossy(&out.stderr).trim().to_string()
 }
@@ -195,33 +221,17 @@ impl GitCli {
             return Err(GitError::Parse("no tree for the shipped commit".into()));
         }
         // The base merged in since (Update from base) as a second parent,
-        // unless `parent`'s history already has it.
+        // unless `parent`'s history already has it. A head that never merged
+        // it (a branch adopted behind its base) must not claim it: the tree
+        // has none of the base's changes, so the host would show them as
+        // removed.
         let merge_parent = match &c.merge_parent {
-            Some(base) if base != &c.parent => {
-                let has = proc(
-                    repo,
-                    &askpass,
-                    &[
-                        "merge-base",
-                        "--is-ancestor",
-                        END_OF_OPTIONS,
-                        base.as_str(),
-                        c.parent.as_str(),
-                    ],
-                )
-                .run_raw()
-                .await?;
-                match has.status {
-                    0 => None,
-                    1 => Some(base.as_str()),
-                    code => {
-                        return Err(GitError::Command {
-                            args: "merge-base --is-ancestor".into(),
-                            code,
-                            stderr: stderr_of(&has),
-                        });
-                    }
-                }
+            Some(base)
+                if base != &c.parent
+                    && is_ancestor(repo, &askpass, base, &c.head).await?
+                    && !is_ancestor(repo, &askpass, base, &c.parent).await? =>
+            {
+                Some(base.as_str())
             }
             _ => None,
         };

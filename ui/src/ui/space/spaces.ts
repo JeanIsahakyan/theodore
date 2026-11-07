@@ -170,8 +170,12 @@ export const STAGE_LABEL: Record<SpaceStage, string> = {
 };
 
 /** Turns since the last ship that a Push would send. */
-export function unshipped(s: Pick<Space, 'shipped' | 'head_sha'>): boolean {
-  return s.shipped != null && s.shipped.head !== s.head_sha;
+export function unshipped(
+  s: Pick<Space, 'shipped' | 'head_sha'> & Partial<Pick<Space, 'fork_sha'>>,
+): boolean {
+  // A space adopted from a branch or PR starts as pushed: at that tip.
+  const pushed = s.shipped?.head ?? s.fork_sha;
+  return pushed != null && pushed !== s.head_sha;
 }
 
 /** What a space is called on screen: the chat agent's proposed title
@@ -533,11 +537,12 @@ export type SpaceMerge =
 
 export function spaceMerge(
   info: MergeInfo | null,
-  s: Pick<Space, 'shipped' | 'head_sha' | 'status'>,
+  s: Pick<Space, 'shipped' | 'head_sha' | 'status'> &
+    Partial<Pick<Space, 'fork_sha'>>,
 ): SpaceMerge {
   if (s.status === 'running')
     return { kind: 'none', reason: 'The agent is still working' };
-  if (s.shipped?.how === 'pr' && unshipped(s))
+  if ((s.shipped == null || s.shipped.how === 'pr') && unshipped(s))
     return { kind: 'none', reason: 'Push the new turns first' };
   if (!info) return { kind: 'none', reason: 'Checking whether it can merge…' };
   if (info.in_queue) return { kind: 'none', reason: 'In the merge queue' };

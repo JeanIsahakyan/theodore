@@ -453,6 +453,24 @@ describe('a space in review', () => {
     });
   });
 
+  it('counts an adopted PR\'s new turns as not pushed', () => {
+    const adopted = space({
+      id: 'b',
+      pr: 'github:o/r#2',
+      fork_sha: 'tip',
+      head_sha: 'turn1',
+    });
+    expect(unshipped(adopted)).toBe(true);
+    expect(spaceMerge(info(), adopted)).toEqual({
+      kind: 'none',
+      reason: 'Push the new turns first',
+    });
+    expect(unshipped({ ...adopted, head_sha: 'tip' })).toBe(false);
+    expect(spaceMerge(info(), { ...adopted, head_sha: 'tip' })).toEqual({
+      kind: 'merge',
+    });
+  });
+
   it('offers Continue once the PR merged', () => {
     const s = space({ id: 'a', pr: 'github:o/r#1' });
     expect(canContinue(s, 'merged')).toBe(true);
