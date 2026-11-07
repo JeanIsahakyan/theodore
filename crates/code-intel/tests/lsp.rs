@@ -595,6 +595,51 @@ languages:
     assert_eq!(server.hint.as_deref(), Some("gem install gem-ls"));
 }
 
+/// Headings and keys of prose and data files (Markdown, TOML, YAML) are
+/// not code definitions: `find_symbol` leaves them out and says so, while
+/// the file's own symbols still list them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prose_symbols_are_not_definitions_unless_asked_for_the_file() {
+    let yaml = r#"
+servers:
+  - name: fake-lsp
+    detect: [["fake-lsp"]]
+    launch: ["{bin}"]
+languages:
+  - id: rust
+    globs: ["*.rs"]
+    servers: [fake-lsp]
+  - id: markdown
+    globs: ["*.md"]
+    prose: true
+    servers: [fake-lsp]
+"#;
+    let env = Env::new();
+    env.fake_server("fake-lsp");
+    let wt = repo(&[("README.md", "fn helper\n"), ("src/lib.rs", LIB)]);
+    let ci = env.facade_with(yaml, LspPolicy::default());
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    ready(&ci, wt.path()).await;
+    let own = ci.file_symbols(wt.path(), "README.md").await.unwrap();
+    assert_eq!(own.items.len(), 1, "asked for the file: listed");
+
+    let found = ci.find_symbol(wt.path(), "helper", None).await.unwrap();
+    let paths: Vec<&str> = found.items.iter().map(|s| s.path.as_str()).collect();
+    assert_eq!(paths, vec!["src/lib.rs"]);
+    // Only prose has it: empty, with a note naming where.
+    std::fs::write(wt.path().join("src/lib.rs"), "fn other() {}\n").unwrap();
+    ci.file_changed(wt.path(), "src/lib.rs").await;
+    let found = ci.find_symbol(wt.path(), "helper", None).await.unwrap();
+    assert!(found.items.is_empty(), "{:?}", found.items);
+    let note = found.note.unwrap_or_default();
+    assert!(
+        note.contains("in prose or data files, not code: README.md"),
+        "{note}"
+    );
+}
+
 /// A server without a method (taplo has no `workspace/symbol`) is not
 /// asked for it, and its "method not found" is no note: the syntax layer
 /// answers as if no server were there for that question.

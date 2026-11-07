@@ -858,6 +858,11 @@ impl CodeIntel {
                 Route::Not(n) => notes.extend(n),
             }
         }
+        // A Markdown heading or a TOML key is not a definition of code; the
+        // file's own symbols still list them.
+        let manifest = self.inner.toolchain.manifest();
+        let code = |s: &CodeSymbol| w.language(&s.path).is_none_or(|l| is_code(manifest, &l));
+        let (lsp, mut prose): (Vec<CodeSymbol>, Vec<CodeSymbol>) = lsp.into_iter().partition(code);
         // Syntax answers for the languages no server answered for; all of
         // them when the servers found nothing.
         if lsp.is_empty() {
@@ -890,8 +895,25 @@ impl CodeIntel {
         let mut items = lsp;
         items.extend(syntax);
         items.extend(text);
+        let (mut items, more_prose): (Vec<CodeSymbol>, Vec<CodeSymbol>) =
+            items.into_iter().partition(code);
+        prose.extend(more_prose);
         items.truncate(MAX_HITS);
         if items.is_empty() {
+            if !prose.is_empty() {
+                let mut paths: Vec<&str> = prose.iter().map(|s| s.path.as_str()).collect();
+                paths.dedup();
+                let more = if paths.len() > NOTE_EXTERNAL {
+                    ", …"
+                } else {
+                    ""
+                };
+                paths.truncate(NOTE_EXTERNAL);
+                notes.push(format!(
+                    "in prose or data files, not code: {}{more}",
+                    paths.join(", ")
+                ));
+            }
             notes.extend(self.skipped_mentions(&w, name).await);
         }
         Ok(self.answer(&w, items, source, notes))

@@ -146,7 +146,9 @@ small Rust hook next to their entry.
   a server later is the same entry plus one line in `grammars.toml` or
   `servers:`.
 - `prose: true` marks data and markup (Markdown, JSON, YAML, TOML, HTML):
-  symbols and servers may serve it, the text fallback never searches it. A
+  symbols and servers may serve it, the text fallback never searches it, and
+  `find_symbol` leaves its headings and keys out (an empty answer names the
+  prose files that had the name); a file's own symbols still list them. A
   language is code when it is in the manifest and not prose. HTML is prose
   because a name in it is text or an attribute, not a definition; CSS, SCSS
   and SQL are code (classes, mixins, tables, functions are defined there).
