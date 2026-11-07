@@ -1135,6 +1135,7 @@ impl GitPort for FakeGit {
         _worktree: &Path,
         space: &str,
         tip: &Sha,
+        _conflicts: &[String],
         _message: &str,
     ) -> GitResult<theodore_ports::SpaceMerge> {
         Ok(self.merge_call("finish", space, tip))

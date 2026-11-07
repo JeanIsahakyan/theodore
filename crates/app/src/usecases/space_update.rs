@@ -287,7 +287,13 @@ impl Core {
     ) -> GitResult<(Finish, serde_json::Value)> {
         let git = &self.0.deps.git;
         match git
-            .space_merge_finish(worktree, &space.id, &update.base_tip, &merge_message(space))
+            .space_merge_finish(
+                worktree,
+                &space.id,
+                &update.base_tip,
+                &update.conflicts,
+                &merge_message(space),
+            )
             .await?
         {
             SpaceMerge::Merged(head) => Ok((

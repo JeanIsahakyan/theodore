@@ -533,9 +533,10 @@ impl GitPort for GitCli {
         worktree: &Path,
         space: &str,
         tip: &Sha,
+        conflicts: &[String],
         message: &str,
     ) -> GitResult<theodore_ports::SpaceMerge> {
-        self.space_merge_finish_op(worktree, space, tip, message)
+        self.space_merge_finish_op(worktree, space, tip, conflicts, message)
             .await
     }
 

@@ -963,7 +963,8 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
 
 - A file counts as resolved when no line starts with `<<<<<<<`, `|||||||`
   or `>>>>>>>` (or it is deleted): the agent needn't `git add`, which its
-  sandbox may not allow (the index lives in the cache).
+  sandbox may not allow (the index lives in the cache), and `git add` alone
+  resolves nothing: a staged file with markers still counts as left.
 - Shipping after an update: the base is a real parent of the space's head,
   so the squashed commit stays correct.
 

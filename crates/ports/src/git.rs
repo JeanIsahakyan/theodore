@@ -523,19 +523,21 @@ pub trait GitPort: Send + Sync {
         Err(GitError::Unsupported("space_merge"))
     }
 
-    /// Completes the merge `space_merge` left in progress: once no file it
-    /// listed still has conflict markers, everything is staged and the
-    /// merge commit written as a checkpoint (`Merged`); otherwise
-    /// `Conflicts` with what is left. A merge concluded in the worktree by
-    /// hand is checkpointed as is; `NotMerging` when it was aborted there.
+    /// Completes the merge `space_merge` left in progress: once neither a
+    /// file in `conflicts` (what it listed, staged or not) nor one still
+    /// unmerged has conflict markers, everything is staged and the merge
+    /// commit written as a checkpoint (`Merged`); otherwise `Conflicts` with
+    /// what is left. A merge concluded in the worktree by hand is
+    /// checkpointed as is; `NotMerging` when it was aborted there.
     async fn space_merge_finish(
         &self,
         worktree: &Path,
         space: &str,
         tip: &Sha,
+        conflicts: &[String],
         message: &str,
     ) -> GitResult<SpaceMerge> {
-        let _ = (worktree, space, tip, message);
+        let _ = (worktree, space, tip, conflicts, message);
         Err(GitError::Unsupported("space_merge_finish"))
     }
 
