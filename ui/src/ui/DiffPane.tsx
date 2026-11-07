@@ -61,6 +61,7 @@ import type {
   HunkId,
   InterdiffEntry,
   PrId,
+  PrSummary,
   Revision,
   Severity,
   Side,
@@ -103,6 +104,14 @@ import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 import { CodeHoverHost } from './symbols/CodeHoverHost';
 import { identifierAt } from './symbols/extract';
+
+/** The PR's Files page on the host; `null` for a review with no host PR
+ *  behind it (a space's branch before it is pushed, a local branch). */
+export function hostFilesUrl(
+  summary: Pick<PrSummary, 'url'> | undefined,
+): string | null {
+  return summary?.url ? `${summary.url}/files` : null;
+}
 
 export interface ComposerState {
   path: string;
@@ -1251,11 +1260,12 @@ function FileBlockInner({
           onAction: () => void navigator.clipboard.writeText(file.path),
         },
       ];
-      if (summaryForMenu) {
+      const filesUrl = hostFilesUrl(summaryForMenu);
+      if (filesUrl) {
         items.push({
           id: 'open-github',
           label: 'Open on GitHub',
-          onAction: () => openExternal(`${summaryForMenu.url}/files`),
+          onAction: () => openExternal(filesUrl),
         });
       }
       items.push({
