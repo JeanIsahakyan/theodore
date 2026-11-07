@@ -117,6 +117,10 @@ export function VirtualChat<T extends { key: string }>({
   const [away, setAway] = useState(startPlace != null);
   // A toggle's frames: nothing pins to the end while it settles.
   const [steadying, setSteadying] = useState(false);
+  // A toggle at the end that grew the row you're reading leaves you off
+  // the end without anything new below: no pill for that, until a row is
+  // added or you scroll (the row count it happened at).
+  const [quietAt, setQuietAt] = useState<number | null>(null);
   const pos = useRef({
     following: startPlace == null,
     restore: startPlace ?? (null as Place | null),
@@ -261,6 +265,7 @@ export function VirtualChat<T extends { key: string }>({
       p.max = max;
       v.options.scrollEndThreshold = p.following ? NEAR_BOTTOM : -1;
       setAway(!p.following);
+      setQuietAt(null);
       remember();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -349,6 +354,7 @@ export function VirtualChat<T extends { key: string }>({
         return;
       }
       finishRestore();
+      const wasFollowing = p.following;
       room.style.minHeight = `${el.scrollTop + el.clientHeight}px`;
       p.holding = true;
       p.steady = true;
@@ -368,6 +374,7 @@ export function VirtualChat<T extends { key: string }>({
         p.max = max;
         setSteadying(false);
         setAway(!p.following);
+        setQuietAt(wasFollowing && !p.following ? v.options.count : null);
         remember();
       });
     },
@@ -439,7 +446,7 @@ export function VirtualChat<T extends { key: string }>({
           </SteadyContext.Provider>
         </div>
       </div>
-      {away && (
+      {away && quietAt !== items.length && (
         <Button
           size="sm"
           variant="secondary"

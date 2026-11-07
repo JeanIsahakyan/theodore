@@ -332,14 +332,20 @@ describe('a row toggled in place', () => {
   };
 
   it('opening it at the bottom keeps it where it is', async () => {
-    await open(rows(50), scope());
+    const id = scope();
+    await open(rows(50), id);
     const before = onScreen('t49');
     await toggle('t49');
     chatLayout.heights.set(49, 900);
     layoutRows();
     await frames();
     expect(onScreen('t49')).toBe(before);
-    // What it pushed down is below you now.
+    // Only that row grew below you: nothing new to jump to.
+    expect(pill()).toBeNull();
+
+    // Something new does bring the pill.
+    await update(rows(51), id);
+    await frames();
     expect(pill()).not.toBeNull();
   });
 
