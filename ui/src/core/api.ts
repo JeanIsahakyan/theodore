@@ -295,9 +295,10 @@ export const api = {
   // ── spaces (docs/spaces.md; hidden behind build mode) ──
   createSpace: (req: CreateSpaceRequest) =>
     call<Space>('create_space', { req }),
-  /** New space's "From an issue" picker. */
-  projectIssues: (req: ProjectIssuesRequest) =>
-    call<SpaceIssue[]>('project_issues', { req }),
+  /** New space's "From an issue" picker. `quiet`: the picker says what
+   *  failed itself (a host without issues). */
+  projectIssues: (req: ProjectIssuesRequest, quiet = false) =>
+    call<SpaceIssue[]>('project_issues', { req }, quiet),
   listSpaces: (project: string | null) =>
     call<Space[]>('list_spaces', { project }),
   spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),

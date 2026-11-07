@@ -225,7 +225,9 @@ pr               ──▶ get_pr; same as branch, plus Space.pr set right away
 An issue needs a host that can read its own issues
 (`Capabilities::issues`; GitHub and GitLab, not Bitbucket) — the picker
 lists the viewer's own open ones (`my_open_issues`), or a pasted URL /
-`#<number>` resolves directly (`get_issue`). The goal box becomes an
+`#<number>` resolves directly (`get_issue`). A host without issues says so
+in the picker instead of a toast; a local folder doesn't offer the choice.
+The line under the composer says what each choice does. The goal box becomes an
 optional note on top of what's picked or typed, rather than required.
 
 ### Space page — drafting

@@ -71,6 +71,7 @@ import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
+import { parseIssueRef, startFooter, type StartKind } from './newSpaceStart';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection } from './ConfigSection';
 import { SpaceProgress } from './SpaceProgress';
@@ -1196,11 +1197,6 @@ const SpaceChanges = observer(function SpaceChanges({
   );
 });
 
-/** `goal`: the plain, usual case. `issue` / `branch` / `pr` adopt something
- *  that already exists on the host (docs/spaces.md §3 "New space") instead
- *  of forking a fresh branch from the goal. */
-type StartKind = 'goal' | 'issue' | 'branch' | 'pr';
-
 const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
   { id: 'goal', label: 'A new branch', hint: 'from the goal' },
   { id: 'issue', label: 'An existing issue' },
@@ -1229,7 +1225,17 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   const [issueId, setIssueId] = useState<string | null>(null);
   const [startText, setStartText] = useState('');
   const chosen = ready.find((p) => p.id === project);
-  const issues = useProjectIssues(startKind === 'issue' ? project : null);
+  const { issues, unsupported: noIssues } = useProjectIssues(
+    startKind === 'issue' ? project : null,
+  );
+  // A local folder has no host issues to start from.
+  const kindItems = START_KIND_ITEMS.filter(
+    (i) => i.id !== 'issue' || chosen?.repo.host !== 'local',
+  );
+  const kindOffered = kindItems.some((i) => i.id === startKind);
+  useEffect(() => {
+    if (!kindOffered) setStartKind('goal');
+  }, [kindOffered]);
   // Switching project, or away from "issue"/"branch"/"PR", drops whatever
   // was picked/typed for the previous one rather than silently reusing it.
   useEffect(() => {
@@ -1237,9 +1243,11 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
     setStartText('');
   }, [project, startKind]);
   const prNumber = Number(startText.trim());
+  // A picked issue, else a typed `#n` / URL (docs: it resolves directly).
+  const issueNumber = issueId ? Number(issueId) : parseIssueRef(startText);
   const startFrom: SpaceStart | null =
-    startKind === 'issue' && issueId
-      ? { kind: 'issue', value: issueId }
+    startKind === 'issue' && issueNumber && !noIssues
+      ? { kind: 'issue', value: String(issueNumber) }
       : startKind === 'branch' && startText.trim()
         ? { kind: 'branch', value: startText.trim() }
         : startKind === 'pr' &&
@@ -1330,7 +1338,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
                   label={
                     START_KIND_ITEMS.find((i) => i.id === startKind)?.label
                   }
-                  items={START_KIND_ITEMS}
+                  items={kindItems}
                   selected={startKind}
                   onSelect={setStartKind}
                 />
@@ -1343,33 +1351,52 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
               </>
             }
           />
-          {startKind === 'issue' && (
-            <div className="flex flex-wrap items-center gap-1.5 px-2">
-              {issues.length === 0 ? (
-                <span className="text-xs text-muted">
-                  No open issues assigned to you on this project's host.
-                </span>
-              ) : (
-                <ChipMenu
-                  ariaLabel="Issue"
-                  label={
-                    issueId
-                      ? `#${issueId} ${
-                          issues.find((i) => String(i.number) === issueId)
-                            ?.title ?? ''
-                        }`
-                      : 'Pick an issue'
-                  }
-                  items={issues.map((i) => ({
-                    id: String(i.number),
-                    label: `#${i.number} ${i.title}`,
-                  }))}
-                  selected={issueId ?? ''}
-                  onSelect={setIssueId}
-                />
-              )}
-            </div>
-          )}
+          {startKind === 'issue' &&
+            (noIssues ? (
+              <span className="px-2 text-xs text-muted">
+                This project's host has no issues to start from. Start from a
+                branch or a PR instead.
+              </span>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5 px-2">
+                <TextField
+                  value={issueId ? `#${issueId}` : startText}
+                  onChange={(v) => {
+                    setIssueId(null);
+                    setStartText(v);
+                  }}
+                  aria-label="Issue number or URL"
+                  autoFocus
+                >
+                  <InputGroup className="w-72 rounded-xl">
+                    <InputGroup.Input
+                      placeholder="#123 or an issue URL"
+                      className="w-full text-sm"
+                    />
+                  </InputGroup>
+                </TextField>
+                {issues.length > 0 && (
+                  <ChipMenu
+                    ariaLabel="Your open issues"
+                    label={
+                      issueId
+                        ? (issues.find((i) => String(i.number) === issueId)
+                            ?.title ?? 'Your issues')
+                        : 'Your issues'
+                    }
+                    items={issues.map((i) => ({
+                      id: String(i.number),
+                      label: `#${i.number} ${i.title}`,
+                    }))}
+                    selected={issueId ?? ''}
+                    onSelect={(id) => {
+                      setIssueId(id);
+                      setStartText('');
+                    }}
+                  />
+                )}
+              </div>
+            ))}
           {(startKind === 'branch' || startKind === 'pr') && (
             <div className="flex items-center gap-1.5 px-2">
               <TextField
@@ -1398,15 +1425,11 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             </div>
           )}
           <span className="px-2 text-xs text-muted">
-            {startKind === 'goal' ? (
+            {startFooter(startKind, chosen?.default_branch ?? undefined)}
+            {startKind === 'goal' && (
               <>
-                The agent works in its own worktree — your checkout is never
-                touched. <K>⇧⏎</K> new line.
-              </>
-            ) : (
-              <>
-                The worktree starts on its tip; shipping pushes back to the same
-                branch.
+                {' '}
+                <K>⇧⏎</K> new line.
               </>
             )}
           </span>
