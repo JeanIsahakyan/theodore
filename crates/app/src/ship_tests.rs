@@ -177,6 +177,17 @@ async fn with_pr(f: &Fixtures, id: &str) -> Space {
     space(f, id)
 }
 
+/// The default `copy` (`.env*`) has nothing to copy on a host project:
+/// that's no news, so no setup note says so.
+#[tokio::test]
+async fn a_host_project_gets_no_note_about_the_default_copy() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    let notes = s.setup.map(|s| s.notes).unwrap_or_default();
+    assert!(!notes.iter().any(|n| n.starts_with("copy:")), "{notes:?}");
+}
+
 // ── Open PR ───────────────────────────────────────────────────────────────
 
 #[tokio::test]

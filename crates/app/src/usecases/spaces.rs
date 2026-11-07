@@ -140,8 +140,11 @@ impl Core {
                 // never for its checkpoints or what it ships.
                 self.0.deps.git.space_exclude(&wt.path, &files).await?;
             }
-            (None, false) => notes
+            // Only a `copy` someone set is worth a word: the default
+            // `.env*` has nothing to come from on a host project.
+            (None, false) if cfg.merged.config.spaces.copy.is_some() => notes
                 .push("copy: skipped, this project has no local checkout to copy from".to_string()),
+            (None, false) => {}
         }
         let ports_guard = self.0.ports_lock.lock().await;
         let ports = self

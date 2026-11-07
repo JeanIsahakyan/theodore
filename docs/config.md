@@ -323,8 +323,8 @@ code_intel:
 Each entry is a path relative to the project's folder: a file, a directory
 (copied whole), or a `*` / `?` glob in its last segment (`.env*`). Absolute
 paths, `..`, `.git` and symlinks are skipped with a note. Copying needs the
-project's own checkout: a host project has none, so `copy` is skipped there
-with a note. Unset by every layer, a space copies `.env*` by default — so a
+project's own checkout: a host project has none, so `copy` is skipped there,
+with a note only when a layer set `copy`. Unset by every layer, a space copies `.env*` by default — so a
 project with no config at all still gets its local secrets; set `copy: []`
 to turn that off.
 
