@@ -1204,8 +1204,8 @@ send ─▶ running? ── no ──▶ turn now
 | Turn ended | The queue |
 | --- | --- |
 | on its own (a failing `check` included: the next turn hears it) | the first waiting message runs as the next turn, then the next |
-| stopped (also during its `check`) | held: nothing is sent, nothing dropped |
-| failed, or a queued one couldn't start | held |
+| stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped |
+| failed, its checkpoint skipped, conflicts left, or a queued one couldn't start | held |
 | Theodore restarted | held (§7 Crash recovery) |
 
 - **Edit** changes a queued message's text, **Cancel** deletes it; both

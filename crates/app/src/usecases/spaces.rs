@@ -1288,8 +1288,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
         action: SyncActionCode::C,
         data: Some(patch),
     });
-    // Stopped or failed: whatever is queued waits for you.
-    let end = if cancelled || error.is_some() {
+    // Stopped (the checkpoint took a while: maybe just now), failed, or its
+    // checkpoint skipped: whatever is queued waits for you, and the next turn
+    // doesn't clear what the space says about it.
+    let end = if cancel.is_cancelled() || error.is_some() || skipped.is_some() {
         TurnEnd::Interrupted
     } else {
         TurnEnd::Done

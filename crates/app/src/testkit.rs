@@ -409,6 +409,8 @@ pub struct FakeGit {
     checkpoint_errors: Mutex<VecDeque<GitError>>,
     /// `(space, message)` of every `space_checkpoint`.
     pub checkpoints: Mutex<Vec<(String, String)>>,
+    /// The next `space_checkpoint` waits for this once it is recorded.
+    checkpoint_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
     removed_spaces: Mutex<Vec<String>>,
     /// Where space worktrees are created as real directories (tests that
     /// copy files or run commands in them); `None`: a fake path.
@@ -548,6 +550,7 @@ impl FakeGit {
             removed_worktrees: Mutex::new(Vec::new()),
             checkpoint_heads: Mutex::new(VecDeque::new()),
             checkpoint_errors: Mutex::new(VecDeque::new()),
+            checkpoint_gate: Mutex::new(None),
             checkpoints: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
             space_root: Mutex::new(None),
@@ -738,6 +741,14 @@ impl FakeGit {
     /// The next `space_checkpoint` moves the space to `head`.
     pub fn push_checkpoint(&self, head: Sha) {
         self.checkpoint_heads.lock().unwrap().push_back(head);
+    }
+
+    /// The next `space_checkpoint` is seen in `checkpoints`, then waits for
+    /// the returned sender: a checkpoint in flight for as long as a test needs.
+    pub fn pause_next_checkpoint(&self) -> tokio::sync::oneshot::Sender<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.checkpoint_gate.lock().unwrap() = Some(rx);
+        tx
     }
 
     /// The next `space_checkpoint` fails with `e`.
@@ -1022,6 +1033,10 @@ impl GitPort for FakeGit {
             .lock()
             .unwrap()
             .push((space.to_string(), message.to_string()));
+        let gate = self.checkpoint_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let Some(e) = self.checkpoint_errors.lock().unwrap().pop_front() {
             return Err(e);
         }
