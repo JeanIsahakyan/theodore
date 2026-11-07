@@ -10,7 +10,7 @@ use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, CreatedIssue, Fetched, HostAdapter, HostError, HostResult,
     InboxSection, IssueTracker, MergeMethod, MergeState, MergeStatus, NewIssue, NewPr,
-    ReviewComment, ReviewSubmission, SubmittedReview, TrackedIssue,
+    ReviewComment, ReviewSubmission, Searched, SubmittedReview, TrackedIssue,
 };
 
 use crate::{anchor, graphql, logs, pagination, rest, time};
@@ -92,8 +92,12 @@ impl GithubAdapter {
     }
 
     async fn changed_since_via_search(&self) -> HostResult<Changes> {
-        let nodes = graphql::search_prs(&self.graphql, "is:pr is:open involves:@me").await?;
-        let prs = nodes.iter().filter_map(search_node_to_pr_ref).collect();
+        let found = graphql::search_prs(&self.graphql, "is:pr is:open involves:@me").await?;
+        let prs = found
+            .nodes
+            .iter()
+            .filter_map(search_node_to_pr_ref)
+            .collect();
         Ok(Changes {
             prs,
             cursor: "search-fallback".to_string(),
@@ -301,12 +305,23 @@ impl HostAdapter for GithubAdapter {
     }
 
     async fn search(&self, section: &InboxSection) -> HostResult<Vec<PrSummary>> {
+        Ok(self.search_checked(None, section).await?.prs)
+    }
+
+    async fn search_checked(
+        &self,
+        _repo: Option<&RepoRef>,
+        section: &InboxSection,
+    ) -> HostResult<Searched> {
         let (query, reason) = section_query(section);
-        let nodes = graphql::search_prs(&self.graphql, &query).await?;
-        Ok(nodes
+        let found = graphql::search_prs(&self.graphql, &query).await?;
+        let prs: Vec<PrSummary> = found
+            .nodes
             .iter()
             .filter_map(|n| search_node_to_summary(n, reason))
-            .collect())
+            .collect();
+        let complete = found.total.is_some_and(|total| prs.len() as u64 >= total);
+        Ok(Searched { prs, complete })
     }
 
     async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {

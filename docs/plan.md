@@ -412,6 +412,40 @@ The notifications API needs a classic token (`gh`, OAuth app, classic PAT) with
 `notifications` or `repo` scope; fine-grained PATs and GitHub App tokens don't
 get it. For those, fall back to GraphQL `search` on a slow interval.
 
+Searches only add and update rows, so an open row nothing returns any more is
+asked about directly (`usecases/reconcile.rs`):
+
+```
+complete search ─▶ stored rows that claim open and it didn't return
+                     │ at most 10 per run, the ones asked longest ago first;
+                     ▼ one still open isn't asked again for an hour
+                  get_pr ─┬─ a PR ──────────▶ written as the host says
+                          ├─ 404 ───────────▶ pr, pr_detail, grouping removed
+                          ├─ connection ────▶ stop, retry next run
+                          └─ anything else ─▶ left as is
+```
+
+| Search | Rows it speaks for |
+| --- | --- |
+| A project's `is:pr is:open repo:<slug>` | that repo's rows |
+| The inbox's four sections, all complete | the primary host's rows outside any project |
+
+- Complete means the host said so (`HostAdapter::search_checked`). GitHub's
+  search stops at 1000 results and returns a node it can't show as null, so an
+  answer short of its `issueCount` is partial. A failed or partial search
+  changes nothing, and doesn't clear inbox reasons either.
+- A raw query is complete only on GitHub: GitLab and Bitbucket don't read
+  `is:open repo:o/r` as a query, so their project rows aren't reconciled.
+- Never asked about: branch and space reviews (no host URL), a live space's PR
+  (`sweep_spaces` keeps it fresh), archived rows.
+- Threads, drafts and `inbox_state` survive a 404, so the PR comes back whole if
+  access to its repo does. A PR open in a tab keeps its row until the next launch.
+
+The sidebar's "Pull requests N" counts open and draft rows the workspace shows,
+everyone's in a project's repo and yours elsewhere, without branch reviews: the
+same rows as the page's All filter, whose "Branch reviews" section is separate.
+It isn't any one GitHub page's number: github.com/pulls lists only what you wrote.
+
 ### 6.7 Outbox, idempotency, errors
 
 - Every host write goes through the outbox as resumable steps. Where the host

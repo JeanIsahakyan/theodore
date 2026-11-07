@@ -1355,6 +1355,12 @@ pub struct FakeHost {
     pub find_marker_responses: Mutex<VecDeque<HostResult<Option<theodore_domain::CommentId>>>>,
     pub changed_since_responses: Mutex<VecDeque<HostResult<Changes>>>,
     pub search_responses: Mutex<VecDeque<HostResult<Vec<PrSummary>>>>,
+    /// Searches answer `complete: true`. Off by default: a test seeding a row
+    /// shouldn't see the startup inbox pass ask after it, or lose a queued
+    /// `get_pr` to it.
+    pub search_complete: std::sync::atomic::AtomicBool,
+    /// Every PR a `get_pr` call asked for, in order.
+    pub get_pr_refs: Mutex<Vec<PrRef>>,
     pub viewer_responses: Mutex<VecDeque<HostResult<Person>>>,
     pub reply_responses: Mutex<VecDeque<HostResult<theodore_domain::CommentId>>>,
     /// Every `(thread, body)` a `reply`/`reply_with_marker` call was made
@@ -1579,6 +1585,17 @@ impl HostAdapter for FakeHost {
             .pop_front()
             .unwrap_or(Ok(vec![]))
     }
+    async fn search_checked(
+        &self,
+        _repo: Option<&RepoRef>,
+        section: &InboxSection,
+    ) -> HostResult<theodore_ports::Searched> {
+        let prs = self.search(section).await?;
+        let complete = self
+            .search_complete
+            .load(std::sync::atomic::Ordering::SeqCst);
+        Ok(theodore_ports::Searched { prs, complete })
+    }
     async fn list_repos(&self) -> HostResult<Vec<theodore_domain::HostRepo>> {
         Ok(vec![])
     }
@@ -1596,9 +1613,10 @@ impl HostAdapter for FakeHost {
             .pop_front()
             .unwrap_or(Ok(vec![]))
     }
-    async fn get_pr(&self, _pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
+    async fn get_pr(&self, pr: &PrRef, _etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
         self.get_pr_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.get_pr_refs.lock().unwrap().push(pr.clone());
         self.get_pr_responses
             .lock()
             .unwrap()

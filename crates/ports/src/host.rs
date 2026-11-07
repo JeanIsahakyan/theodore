@@ -84,6 +84,15 @@ pub enum InboxSection {
     Query(String),
 }
 
+/// A search's answer, and whether it's all the host has for the query.
+#[derive(Debug, Clone)]
+pub struct Searched {
+    pub prs: Vec<PrSummary>,
+    /// `true`: a PR missing from `prs` really doesn't match the query.
+    /// `false`: the host cut the list short, or can't say.
+    pub complete: bool,
+}
+
 /// Cheap "did anything change" probe (GitHub notifications, GitLab
 /// `updated_after`, …). `cursor` is opaque to callers.
 #[derive(Debug, Clone)]
@@ -230,6 +239,24 @@ pub trait HostAdapter: Send + Sync {
     ) -> HostResult<Vec<PrSummary>> {
         let _ = repo;
         self.search(section).await
+    }
+    /// `search`, or `search_repo` with a `repo`, saying how far to trust what
+    /// is missing from the answer. Default: complete for an inbox section,
+    /// which adapters read to its last page. A raw query isn't: only some
+    /// hosts read `is:open repo:o/r` as the query it says it is.
+    async fn search_checked(
+        &self,
+        repo: Option<&RepoRef>,
+        section: &InboxSection,
+    ) -> HostResult<Searched> {
+        let prs = match repo {
+            Some(repo) => self.search_repo(repo, section).await?,
+            None => self.search(section).await?,
+        };
+        Ok(Searched {
+            prs,
+            complete: !matches!(section, InboxSection::Query(_)),
+        })
     }
     /// Repos for the Add project picker, with the metadata it shows
     /// (description, visibility, last push) — not just the bare ref.

@@ -3,6 +3,7 @@
 //! writing to the folder's own `.git` — and reviewing one of their branches
 //! without a host PR.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use theodore_contract::{
@@ -14,6 +15,7 @@ use theodore_ports::{InboxSection, NewAction, SyncActionCode};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
+use crate::usecases::reconcile::SearchedRows;
 
 impl Core {
     pub async fn list_host_repos(&self) -> AppResult<Vec<HostRepo>> {
@@ -98,7 +100,8 @@ impl Core {
 
     /// Fetches/refreshes the project's cache, keeps `default_branch` and the
     /// host's own repo metadata fresh, and — for a host project — writes its
-    /// open, recently merged and recently closed PRs as `pr` rows. Stamps
+    /// open, recently merged and recently closed PRs as `pr` rows, and asks
+    /// after stored rows the open search no longer returns. Stamps
     /// `last_fetched_at` unconditionally (local projects included), for the
     /// header's "fetched Nm ago".
     pub async fn refresh_project(&self, id: &str) -> AppResult<()> {
@@ -195,19 +198,26 @@ impl Core {
                 ),
             ];
             let mut by_id = std::collections::HashMap::new();
+            // Set only by a complete `is:open` answer: nothing else says
+            // what a row missing from it means.
+            let mut open_found = None;
             for (query, cap) in queries {
                 match self
                     .0
                     .deps
                     .host
-                    .search_repo(&project.repo, &InboxSection::Query(query))
+                    .search_checked(Some(&project.repo), &InboxSection::Query(query))
                     .await
                 {
-                    Ok(summaries) => {
+                    Ok(found) => {
                         let summaries = if cap {
-                            recent(summaries, now, FOURTEEN_DAYS_MS, 30)
+                            recent(found.prs, now, FOURTEEN_DAYS_MS, 30)
                         } else {
-                            summaries
+                            if found.complete {
+                                let ids = found.prs.iter().map(|s| s.pr.id());
+                                open_found = Some(ids.collect::<HashSet<_>>());
+                            }
+                            found.prs
                         };
                         for summary in summaries {
                             by_id.entry(summary.pr.id().0).or_insert(summary);
@@ -215,6 +225,10 @@ impl Core {
                     }
                     Err(e) => warn(format!("project refresh failed: {e}")),
                 }
+            }
+            // Whatever any search returned was just written.
+            if let Some(found) = &mut open_found {
+                found.extend(by_id.keys().cloned().map(PrId));
             }
             let mut actions = Vec::with_capacity(by_id.len());
             for summary in by_id.into_values() {
@@ -233,6 +247,13 @@ impl Core {
                 });
             }
             self.apply(actions).await?;
+            if let Some(found) = open_found
+                && self
+                    .reconcile_open_prs(SearchedRows::Repo(&project.repo), &found)
+                    .await?
+            {
+                self.refresh_stacks().await?;
+            }
         }
 
         self.apply(vec![NewAction {

@@ -2,7 +2,9 @@
 //! section, written as `pr` rows plus `inbox_state` rows that are created
 //! once and never overwritten afterwards (so `done`/`snooze` survive).
 //! Called once in the background on `Core::start` and again whenever the
-//! poller's `changed_since` reports something changed.
+//! poller's `changed_since` reports something changed. A complete pass also
+//! asks after open rows outside any project that it no longer returned
+//! (`reconcile.rs`).
 
 use std::collections::BTreeSet;
 
@@ -11,6 +13,7 @@ use theodore_ports::{InboxSection, NewAction, SyncActionCode};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
+use crate::usecases::reconcile::SearchedRows;
 
 const SECTIONS: [InboxSection; 4] = [
     InboxSection::ReviewRequested,
@@ -26,10 +29,13 @@ impl Core {
         let mut complete = true;
 
         for section in &SECTIONS {
-            let result = self.0.deps.host.search(section).await;
+            let result = self.0.deps.host.search_checked(None, section).await;
             self.note_host(&result);
             let summaries = match result {
-                Ok(s) => s,
+                Ok(found) => {
+                    complete &= found.complete;
+                    found.prs
+                }
                 Err(e) => {
                     complete = false;
                     // The banner already says the host is offline, the token
@@ -95,8 +101,8 @@ impl Core {
 
         // A PR no search returned any more (you reviewed it, it was
         // reassigned, …) has no reason to be in the inbox: clear its stored
-        // reasons. Only after a complete pass — a failed section would
-        // otherwise empty the inbox.
+        // reasons. Only after a complete pass — a failed section, or one the
+        // host cut short, would otherwise empty the inbox.
         if complete {
             let store = self.0.deps.store.clone();
             let rows = tokio::task::spawn_blocking(move || store.all(models::PR))
@@ -120,6 +126,12 @@ impl Core {
         }
 
         self.apply(actions).await?;
+        // After the writes: a row the search did return is settled by now.
+        if complete {
+            let found = seen.into_iter().collect();
+            self.reconcile_open_prs(SearchedRows::OutsideProjects, &found)
+                .await?;
+        }
         self.refresh_stacks().await?;
         Ok(())
     }

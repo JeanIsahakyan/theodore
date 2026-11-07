@@ -10,7 +10,7 @@ use theodore_domain::{
 };
 use theodore_ports::{
     Capabilities, Changes, Fetched, HostAdapter, HostError, HostResult, InboxSection, MergeMethod,
-    MergeStatus, NewPr, ReviewSubmission, SubmittedReview,
+    MergeStatus, NewPr, ReviewSubmission, Searched, SubmittedReview,
 };
 
 pub struct Hosts {
@@ -101,6 +101,16 @@ impl HostAdapter for Hosts {
         section: &InboxSection,
     ) -> HostResult<Vec<PrSummary>> {
         self.for_repo(repo)?.search(section).await
+    }
+    async fn search_checked(
+        &self,
+        repo: Option<&RepoRef>,
+        section: &InboxSection,
+    ) -> HostResult<Searched> {
+        match repo {
+            Some(repo) => self.for_repo(repo)?.search_checked(None, section).await,
+            None => self.primary.search_checked(None, section).await,
+        }
     }
     async fn list_repos(&self) -> HostResult<Vec<HostRepo>> {
         self.primary.list_repos().await
@@ -294,6 +304,33 @@ mod tests {
             owner: "o".into(),
             name: name.into(),
         }
+    }
+
+    #[tokio::test]
+    async fn search_checked_routes_by_repo_and_without_one_to_the_primary() {
+        let github = Arc::new(TaggedHost::new(HostKind::Github));
+        let gitlab = Arc::new(TaggedHost::new(HostKind::Gitlab));
+        let local = Arc::new(TaggedHost::new(HostKind::Local));
+        let hosts = Hosts::new(github.clone(), Some(gitlab.clone()), None, local);
+
+        let query = InboxSection::Query("q".into());
+        let found = hosts
+            .search_checked(Some(&repo(HostKind::Gitlab, "b")), &query)
+            .await
+            .unwrap();
+        assert_eq!(gitlab.1.lock().unwrap().len(), 1);
+        assert_eq!(github.1.lock().unwrap().len(), 0);
+        assert!(!found.complete, "a raw query isn't trusted by default");
+
+        hosts.search_checked(None, &query).await.unwrap();
+        assert_eq!(gitlab.1.lock().unwrap().len(), 1);
+        assert_eq!(github.1.lock().unwrap().len(), 1);
+
+        let found = hosts
+            .search_checked(None, &InboxSection::Authored)
+            .await
+            .unwrap();
+        assert!(found.complete, "an inbox section is read to its last page");
     }
 
     #[tokio::test]

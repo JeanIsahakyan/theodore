@@ -75,6 +75,9 @@ pub(crate) struct Inner {
     /// While the host is unreachable the pollers make no host calls; this
     /// paces the one probe that notices it's back (`poller::probe_host`).
     pub host_probe: std::sync::Mutex<crate::poller::HostProbe>,
+    /// When each PR was last asked for its state because a search no longer
+    /// returned it (`usecases/reconcile.rs`). Memory only: a restart asks again.
+    pub reconciled: std::sync::Mutex<HashMap<PrId, i64>>,
     /// The device flow's `device_code` + poll interval between `login_start`
     /// and the login finishing (plan "login"): kept in memory only, never
     /// persisted — a restart just means starting over.
@@ -158,6 +161,7 @@ impl Core {
             grouping_inflight: std::sync::Mutex::new(HashMap::new()),
             host_health: std::sync::Mutex::new((true, None, true)),
             host_probe: std::sync::Mutex::new(crate::poller::HostProbe::default()),
+            reconciled: std::sync::Mutex::new(HashMap::new()),
             login: Mutex::new(None),
             linear_cache: std::sync::Mutex::new(HashMap::new()),
             account: crate::usecases::account::AccountState::new(open),

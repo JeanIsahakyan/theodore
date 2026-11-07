@@ -4897,12 +4897,21 @@ async fn refresh_inbox_clears_reasons_of_prs_no_search_returns() {
         }])
         .unwrap();
     // Every section answers, none with this PR (you reviewed it).
+    f.host
+        .search_complete
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..4 {
         f.host.push_search(Ok(vec![]));
     }
+    // Asked after, it's still open: the row stays, its reasons don't return.
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: None,
+        value: testkit::sample_pr_detail(&pr_ref, &Sha::new("b"), &Sha::new("h")),
+    }));
     core.refresh_inbox().await.expect("refresh_inbox");
     let stored = f.store.get(models::PR, &pr_ref.id().0).unwrap().unwrap();
     assert_eq!(stored.data["reasons"], json!([]));
+    assert_eq!(stored.data["state"], json!("open"));
 }
 
 #[tokio::test]

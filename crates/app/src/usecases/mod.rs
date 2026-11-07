@@ -16,6 +16,7 @@ pub mod mirror;
 pub(crate) mod one_shot;
 pub mod open_pr;
 pub mod projects;
+pub mod reconcile;
 pub mod review;
 pub mod review_config;
 pub mod revision;
