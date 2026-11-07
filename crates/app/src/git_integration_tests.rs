@@ -367,6 +367,72 @@ async fn copied_env_files_stay_out_of_checkpoints_and_commits() {
     assert!(!kept.iter().any(|p| p == ".env.local"), "{kept:?}");
 }
 
+/// Stop: the agent's CLI traps SIGTERM, takes a moment, and writes one more
+/// file. The stopped turn's checkpoint waits for it.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stopped_turn_checkpoints_what_the_agent_wrote_while_dying() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let cli = tmp.path().join("fake-claude");
+    std::fs::write(
+        &cli,
+        "#!/bin/sh\n\
+         trap 'sleep 1; echo late > late.txt; exit 0' TERM\n\
+         touch started.txt\n\
+         while :; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let agents = theodore_agents::AgentCli::new().with_config(
+        theodore_domain::AgentId::Claude,
+        theodore_agents::AgentBinaryConfig {
+            path: Some(cli),
+            ..Default::default()
+        },
+    );
+
+    let lf = local_folder_with(|_| {}, Some(std::sync::Arc::new(agents))).await;
+    let s = lf.core.create_space(no_goal(&lf.project)).await.unwrap();
+    let wt = std::path::PathBuf::from(&s.worktree);
+    lf.core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "work".into(),
+            agent: Some(theodore_domain::AgentId::Claude),
+            model: None,
+            mode: None,
+            attachments: None,
+        })
+        .await
+        .unwrap();
+    wait_for("the agent started", || wt.join("started.txt").exists()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    lf.core.space_stop(&s.id).await.unwrap();
+    // Refused until the agent is gone: no Undo or new turn on top of it.
+    assert_eq!(space_row(&lf.f, &s.id).status, SpaceStatus::Running);
+    assert!(lf.core.undo_space_turn(&s.id).await.is_err());
+    wait_for("the turn ends", || {
+        space_row(&lf.f, &s.id).status != SpaceStatus::Running
+    })
+    .await;
+
+    let row = space_row(&lf.f, &s.id);
+    assert_eq!(row.status, SpaceStatus::Idle);
+    assert_eq!(
+        std::fs::read_to_string(wt.join("late.txt")).unwrap(),
+        "late\n"
+    );
+    let files = tree_files(&wt, row.head_sha.as_str());
+    assert!(
+        files.contains(&"late.txt".to_string()),
+        "the stopped turn's last write: {files:?}"
+    );
+    let subject = git_out(&wt, &["log", "-1", "--format=%s", row.head_sha.as_str()]);
+    assert!(subject.ends_with("turn 1 (stopped)"), "{subject}");
+}
+
 /// Quit right after the push, before `shipped` is on the row: the host has
 /// the branch, and it is this space's own.
 #[tokio::test]

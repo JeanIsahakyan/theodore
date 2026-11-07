@@ -656,9 +656,10 @@ is unchanged from before: Claude's Edit already pre-approves Bash, Codex's
 `workspace-write` already runs commands in its own sandbox; Run lifts the
 remaining prompts and limits.
 
-- **Stop** cancels the run (SIGTERM → 5 s → SIGKILL, existing lifecycle), then
-  checkpoints whatever was edited as "turn N (stopped)". Nothing is lost;
-  messages queued behind it are held, not sent (§8).
+- **Stop** cancels the run (SIGTERM → 5 s → SIGKILL, existing lifecycle), waits
+  for the process to go, then checkpoints whatever was edited as "turn N
+  (stopped)". Until then the space is still running: Undo and a new turn wait.
+  Nothing is lost; messages queued behind it are held, not sent (§8).
 - **Resume** = send another message. The space keeps one agent session and
   each turn continues it (below), so the agent still has the files it read,
   the commands it ran and its todo list; a different agent picks up from the

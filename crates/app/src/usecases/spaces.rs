@@ -885,6 +885,10 @@ fn resumable_session(space: &Space, agent: AgentId, cwd: &Path) -> Option<String
 /// Claude Code's result `errors`, Codex's stderr.
 const SESSION_GONE: [&str; 2] = ["no conversation found", "no rollout found"];
 
+/// A stopped run's events end once its process is gone (SIGTERM, 5 s, then
+/// SIGKILL); this only bounds a runner that never closes them.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// One agent run of a turn, streamed to the UI.
 #[derive(Default)]
 struct Streamed {
@@ -927,11 +931,33 @@ async fn stream_run(
     };
     let mut live = LiveRun::new(run_id, agent);
     let _unsteer = Unsteer { core, run: run_id };
+    // Stopped: the turn goes on until the process is gone, so its checkpoint
+    // has the last writes and nothing starts on top of a dying agent.
+    let mut give_up: Option<tokio::time::Instant> = None;
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => { run.cancel.cancel(); break; }
+            _ = cancel.cancelled(), if give_up.is_none() => {
+                run.cancel.cancel();
+                give_up = Some(tokio::time::Instant::now() + STOP_WAIT);
+            }
+            _ = tokio::time::sleep_until(give_up.unwrap_or_else(tokio::time::Instant::now)),
+                if give_up.is_some() =>
+            {
+                tracing::warn!(
+                    error.code = "space.stop_timed_out",
+                    agent = agent.as_str(),
+                    "a stopped agent's events didn't end in time"
+                );
+                break;
+            }
             event = run.events.recv() => {
                 let Some(event) = event else { break };
+                // How its process ended isn't the turn's answer.
+                if give_up.is_some()
+                    && matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. })
+                {
+                    continue;
+                }
                 let event = with_worktree_paths(event, &cwd);
                 // Quiet because it waits on your answer, not stuck.
                 if !(event == AgentEvent::Stalled && core.asking(run_id)) {

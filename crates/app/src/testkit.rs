@@ -1883,9 +1883,6 @@ pub struct FakeAgent {
     hang_next: Mutex<bool>,
     /// The next one-shot utility call (`stream_text: false`) hangs likewise.
     hang_next_utility: Mutex<bool>,
-    /// Keeps a run's sender alive forever so its `events.recv()` never
-    /// resolves (used to test cancellation deterministically).
-    kept_alive: Mutex<Vec<tokio::sync::mpsc::Sender<AgentEvent>>>,
     /// Every `stream_text: true` request `run()` was called with, in
     /// order (assertions on the prompt, mode, or agent a use case
     /// picked): a turn, a skill run, an ask — never a one-shot utility
@@ -1934,11 +1931,12 @@ impl FakeAgent {
             .push((Box::new(matches), events));
     }
     /// The next turn / skill / ask `run()` (`stream_text: true`) never
-    /// emits anything and never closes, until the whole fake is dropped.
+    /// emits anything and only closes once cancelled, as a real agent's
+    /// events do when its process is gone.
     pub fn hang_next_run(&self) {
         *self.hang_next.lock().unwrap() = true;
     }
-    /// The next one-shot utility call hangs.
+    /// The next one-shot utility call hangs until it is cancelled.
     pub fn hang_next_utility(&self) {
         *self.hang_next_utility.lock().unwrap() = true;
     }
@@ -2013,8 +2011,13 @@ impl AgentPort for FakeAgent {
         } else {
             std::mem::take(&mut *self.hang_next_utility.lock().unwrap())
         };
+        let cancel = CancellationToken::new();
+        let cancelled = cancel.clone();
         if hang {
-            self.kept_alive.lock().unwrap().push(tx);
+            tokio::spawn(async move {
+                let _keep = tx;
+                cancelled.cancelled().await;
+            });
         } else {
             let events = tagged.unwrap_or_else(|| {
                 if stream_text {
@@ -2036,13 +2039,19 @@ impl AgentPort for FakeAgent {
             let hang_after =
                 stream_text && std::mem::take(&mut *self.hang_after_script.lock().unwrap());
             tokio::spawn(async move {
-                if let Some(go) = paused
-                    && go.await.is_err()
-                {
-                    // Never released: hang like `hang_next_run`.
-                    let _keep = tx;
-                    std::future::pending::<()>().await;
-                    return;
+                if let Some(go) = paused {
+                    tokio::select! {
+                        // Stopped before it played: as if its process died.
+                        _ = cancelled.cancelled() => return,
+                        released = go => {
+                            if released.is_err() {
+                                // Never released: hang like `hang_next_run`.
+                                let _keep = tx;
+                                cancelled.cancelled().await;
+                                return;
+                            }
+                        }
+                    }
                 }
                 for e in events {
                     if tx.send(e).await.is_err() {
@@ -2051,14 +2060,11 @@ impl AgentPort for FakeAgent {
                 }
                 if hang_after {
                     let _keep = tx;
-                    std::future::pending::<()>().await;
+                    cancelled.cancelled().await;
                 }
             });
         }
-        Ok(AgentRun {
-            events: rx,
-            cancel: CancellationToken::new(),
-        })
+        Ok(AgentRun { events: rx, cancel })
     }
     async fn run_steerable(
         &self,
