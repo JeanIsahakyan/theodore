@@ -1054,6 +1054,17 @@ fn with_worktree_paths(event: AgentEvent, cwd: &Path) -> AgentEvent {
         let Some(path) = input.get(key).and_then(serde_json::Value::as_str) else {
             continue;
         };
+        // The worktree itself (a search over all of it): no "where" to say,
+        // rather than its internal path under the data dir.
+        if [root.as_str(), private.as_str()]
+            .iter()
+            .any(|r| path.trim_end_matches('/') == r.trim_end_matches('/'))
+        {
+            if let Some(obj) = input.as_object_mut() {
+                obj.remove(key);
+            }
+            continue;
+        }
         let relative = [root.as_str(), private.as_str()]
             .iter()
             .find_map(|r| path.strip_prefix(r)?.strip_prefix('/'))
@@ -1699,6 +1710,35 @@ pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_search_of_the_whole_worktree_names_no_internal_path() {
+        let cwd = Path::new("/data/spaces/795226850cea");
+        let call = |path: &str| AgentEvent::ToolCall {
+            id: "g".into(),
+            name: "Grep".into(),
+            input: serde_json::json!({ "pattern": "the", "path": path }),
+        };
+        let input = |e: AgentEvent| match e {
+            AgentEvent::ToolCall { input, .. } => input,
+            other => panic!("{other:?}"),
+        };
+        for root in [
+            "/data/spaces/795226850cea",
+            "/data/spaces/795226850cea/",
+            "/private/data/spaces/795226850cea",
+        ] {
+            let got = input(with_worktree_paths(call(root), cwd));
+            assert_eq!(got, serde_json::json!({ "pattern": "the" }), "{root}");
+        }
+        let got = input(with_worktree_paths(
+            call("/data/spaces/795226850cea/src"),
+            cwd,
+        ));
+        assert_eq!(got["path"], "src");
+        let got = input(with_worktree_paths(call("/elsewhere"), cwd));
+        assert_eq!(got["path"], "/elsewhere");
+    }
 
     #[test]
     fn ultracode_opens_the_prompt_only_when_on() {
