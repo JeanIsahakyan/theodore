@@ -46,7 +46,11 @@ fn pr_ref(number: u64) -> PrRef {
 }
 
 async fn host_project(f: &Fixtures) -> (Core, Receivers, Project) {
-    let (core, recv) = Core::start(f.deps());
+    host_project_with(f, f.deps()).await
+}
+
+async fn host_project_with(f: &Fixtures, deps: crate::Deps) -> (Core, Receivers, Project) {
+    let (core, recv) = Core::start(deps);
     tokio::time::sleep(Duration::from_millis(30)).await;
     let project = Project {
         id: "github:acme/widget".into(),
@@ -579,6 +583,31 @@ async fn continue_moves_the_space_to_a_new_branch_on_the_fresh_base() {
             .contains("me/retry-on-429-2"),
         "the system prompt names the new branch"
     );
+}
+
+/// Continue moves the worktree onto the new base: the files that moved
+/// are reindexed.
+#[tokio::test]
+async fn continue_reindexes_the_files_it_moved() {
+    use crate::code_intel_tests::{diffs_touch, reindexed};
+    let f = fixtures();
+    let (core, _recv, project) = host_project_with(&f, f.deps_with_code()).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    let root = s.worktree.clone();
+    wait_until(|| {
+        f.code_intel
+            .calls()
+            .iter()
+            .any(|c| c.starts_with(&format!("open {root}")))
+    })
+    .await;
+    merge_on_host(&f, &core, 100).await;
+    base_moved(&f, "main222");
+    // Whatever the turn reindexed has settled.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    diffs_touch(&f, "src/continued.ts");
+    core.continue_space(&s.id).await.unwrap();
+    wait_until(|| reindexed(&f, &root, "src/continued.ts") == 1).await;
 }
 
 #[tokio::test]

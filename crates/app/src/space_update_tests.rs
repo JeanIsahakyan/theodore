@@ -36,7 +36,11 @@ fn widget() -> RepoRef {
 }
 
 async fn host_project(f: &Fixtures) -> (Core, Receivers, Project) {
-    let (core, recv) = Core::start(f.deps());
+    host_project_with(f, f.deps()).await
+}
+
+async fn host_project_with(f: &Fixtures, deps: crate::Deps) -> (Core, Receivers, Project) {
+    let (core, recv) = Core::start(deps);
     tokio::time::sleep(Duration::from_millis(30)).await;
     let project = Project {
         id: "github:acme/widget".into(),
@@ -178,6 +182,70 @@ async fn a_clean_update_moves_the_space_onto_the_new_base() {
         err.to_string().contains("moved since its last turn"),
         "{err}"
     );
+}
+
+/// Update from base, its completion by hand and its abort rewrite the
+/// worktree outside a turn: the files they moved are reindexed.
+#[tokio::test]
+async fn an_update_completed_or_aborted_reindexes_the_files_it_moved() {
+    use crate::code_intel_tests::{diffs_touch, reindexed};
+    let f = fixtures();
+    let (core, _recv, project) = host_project_with(&f, f.deps_with_code()).await;
+    // No goal: no turn, so nothing else reindexes meanwhile.
+    let s = core
+        .create_space(CreateSpaceRequest {
+            project: project.id.clone(),
+            goal: String::new(),
+            name: None,
+            branch: None,
+            base: None,
+            agent: None,
+            model: None,
+            start_from: None,
+        })
+        .await
+        .unwrap();
+    let root = s.worktree.clone();
+    wait_until(|| {
+        f.code_intel
+            .calls()
+            .iter()
+            .any(|c| c.starts_with(&format!("open {root}")))
+    })
+    .await;
+
+    // Clean.
+    base_moves(&f);
+    diffs_touch(&f, "src/merged.ts");
+    core.update_space_from_base(&s.id).await.unwrap();
+    wait_until(|| reindexed(&f, &root, "src/merged.ts") == 1).await;
+
+    // Conflicts the agent's turn leaves, then Abort.
+    f.git.set_resolve("main", Sha::new("base333"));
+    f.git.set_resolve("base333", Sha::new("base333"));
+    for _ in 0..2 {
+        f.git
+            .push_merge_result(SpaceMerge::Conflicts(vec!["a.txt".into()]));
+    }
+    f.agents.push_script(done("Tried."));
+    core.update_space_from_base(&s.id).await.unwrap();
+    idle(&f, &s.id).await;
+    diffs_touch(&f, "src/aborted.ts");
+    core.abort_space_update(&s.id).await.unwrap();
+    wait_until(|| reindexed(&f, &root, "src/aborted.ts") == 1).await;
+
+    // Conflicts resolved by hand, then Complete.
+    for _ in 0..2 {
+        f.git
+            .push_merge_result(SpaceMerge::Conflicts(vec!["a.txt".into()]));
+    }
+    f.agents.push_script(done("Tried."));
+    core.update_space_from_base(&s.id).await.unwrap();
+    idle(&f, &s.id).await;
+    diffs_touch(&f, "src/completed.ts");
+    let s = core.update_space_from_base(&s.id).await.unwrap();
+    assert_eq!(s.base_sha, Sha::new("base333"));
+    wait_until(|| reindexed(&f, &root, "src/completed.ts") == 1).await;
 }
 
 #[tokio::test]

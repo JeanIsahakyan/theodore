@@ -409,8 +409,10 @@ impl Core {
         true
     }
 
-    /// A space turn moved its checkpoint `before` → `after`: the files the
-    /// agent wrote with its own tools are reindexed, in the background.
+    /// A space's worktree moved from commit `before` to `after` — a turn
+    /// (the files the agent wrote with its own tools), Undo, Back to here,
+    /// Revert, Update from base and its Abort, Continue: the files that
+    /// differ are reindexed, in the background.
     pub(crate) fn spawn_space_code_changed(
         &self,
         root: PathBuf,
@@ -420,6 +422,9 @@ impl Core {
         let Some(port) = self.code_port() else {
             return;
         };
+        if before == after {
+            return;
+        }
         let open = self
             .0
             .code_intel

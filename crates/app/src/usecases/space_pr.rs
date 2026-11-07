@@ -331,6 +331,7 @@ impl Core {
             head: tip.clone(),
         };
         git.space_reset(&wt.path, &space.id, &to).await?;
+        self.spawn_space_code_changed(wt.path.clone(), head.clone(), start.clone());
 
         let branch = self.continued_branch(&space, &repo_path).await?;
         let now = self.0.deps.clock.now();

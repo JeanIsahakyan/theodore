@@ -411,6 +411,78 @@ async fn a_turn_reindexes_the_files_it_changed() {
     .await;
 }
 
+/// How many times `path` in `root` was reported changed to the port.
+pub(crate) fn reindexed(f: &Fixtures, root: &str, path: &str) -> usize {
+    let want = format!("file_changed {root} {path}");
+    f.code_intel.calls().iter().filter(|c| **c == want).count()
+}
+
+/// Every diff from now on (the fake's) changes only `path`.
+pub(crate) fn diffs_touch(f: &Fixtures, path: &str) {
+    f.git.set_revision(testkit::two_hunk_revision(
+        &Sha::new("a"),
+        &Sha::new("b"),
+        path,
+    ));
+}
+
+/// Undo, Back to here and Revert rewrite the worktree outside a turn: the
+/// files they moved are reindexed too (a file gone after Undo leaves no
+/// symbol behind).
+#[tokio::test]
+async fn undo_back_to_here_and_revert_reindex_the_files_they_moved() {
+    let e = code_env().await;
+    let s = e.create("").await;
+    let root = s.worktree.clone();
+    wait_until(|| opened(&e, &format!("open {root}"))).await;
+    diffs_touch(&e.f, "src/turn.ts");
+    for (i, head) in ["turn1", "turn2", "turn3"].into_iter().enumerate() {
+        e.f.git.push_checkpoint(Sha::new(head));
+        e.f.agents.push_script(done("ok"));
+        e.core
+            .space_send(SpaceSendRequest {
+                space: s.id.clone(),
+                text: "go".into(),
+                agent: None,
+                model: None,
+                mode: Some(theodore_contract::SpaceMode::Edit),
+                attachments: None,
+            })
+            .await
+            .unwrap();
+        e.until(&s.id, |s| s.run.is_none() && s.head_sha.0 == head)
+            .await;
+        wait_until(|| reindexed(&e.f, &root, "src/turn.ts") == i + 1).await;
+    }
+
+    diffs_touch(&e.f, "src/extra.ts");
+    e.core.undo_space_turn(&s.id).await.unwrap();
+    wait_until(|| reindexed(&e.f, &root, "src/extra.ts") == 1).await;
+
+    diffs_touch(&e.f, "src/back.ts");
+    let reply = e.space(&s.id).turn_log[0].reply.clone();
+    e.core
+        .rewind_space(theodore_contract::RewindSpaceRequest {
+            space: s.id.clone(),
+            reply,
+        })
+        .await
+        .unwrap();
+    wait_until(|| reindexed(&e.f, &root, "src/back.ts") == 1).await;
+
+    diffs_touch(&e.f, "src/reverted.ts");
+    e.f.git.push_checkpoint(Sha::new("revert1"));
+    e.core
+        .revert_space_file(theodore_contract::RevertSpaceFileRequest {
+            space: s.id.clone(),
+            paths: vec!["src/reverted.ts".into()],
+            from: theodore_contract::SpaceRevertFrom::Base,
+        })
+        .await
+        .unwrap();
+    wait_until(|| reindexed(&e.f, &root, "src/reverted.ts") == 1).await;
+}
+
 // ── code_intel.lsp ──────────────────────────────────────────────────────────
 
 #[test]

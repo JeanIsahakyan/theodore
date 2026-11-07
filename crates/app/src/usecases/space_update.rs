@@ -141,6 +141,7 @@ impl Core {
             .await?
         {
             SpaceMerge::Merged(head) => {
+                self.spawn_space_code_changed(wt.path.clone(), from.clone(), head.clone());
                 self.apply(vec![patch(
                     &space.id,
                     serde_json::json!({
@@ -238,6 +239,12 @@ impl Core {
                 )),
                 e => e.into(),
             })?;
+        // The merge's files went back; the base's tip has at least them.
+        self.spawn_space_code_changed(
+            wt.path.clone(),
+            update.base_tip.clone(),
+            update.from.clone(),
+        );
         self.apply(vec![patch(
             &space.id,
             serde_json::json!({
@@ -273,6 +280,11 @@ impl Core {
         let left = match &finish {
             Finish::Left(paths) => Some(paths.clone()),
             Finish::Merged(cp) | Finish::Abandoned(cp) => {
+                self.spawn_space_code_changed(
+                    worktree.to_path_buf(),
+                    space.head_sha.clone(),
+                    cp.sha.clone(),
+                );
                 data["head_sha"] = serde_json::json!(cp.sha);
                 data["worktree_head"] = serde_json::json!(cp.head);
                 data["status"] = serde_json::json!(SpaceStatus::Idle);

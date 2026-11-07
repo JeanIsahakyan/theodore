@@ -76,6 +76,7 @@ impl Core {
             .space_reset(&wt.path, &space.id, &to)
             .await
             .map_err(|e| busy_refusal("undo", e))?;
+        self.spawn_space_code_changed(wt.path.clone(), space.head_sha.clone(), to.sha.clone());
         let mut log = space.turn_log.clone();
         for t in log[i..].iter_mut() {
             t.undone = true;
@@ -186,6 +187,7 @@ impl Core {
                 "{first} is already as it was {said}"
             )));
         }
+        self.spawn_space_code_changed(wt.path.clone(), space.head_sha.clone(), cp.sha.clone());
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = self.0.deps.clock.now();

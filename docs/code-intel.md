@@ -15,6 +15,7 @@ index has a size cap; limits apply live. Open: the eval (§10).
 | PR opened, review run starts | `open_pr.rs` `finish_open_full`, `space_tools.rs` `pr_tools`: `TrustMode::Review` |
 | space created / unarchived / turn | `spaces.rs` `create_space`, `unarchive_space`, `space_send`: trusted per §8 |
 | space turn ends (files the agent wrote) | `spaces.rs` turn end → `code_intel.rs` `spawn_space_code_changed`: the checkpoint's diff → `file_changed` |
+| space's worktree rewritten outside a turn | Undo / Back to here / Revert (`space_checkpoints.rs`), Update from base, its Complete and Abort (`space_update.rs`), Continue (`space_pr.rs`) → `spawn_space_code_changed`: the diff of the worktree before → after → `file_changed` |
 | closed | `spaces.rs` `archive_space`, `projects.rs` `close_branch_review`, runtime worktree GC → `Core::code_intel_sweep` |
 
 ---
@@ -454,10 +455,18 @@ open · close · every 10 min · a smaller cap ─▶ used bytes ≤ cap? ──
 ### 5.3 Spaces: follow the edits
 
 ```
-agent edits ─▶ file watcher (notify, debounced) ─▶ new blob ─▶ reindex file
-                                                 └─▶ didChange to the LSP server
-                                                     ─▶ diagnostics
+edit tool (replace_symbol_body, …) ─▶ write ────────────────────┐
+turn ends ──────────────────────────┐                            │
+Undo · Back to here · Revert        ├─▶ worktree before → after ─┴─▶ file_changed ─▶ reindex the file
+Update from base · Complete · Abort │   (its diff)                                └─▶ didChange to the
+Continue ───────────────────────────┘                                                 LSP server ─▶ diagnostics
 ```
+
+Every operation that rewrites a space's worktree reports the files it
+moved (`spawn_space_code_changed`), so a file Undo removed leaves no symbol
+behind. Abort diffs the merged base's tip against the checkpoint it goes
+back to: a superset of what the merge wrote. Hand edits are not watched:
+they reach the index with the next turn's checkpoint.
 
 ## 6. Language servers at run time
 
@@ -690,7 +699,7 @@ C++  · 3 files      Grammar Installed   clangd Downloading
 S1  syntax layer + toolchain/manifest + grammar CI + review-tools   ✓
     project settings → Languages (was a global Settings page)       ✓
 S2  LSP client + pool + trust switches + space-tools edits          ✓
-    reindex after each space turn (the checkpoint's diff)           ✓
+    reindex after each space turn and each rewrite (Undo, update…)  ✓
 S3  eval with and without the tools; limits; Grep decision          open
 ```
 
