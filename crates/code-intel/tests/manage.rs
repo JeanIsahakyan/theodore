@@ -189,6 +189,11 @@ const PLATFORM: &str = "test-plat";
 
 /// Language `x` served by `srv`, downloaded from `uri`.
 fn server_facade(env: &Env, uri: &str, body: &[u8]) -> CodeIntel {
+    server_facade_with(env, uri, body, "")
+}
+
+/// `more`: languages after `x`, in the manifest's yaml.
+fn server_facade_with(env: &Env, uri: &str, body: &[u8], more: &str) -> CodeIntel {
     let sha = hex::encode(Sha256::digest(body));
     let yaml = format!(
         r#"
@@ -203,7 +208,7 @@ languages:
   - id: x
     globs: ["*.x"]
     servers: [srv]
-"#
+{more}"#
     );
     let manifest = Manifest::parse(&yaml, r#"{"schema":1,"grammars":[]}"#)
         .unwrap()
@@ -276,6 +281,40 @@ async fn install_reports_progress_and_remove_takes_the_server_back_to_missing() 
         .unwrap();
     let s = status_of(&ci, wt.path(), "x").await;
     assert_eq!(s.server.unwrap().install, InstallState::Missing);
+}
+
+/// One server, two languages (tsgo: typescript and tsx). Installing it for
+/// one must not leave the other's row stuck on Downloading, with no plan to
+/// start the server from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn installing_a_server_settles_every_language_it_serves() {
+    let http = MockServer::start().await;
+    let body = b"#!/bin/sh\nsleep 30\n".to_vec();
+    Mock::given(method("GET"))
+        .and(path("/srv"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone()))
+        .mount(&http)
+        .await;
+    let env = Env::new();
+    let more = "  - id: y\n    globs: [\"*.y\"]\n    servers: [srv]\n";
+    let ci = server_facade_with(&env, &http.uri(), &body, more);
+    let wt = repo(&[("a.x", "x"), ("a.y", "y")]);
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+
+    ci.install(&LanguageId::new("x"), None).await.unwrap();
+
+    for language in ["x", "y"] {
+        let s = status_of(&ci, wt.path(), language).await;
+        assert_eq!(
+            s.server.unwrap().install,
+            InstallState::Installed {
+                version: "1.0".into()
+            },
+            "{language}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

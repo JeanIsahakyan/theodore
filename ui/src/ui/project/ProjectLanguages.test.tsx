@@ -231,6 +231,27 @@ describe('ProjectLanguages', () => {
     expect(m!.host.querySelectorAll('.code-decline')).toHaveLength(0);
   });
 
+  it('a language with no grammar reads as text search, not as a failure', async () => {
+    transport.onCall('code_intel_status', () => ({
+      ...STATUS,
+      languages: [
+        {
+          language: 'css',
+          files: 8,
+          grammar: { state: 'unavailable' },
+          server: null,
+          index_percent: 0,
+        },
+      ],
+    }));
+    await render();
+    const text = m!.host.textContent;
+    expect(text).toContain('Text search');
+    expect(text).not.toContain('Unavailable');
+    expect(text).not.toContain('% indexed');
+    expect(m!.host.querySelectorAll('.code-install')).toHaveLength(0);
+  });
+
   it('Remove asks first, then removes', async () => {
     transport.onCall('code_intel_status', () => STATUS);
     transport.onCall('code_intel_remove', () => null);

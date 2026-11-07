@@ -223,7 +223,16 @@ function LanguageRow({
   onRemove: () => void;
   onDecline: () => void;
 }) {
-  const grammar = installView(lang.grammar);
+  // No grammar to get: not a problem to report, text search serves it.
+  const textOnly = lang.grammar.state === 'unavailable';
+  const grammar: InstallView = textOnly
+    ? {
+        label: 'Text search',
+        tone: 'default',
+        detail: null,
+        downloading: false,
+      }
+    : installView(lang.grammar);
   const server = lang.server
     ? installView(lang.server.install, lang.server.hint)
     : null;
@@ -283,7 +292,7 @@ function LanguageRow({
         className="w-20 shrink-0 text-right text-xs tabular-nums text-muted"
         title="Files indexed"
       >
-        {lang.index_percent}% indexed
+        {!textOnly && `${lang.index_percent}% indexed`}
       </span>
       <div className="flex w-40 shrink-0 items-center justify-end gap-1">
         {busy ? (

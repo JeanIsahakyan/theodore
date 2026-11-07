@@ -1146,6 +1146,7 @@ impl CodeIntel {
         let prefer: Option<String> = lock(&self.inner.prefer)
             .values()
             .find_map(|p| p.get(language.as_str()).cloned());
+        let mut fetched: Option<String> = None;
         if let Some((server, state)) = tc.server_to_install(language, prefer.as_deref()).await {
             let fetch = !matches!(
                 state,
@@ -1156,6 +1157,7 @@ impl CodeIntel {
             );
             if fetch && server.download_for(tc.platform()).is_some() {
                 self.mark_downloading(&server.name);
+                fetched = Some(server.name.clone());
                 let report = Reporter::new(
                     progress.clone(),
                     language,
@@ -1174,16 +1176,27 @@ impl CodeIntel {
         // Every open workspace with the language picks both up.
         let open: Vec<Arc<Ws>> = lock(&self.inner.workspaces).values().cloned().collect();
         for w in open {
-            if !w.languages().contains(language) {
-                continue;
+            // `mark_downloading` marked every language of that server, in
+            // every worktree: each has to read where it stands now.
+            let sharing: Vec<LanguageId> = lock(&w.servers)
+                .iter()
+                .filter(|(l, p)| *l != language && Some(&p.spec.name) == fetched.as_ref())
+                .map(|(l, _)| l.clone())
+                .collect();
+            for l in &sharing {
+                self.plan_server(&w, l).await;
             }
-            let progress = w.index.progress();
-            if grammar_ok && progress.missing_languages.contains(language) {
-                w.index.refresh_grammar(language);
-            }
-            self.plan_server(&w, language).await;
-            if let Some(plan) = w.plan(language) {
-                self.attach(&w, &plan.spec.name).await;
+            if w.languages().contains(language) {
+                let progress = w.index.progress();
+                if grammar_ok && progress.missing_languages.contains(language) {
+                    w.index.refresh_grammar(language);
+                }
+                self.plan_server(&w, language).await;
+                if let Some(plan) = w.plan(language) {
+                    self.attach(&w, &plan.spec.name).await;
+                }
+            } else if let Some(server) = fetched.as_deref().filter(|_| !sharing.is_empty()) {
+                self.attach(&w, server).await;
             }
         }
         first_error.map_or(Ok(()), Err)

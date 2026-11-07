@@ -676,6 +676,8 @@ C++  · 3 files      Grammar Installed   clangd Downloading
   | `unavailable` | Unavailable | the manifest's `hint` (`gem install ruby-lsp`), else No download for this Mac |
   | `trusted_only` | Spaces only | Runs the project's build, so it does not start for reviews |
 
+- A language with no grammar for this build reads `Text search`, with no index
+  percent: nothing is wrong, and nothing can be installed for it.
 - Install progress comes from `Ephemeral::CodeIntelProgress` (§5.1): the
   row shows the bar and reads the status again once an item settles. The
   status is polled (every 5 s) only while a server warms up, or a download
