@@ -369,6 +369,10 @@ never serves a review, while a review is what asks.
   does not wait.
 - Offline, or a check fails → that language has no code intelligence; review
   works as it does today.
+- The answers live in one list (`code_intel.declined`, an app setting).
+  "Not now" on the toast declines every language it names at once; the core
+  edits the list one answer at a time (a lock around read, edit, write), so
+  none is lost.
 
 Progress: an install (`code_intel_install`, or `install: always`) emits
 `Ephemeral::CodeIntelProgress` per item, at most four times a second while

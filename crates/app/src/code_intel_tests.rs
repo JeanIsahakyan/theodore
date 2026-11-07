@@ -1105,6 +1105,35 @@ async fn a_declined_language_is_not_suggested_and_install_forgets_the_no() {
     );
 }
 
+/// "Not now" on the collapsed toast declines every language at once: no
+/// write may overwrite another.
+#[tokio::test]
+async fn concurrent_declines_and_installs_keep_every_answer() {
+    let e = code_env().await;
+    e.core.code_intel_decline("go").await.unwrap();
+    let langs = ["cpp", "java", "kotlin", "python", "rust"];
+    let d = |i: usize| e.core.code_intel_decline(langs[i]);
+    let (a, b, c, d2, e2, installed) = tokio::join!(
+        d(0),
+        d(1),
+        d(2),
+        d(3),
+        d(4),
+        e.core.code_intel_install("go")
+    );
+    for r in [a, b, c, d2, e2, installed] {
+        r.unwrap();
+    }
+    let declined: Vec<String> = serde_json::from_value(
+        e.core
+            .setting_value_scoped(crate::usecases::code_intel::DECLINED_KEY, None)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(declined, langs, "install forgot go and kept the rest");
+}
+
 #[tokio::test]
 async fn without_a_port_settings_says_off() {
     let e = start_env_with(Fixtures::deps).await;

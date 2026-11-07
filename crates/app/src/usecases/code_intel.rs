@@ -102,6 +102,9 @@ pub(crate) struct CodeIntelState {
     open: std::sync::Mutex<HashMap<PathBuf, Opened>>,
     suggested: std::sync::Mutex<HashSet<String>>,
     limits: std::sync::Mutex<Option<CodeIntelLimits>>,
+    /// One read-modify-write of the declined list at a time: "Not now"
+    /// declines several languages at once.
+    declined: tokio::sync::Mutex<()>,
 }
 
 /// Who a code tool call is for: the root comes from the run, never from
@@ -767,11 +770,7 @@ impl Core {
         if language.is_empty() {
             return Err(AppError::Invalid("no language".into()));
         }
-        let mut declined = self.declined_languages().await;
-        if declined.iter().any(|l| l == language) {
-            declined.retain(|l| l != language);
-            self.write_declined(declined).await?;
-        }
+        self.edit_declined(|d| d.retain(|l| l != language)).await?;
         port.install(
             &LanguageId::new(language),
             Some(self.install_progress(None)),
@@ -905,17 +904,26 @@ impl Core {
         if language.is_empty() {
             return Err(AppError::Invalid("no language".into()));
         }
-        let mut declined = self.declined_languages().await;
-        if !declined.iter().any(|l| l == language) {
-            declined.push(language.to_string());
-            declined.sort();
-            self.write_declined(declined).await?;
-        }
-        Ok(())
+        self.edit_declined(|d| {
+            if !d.iter().any(|l| l == language) {
+                d.push(language.to_string());
+                d.sort();
+            }
+        })
+        .await
     }
 
-    async fn write_declined(&self, languages: Vec<String>) -> AppResult<()> {
-        self.write_user_setting(DECLINED_KEY, serde_json::json!(languages))
+    /// Reads the declined list, applies `edit`, writes it if it changed:
+    /// under a lock, so concurrent answers never overwrite each other.
+    async fn edit_declined(&self, edit: impl FnOnce(&mut Vec<String>)) -> AppResult<()> {
+        let _guard = self.0.code_intel.declined.lock().await;
+        let before = self.declined_languages().await;
+        let mut after = before.clone();
+        edit(&mut after);
+        if after == before {
+            return Ok(());
+        }
+        self.write_user_setting(DECLINED_KEY, serde_json::json!(after))
             .await
     }
 
