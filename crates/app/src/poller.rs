@@ -285,7 +285,7 @@ async fn poll_pr_ref(core: &Core, pr: &PrId, pr_ref: &PrRef) {
     handle_push(core, pr, pr_ref, old_head, new_head, value).await;
 }
 
-async fn handle_push(
+pub(crate) async fn handle_push(
     core: &Core,
     pr: &PrId,
     pr_ref: &PrRef,

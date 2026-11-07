@@ -3013,6 +3013,48 @@ async fn open_branch_opens_a_review_with_no_host_pr() {
     assert_eq!(again.pr, resp.pr);
 }
 
+/// A commit on the branch after its review opened: reopening it moves the
+/// review to the branch's new head, as a push moves a PR's.
+#[tokio::test]
+async fn reopening_a_branch_review_follows_the_branch() {
+    let f = fixtures();
+    let (core, _recv) = started_core(&f).await;
+    let project = add_ready_local_project(&core, &f, "/tmp/my-folder").await;
+    f.git.set_resolve("feature", Sha::new("feat-head"));
+    f.git.set_resolve("main", Sha::new("main-base"));
+    f.git
+        .set_commit(Sha::new("feat-head"), feature_branch_commit());
+    f.git.set_commit_log(vec![feature_branch_commit()]);
+    let open = || {
+        core.open_branch(OpenBranchRequest {
+            project: project.id.clone(),
+            branch: "feature".into(),
+            base: None,
+        })
+    };
+    let first = open().await.expect("open_branch");
+    assert_eq!(first.head.as_str(), "feat-head");
+
+    let mut next = feature_branch_commit();
+    next.sha = Sha::new("feat-head-2");
+    f.git.set_resolve("feature", Sha::new("feat-head-2"));
+    f.git.set_commit(Sha::new("feat-head-2"), next.clone());
+    f.git.set_commit_log(vec![feature_branch_commit(), next]);
+    let again = open().await.expect("reopen");
+    assert_eq!(again.pr, first.pr);
+    assert_eq!(again.head.as_str(), "feat-head-2");
+    assert_eq!(
+        core.0.current_head.read().await.get(&first.pr),
+        Some(&Sha::new("feat-head-2"))
+    );
+    let row = f.store.get(models::PR, &first.pr.0).unwrap().unwrap();
+    assert_eq!(row.data["head_sha"], json!("feat-head-2"));
+
+    // Nothing new: the same head, no new revision.
+    let same = open().await.expect("reopen unchanged");
+    assert_eq!(same.head.as_str(), "feat-head-2");
+}
+
 #[tokio::test]
 async fn ensure_open_recovers_a_local_pr_after_a_restart() {
     let f = fixtures();

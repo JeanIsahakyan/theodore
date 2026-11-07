@@ -336,10 +336,63 @@ impl Core {
 
         let _guard = self.0.open_lock.lock().await;
         let id = pr_ref.id();
-        if let Some(head) = self.0.current_head.read().await.get(&id).cloned() {
-            return Ok(theodore_contract::OpenPrResponse { pr: id, head });
+        let open = self.0.current_head.read().await.get(&id).cloned();
+        if let Some(head) = open {
+            // A push moves it outside the lock, as the poller does.
+            drop(_guard);
+            return self.follow_branch(&project, &id, pr_ref, &base, head).await;
         }
         self.open_local(&project, pr_ref, &base).await
+    }
+
+    /// An open branch review asked for again: a commit on the branch since
+    /// it opened moves it to the new head, the way a push moves a PR
+    /// (`poller::handle_push`). The branch unreadable: it stays where it is.
+    async fn follow_branch(
+        &self,
+        project: &Project,
+        id: &PrId,
+        pr_ref: PrRef,
+        base: &str,
+        head: theodore_domain::Sha,
+    ) -> AppResult<theodore_contract::OpenPrResponse> {
+        let same = theodore_contract::OpenPrResponse {
+            pr: id.clone(),
+            head: head.clone(),
+        };
+        let Some(branch) = pr_ref.host_id.clone() else {
+            return Ok(same);
+        };
+        // The base it was opened against, not a default that changed since.
+        let base = match self.get_row(models::PR, &id.0).await {
+            Ok(Some(row)) => serde_json::from_value::<PrSummary>(row)
+                .map(|s| s.base_ref)
+                .unwrap_or_else(|_| base.to_string()),
+            _ => base.to_string(),
+        };
+        let Ok(repo_path) = self.ensure_project_cache(project).await else {
+            return Ok(same);
+        };
+        let Ok((detail, _)) = self
+            .0
+            .deps
+            .git
+            .describe_branch(&repo_path, &pr_ref.repo, pr_ref.number, &branch, &base)
+            .await
+        else {
+            return Ok(same);
+        };
+        let new_head = detail.summary.head_sha.clone();
+        if new_head == head {
+            return Ok(same);
+        }
+        self.apply_pr_detail(&detail).await?;
+        crate::poller::handle_push(self, id, &pr_ref, Some(head), new_head, detail).await;
+        let head = self.0.current_head.read().await.get(id).cloned();
+        Ok(theodore_contract::OpenPrResponse {
+            pr: id.clone(),
+            head: head.unwrap_or(same.head),
+        })
     }
 
     /// Closes a branch review (`open_branch`): drops its `pr`, `pr_detail`
