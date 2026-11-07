@@ -397,11 +397,14 @@ export const ReviewerPicker = observer(function ReviewerPicker({
               }
             }}
           >
-            {users.map((u) => (
-              <Dropdown.Item key={u.login} id={u.login} textValue={u.login}>
-                {u.login}
-              </Dropdown.Item>
-            ))}
+            {/* The host refuses a review request from the PR's author. */}
+            {users
+              .filter((u) => u.login !== detail?.summary?.author?.login)
+              .map((u) => (
+                <Dropdown.Item key={u.login} id={u.login} textValue={u.login}>
+                  {u.login}
+                </Dropdown.Item>
+              ))}
           </Dropdown.Menu>
         )}
       </Dropdown.Popover>
