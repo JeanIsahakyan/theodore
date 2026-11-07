@@ -349,8 +349,10 @@ describe('a finished reply', () => {
         })}
       />,
     );
-    expect(m!.host.querySelector('.agent-failed')?.textContent).toContain(
-      'stopped',
+    // A stop you asked for is no failure: a quiet note, no red card.
+    expect(m!.host.querySelector('.agent-failed')).toBeNull();
+    expect(m!.host.querySelector('.agent-stopped')?.textContent).toBe(
+      'Stopped',
     );
     expect(rowsOf(m!.host)).toEqual(['turn-text', 'turn-tool', 'turn-text']);
     // Told once: the steps are the reply.
