@@ -728,7 +728,12 @@ pub async fn symbol_links(
     let mut found: Vec<(usize, usize, String)> = Vec::new();
     for (from, name, hits) in hits {
         let mut kept = 0;
-        for h in hits.iter().filter(|h| !h.is_definition) {
+        // A text hit is only the same word: a column `name` in a migration
+        // says nothing about a function `name()`.
+        for h in hits
+            .iter()
+            .filter(|h| !h.is_definition && h.source != theodore_ports::Source::Text)
+        {
             if kept >= limits.max_links_per_symbol {
                 break;
             }
@@ -1281,6 +1286,19 @@ mod link_tests {
             SymbolLinkLimits::default(),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn the_same_word_found_by_text_search_links_nothing() {
+        let (rev, _) = rev();
+        let mut port = Port {
+            symbols: vec![parse_config()],
+            ..Port::default()
+        };
+        let mut word = hit("src/main.rs", 5, false);
+        word.source = Source::Text;
+        port.refs.insert(("src/config.rs".into(), 10), vec![word]);
+        assert_eq!(links(port, &rev).await, Vec::<SymbolLink>::new());
     }
 
     #[tokio::test]
