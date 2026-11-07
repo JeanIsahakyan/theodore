@@ -497,6 +497,15 @@ pub trait GitPort: Send + Sync {
         Ok(None)
     }
 
+    /// Keeps `paths` (relative to the worktree) out of every checkpoint: the
+    /// ones git would otherwise pick up, untracked and not ignored, are
+    /// excluded for the cache's worktrees. Tracked and ignored ones are left
+    /// as they are. `Ok` by default (fakes).
+    async fn space_exclude(&self, worktree: &Path, paths: &[String]) -> GitResult<()> {
+        let _ = (worktree, paths);
+        Ok(())
+    }
+
     /// The space's worktree as it is now, as a commit on top of `HEAD`:
     /// staged through a temporary index, so the worktree's own index, its
     /// `HEAD` and every ref stay as they were. `HEAD` itself when nothing

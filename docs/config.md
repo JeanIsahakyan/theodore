@@ -310,6 +310,13 @@ with a note. Unset by every layer, a space copies `.env*` by default — so a
 project with no config at all still gets its local secrets; set `copy: []`
 to turn that off.
 
+A copied file stays the space's own: one git would otherwise pick up
+(untracked, not ignored by the repo's `.gitignore` or your global one; the
+folder's own `.git/info/exclude` doesn't reach a space) is excluded in
+Theodore's cache of the project, by name, so it never enters a checkpoint, the
+diff or what ships. A file the base tracks stays tracked: a copy that differs
+from the base shows in the diff like any edit.
+
 ## 4. Variables
 
 Set for every command and agent turn of a space:

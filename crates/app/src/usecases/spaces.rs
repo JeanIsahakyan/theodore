@@ -130,13 +130,15 @@ impl Core {
             (_, true) => {}
             (Some(root), false) => {
                 let (root, dest) = (PathBuf::from(root), wt.path.clone());
-                notes.extend(
-                    tokio::task::spawn_blocking(move || {
-                        crate::usecases::space_commands::copy_into(&root, &dest, &copy)
-                    })
-                    .await
-                    .map_err(AppError::join)?,
-                );
+                let (copy_notes, files) = tokio::task::spawn_blocking(move || {
+                    crate::usecases::space_commands::copy_into(&root, &dest, &copy)
+                })
+                .await
+                .map_err(AppError::join)?;
+                notes.extend(copy_notes);
+                // Local files, secrets by default: for this space to use,
+                // never for its checkpoints or what it ships.
+                self.0.deps.git.space_exclude(&wt.path, &files).await?;
             }
             (None, false) => notes
                 .push("copy: skipped, this project has no local checkout to copy from".to_string()),

@@ -550,9 +550,15 @@ impl Core {
 }
 
 /// Copies `patterns` (paths relative to `root`; `*` / `?` allowed in the
-/// last segment) into `dest`. Returns notes for what wasn't copied.
-pub(crate) fn copy_into(root: &Path, dest: &Path, patterns: &[String]) -> Vec<String> {
+/// last segment) into `dest`. Returns notes for what wasn't copied, and the
+/// files that were.
+pub(crate) fn copy_into(
+    root: &Path,
+    dest: &Path,
+    patterns: &[String],
+) -> (Vec<String>, Vec<String>) {
     let mut notes = Vec::new();
+    let mut files = Vec::new();
     for pattern in patterns {
         let rel = Path::new(pattern);
         let safe = !pattern.is_empty()
@@ -591,16 +597,18 @@ pub(crate) fn copy_into(root: &Path, dest: &Path, patterns: &[String]) -> Vec<St
             notes.push(format!("copy: nothing matches {pattern}"));
         }
         for m in matches {
-            if let Err(e) = copy_path(&root.join(&m), &dest.join(&m)) {
+            if let Err(e) = copy_path(root, dest, &m, &mut files) {
                 notes.push(format!("copy: {}: {e}", m.display()));
             }
         }
     }
-    notes
+    (notes, files)
 }
 
-fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
-    let meta = std::fs::symlink_metadata(from).map_err(|_| {
+/// `rel` from under `root` to under `dest`; each file copied goes on `files`.
+fn copy_path(root: &Path, dest: &Path, rel: &Path, files: &mut Vec<String>) -> std::io::Result<()> {
+    let (from, to) = (root.join(rel), dest.join(rel));
+    let meta = std::fs::symlink_metadata(&from).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "not found in the project")
     })?;
     if meta.file_type().is_symlink() {
@@ -612,14 +620,18 @@ fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
             if std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.file_type().is_symlink()) {
                 continue;
             }
-            copy_path(&e.path(), &to.join(e.file_name()))?;
+            copy_path(root, dest, &rel.join(e.file_name()), files)?;
         }
         return Ok(());
     }
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::copy(from, to).map(|_| ())
+    std::fs::copy(from, to)?;
+    if let Some(rel) = rel.to_str() {
+        files.push(rel.to_string());
+    }
+    Ok(())
 }
 
 /// `*` (any run) and `?` (one character) within one path segment.
@@ -674,7 +686,9 @@ mod copy_tests {
             .into_iter()
             .map(String::from)
             .collect();
-        let notes = copy_into(root.path(), dest.path(), &patterns);
+        let (notes, mut files) = copy_into(root.path(), dest.path(), &patterns);
+        files.sort();
+        assert_eq!(files, [".env", ".env.local", "conf/sub/k.pem"]);
         assert_eq!(
             std::fs::read_to_string(dest.path().join(".env")).unwrap(),
             "A=1"

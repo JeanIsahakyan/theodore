@@ -266,7 +266,85 @@ pub(crate) async fn commit_edits(git: &SpaceGit<'_>, id: &str, message: &str) ->
     Ok(sha)
 }
 
+/// `path` as one line of an exclude file: anchored at the worktree's root,
+/// nothing in it read as a pattern. `None` for a name a line can't hold.
+fn exclude_line(path: &str) -> Option<String> {
+    if path.contains(['\n', '\r']) {
+        return None;
+    }
+    let mut line = String::from("/");
+    for c in path.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[' | ' ' | '\t') {
+            line.push('\\');
+        }
+        line.push(c);
+    }
+    Some(line)
+}
+
 impl GitCli {
+    /// `GitPort::space_exclude`. Through the cache's `info/exclude`, the one
+    /// exclude file a worktree reads that isn't in its tree: git itself then
+    /// leaves the files alone, in `add -A`, `status` and `clean` alike, and
+    /// the agent's own commits too. Each file by name, so anything new next
+    /// to them still counts.
+    pub(crate) async fn space_exclude_op(
+        &self,
+        worktree: &Path,
+        paths: &[String],
+    ) -> GitResult<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let askpass = self.ensure_askpass()?;
+        let _wt = crate::locks::lock(worktree).await;
+        let git = self.space_git(worktree, &askpass);
+        git.verify_root().await?;
+        let others = git
+            .run(&["ls-files", "-z", "--others", "--exclude-standard"])
+            .await?;
+        let others: std::collections::HashSet<String> = others
+            .split(|b| *b == 0)
+            .filter(|f| !f.is_empty())
+            .map(|f| String::from_utf8_lossy(f).into_owned())
+            .collect();
+        let lines: Vec<String> = paths
+            .iter()
+            .filter(|p| others.contains(*p))
+            .filter_map(|p| exclude_line(p))
+            .collect();
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let file = git
+            .run_text(&["rev-parse", "--git-path", "info/exclude"])
+            .await?;
+        let file = worktree.join(file.trim());
+        // Shared by the cache's worktrees.
+        let _file = crate::locks::lock(&file).await;
+        let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+        let known: Vec<&str> = text.lines().collect();
+        let new: Vec<&String> = lines
+            .iter()
+            .filter(|l| !known.contains(&l.as_str()))
+            .collect();
+        if new.is_empty() {
+            return Ok(());
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        for line in new {
+            text.push_str(line);
+            text.push('\n');
+        }
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&file, text)?;
+        Ok(())
+    }
+
     pub(crate) async fn space_checkpoint_op(
         &self,
         worktree: &Path,
@@ -463,6 +541,13 @@ impl GitCli {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exclude_line_names_one_file_and_no_pattern() {
+        assert_eq!(exclude_line(".env").as_deref(), Some("/.env"));
+        assert_eq!(exclude_line("a/b c*.x").as_deref(), Some("/a/b\\ c\\*.x"));
+        assert_eq!(exclude_line("a\nb"), None);
+    }
 
     #[test]
     fn only_plain_paths_inside_the_space_are_accepted() {

@@ -540,6 +540,10 @@ impl GitPort for GitCli {
             .await
     }
 
+    async fn space_exclude(&self, worktree: &Path, paths: &[String]) -> GitResult<()> {
+        self.space_exclude_op(worktree, paths).await
+    }
+
     async fn space_merge_abort(&self, worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
         self.space_merge_abort_op(worktree, space, to).await
     }
