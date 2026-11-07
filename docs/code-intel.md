@@ -630,8 +630,9 @@ in the config editor, or by the next worktree opened after a hand edit.
 
 ### 9.1 Project settings → Languages
 
-Settings → Projects → ⟨project⟩ → Languages: one project's switches and
-languages, next to its other settings and its config editor.
+Workspace switcher → Project settings → Languages: one project's switches and
+languages, a section of the project's own settings next to General and the
+config editor.
 
 ```
 Language servers in reviews   [ ]   off by default: a PR's code can run on this Mac

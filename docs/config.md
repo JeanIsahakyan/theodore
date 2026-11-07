@@ -305,8 +305,8 @@ code_intel:
 - `lsp.*` is honoured only from your global and local files. A repo's file
   setting it is ignored, with a toast, and the editor warns on that line:
   a repo turning servers on for reviews of its own PRs would run their
-  authors' code. Each project's switches (Settings → Projects → ⟨project⟩
-  → Languages) write its local file, ignored through the checkout's own
+  authors' code. Each project's switches (workspace switcher → Project
+  settings → Languages) write its local file, ignored through the checkout's own
   `info/exclude` so the checkout stays clean; unset there, your global file
   applies.
 
@@ -480,7 +480,7 @@ Claude and Gemini get the server over HTTP, Codex through its
 
 ## 8. Creating and saving the config from Theodore
 
-Settings → Projects → ⟨project⟩ → **Config**.
+Workspace switcher → Project settings → **Config**.
 
 ```
 Create from current settings ─▶ the repo's file, else your local file, else generated:

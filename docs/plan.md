@@ -1011,7 +1011,7 @@ Claude runner; the others follow in M4 behind the same runner trait.
 
 | Part | Plan |
 | --- | --- |
-| Screens | Inbox + peek, My PRs, All PRs (list ↔ board), Tasks, Review (groups │ diff │ AI/tasks/threads), Settings, Onboarding |
+| Screens | Inbox + peek, My PRs, All PRs (list ↔ board), Tasks, Review (groups │ diff │ AI/tasks/threads), Settings, Project settings (General │ Languages │ Config; from the workspace switcher), Onboarding |
 | Look | HeroUI, own colour tokens, Shiki highlighting, Geist fonts, Gravity UI icons |
 | Types | generated from the Rust contract, never hand-written |
 | State | MobX object pool fed by the sync stream; `resource()` for immutable data; no business logic in the UI |
