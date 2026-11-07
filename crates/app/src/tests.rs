@@ -4084,6 +4084,10 @@ async fn commit_suggestions_applies_and_pushes_one_commit_on_the_authors_own_pr(
     // The viewer is the PR's own author, so suggestions may be committed
     // directly instead of drafted.
     f.host.push_viewer(Ok(testkit::sample_person("author")));
+    f.git.ship.lock().unwrap().identity = Some(theodore_ports::Identity {
+        name: "Pat Author".into(),
+        email: "pat@example.com".into(),
+    });
     let (core, _recv, pr, head) = open_fixture_pr(&f).await;
 
     std::fs::create_dir_all(f.git.worktree_path(&head)).unwrap();
@@ -4121,6 +4125,14 @@ async fn commit_suggestions_applies_and_pushes_one_commit_on_the_authors_own_pr(
     let push = f.git.last_push.lock().unwrap().clone().expect("pushed");
     assert_eq!(push.0, "feature");
     assert_eq!(push.1, "apply suggestion");
+    assert_eq!(
+        f.git.last_push_author.lock().unwrap().clone(),
+        Some(theodore_ports::Identity {
+            name: "Pat Author".into(),
+            email: "pat@example.com".into(),
+        }),
+        "authored as the user, like a space's commits"
+    );
 }
 
 #[tokio::test]

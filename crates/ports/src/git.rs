@@ -222,18 +222,19 @@ pub trait GitPort: Send + Sync {
         Ok(false)
     }
 
-    /// Stages every change in `worktree`, commits it, and pushes to
-    /// `branch` on `repo`'s remote (plan §4 "Fix target": own or local PR).
-    /// Returns the new head sha. `Unsupported` by default; only a `GitPort`
-    /// backed by a real remote (the git CLI) can push.
+    /// Stages every change in `worktree`, commits it as `author`, and
+    /// pushes to `branch` on `repo`'s remote (plan §4 "Fix target": own or
+    /// local PR). Returns the new head sha. `Unsupported` by default; only a
+    /// `GitPort` backed by a real remote (the git CLI) can push.
     async fn commit_and_push(
         &self,
         worktree: &Path,
         repo: &RepoRef,
         branch: &str,
         message: &str,
+        author: &Identity,
     ) -> GitResult<Sha> {
-        let _ = (worktree, repo, branch, message);
+        let _ = (worktree, repo, branch, message, author);
         Err(GitError::Unsupported("commit_and_push"))
     }
 

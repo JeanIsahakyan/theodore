@@ -384,6 +384,8 @@ pub struct FakeGit {
     files: Mutex<HashMap<(String, String), Vec<u8>>>,
     /// Last `(branch, message)` passed to `commit_and_push`, for assertions.
     pub last_push: Mutex<Option<(String, String)>>,
+    /// The author of that last `commit_and_push`.
+    pub last_push_author: Mutex<Option<theodore_ports::Identity>>,
     push_responses: Mutex<VecDeque<GitResult<Sha>>>,
 
     // ── projects (plan "projects") ───────────────────────────────────────
@@ -542,6 +544,7 @@ impl FakeGit {
             revision: Mutex::new(revision),
             files: Mutex::new(HashMap::new()),
             last_push: Mutex::new(None),
+            last_push_author: Mutex::new(None),
             push_responses: Mutex::new(VecDeque::new()),
             mirror_path: PathBuf::from("/tmp/theodore-fake-mirror"),
             mirror_calls: Mutex::new(Vec::new()),
@@ -901,8 +904,10 @@ impl GitPort for FakeGit {
         _repo: &theodore_domain::RepoRef,
         branch: &str,
         message: &str,
+        author: &theodore_ports::Identity,
     ) -> GitResult<Sha> {
         *self.last_push.lock().unwrap() = Some((branch.to_string(), message.to_string()));
+        *self.last_push_author.lock().unwrap() = Some(author.clone());
         self.push_responses
             .lock()
             .unwrap()

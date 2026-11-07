@@ -409,8 +409,9 @@ impl GitPort for GitCli {
         repo: &RepoRef,
         branch: &str,
         message: &str,
+        author: &theodore_ports::Identity,
     ) -> GitResult<Sha> {
-        self.commit_and_push_op(worktree, repo, branch, message)
+        self.commit_and_push_op(worktree, repo, branch, message, author)
             .await
     }
 

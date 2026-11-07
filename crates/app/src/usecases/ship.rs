@@ -441,10 +441,43 @@ impl Core {
     ) -> AppResult<Identity> {
         // A local folder's own config (a per-repo identity) counts first.
         let config_from = project.path.as_deref().map_or(repo_path, Path::new);
+        self.author_identity(config_from, project.repo.host).await
+    }
+
+    /// `ship_author` for a commit pushed to an open PR (a committed
+    /// suggestion, an applied fix): the PR's project's folder config when
+    /// there is one, else the PR's clone.
+    pub(crate) async fn pr_commit_author(
+        &self,
+        pr: &theodore_domain::PrId,
+        repo: &RepoRef,
+    ) -> AppResult<Identity> {
+        let store = self.0.deps.store.clone();
+        let project = tokio::task::spawn_blocking(move || store.all(models::PROJECT))
+            .await
+            .map_err(AppError::join)??
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<Project>(r.data).ok())
+            .find(|p| &p.repo == repo);
+        let clone = {
+            let head = self.0.current_head.read().await.get(pr).cloned();
+            let revisions = self.0.revisions.read().await;
+            head.and_then(|h| revisions.get(&(pr.clone(), h)).map(|e| e.repo_path.clone()))
+        };
+        let config_from = project
+            .as_ref()
+            .and_then(|p| p.path.clone())
+            .map(PathBuf::from)
+            .or(clone)
+            .ok_or_else(|| AppError::Invalid("pr is not open".into()))?;
+        self.author_identity(&config_from, repo.host).await
+    }
+
+    async fn author_identity(&self, config_from: &Path, host: HostKind) -> AppResult<Identity> {
         if let Some(id) = self.0.deps.git.user_identity(config_from).await? {
             return Ok(id);
         }
-        if project.repo.host == HostKind::Github
+        if host == HostKind::Github
             && let Ok(me) = self.0.deps.host.viewer_for(HostKind::Github).await
         {
             return Ok(Identity {
