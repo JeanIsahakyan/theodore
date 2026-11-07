@@ -1295,10 +1295,15 @@ function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
   const store = useRootStore();
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const people = [
     ...new Map(thread.comments.map((c) => [c.author.login, c.author])),
   ];
+  const first = thread.comments[0]!;
   const last = thread.comments.at(-1)!;
+  const replies = thread.comments.length - 1;
+  // How it started, then (opened) every reply in order.
+  const shown = open ? thread.comments : [first];
   const send = () => {
     const body = reply.trim();
     if (!body) return;
@@ -1332,20 +1337,38 @@ function ThreadCardInner({ pr, thread }: { pr: PrId; thread: Thread }) {
           </span>
         )}
       </div>
-      <p className="line-clamp-2 text-sm text-muted">
-        {/* Name the speaker only when more than one person is in the thread;
-         *  the header already shows a lone author. */}
-        {people.length > 1 && (
-          <>
-            <span className="text-foreground">{last.author.login}:</span>{' '}
-          </>
-        )}
-        {stripHtmlComments(last.body)}
-      </p>
+      {shown.map((c) => (
+        <p
+          key={c.id}
+          className={`text-sm text-muted ${open ? 'whitespace-pre-wrap' : 'line-clamp-2'}`}
+        >
+          {/* Name the speaker only when more than one person is in the
+           *  thread; the header already shows a lone author. */}
+          {people.length > 1 && (
+            <>
+              <span className="text-foreground">{c.author.login}:</span>{' '}
+            </>
+          )}
+          {stripHtmlComments(c.body)}
+        </p>
+      ))}
       <div className="flex items-center justify-between text-xs text-muted">
         <span>
-          {plural(thread.comments.length, 'comment', 'comments', 'comments')} ·{' '}
-          {ago(last.created_at)}
+          {replies > 0 ? (
+            <button
+              type="button"
+              className="thread-replies hover:text-foreground hover:underline"
+              aria-expanded={open}
+              onClick={() => setOpen((v) => !v)}
+            >
+              {open
+                ? 'Hide replies'
+                : `${replies} ${replies === 1 ? 'reply' : 'replies'}`}
+            </button>
+          ) : (
+            '1 comment'
+          )}{' '}
+          · {ago(last.created_at)}
         </span>
         {thread.outdated && <span>outdated</span>}
       </div>
