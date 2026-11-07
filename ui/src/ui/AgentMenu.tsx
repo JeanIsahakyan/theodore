@@ -224,7 +224,10 @@ export const AgentMenu = observer(function AgentMenu({
           <span className="min-w-0 truncate">
             {primary ? (cur?.model?.label ?? AGENT_NAME[primary]) : 'agent'}
             {cur?.effort && (
-              <span className="text-muted"> {effortLabel(cur.effort)}</span>
+              <span className="agent-effort text-muted">
+                {' '}
+                {effortLabel(cur.effort)}
+              </span>
             )}
             {extra && <span className="text-muted"> + {extra}</span>}
           </span>

@@ -1057,6 +1057,7 @@ const SpaceComposer = observer(function SpaceComposer({
                 selected={mode}
                 onSelect={setMode}
                 isDisabled={locked}
+                keep
               />
             </>
           }

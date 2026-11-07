@@ -385,6 +385,32 @@ body.cmd .lines .src span:hover {
   }
 }
 
+/* Composer footer: the chips share it with Send now, Queue and Stop. As the
+ * box narrows, Send now becomes an icon (its tooltip says the rest), then the
+ * model chip drops its effort; the mode chip never shrinks (Composer.tsx). */
+.composer-suffix {
+  container: composer-suffix / inline-size;
+}
+.composer-suffix .send-now-icon {
+  display: none;
+}
+@container composer-suffix (max-width: 32rem) {
+  .composer-suffix .send-now-label {
+    display: none;
+  }
+  .composer-suffix .send-now-icon {
+    display: inline;
+  }
+  .composer-suffix .send-now {
+    padding-inline: 0.5rem;
+  }
+}
+@container composer-suffix (max-width: 24rem) {
+  .composer-suffix .agent-effort {
+    display: none;
+  }
+}
+
 /* Markdown (PR descriptions, comments) */
 .md details {
   margin: 0.5rem 0;
