@@ -83,11 +83,18 @@ struct StoreState {
     kv: HashMap<String, serde_json::Value>,
 }
 
-pub struct FakeStore(Mutex<StoreState>);
+type ReadHook = Box<dyn FnOnce() + Send>;
+
+pub struct FakeStore(Mutex<StoreState>, Mutex<Option<ReadHook>>);
 
 impl FakeStore {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self(Mutex::new(StoreState::default())))
+        Arc::new(Self(Mutex::new(StoreState::default()), Mutex::new(None)))
+    }
+
+    /// Runs `hook` just before the next `query`: a write racing a read.
+    pub fn before_next_read(&self, hook: ReadHook) {
+        *self.1.lock().unwrap() = Some(hook);
     }
 
     /// Test-only inspection, not part of `Store`.
@@ -215,6 +222,10 @@ impl Store for FakeStore {
     }
 
     fn query(&self, model: &str, field: &str, value: &str) -> StoreResult<Vec<ModelRow>> {
+        let hook = self.1.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
         let s = self.0.lock().unwrap();
         Ok(s.models
             .values()

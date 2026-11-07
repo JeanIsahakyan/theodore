@@ -128,6 +128,10 @@ agent / poller ─────────────────────�
 - Every change — user, agent, GitHub poll — becomes a `SyncAction` with a
   monotonically increasing `syncId`. The UI has one model and one inbound stream.
 - UI reload: bootstrap from core, then catch up from `lastSyncId`.
+- A bootstrap reads its `syncId` before its rows, so a write between them is
+  replayed, not lost. A PR scope's id is still the global log's position while
+  its rows are one scope's: the client closes the difference with `catch_up`
+  in the frame order, it never jumps `lastSyncId` to that id.
 - Undo/redo: an undo queue that replays inverse changes as new transactions.
 
 ### 3.2 What goes through the sync log
