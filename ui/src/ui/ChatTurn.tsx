@@ -190,12 +190,15 @@ export function UserBubble({
   text,
   refs,
   attachments,
+  badges,
   className = '',
 }: {
   id?: string;
   text: string;
   refs?: ReactNode;
   attachments?: Attachment[] | null;
+  /** Undo on a Revert, which reads as your own message. */
+  badges?: ReactNode;
   className?: string;
 }) {
   return (
@@ -205,6 +208,9 @@ export function UserBubble({
       className={`chat-message msg user flex justify-end ${className}`}
     >
       <div className="flex max-w-[85%] flex-col items-end gap-1.5">
+        {badges && (
+          <div className="flex items-center gap-1.5 text-xs">{badges}</div>
+        )}
         {refs && (
           <div className="flex max-w-full flex-wrap justify-end gap-1.5">
             {refs}
@@ -252,6 +258,7 @@ export function ChatMessage({
         text={m.text}
         refs={refs}
         attachments={m.attachments}
+        badges={badges}
         className={className}
       />
     );
@@ -264,6 +271,11 @@ export function ChatMessage({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={m.author.agent} badges={badges} />
+        {m.failed && m.text && (
+          <div className="text-sm leading-relaxed">
+            <Md text={m.text} />
+          </div>
+        )}
         {m.failed ? (
           <Alert status="danger" className="agent-failed">
             <Alert.Indicator />

@@ -489,6 +489,88 @@ async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
 }
 
 #[tokio::test]
+async fn a_stopped_turn_keeps_what_the_agent_had_written() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    // A whole block, then one cut off mid-sentence.
+    f.agents.push_script_then_hang(vec![
+        AgentEvent::Text {
+            text: "I found the cause.".into(),
+        },
+        AgentEvent::TextDelta {
+            text: "Now fixing".into(),
+        },
+    ]);
+    let s = core
+        .create_space(request(&project, "Long job"))
+        .await
+        .unwrap();
+    wait_until(|| f.agents.requests().iter().any(|r| r.stream_text)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    core.space_stop(&s.id).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    let chat = transcript(&f, &s.id);
+    let reply = chat.iter().find(|m| m.author != Author::Me).unwrap();
+    assert_eq!(reply.failed.as_deref(), Some("stopped"));
+    assert_eq!(reply.text, "I found the cause.Now fixing");
+}
+
+#[tokio::test]
+async fn a_note_goes_on_top_of_the_issue_it_starts_from() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.host.push_get_issue(Ok(theodore_ports::TrackedIssue {
+        number: 7,
+        title: "Login loops".into(),
+        body: "After SSO it redirects forever.".into(),
+        url: "https://example.test/7".into(),
+    }));
+    f.agents.push_script(done("ok", 0.0));
+    f.git.push_checkpoint(Sha::new("turn111"));
+    let s = core
+        .create_space(CreateSpaceRequest {
+            start_from: Some(theodore_contract::SpaceStart::Issue("7".into())),
+            ..request(&project, "use backoff")
+        })
+        .await
+        .unwrap();
+    assert!(s.goal.starts_with("use backoff"), "{}", s.goal);
+    assert!(s.goal.contains("#7 Login loops"), "{}", s.goal);
+    assert!(s.goal.contains("redirects forever"), "{}", s.goal);
+    assert_eq!(s.issue, Some(7));
+}
+
+#[tokio::test]
+async fn a_pr_start_compares_against_what_the_pr_targets() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let pr = theodore_domain::PrRef {
+        repo: project.repo.clone(),
+        number: 9,
+        host_id: None,
+    };
+    let mut detail =
+        crate::testkit::sample_pr_detail(&pr, &Sha::new("base000"), &Sha::new("tip0000"));
+    detail.summary.base_ref = "develop".into();
+    f.git.set_resolve("develop", Sha::new("dev0000"));
+    f.git.set_resolve("dev0000", Sha::new("dev0000"));
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: detail,
+    }));
+    f.agents.push_script(done("ok", 0.0));
+    f.git.push_checkpoint(Sha::new("turn111"));
+    let s = core
+        .create_space(CreateSpaceRequest {
+            start_from: Some(theodore_contract::SpaceStart::Pr(9)),
+            ..request(&project, "note")
+        })
+        .await
+        .unwrap();
+    assert_eq!(s.base, "develop");
+}
+
+#[tokio::test]
 async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;

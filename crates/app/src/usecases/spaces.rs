@@ -883,6 +883,8 @@ const SESSION_GONE: [&str; 2] = ["no conversation found", "no rollout found"];
 #[derive(Default)]
 struct Streamed {
     text: String,
+    /// Deltas of the text block not finished yet.
+    partial: String,
     error: Option<String>,
     /// `error` says the resumed session is gone.
     session_gone: bool,
@@ -924,7 +926,12 @@ async fn stream_run(
                     live.show(core, &event);
                 }
                 match event {
-                    AgentEvent::Text { text: t } => out.text.push_str(&t),
+                    AgentEvent::Text { text: t } => {
+                        // The whole block: it replaces its own deltas.
+                        out.partial.clear();
+                        out.text.push_str(&t);
+                    }
+                    AgentEvent::TextDelta { text: t } => out.partial.push_str(&t),
                     AgentEvent::Session { id } => out.session = Some(id),
                     AgentEvent::Plan { text } => out.plan = Some(text),
                     AgentEvent::Done { final_text, .. } => {
@@ -939,8 +946,7 @@ async fn stream_run(
                         out.error = Some(message);
                         break;
                     }
-                    AgentEvent::TextDelta { .. }
-                    | AgentEvent::Thinking { .. }
+                    AgentEvent::Thinking { .. }
                     | AgentEvent::ToolCall { .. }
                     | AgentEvent::ToolResult { .. }
                     | AgentEvent::Stalled
@@ -949,6 +955,9 @@ async fn stream_run(
             }
         }
     }
+    // Cut off mid-block (Stop): the deltas are all there is of it.
+    let partial = std::mem::take(&mut out.partial);
+    out.text.push_str(&partial);
     out
 }
 
@@ -1136,7 +1145,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         id: uuid::Uuid::new_v4().to_string(),
         pr: key,
         author: Author::Agent(agent),
-        text: if error.is_some() { String::new() } else { text },
+        // Stopped or failed: what it had written stays, above why it ended.
+        text,
         refs: vec![],
         at: core.0.deps.clock.now(),
         failed: error.clone(),

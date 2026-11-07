@@ -57,9 +57,11 @@ impl Core {
                     AppError::Invalid(format!("not an issue url or number: {raw:?}"))
                 })?;
                 let issue = self.0.deps.host.get_issue(&project.repo, number).await?;
-                if req.goal.trim().is_empty() {
-                    req.goal = issue_goal(&issue);
-                }
+                // A typed note goes on top of the issue, it doesn't replace it.
+                req.goal = match req.goal.trim() {
+                    "" => issue_goal(&issue),
+                    note => format!("{note}\n\n{}", issue_goal(&issue)),
+                };
                 Ok(StartResolution {
                     issue: Some(number),
                     adopt: None,
@@ -106,6 +108,9 @@ impl Core {
                         return Err(AppError::Invalid(format!("PR #{number} not found")));
                     }
                 };
+                // The diff and Update go against what the PR targets.
+                req.base
+                    .get_or_insert_with(|| detail.summary.base_ref.clone());
                 Ok(StartResolution {
                     issue: None,
                     adopt: Some(Adopted {
