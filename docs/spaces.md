@@ -124,7 +124,7 @@ a row, or type "pin"/"unread" in ⌘K.
 │ ◐ add-csv-export     │  running
 │ ● tidy-config        │  turn done, not seen yet
 └──────────────────────┘
-  right-click ▸ Pin/Unpin · Mark as unread
+  right-click ▸ Pin/Unpin · Mark as unread · Archive
 ```
 
 | | Field | Written by |
@@ -135,6 +135,13 @@ a row, or type "pin"/"unread" in ⌘K.
 Pinning never touches `updated_at`, so pinning alone doesn't make a space
 read as a new turn. Pinned spaces sort first, then by activity, in both
 the sidebar and ⌘K.
+
+**Archive from the row**: hovering a space row (or focusing it with the
+keyboard) shows a small Archive button over its right edge, on a fade so
+the label doesn't shift. Pressing it archives that space only — it never
+opens or selects the row. It is the page header's button: disabled while a
+turn runs, and the page steps back only when the archived space is the one
+open. The right-click menu has the same Archive item.
 
 **⌘F searches the current list** (GitHub #77): the PR list on Inbox / My
 PRs (title, number, author, repo, branch), or this section everywhere

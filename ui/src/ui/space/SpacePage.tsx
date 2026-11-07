@@ -162,7 +162,7 @@ function openSpacePr(store: Store, ui: Ui, space: Space) {
   void store.sync.openPr(id).then(() => ui.go({ name: 'review', pr: id }));
 }
 
-function archive(ui: Ui, space: Space) {
+export function archive(ui: Ui, space: Space) {
   void api
     .archiveSpace(space.id)
     .then(() => ui.goBack())
