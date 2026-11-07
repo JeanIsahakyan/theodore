@@ -6,6 +6,7 @@ import {
   foldLine,
   groupLabel,
   splitSteps,
+  stepFailed,
   toolView,
   turnItems,
   type ToolStep,
@@ -273,5 +274,22 @@ describe('a file’s type', () => {
     // Not a property of the table's prototype.
     expect(fileType('a.constructor')).toBeNull();
     expect(fileType('constructor')).toBeNull();
+  });
+});
+
+describe('refusals a print-mode run expects', () => {
+  it('ExitPlanMode and AskUserQuestion turned away are not failures', () => {
+    expect(stepFailed(tool('ExitPlanMode', { ok: false }))).toBe(false);
+    expect(stepFailed(tool('AskUserQuestion', { ok: false }))).toBe(false);
+    expect(stepFailed(run({ ok: false }))).toBe(true);
+    expect(stepFailed(run())).toBe(false);
+    // Not pinned as a failed row: it folds with the rest.
+    const steps = [
+      run(),
+      tool('AskUserQuestion', { ok: false }),
+      run(),
+      text('done'),
+    ];
+    expect(shape(turnItems(steps, { pinLastText: true }))).toBe('[3] t');
   });
 });

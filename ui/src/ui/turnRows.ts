@@ -20,6 +20,14 @@ export type ToolStep = Extract<TurnStep, { kind: 'tool' }>;
 const isTool = (s: TurnStep): s is ToolStep => s.kind === 'tool';
 const ASK = 'ask you';
 const PLAN = 'ExitPlanMode';
+/** Claude Code's own plan and question tools: a print-mode run (`-p`) has
+ *  no one to show them to, so the CLI turns them away. Expected, no failure. */
+const REFUSED_IN_PRINT = new Set([PLAN, 'AskUserQuestion']);
+
+/** A tool call that failed, as a row says it: not a refusal `-p` expects. */
+export function stepFailed(step: ToolStep): boolean {
+  return step.ok === false && !REFUSED_IN_PRINT.has(step.name);
+}
 
 /** How many of the same, with its plural. */
 const n = (count: number, one: string, many = `${one}s`) =>
@@ -111,7 +119,7 @@ export function toolView(step: ToolStep, running = false): ToolView {
 /** Read-only calls of one tool, or calls to one MCP server: `null` for the
  *  ones that stay a row each, edits and commands above all. */
 function groupKey(step: ToolStep): string | null {
-  if (step.ok === false) return null;
+  if (stepFailed(step)) return null;
   const { kind } = toolRow(step.name);
   if (kind === 'mcp') return `mcp:${mcpServer(step.name)}`;
   if (kind === 'read' || kind === 'search') return `tool:${step.name}`;
@@ -219,7 +227,7 @@ export function turnItems(
   const pinned = (step: TurnStep, index: number) => {
     if (step.kind === 'text') return !!options.keepText || index === lastText;
     if (!isTool(step)) return false;
-    return step.ok === false || step.name === ASK || step.name === PLAN;
+    return stepFailed(step) || step.name === ASK || step.name === PLAN;
   };
   const items: TurnItem[] = [];
   let run: { step: TurnStep; index: number }[] = [];

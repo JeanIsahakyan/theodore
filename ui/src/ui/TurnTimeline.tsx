@@ -49,6 +49,7 @@ import {
   foldLine,
   groupLabel,
   splitSteps,
+  stepFailed,
   toolView,
   turnItems,
   type FoldOptions,
@@ -163,7 +164,7 @@ const ToolRow = memo(function ToolRow({
         </span>
       )}
       <LineCounts added={view.added} removed={view.removed} />
-      {step.ok === false && <Failed />}
+      {stepFailed(step) && <Failed />}
     </div>
   );
 });
@@ -319,7 +320,7 @@ const AgentRow = memo(
             {beside}
           </span>
         )}
-        {step.ok === false && <Failed />}
+        {stepFailed(step) && <Failed />}
       </>
     );
     return (
