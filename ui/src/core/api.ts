@@ -214,7 +214,8 @@ export const api = {
   /** `quiet`: the caller handles a failure itself (a baseline that's gone). */
   getRevision: (req: RevisionRequest, quiet = false) =>
     call<Revision>('get_revision', { req }, quiet),
-  getFile: (req: FileRequest) => call<string | null>('get_file', { req }),
+  getFile: (req: FileRequest, quiet = false) =>
+    call<string | null>('get_file', { req }, quiet),
   regroup: (pr: PrId) => call<null>('regroup', { pr }),
   runSkill: (req: RunSkillRequest) => call<string>('run_skill', { req }),
   ask: (req: AskRequest) => call<string>('ask', { req }),

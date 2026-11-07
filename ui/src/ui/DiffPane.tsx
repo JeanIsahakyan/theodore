@@ -41,12 +41,16 @@ import {
   Tooltip,
   Typography,
 } from '@heroui/react';
+import { when } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import {
   Code,
+  fitsWholeFile,
+  grammarReady,
   hunkLineTokens,
   langOf,
   rich,
+  tokenizeFile,
   tokenizeLines,
   useShikiVersion,
   type Tok,
@@ -874,6 +878,120 @@ function Expander({
   );
 }
 
+/** Whole-file tokens go by content: a live diff's next snapshot is a new
+ *  revision of mostly the same files. */
+const tokensKey = (text: string, lang: ReturnType<typeof langOf>) =>
+  `${lang}\0${text}`;
+
+/** `path` at `rev`, tokenized whole, for a gap that may show any part of it.
+ *  `null` while that loads, and for good if the file is gone or not worth
+ *  tokenizing: the gap then tokenizes what it shows, which only goes wrong
+ *  when that starts inside a string or a comment. Reading this in a render
+ *  keeps the tokens for as long as the gap is revealed, whatever the cache
+ *  evicts, so hunks use `loadFileTokens` instead. */
+function useFileTokens(
+  pr: PrId,
+  rev: string,
+  path: string,
+  lang: ReturnType<typeof langOf>,
+  wanted: boolean,
+): Tok[][] | null {
+  const store = useRootStore();
+  useShikiVersion(); // Re-renders once `grammarReady` turns true.
+  if (!wanted || !grammarReady(lang)) return null;
+  const text = store.files.get(`${pr}@${rev}:${path}`, () =>
+    api.getFile({ pr, rev, path }),
+  ).data;
+  // Before the cache key: past the limits it would be a copy of the file.
+  if (text == null || !fitsWholeFile(text)) return null;
+  return (
+    store.fileTokens.get(tokensKey(text, lang), () => tokenizeFile(text, lang))
+      .data ?? null
+  );
+}
+
+/** `path` at `rev`, tokenized whole, for a hunk to take its lines from. Runs
+ *  outside any render, so nothing stays subscribed to the file: a PR's worth
+ *  of hunks don't each keep theirs. The fetch is a local `git show` nobody
+ *  asked for, so it fails without a toast. */
+async function loadFileTokens(
+  store: ReturnType<typeof useRootStore>,
+  pr: PrId,
+  rev: string,
+  path: string,
+  lang: ReturnType<typeof langOf>,
+): Promise<Tok[][] | null> {
+  const file = store.files.get(`${pr}@${rev}:${path}`, () =>
+    api.getFile({ pr, rev, path }, true),
+  );
+  await when(() => file.status !== 'loading');
+  const text = file.data;
+  if (text == null || !fitsWholeFile(text)) return null;
+  const toks = store.fileTokens.get(tokensKey(text, lang), () =>
+    tokenizeFile(text, lang),
+  );
+  await when(() => toks.status !== 'loading');
+  return toks.data ?? null;
+}
+
+/** A hunk's per-line tokens: its own side's until the files land, then the
+ *  files'. Each side's file is fetched only if the hunk shows lines of it and
+ *  doesn't start at its top, where tokenizing the hunk alone is already
+ *  right: a new file never needs one. */
+function useHunkTokens({
+  pr,
+  rev,
+  base,
+  path,
+  oldPath,
+  h,
+  lang,
+}: Pick<HunkProps, 'pr' | 'rev' | 'base' | 'path' | 'oldPath' | 'h' | 'lang'>) {
+  const store = useRootStore();
+  // Recomputed once Shiki (or this hunk's grammar) finishes loading.
+  const shikiVersion = useShikiVersion();
+  const own = useMemo(
+    () => hunkLineTokens(h.lines, lang),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
+    [h.lines, lang, shikiVersion],
+  );
+  const [fromFile, setFromFile] = useState<{
+    lines: Hunk['lines'];
+    toks: Tok[][];
+  } | null>(null);
+  const ready = grammarReady(lang);
+  const wantHead = h.new_start > 1 && h.lines.some((l) => l.kind !== 'del');
+  const wantBase = h.old_start > 1 && h.lines.some((l) => l.kind === 'del');
+  useEffect(() => {
+    if (!ready || (!wantHead && !wantBase)) return;
+    let live = true;
+    void Promise.all([
+      wantHead ? loadFileTokens(store, pr, rev, path, lang) : null,
+      wantBase ? loadFileTokens(store, pr, base, oldPath ?? path, lang) : null,
+    ]).then(([head, old]) => {
+      if (!live || (!head && !old)) return;
+      const toks = hunkLineTokens(h.lines, lang, { head, base: old });
+      setFromFile({ lines: h.lines, toks });
+    });
+    return () => {
+      live = false;
+    };
+  }, [
+    store,
+    pr,
+    rev,
+    base,
+    path,
+    oldPath,
+    h.lines,
+    lang,
+    ready,
+    wantHead,
+    wantBase,
+  ]);
+  return fromFile?.lines === h.lines ? fromFile.toks : own;
+}
+
 /** A collapsed run of unchanged lines above a hunk; fetches the file lazily
  *  (unlike the prototype's eagerly-mocked `sources`) and reveals it in
  *  `STEP`-sized bites from the hunk outward, closest lines first. */
@@ -931,14 +1049,15 @@ const ContextGap = observer(function ContextGap({
   }, [ready, shown, total]);
   const from = gap.to - shown + 1;
   const slice = ready ? res!.data!.split('\n').slice(from - 1, gap.to) : [];
-  // Tokenized as one block (not line by line): a gap can land mid-comment
+  // From the whole file (not this slice alone): a gap can land mid-comment
   // or mid-string, same as a hunk's own lines.
+  const file = useFileTokens(pr, rev, path, lang, shown > 0);
   const shikiVersion = useShikiVersion();
   const sideText = slice.join('\n');
   const toks = useMemo(
-    () => tokenizeLines(sideText, lang),
+    () => file?.slice(from - 1, gap.to) ?? tokenizeLines(sideText, lang),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [sideText, lang, shikiVersion],
+    [file, from, gap.to, sideText, lang, shikiVersion],
   );
   if (ready) {
     const left = total - shown;
@@ -1011,14 +1130,16 @@ const FileTail = observer(function FileTail({
   const allLines = ready ? res!.data!.split('\n') : [];
   const gap = gapTail(hunks, allLines.length);
   const to = gap ? Math.min(gap.to, gap.from + shown - 1) : 0;
-  const slice = gap ? allLines.slice(gap.from - 1, to) : [];
-  // Tokenized as one block (not line by line): see `ContextGap`.
+  const first = gap ? gap.from - 1 : 0;
+  const slice = gap ? allLines.slice(first, to) : [];
+  // From the whole file: see `ContextGap`.
+  const file = useFileTokens(pr, rev, path, lang, shown > 0);
   const shikiVersion = useShikiVersion();
   const sideText = slice.join('\n');
   const toks = useMemo(
-    () => tokenizeLines(sideText, lang),
+    () => file?.slice(first, to) ?? tokenizeLines(sideText, lang),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [sideText, lang, shikiVersion],
+    [file, first, to, sideText, lang, shikiVersion],
   );
   if (ready) {
     if (!gap) return null;
@@ -1561,7 +1682,9 @@ function FileBlockInner({
                 <HunkComponent
                   pr={pr}
                   rev={rev}
+                  base={base}
                   path={file.path}
+                  oldPath={file.old_path}
                   h={h}
                   lang={lang}
                   since={since?.get(h.id)}
@@ -1596,7 +1719,10 @@ function FileBlockInner({
 interface HunkProps {
   pr: PrId;
   rev: Revision['head'];
+  base: Revision['base'];
   path: string;
+  /** Where a renamed file was at `base`. */
+  oldPath?: string | null;
   h: Hunk;
   lang: ReturnType<typeof langOf>;
   since?: SinceKind;
@@ -1744,15 +1870,7 @@ function HunkViewInner(props: HunkProps) {
   const marks = useMemo(() => wordMarks(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
-  // One Shiki call per side (not per line), so grammar state — an open
-  // comment, a template literal — carries across lines; recomputed once
-  // Shiki (or this hunk's grammar) finishes loading.
-  const shikiVersion = useShikiVersion();
-  const toks = useMemo(
-    () => hunkLineTokens(h.lines, lang),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [h.lines, lang, shikiVersion],
-  );
+  const toks = useHunkTokens(props);
   return (
     <div
       id={`H-${h.id}`}
@@ -1831,14 +1949,7 @@ function SplitHunkViewInner(props: HunkProps) {
   const rows = useMemo(() => splitRows(h.lines), [h.lines]);
   const view = useMemo(() => interdiffView(interdiff), [interdiff]);
   const [showInterdiff, setShowInterdiff] = useState(false);
-  // Same per-side tokenizing as the unified view (see `HunkViewInner`) — the
-  // old/new split here is purely a layout difference, not a second pass.
-  const shikiVersion = useShikiVersion();
-  const toks = useMemo(
-    () => hunkLineTokens(h.lines, lang),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
-    [h.lines, lang, shikiVersion],
-  );
+  const toks = useHunkTokens(props);
   // A context line sits on both sides but is one anchor (`anchorSide`:
   // the new side): its threads, drafts and composer show once, on the
   // right, not once per side.
