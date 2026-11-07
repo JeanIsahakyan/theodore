@@ -490,7 +490,7 @@ a.ts, b.ts* replaces the button and the agent gets a turn to resolve them.
 | --- | --- |
 | (the agent's turn ends) | Theodore checks the files; none has markers left → it commits the merge |
 | Complete merge | the same check now, for files fixed by hand; says which files still have markers |
-| Abort | `merge --abort`, worktree and ref back to where the update started, old base |
+| Abort | stops the agent's resolving turn if one runs, then `merge --abort`: worktree and ref back to where the update started, old base |
 
 While it resolves: Ship, Undo, Back to here and Revert are refused ("finish or abort the update
 from base first"), a plain message is a normal turn whose end tries the

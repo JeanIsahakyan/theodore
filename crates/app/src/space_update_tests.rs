@@ -290,6 +290,32 @@ async fn conflicts_left_keep_it_resolving_until_completed_or_aborted() {
     assert!(err.to_string().contains("no update from base"), "{err}");
 }
 
+/// Abort while the agent still resolves: its turn stops, then the merge is
+/// aborted. No Stop first.
+#[tokio::test]
+async fn abort_stops_the_resolving_turn_first() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project).await;
+    base_moves(&f);
+    f.git
+        .push_merge_result(SpaceMerge::Conflicts(vec!["a.txt".into()]));
+    f.git
+        .push_merge_result(SpaceMerge::Conflicts(vec!["a.txt".into()]));
+    f.agents.hang_next_run();
+    core.update_space_from_base(&s.id).await.unwrap();
+    wait_until(|| space(&f, &s.id).status == SpaceStatus::Running).await;
+
+    let s = core.abort_space_update(&s.id).await.unwrap();
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.updating, None);
+    assert_eq!(s.head_sha, Sha::new("turn111"));
+    assert_eq!(
+        merge_calls(&f).last().unwrap(),
+        &("abort", Sha::new("turn111"))
+    );
+}
+
 #[tokio::test]
 async fn files_resolved_by_hand_are_completed_by_update() {
     let f = fixtures();

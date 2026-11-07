@@ -187,9 +187,9 @@ export const UpdatingBanner = observer(function UpdatingBanner({
       <Button
         size="sm"
         variant="ghost"
-        className="shrink-0"
+        className="space-update-abort shrink-0"
         isPending={busy === 'abort'}
-        isDisabled={running || busy !== null}
+        isDisabled={busy !== null}
         onPress={() => act('abort')}
       >
         Abort

@@ -203,6 +203,17 @@ impl Core {
     /// resolved so far, and the space is back at the checkpoint it started
     /// from, on its old base.
     pub async fn abort_space_update(&self, space: &str) -> AppResult<Space> {
+        // The agent's resolving turn stops first: Abort is no Stop + Abort.
+        let row = self.space_row(space).await?;
+        if row.status == SpaceStatus::Running && row.updating.is_some() {
+            self.space_stop(space).await?;
+            for _ in 0..600 {
+                if self.space_row(space).await?.status != SpaceStatus::Running {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
         let _guard = self.0.ship_lock.lock().await;
         let space = self.space_row(space).await?;
         if space.status == SpaceStatus::Running {
