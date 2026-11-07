@@ -544,6 +544,12 @@ waiting for auto-archive (§7):
                               next turn's prompt: "the previous PR (#123) merged…"
 ```
 
+The next round's Open PR isn't about the goal any more: its title is what
+the first turn since that changed files did (the first sentence of the
+agent's reply with three words or more, cut at a word), the other turns
+listed under it, `Update <name>` when no reply says. Your own messages
+never go in: a "Yes, do that" or a feedback prompt is no title.
+
 **Send to agent** sits next to a thread's Resolve, a draft's edit/delete and
 a finding's Add to review — in the diff and in the side panel — but only when
 the PR is the space's (`space.pr`) or is the space's own branch review

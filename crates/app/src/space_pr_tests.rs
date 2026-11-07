@@ -444,6 +444,52 @@ async fn continue_keeps_an_adopted_prs_unpushed_turns_and_leaves_its_branch() {
 
 // ── Continue after merge ──────────────────────────────────────────────────
 
+/// After a Continue, the next PR is about the turns since, not the goal.
+#[tokio::test]
+async fn the_pr_after_a_continue_is_titled_by_its_own_turns() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Initialize a tiny static tamagotchi").await;
+    merge_on_host(&f, &core, 100).await;
+    base_moved(&f, "main222");
+    let c = core.continue_space(&s.id).await.unwrap();
+
+    f.clock.advance(1_000);
+    f.agents.push_script(done(
+        "Done. Added a Credits section to the README.\n\nIt lists who drew the sprites.",
+    ));
+    f.git.push_checkpoint(Sha::new("turn222"));
+    core.space_send(SpaceSendRequest {
+        space: c.id.clone(),
+        text: "Yes, add credits please".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    let c = idle(&f, &c.id).await;
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: sample_pr_detail(&pr_ref(101), &Sha::new("main222"), &Sha::new("squash2")),
+    }));
+    core.ship_space(open_pr(&c)).await.unwrap();
+    wait_until(|| f.host.create_pr_calls.lock().unwrap().len() == 2).await;
+    let calls = f.host.create_pr_calls.lock().unwrap().clone();
+    assert_eq!(calls[1].1.title, "Added a Credits section to the README");
+    assert!(
+        !calls[1].1.body.contains("tamagotchi"),
+        "{}",
+        calls[1].1.body
+    );
+    let ship = f.git.ship.lock().unwrap();
+    assert_eq!(
+        ship.commits.last().unwrap().1.message,
+        "Added a Credits section to the README"
+    );
+}
+
 #[tokio::test]
 async fn continue_moves_the_space_to_a_new_branch_on_the_fresh_base() {
     let f = fixtures();

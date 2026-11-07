@@ -96,7 +96,7 @@ import {
   NOTIFY_KEY,
   STAGE_LABEL,
   autoArchiveDays,
-  defaultTitle,
+  shipTitle,
   diffStat,
   actionablePlan,
   nextMode,
@@ -676,7 +676,9 @@ const ShipControls = observer(function ShipControls({
   const disabled = running || busy || !changed || shippedLocally;
   const start = (c: ShipChoice) => {
     setChoice(c);
-    setTitle(defaultTitle(space));
+    setTitle(
+      shipTitle(space, store.models.chatMessages.byPr(spaceChatKey(space.id))),
+    );
     setOpen(true);
   };
   const current = choice ?? primary;

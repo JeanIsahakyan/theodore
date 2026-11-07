@@ -168,8 +168,10 @@ impl Core {
                         "this space already has a PR; Push sends new turns to it".into(),
                     ));
                 }
-                let title = title_or(req.title.as_deref(), &space);
-                let message = commit_message(&title, &space.goal);
+                // After a Continue, what the turns since changed; else the goal.
+                let about = self.round_about(&space).await;
+                let title = title_or(req.title.as_deref(), &about);
+                let message = commit_message(&title, &about.goal);
                 let shipped = self
                     .push_squashed(&space, &project, &repo_path, &head, &message, &author)
                     .await?;
@@ -181,7 +183,7 @@ impl Core {
                 .await?;
                 // The repo's PR template when it has one, and a link back.
                 let body = self
-                    .space_pr_body(&space, &repo_path, &head, pr_body(&space.goal))
+                    .space_pr_body(&about, &repo_path, &head, pr_body(&about.goal))
                     .await;
                 let body = with_closes(body, space.issue);
                 let payload = CreateSpacePrPayload {
@@ -455,6 +457,55 @@ impl Core {
         ))
     }
 
+    /// What the agent changed in the turns since `since`, oldest first: the
+    /// subject (`subject_of`) of each live turn's reply that changed files.
+    /// Your messages never go in: a feedback or Fix CI prompt is no subject.
+    pub(crate) async fn turn_subjects(&self, space: &Space, since: i64) -> Vec<String> {
+        let store = self.0.deps.store.clone();
+        let key = crate::usecases::spaces::space_chat_key(&space.id).0;
+        let rows =
+            tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+        let replies: std::collections::HashMap<String, theodore_contract::ChatMessage> = rows
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<theodore_contract::ChatMessage>(r.data).ok())
+            .filter(|m| m.author != Author::Me && m.at >= since)
+            .map(|m| (m.id.clone(), m))
+            .collect();
+        let mut turns: Vec<&theodore_contract::ChatMessage> = space
+            .turn_log
+            .iter()
+            .filter(|t| {
+                !t.undone && t.reverted.is_empty() && t.base_before.is_none() && t.before != t.after
+            })
+            .filter_map(|t| replies.get(&t.reply))
+            .collect();
+        turns.sort_by_key(|m| m.at);
+        turns.iter().filter_map(|m| subject_of(&m.text)).collect()
+    }
+
+    /// The space as this round's PR is about: itself before any Continue;
+    /// after one, its goal is what the turns since changed (`turn_subjects`):
+    /// the first as the title, the others listed under it.
+    pub(crate) async fn round_about(&self, space: &Space) -> Space {
+        let Some(round) = space.rounds.last() else {
+            return space.clone();
+        };
+        let subjects = self.turn_subjects(space, round.at).await;
+        let goal = match subjects.split_first() {
+            None => format!("Update {}", space.name),
+            Some((first, [])) => first.clone(),
+            Some((first, rest)) => format!("{first}\n\n{}", bullets(rest)),
+        };
+        Space {
+            goal,
+            ..space.clone()
+        }
+    }
+
     /// The default Push message: your latest message since the last push.
     async fn push_title(&self, space: &Space) -> String {
         let since = space.shipped.as_ref().map_or(0, |s| s.at);
@@ -641,6 +692,76 @@ fn first_line(text: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
+/// `- a` per line.
+fn bullets(lines: &[String]) -> String {
+    lines
+        .iter()
+        .map(|l| format!("- {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `text` cut at a word to at most a subject line's length, no ellipsis.
+fn cut_at_word(text: &str) -> String {
+    if text.chars().count() <= TITLE_CHARS {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(TITLE_CHARS + 1).collect();
+    let cut = head
+        .rfind(char::is_whitespace)
+        .map_or(head.as_str(), |i| &head[..i]);
+    let cut = cut.trim_end_matches(|c: char| c.is_whitespace() || ",;:—-(".contains(c));
+    if cut.is_empty() {
+        text.chars().take(TITLE_CHARS).collect()
+    } else {
+        cut.to_string()
+    }
+}
+
+/// A commit subject from an agent's reply: its first sentence that says
+/// something (three words or more; "Done." or a "## Summary" heading
+/// doesn't), markdown marks off, no closing period, cut at a word. `None`
+/// when no sentence does.
+pub(crate) fn subject_of(reply: &str) -> Option<String> {
+    reply.split("\n\n").find_map(paragraph_subject)
+}
+
+fn paragraph_subject(para: &str) -> Option<String> {
+    let flat = para
+        .lines()
+        .map(|l| {
+            l.trim()
+                .trim_start_matches('#')
+                .trim_start_matches(['-', '*', '>'])
+                .trim()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(['`'], "")
+        .replace("**", "")
+        .replace("__", "");
+    let mut sentences = Vec::new();
+    let mut start = 0;
+    let chars: Vec<(usize, char)> = flat.char_indices().collect();
+    for (k, &(i, c)) in chars.iter().enumerate() {
+        let at_end = chars.get(k + 1).is_none_or(|&(_, n)| n.is_whitespace());
+        if matches!(c, '.' | '!' | '?' | ':') && at_end {
+            sentences.push((&flat[start..i], c == ':'));
+            start = i + c.len_utf8();
+        }
+    }
+    if start < flat.len() {
+        sentences.push((&flat[start..], false));
+    }
+    sentences
+        .into_iter()
+        // "Here's what changed:" only leads in.
+        .filter(|(_, lead_in)| !lead_in)
+        .map(|(s, _)| s.trim())
+        .find(|s| s.split_whitespace().count() >= 3)
+        .map(cut_at_word)
+}
+
 /// An edited title, else the goal's first line, else the space's name.
 fn title_or(edited: Option<&str>, space: &Space) -> String {
     let edited = edited.map(first_line).filter(|t| !t.is_empty());
@@ -700,6 +821,34 @@ mod tests {
         let t = first_line(&long);
         assert_eq!(t.chars().count(), TITLE_CHARS);
         assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn a_subject_is_the_replys_first_sentence_that_says_something() {
+        assert_eq!(
+            subject_of("Done. Changed the dead-state message to \"RIP\". Tests pass.").as_deref(),
+            Some("Changed the dead-state message to \"RIP\"")
+        );
+        assert_eq!(
+            subject_of("## Summary\n\n**Added** a `Credits` section to the README.\n\nMore.")
+                .as_deref(),
+            Some("Added a Credits section to the README")
+        );
+        assert_eq!(
+            subject_of("Here's what changed:\n- Bumped the timeout to 30 s").as_deref(),
+            Some("Bumped the timeout to 30 s")
+        );
+        assert_eq!(subject_of("ok"), None);
+        assert_eq!(subject_of("Done."), None);
+        assert_eq!(subject_of(""), None);
+        // Cut at a word, never mid-word, no ellipsis.
+        let long = "Reworked the hunger and happiness timers so the pet no longer starves \
+                    while the tab sits in the background";
+        let s = subject_of(long).unwrap();
+        assert!(s.chars().count() <= TITLE_CHARS, "{s}");
+        assert!(long.starts_with(&s));
+        assert!(long[s.len()..].starts_with(' '), "{s}");
+        assert!(!s.ends_with('…'));
     }
 
     #[test]

@@ -104,7 +104,7 @@ describe('GroupsPane with a grouping older than the revision', () => {
     expect(m.host.textContent).not.toContain('undefined');
   });
 
-  it("badges a file tree row whose file is in no group", async () => {
+  it('badges a file tree row whose file is in no group', async () => {
     const store = new RootStore();
     seed(store);
     store.sync.pool.put('grouping', PR, {
