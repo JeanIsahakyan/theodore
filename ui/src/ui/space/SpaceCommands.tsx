@@ -299,9 +299,16 @@ export const SetupStage = observer(function SetupStage({
           from this repo?” above.
         </span>
       )}
+      {/* A Retry waiting on "Run commands from this repo?" hasn't run yet:
+          what's here is the failed run's output, said so and dimmed. */}
+      {setup.status === 'waiting' && filterLogs(lines, 'setup').length > 0 && (
+        <span className="setup-log-stale text-xs text-muted">
+          From the last run — nothing runs again until you allow it.
+        </span>
+      )}
       <LogLines
         lines={filterLogs(lines, 'setup')}
-        className="max-h-64"
+        className={`max-h-64 ${setup.status === 'waiting' ? 'opacity-50' : ''}`}
         empty="No output yet."
       />
       {!!setup.notes?.length && (
