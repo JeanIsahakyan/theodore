@@ -613,7 +613,9 @@ export type CodeServer = {
 	hint: string | null,
 };
 
-export type CodeServerState = "not_running" | "warming" | "ready" | "failed";
+export type CodeServerState =
+/**  The project's switch keeps language servers off here. */
+"off" | "not_running" | "warming" | "ready" | "failed";
 
 export type CommandError = {
 	code: string,
