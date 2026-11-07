@@ -380,6 +380,14 @@ async fn switching_is_refused_while_the_other_folder_was_edited() {
         matches!(&err, AppError::Invalid(m) if m.contains("a.txt")),
         "{err}"
     );
+    // s2 has no Discard of its own: the refusal says where it is.
+    let s1_title = s1.title.clone().unwrap_or_else(|| s1.name.clone());
+    assert!(
+        matches!(&err, AppError::Invalid(m)
+            if m.contains(&format!("\"{s1_title}\"")) && m.contains("open that space")
+                && !m.contains("Discard to overwrite")),
+        "{err}"
+    );
     assert!(space(&f, &s1.id).mirror.is_some(), "s1 stays on");
     assert!(space(&f, &s2.id).mirror.is_none(), "s2 never turned on");
 }
