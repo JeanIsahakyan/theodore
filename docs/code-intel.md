@@ -479,6 +479,9 @@ never trusts an earlier read of a file:
 question about path ─▶ hash it again ─▶ not the indexed blob? ─▶ reindex it first
 any LSP request     ─▶ re-read every document open on the server in that worktree
                        └─ differs ─▶ didChange (next version) · gone ─▶ didClose
+diagnostics         ─▶ after that change: pulled again (`textDocument/diagnostic`),
+                       or wait ≤ 2 s for a publish of that version; older ones
+                       are dropped, never shown for the new text
 rename edits        ─▶ each carries what its range held in the server's copy
 apply (any edit)    ─▶ the file no longer holds that? ─▶ refused, nothing written:
                        "changed since the language server read it; ask again"

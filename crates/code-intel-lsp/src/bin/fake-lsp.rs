@@ -19,6 +19,8 @@
 //! `FAKE_LSP_PROGRESS_DELAY_MS` (only announced after that long),
 //! `FAKE_LSP_CRASH_ON` / `FAKE_LSP_HANG_ON` (a method),
 //! `FAKE_LSP_FLAT_SYMBOLS`, `FAKE_LSP_RENAME_CHANGES`, `FAKE_LSP_PULL`,
+//! `FAKE_LSP_PUBLISH_DELAY_MS` (diagnostics published that late, with the
+//! document's version),
 //! `FAKE_LSP_FOLDERS`, `FAKE_LSP_IGNORE_EXIT`, `FAKE_LSP_PID_FILE`.
 
 use std::collections::BTreeMap;
@@ -65,6 +67,7 @@ struct Server {
     out: Out,
     utf8: bool,
     docs: BTreeMap<String, String>,
+    versions: BTreeMap<String, i64>,
     folders: Vec<Value>,
     init_options: Value,
     config_answer: Value,
@@ -163,11 +166,19 @@ impl Server {
             return;
         }
         let text = self.docs.get(uri).cloned().unwrap_or_default();
-        send(
-            &self.out,
-            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                   "params": {"uri": uri, "diagnostics": self.diagnostics(&text)}}),
-        );
+        let msg = json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+               "params": {"uri": uri, "diagnostics": self.diagnostics(&text),
+                          "version": self.versions.get(uri)}});
+        match env("FAKE_LSP_PUBLISH_DELAY_MS").and_then(|ms| ms.parse().ok()) {
+            Some(ms) => {
+                let out = self.out.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(ms));
+                    send(&out, msg);
+                });
+            }
+            None => send(&self.out, msg),
+        }
     }
 
     /// `(name, kind, line, name start, name end, line end, children)`.
@@ -375,6 +386,8 @@ impl Server {
             "textDocument/didOpen" => {
                 let text = p["textDocument"]["text"].as_str().unwrap_or("").to_string();
                 self.docs.insert(uri.clone(), text);
+                let version = p["textDocument"]["version"].as_i64().unwrap_or(0);
+                self.versions.insert(uri.clone(), version);
                 self.publish(&uri);
             }
             "textDocument/didChange" => {
@@ -383,6 +396,8 @@ impl Server {
                     .unwrap_or("")
                     .to_string();
                 self.docs.insert(uri.clone(), text);
+                let version = p["textDocument"]["version"].as_i64().unwrap_or(0);
+                self.versions.insert(uri.clone(), version);
                 self.publish(&uri);
             }
             "textDocument/didClose" => {
@@ -476,6 +491,7 @@ fn main() {
         out: Arc::new(Mutex::new(std::io::stdout())),
         utf8: env("FAKE_LSP_ENCODING").as_deref() == Some("utf-8"),
         docs: BTreeMap::new(),
+        versions: BTreeMap::new(),
         folders: vec![],
         init_options: Value::Null,
         config_answer: Value::Null,

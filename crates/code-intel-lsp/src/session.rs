@@ -123,6 +123,10 @@ struct Shared {
     progress_changed: Notify,
     /// The last `publishDiagnostics` (or pull report) per file.
     diagnostics: Mutex<HashMap<PathBuf, Vec<lsp_types::Diagnostic>>>,
+    /// Files changed since the server last reported on them, and the
+    /// version it was sent: a report of an older version is dropped.
+    /// Locked before `diagnostics` when both are.
+    stale: Mutex<HashMap<PathBuf, i32>>,
     diagnostics_changed: Notify,
     /// The server registered `workspace/didChangeWatchedFiles`.
     watches_files: AtomicBool,
@@ -169,8 +173,35 @@ impl Shared {
         let Some(path) = text::uri_path(p.uri.as_str()) else {
             return;
         };
-        lock(&self.diagnostics).insert(path, p.diagnostics);
+        self.reported(path, p.diagnostics, p.version);
+    }
+
+    /// The server's diagnostics of `path` (of `version`, when it says).
+    fn reported(&self, path: PathBuf, diags: Vec<lsp_types::Diagnostic>, version: Option<i32>) {
+        let mut stale = lock(&self.stale);
+        if let (Some(want), Some(got)) = (stale.get(&path), version)
+            && got < *want
+        {
+            return;
+        }
+        stale.remove(&path);
+        lock(&self.diagnostics).insert(path, diags);
+        drop(stale);
         self.diagnostics_changed.notify_waiters();
+    }
+
+    /// `path` was sent to the server as `version`: what it reported before
+    /// is about another text.
+    fn changed(&self, path: &Path, version: i32) {
+        let mut stale = lock(&self.stale);
+        stale.insert(path.to_path_buf(), version);
+        lock(&self.diagnostics).remove(path);
+    }
+
+    /// `path` has a report about its current text.
+    fn fresh(&self, path: &Path) -> bool {
+        let stale = lock(&self.stale);
+        !stale.contains_key(path) && lock(&self.diagnostics).contains_key(path)
     }
 
     fn folders_json(&self) -> Value {
@@ -356,6 +387,7 @@ impl LspSession {
             }),
             progress_changed: Notify::new(),
             diagnostics: Mutex::default(),
+            stale: Mutex::default(),
             diagnostics_changed: Notify::new(),
             watches_files: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
@@ -595,10 +627,13 @@ impl LspSession {
                     );
                 }
                 doc.text = text;
+                self.shared.changed(abs, doc.version);
                 true
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 docs.open.remove(abs);
+                lock(&self.shared.stale).remove(abs);
+                lock(&self.shared.diagnostics).remove(abs);
                 self.rpc.notify(
                     "textDocument/didClose",
                     json!({"textDocument": {"uri": text::file_uri(abs)}}),
@@ -926,32 +961,35 @@ impl LspSession {
         let files: Vec<PathBuf> = match path {
             Some(rel) => {
                 let abs = text::resolve(&root, rel)?;
-                let notified = self.shared.diagnostics_changed.notified();
                 let was_open = self.docs.lock().await.open.contains_key(&abs);
                 self.open_doc(&abs, rel).await?;
                 if self.info().has("/diagnosticProvider") {
                     self.pull_diagnostics(&abs).await?;
-                } else if !was_open && !lock(&self.shared.diagnostics).contains_key(&abs) {
-                    // Just opened: give the server a moment to publish.
-                    let _ = tokio::time::timeout(self.options.diagnostics_wait, async {
-                        tokio::pin!(notified);
-                        loop {
-                            notified.as_mut().await;
-                            if lock(&self.shared.diagnostics).contains_key(&abs) {
-                                break;
-                            }
-                            notified.set(self.shared.diagnostics_changed.notified());
-                        }
-                    })
-                    .await;
+                } else if !was_open || lock(&self.shared.stale).contains_key(&abs) {
+                    // Just opened or just changed: the server publishes
+                    // about the text it has now.
+                    self.wait_fresh(std::slice::from_ref(&abs)).await;
                 }
                 vec![abs]
             }
-            None => lock(&self.shared.diagnostics)
-                .keys()
-                .filter(|p| text::relative(&root, p).is_some())
-                .cloned()
-                .collect(),
+            None => {
+                let changed: Vec<PathBuf> = lock(&self.shared.stale)
+                    .keys()
+                    .filter(|p| p.starts_with(&root))
+                    .cloned()
+                    .collect();
+                for abs in &changed {
+                    if self.info().has("/diagnosticProvider") {
+                        self.pull_diagnostics(abs).await?;
+                    }
+                }
+                self.wait_fresh(&changed).await;
+                lock(&self.shared.diagnostics)
+                    .keys()
+                    .filter(|p| text::relative(&root, p).is_some())
+                    .cloned()
+                    .collect()
+            }
         };
         let raw: Vec<(PathBuf, Vec<lsp_types::Diagnostic>)> = {
             let cache = lock(&self.shared.diagnostics);
@@ -998,12 +1036,31 @@ impl LspSession {
             lsp_types::DocumentDiagnosticReport::Full(full),
         ) = report
         {
-            lock(&self.shared.diagnostics).insert(
+            self.shared.reported(
                 abs.to_path_buf(),
                 full.full_document_diagnostic_report.items,
+                None,
             );
         }
         Ok(())
+    }
+
+    /// Until the server has reported on each of `files` as they are now,
+    /// at most `diagnostics_wait`.
+    async fn wait_fresh(&self, files: &[PathBuf]) {
+        let _ = tokio::time::timeout(self.options.diagnostics_wait, async {
+            loop {
+                let notified = self.shared.diagnostics_changed.notified();
+                tokio::pin!(notified);
+                // Registered before the check: a report in between wakes it.
+                notified.as_mut().enable();
+                if files.iter().all(|f| self.shared.fresh(f)) {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await;
     }
 
     /// The edits renaming the symbol at `at` to `new_name` would make,
@@ -1154,6 +1211,7 @@ impl LspSession {
             );
         }
         drop(docs);
+        lock(&self.shared.stale).retain(|p, _| !p.starts_with(&root));
         lock(&self.shared.diagnostics).retain(|p, _| !p.starts_with(&root));
         self.rpc.notify(
             "workspace/didChangeWorkspaceFolders",
@@ -1254,7 +1312,7 @@ fn initialize_params(root: &Path, config: &LaunchConfig) -> Value {
                 "definition": {"linkSupport": true},
                 "references": {},
                 "documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
-                "publishDiagnostics": {"relatedInformation": false, "versionSupport": false},
+                "publishDiagnostics": {"relatedInformation": false, "versionSupport": true},
                 "diagnostic": {"dynamicRegistration": false, "relatedDocumentSupport": false},
                 "rename": {"prepareSupport": false},
                 "hover": {"contentFormat": ["markdown", "plaintext"]},
@@ -1377,6 +1435,7 @@ mod tests {
             }),
             progress_changed: Notify::new(),
             diagnostics: Mutex::default(),
+            stale: Mutex::default(),
             diagnostics_changed: Notify::new(),
             watches_files: AtomicBool::new(false),
             stopping: AtomicBool::new(false),

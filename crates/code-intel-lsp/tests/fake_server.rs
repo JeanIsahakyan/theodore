@@ -408,6 +408,46 @@ async fn diagnostics_cache_follows_file_changes() {
     assert_eq!(report(&s, root).await["watched"], json!(1));
 }
 
+/// Diagnostics asked right after an edit are about the edited text: the
+/// change reaches the server first (an edit nobody reported, or one
+/// `file_changed` announced), then a pull asks again, or the client waits
+/// for the server to publish the new version.
+#[tokio::test]
+async fn diagnostics_right_after_an_edit_describe_the_new_text() {
+    let push: &[(&str, &str)] = &[("FAKE_LSP_PUBLISH_DELAY_MS", "300")];
+    let pull: &[(&str, &str)] = &[("FAKE_LSP_PULL", "1")];
+    for (how, env) in [("push", push), ("pull", pull)] {
+        let wt = worktree();
+        let root = wt.path();
+        let s = start(root, env).await;
+        let lib = "src/lib.rs";
+        assert_eq!(
+            s.diagnostics(root, Some(lib)).await.unwrap().len(),
+            1,
+            "{how}"
+        );
+
+        // Fixed by the agent's own Edit: nobody tells the session.
+        std::fs::write(root.join(lib), LIB.replace("bad()", "ok()")).unwrap();
+        assert_eq!(
+            s.diagnostics(root, Some(lib)).await.unwrap(),
+            vec![],
+            "{how}"
+        );
+
+        // Broken by a symbol edit, which reports it.
+        std::fs::write(root.join(lib), LIB.replace("target();", "bad(); bad();")).unwrap();
+        s.file_changed(root, lib).await.unwrap();
+        assert_eq!(
+            s.diagnostics(root, Some(lib)).await.unwrap().len(),
+            3,
+            "{how}"
+        );
+        assert_eq!(s.diagnostics(root, None).await.unwrap().len(), 3, "{how}");
+        s.shutdown().await;
+    }
+}
+
 #[tokio::test]
 async fn pull_diagnostics_when_the_server_offers_them() {
     let wt = worktree();
