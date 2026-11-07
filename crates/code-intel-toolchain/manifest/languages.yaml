@@ -307,7 +307,10 @@ servers:
       # Without it .project, .classpath and .settings land in the worktree. A
       # JVM property: as a setting in init_options it does nothing.
       - -Djava.import.generatesMetadataFilesAtProjectRoot=false
-      - -Xmx1G
+      # What its own bin/jdtls adds on Java 24+; harmless below.
+      - -Djdk.xml.maxGeneralEntitySizeLimit=0
+      - -Djdk.xml.totalEntitySizeLimit=0
+      - -Xmx2G
       - --add-modules=ALL-SYSTEM
       - --add-opens
       - java.base/java.util=ALL-UNNAMED

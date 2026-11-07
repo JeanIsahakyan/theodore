@@ -742,6 +742,68 @@ async fn the_lsp_policy_reads_review_and_spaces_apart() {
 
 // ── install ─────────────────────────────────────────────────────────────────
 
+/// A server that can't run here is neither downloaded nor offered: not by
+/// `always`, not by `ask`.
+#[tokio::test]
+async fn a_server_that_cannot_run_is_never_installed_or_suggested() {
+    let mut e = code_env().await;
+    let with = |lang: &str, name: &str, install: InstallState| LanguageStatus {
+        server: Some(ServerStatus {
+            name: name.into(),
+            install,
+            state: ServerState::NotRunning,
+            hint: None,
+        }),
+        ..missing_server(lang, name)
+    };
+    *e.f.code_intel.status.lock().unwrap() = vec![
+        with(
+            "java",
+            "jdtls",
+            InstallState::NeedsRuntime {
+                runtime: "java".into(),
+                min: "21".into(),
+                found: Some("17.0.2".into()),
+            },
+        ),
+        with("kotlin", "kotlin-lsp", InstallState::TrustedOnly),
+        with("ruby", "ruby-lsp", InstallState::Unavailable),
+    ];
+    let root = Path::new("/tmp/wt");
+
+    e.core
+        .code_install_flow(root, InstallPolicy::Always, None)
+        .await;
+    assert!(
+        !e.f.code_intel
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("install")),
+        "{:?}",
+        e.f.code_intel.calls()
+    );
+
+    e.core
+        .code_install_flow(root, InstallPolicy::Ask, None)
+        .await;
+    no_ephemeral(&mut e.recv, suggestion).await;
+
+    // What the row reads: the state and the hint, through the contract.
+    *e.f.code_intel.status.lock().unwrap() = vec![LanguageStatus {
+        server: Some(ServerStatus {
+            name: "ruby-lsp".into(),
+            install: InstallState::Unavailable,
+            state: ServerState::NotRunning,
+            hint: Some("gem install ruby-lsp".into()),
+        }),
+        ..missing_server("ruby", "ruby-lsp")
+    }];
+    let status = e.core.code_intel_status(&e.project.id).await.unwrap();
+    let server = status.languages[0].server.as_ref().unwrap();
+    assert_eq!(server.install, theodore_contract::CodeInstall::Unavailable);
+    assert_eq!(server.hint.as_deref(), Some("gem install ruby-lsp"));
+}
+
 #[tokio::test]
 async fn install_follows_the_policy_and_remembers_a_no() {
     let mut e = code_env().await;

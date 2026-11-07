@@ -187,8 +187,7 @@ pub(crate) async fn find_system(
     trust: TrustMode,
     env: &ProbeEnv,
 ) -> Option<ResolvedServer> {
-    let found = find_binary(spec, worktree, trust, env).await?;
-    let (path, version) = found;
+    let (path, version) = find_binary(spec, worktree, trust, env).await?;
     let vars = LaunchVars {
         bin: Some(&path),
         data,
