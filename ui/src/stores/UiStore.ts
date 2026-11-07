@@ -739,6 +739,8 @@ export function toggleTheme(): void {
 export function initialTheme(): void {
   applyTheme(themePref());
   darkQuery()?.addEventListener('change', () => {
-    if (themePref() === 'system') applyTheme('system');
+    if (themePref() !== 'system') return;
+    applyTheme('system');
+    window.dispatchEvent(new Event(THEME_EVENT));
   });
 }
