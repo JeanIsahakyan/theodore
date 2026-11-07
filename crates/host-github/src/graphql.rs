@@ -1341,18 +1341,22 @@ pub(crate) async fn convert_to_draft(http: &HttpClient, pull_request_id: &str) -
 const UPDATE_PULL_REQUEST_BRANCH: &str = r#"
 mutation($pullRequestId: ID!) {
   updatePullRequestBranch(input: { pullRequestId: $pullRequestId }) {
-    success
+    pullRequest { id }
   }
 }
 "#;
 
+/// `UpdatePullRequestBranchPayload` has only `clientMutationId` and
+/// `pullRequest`; a refusal (conflicts, branch already up to date with a
+/// protected base…) comes back as a GraphQL error, which `graphql` maps.
 pub(crate) async fn update_pull_request_branch(
     http: &HttpClient,
     pull_request_id: &str,
 ) -> HostResult<()> {
     #[derive(Debug, Deserialize)]
     struct Payload {
-        success: Option<bool>,
+        #[serde(rename = "pullRequest")]
+        pull_request: Option<serde_json::Value>,
     }
     #[derive(Debug, Deserialize)]
     struct Data {
@@ -1365,9 +1369,9 @@ pub(crate) async fn update_pull_request_branch(
         json!({ "pullRequestId": pull_request_id }),
     )
     .await?;
-    match data.payload.and_then(|p| p.success) {
-        Some(true) => Ok(()),
-        _ => Err(HostError::Conflict(
+    match data.payload.and_then(|p| p.pull_request) {
+        Some(_) => Ok(()),
+        None => Err(HostError::Conflict(
             "could not update the pull request branch".into(),
         )),
     }
