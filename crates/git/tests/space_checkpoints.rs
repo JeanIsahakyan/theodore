@@ -343,6 +343,30 @@ async fn reverting_a_file_restores_it_from_a_commit_and_nothing_else() {
 }
 
 #[tokio::test]
+async fn reverting_a_directory_leaves_its_unchanged_files_alone() {
+    let s = space().await;
+    s.write("d/same.txt", "same\n");
+    s.write("d/edited.txt", "first\n");
+    let cp = s.checkpoint("turn 1").await;
+    s.write("d/edited.txt", "second\n");
+    s.checkpoint("turn 2").await;
+    let same_old = age(&s.wt.join("d/same.txt"));
+    let edited_old = age(&s.wt.join("d/edited.txt"));
+
+    s.git
+        .space_restore_paths(&s.wt, &["d".into()], &cp.sha)
+        .await
+        .unwrap();
+    assert_eq!(s.read("d/edited.txt").as_deref(), Some("first\n"));
+    assert_ne!(mtime(&s.wt.join("d/edited.txt")), edited_old);
+    assert_eq!(
+        mtime(&s.wt.join("d/same.txt")),
+        same_old,
+        "its content didn't change, so neither does its mtime"
+    );
+}
+
+#[tokio::test]
 async fn a_live_snapshot_moves_no_ref_and_repeats_itself() {
     let s = space().await;
     let refs = s.refs();

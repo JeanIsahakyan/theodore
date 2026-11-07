@@ -474,7 +474,12 @@ impl GitCli {
                 remove_file(worktree, rel)?;
             }
         }
-        write_paths(&git, &git_dir(&git).await?, &tree, &present).await
+        // Only what differs: an unchanged file keeps its mtime.
+        let git_dir = git_dir(&git).await?;
+        let now = worktree_tree(&git, &git_dir).await?;
+        let (differ, _) = changed_paths(&git, &now, &tree).await?;
+        let write: Vec<String> = present.into_iter().filter(|p| differ.contains(p)).collect();
+        write_paths(&git, &git_dir, &tree, &write).await
     }
 
     /// `GitPort::space_snapshot`: the worktree's tree (`worktree_tree`) as
