@@ -599,6 +599,12 @@ marks and progress, findings, skills. One difference while drafting:
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+A turn doesn't regroup (that would cost an agent run per turn). Once the
+review was grouped, the review moving to a new checkpoint keeps the groups
+and puts every hunk none of them holds in a last **Not grouped yet** group;
+the file tree marks such a file `?`. Opening Review or Regroup groups the new
+head for real.
+
 Each draft and finding has its own "Send to agent" (above); the footer
 sends every open one, plus a PR's unresolved threads, as one turn
 (`space_send_feedback`). The space keeps what went (`sent_feedback`):

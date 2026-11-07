@@ -691,6 +691,77 @@ async fn review_groups_the_space_diff() {
     wait_until(|| f.grouper.last_agent().is_some()).await;
 }
 
+/// A turn after the space's review was grouped: the review moves to the new
+/// checkpoint without a regroup, and a file the old groups don't hold goes
+/// into a "Not grouped yet" group instead of showing in none.
+#[tokio::test]
+async fn a_file_new_since_the_grouping_is_in_a_catch_all_group() {
+    use crate::testkit::{hunk_ids, two_hunk_revision};
+    use theodore_domain::{Group, GroupId, GroupKind, Grouping};
+
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let (base, head) = (Sha::new("base000"), Sha::new("head111"));
+    let first = two_hunk_revision(&base, &head, "index.html");
+    f.git.set_revision(first.clone());
+    f.grouper.set(Grouping {
+        rev: head.clone(),
+        groups: vec![Group {
+            id: GroupId::new("page"),
+            title: "The page".into(),
+            why: String::new(),
+            kind: GroupKind::Normal,
+            risk: None,
+            check: vec![],
+            hunks: hunk_ids(&first),
+            outliers: vec![],
+        }],
+        in_progress: false,
+    });
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    let opened = core
+        .space_review(SpaceReviewRequest {
+            space: s.id.clone(),
+            group: true,
+        })
+        .await
+        .unwrap();
+    let grouping = |f: &Fixtures| -> Option<Grouping> {
+        f.store
+            .get(models::GROUPING, &opened.pr.0)
+            .unwrap()
+            .and_then(|r| serde_json::from_value(r.data).ok())
+    };
+    wait_until(|| grouping(&f).is_some_and(|g| !g.in_progress)).await;
+
+    // A feedback turn adds script.js.
+    let mut second = first.clone();
+    let script = two_hunk_revision(&base, &head, "script.js");
+    second.files.extend(script.files.clone());
+    f.git.set_revision(second);
+    f.agents.push_script(done("Added the script.", 0.0));
+    f.git.push_checkpoint(Sha::new("turn222"));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "add a script".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    idle(&f, &s.id).await;
+    wait_until(|| grouping(&f).is_some_and(|g| g.groups.iter().any(|g| g.id.0 == "ungrouped")))
+        .await;
+    let g = grouping(&f).unwrap();
+    assert_eq!(g.groups[0].hunks, hunk_ids(&first), "old groups stay");
+    let rest = g.groups.iter().find(|g| g.id.0 == "ungrouped").unwrap();
+    assert_eq!(rest.hunks, hunk_ids(&script));
+    assert_eq!(rest.title, "Not grouped yet");
+    assert_eq!(f.grouper.calls(), 1, "no agent run per turn");
+}
+
 #[tokio::test]
 async fn pinning_toggles_the_flag_without_touching_updated_at() {
     let f = fixtures();

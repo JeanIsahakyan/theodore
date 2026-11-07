@@ -817,8 +817,13 @@ impl Core {
             Some(_) => PathBuf::from(&space.worktree),
             None => self.0.deps.git.worktree(&pr_ref, &head).await?.path,
         };
-        self.finish_open_with(pr_ref, detail, revision, repo_path, worktree, group)
-            .await
+        let opened = self
+            .finish_open_with(pr_ref, detail, revision, repo_path, worktree, group)
+            .await?;
+        if !group {
+            self.carry_grouping(&opened.pr, &opened.head).await;
+        }
+        Ok(opened)
     }
 
     pub(crate) async fn space_row(&self, id: &str) -> AppResult<Space> {
