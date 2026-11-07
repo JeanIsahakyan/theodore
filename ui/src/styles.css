@@ -166,6 +166,11 @@ body {
 .ln.split > .side + .side {
   border-left: 1px solid var(--separator);
 }
+/* A split diff's half is narrow: a line's threads and drafts start under
+ * its code, not 108px in, so a card's actions stay inside it. */
+.split-col .ln-notes {
+  padding-left: 0.75rem;
+}
 .ln.split.t-add,
 .ln.split.t-del {
   background: none;

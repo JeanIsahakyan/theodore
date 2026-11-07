@@ -1545,6 +1545,17 @@ interface HunkProps {
   gapFullyRevealed?: boolean;
 }
 
+/** `lineSlice` for a line shown without its annotations: a split diff's
+ *  left copy of a context line. */
+const BARE_SLICE = {
+  threads: NO_IDS,
+  drafts: NO_DRAFTS,
+  findings: NO_FINDINGS,
+  lineAsk: undefined,
+  composer: null,
+  peek: null,
+};
+
 /** A line's annotations and per-line slices of the hunk's props, read from
  *  the per-line indexes — the hunk observes them, the line just renders. */
 function lineSlice(
@@ -1734,7 +1745,10 @@ function SplitHunkViewInner(props: HunkProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
     [h.lines, lang, shikiVersion],
   );
-  const cell = (i: number | null | undefined) => {
+  // A context line sits on both sides but is one anchor (`anchorSide`:
+  // the new side): its threads, drafts and composer show once, on the
+  // right, not once per side.
+  const cell = (i: number | null | undefined, bare = false) => {
     if (i == null) return null;
     const l = h.lines[i]!;
     return (
@@ -1747,7 +1761,7 @@ function SplitHunkViewInner(props: HunkProps) {
         marks={marks.get(i)}
         toks={toks[i]}
         actions={props.actions}
-        {...lineSlice(store, props, l)}
+        {...(bare ? BARE_SLICE : lineSlice(store, props, l))}
       />
     );
   };
@@ -1791,7 +1805,7 @@ function SplitHunkViewInner(props: HunkProps) {
       <div className="lines split-lines">
         {rows.map((row, i) => (
           <div key={i} className="split-row grid grid-cols-2">
-            <div className="split-col">{cell(row.l)}</div>
+            <div className="split-col">{cell(row.l, row.l === row.r)}</div>
             <div className="split-col">{cell(row.r)}</div>
           </div>
         ))}
@@ -1999,7 +2013,7 @@ const Line = memo(function Line(props: LineProps) {
         lineAsk ||
         composer ||
         peek) && (
-        <div className="flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
+        <div className="ln-notes flex flex-col gap-2 border-y border-separator bg-background py-2 pl-[108px] pr-3 font-sans text-sm">
           {peek && (
             <SymbolPeek
               // A fresh click target gets a fresh mount, so its search
