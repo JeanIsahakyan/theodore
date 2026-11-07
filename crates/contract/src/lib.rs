@@ -706,6 +706,28 @@ pub struct SkillRun {
     pub hidden_findings: u32,
 }
 
+/// One thing an agent did in a space turn, kept on the reply in the order it
+/// happened (`ChatMessage::activity`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum TurnStep {
+    /// What it wrote on the way; the reply's own text isn't repeated here.
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+    },
+    Tool {
+        /// Its label: `Bash`, or what Theodore's own tools do (`ship the change`).
+        name: String,
+        /// The command or file it was about.
+        target: Option<String>,
+        /// `None`: no result came (the turn ended first).
+        ok: Option<bool>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct ChatMessage {
     pub id: String,
@@ -726,6 +748,13 @@ pub struct ChatMessage {
     /// A space message waiting for its turn (docs/spaces.md §8).
     #[serde(default)]
     pub queued: Option<QueuedSend>,
+    /// A space reply's turn, in order (docs/spaces.md §3); empty elsewhere
+    /// and on older rows. Never part of a prompt.
+    #[serde(default)]
+    pub activity: Vec<TurnStep>,
+    /// How long a space reply's turn ran.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -763,6 +792,7 @@ pub fn types() -> specta::Types {
         .register::<FileViewedRow>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
+        .register::<TurnStep>()
         .register::<Attachment>()
         .register::<SaveAttachmentRequest>()
         .register::<Setting>()

@@ -512,7 +512,7 @@ async fn a_stopped_turn_keeps_what_the_agent_had_written() {
     let chat = transcript(&f, &s.id);
     let reply = chat.iter().find(|m| m.author != Author::Me).unwrap();
     assert_eq!(reply.failed.as_deref(), Some("stopped"));
-    assert_eq!(reply.text, "I found the cause.Now fixing");
+    assert_eq!(reply.text, "I found the cause.\n\nNow fixing");
 }
 
 #[tokio::test]

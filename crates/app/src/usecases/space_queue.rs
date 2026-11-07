@@ -101,6 +101,8 @@ impl Core {
                 mode: req.mode,
                 held: false,
             }),
+            activity: vec![],
+            duration_ms: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -199,6 +201,8 @@ impl Core {
             // Sent now: it sorts after the turn it waited for.
             at: self.0.deps.clock.now(),
             queued: None,
+            activity: vec![],
+            duration_ms: None,
             ..message
         };
         self.start_turn(space, &req, message, true, None).await
@@ -351,6 +355,8 @@ impl Core {
             failed: None,
             attachments: vec![],
             queued: None,
+            activity: vec![],
+            duration_ms: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),

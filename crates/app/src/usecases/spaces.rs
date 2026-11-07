@@ -27,6 +27,7 @@ use crate::usecases::live::LiveRun;
 use crate::usecases::projects::stable_hash_u32;
 use crate::usecases::skills::{expand_skill, space_skill_content};
 use crate::usecases::space_queue::TurnEnd;
+use crate::usecases::turn_steps::TurnSteps;
 
 /// The `chat_message.pr` key a space's transcript is stored under.
 pub fn space_chat_key(space: &str) -> PrId {
@@ -336,6 +337,8 @@ impl Core {
             failed: None,
             attachments,
             queued: None,
+            activity: vec![],
+            duration_ms: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -882,9 +885,13 @@ const SESSION_GONE: [&str; 2] = ["no conversation found", "no rollout found"];
 /// One agent run of a turn, streamed to the UI.
 #[derive(Default)]
 struct Streamed {
+    /// Its text blocks so far; once it ends on a final text, that.
     text: String,
+    /// `text` is the run's final text.
+    answered: bool,
     /// Deltas of the text block not finished yet.
     partial: String,
+    steps: TurnSteps,
     error: Option<String>,
     /// `error` says the resumed session is gone.
     session_gone: bool,
@@ -925,11 +932,12 @@ async fn stream_run(
                 if !(event == AgentEvent::Stalled && core.asking(run_id)) {
                     live.show(core, &event);
                 }
+                out.steps.record(&event);
                 match event {
                     AgentEvent::Text { text: t } => {
                         // The whole block: it replaces its own deltas.
                         out.partial.clear();
-                        out.text.push_str(&t);
+                        push_block(&mut out.text, &t);
                     }
                     AgentEvent::TextDelta { text: t } => out.partial.push_str(&t),
                     AgentEvent::Session { id } => out.session = Some(id),
@@ -937,6 +945,8 @@ async fn stream_run(
                     AgentEvent::Done { final_text, .. } => {
                         if !final_text.is_empty() {
                             out.text = final_text;
+                            out.answered = true;
+                            out.partial.clear();
                         }
                         break;
                     }
@@ -957,8 +967,16 @@ async fn stream_run(
     }
     // Cut off mid-block (Stop): the deltas are all there is of it.
     let partial = std::mem::take(&mut out.partial);
-    out.text.push_str(&partial);
+    push_block(&mut out.text, &partial);
     out
+}
+
+/// Blocks read as paragraphs, not as one run-on line.
+fn push_block(text: &mut String, block: &str) {
+    if !text.is_empty() && !block.is_empty() {
+        text.push_str("\n\n");
+    }
+    text.push_str(block);
 }
 
 /// Nothing more is steered into a run once its events stop.
@@ -1043,6 +1061,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
     }
     let Streamed {
         text,
+        answered,
+        steps,
         mut error,
         session,
         plan,
@@ -1055,7 +1075,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
     let plan = (mode == SpaceMode::Plan && error.is_none() && !cancel.is_cancelled())
         .then(|| crate::usecases::space_plan::plan_of(plan, &text))
         .flatten();
+    // Without a final text the blocks are the reply, unless a plan took over.
+    let blocks = (!answered).then(|| text.clone());
     let text = plan.clone().unwrap_or(text);
+    let activity = steps.finish((blocks.as_ref() != Some(&text)).then_some(text.as_str()));
     // The session this turn ran in is the one the next turn continues. A
     // resumed run that reported none (it failed to start) leaves it as is;
     // a new one that reported none (Gemini) means there is none to continue.
@@ -1152,6 +1175,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         failed: error.clone(),
         attachments: vec![],
         queued: None,
+        activity,
+        duration_ms: Some(ms),
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1622,6 +1647,8 @@ mod tests {
             failed: None,
             attachments: vec![],
             queued: None,
+            activity: vec![],
+            duration_ms: None,
         }
     }
 

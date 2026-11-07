@@ -204,6 +204,8 @@ impl Core {
             failed: None,
             attachments: vec![],
             queued: None,
+            activity: vec![],
+            duration_ms: None,
         };
         let mut log = space.turn_log.clone();
         log.push(SpaceTurn {

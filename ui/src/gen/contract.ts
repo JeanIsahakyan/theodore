@@ -202,6 +202,13 @@ export type ChatMessage = {
 	attachments?: Attachment[],
 	/**  A space message waiting for its turn (docs/spaces.md §8). */
 	queued?: QueuedSend | null,
+	/**
+	 *  A space reply's turn, in order (docs/spaces.md §3); empty elsewhere
+	 *  and on older rows. Never part of a prompt.
+	 */
+	activity?: TurnStep[],
+	/**  How long a space reply's turn ran. */
+	duration_ms?: number | null,
 };
 
 export type Check = {
@@ -2356,6 +2363,20 @@ export type TriageRequest = {
 	pr: PrId,
 	action: TriageAction,
 };
+
+/**
+ *  One thing an agent did in a space turn, kept on the reply in the order it
+ *  happened (`ChatMessage::activity`).
+ */
+export type TurnStep =
+/**  What it wrote on the way; the reply's own text isn't repeated here. */
+{ kind: "text"; text: string } | { kind: "thinking"; text: string } | { kind: "tool";
+/**  Its label: `Bash`, or what Theodore's own tools do (`ship the change`). */
+name: string;
+/**  The command or file it was about. */
+target: string | null;
+/**  `None`: no result came (the turn ended first). */
+ok: boolean | null };
 
 /**
  *  A product event the UI reports (`track_ui`). Typed like the core's own:

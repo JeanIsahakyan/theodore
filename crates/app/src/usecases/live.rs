@@ -1,5 +1,6 @@
 //! What a running agent shows in the window while it works: its answer as
-//! `Ephemeral::AgentDelta`, its tool calls as `Ephemeral::RunLog`. One
+//! `Ephemeral::AgentDelta`, its tool calls and thinking as `Ephemeral::RunLog`
+//! (a `thinking: ` line stays out of the UI's tool log). One
 //! mapping for every run (chat asks, skills, space turns, fix tasks), so a
 //! runner that streams its text (`AgentRequest::stream_text`) streams it
 //! everywhere, and none shows a message twice.
@@ -21,6 +22,7 @@ use theodore_ports::AgentEvent;
 
 use crate::core::Core;
 use crate::usecases::agents::tool_log_line_with;
+use crate::usecases::turn_steps::{THINKING_MAX, capped};
 
 /// One run's live view: maps its `AgentEvent`s to the `Ephemeral`s the UI
 /// shows under `run`.
@@ -67,6 +69,10 @@ impl LiveRun {
                 self.whole(text).map(|t| self.text(t)).into_iter().collect()
             }
             AgentEvent::Thinking { text } if self.thinking => vec![self.text(text.clone())],
+            AgentEvent::Thinking { text } if !text.trim().is_empty() => {
+                let preview = capped(text.trim(), THINKING_MAX);
+                vec![self.log(format!("thinking: {preview}"))]
+            }
             AgentEvent::ToolCall { name, input, .. } => {
                 vec![self.log(tool_log_line_with(name, input))]
             }
@@ -253,6 +259,13 @@ mod tests {
         let events = [thinking("hmm"), delta("Hi"), text("Hi")];
         assert_eq!(shown(&mut live(), &events).0, "Hi");
         assert_eq!(shown(&mut live().with_thinking(), &events).0, "hmmHi");
+    }
+
+    #[test]
+    fn thinking_goes_to_the_log_unless_it_shows_as_text() {
+        let events = [thinking(" hmm "), thinking("  ")];
+        assert_eq!(shown(&mut live(), &events).1, vec!["thinking: hmm"]);
+        assert!(shown(&mut live().with_thinking(), &events).1.is_empty());
     }
 
     #[test]
