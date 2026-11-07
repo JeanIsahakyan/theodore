@@ -76,6 +76,45 @@ afterEach(() => {
 });
 
 describe('GroupCard "What to check" list', () => {
+  it('toggles on a click on the text, not at the end of a drag', async () => {
+    const store = seed();
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <DiffPane
+          pr={PR}
+          rev={rev}
+          mode={{ mode: 'groups', group: 'g1', file: null }}
+          setMode={noop}
+          since={null}
+          sinceOnly={false}
+          baselineSha={null}
+          focusHunk={null}
+          setFocusHunk={noop}
+          composer={null}
+          setComposer={noop}
+          expandHunk={null}
+        />
+      </RootStoreProvider>,
+    );
+    const text = () => m!.host.querySelector('.gcard span.select-text')!;
+    const input = () =>
+      m!.host.querySelector<HTMLInputElement>('.gcard input[type="checkbox"]')!;
+    const click = () =>
+      act(async () => {
+        text().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+    // A drag leaves a selection behind: no toggle, and the selection stays.
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(text());
+    await click();
+    expect(input().checked).toBe(false);
+    selection.removeAllRanges();
+
+    await click();
+    expect(input().checked).toBe(true);
+  });
+
   it('keeps item text selectable, and the control still toggles it', async () => {
     const store = seed();
     m = await mount(

@@ -749,22 +749,34 @@ function ChecklistItem({
   const rangeEvents = useCheckboxRangeEvents(onPick);
   return (
     <span
-      className="contents"
+      className="flex items-start gap-2 text-sm"
       onClickCapture={rangeEvents.onClickCapture}
       onBlurCapture={rangeEvents.onBlurCapture}
       onKeyDownCapture={rangeEvents.onKeyDownCapture}
     >
-      <Checkbox isSelected={checked} onChange={rangeEvents.onCheckboxChange}>
-        <Checkbox.Content className={checked ? 'text-muted line-through' : ''}>
+      <Checkbox
+        aria-label={text}
+        isSelected={checked}
+        onChange={rangeEvents.onCheckboxChange}
+      >
+        <Checkbox.Content>
           <Checkbox.Control>
             <Checkbox.Indicator />
           </Checkbox.Control>
-          {/* `Checkbox.Content` is `select-none` so a click anywhere in the
-              row toggles the box; the text itself should still be
-              drag-selectable for copy, so it opts back into selection. */}
-          <span className="select-text">{rich(text)}</span>
         </Checkbox.Content>
       </Checkbox>
+      {/* Outside the checkbox: its press takes over the mouse, so dragging
+          across the text would tick the box instead of selecting. A plain
+          click still toggles; the end of a drag doesn't. */}
+      <span
+        className={`select-text ${checked ? 'text-muted line-through' : ''}`}
+        onClick={(e) => {
+          if (window.getSelection()?.isCollapsed === false) return;
+          onPick(!checked, { shiftKey: e.shiftKey });
+        }}
+      >
+        {rich(text)}
+      </span>
     </span>
   );
 }
@@ -1193,9 +1205,13 @@ function FileBlockInner({
   } | null>(null);
   if (
     fold &&
-    (fold.viewed !== isViewed || (fold.closed && fold.arrival !== arrival))
+    (fold.viewed !== isViewed ||
+      (fold.closed && arrival !== null && fold.arrival !== arrival))
   ) {
     setFold(null);
+  } else if (fold?.closed && arrival === null && fold.arrival !== null) {
+    // Focus left: a hand fold stays, and coming back is a jump again.
+    setFold({ ...fold, arrival: null });
   }
   const foldTo = (closed: boolean) =>
     setFold({ closed, viewed: isViewed, arrival });
@@ -1208,6 +1224,9 @@ function FileBlockInner({
     arrival: string | null;
   }>({ viewed: isViewed, arrival: null });
   if (seen.viewed !== isViewed) setSeen({ viewed: isViewed, arrival });
+  // Focus left: coming back to the same hunk is a jump again.
+  else if (arrival === null && seen.arrival !== null)
+    setSeen({ viewed: isViewed, arrival: null });
   const jumpedIn = arrival !== null && arrival !== seen.arrival;
   const md = isMarkdown(file.path) && file.status !== 'deleted';
   const [preview, setPreview] = useState(false);
@@ -1740,6 +1759,7 @@ function SplitHunkViewInner(props: HunkProps) {
     >
       <div
         className={`flex min-h-8 items-center gap-3 px-4 py-1 text-xs text-muted ${focused ? 'bg-accent-soft/60' : 'bg-surface-secondary'}`}
+        onContextMenu={(e) => openHunkMenu(e, store, props)}
       >
         <span className="tabular-nums">{hunkRange(h)}</span>
         {h.header && !gapFullyRevealed && (

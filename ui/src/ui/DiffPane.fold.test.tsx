@@ -167,6 +167,29 @@ describe('DiffPane folds a file', () => {
     expect(m.host.querySelector('#H-a1')).not.toBeNull();
   });
 
+  it('opens a Viewed file when J/K comes back to the hunk it folded on', async () => {
+    const f = await open(false, 'a0');
+    m = f;
+    await click(viewedToggle());
+    expect(folded()).not.toBeNull();
+    await f.focus(null);
+    expect(folded()).not.toBeNull();
+    await f.focus('a0');
+    expect(folded()).toBeNull();
+    expect(m.host.querySelector('#H-a0')).not.toBeNull();
+  });
+
+  it('keeps a hand fold when focus leaves, and opens on a jump back', async () => {
+    const f = await open(false, 'a0');
+    m = f;
+    await click(chevron());
+    expect(folded()).not.toBeNull();
+    await f.focus(null);
+    expect(folded()).not.toBeNull();
+    await f.focus('a0');
+    expect(folded()).toBeNull();
+  });
+
   it('folds and unfolds by hand from the chevron, without touching Viewed', async () => {
     m = await open();
     await click(chevron());
