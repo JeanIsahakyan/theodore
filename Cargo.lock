@@ -5699,6 +5699,7 @@ dependencies = [
  "theodore-runtime",
  "theodore-sandbox",
  "theodore-secrets",
+ "theodore-store",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
