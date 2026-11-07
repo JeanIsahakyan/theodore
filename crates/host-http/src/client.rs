@@ -428,9 +428,7 @@ impl HttpClient {
                             duration_ms = started.elapsed().as_millis() as u64,
                             "host server error after retries"
                         );
-                        return Err(HostError::Network(format!(
-                            "server error {status} after retries"
-                        )));
+                        return Err(HostError::Server(format!("{status} after retries")));
                     }
 
                     let text = resp.text().await.map_err(|e| {

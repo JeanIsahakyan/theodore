@@ -383,7 +383,7 @@ async fn gives_up_after_max_retries_on_persistent_5xx() {
 
     let http = client(&server, None, clock);
     let err = http.get::<serde_json::Value>("down").await.unwrap_err();
-    assert!(matches!(err, HostError::Network(_)));
+    assert!(matches!(err, HostError::Server(_)));
     // Default retry config: 1 initial try + 3 retries.
     assert_eq!(server.received_requests().await.unwrap().len(), 4);
 }

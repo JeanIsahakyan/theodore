@@ -671,7 +671,12 @@ background?: boolean } |
  */
 { type: "run_stalled"; run: string; agent: AgentId } | { type: "toast"; level: ToastLevel; text: string } |
 /**  Grouping of a PR started or finished (no sync row until it's done). */
-{ type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean } |
+{ type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean;
+/**
+ *  Reachable, but answering with server errors (5xx): the host is
+ *  having trouble, which is not being offline.
+ */
+server_trouble?: boolean } |
 /**  The Theodore account signed in, signed out, or its session ended. */
 { type: "account_status"; status: AccountStatus } |
 /**

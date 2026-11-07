@@ -838,7 +838,12 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
  */
 { type: "run_step"; run: string; step: TurnStep } |
 /**  The tool call `id` of `run` ended, or (`ok` none) learned its summary. */
-{ type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null } |
+{ type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null;
+/**
+ *  The call was a subagent launched in the background: its result
+ *  only says it started.
+ */
+background?: boolean } |
 /**  The next `AgentDelta` of `run` starts a new text row. */
 { type: "run_text_break"; run: string } |
 /**
@@ -848,7 +853,12 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
  */
 { type: "run_stalled"; run: string; agent: AgentId } | { type: "toast"; level: ToastLevel; text: string } |
 /**  Grouping of a PR started or finished (no sync row until it's done). */
-{ type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean } |
+{ type: "grouping"; pr: PrId; running: boolean; error: string | null } | { type: "host_status"; online: boolean; rate_limited_until: number | null; auth_ok: boolean;
+/**
+ *  Reachable, but answering with server errors (5xx): the host is
+ *  having trouble, which is not being offline.
+ */
+server_trouble?: boolean } |
 /**  The Theodore account signed in, signed out, or its session ended. */
 { type: "account_status"; status: AccountStatus } |
 /**
@@ -2345,7 +2355,12 @@ detail?: string | null;
  */
 summary?: string | null;
 /**  Lines an edit adds and removes, from its input. */
-added?: number | null; removed?: number | null };
+added?: number | null; removed?: number | null;
+/**
+ *  A subagent launched in the background: its result only says it
+ *  started, its report (`summary`) comes later, or never.
+ */
+background?: boolean };
 
 /**
  *  A product event the UI reports (`track_ui`). Typed like the core's own:

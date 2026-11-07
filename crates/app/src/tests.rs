@@ -5008,7 +5008,8 @@ async fn a_rejected_token_on_a_read_raises_the_auth_banner_and_clears_after() {
             Ephemeral::HostStatus {
                 auth_ok: true,
                 online: true,
-                rate_limited_until: None
+                rate_limited_until: None,
+                server_trouble: false
             }
         )
     })
@@ -5051,6 +5052,29 @@ async fn a_finding_reported_from_a_skill_run_belongs_to_its_skill() {
     let id = core.add_finding(pr, finding).await.expect("add_finding");
     let row = f.store.get(models::FINDING, &id.0).unwrap().unwrap();
     assert_eq!(row.data["skill"], json!("bugs"));
+}
+
+#[tokio::test]
+async fn a_server_error_is_host_trouble_not_offline() {
+    let f = fixtures();
+    let (core, mut recv) = started_core(&f).await;
+    for _ in 0..4 {
+        f.host
+            .push_search(Err(theodore_ports::HostError::Server("502".into())));
+    }
+    let _ = core.refresh_inbox().await;
+    expect_ephemeral(&mut recv, |e| {
+        matches!(
+            e,
+            Ephemeral::HostStatus {
+                online: true,
+                server_trouble: true,
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(core.host_online(), "a host that answers 502 is not offline");
 }
 
 #[tokio::test]

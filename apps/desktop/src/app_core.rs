@@ -210,6 +210,10 @@ fn issue_err(e: HostError) -> CommandError {
             "network",
             "Couldn't reach GitHub. Check the connection and try again.".to_string(),
         ),
+        HostError::Server(_) => (
+            "network",
+            "GitHub is having trouble right now. Try again in a few minutes.".to_string(),
+        ),
         HostError::Validation(m) => ("invalid", format!("GitHub refused the issue: {m}")),
         other => ("internal", other.to_string()),
     };

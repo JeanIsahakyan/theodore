@@ -610,6 +610,10 @@ pub enum Ephemeral {
         online: bool,
         rate_limited_until: Option<Millis>,
         auth_ok: bool,
+        /// Reachable, but answering with server errors (5xx): the host is
+        /// having trouble, which is not being offline.
+        #[serde(default)]
+        server_trouble: bool,
     },
     /// The Theodore account signed in, signed out, or its session ended.
     AccountStatus {

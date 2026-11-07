@@ -29,7 +29,7 @@ import { SignInGate } from './AccountCard';
 import { UpdateReady } from './shell/UpdateReady';
 import { SharingPrompt } from './SharingPrompt';
 import { appView } from '../core/accountGate';
-import { StatusBanners } from './shell/StatusBanners';
+import { StatusBanners, statusKind } from './shell/StatusBanners';
 import { showToast } from './shell/toasts';
 import { isBuildMode } from './space/mode';
 import { isHostOn } from './settings/labs';
@@ -212,11 +212,21 @@ export const App = observer(function App() {
               <Review key={r.pr} pr={r.pr} />
             )}
           </div>
-          {/* Floats above the hint bar: a banner appearing or clearing
-              never moves the page, and never covers the header. */}
+          {/* What is broken gets a strip of its own under the page, so it
+              never sits over the page's content or its footer. */}
+          {statusKind(
+            store.sync.status,
+            store.ephemeral.hostStatus,
+            Date.now(),
+          ) !== null && (
+            <div className="status-strip flex shrink-0 justify-center border-t border-separator px-4 py-1.5">
+              <StatusBanners />
+            </div>
+          )}
+          {/* The update prompt floats above the hint bar: appearing or
+              clearing never moves the page, nor covers the header. */}
           <div className="pointer-events-none absolute inset-x-0 bottom-14 z-30 flex flex-col items-center gap-2 px-4 [&>*]:pointer-events-auto">
             <UpdateReady inline />
-            <StatusBanners />
           </div>
         </Surface>
       </div>

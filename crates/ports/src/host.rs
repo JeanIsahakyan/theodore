@@ -42,6 +42,10 @@ pub enum HostError {
     Validation(String),
     #[error("network: {0}")]
     Network(String),
+    /// The host answered, but with a server error (5xx) after retries: it
+    /// is up and having trouble, not unreachable.
+    #[error("host server error: {0}")]
+    Server(String),
     #[error("not supported by this host: {0}")]
     Unsupported(&'static str),
     #[error("unexpected response: {0}")]
@@ -61,6 +65,7 @@ impl HostError {
             HostError::Conflict(_) => "host.conflict",
             HostError::Validation(_) => "host.validation",
             HostError::Network(_) => "host.network",
+            HostError::Server(_) => "host.server_error",
             HostError::Unsupported(_) => "host.unsupported",
             HostError::Protocol(_) => "host.protocol",
         }

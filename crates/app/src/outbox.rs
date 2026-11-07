@@ -235,6 +235,7 @@ async fn process_item(core: &Core, item: OutboxItem) {
                 online: true,
                 rate_limited_until: None,
                 auth_ok: false,
+                server_trouble: false,
             });
         }
         Err(Outcome::Fail(message)) => {
@@ -295,10 +296,11 @@ async fn classify_host_error(core: &Core, item: &OutboxItem, err: HostError) -> 
                 online: true,
                 rate_limited_until: Some(reset_at),
                 auth_ok: true,
+                server_trouble: false,
             });
             retry(reset_at, &err)
         }
-        HostError::Network(_) => {
+        HostError::Network(_) | HostError::Server(_) => {
             let now = core.0.deps.clock.now();
             retry(now + backoff_ms(item.attempts), &err)
         }

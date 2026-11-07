@@ -70,8 +70,9 @@ pub(crate) struct Inner {
     /// (`usecases::grouping::GroupingSlot`).
     pub grouping_inflight: std::sync::Mutex<HashMap<PrId, bool>>,
     /// Last host health the UI was told about (`Ephemeral::HostStatus`):
-    /// online, rate-limit reset, token accepted.
-    pub host_health: std::sync::Mutex<(bool, Option<i64>, bool)>,
+    /// online, rate-limit reset, token accepted, answering with server
+    /// errors.
+    pub host_health: std::sync::Mutex<(bool, Option<i64>, bool, bool)>,
     /// While the host is unreachable the pollers make no host calls; this
     /// paces the one probe that notices it's back (`poller::probe_host`).
     pub host_probe: std::sync::Mutex<crate::poller::HostProbe>,
@@ -159,7 +160,7 @@ impl Core {
             open_lock: tokio::sync::Mutex::new(()),
             ship_lock: tokio::sync::Mutex::new(()),
             grouping_inflight: std::sync::Mutex::new(HashMap::new()),
-            host_health: std::sync::Mutex::new((true, None, true)),
+            host_health: std::sync::Mutex::new((true, None, true, false)),
             host_probe: std::sync::Mutex::new(crate::poller::HostProbe::default()),
             reconciled: std::sync::Mutex::new(HashMap::new()),
             login: Mutex::new(None),
@@ -278,7 +279,10 @@ impl Core {
         use theodore_ports::HostError;
         matches!(
             err,
-            HostError::Auth | HostError::RateLimited { .. } | HostError::Network(_)
+            HostError::Auth
+                | HostError::RateLimited { .. }
+                | HostError::Network(_)
+                | HostError::Server(_)
         )
     }
 
@@ -297,10 +301,12 @@ impl Core {
     pub(crate) fn note_host<T>(&self, result: &theodore_ports::HostResult<T>) {
         use theodore_ports::HostError;
         let next = match result {
-            Ok(_) => (true, None, true),
-            Err(HostError::Auth) => (true, None, false),
-            Err(HostError::RateLimited { reset_at }) => (true, Some(*reset_at), true),
-            Err(HostError::Network(_)) => (false, None, true),
+            Ok(_) => (true, None, true, false),
+            Err(HostError::Auth) => (true, None, false, false),
+            Err(HostError::RateLimited { reset_at }) => (true, Some(*reset_at), true, false),
+            Err(HostError::Network(_)) => (false, None, true, false),
+            // It answered: up, but in trouble — not offline.
+            Err(HostError::Server(_)) => (true, None, true, true),
             // A 404, a validation error, … says nothing about the connection.
             Err(_) => return,
         };
@@ -327,6 +333,7 @@ impl Core {
                 online: next.0,
                 rate_limited_until: next.1,
                 auth_ok: next.2,
+                server_trouble: next.3,
             });
         }
     }

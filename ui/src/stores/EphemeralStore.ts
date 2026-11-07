@@ -139,6 +139,8 @@ export interface HostStatus {
   online: boolean;
   rateLimitedUntil: number | null;
   authOk: boolean;
+  /** Reachable, but answering with server errors (5xx). */
+  serverTrouble: boolean;
 }
 
 /** A message you just sent to a space, until the core stored it. */
@@ -226,6 +228,7 @@ export class EphemeralStore {
     online: true,
     rateLimitedUntil: null,
     authOk: true,
+    serverTrouble: false,
   };
   /** `refresh_inbox` in flight. */
   inboxLoading = false;
@@ -647,6 +650,7 @@ export class EphemeralStore {
             online: e.online,
             rateLimitedUntil: e.rate_limited_until,
             authOk: e.auth_ok,
+            serverTrouble: e.server_trouble ?? false,
           };
           return;
         case 'account_status':
