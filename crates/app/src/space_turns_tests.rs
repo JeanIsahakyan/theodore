@@ -1281,3 +1281,35 @@ fn an_older_chat_row_has_no_steps() {
     assert!(row.activity.is_empty());
     assert_eq!(row.duration_ms, None);
 }
+
+#[tokio::test]
+async fn a_steps_file_is_named_from_the_worktree_not_by_its_directory() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = space_in_session(&f, &core, &project).await;
+    let wt = space(&f, &s.id).worktree;
+    f.agents.push_script(vec![
+        AgentEvent::ToolCall {
+            id: "1".into(),
+            name: "Read".into(),
+            input: serde_json::json!({ "file_path": format!("{wt}/package.json") }),
+        },
+        AgentEvent::Done {
+            final_text: "Read it.".into(),
+            usage: Usage::default(),
+        },
+    ]);
+    let s = send(&f, &core, &s.id, "Read it", None).await;
+    let reply = transcript(&f, &s.id)
+        .into_iter()
+        .rfind(|m| m.text == "Read it." && m.author != theodore_domain::Author::Me)
+        .unwrap();
+    assert!(
+        matches!(
+            reply.activity.as_slice(),
+            [theodore_contract::TurnStep::Tool { target: Some(t), .. }] if t == "package.json"
+        ),
+        "{:?}",
+        reply.activity
+    );
+}

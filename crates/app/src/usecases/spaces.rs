@@ -909,6 +909,7 @@ async fn stream_run(
 ) -> Streamed {
     let agent = req.agent;
     let resumed = req.resume.is_some();
+    let cwd = req.cwd.clone();
     let mut out = Streamed::default();
     let mut run = match core.0.deps.agents.run_steerable(req).await {
         Ok((run, steer)) => {
@@ -928,6 +929,7 @@ async fn stream_run(
             _ = cancel.cancelled() => { run.cancel.cancel(); break; }
             event = run.events.recv() => {
                 let Some(event) = event else { break };
+                let event = with_worktree_paths(event, &cwd);
                 // Quiet because it waits on your answer, not stuck.
                 if !(event == AgentEvent::Stalled && core.asking(run_id)) {
                     live.show(core, &event);
@@ -977,6 +979,35 @@ fn push_block(text: &mut String, block: &str) {
         text.push_str("\n\n");
     }
     text.push_str(block);
+}
+
+/// A tool call's path as shown: relative to the worktree, whose own directory
+/// (the space's id) means nothing to a reader. `/tmp` paths come back as
+/// `/private/tmp` on macOS.
+fn with_worktree_paths(event: AgentEvent, cwd: &Path) -> AgentEvent {
+    let AgentEvent::ToolCall {
+        id,
+        name,
+        mut input,
+    } = event
+    else {
+        return event;
+    };
+    let root = cwd.display().to_string();
+    let private = format!("/private{root}");
+    for key in ["file_path", "path", "notebook_path", "file"] {
+        let Some(path) = input.get(key).and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let relative = [root.as_str(), private.as_str()]
+            .iter()
+            .find_map(|r| path.strip_prefix(r)?.strip_prefix('/'))
+            .map(str::to_string);
+        if let Some(relative) = relative {
+            input[key] = serde_json::Value::String(relative);
+        }
+    }
+    AgentEvent::ToolCall { id, name, input }
 }
 
 /// Nothing more is steered into a run once its events stop.
