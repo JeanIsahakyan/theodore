@@ -47,10 +47,7 @@ const MAX_NOTE: usize = 280;
 /// The error text without the "invalid request:" prefix: the agent passes
 /// it on to the user.
 fn refusal(e: AppError) -> SpaceToolError {
-    SpaceToolError::Unavailable(match e {
-        AppError::Invalid(m) => m,
-        other => other.to_string(),
-    })
+    SpaceToolError::Unavailable(e.user_message())
 }
 
 fn unavailable(m: impl Into<String>) -> SpaceToolError {

@@ -105,6 +105,7 @@ import {
   spaceStage,
   unshipped,
   spaceTitle,
+  plainError,
 } from './spaces';
 
 /** What the agent may do in a turn (docs/spaces.md §5). */
@@ -1036,9 +1037,9 @@ const SpaceComposer = observer(function SpaceComposer({
         {space.status === 'failed' && space.error && (
           <span
             className="truncate px-2 text-xs text-danger"
-            title={space.error}
+            title={plainError(space.error)}
           >
-            {space.error}
+            {plainError(space.error)}
           </span>
         )}
         <SpaceProgress space={space} />

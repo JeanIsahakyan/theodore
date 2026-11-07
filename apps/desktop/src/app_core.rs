@@ -314,7 +314,7 @@ fn err(e: AppError) -> CommandError {
         AppError::Host(HostError::RateLimited { reset_at }) => {
             rate_limited_message(*reset_at, now_ms())
         }
-        _ => e.to_string(),
+        _ => e.user_message(),
     };
     CommandError {
         code: code.into(),

@@ -534,7 +534,7 @@ impl Core {
                             action: SyncActionCode::C,
                             data: Some(serde_json::json!({
                                 "status": ProjectStatus::Error,
-                                "error": e.to_string(),
+                                "error": e.user_message(),
                             })),
                         }])
                         .await;

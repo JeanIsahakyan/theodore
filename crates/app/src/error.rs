@@ -59,6 +59,15 @@ impl AppError {
         }
     }
 
+    /// What a person reads (a toast, a dialog): a refusal says its reason
+    /// without the "invalid request:" prefix the log keeps (`Display`).
+    pub fn user_message(&self) -> String {
+        match self {
+            AppError::Invalid(m) => m.clone(),
+            other => other.to_string(),
+        }
+    }
+
     /// The network (not the request, not the repo) is the problem: the
     /// git remote couldn't be reached.
     pub fn is_offline(&self) -> bool {
@@ -143,6 +152,7 @@ mod tests {
             ),
             (HostError::NotFound(String::new()).into(), "host.not_found"),
             (HostError::Network("dns".into()).into(), "host.network"),
+            (HostError::Server("502".into()).into(), "host.server_error"),
             (HostError::Protocol("x".into()).into(), "host.protocol"),
             (
                 GrouperError::Invalid("bad json".into()).into(),
@@ -175,5 +185,22 @@ mod tests {
             assert!(parts.next().is_some_and(|p| !p.is_empty()));
             assert!(parts.next().is_some_and(|p| !p.is_empty()));
         }
+    }
+
+    #[test]
+    fn a_refusal_reads_without_the_invalid_request_prefix() {
+        let e = AppError::Invalid("conflicts left in notes.md; abort the update".into());
+        assert_eq!(
+            e.user_message(),
+            "conflicts left in notes.md; abort the update"
+        );
+        assert!(
+            e.to_string().starts_with("invalid request: "),
+            "logs keep it"
+        );
+        assert_eq!(
+            AppError::NotFound("pr".into()).user_message(),
+            "not found: pr"
+        );
     }
 }

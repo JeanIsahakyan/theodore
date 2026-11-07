@@ -124,17 +124,34 @@ export function canMarkUnread(
   return s.turns > 0 && spaceGlyph(s, seenAt) !== 'unseen';
 }
 
+/** A space error as a person reads it: a refusal without the core's
+ *  "invalid request:" prefix (the log keeps it). */
+export function plainError(error: string): string {
+  return error.replace(/^invalid request:\s*/, '');
+}
+
+type EndedFields = Pick<
+  Space,
+  'status' | 'name' | 'error' | 'goal' | 'title' | 'updating'
+>;
+
+/** What a failed end is called: the agent's turn on an Update from base
+ *  that left conflicts is the update waiting on you, not a turn failure. */
+function failedWhat(next: Pick<Space, 'updating'>): string {
+  return next.updating ? 'update has conflicts left' : 'turn failed';
+}
+
 /** A turn just ended (running → anything else): what to tell you if you're
  *  not looking at the space. `null` when nothing finished. */
 export function turnEnded(
   prev: Pick<Space, 'status'> | undefined,
-  next: Pick<Space, 'status' | 'name' | 'error' | 'goal' | 'title'>,
+  next: EndedFields,
 ): { level: 'info' | 'error'; text: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
   if (next.status === 'failed') {
     return {
       level: 'error',
-      text: `${spaceTitle(next)}: turn failed${next.error ? ` — ${next.error}` : ''}`,
+      text: `${spaceTitle(next)}: ${failedWhat(next)}${next.error ? ` — ${plainError(next.error)}` : ''}`,
     };
   }
   return { level: 'info', text: `${spaceTitle(next)}: turn done` };
@@ -488,12 +505,12 @@ export function notifyOn(
  *  did: "<space>: turn finished" / "<space>: turn failed". */
 export function nativeNotice(
   prev: Pick<Space, 'status'> | undefined,
-  next: Pick<Space, 'status' | 'name' | 'error' | 'goal' | 'title'>,
+  next: EndedFields,
 ): { title: string; body?: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
   if (next.status === 'failed') {
-    const title = `${spaceTitle(next)}: turn failed`;
-    return next.error ? { title, body: next.error } : { title };
+    const title = `${spaceTitle(next)}: ${failedWhat(next)}`;
+    return next.error ? { title, body: plainError(next.error) } : { title };
   }
   return { title: `${spaceTitle(next)}: turn finished` };
 }
@@ -522,7 +539,8 @@ export function waitingSpaces(
   return spaces.filter(
     (s) =>
       (s.status === 'running' && !!s.question) ||
-      ((s.status === 'idle' || s.status === 'failed') && hasNews(s, seen(s.id))),
+      ((s.status === 'idle' || s.status === 'failed') &&
+        hasNews(s, seen(s.id))),
   ).length;
 }
 

@@ -205,6 +205,23 @@ describe('spaces', () => {
     ).toEqual({ level: 'error', text: 'Fix it: turn failed — boom' });
     expect(turnEnded({ status: 'idle' }, next)).toBeNull();
     expect(turnEnded(undefined, next)).toBeNull();
+    // Conflicts left by an Update from base: the update waits on you, and
+    // the reason reads without the core's "invalid request:".
+    expect(
+      turnEnded(
+        { status: 'running' },
+        {
+          ...next,
+          status: 'failed',
+          error:
+            'invalid request: conflicts left in notes.md; abort the update',
+          updating: { from: 'a', base: 'b', conflicts: ['notes.md'] } as never,
+        },
+      ),
+    ).toEqual({
+      level: 'error',
+      text: 'Fix it: update has conflicts left — conflicts left in notes.md; abort the update',
+    });
     expect(
       turnEnded({ status: 'running' }, { ...next, status: 'running' }),
     ).toBeNull();
