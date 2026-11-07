@@ -318,6 +318,13 @@ impl Store for FakeStore {
         Ok(())
     }
 
+    fn outbox_has_pending(&self, op: &str, payload: &serde_json::Value) -> StoreResult<bool> {
+        let s = self.0.lock().unwrap();
+        Ok(s.outbox
+            .iter()
+            .any(|i| i.status == OutboxStatus::Pending && i.op == op && &i.payload == payload))
+    }
+
     fn outbox_pending_count(&self) -> StoreResult<u64> {
         let s = self.0.lock().unwrap();
         Ok(s.outbox
@@ -1406,6 +1413,8 @@ pub struct FakeHost {
     pub changed_since_calls: std::sync::atomic::AtomicUsize,
     pub get_pr_responses: Mutex<VecDeque<HostResult<Fetched<PrDetail>>>>,
     pub set_viewed_responses: Mutex<VecDeque<HostResult<()>>>,
+    /// Every `(path, viewed)` a `set_viewed` call was made with.
+    pub set_viewed_calls: Mutex<Vec<(String, bool)>>,
     pub submit_review_responses: Mutex<VecDeque<HostResult<SubmittedReview>>>,
     pub find_marker_responses: Mutex<VecDeque<HostResult<Option<theodore_domain::CommentId>>>>,
     pub changed_since_responses: Mutex<VecDeque<HostResult<Changes>>>,
@@ -1678,7 +1687,11 @@ impl HostAdapter for FakeHost {
             .pop_front()
             .unwrap_or_else(|| Err(HostError::NotFound("no fixture queued".into())))
     }
-    async fn set_viewed(&self, _pr: &PrRef, _path: &str, _viewed: bool) -> HostResult<()> {
+    async fn set_viewed(&self, _pr: &PrRef, path: &str, viewed: bool) -> HostResult<()> {
+        self.set_viewed_calls
+            .lock()
+            .unwrap()
+            .push((path.to_string(), viewed));
         self.set_viewed_responses
             .lock()
             .unwrap()

@@ -747,6 +747,188 @@ async fn reading_every_hunk_of_a_file_marks_it_viewed_and_enqueues_set_viewed() 
     assert_eq!(fv.state, ViewedState::Viewed);
 }
 
+/// `setFileViewed` from the UI: the Viewed checkbox's transaction.
+fn file_viewed_tx(
+    id: &str,
+    pr: &PrId,
+    path: &str,
+    state: ViewedState,
+    exists: bool,
+) -> Transaction {
+    let model_id = format!("{}:{path}", pr.0);
+    let data = serde_json::to_value(FileViewedRow {
+        pr: pr.clone(),
+        path: path.into(),
+        state,
+    })
+    .unwrap();
+    let op = if exists {
+        MutationOp::Update {
+            model: models::FILE_VIEWED.into(),
+            id: model_id,
+            data,
+        }
+    } else {
+        MutationOp::Create {
+            model: models::FILE_VIEWED.into(),
+            id: model_id,
+            data,
+        }
+    };
+    Transaction {
+        id: id.into(),
+        ops: vec![op],
+    }
+}
+
+fn set_viewed_calls(f: &Fixtures) -> Vec<(String, bool)> {
+    f.host.set_viewed_calls.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn toggling_viewed_by_hand_syncs_both_ways_through_the_outbox() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    let r = core
+        .transact(file_viewed_tx(
+            "fv-1",
+            &pr,
+            "src/lib.rs",
+            ViewedState::Viewed,
+            false,
+        ))
+        .await;
+    assert!(matches!(r, TransactionResult::Ok { .. }));
+    wait_until(|| set_viewed_calls(&f) == vec![("src/lib.rs".to_string(), true)]).await;
+
+    let r = core
+        .transact(file_viewed_tx(
+            "fv-2",
+            &pr,
+            "src/lib.rs",
+            ViewedState::Unviewed,
+            true,
+        ))
+        .await;
+    assert!(matches!(r, TransactionResult::Ok { .. }));
+    wait_until(|| set_viewed_calls(&f).len() == 2).await;
+    assert_eq!(
+        set_viewed_calls(&f)[1],
+        ("src/lib.rs".to_string(), false),
+        "Not viewed must unmark the file on the host"
+    );
+}
+
+#[tokio::test]
+async fn quick_viewed_toggles_coalesce_into_one_host_write_of_the_last_state() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    // The first write fails on the network and waits out its backoff, so
+    // the toggles below land while it is still pending.
+    f.host
+        .push_set_viewed(Err(HostError::Network("timeout".into())));
+    core.transact(file_viewed_tx(
+        "fv-1",
+        &pr,
+        "src/lib.rs",
+        ViewedState::Viewed,
+        false,
+    ))
+    .await;
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .first()
+            .is_some_and(|i| i.attempts >= 1 && i.status == OutboxStatus::Pending)
+    })
+    .await;
+
+    for (i, state) in [
+        ViewedState::Unviewed,
+        ViewedState::Viewed,
+        ViewedState::Unviewed,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        core.transact(file_viewed_tx(
+            &format!("fv-t{i}"),
+            &pr,
+            "src/lib.rs",
+            state,
+            true,
+        ))
+        .await;
+    }
+    assert_eq!(
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .filter(|i| i.op == "set_viewed")
+            .count(),
+        1,
+        "toggles while a write is pending ride on it"
+    );
+
+    f.clock.advance(10_000);
+    wait_until(|| f.store.outbox_snapshot()[0].status == OutboxStatus::Done).await;
+    assert_eq!(
+        set_viewed_calls(&f),
+        vec![
+            ("src/lib.rs".to_string(), true),
+            ("src/lib.rs".to_string(), false),
+        ],
+        "the retry sends the state the file has now"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_unview_puts_viewed_back() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    core.transact(file_viewed_tx(
+        "fv-1",
+        &pr,
+        "src/lib.rs",
+        ViewedState::Viewed,
+        false,
+    ))
+    .await;
+    wait_until(|| set_viewed_calls(&f).len() == 1).await;
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .all(|i| i.status == OutboxStatus::Done)
+    })
+    .await;
+
+    f.host
+        .push_set_viewed(Err(HostError::Validation("nope".into())));
+    core.transact(file_viewed_tx(
+        "fv-2",
+        &pr,
+        "src/lib.rs",
+        ViewedState::Unviewed,
+        true,
+    ))
+    .await;
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.status == OutboxStatus::Failed)
+    })
+    .await;
+    wait_until(|| {
+        file_viewed_row(&f, &pr, "src/lib.rs").is_some_and(|r| r.state == ViewedState::Viewed)
+    })
+    .await;
+}
+
 // ── outbox retry / backoff / auth pause / compensation ──────────────────
 
 #[tokio::test]

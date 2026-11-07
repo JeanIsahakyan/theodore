@@ -326,30 +326,47 @@ async fn do_set_viewed(core: &Core, item: &OutboxItem) -> Result<(), Outcome> {
         .pr_ref(&payload.pr)
         .await
         .ok_or_else(|| Outcome::Fail("pr not found".into()))?;
+    // The item carries no state: it sends what the row says now, so toggles
+    // that rode on it while it waited end on the host as they did locally.
+    let row_id = format!("{}:{}", payload.pr.0, payload.path);
+    let store = core.0.deps.store.clone();
+    let row = tokio::task::spawn_blocking(move || store.get(models::FILE_VIEWED, &row_id))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten()
+        .and_then(|r| serde_json::from_value::<theodore_contract::FileViewedRow>(r.data).ok());
+    let viewed = row.is_none_or(|r| r.state == ViewedState::Viewed);
     match core
         .0
         .deps
         .host
-        .set_viewed(&pr_ref, &payload.path, true)
+        .set_viewed(&pr_ref, &payload.path, viewed)
         .await
     {
         Ok(()) => Ok(()),
         Err(e) => {
             let outcome = classify_host_error(core, item, e).await;
             if matches!(outcome, Outcome::Fail(_)) {
-                compensate_set_viewed(core, &payload).await;
+                compensate_set_viewed(core, &payload, viewed).await;
             }
             Err(outcome)
         }
     }
 }
 
-async fn compensate_set_viewed(core: &Core, payload: &SetViewedPayload) {
+/// Puts the row back the way the host still has it: the opposite of the
+/// state the failed write tried to send.
+async fn compensate_set_viewed(core: &Core, payload: &SetViewedPayload, sent: bool) {
     let row_id = format!("{}:{}", payload.pr.0, payload.path);
     let data = serde_json::to_value(theodore_contract::FileViewedRow {
         pr: payload.pr.clone(),
         path: payload.path.clone(),
-        state: ViewedState::Unviewed,
+        state: if sent {
+            ViewedState::Unviewed
+        } else {
+            ViewedState::Viewed
+        },
     })
     .expect("serializable");
     let action = NewAction {
