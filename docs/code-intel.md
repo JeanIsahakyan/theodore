@@ -602,6 +602,11 @@ Everything above, plus edits in modes that allow them (`AgentMode::Edit`,
 | `rename_symbol(path, line, col, new)` | grep + N edits |
 | `diagnostics(path?)` | a full `run_check` after every edit; `run_check` stays for the end |
 
+- A symbol's range may start after the modifiers on its line (`export`,
+  `pub`). A body that starts with those same words replaces them too, so
+  `export function …` never becomes `export export function …`; a body
+  without them leaves them in place.
+
 - Grep and Read stay. Strings, config, comments and error texts are not
   symbols. The system prompt says: for code, use the symbol tools first.
   Taking Grep away is decided only by an eval (§10).

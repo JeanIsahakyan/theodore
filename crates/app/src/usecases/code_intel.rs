@@ -1189,16 +1189,14 @@ impl CodeRoot {
             .symbol_body(&self.root, path, name)
             .await
             .map_err(code_err)?;
+        let (range, text) = with_modifiers(&self.root, path, symbol.range, text, body).await;
         let edit = TextEdit {
             path: path.to_string(),
-            range: symbol.range,
+            range,
             new_text: body.to_string(),
             expect: None,
         };
-        let check = Check {
-            range: symbol.range,
-            text,
-        };
+        let check = Check { range, text };
         apply_checked(&*self.port, &self.root, &[edit], Some(&check)).await
     }
 
@@ -1364,6 +1362,47 @@ fn language_view(l: LanguageStatus, declined: &[String]) -> CodeLanguage {
 struct Check {
     range: theodore_ports::Range,
     text: String,
+}
+
+/// A symbol's range may start after modifiers on its line (`export`,
+/// `export default`, `pub`): when the new `body` starts with those same
+/// words, they are part of what it replaces, so they don't end up twice.
+/// Returns the range to replace and the text it holds now.
+async fn with_modifiers(
+    root: &Path,
+    path: &str,
+    range: theodore_ports::Range,
+    text: String,
+    body: &str,
+) -> (theodore_ports::Range, String) {
+    let unchanged = (range, text.clone());
+    let Ok(full) = crate::usecases::suggestions::safe_join(root, path).await else {
+        return unchanged;
+    };
+    let Ok(file) = tokio::fs::read_to_string(&full).await else {
+        return unchanged;
+    };
+    let line_start = theodore_ports::Position {
+        line: range.start.line,
+        col: 1,
+    };
+    let (Some(ls), Some(s)) = (offset(&file, line_start), offset(&file, range.start)) else {
+        return unchanged;
+    };
+    let before = &file[ls..s];
+    let mods = before.trim_start();
+    if mods.is_empty() || !body.trim_start().starts_with(mods) {
+        return unchanged;
+    }
+    let indent = before.len() - mods.len();
+    let start = theodore_ports::Position {
+        line: range.start.line,
+        col: 1 + before[..indent].chars().count() as u32,
+    };
+    (
+        theodore_ports::Range { start, ..range },
+        format!("{mods}{text}"),
+    )
 }
 
 /// Applies `edits` to files under `root`: every file is read and edited in

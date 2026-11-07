@@ -1299,6 +1299,44 @@ async fn replace_and_insert_edit_the_file_and_tell_the_port() {
     );
 }
 
+/// A symbol's range may start after its modifiers (`export`, `pub`): a body
+/// that repeats them replaces them too, never `export export function`.
+#[tokio::test]
+async fn a_body_with_the_symbols_modifiers_replaces_them() {
+    let e = code_env().await;
+    let (s, root) = edit_space(&e).await;
+    std::fs::write(
+        root.join("src/util.ts"),
+        "// util\nexport function greet() {\n  return 1;\n}\n",
+    )
+    .unwrap();
+    e.f.code_intel.symbols.lock().unwrap().push(symbol(
+        "src/util.ts",
+        "greet",
+        range((2, 8), (4, 2)),
+        range((2, 17), (2, 22)),
+    ));
+    e.f.code_intel
+        .bodies
+        .lock()
+        .unwrap()
+        .insert("greet".into(), "function greet() {\n  return 1;\n}".into());
+    let scope = CodeScope::Space(s.id.clone());
+    e.core
+        .code_replace_symbol(
+            &scope,
+            "src/util.ts",
+            "greet",
+            "export function greet() {\n  return 2;\n}",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/util.ts")).unwrap(),
+        "// util\nexport function greet() {\n  return 2;\n}\n"
+    );
+}
+
 fn rename_edit(path: &str, line: u32, from: u32, to: u32) -> TextEdit {
     TextEdit {
         path: path.into(),
