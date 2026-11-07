@@ -594,3 +594,30 @@ languages:
     assert_eq!(server.install, InstallState::Unavailable);
     assert_eq!(server.hint.as_deref(), Some("gem install gem-ls"));
 }
+
+/// A server without a method (taplo has no `workspace/symbol`) is not
+/// asked for it, and its "method not found" is no note: the syntax layer
+/// answers as if no server were there for that question.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_method_the_server_lacks_is_neither_asked_nor_noted() {
+    let env = Env::new();
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let ci = env.fake_lsp_facade(LspPolicy::default());
+    let real = env!("CARGO_BIN_EXE_code-intel-fake-lsp");
+    env.script(
+        "fake-lsp",
+        &format!("FAKE_LSP_NO_SYMBOLS=1 exec '{real}' \"$@\""),
+    );
+    ci.open(workspace(wt.path(), TrustMode::Trusted))
+        .await
+        .unwrap();
+    ready(&ci, wt.path()).await;
+    indexed(&ci, wt.path()).await;
+    // The file is open on the server: it would answer if it could.
+    ci.file_symbols(wt.path(), "src/lib.rs").await.unwrap();
+
+    let found = ci.find_symbol(wt.path(), "helper", None).await.unwrap();
+    assert_eq!(found.source, Source::Syntax);
+    assert_eq!(found.items.len(), 1);
+    assert_eq!(found.note, None);
+}

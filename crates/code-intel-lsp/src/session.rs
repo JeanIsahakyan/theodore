@@ -559,12 +559,22 @@ impl LspSession {
         &self,
         params: R::Params,
     ) -> CodeIntelResult<R::Result> {
+        let unsupported = || {
+            CodeIntelError::Unsupported(format!("{} does not answer {}", self.server(), R::METHOD))
+        };
+        // Not offered at `initialize`: not asked (taplo has no workspace/symbol).
+        if capability(R::METHOD).is_some_and(|cap| !self.info().has(cap)) {
+            return Err(unsupported());
+        }
         let params = serde_json::to_value(params).map_err(|e| self.err(e))?;
         let raw = self
             .rpc
             .request(R::METHOD, params, self.options.request_timeout)
             .await
-            .map_err(|e| self.err(e))?;
+            .map_err(|e| match e {
+                RpcError::Server { code, .. } if code == rpc::METHOD_NOT_FOUND => unsupported(),
+                e => self.err(e),
+            })?;
         self.touch();
         serde_json::from_value(raw).map_err(|e| self.err(RpcError::Decode(e.to_string())))
     }
@@ -1394,6 +1404,21 @@ fn workspace_edits(
     let mut out: Vec<_> = edit.changes.unwrap_or_default().into_iter().collect();
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
+}
+
+/// The server capability that offers a request, for those a server may
+/// lack.
+fn capability(method: &str) -> Option<&'static str> {
+    Some(match method {
+        "textDocument/definition" => "/definitionProvider",
+        "textDocument/references" => "/referencesProvider",
+        "textDocument/documentSymbol" => "/documentSymbolProvider",
+        "workspace/symbol" => "/workspaceSymbolProvider",
+        "textDocument/rename" => "/renameProvider",
+        "textDocument/hover" => "/hoverProvider",
+        "textDocument/diagnostic" => "/diagnosticProvider",
+        _ => return None,
+    })
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

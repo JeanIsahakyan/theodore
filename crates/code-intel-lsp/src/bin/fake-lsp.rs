@@ -21,6 +21,8 @@
 //! `FAKE_LSP_FLAT_SYMBOLS`, `FAKE_LSP_RENAME_CHANGES`, `FAKE_LSP_PULL`,
 //! `FAKE_LSP_PUBLISH_DELAY_MS` (diagnostics published that late, with the
 //! document's version),
+//! `FAKE_LSP_NO_SYMBOLS` (no `workspace/symbol`: not offered, and
+//! "method not found" if asked anyway),
 //! `FAKE_LSP_FOLDERS`, `FAKE_LSP_IGNORE_EXIT`, `FAKE_LSP_PID_FILE`.
 
 use std::collections::BTreeMap;
@@ -273,6 +275,11 @@ impl Server {
                     caps["diagnosticProvider"] =
                         json!({"interFileDependencies": false, "workspaceDiagnostics": false});
                 }
+                if env("FAKE_LSP_NO_SYMBOLS").is_some() {
+                    caps.as_object_mut()
+                        .unwrap()
+                        .remove("workspaceSymbolProvider");
+                }
                 if env("FAKE_LSP_FOLDERS").is_some() {
                     caps["workspace"] = json!({"workspaceFolders":
                         {"supported": true, "changeNotifications": true}});
@@ -513,6 +520,13 @@ fn main() {
         }
         let params = msg["params"].clone();
         match msg.get("id") {
+            Some(id) if method == "workspace/symbol" && env("FAKE_LSP_NO_SYMBOLS").is_some() => {
+                send(
+                    &server.out,
+                    json!({"jsonrpc": "2.0", "id": id,
+                           "error": {"code": -32601, "message": "Method not found"}}),
+                );
+            }
             Some(id) => {
                 let result = server.request(&method, &params);
                 send(

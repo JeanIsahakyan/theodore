@@ -265,6 +265,14 @@ impl Notes {
         }
     }
 
+    /// A server's failure. One that only doesn't answer this kind of
+    /// question (`Unsupported`, "method not found") is no news.
+    fn error(&mut self, e: CodeIntelError) {
+        if !matches!(e, CodeIntelError::Unsupported(_)) {
+            self.push(e.to_string());
+        }
+    }
+
     fn finish(self) -> Option<String> {
         (!self.0.is_empty()).then(|| self.0.join("; "))
     }
@@ -777,7 +785,7 @@ impl CodeIntel {
                         );
                         answered.extend(langs);
                     }
-                    Err(e) => notes.push(e.to_string()),
+                    Err(e) => notes.error(e),
                 },
                 Route::Not(n) => notes.extend(n),
             }
@@ -833,7 +841,7 @@ impl CodeIntel {
                     return Ok(self.answer(&w, syms, Source::Lsp, notes));
                 }
                 Ok(_) => {}
-                Err(e) => notes.push(e.to_string()),
+                Err(e) => notes.error(e),
             },
             Route::Not(n) => notes.extend(n),
         }
@@ -910,7 +918,7 @@ impl CodeIntel {
                     return Ok(self.answer(&w, hits, Source::Lsp, notes));
                 }
                 Ok(_) => notes.push(format!("{}: no definition; matched by name", s.server())),
-                Err(e) => notes.push(e.to_string()),
+                Err(e) => notes.error(e),
             },
             Route::Not(n) => notes.extend(n),
         }
@@ -961,7 +969,7 @@ impl CodeIntel {
                     return Ok(self.answer(&w, hits, Source::Lsp, notes));
                 }
                 Ok(_) => notes.push(format!("{}: no references; matched by name", s.server())),
-                Err(e) => notes.push(e.to_string()),
+                Err(e) => notes.error(e),
             },
             Route::Not(n) => notes.extend(n),
         }
@@ -1012,7 +1020,7 @@ impl CodeIntel {
                         asked = true;
                         match session_diagnostics(&s, &w.root, Some(&p)).await {
                             Ok(d) => items = d,
-                            Err(e) => notes.push(e.to_string()),
+                            Err(e) => notes.error(e),
                         }
                     }
                     Route::Not(n) => notes.extend(n),
@@ -1025,7 +1033,7 @@ impl CodeIntel {
                             asked = true;
                             match session_diagnostics(&s, &w.root, None).await {
                                 Ok(d) => items.extend(d),
-                                Err(e) => notes.push(e.to_string()),
+                                Err(e) => notes.error(e),
                             }
                         }
                         Route::Not(n) => notes.extend(n),

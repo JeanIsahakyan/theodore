@@ -521,6 +521,9 @@ idle code_intel.idle_minutes ─▶ shutdown ─▶ exit ─▶ kill after 5 s
   server on the base is started only when a question needs it.
 - A server that crashes is restarted once per session; a second crash marks
   it failed for that worktree, and the syntax layer answers.
+- A request a server did not offer at `initialize` (taplo has no
+  `workspace/symbol`) is not sent, and a "method not found" answer counts the
+  same: the syntax layer answers, with no note about it.
 - JVM servers start slowly and answer empty while they import. `warming` holds
   until no `$/progress` token is in flight for `ready_settle` (1.5 s), so a
   question meanwhile goes to the syntax layer, not to an empty answer. A slow
