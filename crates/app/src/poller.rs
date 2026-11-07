@@ -20,6 +20,9 @@ use crate::usecases::review_config::{ConfigBase, ReviewSource};
 const OPEN_PR_POLL_MS: i64 = 15_000;
 const INBOX_ERROR_RETRY_MS: i64 = 30_000;
 const DEFAULT_INBOX_POLL_MS: i64 = 15_000;
+/// Your own open PRs: one search a minute, plus a conditional fetch for each
+/// one it stopped returning.
+const AUTHORED_POLL_MS: i64 = 60_000;
 /// Real-time tick for noticing a `Clock`-measured deadline is due. Kept
 /// short and wall-clock-based (not through `Clock`) so a test's single
 /// `advance()` jump is never missed while this task is busy elsewhere —
@@ -42,6 +45,7 @@ pub(crate) async fn run(inner: Arc<Inner>) {
     tokio::join!(
         poll_open_prs(inner.clone()),
         poll_inbox(inner.clone()),
+        poll_authored(inner.clone()),
         poll_projects(inner.clone()),
         poll_spaces(inner.clone()),
         probe_host(inner)
@@ -220,6 +224,32 @@ async fn poll_projects(inner: Arc<Inner>) {
                     .await
             {
                 let _ = core.refresh_project_quietly(&id).await;
+            }
+        }
+        tokio::select! {
+            _ = inner.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(REAL_TICK_MS)) => {},
+        }
+    }
+}
+
+/// Every `AUTHORED_POLL_MS`, your own open PRs (`refresh_authored`): the
+/// host sends no notification for your own actions, so the inbox poll
+/// alone leaves a PR you opened or closed elsewhere stale. Skipped while
+/// offline; the startup inbox pass covers the first minute.
+async fn poll_authored(inner: Arc<Inner>) {
+    let core = Core(inner.clone());
+    let mut next_due = inner.deps.clock.now() + AUTHORED_POLL_MS;
+    loop {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
+            return;
+        }
+        let now = inner.deps.clock.now();
+        if now >= next_due && core.host_online() {
+            next_due = now + AUTHORED_POLL_MS;
+            if let Err(e) = core.refresh_authored().await {
+                tracing::debug!(error = %e, "authored PRs poll failed");
             }
         }
         tokio::select! {

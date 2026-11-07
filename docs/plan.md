@@ -400,6 +400,9 @@ content creation.
 GitHub:    GET /notifications  (If-Modified-Since, honours X-Poll-Interval)
               └─ something changed ─▶ GraphQL for the changed PRs only
            open PR: GET /pulls/{n} with ETag every 10–30 s (304s are free)
+           your PRs: search author:@me is:open every 60 s (no notification
+              comes for your own actions); one it stopped returning ─▶
+              GET /pulls/{n} with ETag
 GitLab:    ?updated_after=<cursor>
 Bitbucket: re-lists the viewer's involved PRs every poll — no indexed
            "updated after" filter cheap enough to use as a real delta probe

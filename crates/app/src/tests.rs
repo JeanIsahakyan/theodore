@@ -1633,6 +1633,85 @@ async fn refresh_inbox_writes_pr_rows_and_seeds_inbox_state_once() {
 }
 
 #[tokio::test]
+async fn the_authored_poll_adds_a_new_pr_and_settles_one_closed_elsewhere() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.host
+        .search_complete
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let repo = fixture_pr_ref().repo;
+    let pr_ref = |number| PrRef {
+        repo: repo.clone(),
+        number,
+        host_id: None,
+    };
+    // #7: yours, open as far as the store knows, closed on the host.
+    let mut mine = testkit::sample_pr_summary(&pr_ref(7), &Sha::new("h7"));
+    mine.reasons = vec![
+        theodore_domain::InboxReason::Authored,
+        theodore_domain::InboxReason::Mentioned,
+    ];
+    put_model_row(
+        &f,
+        models::PR,
+        &pr_ref(7).id().0,
+        serde_json::to_value(&mine).unwrap(),
+    );
+    let mut closed = testkit::sample_pr_detail(&pr_ref(7), &Sha::new("b"), &Sha::new("h7"));
+    closed.summary.state = theodore_domain::PrState::Closed;
+    closed.summary.updated_at = 5;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("e7".into()),
+        value: closed,
+    }));
+    // #8: opened on the host, never seen; with a conflict.
+    let mut new_pr = testkit::sample_pr_summary(&pr_ref(8), &Sha::new("h8"));
+    new_pr.reasons = vec![theodore_domain::InboxReason::Authored];
+    new_pr.conflicts = true;
+    f.host.push_search(Ok(vec![new_pr]));
+
+    core.refresh_authored().await.expect("refresh_authored");
+
+    let row = |n: u64| -> PrSummary {
+        serde_json::from_value(
+            f.store
+                .get(models::PR, &pr_ref(n).id().0)
+                .unwrap()
+                .unwrap()
+                .data,
+        )
+        .unwrap()
+    };
+    assert!(row(8).conflicts, "the new PR is in, conflict and all");
+    assert!(
+        f.store
+            .get(models::INBOX_STATE, &pr_ref(8).id().0)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(row(7).state, theodore_domain::PrState::Closed);
+    assert!(
+        row(7)
+            .reasons
+            .contains(&theodore_domain::InboxReason::Mentioned),
+        "a single-PR fetch keeps the inbox's reasons"
+    );
+    assert_eq!(
+        f.host
+            .get_pr_refs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.number)
+            .collect::<Vec<_>>(),
+        vec![7],
+        "only the PR the search no longer returns is asked after"
+    );
+}
+
+#[tokio::test]
 async fn an_inbox_refresh_that_sees_a_new_head_wakes_a_next_push_snooze() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps());
