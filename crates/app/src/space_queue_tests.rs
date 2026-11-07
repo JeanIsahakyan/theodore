@@ -444,6 +444,8 @@ async fn send_now_queues_when_the_run_cant_take_it() {
     let a = core.space_send_now(send(&s.id, "plain")).await.unwrap();
     assert!(message(&f, &a).unwrap().queued.is_some());
     release();
+    // "plain" gets its own turn: past it, or it could take the pause below.
+    wait_until(|| f.agents.requests().len() == 2).await;
     idle(&f, &s.id).await;
 
     // A steerable run, but the message switches the mode: it waits too.
