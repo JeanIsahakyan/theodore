@@ -224,7 +224,9 @@ function LanguageRow({
   onDecline: () => void;
 }) {
   const grammar = installView(lang.grammar);
-  const server = lang.server ? installView(lang.server.install) : null;
+  const server = lang.server
+    ? installView(lang.server.install, lang.server.hint)
+    : null;
   const running = lang.server ? SERVER_STATE[lang.server.state] : null;
   const download = downloadOf(progress);
   const downloading = isDownloading(lang, progress);
@@ -267,9 +269,10 @@ function LanguageRow({
             {server.detail}
           </span>
         )}
-        {server?.tone === 'default' && server.detail && (
-          <span className="text-xs text-muted">{server.detail}</span>
-        )}
+        {(server?.tone === 'default' || server?.tone === 'warning') &&
+          server.detail && (
+            <span className="text-xs text-muted">{server.detail}</span>
+          )}
         {errors.map((e) => (
           <span key={e} className="text-xs break-words text-danger">
             {e}

@@ -94,6 +94,7 @@ fn missing_server(lang: &str, server: &str) -> LanguageStatus {
             name: server.into(),
             install: InstallState::Missing,
             state: ServerState::NotRunning,
+            hint: None,
         }),
         index_percent: 40,
     }
@@ -263,6 +264,21 @@ async fn code_intel_off_in_config_opens_nothing_and_lists_no_tools() {
     assert!(
         err.to_string().contains("code intelligence is off"),
         "{err}"
+    );
+}
+
+/// `code_intel.servers`: a preference in a config file reaches the port.
+#[tokio::test]
+async fn a_preferred_server_reaches_the_port() {
+    let e = code_env().await;
+    e.global("code_intel: {languages: [rust], servers: {python: pyright}}");
+    let s = e.create("").await;
+    let want = format!("open {} Trusted [rust]", s.worktree);
+    wait_until(|| e.f.code_intel.calls().contains(&want)).await;
+    let servers = e.f.code_intel.last_servers.lock().unwrap().clone();
+    assert_eq!(
+        servers,
+        std::collections::BTreeMap::from([("python".to_string(), "pyright".to_string())])
     );
 }
 
@@ -739,6 +755,7 @@ async fn install_follows_the_policy_and_remembers_a_no() {
                     version: None,
                 },
                 state: ServerState::Ready,
+                hint: None,
             }),
             ..missing_server("python", "ty")
         },

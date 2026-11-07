@@ -511,8 +511,21 @@ export type CodeInstall =
 { state: "system"; path: string; version: string | null } |
 /**  Downloaded by Theodore. */
 { state: "installed"; version: string } |
-/**  No download for this platform. */
+/**  No download for this platform, and not on this machine. */
 { state: "unavailable" } |
+/**
+ *  Needs a runtime that is missing or too old; nothing is downloaded
+ *  for a server that can't run.
+ */
+{ state: "needs_runtime";
+/**  `java`, `node`, `ruby`, `php`, `dotnet`, `dotnet-sdk`. */
+runtime: string;
+/**  The oldest that works: `21`, `8.2`. */
+min: string;
+/**  What is on this machine, if one ran. */
+found: string | null } |
+/**  Runs the project's code, so it serves spaces and never a review. */
+{ state: "trusted_only" } |
 /**  You said no to the install suggestion. */
 { state: "declined" } | { state: "failed"; error: string };
 
@@ -596,6 +609,8 @@ export type CodeServer = {
 	name: string,
 	install: CodeInstall,
 	state: CodeServerState,
+	/**  How to get it when Theodore can't: `gem install ruby-lsp`. */
+	hint: string | null,
 };
 
 export type CodeServerState = "not_running" | "warming" | "ready" | "failed";

@@ -38,6 +38,7 @@ const lang = (over: Partial<CodeLanguage> = {}): CodeLanguage => ({
     name: 'rust-analyzer',
     install: { state: 'system', path: '/usr/bin/rust-analyzer', version: null },
     state: 'ready',
+    hint: null,
   },
   index_percent: 100,
   ...over,
@@ -54,7 +55,7 @@ const status = (languages: CodeLanguage[]): CodeIntelStatus => ({
 });
 
 const server = (install: CodeInstall, state: 'ready' | 'warming' = 'ready') =>
-  ({ name: 'clangd', install, state }) as const;
+  ({ name: 'clangd', install, state, hint: null }) as const;
 
 /** Timers the test fires by hand. */
 class ManualTimers implements Timers {
@@ -134,6 +135,7 @@ describe('installView', () => {
       installView({ state: 'installed', version: '2026-10-26' }).label,
     ).toBe('Installed 2026-10-26');
     expect(installView({ state: 'unavailable' }).label).toBe('Unavailable');
+    expect(installView({ state: 'trusted_only' }).label).toBe('Spaces only');
     expect(installView({ state: 'declined' }).label).toBe('Declined');
     expect(
       installView({ state: 'failed', error: 'sha256 mismatch' }),
@@ -142,6 +144,50 @@ describe('installView', () => {
       tone: 'danger',
       detail: 'sha256 mismatch',
     });
+  });
+
+  it('names the runtime a server needs and what was found', () => {
+    expect(
+      installView({
+        state: 'needs_runtime',
+        runtime: 'java',
+        min: '21',
+        found: '17.0.2',
+      }),
+    ).toMatchObject({
+      label: 'Needs Java 21+',
+      tone: 'warning',
+      detail: 'Found 17.0.2',
+    });
+    expect(
+      installView({
+        state: 'needs_runtime',
+        runtime: 'php',
+        min: '8.2',
+        found: null,
+      }),
+    ).toMatchObject({ label: 'Needs PHP 8.2+', detail: null });
+    expect(
+      installView({
+        state: 'needs_runtime',
+        runtime: 'dotnet-sdk',
+        min: '10',
+        found: '10.0.3 without an SDK',
+      }).label,
+    ).toBe('Needs .NET SDK 10+');
+  });
+
+  it('says how to get a server, or that there is no download', () => {
+    expect(
+      installView({ state: 'unavailable' }, 'gem install ruby-lsp').detail,
+    ).toBe('gem install ruby-lsp');
+    expect(installView({ state: 'unavailable' }).detail).toBe(
+      'No download for this Mac',
+    );
+    // A hint is about getting the server: it changes nothing else.
+    expect(
+      installView({ state: 'missing' }, 'gem install x').detail,
+    ).toBeNull();
   });
 });
 

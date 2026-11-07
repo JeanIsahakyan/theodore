@@ -52,13 +52,27 @@ export function languageName(id: string): string {
   return NAMES[id] ?? (id ? id[0]!.toUpperCase() + id.slice(1) : id);
 }
 
+const RUNTIME_NAMES: Record<string, string> = {
+  node: 'Node.js',
+  java: 'Java',
+  ruby: 'Ruby',
+  php: 'PHP',
+  dotnet: '.NET',
+  'dotnet-sdk': '.NET SDK',
+};
+
+/** A manifest runtime id (`dotnet-sdk`) as people write it (`.NET SDK`). */
+export function runtimeName(id: string): string {
+  return RUNTIME_NAMES[id] ?? id;
+}
+
 export type InstallTone =
   'default' | 'accent' | 'success' | 'warning' | 'danger';
 
 export interface InstallView {
   label: string;
   tone: InstallTone;
-  /** A path, or why it failed. */
+  /** A path, why it failed, what was found, or how to get it. */
   detail: string | null;
   downloading: boolean;
 }
@@ -68,7 +82,12 @@ function versionLabel(v: string): string {
   return /^\d+\.\d/.test(v) ? `v${v}` : v;
 }
 
-export function installView(i: CodeInstall): InstallView {
+/** `hint`: how to get a server Theodore can't download (`gem install
+ *  ruby-lsp`); without one, "no download" is all there is to say. */
+export function installView(
+  i: CodeInstall,
+  hint: string | null = null,
+): InstallView {
   switch (i.state) {
     case 'system':
       return {
@@ -102,7 +121,21 @@ export function installView(i: CodeInstall): InstallView {
       return {
         label: 'Unavailable',
         tone: 'default',
-        detail: 'No download for this Mac',
+        detail: hint ?? 'No download for this Mac',
+        downloading: false,
+      };
+    case 'needs_runtime':
+      return {
+        label: `Needs ${runtimeName(i.runtime)} ${i.min}+`,
+        tone: 'warning',
+        detail: i.found ? `Found ${i.found}` : null,
+        downloading: false,
+      };
+    case 'trusted_only':
+      return {
+        label: 'Spaces only',
+        tone: 'default',
+        detail: 'Runs the project’s build, so it does not start for reviews',
         downloading: false,
       };
     case 'declined':

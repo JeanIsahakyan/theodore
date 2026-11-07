@@ -7,13 +7,28 @@
 #              one-element argv only checks that the program exists.
 #   download   per platform; sha256 is required (an entry without it is
 #              dropped). redirect_hosts: the only hosts the URL may redirect to.
-#   launch     argv; "{bin}" is replaced by the resolved binary.
+#   launch     argv. "{bin}" (the resolved binary) and "{runtime}" (what passed
+#              `requires`) are whole arguments; "{dir}" (where the download was
+#              unpacked; never with `detect`) and "{data}" (writable, per worktree
+#              and trust mode, under the toolchain's root, never in the worktree;
+#              Remove deletes it) may sit inside one.
+#   requires   { runtime: node | java | ruby | php | dotnet | dotnet-sdk, min: 21
+#              or "8.2" }. Checked by running the runtime (§4.3): missing or too
+#              old, the server is skipped, found or downloaded alike, and nothing
+#              is downloaded for it. dotnet-sdk: that runtime and any SDK.
+#   hint       how to get it when Theodore can't; shown when nothing can serve.
+#   start_timeout_secs  replaces the initialize timeout (60 s) and the warm-up cap
+#              (180 s): a JVM importing a build takes minutes.
+#   ready_settle_secs   quiet time before it counts as warmed up (default 1.5 s),
+#              for a server slow to announce its work.
 #   review_init_options  merged over init_options in a review run (§8). They
 #              narrow what a server runs; they do not make it safe: rust-analyzer
 #              still runs `cargo metadata` (a PR's .cargo/config.toml
 #              `rustc-wrapper`, rust-toolchain.toml), typescript-language-server
 #              loads node_modules/typescript. Hence review runs start servers
 #              only when `code_intel.lsp.review` is on (off by default).
+#   trusted_only  runs the project's code with no option to turn that off: never
+#              started in a review run, even with `code_intel.lsp.review` on.
 # languages[]: globs match the file name (`*.rs`, `Dockerfile`); a glob with a
 #   `/` matches the repo-relative path. First language whose glob matches wins.
 #   tags_extends  a language whose tags query is prepended to this one's
@@ -67,13 +82,17 @@ servers:
     detect: [["pyright-langserver"]]
     launch: ["{bin}", "--stdio"]
     workspace_folders: true
-    requires: node
+    requires: { runtime: node, min: 14 }
+    hint: npm install -g pyright
 
   - name: typescript-language-server
     detect: [["typescript-language-server", "--version"]]
     launch: ["{bin}", "--stdio"]
     workspace_folders: true
-    requires: node
+    # The floor is the oldest a release of it supports: installed, its own
+    # version decides.
+    requires: { runtime: node, min: 18 }
+    hint: npm install -g typescript-language-server typescript
     review_init_options:
       plugins: []
       disableAutomaticTypingAcquisition: true
@@ -84,7 +103,8 @@ servers:
     # (crates/code-intel-toolchain/tests/tsgo_lsp.rs, run with --ignored)
     # against this crate's own package: it answers all three. Listed ahead
     # of typescript-language-server (docs/code-intel.md §11 open question
-    # resolved: default for TypeScript).
+    # resolved: default for TypeScript). It serves plain .js with no tsconfig
+    # or jsconfig too (tests/server_lsp.rs), hence first for JavaScript.
     version: "7.0.0-dev.20260707.2"
     detect: [["tsgo", "--version"]]
     download:
@@ -136,6 +156,7 @@ servers:
     detect: [["sourcekit-lsp"]]
     launch: ["{bin}"]
     workspace_folders: true
+    hint: Install Xcode or the Swift toolchain
 
   - name: zls
     # Upstream only publishes .tar.xz for darwin-arm64 (zigtools/zls
@@ -147,6 +168,7 @@ servers:
     detect: [["zls", "--version"]]
     launch: ["{bin}"]
     workspace_folders: true
+    hint: brew install zls
 
   - name: lua-language-server
     version: "3.19.2"
