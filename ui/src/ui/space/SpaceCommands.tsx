@@ -49,11 +49,15 @@ import {
 
 const EMPTY: SpaceLogLine[] = [];
 
-/** `space_config` for the page, refetched when what it depends on moves
- *  (trust answered, setup moved on, archived). */
+/** `space_config` for the page, refetched when what it depends on moves:
+ *  trust answered, setup moved on, archived, a turn started or ended (it may
+ *  have written the config), a new base (Continue, Update from base: the
+ *  repo's file is read at `base_sha`). */
 export function useSpaceConfig(
   id: string,
-  space: Pick<Space, 'status' | 'commands_denied' | 'setup'> | undefined,
+  space:
+    | Pick<Space, 'status' | 'commands_denied' | 'setup' | 'base_sha'>
+    | undefined,
 ): {
   config: SpaceConfigView | null;
   refresh: () => void;
@@ -67,6 +71,8 @@ export function useSpaceConfig(
   const live = space != null && space.status !== 'archived';
   const denied = space?.commands_denied;
   const setup = space?.setup?.status;
+  const status = space?.status;
+  const base = space?.base_sha;
   useEffect(() => {
     if (!live) return;
     let on = true;
@@ -77,7 +83,7 @@ export function useSpaceConfig(
     return () => {
       on = false;
     };
-  }, [id, live, denied, setup, tick]);
+  }, [id, live, denied, setup, status, base, tick]);
   const config = live && got?.id === id ? got.config : null;
   return { config, refresh };
 }
