@@ -487,9 +487,20 @@ async fn do_resolve_thread(core: &Core, item: &OutboxItem) -> Result<(), Outcome
     {
         Ok(()) => {
             refresh_pr_detail(core, &payload.pr, &pr_ref).await;
+            // The host just took it: a fetch that raced the write and still
+            // reads the old state doesn't get to undo it.
+            core.set_thread_resolved(&payload.pr, &payload.thread, payload.resolved)
+                .await;
             Ok(())
         }
-        Err(e) => Err(classify_host_error(core, item, e).await),
+        Err(e) => {
+            let outcome = classify_host_error(core, item, e).await;
+            if matches!(outcome, Outcome::Fail(_)) {
+                core.set_thread_resolved(&payload.pr, &payload.thread, !payload.resolved)
+                    .await;
+            }
+            Err(outcome)
+        }
     }
 }
 

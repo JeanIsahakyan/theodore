@@ -2341,6 +2341,76 @@ async fn reply_thread_does_not_repost_after_a_timeout_retry() {
     );
 }
 
+/// Puts one unresolved thread, `thread-1`, in the open fixture PR's detail.
+fn seed_thread(f: &Fixtures, pr: &PrId, head: &Sha) {
+    let mut detail = testkit::sample_pr_detail(&fixture_pr_ref(), &Sha::new("base000"), head);
+    detail.threads = vec![Thread {
+        id: ThreadId::new("thread-1"),
+        anchor: None,
+        resolved: false,
+        outdated: false,
+        comments: vec![],
+    }];
+    f.store
+        .apply(vec![NewAction {
+            model: models::PR_DETAIL.into(),
+            model_id: pr.0.clone(),
+            action: SyncActionCode::U,
+            data: Some(serde_json::to_value(&detail).unwrap()),
+        }])
+        .unwrap();
+}
+
+fn thread_resolved(f: &Fixtures, pr: &PrId) -> bool {
+    let row = f.store.get(models::PR_DETAIL, &pr.0).unwrap().unwrap();
+    let detail: theodore_domain::PrDetail = serde_json::from_value(row.data).unwrap();
+    detail.threads[0].resolved
+}
+
+#[tokio::test]
+async fn resolving_a_thread_shows_before_the_host_answers() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    seed_thread(&f, &pr, &head);
+    // The host is slow to take it: the write waits on a retry.
+    f.host
+        .push_resolve(Err(HostError::Network("timeout".into())));
+
+    core.resolve_thread(ResolveRequest {
+        pr: pr.clone(),
+        thread: ThreadId::new("thread-1"),
+        resolved: true,
+    })
+    .await
+    .expect("resolve_thread");
+    assert!(thread_resolved(&f, &pr), "resolved at once, not on a poll");
+}
+
+#[tokio::test]
+async fn a_refused_resolve_puts_the_thread_back() {
+    let f = fixtures();
+    let (core, _recv, pr, head) = open_fixture_pr(&f).await;
+    seed_thread(&f, &pr, &head);
+    f.host
+        .push_resolve(Err(HostError::Forbidden("must have push access".into())));
+
+    core.resolve_thread(ResolveRequest {
+        pr: pr.clone(),
+        thread: ThreadId::new("thread-1"),
+        resolved: true,
+    })
+    .await
+    .expect("resolve_thread");
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .iter()
+            .any(|i| i.op == "resolve_thread" && i.status == OutboxStatus::Failed)
+    })
+    .await;
+    assert!(!thread_resolved(&f, &pr), "rolled back");
+}
+
 #[tokio::test]
 async fn resolve_thread_enqueues_outbox() {
     let f = fixtures();
