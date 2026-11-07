@@ -243,6 +243,18 @@ export type CheckRollup = "none" | "pending" | "pass" | "fail";
 export type CheckStatus = "pending" | "pass" | "fail" | "skipped";
 
 /**
+ *  One ticked item of a group's "What to check" list, kept like a read mark
+ *  so it survives a tab switch or a restart. `scope` names the group within
+ *  a revision (`<base>:<head>:<group id>`): a regroup or a push starts the
+ *  list over. `item` is the item's key within the group.
+ */
+export type CheckTick = {
+	pr: PrId,
+	scope: string,
+	item: string,
+};
+
+/**
  *  One UI error or event, forwarded to the core's log. The core rate-limits
  *  and dedupes these, then redacts them like every other record.
  */

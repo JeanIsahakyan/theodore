@@ -139,7 +139,7 @@ agent / poller ─────────────────────�
 | Synced (mutable, persisted) | Not synced |
 | --- | --- |
 | PR list rows, inbox state, snooze | Diff hunks and file contents — immutable per commit, fetched by query |
-| Read state per hunk, Viewed per file | Agent token stream — ephemeral `agent:delta` events; only the final message is synced |
+| Read state per hunk, Viewed per file, "What to check" ticks | Agent token stream — ephemeral `agent:delta` events; only the final message is synced |
 | Groups (and regroupings) | Skill run log lines — ephemeral, last N kept in memory |
 | Threads, comments, drafts | Syntax highlighting — computed in UI |
 | Findings, fixes, tasks | |

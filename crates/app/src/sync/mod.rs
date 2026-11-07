@@ -80,6 +80,7 @@ impl Core {
                     for m in [
                         models::HUNK_READ,
                         models::FILE_VIEWED,
+                        models::CHECK_TICK,
                         models::THREAD,
                         models::DRAFT,
                         models::FINDING,

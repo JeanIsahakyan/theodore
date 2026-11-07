@@ -1,13 +1,15 @@
 /** A group's "What to check" list (#48): the item text is drag-selectable
  *  for copy even though `Checkbox.Content` is `select-none` so a click
  *  anywhere in the row still toggles the box. */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { mount, type Mounted } from '../test/dom';
 import type { FileDiff, Group, Revision } from '../gen/contract';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { DiffPane } from './DiffPane';
+import { setTransport } from '../core/transport';
+import { FakeTransport } from '../test/fakeTransport';
 
 const PR = 'gh:acme/app#1';
 const HEAD = 'h'.repeat(40);
@@ -70,6 +72,13 @@ function seed(): RootStore {
 const noop = () => {};
 
 let m: Mounted | null = null;
+let transport = new FakeTransport();
+beforeEach(() => {
+  // A tick is a transaction: core accepts it.
+  transport = new FakeTransport();
+  transport.onCall('transact', () => ({ status: 'ok', last_sync_id: 1 }));
+  setTransport(transport);
+});
 afterEach(() => {
   m?.unmount();
   m = null;
@@ -149,5 +158,58 @@ describe('GroupCard "What to check" list', () => {
       );
     });
     expect(input.checked).toBe(true);
+  });
+});
+
+describe('"What to check" ticks', () => {
+  const pane = (store: RootStore) => (
+    <RootStoreProvider store={store}>
+      <DiffPane
+        pr={PR}
+        rev={rev}
+        mode={{ mode: 'groups', group: 'g1', file: null }}
+        setMode={noop}
+        since={null}
+        sinceOnly={false}
+        baselineSha={null}
+        focusHunk={null}
+        setFocusHunk={noop}
+        composer={null}
+        setComposer={noop}
+        expandHunk={null}
+      />
+    </RootStoreProvider>
+  );
+  const input = () =>
+    m!.host.querySelector<HTMLInputElement>('.gcard input[type="checkbox"]')!;
+  const tick = () =>
+    act(async () => {
+      m!.host
+        .querySelector('.gcard span.select-text')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+  it('survive the pane remounting (a tab switch) as a synced row', async () => {
+    const store = seed();
+    m = await mount(pane(store));
+    await tick();
+    expect(input().checked).toBe(true);
+    expect(
+      transport.calls.some(
+        (c) =>
+          c.cmd === 'transact' &&
+          JSON.stringify(c.args).includes('"model":"check_tick"'),
+      ),
+    ).toBe(true);
+
+    m.unmount();
+    m = await mount(pane(store));
+    expect(input().checked).toBe(true);
+
+    await tick();
+    expect(input().checked).toBe(false);
+    m.unmount();
+    m = await mount(pane(store));
+    expect(input().checked).toBe(false);
   });
 });

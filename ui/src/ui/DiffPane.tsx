@@ -75,6 +75,7 @@ import {
   markHunkRead,
   openLineAnswer,
   referenceLine,
+  setCheckTicked,
   setFileViewed,
 } from '../actions';
 import { useRootStore, useUi } from '../stores/context';
@@ -665,7 +666,10 @@ const GroupCard = observer(function GroupCard({
 }) {
   const store = useRootStore();
   const g = store.models.groupsOf(pr).find((x) => x.id === groupId);
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  // Ticks are synced rows, like read marks: a tab switch or a restart
+  // keeps them. Per revision and group: a push or a regroup starts over.
+  const tickScope = `${rev.base}:${rev.head}:${groupId}`;
+  const ticked = store.models.checkTicks.ticked(pr, tickScope);
   const occurrences = new Map<string, number>();
   const checks = (g?.check ?? []).map((text) => {
     const occurrence = occurrences.get(text) ?? 0;
@@ -673,13 +677,10 @@ const GroupCard = observer(function GroupCard({
     return { key: JSON.stringify([text, occurrence]), text };
   });
   const range = useCheckboxRange({
-    scopeKey: `checks:${pr}:${rev.base}:${rev.head}:${groupId}`,
+    scopeKey: `checks:${pr}:${tickScope}`,
     orderedKeys: checks.map((check) => check.key),
     onChange: (keys, value) =>
-      setChecked((current) => ({
-        ...current,
-        ...Object.fromEntries(keys.map((key) => [key, value])),
-      })),
+      setCheckTicked(store, pr, tickScope, keys, value),
   });
   if (!g) return null;
   // Same sequence `GroupsPane` numbers groups in — includes hidden groups
@@ -741,7 +742,7 @@ const GroupCard = observer(function GroupCard({
             <ChecklistItem
               key={key}
               text={text}
-              checked={!!checked[key]}
+              checked={ticked.has(key)}
               onPick={(value, modifiers) =>
                 range.activate(key, value, modifiers)
               }

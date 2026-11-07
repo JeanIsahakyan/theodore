@@ -55,6 +55,8 @@ pub mod models {
     pub const GROUPING: &str = "grouping";
     pub const HUNK_READ: &str = "hunk_read";
     pub const FILE_VIEWED: &str = "file_viewed";
+    /// A ticked "What to check" item of one group; no row is unticked.
+    pub const CHECK_TICK: &str = "check_tick";
     pub const THREAD: &str = "thread";
     pub const DRAFT: &str = "draft";
     pub const FINDING: &str = "finding";
@@ -73,6 +75,7 @@ pub mod models {
         GROUPING,
         HUNK_READ,
         FILE_VIEWED,
+        CHECK_TICK,
         THREAD,
         DRAFT,
         FINDING,
@@ -706,6 +709,17 @@ pub struct FileViewedRow {
     pub state: ViewedState,
 }
 
+/// One ticked item of a group's "What to check" list, kept like a read mark
+/// so it survives a tab switch or a restart. `scope` names the group within
+/// a revision (`<base>:<head>:<group id>`): a regroup or a push starts the
+/// list over. `item` is the item's key within the group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CheckTick {
+    pub pr: PrId,
+    pub scope: String,
+    pub item: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
@@ -862,6 +876,7 @@ pub fn types() -> specta::Types {
         .register::<InboxState>()
         .register::<HunkRead>()
         .register::<FileViewedRow>()
+        .register::<CheckTick>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
         .register::<TurnStep>()
