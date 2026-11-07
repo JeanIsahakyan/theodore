@@ -27,6 +27,7 @@ import { isBranchReview } from './project/sections';
 import { projectLabel } from './Projects';
 import { reviewTitle } from './space/mode';
 import { spaceTitle } from './space/spaces';
+import { reviewTabTitle } from './tabTitle';
 import { PRIcon, PrStatusIcon } from './StatusIcon';
 import { readProgress } from './review/progress';
 
@@ -73,11 +74,14 @@ function useLabel(r: Route): {
         ) : (
           <PRIcon status="open" />
         ),
-        title: !p
-          ? r.pr
-          : isBranchReview(p)
-            ? reviewTitle(store, r.pr, p.title)
-            : `#${p.pr.number} ${p.title}`,
+        title: reviewTabTitle(
+          r.pr,
+          !p
+            ? null
+            : isBranchReview(p)
+              ? reviewTitle(store, r.pr, p.title)
+              : `#${p.pr.number} ${p.title}`,
+        ),
         drafts,
       };
     }
