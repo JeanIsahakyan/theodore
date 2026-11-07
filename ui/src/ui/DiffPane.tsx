@@ -1578,14 +1578,40 @@ const BARE_SLICE = {
   peek: null,
 };
 
+/** The head-side code a suggestion on the composer's line or range would
+ *  replace: every new-side line from `startLine` to `line`, deletions left
+ *  out (a suggestion can't touch them). Nothing for an old-side comment. */
+function suggestionCode(lines: readonly DiffLine[], c: ComposerState): string {
+  if (c.side !== 'new') return '';
+  const from = c.startLine ?? c.line;
+  return lines
+    .filter(
+      (l) =>
+        l.kind !== 'del' &&
+        l.new_no != null &&
+        l.new_no >= from &&
+        l.new_no <= c.line,
+    )
+    .map((l) => l.text)
+    .join('\n');
+}
+
 /** A line's annotations and per-line slices of the hunk's props, read from
  *  the per-line indexes — the hunk observes them, the line just renders. */
 function lineSlice(
   store: ReturnType<typeof useRootStore>,
-  { pr, path, composer, peek, actions }: HunkProps,
+  { pr, path, h, composer, peek, actions }: HunkProps,
   l: DiffLine,
 ) {
   const a = anchorSide(l);
+  const composerHere =
+    a &&
+    composer &&
+    composer.path === path &&
+    composer.side === a.side &&
+    composer.line === a.line
+      ? composer
+      : null;
   return {
     threads: a ? store.models.threadIdsAt(pr, path, a.side, a.line) : NO_IDS,
     drafts: a ? store.models.drafts.at(pr, path, a.side, a.line) : NO_DRAFTS,
@@ -1597,14 +1623,8 @@ function lineSlice(
       a && actions.askAi
         ? store.ephemeral.lineAskAt(pr, path, a.side, a.line)
         : undefined,
-    composer:
-      a &&
-      composer &&
-      composer.path === path &&
-      composer.side === a.side &&
-      composer.line === a.line
-        ? composer
-        : null,
+    composer: composerHere,
+    composerCode: composerHere ? suggestionCode(h.lines, composerHere) : '',
     peek:
       peek &&
       peek.path === path &&
@@ -1912,6 +1932,9 @@ interface LineProps {
   lineAsk: LineAsk | undefined;
   /** Only set when the composer is open on this very line. */
   composer: ComposerState | null;
+  /** The code the composer's line or range covers, for its Suggestion;
+   *  `''` on every other line. */
+  composerCode: string;
   /** Only set when the symbol peek is pinned to this very line. */
   peek: SymbolPeekTarget | null;
   actions: LineActions;
@@ -1934,6 +1957,7 @@ const Line = memo(function Line(props: LineProps) {
     findings,
     lineAsk,
     composer,
+    composerCode,
     peek,
     actions,
   } = props;
@@ -2082,7 +2106,7 @@ const Line = memo(function Line(props: LineProps) {
               key={`${composerAnchor.path}:${composerAnchor.start_line}:${composerAnchor.line}`}
               pr={pr}
               anchor={composerAnchor}
-              lineText={l.kind !== 'del' ? l.text : ''}
+              lineText={composerCode}
               askAi={actions.askAi}
               onClose={() => actions.setComposer(null)}
             />

@@ -751,6 +751,8 @@ function ComposerInner({
 }: {
   pr: PrId;
   anchor: Anchor;
+  /** The code the anchor covers, every line of a range: what Suggestion
+   *  starts from, since committing it replaces exactly those lines. */
   lineText: string;
   /** Offer "Ask AI"; off where there's no AI panel to answer in. */
   askAi?: boolean;
