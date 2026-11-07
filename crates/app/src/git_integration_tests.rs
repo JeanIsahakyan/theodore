@@ -367,6 +367,52 @@ async fn copied_env_files_stay_out_of_checkpoints_and_commits() {
     assert!(!kept.iter().any(|p| p == ".env.local"), "{kept:?}");
 }
 
+/// `uncommitted` is about edits since the last checkpoint, not about the
+/// worktree against `HEAD`: a checkpoint leaves its edits uncommitted on
+/// `HEAD`, on purpose.
+#[tokio::test]
+async fn the_diff_tool_only_calls_new_edits_uncommitted() {
+    let lf = local_folder(|_| {}).await;
+    let s = lf.core.create_space(no_goal(&lf.project)).await.unwrap();
+    let wt = Path::new(&s.worktree);
+    let diff = lf.core.space_tool_diff(&s.id, None).await.unwrap();
+    assert!(!diff.uncommitted, "clean");
+
+    std::fs::write(wt.join("a.txt"), "one\ntwo\n").unwrap();
+    let diff = lf.core.space_tool_diff(&s.id, None).await.unwrap();
+    assert!(diff.uncommitted, "an edit no checkpoint has");
+
+    lf.f.agents
+        .push_script(vec![theodore_ports::AgentEvent::Done {
+            final_text: "done".into(),
+            usage: Default::default(),
+        }]);
+    lf.core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "go".into(),
+            agent: None,
+            model: None,
+            mode: None,
+            attachments: None,
+        })
+        .await
+        .unwrap();
+    wait_for("the turn ends", || {
+        space_row(&lf.f, &s.id).status != SpaceStatus::Running
+    })
+    .await;
+    let row = space_row(&lf.f, &s.id);
+    assert_ne!(row.head_sha, s.head_sha, "the turn checkpointed the edit");
+    let diff = lf.core.space_tool_diff(&s.id, None).await.unwrap();
+    assert!(!diff.uncommitted, "nothing new since the checkpoint");
+    assert_eq!(diff.files.len(), 1, "the edit is still in the diff");
+
+    std::fs::write(wt.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    let diff = lf.core.space_tool_diff(&s.id, None).await.unwrap();
+    assert!(diff.uncommitted, "edited again");
+}
+
 /// Stop: the agent's CLI traps SIGTERM, takes a moment, and writes one more
 /// file. The stopped turn's checkpoint waits for it.
 #[cfg(unix)]

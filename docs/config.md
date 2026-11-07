@@ -421,7 +421,7 @@ The change itself (docs/spaces.md §5):
 | Tool | Takes | Returns |
 | --- | --- | --- |
 | `ship` | `action`: `open_pr · open_draft_pr · push · merge_locally · keep_branch`; `title?` | `branch`, `sha`, `pr_number`, `pr_url`, a one-line `summary` |
-| `get_space_diff` | `file?`, `stat?` | `base`, `base_sha` (merge-base), `head`, `uncommitted`, `files` (status, +/−), `diff` (unified, at most 120 000 chars; `truncated`) |
+| `get_space_diff` | `file?`, `stat?` | `base`, `base_sha` (merge-base), `head`, `uncommitted` (edits since the last checkpoint), `files` (status, +/−), `diff` (unified, at most 120 000 chars; `truncated`) |
 | `get_review_comments` | `file?` | `items`: `kind` (`draft · finding · thread`), `on` (`space · pr`), `location`, `state` (`draft · open · resolved · outdated`), `severity`, `title`, `comments` (`author`: `you`, an agent or a login) |
 | `add_review_comment` | `file`, `line` (new side, 1-based), `body`, `severity?` (`info` default · `warn` · `high`) | `finding_id` |
 | `set_base` | `branch` | `base`, `base_sha`, `previous`, `note` (an open PR is not retargeted) |
