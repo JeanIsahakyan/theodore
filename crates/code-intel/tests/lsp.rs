@@ -154,7 +154,7 @@ async fn review_runs_start_no_server_by_default() {
         server.install,
         theodore_ports::code_intel::InstallState::System { .. }
     ));
-    assert_eq!(server.state, ServerState::NotRunning);
+    assert_eq!(server.state, ServerState::Off);
     assert!(env.launches().is_empty(), "{:?}", env.launches());
 }
 
@@ -211,7 +211,7 @@ async fn each_switch_gates_its_own_worktrees_live() {
                 assert_eq!(a.source, Source::Lsp, "{what}");
             } else {
                 eventually(&what, || async {
-                    server_state(&ci, root, "rust").await == Some(ServerState::NotRunning)
+                    server_state(&ci, root, "rust").await == Some(ServerState::Off)
                 })
                 .await;
                 let a = ci.file_symbols(root, "src/lib.rs").await.unwrap();
@@ -300,7 +300,108 @@ async fn a_workspace_policy_overrides_the_default() {
     assert_eq!(syms.source, Source::Syntax);
     assert_eq!(
         server_state(&ci, space.path(), "rust").await,
-        Some(ServerState::NotRunning)
+        Some(ServerState::Off)
     );
     assert_eq!(env.launches().len(), 1, "{:?}", env.launches());
+}
+
+/// A server stopped for being idle stays stopped until a question, so the
+/// settings row read "Not running" for good. `warm` brings it back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn warm_brings_back_a_server_stopped_for_being_idle() {
+    let env = Env::new();
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let root = wt.path().canonicalize().unwrap();
+    let ci = env.fake_lsp_facade(LspPolicy::default());
+    ci.open(workspace(&root, TrustMode::Trusted)).await.unwrap();
+    ready(&ci, &root).await;
+    assert_eq!(env.launches().len(), 1);
+
+    let mut o = ci.options();
+    o.idle = std::time::Duration::from_millis(20);
+    ci.set_options(o).await;
+    eventually("idle stop", || async {
+        server_state(&ci, &root, "rust").await == Some(ServerState::NotRunning)
+    })
+    .await;
+
+    let mut o = ci.options();
+    o.idle = std::time::Duration::from_secs(600);
+    ci.set_options(o).await;
+    ci.warm(&root).await;
+    ready(&ci, &root).await;
+
+    // Warming a live server starts nothing.
+    let launches = env.launches().len();
+    ci.warm(&root).await;
+    assert_eq!(env.launches().len(), launches);
+}
+
+/// Warming never pushes out a running server to make room.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn warm_stays_under_the_cap() {
+    let env = Env::new();
+    let (a, b) = (repo(&[("src/lib.rs", LIB)]), repo(&[("src/lib.rs", LIB)]));
+    let (a, b, _keep) = (
+        a.path().canonicalize().unwrap(),
+        b.path().canonicalize().unwrap(),
+        (a, b),
+    );
+    let ci = env.fake_lsp_facade(LspPolicy::default());
+    let mut o = ci.options();
+    o.max_servers = 1;
+    ci.set_options(o).await;
+    ci.open(workspace(&a, TrustMode::Trusted)).await.unwrap();
+    ready(&ci, &a).await;
+
+    let off = LspPolicy {
+        review: false,
+        spaces: false,
+    };
+    let mut ws = workspace(&b, TrustMode::Trusted);
+    ws.repo_key = "other".into();
+    ws.lsp = Some(off);
+    ci.open(ws).await.unwrap();
+    ci.set_lsp(&b, true).await;
+    // Turning the switch on is an explicit start: it takes the only slot.
+    // Warming the one that lost it must not take it back.
+    ready(&ci, &b).await;
+    assert_eq!(
+        server_state(&ci, &a, "rust").await,
+        Some(ServerState::NotRunning)
+    );
+    let launches = env.launches().len();
+    assert_eq!(launches, 2, "{:?}", env.launches());
+    ci.warm(&a).await;
+    assert_eq!(env.launches().len(), launches, "{:?}", env.launches());
+    assert_eq!(
+        server_state(&ci, &b, "rust").await,
+        Some(ServerState::Ready)
+    );
+}
+
+/// The project's switch reaches a worktree already open, both ways.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workspace_switch_applies_live() {
+    let env = Env::new();
+    let wt = repo(&[("src/lib.rs", LIB)]);
+    let root = wt.path().canonicalize().unwrap();
+    let ci = env.fake_lsp_facade(LspPolicy::default());
+    ci.open(workspace(&root, TrustMode::Review)).await.unwrap();
+    indexed(&ci, &root).await;
+    assert_eq!(
+        server_state(&ci, &root, "rust").await,
+        Some(ServerState::Off)
+    );
+    assert!(env.launches().is_empty());
+
+    ci.set_lsp(&root, true).await;
+    ready(&ci, &root).await;
+    assert_eq!(env.launches().len(), 1);
+
+    ci.set_lsp(&root, false).await;
+    eventually("off", || async {
+        server_state(&ci, &root, "rust").await == Some(ServerState::Off)
+    })
+    .await;
 }

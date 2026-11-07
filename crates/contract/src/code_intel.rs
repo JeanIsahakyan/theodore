@@ -119,6 +119,8 @@ pub enum CodeInstall {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeServerState {
+    /// The project's switch keeps language servers off here.
+    Off,
     NotRunning,
     Warming,
     Ready,

@@ -126,6 +126,7 @@ export const SERVER_STATE: Record<
   CodeServerState,
   { label: string; tone: InstallTone }
 > = {
+  off: { label: 'Off', tone: 'default' },
   not_running: { label: 'Not running', tone: 'default' },
   warming: { label: 'Warming up', tone: 'accent' },
   ready: { label: 'Ready', tone: 'success' },

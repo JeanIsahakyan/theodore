@@ -3080,6 +3080,12 @@ impl theodore_ports::CodeIntelPort for FakeCodeIntel {
     async fn file_changed(&self, root: &Path, path: &str) {
         self.record(format!("file_changed {} {path}", root.display()));
     }
+    async fn warm(&self, root: &Path) {
+        self.record(format!("warm {}", root.display()));
+    }
+    async fn set_lsp(&self, root: &Path, on: bool) {
+        self.record(format!("set_lsp {} {on}", root.display()));
+    }
     async fn status(
         &self,
         root: &Path,

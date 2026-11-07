@@ -327,18 +327,23 @@ impl CodeIntel {
             old_pool.shutdown_all().await;
         }
         let open: Vec<Arc<Ws>> = lock(&self.inner.workspaces).values().cloned().collect();
-        for w in open.into_iter().filter(|w| w.lsp.is_none()) {
+        for w in open.into_iter().filter(|w| lock(&w.lsp).is_none()) {
             let (was, now) = (allowed(old.lsp, w.trust), allowed(options.lsp, w.trust));
-            if !now {
-                if was {
-                    self.pool().release_root(&w.root).await;
-                }
-                for plan in lock(&w.servers).values_mut() {
-                    plan.resolved = None;
-                }
-            } else if !was || new_pool {
-                self.start_servers(&w).await;
+            self.apply_switch(&w, was, now, new_pool).await;
+        }
+    }
+
+    /// A worktree's policy went `was` → `now`: its servers follow.
+    async fn apply_switch(&self, w: &Ws, was: bool, now: bool, restart: bool) {
+        if !now {
+            if was {
+                self.pool().release_root(&w.root).await;
             }
+            for plan in lock(&w.servers).values_mut() {
+                plan.resolved = None;
+            }
+        } else if !was || restart {
+            self.start_servers(w).await;
         }
     }
 
@@ -419,7 +424,7 @@ impl CodeIntel {
 
     /// `w`'s own policy, else the default.
     fn policy_for(&self, w: &Ws) -> LspPolicy {
-        w.lsp.unwrap_or_else(|| self.policy())
+        lock(&w.lsp).unwrap_or_else(|| self.policy())
     }
 
     fn pool(&self) -> Arc<LspPool> {
@@ -482,7 +487,7 @@ impl CodeIntel {
             root: root.clone(),
             repo_key: ws.repo_key,
             trust: ws.trust,
-            lsp: ws.lsp,
+            lsp: Mutex::new(ws.lsp),
             requested: ws.languages,
             language_of: lang_of,
             servers: Mutex::default(),
@@ -513,6 +518,32 @@ impl CodeIntel {
         for server in w.servers_by_name().into_keys() {
             self.attach(w, &server).await;
         }
+    }
+
+    /// [`CodeIntelPort::warm`]. Stops at the cap: warming must not push out
+    /// a server someone is using, only to be pushed out in turn.
+    async fn warm_ws(&self, root: &Path) {
+        let Ok(w) = self.ws(root) else { return };
+        if !allowed(self.policy_for(&w), w.trust) {
+            return;
+        }
+        let pool = self.pool();
+        for server in w.servers_by_name().into_keys() {
+            if pool.get(&w.pool_key, &w.root, &server).await.is_none() && pool.has_room().await {
+                self.attach(&w, &server).await;
+            }
+        }
+    }
+
+    /// [`CodeIntelPort::set_lsp`].
+    async fn set_ws_lsp(&self, root: &Path, on: bool) {
+        let Ok(w) = self.ws(root) else { return };
+        let was = allowed(self.policy_for(&w), w.trust);
+        *lock(&w.lsp) = Some(LspPolicy {
+            review: on,
+            spaces: on,
+        });
+        self.apply_switch(&w, was, on, false).await;
     }
 
     /// Index `paths` first, then files mentioning the names they define.
@@ -619,7 +650,7 @@ impl CodeIntel {
         match session.state() {
             ServerState::Ready => Route::Ready(session),
             ServerState::Warming => Route::Not(Some(format!("{name} warming up"))),
-            ServerState::NotRunning | ServerState::Failed => {
+            ServerState::Off | ServerState::NotRunning | ServerState::Failed => {
                 Route::Not(Some(format!("{name} not running")))
             }
         }
@@ -1307,7 +1338,7 @@ impl CodeIntel {
                             .copied()
                             .unwrap_or(ServerState::NotRunning)
                     } else {
-                        ServerState::NotRunning
+                        ServerState::Off
                     },
                     name: p.spec.name,
                     install: p.install,
@@ -1585,6 +1616,14 @@ impl CodeIntelPort for CodeIntel {
 
     async fn file_changed(&self, root: &Path, path: &str) {
         self.changed(root, path).await
+    }
+
+    async fn warm(&self, root: &Path) {
+        self.warm_ws(root).await
+    }
+
+    async fn set_lsp(&self, root: &Path, on: bool) {
+        self.set_ws_lsp(root, on).await
     }
 
     async fn status(&self, root: &Path) -> CodeIntelResult<Vec<LanguageStatus>> {

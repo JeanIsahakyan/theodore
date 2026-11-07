@@ -361,6 +361,8 @@ query ─▶ pool[(repo, language)] ── alive ─▶ request
                                  └─ none ──▶ spawn (stdio) ─▶ initialize
                                              ─▶ status: warming ─▶ ready
 idle code_intel.idle_minutes ─▶ shutdown ─▶ exit ─▶ kill after 5 s
+                              └─ back on: a question · the worktree used again
+                                          · project settings → Languages read
 ```
 
 - One client (`lsp-types` + `async-lsp`), every server behind it. Theodore's
@@ -369,7 +371,9 @@ idle code_intel.idle_minutes ─▶ shutdown ─▶ exit ─▶ kill after 5 s
   `workspaceFolders`; worktrees join it as folders. Otherwise one per
   worktree.
 - At most `code_intel.max_servers` alive; the least recently used goes first.
-  A change of it or of `idle_minutes` restarts the pool.
+  A change of it or of `idle_minutes` restarts the pool. Coming back from idle
+  on its own (not for a question) a server only takes a free slot: it never
+  pushes out a running one.
 - Locations a server answers outside the worktree (std, a dependency's
   source) never enter `items`, whose paths are repo-relative. They are
   counted, and the note says so: `1 result outside the worktree (std /
@@ -468,7 +472,8 @@ Some servers run code from the project they open.
 | `spaces: false` | — | syntax + text only |
 
 - A switch turned off stops the sessions it no longer allows; turned on, the
-  servers already on disk start. Answers say why a server is not used.
+  servers already on disk start, in the worktrees open now. Answers say why a
+  server is not used.
 - Review sessions never share a process with a space's, even for one repo.
 
 ## 9. Settings
@@ -523,6 +528,15 @@ C++  · 3 files      Grammar Installed   clangd Downloading
   run state, index progress; Install, Decline (a missing server) and
   Remove (what Theodore downloaded, §5.1.1; asks first, and shows the
   refusal when a review or a space uses the language).
+- Across every worktree of the project open now, not one of them: a language
+  shows its most alive server.
+
+  | Run state | Means |
+  | --- | --- |
+  | Off | the switch above keeps servers off in the worktrees open now |
+  | Warming up → Ready | started; reading this section starts what went idle |
+  | Not running | allowed, but `max_servers` is full (or a server crashed once and returns on the next question) |
+  | Failed | crashed twice in that worktree; not restarted |
 - Install progress comes from `Ephemeral::CodeIntelProgress` (§5.1): the
   row shows the bar and reads the status again once an item settles. The
   status is polled (every 5 s) only while a server warms up, or a download

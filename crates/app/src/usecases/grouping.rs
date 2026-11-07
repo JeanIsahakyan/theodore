@@ -1051,6 +1051,8 @@ mod link_tests {
             Ok(())
         }
         async fn close(&self, _root: &Path) {}
+        async fn warm(&self, _root: &Path) {}
+        async fn set_lsp(&self, _root: &Path, _on: bool) {}
         async fn find_symbol(
             &self,
             _root: &Path,

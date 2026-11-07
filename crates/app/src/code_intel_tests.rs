@@ -672,9 +672,9 @@ async fn the_old_app_wide_switch_still_counts_below_the_files() {
 }
 
 #[tokio::test]
-async fn a_switch_reopens_the_worktrees_it_changes() {
+async fn a_switch_reaches_the_worktrees_open_now() {
     let e = code_env().await;
-    // A space served once is reopened when its policy changes.
+    // A space keeps its index and only its servers follow the switch.
     let s = e.create("").await;
     let open = format!("open {} Trusted []", s.worktree);
     wait_until(|| e.f.code_intel.calls().contains(&open)).await;
@@ -688,17 +688,127 @@ async fn a_switch_reopens_the_worktrees_it_changes() {
             .count()
     };
     assert_eq!(count(&e), 1, "unchanged: not reopened");
+    let switched = |e: &Env, on: bool| {
+        let call = format!("set_lsp {} {on}", s.worktree);
+        e.f.code_intel
+            .calls()
+            .iter()
+            .filter(|c| **c == call)
+            .count()
+    };
     e.core
         .code_intel_set_lsp(set_lsp(&e.project.id, SPACES, false))
         .await
         .unwrap();
+    assert_eq!(switched(&e, false), 1, "{:?}", e.f.code_intel.calls());
+    // The next use finds it as the switch left it.
     e.core.code_status(&scope).await.unwrap();
-    assert_eq!(count(&e), 2, "{:?}", e.f.code_intel.calls());
-    assert!(
-        e.f.code_intel
-            .calls()
-            .contains(&format!("close {}", s.worktree))
-    );
+    assert_eq!(count(&e), 1, "{:?}", e.f.code_intel.calls());
+
+    // The review switch does not concern a trusted space.
+    e.core
+        .code_intel_set_lsp(set_lsp(&e.project.id, REVIEW, true))
+        .await
+        .unwrap();
+    assert_eq!(switched(&e, true), 0, "{:?}", e.f.code_intel.calls());
+
+    e.core
+        .code_intel_set_lsp(set_lsp(&e.project.id, SPACES, true))
+        .await
+        .unwrap();
+    assert_eq!(switched(&e, true), 1, "{:?}", e.f.code_intel.calls());
+}
+
+#[tokio::test]
+async fn using_a_worktree_again_brings_its_servers_back() {
+    let e = code_env().await;
+    let s = e.create("").await;
+    let open = format!("open {} Trusted []", s.worktree);
+    wait_until(|| e.f.code_intel.calls().contains(&open)).await;
+    let warm = format!("warm {}", s.worktree);
+    assert!(!e.f.code_intel.calls().contains(&warm));
+    e.core
+        .code_status(&CodeScope::Space(s.id.clone()))
+        .await
+        .unwrap();
+    wait_until(|| e.f.code_intel.calls().contains(&warm)).await;
+}
+
+#[tokio::test]
+async fn the_status_reads_every_worktree_of_the_project_and_warms_it() {
+    let e = code_env().await;
+    let (a, b) = (e.create("").await, e.create("").await);
+    for s in [&a, &b] {
+        let open = format!("open {} Trusted []", s.worktree);
+        wait_until(|| e.f.code_intel.calls().contains(&open)).await;
+    }
+    e.core.code_intel_status(&e.project.id).await.unwrap();
+    let calls = e.f.code_intel.calls();
+    for s in [&a, &b] {
+        for what in ["warm", "status"] {
+            let call = format!("{what} {}", s.worktree);
+            assert!(calls.contains(&call), "{call} not in {calls:?}");
+        }
+    }
+}
+
+#[test]
+fn a_language_shows_its_most_alive_server_and_its_largest_worktree() {
+    let with = |state, files, index_percent| LanguageStatus {
+        files,
+        index_percent,
+        server: Some(ServerStatus {
+            name: "rust-analyzer".into(),
+            install: InstallState::Installed {
+                version: "1".into(),
+            },
+            state,
+        }),
+        ..missing_server("rust", "rust-analyzer")
+    };
+    let state = |l: &LanguageStatus| l.server.as_ref().unwrap().state;
+    let merged = |pairs: Vec<LanguageStatus>| {
+        let mut out = Vec::new();
+        for l in pairs {
+            crate::usecases::code_intel::merge_statuses(&mut out, vec![l]);
+        }
+        assert_eq!(out.len(), 1);
+        out.remove(0)
+    };
+
+    // The review worktree's switch is off; the space's server answers.
+    let l = merged(vec![
+        with(ServerState::Off, 10, 100),
+        with(ServerState::Ready, 3, 50),
+    ]);
+    assert_eq!(state(&l), ServerState::Ready);
+    assert_eq!((l.files, l.index_percent), (10, 100));
+
+    for (a, b, want) in [
+        (
+            ServerState::Ready,
+            ServerState::NotRunning,
+            ServerState::Ready,
+        ),
+        (
+            ServerState::NotRunning,
+            ServerState::Warming,
+            ServerState::Warming,
+        ),
+        (
+            ServerState::Failed,
+            ServerState::NotRunning,
+            ServerState::Failed,
+        ),
+        (
+            ServerState::Off,
+            ServerState::NotRunning,
+            ServerState::NotRunning,
+        ),
+    ] {
+        let l = merged(vec![with(a, 1, 1), with(b, 1, 1)]);
+        assert_eq!(state(&l), want, "{a:?} + {b:?}");
+    }
 }
 
 #[tokio::test]

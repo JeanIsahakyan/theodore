@@ -254,6 +254,8 @@ pub enum InstallState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerState {
+    /// The policy does not let a server run here (`code_intel.lsp`).
+    Off,
     NotRunning,
     Warming,
     Ready,
@@ -457,5 +459,12 @@ pub trait CodeIntelPort: Send + Sync {
 
     /// A file in the worktree changed on disk (spaces' watcher).
     async fn file_changed(&self, root: &Path, path: &str);
+    /// Start the servers the policy allows and that are on disk, as far as
+    /// the cap has room: one stopped for being idle comes back. Running
+    /// ones are left alone; nothing is downloaded.
+    async fn warm(&self, root: &Path);
+    /// This worktree's own switch, live: off stops its servers, on starts
+    /// those on disk.
+    async fn set_lsp(&self, root: &Path, on: bool);
     async fn status(&self, root: &Path) -> CodeIntelResult<Vec<LanguageStatus>>;
 }

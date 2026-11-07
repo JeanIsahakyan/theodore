@@ -39,7 +39,7 @@ pub(crate) struct Ws {
     pub repo_key: String,
     pub trust: TrustMode,
     /// `Workspace::lsp`: this workspace's own policy, over the default.
-    pub lsp: Option<LspPolicy>,
+    pub lsp: Mutex<Option<LspPolicy>>,
     /// `Workspace::languages` as given (empty: detected).
     pub requested: Vec<LanguageId>,
     pub pool_key: String,
