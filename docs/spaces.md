@@ -898,6 +898,10 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
   and it goes when the turn ends.
 - Trust holds: a repo command not allowed yet is refused with "not allowed
   by the user yet" and never runs.
+- A command that isn't configured is no error, so no failed row: `run_check`
+  answers `ran: false` and `start_app`/`app_status` a `note`, saying nothing
+  ran and not to retry. A check that ran and failed says so (`passed: false`,
+  its exit code and output tail).
 - The turn lists its tool calls while it runs and after (§3 "A turn in the
   chat"), Theodore's own by what they do.
 - Review chat, skills and fixes on a space's PR also get the read-only
