@@ -97,6 +97,9 @@ pub enum GrouperError {
     /// The agent couldn't reach its servers (`ports::offline_message`).
     #[error("{0}")]
     Offline(String),
+    /// The agent isn't signed in (`ports::signed_out_message`).
+    #[error("{0}")]
+    SignedOut(String),
 }
 
 impl GrouperError {
@@ -105,6 +108,7 @@ impl GrouperError {
             GrouperError::Agent(_) => "grouping.agent_failed",
             GrouperError::Invalid(_) => "grouping.invalid_output",
             GrouperError::Offline(_) => theodore_ports::AGENT_OFFLINE_CODE,
+            GrouperError::SignedOut(_) => theodore_ports::AGENT_SIGNED_OUT_CODE,
         }
     }
 }

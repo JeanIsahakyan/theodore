@@ -1182,6 +1182,17 @@ async fn drive_turn(core: &Core, turn: Turn) {
             duration_ms = ms,
             "space turn couldn't reach the agent"
         );
+    } else if let (Some(e), false) = (&error, cancelled)
+        && theodore_ports::signed_out_message_in(e).is_some()
+    {
+        // The agent has no credentials: the user's to fix, not a bug.
+        tracing::info!(
+            error.code = theodore_ports::AGENT_SIGNED_OUT_CODE,
+            space = %space.id,
+            agent = agent.as_str(),
+            duration_ms = ms,
+            "space turn couldn't sign in to the agent"
+        );
     } else if let (Some(e), false) = (&error, cancelled) {
         tracing::warn!(
             error.code = "space.turn_failed",

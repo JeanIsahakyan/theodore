@@ -175,8 +175,14 @@ impl Core {
             .instrument(span)
             .await;
         writer.finish(result.is_ok()).await;
-        if let Err(e @ AppError::Grouper(crate::error::GrouperError::Offline(_))) = &result {
-            // The agent couldn't reach its servers: the network, not a bug.
+        if let Err(
+            e @ AppError::Grouper(
+                crate::error::GrouperError::Offline(_) | crate::error::GrouperError::SignedOut(_),
+            ),
+        ) = &result
+        {
+            // The agent couldn't be reached or isn't signed in: the network
+            // or the user's to fix, not a bug.
             tracing::info!(
                 error.code = e.code(),
                 pr = %pr.0,

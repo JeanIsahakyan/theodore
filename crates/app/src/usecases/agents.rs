@@ -484,6 +484,17 @@ async fn drive_skill_run(
             duration_ms = ms,
             "skill run couldn't reach the agent"
         );
+    } else if let Some(e) = &error
+        && theodore_ports::signed_out_message_in(e).is_some()
+    {
+        // The agent has no credentials: the user's to fix, not a bug.
+        tracing::info!(
+            error.code = theodore_ports::AGENT_SIGNED_OUT_CODE,
+            run = %run_id,
+            agent = last_agent.as_str(),
+            duration_ms = ms,
+            "skill run couldn't sign in to the agent"
+        );
     } else if let Some(e) = &error {
         tracing::warn!(
             error.code = "skill.failed",
