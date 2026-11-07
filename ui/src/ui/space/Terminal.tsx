@@ -104,11 +104,11 @@ export function TerminalToggle({
         variant={open ? 'secondary' : 'ghost'}
         aria-label="Terminal"
         aria-pressed={open}
-        className="space-terminal-toggle"
+        className="space-terminal-toggle btn-collapsible"
         onPress={onToggle}
       >
         <TerminalLine className="size-3.5" />
-        Terminal
+        <span className="btn-label">Terminal</span>
       </Button>
       <Tooltip.Content>Terminal ⌃`</Tooltip.Content>
     </Tooltip>

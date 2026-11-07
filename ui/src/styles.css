@@ -357,6 +357,34 @@ body.cmd .lines .src span:hover {
   overflow-wrap: anywhere;
 }
 
+/* Space header: it is its own container, so what gives way follows the
+ * room it has, not the window (the sidebar and the changes pane change
+ * that). First the labels of the secondary actions go (Logs, Terminal, Run,
+ * Open app, PR) and "Base moved: 2 commits behind" becomes "2 behind";
+ * narrower still, Push too. What still doesn't fit wraps to a second line
+ * under the title (SpacePage.tsx). */
+.space-header {
+  container: space-header / inline-size;
+}
+@container space-header (max-width: 74rem) {
+  .space-header .btn-label,
+  .space-header .base-moved-lead,
+  .space-header .base-moved-long {
+    display: none;
+  }
+  .space-header .btn-collapsible {
+    padding-inline: 0.5rem;
+  }
+}
+@container space-header (max-width: 48rem) {
+  .space-header .btn-label-narrow {
+    display: none;
+  }
+  .space-header .btn-collapsible-narrow {
+    padding-inline: 0.5rem;
+  }
+}
+
 /* Markdown (PR descriptions, comments) */
 .md details {
   margin: 0.5rem 0;

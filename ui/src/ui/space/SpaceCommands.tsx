@@ -411,7 +411,8 @@ export const RunButton = observer(function RunButton({
       <Button
         size="sm"
         variant={ctl.running ? 'secondary' : 'ghost'}
-        className="space-run"
+        className="space-run btn-collapsible"
+        aria-label={ctl.running ? 'Stop' : 'Run'}
         isPending={busy}
         onPress={() => {
           setBusy(true);
@@ -423,7 +424,7 @@ export const RunButton = observer(function RunButton({
         ) : (
           <Play className="size-3.5" />
         )}
-        {ctl.running ? 'Stop' : 'Run'}
+        <span className="btn-label">{ctl.running ? 'Stop' : 'Run'}</span>
       </Button>
       <Tooltip.Content>
         <span className="font-mono">{ctl.script}</span>
@@ -452,11 +453,14 @@ export const PortChips = observer(function PortChips({
           <Button
             size="sm"
             variant="secondary"
-            className="space-port shrink-0 gap-1.5"
+            className="space-port btn-collapsible shrink-0 gap-1.5"
+            aria-label={i === 0 ? 'Open app' : `Port ${p}`}
             onPress={() => openExternal(portUrl(p))}
           >
             <ArrowUpRightFromSquare className="size-3.5" />
-            {i === 0 ? 'Open app' : `Port ${p}`}
+            <span className="btn-label">
+              {i === 0 ? 'Open app' : `Port ${p}`}
+            </span>
           </Button>
           <Tooltip.Content>Open {portUrl(p)} in the browser</Tooltip.Content>
         </Tooltip>
@@ -474,17 +478,20 @@ export function LogsToggle({
   onToggle: () => void;
 }) {
   return (
-    <Button
-      size="sm"
-      variant={open ? 'secondary' : 'ghost'}
-      aria-label="Command logs"
-      aria-pressed={open}
-      className="space-logs-toggle"
-      onPress={onToggle}
-    >
-      <Terminal className="size-3.5" />
-      Logs
-    </Button>
+    <Tooltip>
+      <Button
+        size="sm"
+        variant={open ? 'secondary' : 'ghost'}
+        aria-label="Command logs"
+        aria-pressed={open}
+        className="space-logs-toggle btn-collapsible"
+        onPress={onToggle}
+      >
+        <Terminal className="size-3.5" />
+        <span className="btn-label">Logs</span>
+      </Button>
+      <Tooltip.Content>Command logs</Tooltip.Content>
+    </Tooltip>
   );
 }
 

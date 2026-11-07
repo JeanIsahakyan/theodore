@@ -61,6 +61,21 @@ function useBaseStatus(space: Space): SpaceBaseStatus | null {
   return status;
 }
 
+/** `baseMovedLabel`'s words, in parts a narrow header can drop
+ *  (`.base-moved-lead`, `.base-moved-long`: "2 behind"). */
+export function BaseMovedText({ behind }: { behind: number }) {
+  return (
+    <>
+      <span className="base-moved-lead">Base moved: </span>
+      {behind}
+      <span className="base-moved-long">
+        {behind === 1 ? ' commit' : ' commits'}
+      </span>{' '}
+      behind
+    </>
+  );
+}
+
 /** Header: "Base moved: N commits behind" with Update. */
 export const BaseMoved = observer(function BaseMoved({
   space,
@@ -70,7 +85,7 @@ export const BaseMoved = observer(function BaseMoved({
   const status = useBaseStatus(space);
   const [busy, setBusy] = useState(false);
   const label = baseMovedLabel(space, status);
-  if (!label) return null;
+  if (!label || !status) return null;
   return (
     <Tooltip>
       <Button
@@ -88,7 +103,7 @@ export const BaseMoved = observer(function BaseMoved({
         }}
       >
         <CodeMerge className="size-3.5" />
-        {label} · Update
+        <BaseMovedText behind={status.behind} /> · Update
       </Button>
       <Tooltip.Content>
         Merges {space.base} into this space. Conflicts go to the agent; pushed
@@ -117,7 +132,10 @@ export const UpdatingBanner = observer(function UpdatingBanner({
     void call.catch(() => {}).finally(() => setBusy(null));
   };
   return (
-    <Alert status="warning" className="space-updating mx-3 mt-3 items-center">
+    <Alert
+      status="warning"
+      className="space-updating mx-3 mt-3 w-auto items-center"
+    >
       <Alert.Content>
         <Alert.Description>
           {text}. Theodore commits the merge once no conflict markers are left.

@@ -399,7 +399,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
 function ArchivedBanner({ space }: { space: Space }) {
   const [busy, setBusy] = useState(false);
   return (
-    <Alert status="accent" className="m-3 items-center">
+    <Alert status="accent" className="m-3 w-auto items-center">
       <Alert.Content>
         <Alert.Description>
           Archived. The transcript and the checkpoint ref are kept.
@@ -455,90 +455,100 @@ const SpaceHeader = observer(function SpaceHeader({
     // Just what you act on: the name, and the stage only once it says
     // something (in review, done). Branch, base and agent are in the
     // name's tooltip.
-    <header className="flex min-h-14 flex-nowrap items-center gap-2 border-b border-separator px-6 py-2 [&>button]:shrink-0">
-      <Typography.Heading
-        level={6}
-        className="min-w-0 shrink truncate"
-        title={`${space.branch} ← ${space.base} · ${space.agent}`}
+    // The title keeps 9rem (plus the stage chip's room) on the first line;
+    // the actions drop to a line of their own when they don't fit beside
+    // it, and give up their labels first (`.space-header`, styles.css).
+    <header className="space-header flex min-h-14 flex-wrap items-center gap-x-2 gap-y-1 border-b border-separator px-6 py-2 [&>button]:shrink-0">
+      <div
+        className={`flex flex-1 basis-0 items-center gap-2 ${stage === 'drafting' ? 'min-w-[9rem]' : 'min-w-[18rem]'}`}
       >
-        {spaceTitle(space)}
-      </Typography.Heading>
-      {stage !== 'drafting' && (
-        <span
-          className="space-stage shrink-0 rounded-full bg-default px-2 py-0.5 text-xs"
-          title={
-            space.done_at && days > 0
-              ? `Archives itself ${days} day${days === 1 ? '' : 's'} after it was done`
-              : undefined
-          }
+        <Typography.Heading
+          level={6}
+          className="min-w-[9rem] shrink truncate"
+          title={`${space.branch} ← ${space.base} · ${space.agent}`}
         >
-          {STAGE_LABEL[stage]}
-          {pr ? ` · #${pr.pr.number}` : ''}
-        </span>
-      )}
-      <span className="flex-1" />
-      {/* Once its PR merged, Continue moves it onto the new base. */}
-      {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
-      <RunButton space={space} config={config} />
-      <PortChips space={space} />
-      <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
-      {!archived && (
-        <TerminalToggle open={terminalOpen} onToggle={onToggleTerminal} />
-      )}
-      <ReviewMenu space={space} />
-      {!archived && project && (
-        <ShipControls
-          space={space}
-          local={project.path != null}
-          handle={ship}
-        />
-      )}
-      {!archived && space.pr && <SpaceMergeButton space={space} />}
-      {space.pr && (
-        <Button
-          size="sm"
-          variant="ghost"
-          onPress={() => openSpacePr(store, ui, space)}
-        >
-          <CodePullRequest className="size-3.5" />
-          PR
-        </Button>
-      )}
-      {!archived && project?.path != null && (
-        <MirrorToggle space={space} folder={project.path} />
-      )}
-      <Tooltip>
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-label="Archive space"
-          isIconOnly
-          className="space-archive shrink-0"
-          isDisabled={running || archived}
-          onPress={() => archive(ui, space)}
-        >
-          <Archive className="size-4" />
-        </Button>
-        <Tooltip.Content>
-          Archive <K>⇧E</K> — removes the worktree; the transcript and
-          checkpoints are kept
-        </Tooltip.Content>
-      </Tooltip>
-      <Tooltip>
-        <ToggleButton
-          isIconOnly
-          size="sm"
-          aria-label="Changes"
-          className="shrink-0"
-          isSelected={showChanges}
-          onChange={onToggleChanges}
-        >
-          <LayoutSideContentRight className="size-4" />
-        </ToggleButton>
-        <Tooltip.Content>
-          {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
-        </Tooltip.Content>
-      </Tooltip>
+          {spaceTitle(space)}
+        </Typography.Heading>
+        {stage !== 'drafting' && (
+          <span
+            className="space-stage shrink-0 rounded-full bg-default px-2 py-0.5 text-xs"
+            title={
+              space.done_at && days > 0
+                ? `Archives itself ${days} day${days === 1 ? '' : 's'} after it was done`
+                : undefined
+            }
+          >
+            {STAGE_LABEL[stage]}
+            {pr ? ` · #${pr.pr.number}` : ''}
+          </span>
+        )}
+      </div>
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-2 [&>button]:shrink-0">
+        {/* Once its PR merged, Continue moves it onto the new base. */}
+        {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
+        <RunButton space={space} config={config} />
+        <PortChips space={space} />
+        <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
+        {!archived && (
+          <TerminalToggle open={terminalOpen} onToggle={onToggleTerminal} />
+        )}
+        <ReviewMenu space={space} />
+        {!archived && project && (
+          <ShipControls
+            space={space}
+            local={project.path != null}
+            handle={ship}
+          />
+        )}
+        {!archived && space.pr && <SpaceMergeButton space={space} />}
+        {space.pr && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="btn-collapsible"
+            aria-label="Open the PR"
+            onPress={() => openSpacePr(store, ui, space)}
+          >
+            <CodePullRequest className="size-3.5" />
+            <span className="btn-label">PR</span>
+          </Button>
+        )}
+        {!archived && project?.path != null && (
+          <MirrorToggle space={space} folder={project.path} />
+        )}
+        <Tooltip>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label="Archive space"
+            isIconOnly
+            className="space-archive shrink-0"
+            isDisabled={running || archived}
+            onPress={() => archive(ui, space)}
+          >
+            <Archive className="size-4" />
+          </Button>
+          <Tooltip.Content>
+            Archive <K>⇧E</K> — removes the worktree; the transcript and
+            checkpoints are kept
+          </Tooltip.Content>
+        </Tooltip>
+        <Tooltip>
+          <ToggleButton
+            isIconOnly
+            size="sm"
+            aria-label="Changes"
+            className="shrink-0"
+            isSelected={showChanges}
+            onChange={onToggleChanges}
+          >
+            <LayoutSideContentRight className="size-4" />
+          </ToggleButton>
+          <Tooltip.Content>
+            {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
+          </Tooltip.Content>
+        </Tooltip>
+      </div>
     </header>
   );
 });
@@ -607,13 +617,14 @@ const ShipControls = observer(function ShipControls({
         <Button
           size="sm"
           variant="secondary"
-          className="space-push"
+          className="space-push btn-collapsible-narrow"
+          aria-label="Push"
           isDisabled={running || busy || !pending}
           isPending={busy}
           onPress={() => void ship('push', null)}
         >
           <ArrowUpFromLine className="size-3.5" />
-          Push
+          <span className="btn-label-narrow">Push</span>
         </Button>
         <Tooltip.Content>
           {pending
@@ -828,7 +839,10 @@ const MirrorBanner = observer(function MirrorBanner({
   };
 
   return (
-    <Alert status={refusal ? 'danger' : 'accent'} className="m-3 items-center">
+    <Alert
+      status={refusal ? 'danger' : 'accent'}
+      className="m-3 w-auto items-center"
+    >
       <Alert.Content>
         <Alert.Description>
           {refusal ??
