@@ -1,16 +1,29 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 /** This close to the bottom still counts as being there. */
-const NEAR_BOTTOM = 80;
+export const NEAR_BOTTOM = 80;
 
 /** Where a chat was left scrolled up, by `scope`. A chat left at the bottom
  *  has no entry: it opens at the bottom, past whatever came since. */
 const leftAt = new Map<string, number>();
 
-function measure(el: HTMLElement) {
+export function measure(el: HTMLElement) {
   const max = el.scrollHeight - el.clientHeight;
   // Past the end while the view bounces: still the end.
   return { top: Math.min(el.scrollTop, max), max };
+}
+
+/** After a scroll: is the chat still following new content? Upward with the
+ *  same room to scroll is you. The content shrinking moves the view up too,
+ *  and that isn't leaving the bottom. Near the bottom counts neither way while
+ *  text streams: a small scroll up must not be pulled straight back. */
+export function stillFollowing(
+  was: { following: boolean; top: number; max: number },
+  top: number,
+  max: number,
+): boolean {
+  const up = top < was.top - 1 && max >= was.max;
+  return !up && (was.following || max - top <= NEAR_BOTTOM);
 }
 
 /** A chat's scrolling. New content is followed only while you are at the
@@ -64,12 +77,7 @@ export function useChatScroll(scope?: string) {
         if (Math.abs(top - p.top) <= 1) return; // our own move
         p.restore = null;
       }
-      // Upward with the same room to scroll is you. The content shrinking
-      // moves the view up too, and that isn't leaving the bottom. Near the
-      // bottom counts neither way while text streams: a small scroll up
-      // must not be pulled straight back.
-      const up = top < p.top - 1 && max >= p.max;
-      p.following = !up && (p.following || max - top <= NEAR_BOTTOM);
+      p.following = stillFollowing(p, top, max);
       p.top = top;
       p.max = max;
       setAway(!p.following);

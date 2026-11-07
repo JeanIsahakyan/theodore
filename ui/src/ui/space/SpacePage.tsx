@@ -18,7 +18,6 @@ import {
   Folder,
   FolderOpen,
   LayoutSideContentRight,
-  Pencil,
 } from '@gravity-ui/icons';
 import {
   Alert,
@@ -60,9 +59,8 @@ import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
 import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
-import { ChatEmpty, ChatLive, ChatLog } from '../ChatTurn';
-import { QueuedMessages } from './QueuedMessages';
-import { canSendNow, splitQueue } from './queue';
+import { SpaceLog } from './SpaceLog';
+import { canSendNow } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
 import { latinKey, useViewKeys } from '../keys';
 import { AgentChip, ChipMenu, Composer } from './Composer';
@@ -71,27 +69,23 @@ import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
-import { runControl, runsByReply, settingUp, setupView } from './commands';
-import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
+import { runControl, settingUp } from './commands';
+import { GlobalConfigSection } from './ConfigSection';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
 import { revertItems } from './SpaceRewind';
-import { SpaceMessage } from './SpaceMessage';
 import {
   LogsDrawer,
   LogsToggle,
   PortChips,
   RunButton,
-  SetupNote,
-  SetupStage,
   TrustPrompt,
   toggleRun,
   useSpaceConfig,
   useSpaceLogsSeed,
 } from './SpaceCommands';
 import { TerminalDrawer, TerminalToggle } from './Terminal';
-import { QuestionCard } from './SpacePlan';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
@@ -893,56 +887,6 @@ export const SpaceChat = observer(function SpaceChat({
       <SpaceLog space={space} config={config} onRevise={onRevise} />
       <SpaceComposer space={space} handle={handle} revise={revise} />
     </>
-  );
-});
-
-const SpaceLog = observer(function SpaceLog({
-  space,
-  config,
-  onRevise,
-}: {
-  space: Space;
-  config: SpaceConfigView | null;
-  onRevise: () => void;
-}) {
-  const store = useRootStore();
-  // Queued messages wait under the running turn, in the order they send.
-  const { sent: messages, queued } = splitQueue([
-    ...store.models.chatMessages.byPr(spaceChatKey(space.id)),
-  ]);
-  const run = space.status === 'running' ? space.run : null;
-  const turnRuns = runsByReply(space.id, space.turn_log);
-  const setupStage = setupView(space) === 'stage';
-  // A turn whose check still runs has its reply stored already: its steps
-  // and text show there, the check under them.
-  const replied = run != null && [...turnRuns.values()].includes(run);
-  return (
-    <ChatLog scope={space.id}>
-      <SetupStage space={space} />
-      <SetupNote space={space} />
-      {messages.length === 0 && !run && !setupStage && (
-        <>
-          <ChatEmpty
-            icon={<Pencil />}
-            title="Tell the agent what to change"
-            hint="It works in its own worktree; your checkout is never touched."
-          />
-          <SpaceSetupAssistHint space={space} config={config} />
-        </>
-      )}
-      {messages.map((m) => (
-        <SpaceMessage key={m.id} spaceId={space.id} m={m} onRevise={onRevise} />
-      ))}
-      {run && !replied && <ChatLive run={run} agent={space.agent} timeline />}
-      <QueuedMessages space={space} queued={queued} />
-      {run && space.question?.run === run && (
-        <QuestionCard
-          key={space.question.id}
-          space={space}
-          question={space.question}
-        />
-      )}
-    </ChatLog>
   );
 });
 

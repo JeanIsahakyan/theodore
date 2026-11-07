@@ -81,7 +81,9 @@ export const SpaceMessage = memo(
         after={
           agent ? (
             <>
-              {v.check && <CheckChip check={v.check} />}
+              {v.check && (
+                <CheckChip check={v.check} keptAs={`check:${m.id}`} />
+              )}
               {v.planHere && (
                 <SpacePlanActions spaceId={spaceId} onRevise={onRevise} />
               )}

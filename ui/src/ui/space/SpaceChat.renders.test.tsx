@@ -1,7 +1,16 @@
 /** Typing and space updates leave the message rows alone: only the composer
  *  re-renders with what you type, and a row only with its own message. */
 import { act, createRef } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { mount, settle, typeInto, type Mounted } from '../../test/dom';
 import type { ChatMessage, Space } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
@@ -9,6 +18,7 @@ import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { FakeTransport } from '../../test/fakeTransport';
 import { SpaceChat } from './SpacePage';
+import { installChatLayout, uninstallChatLayout } from '../../test/chatLayout';
 import { spaceChatKey } from './spaces';
 
 const renders = vi.hoisted(() => new Map<string, number>());
@@ -57,6 +67,9 @@ const message = (id: string, over: Partial<ChatMessage>): ChatMessage => ({
   failed: null,
   ...over,
 });
+
+beforeAll(installChatLayout);
+afterAll(uninstallChatLayout);
 
 let m: Mounted | null = null;
 let store: RootStore;

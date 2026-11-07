@@ -11,9 +11,10 @@
  *           copy · vote · 1m 12s · 14:03
  * ```
  */
-import { memo, useState, type ComponentType, type ReactNode } from 'react';
+import { memo, type ComponentType, type ReactNode } from 'react';
 import {
   Bulb,
+  ChevronDown,
   CircleXmarkFill,
   FileText,
   Magnifier,
@@ -21,12 +22,12 @@ import {
   Terminal,
   Wrench,
 } from '@gravity-ui/icons';
-import { Disclosure } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { TurnStep } from '../gen/contract';
 import { useRootStore } from '../stores/context';
 import { Md } from '../highlight';
 import { Spinner } from './bits';
+import { useKeptOpen, useSteadyChange } from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
 
 const KIND_ICON: Record<ToolKind, ComponentType<{ className?: string }>> = {
@@ -95,17 +96,20 @@ const ToolRow = memo(function ToolRow({
 const ThinkingRow = memo(function ThinkingRow({
   text,
   busy,
+  keptAs,
 }: {
   text: string;
   busy: boolean;
+  keptAs: string | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useKeptOpen(keptAs);
+  const steady = useSteadyChange();
   return (
     <button
       type="button"
       aria-expanded={open}
       className="turn-thinking flex w-full min-w-0 items-start gap-1.5 text-left text-xs text-muted"
-      onClick={() => setOpen((o) => !o)}
+      onClick={() => steady(() => setOpen(!open))}
     >
       <StepIcon busy={busy}>
         <Bulb className="size-3.5" />
@@ -136,9 +140,12 @@ const TextRow = memo(function TextRow({ text }: { text: string }) {
 export function TimelineRows({
   steps,
   running = false,
+  keptAs = null,
 }: {
   steps: readonly TurnStep[];
   running?: boolean;
+  /** A stored reply's id: what's open in here outlives being scrolled away. */
+  keptAs?: string | null;
 }) {
   // A text piece that is only whitespace so far has nothing to show yet.
   const rows = steps.filter((s) => s.kind !== 'text' || s.text.trim());
@@ -150,7 +157,12 @@ export function TimelineRows({
         return step.kind === 'text' ? (
           <TextRow key={i} text={step.text} />
         ) : step.kind === 'thinking' ? (
-          <ThinkingRow key={i} text={step.text} busy={busy} />
+          <ThinkingRow
+            key={i}
+            text={step.text}
+            busy={busy}
+            keptAs={keptAs && `thinking:${keptAs}:${i}`}
+          />
         ) : (
           <ToolRow key={i} step={step} busy={busy} />
         );
@@ -177,10 +189,6 @@ export const LiveTimeline = observer(function LiveTimeline({
   return <TimelineRows steps={steps} running />;
 });
 
-/** Whether a reply's activity is open, by message id: kept across remounts
- *  (leaving the space and coming back), closed by default. */
-const activityOpen = new Map<string, boolean>();
-
 /** `Worked 1m 12s · 12 steps`. */
 export function workedLine(steps: number, ms: number | null | undefined) {
   const count = `${steps} ${steps === 1 ? 'step' : 'steps'}`;
@@ -189,7 +197,8 @@ export function workedLine(steps: number, ms: number | null | undefined) {
     : `Worked ${formatDuration(ms)} · ${count}`;
 }
 
-/** A finished turn's activity, folded to one line above its reply. */
+/** A finished turn's activity, folded to one line above its reply. Opens at
+ *  once: no animation, and what you clicked stays where it is. */
 export function TurnActivity({
   reply,
   steps,
@@ -200,30 +209,26 @@ export function TurnActivity({
   steps: readonly TurnStep[];
   durationMs?: number | null;
 }) {
-  const [open, setOpen] = useState(() => activityOpen.get(reply) ?? false);
-  const toggle = (next: boolean) => {
-    activityOpen.set(reply, next);
-    setOpen(next);
-  };
+  const [open, setOpen] = useKeptOpen(`activity:${reply}`);
+  const steady = useSteadyChange();
   return (
-    <Disclosure
-      isExpanded={open}
-      onExpandedChange={toggle}
-      className="turn-activity"
-    >
-      <Disclosure.Heading>
-        <Disclosure.Trigger className="turn-activity-summary flex w-fit items-center gap-1.5 text-left text-xs text-muted">
-          <span>{workedLine(steps.length, durationMs)}</span>
-          <Disclosure.Indicator />
-        </Disclosure.Trigger>
-      </Disclosure.Heading>
-      <Disclosure.Content>
-        {/* A turn can hold hundreds of rows: none of them while folded. */}
-        <Disclosure.Body className="mt-2 border-l border-separator p-0 pl-3">
-          {open && <TimelineRows steps={steps} />}
-        </Disclosure.Body>
-      </Disclosure.Content>
-    </Disclosure>
+    <div className="turn-activity">
+      <button
+        type="button"
+        aria-expanded={open}
+        className="turn-activity-summary flex w-fit items-center gap-1.5 text-left text-xs text-muted"
+        onClick={() => steady(() => setOpen(!open))}
+      >
+        <span>{workedLine(steps.length, durationMs)}</span>
+        <ChevronDown className={`size-3.5 ${open ? '-rotate-180' : ''}`} />
+      </button>
+      {/* A turn can hold hundreds of rows: none of them while folded. */}
+      {open && (
+        <div className="mt-2 border-l border-separator pl-3">
+          <TimelineRows steps={steps} keptAs={reply} />
+        </div>
+      )}
+    </div>
   );
 }
 

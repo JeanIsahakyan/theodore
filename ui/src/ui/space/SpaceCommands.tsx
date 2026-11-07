@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useKeptOpen, useSteadyChange } from '../rowState';
 
 import {
   CircleCheck,
@@ -364,7 +365,7 @@ export const SetupNote = observer(function SetupNote({
 }: {
   space: Space;
 }) {
-  const [hidden, setHidden] = useState(false);
+  const [hidden, setHidden] = useKeptOpen(`setup-note:${space.id}`);
   const notes = space.setup?.notes ?? [];
   if (hidden || setupView(space) !== 'note' || !space.setup) return null;
   return (
@@ -542,8 +543,16 @@ export const LogsDrawer = observer(function LogsDrawer({
 
 /** On an agent reply: the turn's check — passed / failed / running —
  *  expanding to the tail of its output. */
-export function CheckChip({ check }: { check: SpaceCheck }) {
-  const [open, setOpen] = useState(false);
+export function CheckChip({
+  check,
+  keptAs = null,
+}: {
+  check: SpaceCheck;
+  /** Keeps it open across being scrolled away, per this id. */
+  keptAs?: string | null;
+}) {
+  const [open, setOpen] = useKeptOpen(keptAs);
+  const steady = useSteadyChange();
   const { tone, label } = checkChip(check);
   const output = check.output ?? [];
   return (
@@ -553,7 +562,7 @@ export function CheckChip({ check }: { check: SpaceCheck }) {
         className="inline-flex w-fit items-center"
         aria-expanded={open}
         disabled={output.length === 0}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => steady(() => setOpen(!open))}
       >
         <Chip
           size="sm"

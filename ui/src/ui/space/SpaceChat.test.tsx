@@ -2,7 +2,7 @@
  *  panel: your turns as bubbles apart from the agent's replies, the live
  *  turn as an agent bubble, Stop in the composer. */
 import { act, createRef } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { mount, settle, type Mounted } from '../../test/dom';
 import type { ChatMessage, Space } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
@@ -10,6 +10,7 @@ import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { FakeTransport } from '../../test/fakeTransport';
 import { SpaceChat } from './SpacePage';
+import { installChatLayout, uninstallChatLayout } from '../../test/chatLayout';
 import { spaceChatKey } from './spaces';
 
 Element.prototype.scrollIntoView ??= function () {};
@@ -48,6 +49,9 @@ const message = (id: string, over: Partial<ChatMessage>): ChatMessage => ({
   failed: null,
   ...over,
 });
+
+beforeAll(installChatLayout);
+afterAll(uninstallChatLayout);
 
 let m: Mounted | null = null;
 let transport: FakeTransport;

@@ -297,11 +297,39 @@ finished   Worked 1m 12s · 12 steps ▸   opens the rows; closed by default
 At most 500 steps, the newest kept; a text capped at 4000 characters, thinking
 at 1000. A run retried because its session is gone starts its steps over.
 
+**Rows.** A space's chat is one row per turn, keyed by your message's id:
+your message, the reply with its timeline and cards, and the live reply while
+it runs. Only the rows near the view are mounted (`VirtualChat`, the one file
+that knows about the virtualizer).
+
+```
+head   setup stage / note                stays mounted
+turn   you ─ reply, timeline, cards      mounted near the view
+turn   you ─ the live reply              the reply lands in this same row
+tail   queued messages, the question     stays mounted
+```
+
+Nothing said yet is a plain page with the empty state, not a list. Find in
+page only sees mounted rows.
+
+| What changed | What re-renders |
+| --- | --- |
+| a key in the composer | the composer |
+| a space field that says nothing about a message (progress, status) | not its row |
+| a piece of streamed text | the live timeline, at most once per frame |
+
 **Scrolling** follows new content only while you are at the bottom (within
 80px). Scrolled up, nothing moves you and a "Jump to latest" pill takes you
 back. A space's chat reopens where you left it scrolled up (in memory, by
-space); left at the bottom, or opened for the first time, it opens at the
-bottom.
+space), by the turn and the offset into it, so turns that came or grew since
+don't move your place; any input of yours ends the restore. Left at the bottom,
+or opened for the first time, it opens at the bottom.
+
+Opening or closing a turn's activity, a thinking row or a check is instant and
+moves nothing: the row you clicked stays where it is, also at the bottom, where
+the sizer holds the room a closed row gave back until you scroll up or new
+content fills it. What is open survives scrolling away and leaving the space (in
+memory, by message).
 
 `/skill` in a space's chat runs your Claude skills (`~/.claude/skills`, the
 repo's `.claude/skills`) as that turn's instructions; review built-ins aren't
