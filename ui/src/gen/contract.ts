@@ -2053,6 +2053,12 @@ export type SpaceSetup = {
 	/**  Files not copied, commands skipped, … */
 	notes?: string[],
 	finished_at?: number | null,
+	/**
+	 *  A Retry took the command from the space's own worktree: the repo
+	 *  layer of `setup`, and of the trust prompt while it waits, is the
+	 *  worktree's file (docs/config.md §2 "Setup").
+	 */
+	from_worktree?: boolean,
 };
 
 export type SpaceSetupRequest = {
