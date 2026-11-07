@@ -17,6 +17,7 @@ import { useRootStore, useUi } from '../stores/context';
 import { AgentTag, K, Shell } from './bits';
 import { AssignMenu, CommandMenu, SnoozeMenu } from './Palette';
 import { AddProjectModal } from './Projects';
+import { ManageProjectsModal } from './project/ManageProjects';
 import { isBuildMode } from './space/mode';
 import { NewSpaceModal } from './space/SpacePage';
 import { ReportProblemModal } from './ReportProblem';
@@ -317,6 +318,8 @@ export const Modals = observer(function Modals() {
       return <HelpModal />;
     case 'add-project':
       return <AddProjectModal />;
+    case 'manage-projects':
+      return <ManageProjectsModal />;
     case 'new-space':
       return isBuildMode(store) ? <NewSpaceModal /> : null;
     case 'sign-in':

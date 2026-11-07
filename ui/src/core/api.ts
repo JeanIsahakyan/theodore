@@ -396,7 +396,7 @@ export const api = {
   /** A project's merged config, read-only (Settings → Labs). */
   projectConfig: (project: string) =>
     call<EffectiveConfig>('project_config', { project }),
-  /** Settings → Projects → Config: each layer's file and YAML generated
+  /** Project settings → Config: each layer's file and YAML generated
    *  from the project's settings. */
   configDraft: (project: string) =>
     call<ConfigDraft>('config_draft', { project }),

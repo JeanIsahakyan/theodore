@@ -24,6 +24,7 @@ import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { K } from './bits';
 import { isBranchReview } from './project/sections';
+import { projectLabel } from './Projects';
 import { reviewTitle } from './space/mode';
 import { spaceTitle } from './space/spaces';
 import { PRIcon, PrStatusIcon } from './StatusIcon';
@@ -48,6 +49,15 @@ function useLabel(r: Route): {
       return { icon: <Sparkles />, title: 'Skills' };
     case 'settings':
       return { icon: <Gear />, title: 'Settings' };
+    case 'project-settings': {
+      const p = store.models.projects.get(r.project);
+      return {
+        icon: <Gear />,
+        title: p
+          ? `${projectLabel(p).split('/').pop()} settings`
+          : 'Project settings',
+      };
+    }
     case 'new':
       return { icon: <Link />, title: 'New tab' };
     case 'space': {

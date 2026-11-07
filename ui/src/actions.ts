@@ -734,6 +734,8 @@ export async function removeProject(
 ): Promise<void> {
   try {
     await api.removeProject(id);
+    // Its settings tabs first: they'd point at a project that's gone.
+    store.ui.closeProjectSettings(id);
     store.workspaces.forget(id);
   } catch {
     // toasted by api.ts

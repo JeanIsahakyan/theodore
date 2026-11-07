@@ -1,4 +1,4 @@
-/** Settings → Projects → ⟨project⟩ → Languages: the project's two
+/** Project settings → Languages: the project's two
  *  language-server switches (its local config file), then each of its
  *  languages with grammar, server, index and Install / Remove / Decline
  *  (`languages.ts`). */

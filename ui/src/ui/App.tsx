@@ -17,6 +17,10 @@ import { PullRequests } from './PullRequests';
 import { Review } from './Review';
 import { Sidebar } from './Sidebar';
 import { SettingsNav, SettingsPage } from './Settings';
+import {
+  ProjectSettingsNav,
+  ProjectSettingsPage,
+} from './project/ProjectSettings';
 import { SkillsPage } from './Skills';
 import { TabBar } from './TabBar';
 import { Tasks } from './Tasks';
@@ -163,16 +167,25 @@ export const App = observer(function App() {
       onContextMenu={onContextMenu}
     >
       <div className="flex min-h-0 flex-1">
-        {/* Settings always shows its own sections: with the sidebar
-            collapsed there'd be no way between its pages. */}
+        {/* Settings (and a project's settings) always show their own
+            sections: with the sidebar collapsed there'd be no way between
+            its pages. */}
         {r.name === 'settings' ? (
           <SettingsNav page={r.page} />
+        ) : r.name === 'project-settings' ? (
+          <ProjectSettingsNav project={r.project} section={r.section} />
         ) : (
           ui.sidebar && <Sidebar />
         )}
         <Surface className="relative flex min-w-0 flex-1 flex-col rounded-none">
           {/* Settings shows its own nav in the sidebar's place. */}
-          <TabBar showOpen={!ui.sidebar && r.name !== 'settings'} />
+          <TabBar
+            showOpen={
+              !ui.sidebar &&
+              r.name !== 'settings' &&
+              r.name !== 'project-settings'
+            }
+          />
           <div className="flex min-h-0 flex-1">
             {r.name === 'inbox' ? (
               <Inbox />
@@ -186,6 +199,8 @@ export const App = observer(function App() {
               <SkillsPage />
             ) : r.name === 'settings' ? (
               <SettingsPage page={r.page} />
+            ) : r.name === 'project-settings' ? (
+              <ProjectSettingsPage project={r.project} section={r.section} />
             ) : r.name === 'new' ? (
               <NewTab key={r.id} route={r} />
             ) : r.name === 'space' ? (
