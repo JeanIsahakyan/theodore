@@ -122,6 +122,17 @@ pub enum AgentEvent {
     TextDelta {
         text: String,
     },
+    /// A new text block starts: the deltas after this aren't the same
+    /// paragraph as the ones before, even with no tool between them. Only a
+    /// streaming CLI that marks its blocks sends it.
+    TextStart,
+    /// Something a subagent did (Claude Code's `parent_tool_use_id`), under
+    /// the `Task`/`Agent` call `parent` that started it. `event` is its text,
+    /// thinking, tool call or result; never part of the run's own answer.
+    Nested {
+        parent: String,
+        event: Box<AgentEvent>,
+    },
     Thinking {
         text: String,
     },

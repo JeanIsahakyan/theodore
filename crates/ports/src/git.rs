@@ -128,6 +128,14 @@ pub struct SpaceCheckpoint {
     pub head: Sha,
 }
 
+/// One file's line counts between two commits ([`GitPort::numstat`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileStat {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
 /// One local branch of a project (plan "projects"): host projects list
 /// remote branches of the bare clone, local folder projects list the
 /// folder's own branches, both read off the same `refs/heads/*` namespace.
@@ -192,6 +200,12 @@ pub trait GitPort: Send + Sync {
     ) -> GitResult<Revision>;
     /// File contents at `rev`, `None` if absent.
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>>;
+    /// The files that differ between two commits (not their merge base), with
+    /// lines added and removed; a binary file counts as 0 and 0.
+    async fn numstat(&self, repo: &Path, from: &Sha, to: &Sha) -> GitResult<Vec<FileStat>> {
+        let _ = (repo, from, to);
+        Err(GitError::Unsupported("numstat"))
+    }
 
     /// The bare clone of `repo` if one is already on disk, `None` if not.
     /// Unlike `ensure_repo`, never touches the network: opening a PR

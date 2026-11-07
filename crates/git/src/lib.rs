@@ -364,6 +364,15 @@ impl GitPort for GitCli {
         self.diff_op(repo, base, head, opts).await
     }
 
+    async fn numstat(
+        &self,
+        repo: &Path,
+        from: &Sha,
+        to: &Sha,
+    ) -> GitResult<Vec<theodore_ports::FileStat>> {
+        self.numstat_op(repo, from, to).await
+    }
+
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>> {
         self.show_op(repo, rev, path).await
     }

@@ -411,6 +411,10 @@ pub struct FakeGit {
     pub checkpoints: Mutex<Vec<(String, String)>>,
     /// The next `space_checkpoint` waits for this once it is recorded.
     checkpoint_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// What `numstat` answers; none: it fails.
+    numstats: Mutex<Option<Vec<theodore_ports::FileStat>>>,
+    /// `(from, to)` of every `numstat`.
+    pub numstat_calls: Mutex<Vec<(Sha, Sha)>>,
     removed_spaces: Mutex<Vec<String>>,
     /// Where space worktrees are created as real directories (tests that
     /// copy files or run commands in them); `None`: a fake path.
@@ -552,6 +556,8 @@ impl FakeGit {
             checkpoint_errors: Mutex::new(VecDeque::new()),
             checkpoint_gate: Mutex::new(None),
             checkpoints: Mutex::new(Vec::new()),
+            numstats: Mutex::new(None),
+            numstat_calls: Mutex::new(Vec::new()),
             removed_spaces: Mutex::new(Vec::new()),
             space_root: Mutex::new(None),
             grep_hits: Mutex::new(None),
@@ -736,6 +742,11 @@ impl FakeGit {
 
     pub fn removed_repos(&self) -> Vec<RepoRef> {
         self.removed_repos.lock().unwrap().clone()
+    }
+
+    /// `numstat` answers `stats` from now on.
+    pub fn set_numstat(&self, stats: Vec<theodore_ports::FileStat>) {
+        *self.numstats.lock().unwrap() = Some(stats);
     }
 
     /// The next `space_checkpoint` moves the space to `head`.
@@ -1021,6 +1032,23 @@ impl GitPort for FakeGit {
             },
             head,
         })
+    }
+
+    async fn numstat(
+        &self,
+        _repo: &Path,
+        from: &Sha,
+        to: &Sha,
+    ) -> GitResult<Vec<theodore_ports::FileStat>> {
+        self.numstat_calls
+            .lock()
+            .unwrap()
+            .push((from.clone(), to.clone()));
+        self.numstats
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(GitError::Unsupported("numstat"))
     }
 
     async fn space_checkpoint(

@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use theodore_contract::{ChatMessage, TurnStep, models};
+use theodore_contract::{ChatMessage, TurnFile, TurnStep, models};
 use theodore_domain::{AgentId, Author, PrId};
 use theodore_ports::{ModelRow, NewAction, Store, SyncActionCode};
 use theodore_sandbox::control;
@@ -33,6 +33,9 @@ pub fn seed_messages(space: &str, turns: usize, now_ms: u64, tag: u64) -> Vec<Ch
         queued: None,
         activity: vec![],
         duration_ms: None,
+        changed_files: vec![],
+        model: None,
+        text_in_steps: false,
     };
     (0..turns)
         .flat_map(|n| {
@@ -46,6 +49,13 @@ pub fn seed_messages(space: &str, turns: usize, now_ms: u64, tag: u64) -> Vec<Ch
             let reply = ChatMessage {
                 activity: steps(n),
                 duration_ms: Some(5_000 + (n as u64 % 40) * 3_000),
+                changed_files: (0..n % 6)
+                    .map(|i| TurnFile {
+                        path: format!("src/parse_{i}.rs"),
+                        additions: 3 + i as u32,
+                        deletions: i as u32,
+                    })
+                    .collect(),
                 ..base(
                     format!("seed-{tag}-{n}-reply"),
                     Author::Agent(AgentId::Claude),
@@ -85,29 +95,30 @@ fn reply_text(n: usize) -> String {
 }
 
 fn steps(n: usize) -> Vec<TurnStep> {
+    let tool = |i: usize, name: &str, target: String, ok: bool| TurnStep::Tool {
+        name: name.into(),
+        target: Some(target),
+        ok: Some(ok),
+        id: Some(format!("seed-{n}-{i}")),
+        parent: None,
+        detail: None,
+        summary: None,
+        added: None,
+        removed: None,
+    };
     let mut steps = vec![TurnStep::Text {
         text: "Reading the module first.".into(),
+        parent: None,
     }];
     for i in 0..(2 + n % 12) {
         steps.push(match i % 4 {
-            0 => TurnStep::Tool {
-                name: "Read".into(),
-                target: Some(format!("src/parse_{i}.rs")),
-                ok: Some(true),
-            },
+            0 => tool(i, "Read", format!("src/parse_{i}.rs"), true),
             1 => TurnStep::Thinking {
                 text: "Which callers still use the old path?".into(),
+                parent: None,
             },
-            2 => TurnStep::Tool {
-                name: "Edit".into(),
-                target: Some(format!("src/parse_{i}.rs")),
-                ok: Some(true),
-            },
-            _ => TurnStep::Tool {
-                name: "Bash".into(),
-                target: Some("cargo test".into()),
-                ok: Some(i % 8 != 3),
-            },
+            2 => tool(i, "Edit", format!("src/parse_{i}.rs"), true),
+            _ => tool(i, "Bash", "cargo test".into(), i % 8 != 3),
         });
     }
     steps

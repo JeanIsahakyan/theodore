@@ -81,6 +81,42 @@ impl GitCli {
         })
     }
 
+    pub(crate) async fn numstat_op(
+        &self,
+        repo: &Path,
+        from: &Sha,
+        to: &Sha,
+    ) -> GitResult<Vec<theodore_ports::FileStat>> {
+        let askpass = self.ensure_askpass()?;
+        let args = [
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--find-renames",
+            "--numstat",
+            "-z",
+            from.as_str(),
+            to.as_str(),
+        ];
+        let bytes = GitProc {
+            cwd: repo,
+            askpass: &askpass,
+            args: &args,
+            token: None,
+            stdin: None,
+        }
+        .run()
+        .await?;
+        Ok(parse::parse_numstat(&bytes)
+            .into_iter()
+            .map(|n| theodore_ports::FileStat {
+                path: n.path,
+                additions: n.additions.unwrap_or(0),
+                deletions: n.deletions.unwrap_or(0),
+            })
+            .collect())
+    }
+
     pub(crate) async fn show_op(
         &self,
         repo: &Path,

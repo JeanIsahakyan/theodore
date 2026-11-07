@@ -103,6 +103,9 @@ impl Core {
             }),
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -203,6 +206,9 @@ impl Core {
             queued: None,
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
             ..message
         };
         self.start_turn(space, &req, message, true, None).await
@@ -364,6 +370,9 @@ impl Core {
             queued: None,
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),

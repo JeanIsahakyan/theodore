@@ -568,6 +568,23 @@ pub enum Ephemeral {
         agent: AgentId,
         line: String,
     },
+    /// A new row of a run's timeline: a tool call, thinking, or a subagent's
+    /// text. The run's own text comes as `AgentDelta`.
+    RunStep {
+        run: String,
+        step: TurnStep,
+    },
+    /// The tool call `id` of `run` ended, or (`ok` none) learned its summary.
+    RunStepDone {
+        run: String,
+        id: String,
+        ok: Option<bool>,
+        summary: Option<String>,
+    },
+    /// The next `AgentDelta` of `run` starts a new text row.
+    RunTextBreak {
+        run: String,
+    },
     /// No output for `agents.stall_after_ms` while `run` is still alive.
     /// The run keeps going (this isn't terminal) — the UI offers Retry
     /// (cancel + resend) or Cancel instead of waiting silently.
@@ -714,9 +731,14 @@ pub enum TurnStep {
     /// What it wrote on the way; the reply's own text isn't repeated here.
     Text {
         text: String,
+        /// The `Agent`/`Task` call whose subagent wrote it.
+        #[serde(default)]
+        parent: Option<String>,
     },
     Thinking {
         text: String,
+        #[serde(default)]
+        parent: Option<String>,
     },
     Tool {
         /// Its label: `Bash`, or what Theodore's own tools do (`ship the change`).
@@ -725,7 +747,34 @@ pub enum TurnStep {
         target: Option<String>,
         /// `None`: no result came (the turn ended first).
         ok: Option<bool>,
+        /// The call's id, for its result and its subagent's steps to find.
+        #[serde(default)]
+        id: Option<String>,
+        /// The `Agent`/`Task` call whose subagent made this call.
+        #[serde(default)]
+        parent: Option<String>,
+        /// What the agent said it is: a command's or a subagent's description,
+        /// a search's pattern, the question asked. Capped.
+        #[serde(default)]
+        detail: Option<String>,
+        /// What its result says: `120 lines`, `5 matches`, a subagent's
+        /// report. Capped.
+        #[serde(default)]
+        summary: Option<String>,
+        /// Lines an edit adds and removes, from its input.
+        #[serde(default)]
+        added: Option<u32>,
+        #[serde(default)]
+        removed: Option<u32>,
     },
+}
+
+/// A file a space turn changed (`ChatMessage::changed_files`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct TurnFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -755,6 +804,17 @@ pub struct ChatMessage {
     /// How long a space reply's turn ran.
     #[serde(default)]
     pub duration_ms: Option<u64>,
+    /// What a space reply's turn changed, from git between its checkpoints.
+    /// At most 200; empty when it changed nothing or git couldn't tell.
+    #[serde(default)]
+    pub changed_files: Vec<TurnFile>,
+    /// The model a space reply's turn asked for; none: the CLI's default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// A space reply with no final text: `text` is the text steps in
+    /// `activity` joined, and only those show, in the order they came.
+    #[serde(default)]
+    pub text_in_steps: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -793,6 +853,7 @@ pub fn types() -> specta::Types {
         .register::<SkillRun>()
         .register::<ChatMessage>()
         .register::<TurnStep>()
+        .register::<TurnFile>()
         .register::<Attachment>()
         .register::<SaveAttachmentRequest>()
         .register::<Setting>()

@@ -125,6 +125,9 @@ impl Core {
             queued: None,
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -561,6 +564,9 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
         queued: None,
         activity: vec![],
         duration_ms: None,
+        changed_files: vec![],
+        model: None,
+        text_in_steps: false,
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -824,6 +830,9 @@ async fn drive_ask(
         queued: None,
         activity: vec![],
         duration_ms: None,
+        changed_files: vec![],
+        model: None,
+        text_in_steps: false,
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

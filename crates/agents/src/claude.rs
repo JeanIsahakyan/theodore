@@ -6,6 +6,8 @@
 //! shapes are long-documented Claude Code stream-json content blocks but were
 //! not exercised live here (sandboxed shell denied a tool-using prompt); see
 //! `tests/fixtures/claude_tool_call.jsonl`, built from that documented shape.
+//! A subagent's lines carry `parent_tool_use_id` (recorded from a real 2.1.319
+//! run, redacted: `tests/fixtures/claude_subagent.jsonl`).
 //!
 //! A steerable run (`build_steerable_args`, docs/spaces.md §8 "Send now")
 //! reads its messages from stdin instead (`--input-format stream-json
@@ -446,27 +448,56 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return vec![];
     };
-    match v.get("type").and_then(Value::as_str) {
+    let events = match v.get("type").and_then(Value::as_str) {
         Some("assistant") => content_blocks(&v),
         Some("user") => tool_results(&v),
         Some("result") => result_events(&v),
         // Only with `--include-partial-messages`: the raw API stream.
-        Some("stream_event") => text_delta(&v).into_iter().collect(),
+        Some("stream_event") => stream_event(&v).into_iter().collect(),
         // `init` opens every run with the session id `--resume` takes.
         Some("system") if v.get("subtype").and_then(Value::as_str) == Some("init") => {
             session_event(&v).into_iter().collect()
         }
         _ => vec![], // system/rate_limit_event/etc: not user-visible stream content
+    };
+    match v.get("parent_tool_use_id").and_then(Value::as_str) {
+        Some(parent) if !parent.is_empty() => nested(parent, events),
+        _ => events,
     }
 }
 
-/// A `content_block_delta` carrying answer text (`text_delta`); thinking
-/// and tool-input deltas are left to the whole-message events.
-fn text_delta(v: &Value) -> Option<AgentEvent> {
+/// A subagent's line (recorded from 2.1.319, `tests/fixtures/
+/// claude_subagent.jsonl`): whole events under the call that started it. Its
+/// streamed pieces, if any, are left to those.
+fn nested(parent: &str, events: Vec<AgentEvent>) -> Vec<AgentEvent> {
+    events
+        .into_iter()
+        .filter(|e| !matches!(e, AgentEvent::TextDelta { .. } | AgentEvent::TextStart))
+        .map(|event| AgentEvent::Nested {
+            parent: parent.to_string(),
+            event: Box::new(event),
+        })
+        .collect()
+}
+
+/// What the raw stream adds to the whole-message events: where a text block
+/// starts, and its text as it is generated. Thinking and tool-input deltas
+/// are left to the whole messages.
+fn stream_event(v: &Value) -> Option<AgentEvent> {
     let event = v.get("event")?;
-    if event.get("type").and_then(Value::as_str) != Some("content_block_delta") {
-        return None;
+    match event.get("type").and_then(Value::as_str)? {
+        "content_block_start"
+            if event.pointer("/content_block/type").and_then(Value::as_str) == Some("text") =>
+        {
+            Some(AgentEvent::TextStart)
+        }
+        "content_block_delta" => text_delta(event),
+        _ => None,
     }
+}
+
+/// A `content_block_delta` carrying answer text (`text_delta`).
+fn text_delta(event: &Value) -> Option<AgentEvent> {
     let delta = event.get("delta")?;
     if delta.get("type").and_then(Value::as_str) != Some("text_delta") {
         return None;
@@ -1231,11 +1262,69 @@ mod model_and_effort_tests {
         );
         for other in [
             r#"{"type":"stream_event","event":{"type":"message_start","message":{}}}"#,
-            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","name":"Read"}}}"#,
             r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hm"}}}"#,
             r#"{"type":"stream_event","event":{"type":"message_stop"}}"#,
         ] {
             assert_eq!(parse_line(other), vec![], "{other}");
+        }
+    }
+
+    /// Two text blocks with no tool between them: each opens with a
+    /// `content_block_start`, in one message or two.
+    #[test]
+    fn a_text_block_start_is_a_boundary() {
+        let start = r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}}"#;
+        assert_eq!(parse_line(start), vec![AgentEvent::TextStart]);
+    }
+
+    /// A real run's lines, redacted: a subagent's call and result are under
+    /// its parent; the parent's own call and answer are not.
+    #[test]
+    fn a_subagents_lines_nest_under_the_call_that_started_it() {
+        let mut parser = ClaudeParser::new();
+        let events: Vec<AgentEvent> = include_str!("../tests/fixtures/claude_subagent.jsonl")
+            .lines()
+            .flat_map(|l| parser.on_line(l))
+            .collect();
+        let under = |e: &AgentEvent| match e {
+            AgentEvent::Nested { parent, .. } => Some(parent.clone()),
+            _ => None,
+        };
+        let nested: Vec<_> = events.iter().filter(|e| under(e).is_some()).collect();
+        assert_eq!(nested.len(), 4, "{nested:?}");
+        assert!(
+            nested
+                .iter()
+                .all(|e| under(e).as_deref() == Some("toolu_agent"))
+        );
+        let AgentEvent::Nested { event, .. } = nested[0] else {
+            unreachable!()
+        };
+        assert!(matches!(&**event, AgentEvent::ToolCall { name, .. } if name == "Read"));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolCall { id, name, .. } if id == "toolu_agent" && name == "Agent"
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ToolResult { id, .. } if id == "toolu_agent"))
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Done { final_text, .. } if final_text == "first line here"
+        )));
+    }
+
+    #[test]
+    fn a_subagents_stream_pieces_are_left_to_its_whole_messages() {
+        for line in [
+            r#"{"type":"stream_event","parent_tool_use_id":"t","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}"#,
+            r#"{"type":"stream_event","parent_tool_use_id":"t","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}}"#,
+        ] {
+            assert_eq!(parse_line(line), vec![], "{line}");
         }
     }
 

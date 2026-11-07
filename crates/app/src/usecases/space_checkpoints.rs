@@ -206,6 +206,9 @@ impl Core {
             queued: None,
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
         };
         let mut log = space.turn_log.clone();
         log.push(SpaceTurn {

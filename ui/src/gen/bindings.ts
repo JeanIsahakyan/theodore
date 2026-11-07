@@ -833,6 +833,15 @@ export type EffectiveConfig = {
 
 export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text: string } | { type: "run_log"; run: string; agent: AgentId; line: string } |
 /**
+ *  A new row of a run's timeline: a tool call, thinking, or a subagent's
+ *  text. The run's own text comes as `AgentDelta`.
+ */
+{ type: "run_step"; run: string; step: TurnStep } |
+/**  The tool call `id` of `run` ended, or (`ok` none) learned its summary. */
+{ type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null } |
+/**  The next `AgentDelta` of `run` starts a new text row. */
+{ type: "run_text_break"; run: string } |
+/**
  *  No output for `agents.stall_after_ms` while `run` is still alive.
  *  The run keeps going (this isn't terminal) — the UI offers Retry
  *  (cancel + resend) or Cancel instead of waiting silently.
@@ -2305,6 +2314,38 @@ export type TriageRequest = {
 	pr: PrId,
 	action: TriageAction,
 };
+
+/**
+ *  One thing an agent did in a space turn, kept on the reply in the order it
+ *  happened (`ChatMessage::activity`).
+ */
+export type TurnStep =
+/**  What it wrote on the way; the reply's own text isn't repeated here. */
+{ kind: "text"; text: string;
+/**  The `Agent`/`Task` call whose subagent wrote it. */
+parent?: string | null } | { kind: "thinking"; text: string; parent?: string | null } | { kind: "tool";
+/**  Its label: `Bash`, or what Theodore's own tools do (`ship the change`). */
+name: string;
+/**  The command or file it was about. */
+target: string | null;
+/**  `None`: no result came (the turn ended first). */
+ok: boolean | null;
+/**  The call's id, for its result and its subagent's steps to find. */
+id?: string | null;
+/**  The `Agent`/`Task` call whose subagent made this call. */
+parent?: string | null;
+/**
+ *  What the agent said it is: a command's or a subagent's description,
+ *  a search's pattern, the question asked. Capped.
+ */
+detail?: string | null;
+/**
+ *  What its result says: `120 lines`, `5 matches`, a subagent's
+ *  report. Capped.
+ */
+summary?: string | null;
+/**  Lines an edit adds and removes, from its input. */
+added?: number | null; removed?: number | null };
 
 /**
  *  A product event the UI reports (`track_ui`). Typed like the core's own:

@@ -344,6 +344,9 @@ impl Core {
             queued: None,
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -1002,6 +1005,8 @@ async fn stream_run(
                         break;
                     }
                     AgentEvent::Thinking { .. }
+                    | AgentEvent::TextStart
+                    | AgentEvent::Nested { .. }
                     | AgentEvent::ToolCall { .. }
                     | AgentEvent::ToolResult { .. }
                     | AgentEvent::Stalled
@@ -1012,6 +1017,7 @@ async fn stream_run(
     }
     // Cut off mid-block (Stop): the deltas are all there is of it.
     let partial = std::mem::take(&mut out.partial);
+    out.steps.record_cut_off(&partial);
     push_block(&mut out.text, &partial);
     out
 }
@@ -1028,6 +1034,12 @@ fn push_block(text: &mut String, block: &str) {
 /// (the space's id) means nothing to a reader. `/tmp` paths come back as
 /// `/private/tmp` on macOS.
 fn with_worktree_paths(event: AgentEvent, cwd: &Path) -> AgentEvent {
+    if let AgentEvent::Nested { parent, event } = event {
+        return AgentEvent::Nested {
+            parent,
+            event: Box::new(with_worktree_paths(*event, cwd)),
+        };
+    }
     let AgentEvent::ToolCall {
         id,
         name,
@@ -1095,6 +1107,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mcp: mcp.clone(),
     };
     let resumed = resume.is_some();
+    let asked_model = model.clone();
     let mut req = AgentRequest {
         agent,
         prompt,
@@ -1152,7 +1165,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // Without a final text the blocks are the reply, unless a plan took over.
     let blocks = (!answered).then(|| text.clone());
     let text = plan.clone().unwrap_or(text);
-    let activity = steps.finish((blocks.as_ref() != Some(&text)).then_some(text.as_str()));
+    let (activity, text_in_steps) =
+        steps.finish((blocks.as_ref() != Some(&text)).then_some(text.as_str()));
     // The session this turn ran in is the one the next turn continues. A
     // resumed run that reported none (it failed to start) leaves it as is;
     // a new one that reported none (Gemini) means there is none to continue.
@@ -1248,6 +1262,13 @@ async fn drive_turn(core: &Core, turn: Turn) {
         }
     };
 
+    // A merge's turn holds the base's changes too: not what the agent did.
+    let changed_files = match &checkpoint {
+        Some(cp) if cp.sha != space.head_sha && saved.base_before.is_none() => {
+            crate::usecases::turn_steps::changed_files(core, &cwd, &space.head_sha, &cp.sha).await
+        }
+        _ => Vec::new(),
+    };
     let key = space_chat_key(&space.id);
     let reply = ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1262,6 +1283,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
         queued: None,
         activity,
         duration_ms: Some(ms),
+        changed_files,
+        model: asked_model,
+        text_in_steps,
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1764,6 +1788,9 @@ mod tests {
             queued: None,
             activity: vec![],
             duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
         }
     }
 
