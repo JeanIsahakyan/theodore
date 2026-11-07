@@ -1377,12 +1377,12 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
                 </TextField>
                 {issues.length > 0 && (
                   <ChipMenu
-                    ariaLabel="Your open issues"
+                    ariaLabel="Open issues"
                     label={
                       issueId
                         ? (issues.find((i) => String(i.number) === issueId)
-                            ?.title ?? 'Your issues')
-                        : 'Your issues'
+                            ?.title ?? 'Open issues')
+                        : 'Open issues'
                     }
                     items={issues.map((i) => ({
                       id: String(i.number),

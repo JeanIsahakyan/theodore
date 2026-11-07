@@ -1,4 +1,4 @@
-/** The project's own open issues assigned to the viewer, for New space's
+/** The project's open issues, the viewer's own first, for New space's
  *  "An existing issue" picker (`project_issues`). Empty while `project` is
  *  `null` (nothing picked, or a mode other than "issue"). A host that
  *  can't read issues (`Capabilities::issues`) answers `host.unsupported`:

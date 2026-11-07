@@ -394,18 +394,21 @@ pub(crate) async fn get_issue(
     Ok(issue)
 }
 
-/// `GET /repos/{owner}/{repo}/issues?state=open&assignee={login}`: open
-/// issues assigned to `login`, pull requests filtered out.
-pub(crate) async fn list_assigned_issues(
+/// `GET /repos/{owner}/{repo}/issues?state=open[&assignee={login}]`: open
+/// issues (assigned to `assignee`, when given), pull requests filtered out.
+pub(crate) async fn list_open_issues(
     http: &HttpClient,
     owner: &str,
     repo: &str,
-    login: &str,
+    assignee: Option<&str>,
 ) -> HostResult<Vec<GhIssueFull>> {
-    let path = format!(
-        "repos/{owner}/{repo}/issues?state=open&assignee={}&per_page=50",
-        urlencode(login)
-    );
+    let path = match assignee {
+        Some(login) => format!(
+            "repos/{owner}/{repo}/issues?state=open&assignee={}&per_page=50",
+            urlencode(login)
+        ),
+        None => format!("repos/{owner}/{repo}/issues?state=open&per_page=50"),
+    };
     let issues = http.get::<Vec<GhIssueFull>>(&path).await?.value;
     Ok(issues
         .into_iter()

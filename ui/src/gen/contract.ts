@@ -1263,8 +1263,8 @@ export type Project = {
 };
 
 /**
- *  New space's "From an issue" picker: the project's own open issues
- *  assigned to the viewer (`HostAdapter::my_open_issues`).
+ *  New space's "From an issue" picker: the project's open issues, the
+ *  viewer's own first (`HostAdapter::open_issues`).
  */
 export type ProjectIssuesRequest = {
 	project: string,

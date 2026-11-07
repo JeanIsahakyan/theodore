@@ -130,14 +130,14 @@ impl Core {
         }
     }
 
-    /// New space's "From an issue" picker: the project's own open issues
-    /// assigned to the viewer.
+    /// New space's "From an issue" picker: the project's open issues,
+    /// the viewer's own first.
     pub async fn project_issues(&self, req: ProjectIssuesRequest) -> AppResult<Vec<SpaceIssue>> {
         let project = self
             .project_row(&req.project)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("project {}", req.project)))?;
-        let issues = self.0.deps.host.my_open_issues(&project.repo).await?;
+        let issues = self.0.deps.host.open_issues(&project.repo).await?;
         Ok(issues.into_iter().map(tracked_to_wire).collect())
     }
 }

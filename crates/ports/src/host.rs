@@ -18,7 +18,7 @@ pub struct Capabilities {
     pub merge_queue: bool,
     pub auto_merge: bool,
     pub reactions: bool,
-    /// A cheap read of the project's own issues (`my_open_issues`,
+    /// A cheap read of the project's own issues (`open_issues`,
     /// `get_issue`): New space "From an issue" offers the option only here.
     pub issues: bool,
 }
@@ -200,6 +200,15 @@ pub struct TrackedIssue {
     pub url: String,
 }
 
+/// `HostAdapter::open_issues`' order: `mine` first, then the rest of `all`,
+/// each issue once.
+pub fn mine_first(mine: Vec<TrackedIssue>, all: Vec<TrackedIssue>) -> Vec<TrackedIssue> {
+    let seen: std::collections::HashSet<u64> = mine.iter().map(|i| i.number).collect();
+    let mut out = mine;
+    out.extend(all.into_iter().filter(|i| !seen.contains(&i.number)));
+    out
+}
+
 #[async_trait]
 pub trait HostAdapter: Send + Sync {
     fn kind(&self) -> theodore_domain::HostKind;
@@ -282,9 +291,10 @@ pub trait HostAdapter: Send + Sync {
     }
 
     // issues (docs/spaces.md "New space from an issue")
-    /// The viewer's own open issues in `repo`, for the New space picker.
-    async fn my_open_issues(&self, _repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
-        Err(HostError::Unsupported("my_open_issues"))
+    /// Open issues in `repo` for the New space picker: the viewer's own
+    /// (assigned) first, then the rest, each once.
+    async fn open_issues(&self, _repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
+        Err(HostError::Unsupported("open_issues"))
     }
     /// One issue by number, read for its title/body/url to seed a space's
     /// goal (a pasted URL or `#<number>` resolves to this).

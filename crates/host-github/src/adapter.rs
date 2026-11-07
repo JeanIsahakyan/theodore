@@ -373,10 +373,19 @@ impl HostAdapter for GithubAdapter {
         Ok(pull_to_pr_ref(repo, pull))
     }
 
-    async fn my_open_issues(&self, repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
-        let me = self.viewer().await?.login;
-        let issues = rest::list_assigned_issues(&self.rest, &repo.owner, &repo.name, &me).await?;
-        Ok(issues.into_iter().map(gh_issue_to_tracked).collect())
+    async fn open_issues(&self, repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
+        let all = rest::list_open_issues(&self.rest, &repo.owner, &repo.name, None).await?;
+        // Yours first; without a viewer the list is still the repo's.
+        let mine = match self.viewer().await {
+            Ok(me) => {
+                rest::list_open_issues(&self.rest, &repo.owner, &repo.name, Some(&me.login)).await?
+            }
+            Err(_) => Vec::new(),
+        };
+        let tracked = |v: Vec<rest::GhIssueFull>| -> Vec<TrackedIssue> {
+            v.into_iter().map(gh_issue_to_tracked).collect()
+        };
+        Ok(theodore_ports::mine_first(tracked(mine), tracked(all)))
     }
 
     async fn get_issue(&self, repo: &RepoRef, number: u64) -> HostResult<TrackedIssue> {

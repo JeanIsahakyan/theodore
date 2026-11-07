@@ -2,7 +2,7 @@ mod support;
 
 use theodore_domain::{HostKind, RepoRef};
 use theodore_ports::{HostAdapter, HostError};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, ResponseTemplate};
 
 fn repo() -> RepoRef {
@@ -58,7 +58,7 @@ async fn get_issue_on_a_pull_request_number_is_not_found() {
 }
 
 #[tokio::test]
-async fn my_open_issues_filters_out_pull_requests() {
+async fn open_issues_filters_out_pull_requests() {
     let s = support::servers().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -82,8 +82,46 @@ async fn my_open_issues_filters_out_pull_requests() {
         ])))
         .mount(&s.rest)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/widgets/issues"))
+        .and(query_param_is_missing("assignee"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&s.rest)
+        .await;
 
-    let got = s.adapter.my_open_issues(&repo()).await.unwrap();
+    let got = s.adapter.open_issues(&repo()).await.unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].number, 42);
+}
+
+#[tokio::test]
+async fn open_issues_lists_the_repos_issues_with_yours_first() {
+    let s = support::servers().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "viewer": { "login": "octocat", "name": null, "avatarUrl": null } }
+        })))
+        .mount(&s.graphql)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/widgets/issues"))
+        .and(query_param("assignee", "octocat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([gh_issue(9)])))
+        .mount(&s.rest)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/widgets/issues"))
+        .and(query_param("state", "open"))
+        .and(query_param_is_missing("assignee"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            gh_issue(12),
+            gh_issue(9),
+            gh_issue(3)
+        ])))
+        .mount(&s.rest)
+        .await;
+
+    let got = s.adapter.open_issues(&repo()).await.unwrap();
+    let numbers: Vec<u64> = got.iter().map(|i| i.number).collect();
+    assert_eq!(numbers, [9, 12, 3]);
 }

@@ -1456,7 +1456,7 @@ pub struct FakeHost {
     pub create_pr_errors: Mutex<VecDeque<HostError>>,
     pub create_pr_lands: Mutex<bool>,
     pub get_issue_responses: Mutex<VecDeque<HostResult<TrackedIssue>>>,
-    pub my_open_issues_responses: Mutex<VecDeque<HostResult<Vec<TrackedIssue>>>>,
+    pub open_issues_responses: Mutex<VecDeque<HostResult<Vec<TrackedIssue>>>>,
 }
 
 impl FakeHost {
@@ -1562,8 +1562,8 @@ impl FakeHost {
     pub fn push_get_issue(&self, r: HostResult<TrackedIssue>) {
         self.get_issue_responses.lock().unwrap().push_back(r);
     }
-    pub fn push_my_open_issues(&self, r: HostResult<Vec<TrackedIssue>>) {
-        self.my_open_issues_responses.lock().unwrap().push_back(r);
+    pub fn push_open_issues(&self, r: HostResult<Vec<TrackedIssue>>) {
+        self.open_issues_responses.lock().unwrap().push_back(r);
     }
 }
 
@@ -1661,8 +1661,8 @@ impl HostAdapter for FakeHost {
             .pop_front()
             .unwrap_or_else(|| Err(HostError::NotFound("no fixture queued".into())))
     }
-    async fn my_open_issues(&self, _repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
-        self.my_open_issues_responses
+    async fn open_issues(&self, _repo: &RepoRef) -> HostResult<Vec<TrackedIssue>> {
+        self.open_issues_responses
             .lock()
             .unwrap()
             .pop_front()
