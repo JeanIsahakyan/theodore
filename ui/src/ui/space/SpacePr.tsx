@@ -37,6 +37,8 @@ import {
   autoArchiveDays,
   canContinue,
   defaultMergeMethod,
+  mergeLine,
+  prPollMs,
   prTint,
   spaceMerge,
   type PrTint,
@@ -133,16 +135,32 @@ function useConflicts(
   return on && got?.key === key ? got.files : null;
 }
 
+/** Asks for the space's PR now and every `ms` while the page is open
+ *  (`refresh_space_pr`: a conditional fetch, so an unchanged PR costs a
+ *  304). The PR's review tab isn't needed for its checks to move. */
+function usePrPoll(space: string, ms: number | null) {
+  useEffect(() => {
+    if (ms == null) return;
+    const ask = () => void api.refreshSpacePr(space).catch(() => {});
+    ask();
+    const timer = window.setInterval(ask, ms);
+    return () => window.clearInterval(timer);
+  }, [space, ms]);
+}
+
 const isOpen = (s: PrSummary | undefined) =>
   s?.state === 'open' || s?.state === 'draft';
 
 /** The right pane once the space has a PR: its diff, the PR's threads
  *  (Reply · Resolve · Send to agent) and its checks. */
 export const SpacePrPane = observer(function SpacePrPane({
+  space,
   pr,
   changes,
   showChanges,
 }: {
+  /** The space whose PR it is: polled while this pane is open. */
+  space: string;
   pr: PrId;
   /** The Changes tab: the space's live diff. */
   changes: ReactNode;
@@ -159,6 +177,7 @@ export const SpacePrPane = observer(function SpacePrPane({
     void store.sync.openPr(pr).catch(() => {});
   }, [store, pr]);
   const summary = store.models.prSummaries.get(pr);
+  usePrPoll(space, prPollMs(summary));
   const threads = store.models.prDetails.get(pr)?.threads ?? [];
   const unresolved = threads.filter((t) => !t.resolved).length;
   return (
@@ -263,10 +282,11 @@ const SpaceChecks = observer(function SpaceChecks({ pr }: { pr: PrId }) {
     open && !!summary?.conflicts,
   );
   const [updating, setUpdating] = useState(false);
+  const line = summary ? mergeLine(summary, info, STATE_LABEL) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-      {summary && (
+      {summary && line && (
         <section className="space-pr-status flex flex-col gap-2 border-b border-separator px-6 py-4 text-sm">
           <StatusRow
             ok={
@@ -281,23 +301,8 @@ const SpaceChecks = observer(function SpaceChecks({ pr }: { pr: PrId }) {
             <span className="shrink-0">{reviewLabel(summary)}</span>
             {detail && <ReviewerStrip reviewers={detail.reviewers} />}
           </StatusRow>
-          <StatusRow
-            ok={
-              !open
-                ? summary.state === 'merged'
-                : info
-                  ? info.state === 'clean'
-                  : null
-            }
-            label="Merge"
-          >
-            {!open
-              ? summary.state === 'merged'
-                ? 'Merged'
-                : 'Closed without merging'
-              : info
-                ? `${STATE_LABEL[info.state]}${info.auto_merge_enabled ? ' · auto-merge on' : ''}${info.in_queue ? ' · in the merge queue' : ''}`
-                : 'Checking…'}
+          <StatusRow ok={line.ok} label="Merge">
+            {line.text}
           </StatusRow>
           {open && summary.conflicts && (
             <StatusRow ok={false} label="Conflicts">
@@ -361,10 +366,7 @@ export const SpaceMergeButton = observer(function SpaceMergeButton({
   const [dialog, setDialog] = useState(false);
   if (!pr || !summary || !open) return null;
 
-  const action =
-    summary.state === 'draft'
-      ? { kind: 'none' as const, reason: 'A draft: mark it ready first' }
-      : spaceMerge(info, space);
+  const action = spaceMerge(info, space, summary);
   const method = info ? defaultMergeMethod(info) : 'squash';
   const methods: MergeMethod[] = info?.allowed_methods.length
     ? info.allowed_methods

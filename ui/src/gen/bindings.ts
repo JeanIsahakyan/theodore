@@ -115,6 +115,8 @@ export const commands = {
 	mergeSpace: (req: MergeSpaceRequest) => typedError<MergeSpaceResult, CommandError>(__TAURI_INVOKE("merge_space", { req })),
 	/**  Continue after merge: a new branch on the base's fresh tip (§7). */
 	continueSpace: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("continue_space", { space })),
+	/**  The space page's poll of its PR's checks: one conditional fetch. */
+	refreshSpacePr: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("refresh_space_pr", { space })),
 	undoSpaceTurn: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("undo_space_turn", { space })),
 	rewindSpace: (req: RewindSpaceRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("rewind_space", { req })),
 	revertSpaceFile: (req: RevertSpaceFileRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("revert_space_file", { req })),

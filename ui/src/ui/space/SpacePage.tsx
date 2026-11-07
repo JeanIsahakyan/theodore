@@ -353,6 +353,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
             {opened || !live ? (
               space.pr ? (
                 <SpacePrPane
+                  space={space.id}
                   pr={space.pr}
                   changes={<SpaceChanges space={space} />}
                   showChanges={changesFocus}

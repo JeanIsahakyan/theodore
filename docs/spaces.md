@@ -521,6 +521,13 @@ happens here; "PR" still opens the normal review.
 | Threads | the PR's threads and drafts: Reply · Resolve · Send to agent; unresolved count on the tab | the review side panel's `Threads` |
 | Checks | review decision + approvals, mergeable state (`merge_info`), conflicting files (`conflicts`) with Update branch, then every check with Re-run (`rerun_check`) | `Checks`, `ReviewerStrip` |
 
+The PR is asked for while the page is open (`refresh_space_pr`, one
+conditional fetch by ETag, so an unchanged PR is a 304): every 10 s while
+its checks run, every 30 s otherwise, never once it merged or closed. Its
+review tab needn't be open for a failure to show. The Merge line agrees with
+Merge: a draft or conflicts on the PR row say so even while `merge_info`
+still says clean.
+
 **Merge** (`merge_space`, through `merge_pr` and the outbox):
 
 | PR state (`merge_info`) | Merge does |

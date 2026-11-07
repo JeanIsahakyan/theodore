@@ -320,6 +320,9 @@ export const api = {
     call<MergeSpaceResult>('merge_space', { req }),
   /** Continue after merge: a new branch on the base's fresh tip (§7). */
   continueSpace: (space: string) => call<Space>('continue_space', { space }),
+  /** The space page's poll of its PR's checks: quiet, it's passive. */
+  refreshSpacePr: (space: string) =>
+    call<null>('refresh_space_pr', { space }, true),
   /** "Back to here": later turns undone (docs/spaces.md §3). */
   rewindSpace: (req: RewindSpaceRequest) =>
     call<Space>('rewind_space', { req }),

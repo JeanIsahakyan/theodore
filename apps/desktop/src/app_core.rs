@@ -1004,6 +1004,9 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::Space, CommandError> {
         self.core.continue_space(&space).await.map_err(err)
     }
+    async fn refresh_space_pr(&self, space: String) -> Result<(), CommandError> {
+        self.core.refresh_space_pr(&space).await.map_err(err)
+    }
     async fn undo_space_turn(
         &self,
         space: String,

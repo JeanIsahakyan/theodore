@@ -680,15 +680,53 @@ export function defaultMergeMethod(info: MergeInfo): MergeMethod {
 export type SpaceMerge =
   { kind: 'merge' | 'auto' | 'queue' } | { kind: 'none'; reason: string };
 
+/** The Checks tab's Merge line, agreeing with what blocks Merge: a draft
+ *  or conflicts on the PR row win over a `merge_info` that still says
+ *  clean. `labels`: the merge dialog's state wording. */
+export function mergeLine(
+  pr: Pick<PrSummary, 'state' | 'conflicts'>,
+  info: MergeInfo | null,
+  labels: Record<MergeInfo['state'], string>,
+): { ok: boolean | null; text: string } {
+  if (pr.state === 'merged') return { ok: true, text: 'Merged' };
+  if (pr.state === 'closed')
+    return { ok: false, text: 'Closed without merging' };
+  if (pr.state === 'draft') return { ok: false, text: DRAFT_REASON };
+  if (pr.conflicts || info?.state === 'dirty')
+    return { ok: false, text: labels.dirty };
+  if (!info) return { ok: null, text: 'Checking…' };
+  const extra = `${info.auto_merge_enabled ? ' · auto-merge on' : ''}${info.in_queue ? ' · in the merge queue' : ''}`;
+  return {
+    ok: info.state === 'clean' && info.mergeable !== false,
+    text: `${labels[info.state]}${extra}`,
+  };
+}
+
+/** How often a space page asks for its PR (`refresh_space_pr`): often
+ *  while checks run, now and then otherwise, never once it's done. */
+export function prPollMs(
+  pr: Pick<PrSummary, 'state' | 'checks'> | undefined,
+): number | null {
+  if (pr?.state === 'merged' || pr?.state === 'closed') return null;
+  return !pr || pr.checks === 'pending' ? 10_000 : 30_000;
+}
+
+const DRAFT_REASON = 'A draft: mark it ready for review first';
+const CONFLICT_REASON = 'Conflicts with the base branch';
+
 export function spaceMerge(
   info: MergeInfo | null,
   s: Pick<Space, 'shipped' | 'head_sha' | 'status'> &
     Partial<Pick<Space, 'fork_sha'>>,
+  /** The PR row: its draft state and conflicts can be newer than `info`. */
+  pr?: Pick<PrSummary, 'state' | 'conflicts'>,
 ): SpaceMerge {
   if (s.status === 'running')
     return { kind: 'none', reason: 'The agent is still working' };
+  if (pr?.state === 'draft') return { kind: 'none', reason: DRAFT_REASON };
   if ((s.shipped == null || s.shipped.how === 'pr') && unshipped(s))
     return { kind: 'none', reason: 'Push the new turns first' };
+  if (pr?.conflicts) return { kind: 'none', reason: CONFLICT_REASON };
   if (!info) return { kind: 'none', reason: 'Checking whether it can merge…' };
   if (info.in_queue) return { kind: 'none', reason: 'In the merge queue' };
   if (info.auto_merge_enabled)

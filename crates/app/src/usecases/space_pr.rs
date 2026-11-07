@@ -216,6 +216,21 @@ impl Core {
         })
     }
 
+    /// The space page's poll of its PR (docs/spaces.md "Space page — in
+    /// review"): one conditional fetch (ETag), applied when the host says it
+    /// changed, so checks show without the PR's review open. Nothing to do
+    /// without a PR.
+    pub async fn refresh_space_pr(&self, id: &str) -> AppResult<()> {
+        let space = self.space_row(id).await?;
+        let Some(pr) = space.pr else {
+            return Ok(());
+        };
+        if let Some(pr_ref) = self.pr_ref(&pr).await {
+            self.refresh_pr(&pr, &pr_ref).await;
+        }
+        Ok(())
+    }
+
     /// Continue after merge (docs/spaces.md §7): the space moves to a new
     /// branch on the base's fresh tip, which has the merged work; turns
     /// that weren't in the PR come along. Turns and transcript stay;

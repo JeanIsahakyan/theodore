@@ -33,6 +33,8 @@ import {
   prTint,
   defaultMergeMethod,
   spaceMerge,
+  mergeLine,
+  prPollMs,
   canContinue,
 } from './spaces';
 import type { MergeInfo } from '../../gen/contract';
@@ -575,6 +577,56 @@ describe('a space in review', () => {
       kind: 'none',
       reason: 'Push the new turns first',
     });
+  });
+
+  it('a draft or a conflict blocks Merge, whatever the host last said', () => {
+    const s = space({ id: 'a', status: 'idle' });
+    expect(spaceMerge(info(), s, { state: 'draft', conflicts: false })).toEqual(
+      { kind: 'none', reason: 'A draft: mark it ready for review first' },
+    );
+    expect(spaceMerge(info(), s, { state: 'open', conflicts: true })).toEqual({
+      kind: 'none',
+      reason: 'Conflicts with the base branch',
+    });
+  });
+
+  it('the merge line says what blocks, never "Ready" beside a blocker', () => {
+    const open = { state: 'open' as const, conflicts: false };
+    const labels = {
+      clean: 'Ready to merge',
+      blocked: 'Blocked',
+      behind: 'Behind',
+      dirty: 'Has merge conflicts',
+      unstable: 'Checks running',
+      unknown: 'Unknown',
+    };
+    expect(mergeLine(open, info(), labels)).toEqual({
+      ok: true,
+      text: 'Ready to merge',
+    });
+    expect(mergeLine({ ...open, conflicts: true }, info(), labels)).toEqual({
+      ok: false,
+      text: 'Has merge conflicts',
+    });
+    expect(mergeLine({ ...open, state: 'draft' }, info(), labels)).toEqual({
+      ok: false,
+      text: 'A draft: mark it ready for review first',
+    });
+    expect(mergeLine(open, null, labels)).toEqual({
+      ok: null,
+      text: 'Checking…',
+    });
+    expect(mergeLine({ ...open, state: 'merged' }, info(), labels)).toEqual({
+      ok: true,
+      text: 'Merged',
+    });
+  });
+
+  it('polls its PR while the page is open, faster while checks run', () => {
+    expect(prPollMs({ state: 'open', checks: 'pending' })).toBe(10_000);
+    expect(prPollMs({ state: 'draft', checks: 'fail' })).toBe(30_000);
+    expect(prPollMs({ state: 'merged', checks: 'pass' })).toBeNull();
+    expect(prPollMs(undefined)).toBe(10_000);
   });
 
   it("counts an adopted PR's new turns as not pushed", () => {

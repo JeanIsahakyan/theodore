@@ -810,6 +810,18 @@ pub async fn merge_space(
     op.run(async move { core.merge_space(req).await }).await
 }
 
+/// The space page's poll of its PR's checks: one conditional fetch.
+#[tauri::command]
+#[specta::specta]
+pub async fn refresh_space_pr(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.refresh_space_pr(space).await })
+        .await
+}
+
 /// Continue after merge: a new branch on the base's fresh tip (§7).
 #[tauri::command]
 #[specta::specta]

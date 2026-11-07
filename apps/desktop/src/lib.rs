@@ -106,6 +106,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::ship_space,
             commands::merge_space,
             commands::continue_space,
+            commands::refresh_space_pr,
             commands::undo_space_turn,
             commands::rewind_space,
             commands::revert_space_file,

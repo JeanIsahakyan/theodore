@@ -442,6 +442,38 @@ async fn continue_keeps_an_adopted_prs_unpushed_turns_and_leaves_its_branch() {
     );
 }
 
+// ── Checks while the page is open ─────────────────────────────────────────
+
+/// The space page asks for its PR's checks (`refresh_space_pr`): a
+/// conditional fetch that lands in `pr_detail`, so a failure shows without
+/// opening the PR's review.
+#[tokio::test]
+async fn refresh_space_pr_brings_the_hosts_checks() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    let pr = s.pr.clone().unwrap();
+    let mut failed = sample_pr_detail(&pr_ref(100), &Sha::new("base000"), &Sha::new("squash1"));
+    failed.checks = vec![theodore_domain::Check {
+        id: "c1".into(),
+        name: "test".into(),
+        status: theodore_domain::CheckStatus::Fail,
+        url: None,
+        duration_ms: None,
+    }];
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: Some("e2".into()),
+        value: failed,
+    }));
+    core.refresh_space_pr(&s.id).await.unwrap();
+    let detail = f.store.get(models::PR_DETAIL, &pr.0).unwrap().unwrap().data;
+    assert_eq!(detail["checks"][0]["status"], json!("fail"));
+
+    // Nothing to ask about without a PR.
+    let other = one_turn(&f, &core, &project, "Something else").await;
+    core.refresh_space_pr(&other.id).await.unwrap();
+}
+
 // ── Continue after merge ──────────────────────────────────────────────────
 
 /// After a Continue, the next PR is about the turns since, not the goal.
