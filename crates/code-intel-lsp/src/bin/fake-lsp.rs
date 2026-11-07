@@ -346,6 +346,11 @@ impl Server {
                 json!({"contents": {"kind": "markdown", "value": report.to_string()}})
             }
             "textDocument/diagnostic" => {
+                // Strict like tsgo: an unset option is left out, never null.
+                assert!(
+                    p.get("identifier").is_none() && p.get("previousResultId").is_none(),
+                    "null fields in {p}"
+                );
                 let text = self.docs.get(&uri).cloned().unwrap_or_default();
                 json!({"kind": "full", "items": self.diagnostics(&text)})
             }

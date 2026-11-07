@@ -905,18 +905,12 @@ impl LspSession {
     /// `textDocument/diagnostic` into the cache; an "unchanged" report keeps
     /// the cached one.
     async fn pull_diagnostics(&self, abs: &Path) -> CodeIntelResult<()> {
-        let params = lsp_types::DocumentDiagnosticParams {
+        let params = PullDiagnosticsParams {
             text_document: lsp_types::TextDocumentIdentifier {
                 uri: text::lsp_uri(abs),
             },
-            identifier: None,
-            previous_result_id: None,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
         };
-        let report = self
-            .call::<lsp_types::request::DocumentDiagnosticRequest>(params)
-            .await?;
+        let report = self.call::<PullDiagnostics>(params).await?;
         if let lsp_types::DocumentDiagnosticReportResult::Report(
             lsp_types::DocumentDiagnosticReport::Full(full),
         ) = report
@@ -1291,6 +1285,23 @@ fn workspace_edits(
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `textDocument/diagnostic`, with only the field every server needs. The
+/// crate's own params serialize their unset options as `null`, which tsgo
+/// refuses: "null value is not allowed for field identifier".
+enum PullDiagnostics {}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PullDiagnosticsParams {
+    text_document: lsp_types::TextDocumentIdentifier,
+}
+
+impl lsp_types::request::Request for PullDiagnostics {
+    type Params = PullDiagnosticsParams;
+    type Result = lsp_types::DocumentDiagnosticReportResult;
+    const METHOD: &'static str = "textDocument/diagnostic";
 }
 
 #[cfg(test)]
