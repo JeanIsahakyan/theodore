@@ -170,6 +170,22 @@ describe('the space chat', () => {
     expect(agent.querySelector('.message-actions')).not.toBeNull();
   });
 
+  it('a turn you stopped is a quiet "Stopped", not a failure card', async () => {
+    const store = await render(space());
+    act(() =>
+      store.sync.pool.merge('chat_message', 'a1', {
+        text: 'I found the cause.',
+        failed: 'stopped',
+        duration_ms: 1000,
+      }),
+    );
+    await settle();
+    const agent = m!.host.querySelector('.chat-message[data-msg="a1"]')!;
+    expect(agent.querySelector('.agent-failed')).toBeNull();
+    expect(agent.querySelector('.agent-stopped')?.textContent).toBe('Stopped');
+    expect(agent.textContent).toContain('I found the cause.');
+  });
+
   it('a running turn: an agent bubble in the log, Stop in the composer', async () => {
     await render(space({ status: 'running', run: 'space:s1:u2' }));
     expect(

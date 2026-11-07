@@ -261,6 +261,9 @@ export function UserBubble({
   );
 }
 
+/** `ChatMessage.failed` of a run you stopped (the core's "stopped"). */
+const STOPPED = 'stopped';
+
 /** One stored message. Yours: a `UserBubble`. The agent's: its tag, a space
  *  turn's activity, the markdown reply, its chips and files, `after` (a turn's
  *  check), then how long it took, copy / vote and the files it changed. A run
@@ -322,7 +325,10 @@ export function ChatMessage({
             <Md text={m.text} />
           </div>
         )}
-        {m.failed ? (
+        {m.failed === STOPPED ? (
+          // You stopped it: no failure, just where it ended.
+          <span className="agent-stopped text-xs text-muted">Stopped</span>
+        ) : m.failed ? (
           <Alert status="danger" className="agent-failed">
             <Alert.Indicator />
             <Alert.Content>
