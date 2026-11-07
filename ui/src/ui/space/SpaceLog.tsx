@@ -5,7 +5,7 @@
 import { memo, useCallback, type ReactNode, type Ref } from 'react';
 import { Pencil } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
-import type { ChatMessage, Space, SpaceConfigView } from '../../gen/contract';
+import type { ChatMessage, Space } from '../../gen/contract';
 import { useRootStore } from '../../stores/context';
 import type { SpaceSend } from '../../stores/EphemeralStore';
 import { ChatEmpty, ChatLive, ChatLog } from '../ChatTurn';
@@ -16,7 +16,6 @@ import {
   type ChatRow,
 } from './chatTurns';
 import { runsByReply, setupView } from './commands';
-import { SpaceSetupAssistHint } from './ConfigSection';
 import { QueuedMessages } from './QueuedMessages';
 import { splitQueue } from './queue';
 import { sendingMessage } from './send';
@@ -31,12 +30,10 @@ const isPinned = (row: ChatRow) => row.kind === 'head' || row.kind === 'tail';
 
 export const SpaceLog = observer(function SpaceLog({
   space,
-  config,
   onRevise,
   control,
 }: {
   space: Space;
-  config: SpaceConfigView | null;
   onRevise: () => void;
   control?: Ref<VirtualChatControl>;
 }) {
@@ -86,14 +83,11 @@ export const SpaceLog = observer(function SpaceLog({
       <ChatLog scope={space.id}>
         {head}
         {setup !== 'stage' && (
-          <>
-            <ChatEmpty
-              icon={<Pencil />}
-              title="Tell the agent what to change"
-              hint="It works in its own worktree; your checkout is never touched."
-            />
-            <SpaceSetupAssistHint space={space} config={config} />
-          </>
+          <ChatEmpty
+            icon={<Pencil />}
+            title="Tell the agent what to change"
+            hint="It works in its own worktree; your checkout is never touched."
+          />
         )}
         {tail}
       </ChatLog>

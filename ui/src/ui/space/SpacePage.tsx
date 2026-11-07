@@ -74,7 +74,7 @@ import { useProjectIssues } from './useProjectIssues';
 import { parseIssueRef, startFooter, type StartKind } from './newSpaceStart';
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
-import { GlobalConfigSection } from './ConfigSection';
+import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
@@ -915,12 +915,12 @@ export const SpaceChat = observer(function SpaceChat({
   const log = useRef<VirtualChatControl | null>(null);
   return (
     <>
-      <SpaceLog
-        space={space}
-        config={config}
-        onRevise={onRevise}
-        control={log}
-      />
+      <SpaceLog space={space} onRevise={onRevise} control={log} />
+      <div className="px-4">
+        <div className="mx-auto w-full max-w-[860px]">
+          <SpaceSetupAssistHint space={space} config={config} />
+        </div>
+      </div>
       <SpaceComposer space={space} handle={handle} revise={revise} log={log} />
     </>
   );

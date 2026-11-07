@@ -227,8 +227,9 @@ archive ─▶ stop run ─▶ checkpoint ─▶ archive ─▶ remove worktree 
   **Fix with agent**. Notes from copying (a missing file, a path outside the
   project) are shown with it.
 - **No commands at all.** A project whose `spaces:` section sets none of
-  `setup` / `run` / `check` / `archive` shows **Set up with agent** instead:
-  a turn asking the space's agent to look at the repo (package manager,
+  `setup` / `run` / `check` / `archive` shows **Set up with agent** in a
+  quiet row above the composer (not while a turn runs; ✕ hides it for the
+  project): a turn asking the space's agent to look at the repo (package manager,
   lockfiles, README, Makefile/justfile, docker compose, existing scripts)
   and write the section. The agent edits `.theodore/config.yaml` with its
   normal tools, in its own worktree, like any other change — so whatever it
