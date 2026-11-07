@@ -687,6 +687,37 @@ async fn a_switch_keeps_the_rest_of_the_local_file_and_refuses_what_it_cant_edit
     assert!(matches!(err, AppError::NotFound(_)), "{err}");
 }
 
+/// A repo that commits its local file: that file is read as the repo's,
+/// whose `lsp` keys are ignored, so a switch written there would change a
+/// tracked file and do nothing. Refused, pointing at the global file.
+#[tokio::test]
+async fn a_switch_refuses_a_committed_local_file() {
+    let e = code_env().await;
+    let folder = PathBuf::from(e.project.path.clone().unwrap());
+    let local = folder.join(".theodore/config.local.yaml");
+    let committed = "spaces:\n  ports: 2\n";
+    e.repo_file(".theodore/config.local.yaml", committed);
+    e.f.git
+        .tracked
+        .lock()
+        .unwrap()
+        .push(".theodore/config.local.yaml".into());
+    let err = e
+        .core
+        .code_intel_set_lsp(set_lsp(&e.project.id, SPACES, false))
+        .await
+        .unwrap_err();
+    let global = e.f.data_dir.path().join("config.yaml");
+    let msg = err.to_string();
+    assert!(matches!(err, AppError::Invalid(_)), "{err}");
+    assert!(msg.contains("commits .theodore/config.local.yaml"), "{msg}");
+    assert!(msg.contains("code_intel.lsp.spaces"), "{msg}");
+    assert!(msg.contains(&global.display().to_string()), "{msg}");
+    assert_eq!(std::fs::read_to_string(&local).unwrap(), committed);
+    assert!(!global.exists(), "nothing written for you");
+    assert!(e.f.git.excluded.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_host_projects_switch_writes_its_local_file_in_the_data_dir() {
     let f = fixtures();

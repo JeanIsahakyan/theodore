@@ -684,7 +684,8 @@ impl Core {
     /// default under it. Worktrees of the project open now follow at once.
     ///
     /// ```text
-    /// switch ─▶ local file: line edit (comments kept) ─▶ checked ─▶ written
+    /// switch ─▶ the folder commits its local file? ─▶ refused: set it in the global file
+    ///    └─▶ local file: line edit (comments kept) ─▶ checked ─▶ written
     ///              │       └─ a shape a line edit can't handle ─▶ refused, nothing written
     ///              └─▶ open worktrees whose answer changed ─▶ servers stop / start
     /// ```
@@ -700,6 +701,25 @@ impl Core {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("project {}", req.project)))?;
         let folder = project.path.as_deref().map(Path::new);
+        if let Some(folder) = folder
+            && self
+                .0
+                .deps
+                .git
+                .is_tracked(folder, crate::config::LOCAL_FILE)
+                .await
+                .unwrap_or(false)
+        {
+            // Read as the repo's file (`folder_local_layer`), whose `lsp`
+            // is ignored: writing it would dirty the checkout for nothing.
+            return Err(AppError::Invalid(format!(
+                "this repo commits {}, so Theodore reads it as the repo's config and \
+                 ignores code_intel.lsp there. Set code_intel.lsp.{leaf} in your global \
+                 config ({}) instead",
+                crate::config::LOCAL_FILE,
+                crate::config::global_path(&self.0.deps.data_dir).display()
+            )));
+        }
         let path = match folder {
             Some(folder) => folder.join(crate::config::LOCAL_FILE),
             None => crate::config::host_local_path(&self.0.deps.data_dir, &project.repo),

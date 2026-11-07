@@ -309,7 +309,9 @@ code_intel:
   authors' code. Each project's switches (workspace switcher → Project
   settings → Languages) write its local file, ignored through the checkout's own
   `info/exclude` so the checkout stays clean; unset there, your global file
-  applies.
+  applies. A repo that commits `.theodore/config.local.yaml` has no local
+  layer (the file counts as the repo's, above): the switches refuse, write
+  nothing, and say to set `code_intel.lsp.*` in your global file.
 
 - Read like the rest of the repo layer: at the base, never at a PR's head,
   so a PR can't change what gets downloaded or run.

@@ -669,6 +669,10 @@ C++  · 3 files      Grammar Installed   clangd Downloading
   the rest of the file, comments included. A shape a line edit can't
   handle (a flow mapping, a dotted key) is refused with the file untouched:
   set it in the config editor. Never the repo's file (§8).
+- A repo that commits its `.theodore/config.local.yaml` makes that file the
+  repo's (docs/config.md), whose `lsp` keys are ignored: the switch is
+  refused with the file untouched, and the toast says to set
+  `code_intel.lsp.<scope>` in your global file (its path).
 - Each language: grammar, server (found / downloaded / not available / what
   it needs), run state, index progress; Install, Decline (a missing server) and
   Remove (what Theodore downloaded, §5.1.1; asks first, and shows the
