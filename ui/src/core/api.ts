@@ -127,6 +127,10 @@ export function newOpId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** The host can't do this at all (no issues on it, say): said in place,
+ *  not toasted. */
+export const HOST_UNSUPPORTED = 'host.unsupported';
+
 /** A command rejected; carries the core's error code, not just a message. */
 export class CommandFailure extends Error {
   readonly code: string;
@@ -164,8 +168,9 @@ export function setAccountRequiredHandler(fn: () => void): void {
 async function call<T>(
   cmd: string,
   args?: Record<string, unknown>,
-  /** The caller shows the failure itself (the sign-in dialog): no toast. */
-  quiet = false,
+  /** The caller shows the failure itself (the sign-in dialog): no toast.
+   *  A function: only the failures it picks are the caller's to show. */
+  quiet: boolean | ((f: CommandFailure) => boolean) = false,
 ): Promise<T> {
   const opId = newOpId();
   try {
@@ -174,7 +179,8 @@ async function call<T>(
     if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
       const failure = new CommandFailure(e as CommandError, opId);
       if (failure.code === ACCOUNT_REQUIRED) onAccountRequired?.();
-      else if (!quiet) onFailure?.(failure);
+      else if (!(typeof quiet === 'function' ? quiet(failure) : quiet))
+        onFailure?.(failure);
       throw failure;
     }
     throw e;
@@ -293,8 +299,10 @@ export const api = {
   sandboxFireEvent: (id: string) =>
     call<SandboxStatus>('sandbox_fire_event', { id }),
   // ── spaces (docs/spaces.md; hidden behind build mode) ──
+  /** A host without issues turns "start from #12" away with
+   *  `host.unsupported`: New space says that in the issue field. */
   createSpace: (req: CreateSpaceRequest) =>
-    call<Space>('create_space', { req }),
+    call<Space>('create_space', { req }, (f) => f.code === HOST_UNSUPPORTED),
   /** New space's "From an issue" picker. `quiet`: the picker says what
    *  failed itself (a host without issues). */
   projectIssues: (req: ProjectIssuesRequest, quiet = false) =>

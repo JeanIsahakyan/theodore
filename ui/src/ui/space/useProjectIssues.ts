@@ -6,7 +6,7 @@
  *  other failure leaves the list empty; a typed `#n` or URL still works. */
 import { useEffect, useState } from 'react';
 import type { SpaceIssue } from '../../gen/contract';
-import { api, CommandFailure } from '../../core/api';
+import { api, CommandFailure, HOST_UNSUPPORTED } from '../../core/api';
 
 export type ProjectIssues = {
   issues: SpaceIssue[];
@@ -36,7 +36,7 @@ export function useProjectIssues(project: string | null): ProjectIssues {
           got: {
             issues: [],
             unsupported:
-              e instanceof CommandFailure && e.code === 'host.unsupported',
+              e instanceof CommandFailure && e.code === HOST_UNSUPPORTED,
           },
         });
       });

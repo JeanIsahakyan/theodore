@@ -47,7 +47,7 @@ import type {
   SpaceMode,
   SpaceStart,
 } from '../../gen/contract';
-import { api, CommandFailure } from '../../core/api';
+import { api, CommandFailure, HOST_UNSUPPORTED } from '../../core/api';
 import { STORAGE_NS } from '../../stores/UiStore';
 import { ALL } from '../../core/workspaces';
 import { FEATURES } from '../../features';
@@ -1235,9 +1235,14 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   const [issueId, setIssueId] = useState<string | null>(null);
   const [startText, setStartText] = useState('');
   const chosen = ready.find((p) => p.id === project);
-  const { issues, unsupported: noIssues } = useProjectIssues(
+  const { issues, unsupported: pickerNoIssues } = useProjectIssues(
     startKind === 'issue' ? project : null,
   );
+  // Create with a typed `#12` can beat the picker's answer: the host's
+  // "no issues here" then comes back from create_space instead.
+  const [noIssuesFor, setNoIssuesFor] = useState<string | null>(null);
+  const noIssues =
+    pickerNoIssues || (project !== null && noIssuesFor === project);
   // A local folder has no host issues to start from.
   const kindItems = START_KIND_ITEMS.filter(
     (i) => i.id !== 'issue' || chosen?.repo.host !== 'local',
@@ -1287,8 +1292,10 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
       });
       ui.closeModal();
       ui.go({ name: 'space', id: s.id });
-    } catch {
-      // toasted by api.ts
+    } catch (e) {
+      // Anything else is toasted by api.ts.
+      if (e instanceof CommandFailure && e.code === HOST_UNSUPPORTED)
+        setNoIssuesFor(project);
     } finally {
       setBusy(false);
     }

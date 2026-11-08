@@ -300,6 +300,9 @@ fn err(e: AppError) -> CommandError {
         AppError::Git(_) => "git",
         AppError::Host(theodore_ports::HostError::Auth) => "auth",
         AppError::Host(theodore_ports::HostError::RateLimited { .. }) => "rate_limited",
+        // This host can't do that at all (issues on a local folder or a
+        // host without them): the UI says so in place, never a toast.
+        AppError::Host(theodore_ports::HostError::Unsupported(_)) => "host.unsupported",
         AppError::Host(_) => "host",
         AppError::Grouper(_) => "grouping",
         AppError::NotFound(_) => "not_found",
@@ -1128,6 +1131,16 @@ mod tests {
         let e = err(AppError::AccountRequired);
         assert_eq!(e.code, "account_required");
         assert_eq!(e.message, "Sign in to your Theodore account to continue");
+    }
+
+    #[test]
+    fn an_unsupported_host_call_has_its_own_code() {
+        // New space's issue picker says "no issues here" on this code
+        // instead of toasting it.
+        let e = err(AppError::Host(HostError::Unsupported("open_issues")));
+        assert_eq!(e.code, "host.unsupported");
+        let other = err(AppError::Host(HostError::Server("502".into())));
+        assert_eq!(other.code, "host");
     }
 
     #[test]
