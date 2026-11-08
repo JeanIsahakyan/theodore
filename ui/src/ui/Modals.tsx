@@ -40,8 +40,8 @@ const SubmitReviewModal = observer(function SubmitReviewModal() {
   const summary = store.models.prSummaries.get(pr);
   const local = summary?.pr.repo.host === 'local';
   // Your own PR takes no verdict from you on the host: Comment only.
-  const mine =
-    !!summary && store.ephemeral.viewer?.login === summary.author.login;
+  const viewer = store.ephemeral.viewer?.login;
+  const mine = !!viewer && viewer === summary?.author?.login;
   const events = mine
     ? EVENT_OPTS.filter(([v]) => v === 'COMMENT')
     : EVENT_OPTS;
