@@ -170,6 +170,8 @@ const ToolRow = memo(function ToolRow({
           toggle();
         }}
         onKeyDown={(e) => {
+          // A key on the file chip inside is the chip's, not the row's.
+          if (e.target !== e.currentTarget) return;
           if (e.key !== 'Enter' && e.key !== ' ') return;
           e.preventDefault();
           toggle();
