@@ -129,9 +129,11 @@ export function gatesFor(
           ? 'Draft — needs "Ready for review"'
           : 'Open for review',
     });
+    // A running check isn't a pass: the footer must not say "All checks
+    // passed." while one runs. It holds the merge only if the host says so.
     gates.push({
-      ok: failing === 0,
-      warn: failing > 0 && hostMerges,
+      ok: failing === 0 && pending === 0,
+      warn: (failing > 0 || pending > 0) && hostMerges,
       label: failing
         ? `${failing} ${failing === 1 ? 'check' : 'checks'} failing`
         : pending
