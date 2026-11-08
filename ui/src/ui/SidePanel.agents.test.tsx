@@ -76,10 +76,6 @@ const chip = () =>
   m!.host.querySelector<HTMLButtonElement>(
     '.chat-input button[aria-label="Model"]',
   );
-const skillAgents = () =>
-  m!.host.querySelector<HTMLButtonElement>(
-    '.chat-input button[aria-label="Run skills on"]',
-  );
 const item = (name: string) =>
   [...document.querySelectorAll('[role^="menuitem"]')].find((el) =>
     el.textContent?.trim().startsWith(name),
@@ -98,30 +94,25 @@ async function send(text: string) {
 }
 
 describe('the AI panel agent chip', () => {
-  it('one enabled agent: the chip with its model and effort, no multi picker', async () => {
+  it('one enabled agent: the chip with its model and effort', async () => {
     await open(['claude']);
     expect(chip()?.textContent).toBe('Opus 5.5 Medium');
-    expect(skillAgents()).toBeNull();
   });
 
-  it('two enabled agents: the chip, plus the picker for skills', async () => {
+  it('no second picker for skills, however many agents are enabled', async () => {
     await open(['claude', 'codex']);
     expect(chip()?.textContent).toBe('Opus 5.5 Medium');
-    // As before: skills run on every enabled agent until you narrow it.
-    expect(skillAgents()?.textContent).toBe('Skills on: Claude + Codex');
-    await click(skillAgents());
-    await settle();
-    await click(item('Codex')!);
-    await settle();
-    expect(skillAgents()?.textContent).toBe('Skills on: Claude');
+    expect(m!.host.querySelector('.skill-agents')).toBeNull();
   });
 
-  it('a disabled agent is not offered, so one left means no picker', async () => {
+  it('a disabled agent is not offered', async () => {
     await open(['claude', 'codex'], (s) =>
       setSetting(s, 'user', 'agents.codex.enabled', false),
     );
     expect(chip()).not.toBeNull();
-    expect(skillAgents()).toBeNull();
+    await click(chip());
+    await settle();
+    expect(item('GPT-6-Sol')).toBeUndefined();
   });
 
   it('asks go to the agent the chip shows', async () => {
@@ -140,8 +131,6 @@ describe('the AI panel agent chip', () => {
     expect(agentModel(store, 'codex')).toBe('gpt-6-sol');
     await send('second?');
     expect(asked()).toMatchObject([{ agent: 'codex', question: 'second?' }]);
-    // The chat agent runs skills too, and leads the list.
-    expect(skillAgents()?.textContent).toBe('Skills on: Codex + Claude');
   });
 
   it('⌘⇧/ in the box cycles the effort, as in a space', async () => {

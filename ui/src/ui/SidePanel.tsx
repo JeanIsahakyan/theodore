@@ -74,7 +74,6 @@ import { Md, rich } from '../highlight';
 import { latinKey } from './keys';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
-import { SkillAgentsMenu } from './SkillAgentsMenu';
 import { matchSkills } from './SkillMenu';
 import { reportChat, reportCommand } from './reportChat';
 import { useAttachments } from './attachments';
@@ -737,12 +736,12 @@ function stopPendingAsk(store: RootStore, pr: PrId, pending: ChatPending) {
 function Chat({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [skillAgents, setSkillAgents] = useState<AgentId[]>(AGENTS);
+  // The agent the panel talks to, and the one skills run on.
+  const [agent, setAgent] = useState<AgentId | null>(null);
   const [installed, setInstalled] = useState<AgentId[] | null>(null);
   // Default to the agents actually installed on this machine, minus any the
   // user has disabled (plan "enable/disable agents": hidden from the chat
-  // chip, skipped for skills). The first one is the agent the panel talks
-  // to; the rest are the others skills also run on.
+  // chip). The first one is the agent the panel starts on.
   useEffect(() => {
     let live = true;
     void api
@@ -756,7 +755,7 @@ function Chat({ pr }: { pr: PrId }) {
           .sort((a, b) => Number(b === first) - Number(a === first));
         if (!live) return;
         setInstalled(ids);
-        if (ids.length > 0) setSkillAgents(ids);
+        if (ids.length > 0) setAgent(ids[0]!);
       })
       .catch(() => {});
     return () => {
@@ -775,11 +774,11 @@ function Chat({ pr }: { pr: PrId }) {
   const clearText = useRef<(() => void) | null>(null);
   const runMatch = useCallback(
     (s: SkillInfo) => {
-      void runSkill(store, pr, s.id, skillAgents);
+      void runSkill(store, pr, s.id, agent ? [agent] : []);
       clearText.current?.();
       log.current?.jumpToLatest();
     },
-    [store, pr, skillAgents],
+    [store, pr, agent],
   );
 
   return (
@@ -801,8 +800,8 @@ function Chat({ pr }: { pr: PrId }) {
       <AiComposer
         pr={pr}
         skills={skills}
-        skillAgents={skillAgents}
-        onSkillAgents={setSkillAgents}
+        agent={agent}
+        onAgent={setAgent}
         installed={installed}
         onPickSkill={runMatch}
         onManage={() => setManaging(true)}
@@ -1079,8 +1078,8 @@ const AiTail = observer(function AiTail({
 const AiComposer = observer(function AiComposer({
   pr,
   skills,
-  skillAgents,
-  onSkillAgents,
+  agent,
+  onAgent,
   installed,
   onPickSkill,
   onManage,
@@ -1089,8 +1088,8 @@ const AiComposer = observer(function AiComposer({
 }: {
   pr: PrId;
   skills: SkillInfo[];
-  skillAgents: AgentId[];
-  onSkillAgents: (agents: AgentId[]) => void;
+  agent: AgentId | null;
+  onAgent: (agent: AgentId) => void;
   installed: AgentId[] | null;
   onPickSkill: (s: SkillInfo) => void;
   onManage: () => void;
@@ -1104,17 +1103,10 @@ const AiComposer = observer(function AiComposer({
   // Only agents installed on this computer and not disabled in Settings →
   // Agents are offered.
   const enabled = (installed ?? []).filter((a) => isAgentEnabled(store, a));
-  // The agent the panel talks to, as the chip shows it: the first of the
-  // chosen ones that is offered. Its model and effort are the agent's
-  // settings, which core reads when it asks.
+  // The agent the panel talks to, as the chip shows it. Its model and effort
+  // are the agent's settings, which core reads when it asks.
   const chatAgent =
-    (skillAgents[0] && enabled.includes(skillAgents[0])
-      ? skillAgents[0]
-      : enabled[0]) ??
-    skillAgents[0] ??
-    null;
-  const pickChat = (a: AgentId) =>
-    onSkillAgents([a, ...skillAgents.filter((x) => x !== a)]);
+    (agent && enabled.includes(agent) ? agent : enabled[0]) ?? agent;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     clearText.current = () => setText('');
@@ -1197,7 +1189,7 @@ const AiComposer = observer(function AiComposer({
       const name = t.slice(1).split(' ')[0] ?? '';
       const skill =
         skills.find((s) => s.id === name) ?? matchSkills(skills, t)?.[0];
-      void runSkill(store, pr, skill?.id ?? name, skillAgents);
+      void runSkill(store, pr, skill?.id ?? name, chatAgent ? [chatAgent] : []);
     } else if (lineRef) {
       // About a line: its own status on the line, its own bubble here.
       if (lineAskRunning(store, pr, lineRef)) {
@@ -1251,9 +1243,6 @@ const AiComposer = observer(function AiComposer({
         onPickSkill={onPickSkill}
         skillFooter={
           <div className="flex items-center gap-1 ps-3 pt-1 text-xs text-muted">
-            <span className="min-w-0 truncate">
-              Runs on {skillAgents.join(' + ')}
-            </span>
             <Button
               size="sm"
               variant="ghost"
@@ -1284,19 +1273,7 @@ const AiComposer = observer(function AiComposer({
         onEmptyBackspace={
           lineRef ? () => store.ephemeral.clearLineRef(pr) : undefined
         }
-        chips={
-          <>
-            <AgentChip value={chatAgent} onChange={pickChat} />
-            {chatAgent && (
-              <SkillAgentsMenu
-                agents={enabled}
-                primary={chatAgent}
-                selected={skillAgents}
-                onSelect={onSkillAgents}
-              />
-            )}
-          </>
-        }
+        chips={<AgentChip value={chatAgent} onChange={onAgent} />}
       />
       <div className="flex items-center gap-2 px-2 text-xs text-muted">
         <span className="min-w-0 truncate">The agent can be wrong</span>

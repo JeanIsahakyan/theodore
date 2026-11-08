@@ -993,10 +993,7 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
 - The AI panel's box has the same agent chip as a space's: the agent the panel
   talks to, with its model and effort (⌘⇧/ cycles the effort). Questions go to
   that agent, which starts as `agents.chat`; model and effort are the agent's
-  `agents.<id>.*` settings, shared with spaces. When more than one agent is
-  installed and enabled, "Skills on: …" beside the chip picks the agents a
-  skill runs on (all of them by default; the chat agent always included). With
-  one, it is not shown.
+  `agents.<id>.*` settings, shared with spaces. Skills run on that agent too.
 - Chat history (the panel's and a space's) names the agent on a reply only
   when the conversation has replies from more than one agent; with one, no
   reply carries a tag, whichever agent it is.
