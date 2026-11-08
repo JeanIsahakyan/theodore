@@ -7,11 +7,30 @@
  */
 
 .pn {
-  --pn-rim: #0c5bc0; /* rim and bridge */
-  --pn-glass-top: #6fb4f5; /* glass, top of the gradient */
-  --pn-glass-bottom: #0c5bc0; /* glass, bottom of the gradient */
+  /* The accent follows the build, like the logo (styles.css): one colour
+     drives the glass, the rim and the arcs. */
+  --pn-accent: var(--accent, #0485f7);
+  --pn-rim: color-mix(
+    in oklab,
+    var(--pn-accent) 78%,
+    black
+  ); /* rim and bridge */
+  --pn-glass-top: color-mix(
+    in oklab,
+    var(--pn-accent) 62%,
+    white
+  ); /* glass, top of the gradient */
+  --pn-glass-bottom: color-mix(
+    in oklab,
+    var(--pn-accent) 78%,
+    black
+  ); /* glass, bottom of the gradient */
   --pn-stripe: #ffffff; /* stripes, lines, sweep */
-  --pn-spin: #082a5c; /* loading arcs */
+  --pn-spin: color-mix(
+    in oklab,
+    var(--pn-accent) 40%,
+    black
+  ); /* loading arcs */
   --pn-error: var(--danger, #ff383c); /* error flash: the theme's danger */
 
   display: inline-block;
@@ -22,7 +41,7 @@
 
 .dark .pn,
 [data-theme='dark'] .pn {
-  --pn-rim: #9ccbff;
+  --pn-rim: color-mix(in oklab, var(--pn-accent) 55%, white);
   --pn-spin: #ffffff;
 }
 

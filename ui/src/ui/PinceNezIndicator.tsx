@@ -2,7 +2,7 @@ import { useId } from 'react';
 import './pince-nez-indicator.css';
 
 /**
- * The agent's animated turn indicator, without eyes: blue glass lenses, a rim
+ * The agent's animated turn indicator, without eyes: accent-tinted glass lenses, a rim
  * and a bridge, no plate. The state is the animation of the glass itself.
  */
 
