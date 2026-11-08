@@ -2,7 +2,13 @@
  *  and the merge dialog both recover from a host having trouble on their
  *  own, and say what's wrong in a sentence rather than the core's words. */
 import { useEffect, useState } from 'react';
-import type { HostKind, MergeInfo, PrId } from '../gen/contract';
+import type {
+  Check,
+  HostKind,
+  MergeInfo,
+  PrId,
+  PrSummary,
+} from '../gen/contract';
 import { api, CommandFailure } from '../core/api';
 
 /** How long before asking `merge_info` again after `attempt` failed (or
@@ -17,8 +23,24 @@ export type MergeInfoState = {
   error: unknown;
 };
 
+/** What `merge_info` follows (`version` below): the PR row's head and
+ *  update time, and its checks — the row's rollup and each check of the
+ *  detail. A check finishing changes neither the head nor the update
+ *  time, yet it's what turns "Some checks aren't passing" into clean; the
+ *  checks already arrive with the PR's refreshes, so no polling of its own. */
+export function mergeInfoVersion(
+  summary: Pick<PrSummary, 'head_sha' | 'updated_at' | 'checks'> | undefined,
+  checks: readonly Pick<Check, 'id' | 'status'>[] | undefined,
+): string {
+  const each = (checks ?? [])
+    .map((c) => `${c.id}=${c.status}`)
+    .sort()
+    .join(',');
+  return `${summary?.head_sha}:${summary?.updated_at}:${summary?.checks}:${each}`;
+}
+
 /** `merge_info` of an open PR, asked again whenever `version` changes
- *  (the PR row's head and update time); the last answer stays meanwhile.
+ *  (`mergeInfoVersion`); the last answer stays meanwhile.
  *  A failed ask (a host having trouble) or an `unknown` answer is asked
  *  again on a backoff, so "Checking…" doesn't stay until you leave.
  *  Quiet: the caller says what's unknown (`mergeInfoProblem`). */

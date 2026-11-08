@@ -536,7 +536,9 @@ though the PR itself didn't change): every 10 s while
 its checks run, every 30 s otherwise, never once it merged or closed. Its
 review tab needn't be open for a failure to show. The Merge line agrees with
 Merge: a draft or conflicts on the PR row say so even while `merge_info`
-still says clean.
+still says clean. `merge_info` is asked again when the PR's head, update
+time or checks change (a check finishing moves only the last), so the line
+and the merge dialog follow the checks without polling of their own.
 
 **Merge** (`merge_space`, through `merge_pr` and the outbox):
 

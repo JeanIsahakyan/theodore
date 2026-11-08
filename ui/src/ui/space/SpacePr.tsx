@@ -31,7 +31,7 @@ import {
   MergeDialog,
   STATE_LABEL,
 } from '../Merge';
-import { useMergeInfo } from '../mergeInfo';
+import { mergeInfoVersion, useMergeInfo } from '../mergeInfo';
 import { Threads } from '../SidePanel';
 import {
   autoArchiveDays,
@@ -222,14 +222,14 @@ function StatusRow({
 
 /** Review decision, mergeable state and conflicts, then every check
  *  (Re-run on a failed one). */
-const SpaceChecks = observer(function SpaceChecks({ pr }: { pr: PrId }) {
+export const SpaceChecks = observer(function SpaceChecks({ pr }: { pr: PrId }) {
   const store = useRootStore();
   const summary = store.models.prSummaries.get(pr);
   const detail = store.models.prDetails.get(pr);
   const open = isOpen(summary);
   const info = useMergeInfo(
     open ? pr : null,
-    `${summary?.head_sha}:${summary?.updated_at}`,
+    mergeInfoVersion(summary, detail?.checks),
   );
   const conflicts = useConflicts(
     pr,
@@ -312,10 +312,11 @@ export const SpaceMergeButton = observer(function SpaceMergeButton({
   const store = useRootStore();
   const pr = space.pr ?? null;
   const summary = pr ? store.models.prSummaries.get(pr) : undefined;
+  const detail = pr ? store.models.prDetails.get(pr) : undefined;
   const open = isOpen(summary);
   const info = useMergeInfo(
     open ? pr : null,
-    `${summary?.head_sha}:${summary?.updated_at}`,
+    mergeInfoVersion(summary, detail?.checks),
   );
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState(false);
