@@ -19,6 +19,7 @@ import {
   userScroll,
 } from '../../test/chatLayout';
 import { spaceChatKey } from './spaces';
+import { resetAgentModels } from '../useAgentModels';
 
 Element.prototype.scrollIntoView ??= function () {};
 
@@ -68,9 +69,10 @@ afterEach(() => {
   m = null;
 });
 
-async function render(s: Space) {
+async function render(s: Space, setup?: (t: FakeTransport) => void) {
   transport = new FakeTransport();
   transport.onCall('detect_agents', () => []);
+  setup?.(transport);
   transport.onCall('space_skills', () => []);
   transport.onCall('space_stop', () => null);
   transport.onCall('space_send', () => 'stored');
@@ -137,6 +139,50 @@ describe('sending', () => {
     } finally {
       chatLayout.rowHeight = 100;
     }
+  });
+});
+
+describe("a space's own settings", () => {
+  it('a blank space puts the cursor in the composer', async () => {
+    await render(space({ blank: true, title: 'New space' }));
+    expect(document.activeElement?.tagName).toBe('TEXTAREA');
+  });
+
+  it("⌘⇧/ writes this space's effort, not the setting", async () => {
+    resetAgentModels();
+    await render(space({ effort: 'high' }), (t) => {
+      t.onCall('detect_agents', () => [
+        { id: 'claude', installed: true, version: '1', path: '/bin/claude' },
+      ]);
+      t.onCall('agent_models', () => [
+        {
+          id: 'opus',
+          label: 'Opus',
+          description: null,
+          efforts: ['low', 'high', 'max'],
+          default_effort: 'high',
+          older: false,
+        },
+      ]);
+      t.onCall('set_space_settings', () => null);
+    });
+    await settle();
+    m!.host.querySelector('textarea')!.focus();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          code: 'Slash',
+          metaKey: true,
+          shiftKey: true,
+        }),
+      );
+    });
+    await settle();
+    const sent = transport.calls.filter((c) => c.cmd === 'set_space_settings');
+    expect(sent.map((c) => c.args?.req)).toEqual([
+      { space: 's1', agent: 'claude', effort: 'max' },
+    ]);
+    expect(transport.calls.some((c) => c.cmd === 'transact')).toBe(false);
   });
 });
 

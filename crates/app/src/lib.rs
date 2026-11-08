@@ -28,6 +28,8 @@ mod account_gate_tests;
 #[cfg(test)]
 mod account_tests;
 #[cfg(test)]
+mod activity_tests;
+#[cfg(test)]
 mod attachments_tests;
 #[cfg(test)]
 mod code_intel_tests;
@@ -39,6 +41,8 @@ mod git_integration_tests;
 mod config_editor_tests;
 #[cfg(test)]
 mod diff_media_integration_tests;
+#[cfg(test)]
+mod file_preview_tests;
 #[cfg(test)]
 mod interdiff_tests;
 #[cfg(test)]

@@ -102,6 +102,8 @@ async fn two_turns(f: &Fixtures) -> (Core, Receivers, Space) {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -115,6 +117,7 @@ async fn two_turns(f: &Fixtures) -> (Core, Receivers, Space) {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -135,6 +138,77 @@ fn about(chat: PrId, message: Option<String>) -> DraftReportRequest {
 
 fn row<'a>(rows: &'a [(String, String)], k: &str) -> Option<&'a str> {
     rows.iter().find(|(l, _)| l == k).map(|(_, v)| v.as_str())
+}
+
+/// A tool call's stored input and output open in its row, and never reach a
+/// report: that stays one line per call.
+#[tokio::test]
+async fn a_report_stays_one_line_per_call_however_much_a_call_stored() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let marker = "PAYLOAD-MARKER";
+    f.agents.push_script(vec![
+        AgentEvent::ToolCall {
+            id: "t1".into(),
+            name: "Bash".into(),
+            input: json!({"command": format!("cargo test\necho {marker}")}),
+        },
+        AgentEvent::ToolResult {
+            id: "t1".into(),
+            ok: true,
+            output: format!("output {marker}"),
+        },
+        AgentEvent::Done {
+            final_text: "done".into(),
+            usage: Usage::default(),
+        },
+    ]);
+    f.git.push_checkpoint(Sha::new("turn1"));
+    let s = core
+        .create_space(CreateSpaceRequest {
+            project: project.id.clone(),
+            goal: "First".into(),
+            name: None,
+            branch: None,
+            base: None,
+            agent: None,
+            model: None,
+            start_from: None,
+            effort: None,
+            mode: None,
+        })
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+
+    let chat = transcript(&f, &s.id);
+    let reply = chat.iter().find(|m| m.text == "done").unwrap();
+    let run = reply.run.clone().unwrap();
+    let stored = core
+        .tool_payload(run, "t1".into())
+        .await
+        .unwrap()
+        .expect("the call's payload is stored");
+    assert!(
+        stored.result.unwrap().output.unwrap().text.contains(marker),
+        "the row has it"
+    );
+    assert!(
+        !format!("{:?}", reply.activity).contains(marker),
+        "and the synced steps don't: {:?}",
+        reply.activity
+    );
+
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(reply.id.clone())), None)
+        .await
+        .unwrap();
+    let context = core.report_context(&draft.id).await.unwrap().context;
+    assert_eq!(context.tools.len(), 1, "{:?}", context.tools);
+    assert!(
+        !format!("{context:?}").contains(marker),
+        "the report doesn't: {context:?}"
+    );
 }
 
 #[tokio::test]
@@ -373,6 +447,11 @@ async fn an_ai_panel_reply_brings_its_question() {
     assert_eq!(row(&c.rows, "Mode"), Some("ask (read-only)"));
     assert_eq!(row(&c.rows, "Took"), Some("3.0 s"));
     assert_eq!(row(&c.rows, "Space status"), None);
+    // A reply from before the effort was recorded: no guess from settings.
+    assert_eq!(
+        row(&c.rows, "Effort"),
+        Some("unknown (not recorded on this reply)")
+    );
     // A reply from before the model was recorded: no guess from settings.
     assert_eq!(
         row(&c.rows, "Model"),
@@ -409,15 +488,15 @@ fn set_model(f: &Fixtures, value: serde_json::Value) {
         .unwrap();
 }
 
-/// New space with a model picked in the menu: the space asks for none, the
-/// `agents.claude.model` setting decides — the reply records the model the
-/// run was sent, and a later change to the setting doesn't rewrite it.
+/// New space with a model picked in the menu: the `agents.claude.model`
+/// setting is what the space pins when it's created — the reply records the
+/// model the run was sent, and a later change to the setting doesn't rewrite it.
 #[tokio::test]
 async fn the_model_row_is_the_one_the_run_used_from_the_setting() {
     let f = fixtures();
     set_model(&f, json!("claude-haiku-5-5"));
     let (core, _recv, s) = two_turns(&f).await;
-    assert_eq!(s.model, None, "the space pins no model");
+    assert_eq!(s.model.as_deref(), Some("claude-haiku-5-5"));
     assert_eq!(
         f.agents.last_request().unwrap().model.as_deref(),
         Some("claude-haiku-5-5"),
@@ -435,6 +514,61 @@ async fn the_model_row_is_the_one_the_run_used_from_the_setting() {
         .unwrap();
     let r = core.report_context(&draft.id).await.unwrap();
     assert_eq!(row(&r.context.rows, "Model"), Some("claude-haiku-5-5"));
+}
+
+fn set_effort(f: &Fixtures, value: serde_json::Value) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: "user:agents.claude.effort".into(),
+            action: SyncActionCode::I,
+            data: Some(json!({ "key": "agents.claude.effort", "scope": "user", "value": value })),
+        }])
+        .unwrap();
+}
+
+/// The run's request and the reply carry one effort, and the report reads
+/// the reply: a report said `low` while its own log lines said `medium`.
+#[tokio::test]
+async fn the_effort_row_is_the_one_the_run_used_not_the_setting_now() {
+    let f = fixtures();
+    set_effort(&f, json!("medium"));
+    let (core, _recv, s) = two_turns(&f).await;
+    assert_eq!(
+        f.agents.last_request().unwrap().effort.as_deref(),
+        Some("medium"),
+        "the run got the setting's effort"
+    );
+    let chat = transcript(&f, &s.id);
+    let first = chat.iter().find(|m| m.text == "one").unwrap();
+    assert_eq!(first.effort.as_deref(), Some("medium"));
+    assert!(first.effort_resolved);
+
+    set_effort(&f, json!("low"));
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(first.id.clone())), None)
+        .await
+        .unwrap();
+    let r = core.report_context(&draft.id).await.unwrap();
+    assert_eq!(row(&r.context.rows, "Effort"), Some("medium"));
+}
+
+#[tokio::test]
+async fn the_effort_row_says_the_cli_default_only_when_it_was() {
+    let f = fixtures();
+    let (core, _recv, s) = two_turns(&f).await;
+    let chat = transcript(&f, &s.id);
+    let reply = chat.iter().find(|m| m.text == "two").unwrap();
+    assert_eq!(reply.effort, None);
+    assert!(reply.effort_resolved);
+    // Set after the run: not what it used.
+    set_effort(&f, json!("low"));
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(reply.id.clone())), None)
+        .await
+        .unwrap();
+    let r = core.report_context(&draft.id).await.unwrap();
+    assert_eq!(row(&r.context.rows, "Effort"), Some("the CLI's default"));
 }
 
 #[tokio::test]

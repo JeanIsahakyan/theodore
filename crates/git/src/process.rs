@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use theodore_ports::{GitError, GitResult};
 
@@ -101,6 +101,22 @@ impl GitProc<'_> {
 
     pub(crate) async fn run(&self) -> GitResult<Vec<u8>> {
         self.run_cmd(self.command()).await
+    }
+
+    /// The first `max` bytes of the output; git is killed there (`kill_on_drop`
+    /// on the dropped child). Its exit status says nothing about the bytes
+    /// then, so the caller has checked the object exists.
+    pub(crate) async fn run_head(&self, max: usize) -> GitResult<Vec<u8>> {
+        let mut child = self.command().spawn().map_err(io_err)?;
+        let mut out = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            stdout
+                .take(max as u64)
+                .read_to_end(&mut out)
+                .await
+                .map_err(io_err)?;
+        }
+        Ok(out)
     }
 
     /// `run` with discovery stopped at `ceiling` (`command_below`).

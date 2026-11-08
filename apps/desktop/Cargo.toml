@@ -17,6 +17,11 @@ path = "src/lib.rs"
 name = "theodore-app"
 path = "src/main.rs"
 
+[features]
+# Live click-testing (docs/live-qa.md): the app runs JS from a directory, with
+# every command in reach. Off by default; build.rs fails it outside `dev`.
+qa-driver = []
+
 [build-dependencies]
 tauri-build = { workspace = true, features = ["codegen"] }
 

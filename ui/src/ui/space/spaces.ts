@@ -133,7 +133,21 @@ export function plainError(error: string): string {
 type EndedFields = Pick<
   Space,
   'status' | 'name' | 'error' | 'goal' | 'title' | 'updating'
->;
+> &
+  Partial<Pick<Space, 'turn_log'>>;
+
+type BeforeEnd = Pick<Space, 'status'> & Partial<Pick<Space, 'turn_log'>>;
+
+/** What the turn that just ended left, from the turn it logged: `null` when
+ *  it logged none (stopped before its checkpoint) or was stopped. */
+function turnOutcome(prev: BeforeEnd, next: EndedFields): string | null {
+  const log = next.turn_log ?? [];
+  if (log.length <= (prev.turn_log?.length ?? 0)) return null;
+  const last = log[log.length - 1]!;
+  if (last.stopped) return null;
+  if (last.plan) return 'Plan ready';
+  return last.before === last.after ? 'Replied' : 'Changes ready';
+}
 
 /** What a failed end is called: the agent's turn on an Update from base
  *  that left conflicts is the update waiting on you, not a turn failure. */
@@ -144,7 +158,7 @@ function failedWhat(next: Pick<Space, 'updating'>): string {
 /** A turn just ended (running → anything else): what to tell you if you're
  *  not looking at the space. `null` when nothing finished. */
 export function turnEnded(
-  prev: Pick<Space, 'status'> | undefined,
+  prev: BeforeEnd | undefined,
   next: EndedFields,
 ): { level: 'info' | 'error'; text: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
@@ -154,7 +168,65 @@ export function turnEnded(
       text: `${spaceTitle(next)}: ${failedWhat(next)}${next.error ? ` — ${plainError(next.error)}` : ''}`,
     };
   }
-  return { level: 'info', text: `${spaceTitle(next)}: turn done` };
+  const outcome = turnOutcome(prev, next);
+  return {
+    level: 'info',
+    text: outcome
+      ? `${spaceTitle(next)}: ${outcome.toLowerCase()}`
+      : spaceTitle(next),
+  };
+}
+
+/** A model picked in a space's box, for the agent it was picked for. */
+export type ModelPick = { agent: AgentId; model: string };
+
+/** The model a space's box has of its own for `agent`: the pick, else the
+ *  space's own while `agent` is the space's. `null`: none, the agent's setting
+ *  applies. An unlisted name stays as it is (the chip shows it as typed). */
+export function spaceOwnModel(
+  space: Pick<Space, 'agent' | 'model'>,
+  agent: AgentId,
+  picked: ModelPick | null,
+): string | null {
+  if (picked?.agent === agent) return picked.model;
+  return agent === space.agent ? (space.model ?? null) : null;
+}
+
+/** The model a send from a space's box names: the pick, or for another agent
+ *  the one shown for it; `null` keeps the space's. A send names nothing else,
+ *  so it never changes the space's model unasked. */
+export function sendModel(
+  space: Pick<Space, 'agent'>,
+  agent: AgentId,
+  picked: ModelPick | null,
+  setting: string | null,
+): string | null {
+  if (picked?.agent === agent) return picked.model;
+  return agent === space.agent ? null : setting;
+}
+
+/** An effort picked in a space's box, for the agent it was picked for. */
+export type EffortPick = { agent: AgentId; effort: string };
+
+/** The effort a space's box has of its own for `agent`: the pick, else the
+ *  space's own while `agent` is the space's. `null`: the agent's setting
+ *  applies (a space from before efforts were per space, or another agent). */
+export function spaceOwnEffort(
+  space: Pick<Space, 'agent' | 'effort'>,
+  agent: AgentId,
+  picked: EffortPick | null,
+): string | null {
+  if (picked?.agent === agent) return picked.effort;
+  return agent === space.agent ? (space.effort ?? null) : null;
+}
+
+/** The effort a send from a space's box names: the pick; `null` keeps the
+ *  space's, or for another agent its own setting. */
+export function sendEffort(
+  agent: AgentId,
+  picked: EffortPick | null,
+): string | null {
+  return picked?.agent === agent ? picked.effort : null;
 }
 
 /** Days after a space is done before it archives itself; 0 = never. */
@@ -218,7 +290,7 @@ export function spaceTitle(
   const proposed = s.title?.trim();
   const raw = proposed && proposed.length > 0 ? proposed : defaultTitle(s);
   // Short enough for a sidebar row or a notification: no trailing period
-  // (it reads as "formatter.: turn done"), cut at a word near 60 chars.
+  // (a toast would read "formatter."), cut at a word near 60 chars.
   const t = raw.replace(/[.。!]+$/u, '');
   if (t.length <= 60) return t;
   const cut = t.slice(0, 60);
@@ -532,9 +604,9 @@ export function notifyOn(
 }
 
 /** The native notification for a turn that just ended, `null` when none
- *  did: "<space>: turn finished" / "<space>: turn failed". */
+ *  did: "<space>" and what the turn left / "<space>: turn failed". */
 export function nativeNotice(
-  prev: Pick<Space, 'status'> | undefined,
+  prev: BeforeEnd | undefined,
   next: EndedFields,
 ): { title: string; body?: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
@@ -542,7 +614,8 @@ export function nativeNotice(
     const title = `${spaceTitle(next)}: ${failedWhat(next)}`;
     return next.error ? { title, body: plainError(next.error) } : { title };
   }
-  return { title: `${spaceTitle(next)}: turn finished` };
+  const body = turnOutcome(prev, next);
+  return body ? { title: spaceTitle(next), body } : { title: spaceTitle(next) };
 }
 
 /** The agent just asked you something (`ask_user`): the notice, `null`

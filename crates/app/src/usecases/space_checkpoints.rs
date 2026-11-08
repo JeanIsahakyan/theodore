@@ -37,7 +37,9 @@ impl Core {
         let i = (k + 1..log.len())
             .find(|&i| !log[i].undone)
             .ok_or_else(|| AppError::Invalid("this is already the space's last turn".into()))?;
-        self.rewind_space_from(&space.id, Some(i)).await
+        let rewound = self.rewind_space_from(&space.id, Some(i)).await?;
+        crate::usecases::telemetry::space_action("back_to_here");
+        Ok(rewound)
     }
 
     /// The space back to where `turn_log[from]` started (`None`: the last
@@ -212,7 +214,11 @@ impl Core {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         };
         let mut log = space.turn_log.clone();
         log.push(SpaceTurn {
@@ -228,6 +234,7 @@ impl Core {
             after_head: Some(cp.head.clone()),
             reverted: paths,
             plan: None,
+            stopped: false,
         });
         self.apply(vec![
             NewAction {

@@ -76,6 +76,20 @@ pub fn missing_keys_error(env: &str, missing: &[&str]) -> String {
     )
 }
 
+/// The build error for the `qa-driver` feature outside a `dev` build. It runs
+/// any JS with every command in reach, so nothing that leaves this machine may
+/// carry it (docs/live-qa.md); a nightly counts.
+pub fn qa_driver_error(env: &str, enabled: bool) -> Option<String> {
+    (enabled && env != "dev").then(|| {
+        format!(
+            "THEODORE_BUILD_ENV={env} with the `qa-driver` feature: refused.\n\
+             The driver runs arbitrary JS with access to every Tauri command, so it must never reach a shipped binary.\n\
+             - To click-test: scripts/qa/build.sh (a dev build, docs/live-qa.md).\n\
+             - To release: build without the feature."
+        )
+    })
+}
+
 /// The first 7 characters of the sha, keeping a `-dirty` suffix.
 pub fn short_commit(commit: &str) -> String {
     let (sha, dirty) = match commit.strip_suffix("-dirty") {
@@ -159,6 +173,40 @@ mod tests {
         assert_eq!(short_commit("a1b2c3d4e5f6"), "a1b2c3d");
         assert_eq!(short_commit("a1b2c3d4e5f6-dirty"), "a1b2c3d-dirty");
         assert_eq!(short_commit("unknown"), "unknown");
+    }
+
+    #[test]
+    fn the_qa_driver_is_dev_only() {
+        for env in ["production", "staging", "nightly"] {
+            let e = qa_driver_error(env, true).expect("must refuse");
+            assert!(e.contains(env) && e.contains("qa-driver"), "{e}");
+        }
+        assert_eq!(qa_driver_error("dev", true), None);
+        for env in BUILD_ENVS {
+            assert_eq!(qa_driver_error(env, false), None);
+        }
+    }
+
+    /// The release paths are the workflows and the scripts beside
+    /// `scripts/qa/` (not in it: `build.sh` there is the one that asks).
+    #[test]
+    fn no_release_path_enables_the_qa_driver() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut checked = 0;
+        for dir in [".github/workflows", "scripts"] {
+            for entry in std::fs::read_dir(root.join(dir)).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                checked += 1;
+                for banned in ["qa-driver", "all-features"] {
+                    assert!(!text.contains(banned), "{}: {banned}", path.display());
+                }
+            }
+        }
+        assert!(checked > 2, "nothing found under {}", root.display());
     }
 
     #[test]

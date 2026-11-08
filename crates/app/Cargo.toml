@@ -41,6 +41,7 @@ theodore-git.workspace = true
 theodore-store.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true, features = ["registry", "std"] }
 
 [lints]
 workspace = true

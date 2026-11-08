@@ -12,6 +12,8 @@ const unchosen: TelemetryStatus = {
   errors_available: true,
   usage: null,
   errors: null,
+  usage_needs_consent: false,
+  errors_needs_consent: false,
   events: [],
   never_sent: [],
 };
@@ -81,6 +83,28 @@ describe('PrivacyCard', () => {
     await click(input('usage'));
     await settle();
     expect(sent[2]).toEqual({ usage: false, errors: true });
+  });
+
+  it('says a switch still at the old terms is anonymous for now', async () => {
+    await renderCard({
+      ...unchosen,
+      usage: true,
+      errors: false,
+      usage_needs_consent: true,
+    });
+    expect(m!.host.querySelector('.privacy-usage')?.textContent).toContain(
+      'Anonymous for now',
+    );
+    expect(m!.host.querySelector('.privacy-errors')?.textContent).not.toContain(
+      'Anonymous for now',
+    );
+  });
+
+  it('asks the core for nothing beyond the switches: turning one on is what counts', async () => {
+    await renderCard({ ...unchosen, usage: false, errors: false });
+    await click(input('usage'));
+    await settle();
+    expect(sent).toEqual([{ usage: true, errors: false }]);
   });
 
   it('disables a switch whose sink is not in this build', async () => {

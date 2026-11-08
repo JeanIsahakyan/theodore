@@ -8,7 +8,7 @@ import { Shell, Spinner } from './bits';
 
 /** The one claim the UI makes about usage data, everywhere it's shown. */
 export const TELEMETRY_CLAIM =
-  'Not linked to your account, email or code; repository names are hashed; you can turn this off any time in Settings.';
+  "Linked to your Theodore account's id when you're signed in, never to your email, name or code; repository names are hashed; you can turn this off any time in Settings.";
 
 export function WhatsCollectedView({ status }: { status: TelemetryStatus }) {
   return (

@@ -35,7 +35,8 @@ import type { Space } from '../gen/contract';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, type Route, type UiStore } from '../stores/UiStore';
 import { api } from '../core/api';
-import { Avatar, K, Spinner } from './bits';
+import { SpaceMark } from './AgentMark';
+import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ListSearchBar } from './ListSearchBar';
 import { inInbox } from './List';
@@ -132,11 +133,10 @@ interface NavGroup {
 
 const routeKey = (r: Route) => JSON.stringify(r);
 
-/** A space's run state at a glance (docs/spaces.md §3). */
-function SpaceGlyphIcon({ g }: { g: SpaceGlyph }) {
+/** A space's mark when no agent shows on it: unread, failed, idle
+ *  (docs/spaces.md §3). `SpaceMark` draws running and waiting. */
+function SpaceGlyphIcon({ g }: { g: Exclude<SpaceGlyph, 'running'> }) {
   switch (g) {
-    case 'running':
-      return <Spinner />;
     case 'unseen':
       return (
         <span
@@ -150,6 +150,10 @@ function SpaceGlyphIcon({ g }: { g: SpaceGlyph }) {
       return <Pencil />;
   }
 }
+
+/** `running` has no glyph: `SpaceMark` draws it. */
+const glyphIcon = (g: SpaceGlyph) =>
+  g === 'running' ? null : <SpaceGlyphIcon g={g} />;
 
 function IconBtn({
   label,
@@ -296,12 +300,18 @@ export const Sidebar = observer(function Sidebar() {
                   : undefined;
                 return {
                   key: routeKey({ name: 'space', id: s.id }),
-                  icon:
-                    s.pr && g === 'idle' ? (
-                      <PrGlyph pr={pr} />
-                    ) : (
-                      <SpaceGlyphIcon g={g} />
-                    ),
+                  icon: (
+                    <SpaceMark
+                      spaceId={s.id}
+                      fallback={
+                        s.pr && g === 'idle' ? (
+                          <PrGlyph pr={pr} />
+                        ) : (
+                          glyphIcon(g)
+                        )
+                      }
+                    />
+                  ),
                   label: withPrNumber(pr?.pr.number, spaceTitle(s)),
                   route: { name: 'space', id: s.id },
                   contextMenu: () => spaceContextMenu(s, ui),
@@ -478,7 +488,10 @@ export const Sidebar = observer(function Sidebar() {
                 )}
               >
                 <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
-                  <SpaceGlyphIcon g={spaceGlyph(s, spaceSeen.get(s.id))} />
+                  <SpaceMark
+                    spaceId={s.id}
+                    fallback={glyphIcon(spaceGlyph(s, spaceSeen.get(s.id)))}
+                  />
                 </span>
                 <span className="min-w-0 flex-1 truncate" title={spaceTitle(s)}>
                   {spaceTitle(s)}

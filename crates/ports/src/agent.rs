@@ -113,6 +113,43 @@ pub struct AgentAttachment {
     pub mime: String,
 }
 
+/// [`AgentEvent::ToolDetail`]: what a CLI's stream says of a result, where it
+/// says it. Every field empty on one that doesn't.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolResultDetail {
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub exit_code: Option<i32>,
+    pub interrupted: bool,
+    /// It keeps running in the background: this result only says it started.
+    pub background: bool,
+    /// A call that went to the background has ended.
+    pub end: Option<TaskEnd>,
+    /// Output too long for the stream: where the CLI kept all of it.
+    pub persisted_output: Option<PersistedOutput>,
+    /// The concrete model a subagent ran on.
+    pub resolved_model: Option<String>,
+}
+
+/// A command's output the CLI kept in a file (`persistedOutputPath`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedOutput {
+    pub path: String,
+    /// Its whole size, when the CLI says.
+    pub bytes: Option<u64>,
+}
+
+/// How a background call ended (Claude Code's `task_notification`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskEnd {
+    /// `completed`, `failed` or `stopped`.
+    pub status: String,
+    pub summary: Option<String>,
+    /// Where the CLI kept its output, when it says.
+    pub output_file: Option<String>,
+    pub duration_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -148,6 +185,13 @@ pub enum AgentEvent {
         id: String,
         ok: bool,
         output: String,
+    },
+    /// What a call's stream says beyond its result's text: separate stdout and
+    /// stderr, the exit code, that it went to the background or ended there.
+    /// Comes just before that `ToolResult`; a stream without it still works.
+    ToolDetail {
+        id: String,
+        detail: ToolResultDetail,
     },
     Usage {
         usage: Usage,

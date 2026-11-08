@@ -374,7 +374,15 @@ export function VirtualChat<T extends { key: string }>({
         p.max = max;
         setSteadying(false);
         setAway(!p.following);
-        setQuietAt(wasFollowing && !p.following ? v.options.count : null);
+        // A second toggle's frames (an opened row's output landing) leave
+        // the first's "nothing new below" as it was.
+        setQuietAt((at) =>
+          wasFollowing && !p.following
+            ? v.options.count
+            : p.following
+              ? null
+              : at,
+        );
         remember();
       });
     },

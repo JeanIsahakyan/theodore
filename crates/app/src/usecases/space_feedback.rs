@@ -44,13 +44,14 @@ impl Core {
         // once it ends, so this is the number it will carry.
         let turn = space.turns + 1;
         let message_id = self
-            .space_send(SpaceSendRequest {
+            .system_send(SpaceSendRequest {
                 space: space.id.clone(),
                 text: feedback_prompt(&quotes),
                 agent: None,
                 model: None,
                 mode: None,
                 attachments: None,
+                effort: None,
             })
             .await?;
         let mut sent = space.sent_feedback.clone();

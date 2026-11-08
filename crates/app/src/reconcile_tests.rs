@@ -393,6 +393,8 @@ async fn a_live_spaces_pr_is_left_to_its_sweep() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

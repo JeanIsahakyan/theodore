@@ -24,6 +24,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from 'react';
+import { countUse } from '../core/useCounts';
 import {
   Bulb,
   ChevronRight,
@@ -41,12 +42,16 @@ import type { AgentId, TurnFile, TurnStep } from '../gen/contract';
 import { useRootStore } from '../stores/context';
 import { Md } from '../highlight';
 import { Spinner } from './bits';
+import { useFileHover } from './FileHoverPreview';
 import { FileTypeIcon } from './FileTypeIcon';
 import { useKeptOpen, useSteadyChange } from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
+import { AgentDetails, ToolDetails } from './ToolDetails';
+import { toolKey, useToolRun } from './toolPayload';
 import {
   fileChips,
   foldLine,
+  formatDuration,
   groupLabel,
   splitSteps,
   stepFailed,
@@ -70,15 +75,7 @@ const KIND_ICON: Record<ToolKind, ComponentType<{ className?: string }>> = {
 const NO_STEPS: readonly TurnStep[] = [];
 const ROW = 'flex min-w-0 items-center gap-1.5 text-[13px]';
 
-/** `<1s`, `42s`, `1m 12s`, `1h 3m`. */
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return '<1s';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
+export { formatDuration };
 
 function StepIcon({ busy, children }: { busy: boolean; children: ReactNode }) {
   return (
@@ -106,14 +103,20 @@ function Failed() {
 }
 
 function Chip({ text, file = false }: { text: string; file?: boolean }) {
+  const hover = useFileHover<HTMLSpanElement>(file ? text : null);
   return (
-    <span
-      title={text}
-      className="turn-chip inline-flex min-w-0 items-center gap-1 rounded bg-default px-1.5 py-0.5 font-mono text-[11px] text-muted"
-    >
-      {file && <FileTypeIcon path={text} />}
-      <span className="min-w-0 truncate">{text}</span>
-    </span>
+    <>
+      <span
+        {...hover.triggerProps}
+        title={hover.active ? undefined : text}
+        tabIndex={hover.active ? 0 : undefined}
+        className="turn-chip inline-flex min-w-0 items-center gap-1 rounded bg-default px-1.5 py-0.5 font-mono text-[11px] text-muted"
+      >
+        {file && <FileTypeIcon path={text} />}
+        <span className="min-w-0 truncate">{text}</span>
+      </span>
+      {hover.popover}
+    </>
   );
 }
 
@@ -149,22 +152,52 @@ const ToolRow = memo(function ToolRow({
 }) {
   const view = toolView(step, running);
   const Icon = KIND_ICON[view.kind];
+  const key = toolKey(useToolRun(), step);
+  const [open, setOpen] = useKeptOpen(key && `tool:${key}`);
+  const steady = useSteadyChange();
+  const toggle = () => {
+    if (!open) countUse('tool_rows');
+    steady(() => setOpen(!open));
+  };
+  // A background task keeps going after its call has answered.
+  const waiting = !!step.background && !step.summary;
   return (
-    <div data-kind={view.kind} className={`turn-tool ${ROW}`}>
-      <StepIcon busy={running && step.ok == null}>
-        <Icon className="size-3.5" />
-      </StepIcon>
-      <span title={view.label} className="turn-tool-label min-w-0 truncate">
-        {view.label}
-      </span>
-      {view.chip && <Chip text={view.chip} file={view.isFile} />}
-      {view.note && (
-        <span className="turn-tool-note shrink-0 text-xs text-muted">
-          {view.note}
+    <div data-kind={view.kind} className="turn-tool min-w-0">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        className={`turn-tool-line cursor-pointer ${ROW}`}
+        onClick={() => {
+          // Selecting the row's text isn't a click on it.
+          if (window.getSelection()?.isCollapsed === false) return;
+          toggle();
+        }}
+        onKeyDown={(e) => {
+          // A key on the file chip inside is the chip's, not the row's.
+          if (e.target !== e.currentTarget) return;
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          toggle();
+        }}
+      >
+        <StepIcon busy={running && (step.ok == null || waiting)}>
+          <Icon className="size-3.5" />
+        </StepIcon>
+        <span title={view.label} className="turn-tool-label min-w-0 truncate">
+          {view.label}
         </span>
-      )}
-      <LineCounts added={view.added} removed={view.removed} />
-      {stepFailed(step) && <Failed />}
+        {view.chip && <Chip text={view.chip} file={view.isFile} />}
+        {view.note && (
+          <span className="turn-tool-note shrink-0 text-xs text-muted">
+            {view.note}
+          </span>
+        )}
+        <LineCounts added={view.added} removed={view.removed} />
+        {stepFailed(step) && <Failed />}
+        <Chevron open={open} />
+      </div>
+      {open && <ToolDetails step={step} running={running} />}
     </div>
   );
 });
@@ -299,58 +332,47 @@ const AgentRow = memo(
     const waiting = !!step.background && !step.summary;
     const busy = running && (step.ok == null || waiting);
     const view = toolView(step, running);
-    const hasMore = own.length > 0 || !!step.summary;
     const beside = busy
       ? (latestOf(own) ?? (waiting ? 'running in background' : null))
       : (step.summary ?? (step.background ? 'ran in background' : null));
-    const line = (
-      <>
-        <StepIcon busy={busy}>
-          <Cpu className="size-3.5" />
-        </StepIcon>
-        <span title={view.label} className="min-w-0 shrink-0 truncate">
-          {view.label}
-        </span>
-        {hasMore && <Chevron open={open} />}
-        {beside && !open && (
-          <span
-            title={beside}
-            className="turn-agent-note min-w-0 truncate text-xs text-muted"
-          >
-            {beside}
-          </span>
-        )}
-        {stepFailed(step) && <Failed />}
-      </>
-    );
     return (
       <div data-kind="agent" className="turn-agent min-w-0">
-        {hasMore ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            className={`turn-agent-line w-full text-left ${ROW}`}
-            onClick={() => steady(() => setOpen(!open))}
-          >
-            {line}
-          </button>
-        ) : (
-          <div className={`turn-agent-line ${ROW}`}>{line}</div>
-        )}
+        <button
+          type="button"
+          aria-expanded={open}
+          className={`turn-agent-line w-full text-left ${ROW}`}
+          onClick={() => steady(() => setOpen(!open))}
+        >
+          <StepIcon busy={busy}>
+            <Cpu className="size-3.5" />
+          </StepIcon>
+          <span title={view.label} className="min-w-0 shrink-0 truncate">
+            {view.label}
+          </span>
+          <Chevron open={open} />
+          {beside && !open && (
+            <span
+              title={beside}
+              className="turn-agent-note min-w-0 truncate text-xs text-muted"
+            >
+              {beside}
+            </span>
+          )}
+          {stepFailed(step) && <Failed />}
+        </button>
         {open && (
           <div className="turn-agent-steps mt-2 flex flex-col gap-2 border-l border-separator ps-3">
-            <StepList
-              own={own}
-              under={NOTHING_UNDER}
-              options={busy ? { running: true } : { flat: true }}
-              keptAs={keptAs && `${keptAs}:a`}
-              running={busy}
-            />
-            {!busy && step.summary && (
-              <div className="turn-agent-summary text-xs text-muted">
-                {step.summary}
-              </div>
-            )}
+            <AgentDetails step={step} running={busy} steps={own}>
+              {(shown) => (
+                <StepList
+                  own={shown}
+                  under={NOTHING_UNDER}
+                  options={busy ? { running: true } : { flat: true }}
+                  keptAs={keptAs && `${keptAs}:a`}
+                  running={busy}
+                />
+              )}
+            </AgentDetails>
           </div>
         )}
       </div>
@@ -652,6 +674,35 @@ export function TurnFooter({
 const CHIP =
   'inline-flex h-6 min-w-0 items-center gap-1 rounded-md border border-separator px-1.5 text-xs text-muted';
 
+function TurnFileChip({
+  file,
+  onOpen,
+}: {
+  file: TurnFile;
+  onOpen?: (path: string | null) => void;
+}) {
+  const hover = useFileHover<HTMLButtonElement>(file.path);
+  return (
+    <>
+      <button
+        {...hover.triggerProps}
+        type="button"
+        title={hover.active ? undefined : file.path}
+        data-path={file.path}
+        className={`turn-file ${CHIP}`}
+        onClick={() => onOpen?.(file.path)}
+      >
+        <FileTypeIcon path={file.path} />
+        <span className="min-w-0 max-w-[180px] truncate">
+          {file.path.split('/').pop()}
+        </span>
+        <LineCounts added={file.additions} removed={file.deletions} />
+      </button>
+      {hover.popover}
+    </>
+  );
+}
+
 /** The files a turn changed. A chip opens the Changes pane on its file;
  *  `+N more` opens the pane. */
 export const TurnFiles = memo(function TurnFiles({
@@ -665,20 +716,7 @@ export const TurnFiles = memo(function TurnFiles({
   return (
     <div className="turn-files flex min-w-0 flex-wrap items-center gap-1.5">
       {shown.map((f) => (
-        <button
-          key={f.path}
-          type="button"
-          title={f.path}
-          data-path={f.path}
-          className={`turn-file ${CHIP}`}
-          onClick={() => onOpen?.(f.path)}
-        >
-          <FileTypeIcon path={f.path} />
-          <span className="min-w-0 max-w-[180px] truncate">
-            {f.path.split('/').pop()}
-          </span>
-          <LineCounts added={f.additions} removed={f.deletions} />
-        </button>
+        <TurnFileChip key={f.path} file={f} onOpen={onOpen} />
       ))}
       {rest && (
         <button

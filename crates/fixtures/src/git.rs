@@ -135,4 +135,36 @@ impl GitPort for FixtureGit {
         let state = self.state.lock().unwrap();
         Ok(state.files.get(&(rev.clone(), path.to_string())).cloned())
     }
+
+    async fn diff_file(
+        &self,
+        _repo: &Path,
+        _from: &Sha,
+        to: &Sha,
+        path: &str,
+        _opts: &DiffOptions,
+    ) -> GitResult<Option<theodore_domain::FileDiff>> {
+        let state = self.state.lock().unwrap();
+        Ok(state
+            .revisions_by_head
+            .get(to)
+            .and_then(|r| r.files.iter().find(|f| f.path == path).cloned()))
+    }
+
+    async fn blob_size(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<u64>> {
+        let bytes = self.show(repo, rev, path).await?;
+        Ok(bytes.map(|b| b.len() as u64))
+    }
+
+    async fn blob_head(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+        max: usize,
+    ) -> GitResult<Vec<u8>> {
+        let mut bytes = self.show(repo, rev, path).await?.unwrap_or_default();
+        bytes.truncate(max);
+        Ok(bytes)
+    }
 }

@@ -726,7 +726,9 @@ export function rich(text: string): ReactNode[] {
 /** GitHub-flavoured markdown (headings, lists, tables, task lists, code,
  *  footnotes) for PR descriptions, comments and agent replies. Raw HTML goes
  *  through GitHub's own allowlist (`<details>`, `<summary>`, `<kbd>`,
- *  `<sub>`, `<br>`…); scripts, styles and event handlers never render. */
+ *  `<sub>`, `<br>`…); scripts, styles and event handlers never render, and
+ *  neither do HTML comments (e.g. Theodore's idempotency markers): the
+ *  sanitizer drops them after parsing, so code keeps its literal text. */
 export const Md = memo(function Md({ text }: { text: string }) {
   return (
     <div className="rich md">
@@ -735,15 +737,24 @@ export const Md = memo(function Md({ text }: { text: string }) {
         rehypePlugins={[rehypeRaw, [rehypeSanitize, defaultSchema]]}
         components={mdComponents}
       >
-        {stripHtmlComments(text)}
+        {text}
       </Markdown>
     </div>
   );
 });
 
-/** HTML comments (e.g. Theodore's idempotency markers) never show. */
+/** A fence (to its closing fence or the end of the text), a code span, or an
+ *  HTML comment. The first two are matched so they're skipped whole. */
+const CODE_OR_COMMENT =
+  /^ {0,3}(`{3,}(?=[^`\n]*$)|~{3,})[^\n]*(?:\n[\s\S]*?(?:\n {0,3}\1[`~]*[ \t]*(?=\n|$)|$(?![\s\S])))?|(`+)(?:[^`]|`(?!\2))*?\2(?!`)|<!--[\s\S]*?-->/gm;
+
+/** For a one-line preview of raw markdown: HTML comments (e.g. Theodore's
+ *  idempotency markers) never show; one written in code is the code's text.
+ *  `Md` leaves this to the parser, which also knows indented code. */
 export function stripHtmlComments(text: string): string {
-  return text.replace(/<!--[\s\S]*?-->/g, '').trimEnd();
+  return text
+    .replace(CODE_OR_COMMENT, (m) => (m.startsWith('<!--') ? '' : m))
+    .trimEnd();
 }
 
 const mdComponents: Components = {

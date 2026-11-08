@@ -43,6 +43,8 @@ Start over: quit the app and delete the data dir. The scenario is read on
 every start, but after the first one the state file is the source of truth
 (repos added to the scenario later are still built).
 
+To click through it from a script, see [live-qa.md](live-qa.md).
+
 ## Drive it from a terminal
 
 The app must be running (`status` also works when it isn't). Same

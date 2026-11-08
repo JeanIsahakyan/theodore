@@ -9,6 +9,7 @@ import {
   stepFailed,
   toolView,
   turnItems,
+  withoutReportStep,
   type ToolStep,
   type TurnItem,
 } from './turnRows';
@@ -35,6 +36,27 @@ const shape = (items: TurnItem[]) =>
       return i.step.kind === 'thinking' ? '?' : 'T';
     })
     .join(' ');
+
+describe('a report and its last message', () => {
+  const steps = [run({ id: 'a' }), text('All done.\nDetails here')];
+
+  it('drops the last message when it is the report', () => {
+    expect(withoutReportStep(steps, 'All done.\nDetails here')).toEqual([
+      steps[0],
+    ]);
+  });
+
+  it('drops it when only a stored, cut copy of the report', () => {
+    const report = `All done.\n${'more '.repeat(2000)}`;
+    const cut = [text(`${report.slice(0, 200)}…`)];
+    expect(withoutReportStep(cut, report)).toEqual([]);
+  });
+
+  it('keeps any other last message', () => {
+    expect(withoutReportStep(steps, 'A different report')).toEqual(steps);
+    expect(withoutReportStep([], 'x')).toEqual([]);
+  });
+});
 
 describe('the fold rule', () => {
   it('a running turn never folds or groups', () => {

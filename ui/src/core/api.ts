@@ -24,6 +24,8 @@ import type {
   DeviceLogin,
   DraftStateRequest,
   EditCommentRequest,
+  FilePreviewAnswer,
+  FilePreviewRequest,
   FileRequest,
   FindSymbolRequest,
   GetBlobRequest,
@@ -82,11 +84,13 @@ import type {
   SpaceIssue,
   SpaceReviewRequest,
   SpaceQueuedRequest,
+  SetMessageVoteRequest,
   SpaceSendRequest,
   SpaceConfigView,
   SpaceLogLine,
   SpaceRunRequest,
   SetSpacePinnedRequest,
+  SetSpaceSettingsRequest,
   SpaceSetupRequest,
   SpaceTerminalInfo,
   SpaceTrustRequest,
@@ -113,6 +117,7 @@ import type {
   TelemetryChoice,
   TelemetryStatus,
   TerminalMention,
+  ToolPayload,
   Transaction,
   TransactionResult,
   UiEvent,
@@ -227,6 +232,9 @@ export const api = {
     call<Attachment>('save_attachment', { req }),
   /** A saved attachment as a `data:<mime>;base64,…` URL. */
   attachmentData: (id: string) => call<string>('attachment_data', { id }),
+  /** What's stored of a tool call; `null`: nothing was. */
+  toolPayload: (run: string, callId: string) =>
+    call<ToolPayload | null>('tool_payload', { run, call: callId }),
   cancelRun: (run: string) => call<null>('cancel_run', { run }),
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),
@@ -306,6 +314,9 @@ export const api = {
   findSymbol: (req: FindSymbolRequest) =>
     call<SymbolHit[]>('find_symbol', { req }),
   getBlob: (req: GetBlobRequest) => call<BlobResponse>('get_blob', { req }),
+  /** `quiet`: a preview that fails is "No preview", never a toast. */
+  filePreview: (req: FilePreviewRequest, quiet = false) =>
+    call<FilePreviewAnswer>('file_preview', { req }, quiet),
   /** Settings → Sandbox: `null` outside sandbox mode. */
   sandboxStatus: () => call<SandboxStatus | null>('sandbox_status'),
   sandboxSetFault: (req: SandboxFaultRequest) =>
@@ -325,12 +336,19 @@ export const api = {
     call<Space[]>('list_spaces', { project }),
   spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),
   /** "Send now": into the running turn when it can take it, else queued. */
+  /** A reply's thumbs up or down; `vote: null` takes it back. */
+  setMessageVote: (req: SetMessageVoteRequest) =>
+    call<null>('set_message_vote', { req }),
   spaceSendNow: (req: SpaceSendRequest) =>
     call<string>('space_send_now', { req }),
   /** Send / Cancel / Edit on a queued message (docs/spaces.md §8). */
   spaceQueued: (req: SpaceQueuedRequest) => call<null>('space_queued', { req }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
   spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
+  projectSkills: (project: string) =>
+    call<SkillInfo[]>('project_skills', { project }),
+  setSpaceSettings: (req: SetSpaceSettingsRequest) =>
+    call<Space>('set_space_settings', { req }),
   spaceReview: (req: SpaceReviewRequest) =>
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),
@@ -477,7 +495,7 @@ export const api = {
    *  log line must not turn into another error. */
   logClient: (entry: ClientLog): Promise<null> =>
     quietCall('log_client', { entry }),
-  /** A product event (onboarding steps). Never throws, never toasts. */
+  /** A product event the UI alone can see. Never throws, never toasts. */
   trackUi: (event: UiEvent): Promise<null> => quietCall('track_ui', { event }),
   telemetryStatus: () => call<TelemetryStatus>('telemetry_status'),
   /** Records both sharing choices; the core applies them at once. */

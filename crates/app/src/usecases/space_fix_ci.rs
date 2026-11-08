@@ -92,13 +92,14 @@ impl Core {
         let cfg = self.space_config_of(&space, &project).await;
         let check_cmd = cfg.command(SpaceCommandKind::Check).map(|c| c.script);
 
-        self.space_send(SpaceSendRequest {
+        self.system_send(SpaceSendRequest {
             space: space.id,
             text: fix_ci_prompt(&items, check_cmd.as_deref()),
             agent: None,
             model: None,
             mode: None,
             attachments: Some(attachments),
+            effort: None,
         })
         .await
     }

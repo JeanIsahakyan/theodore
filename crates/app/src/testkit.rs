@@ -81,6 +81,8 @@ struct StoreState {
     outbox: Vec<OutboxItem>,
     next_outbox_id: u64,
     kv: HashMap<String, serde_json::Value>,
+    /// `(space, parts)` by `(run, call)`.
+    tool_payloads: HashMap<(String, String), (String, serde_json::Map<String, serde_json::Value>)>,
 }
 
 type ReadHook = Box<dyn FnOnce() + Send>;
@@ -104,6 +106,28 @@ impl FakeStore {
 }
 
 impl Store for FakeStore {
+    fn tool_payload_put(
+        &self,
+        key: &theodore_ports::ToolCallKey,
+        part: &str,
+        value: &serde_json::Value,
+    ) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        s.tool_payloads
+            .entry((key.run.clone(), key.call.clone()))
+            .or_insert_with(|| (key.space.clone(), serde_json::Map::new()))
+            .1
+            .insert(part.to_string(), value.clone());
+        Ok(())
+    }
+
+    fn tool_payload_get(&self, run: &str, call: &str) -> StoreResult<Option<serde_json::Value>> {
+        let s = self.0.lock().unwrap();
+        Ok(s.tool_payloads
+            .get(&(run.to_string(), call.to_string()))
+            .map(|(_, parts)| serde_json::Value::Object(parts.clone())))
+    }
+
     fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {
         let mut s = self.0.lock().unwrap();
         let mut out = Vec::new();
@@ -382,6 +406,10 @@ pub struct FakeGit {
     head: Mutex<Sha>,
     revision: Mutex<Revision>,
     files: Mutex<HashMap<(String, String), Vec<u8>>>,
+    /// `diff_file`'s answers, by `(from, to, path)`; anything else: no change.
+    file_diffs: Mutex<HashMap<(String, String, String), theodore_domain::FileDiff>>,
+    /// `(from, to, path)` of every `diff_file`.
+    pub diff_file_calls: Mutex<Vec<(Sha, Sha, String)>>,
     /// Last `(branch, message)` passed to `commit_and_push`, for assertions.
     pub last_push: Mutex<Option<(String, String)>>,
     /// The author of that last `commit_and_push`.
@@ -543,6 +571,8 @@ impl FakeGit {
             head: Mutex::new(head),
             revision: Mutex::new(revision),
             files: Mutex::new(HashMap::new()),
+            file_diffs: Mutex::new(HashMap::new()),
+            diff_file_calls: Mutex::new(Vec::new()),
             last_push: Mutex::new(None),
             last_push_author: Mutex::new(None),
             push_responses: Mutex::new(VecDeque::new()),
@@ -697,6 +727,13 @@ impl FakeGit {
 
     pub fn set_revision(&self, revision: Revision) {
         *self.revision.lock().unwrap() = revision;
+    }
+
+    pub fn put_file_diff(&self, from: &Sha, to: &Sha, file: theodore_domain::FileDiff) {
+        self.file_diffs
+            .lock()
+            .unwrap()
+            .insert((from.0.clone(), to.0.clone(), file.path.clone()), file);
     }
 
     pub fn put_file(&self, rev: &Sha, path: &str, content: &[u8]) {
@@ -897,6 +934,54 @@ impl GitPort for FakeGit {
             .unwrap()
             .get(&(rev.0.clone(), path.to_string()))
             .cloned())
+    }
+    async fn list_dir(&self, _repo: &Path, rev: &Sha, dir: &str) -> GitResult<Vec<String>> {
+        let prefix = format!("{}/", dir.trim_end_matches('/'));
+        let mut names: Vec<String> = self
+            .files
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|(r, _)| r == &rev.0)
+            .filter_map(|(_, p)| p.strip_prefix(prefix.as_str()))
+            .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+    async fn diff_file(
+        &self,
+        _repo: &Path,
+        from: &Sha,
+        to: &Sha,
+        path: &str,
+        _opts: &DiffOptions,
+    ) -> GitResult<Option<theodore_domain::FileDiff>> {
+        self.diff_file_calls
+            .lock()
+            .unwrap()
+            .push((from.clone(), to.clone(), path.to_string()));
+        Ok(self
+            .file_diffs
+            .lock()
+            .unwrap()
+            .get(&(from.0.clone(), to.0.clone(), path.to_string()))
+            .cloned())
+    }
+    async fn blob_size(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<u64>> {
+        Ok(self.show(repo, rev, path).await?.map(|b| b.len() as u64))
+    }
+    async fn blob_head(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+        max: usize,
+    ) -> GitResult<Vec<u8>> {
+        let mut bytes = self.show(repo, rev, path).await?.unwrap_or_default();
+        bytes.truncate(max);
+        Ok(bytes)
     }
     async fn commit_and_push(
         &self,
@@ -3531,4 +3616,141 @@ pub fn sample_anchor(path: &str, line: u32) -> Anchor {
         start_line: None,
         start_side: None,
     }
+}
+
+/// The product events emitted on this thread while the guard lives, in
+/// order, as (event, properties), and the account changes telemetry was
+/// told of as `identity`. `#[tokio::test]` runs the core there.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct ProductLog(Arc<Mutex<Vec<(String, serde_json::Value)>>>);
+
+#[cfg(test)]
+impl ProductLog {
+    /// The properties of every `event` so far.
+    pub fn named(&self, event: &str) -> Vec<serde_json::Value> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, _)| name == event)
+            .map(|(_, props)| props.clone())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ProductLog {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let target = event.metadata().target();
+        #[derive(Default)]
+        struct Fields {
+            event: String,
+            props: String,
+            signed_in: Option<bool>,
+        }
+        impl tracing::field::Visit for Fields {
+            fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+                if field.name() == "signed_in" {
+                    self.signed_in = Some(value);
+                }
+            }
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "event" {
+                    self.event = value.to_string();
+                }
+            }
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "props" {
+                    self.props = format!("{value:?}");
+                }
+            }
+        }
+        let mut fields = Fields::default();
+        if target == theodore_telemetry::IDENTITY_TARGET {
+            event.record(&mut fields);
+            let props = serde_json::json!({ "signed_in": fields.signed_in });
+            self.0.lock().unwrap().push(("identity".into(), props));
+            return;
+        }
+        if target != theodore_telemetry::product::TARGET {
+            return;
+        }
+        event.record(&mut fields);
+        let props = serde_json::from_str(&fields.props).expect("props are json");
+        self.0.lock().unwrap().push((fields.event, props));
+    }
+}
+
+/// `tracing` caches whether anyone wants an event at its call site, and
+/// parallel tests' short-lived subscribers race on that cache: a capture
+/// could lose an event. One subscriber that always lives keeps it "yes".
+#[cfg(test)]
+fn keep_call_sites_interested() {
+    static ALWAYS_INTERESTED: std::sync::Once = std::sync::Once::new();
+    ALWAYS_INTERESTED.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
+    });
+}
+
+/// Every log line while capturing: `message field=value …`.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct LineLog(Arc<Mutex<Vec<String>>>);
+
+#[cfg(test)]
+impl LineLog {
+    /// The lines containing `needle`.
+    pub fn matching(&self, needle: &str) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LineLog {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        struct Line(String);
+        impl tracing::field::Visit for Line {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0 += &format!(" {}={value:?}", field.name());
+            }
+        }
+        let mut line = Line(String::new());
+        event.record(&mut line);
+        self.0.lock().unwrap().push(line.0);
+    }
+}
+
+/// Records log lines until the guard drops.
+#[cfg(test)]
+pub fn capture_lines() -> (LineLog, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    keep_call_sites_interested();
+    let log = LineLog::default();
+    let subscriber = tracing_subscriber::registry().with(log.clone());
+    (log, tracing::subscriber::set_default(subscriber))
+}
+
+/// Records product events until the guard drops.
+#[cfg(test)]
+pub fn capture_product() -> (ProductLog, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    keep_call_sites_interested();
+    let log = ProductLog::default();
+    let subscriber = tracing_subscriber::registry().with(log.clone());
+    (log, tracing::subscriber::set_default(subscriber))
 }

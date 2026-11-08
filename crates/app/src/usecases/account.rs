@@ -465,6 +465,7 @@ impl Core {
                 .and_then(Result::ok)
                 .flatten();
                 let session = raw.and_then(|s| serde_json::from_str::<AccountSession>(&s).ok());
+                theodore_telemetry::set_account(session.as_ref().map(|s| s.user.id.as_str()));
                 *self.0.account.session.lock().expect("account lock") = session;
             })
             .await;
@@ -683,6 +684,7 @@ impl Core {
         self.account_load().await;
         self.account_persist(Some(&session)).await?;
         self.0.account.generation.fetch_add(1, Ordering::SeqCst);
+        theodore_telemetry::set_account(Some(&session.user.id));
         *self.0.account.session.lock().expect("account lock") = Some(session);
         self.0.account.session_ended.store(false, Ordering::SeqCst);
         self.account_gate().await;
@@ -691,7 +693,7 @@ impl Core {
         self.emit(Ephemeral::AccountStatus {
             status: status.clone(),
         });
-        // No account id, email or name: the event only says it happened.
+        // No email or name; the sinks add the account's id on their own.
         tracing::info!("signed in to the Theodore account");
         theodore_telemetry::product(theodore_telemetry::ProductEvent::SignedIn);
         Ok(status)
@@ -823,6 +825,10 @@ impl Core {
         }
         self.0.account.generation.fetch_add(1, Ordering::SeqCst);
         let old = self.0.account.session.lock().expect("account lock").take();
+        theodore_telemetry::set_account(None);
+        if old.is_some() {
+            tracing::info!("signed out of the Theodore account");
+        }
         let persisted = self.account_persist(None).await;
         self.account_gate().await;
         persisted?;
@@ -874,6 +880,7 @@ impl Core {
                 }
                 self.account_persist(Some(&next)).await?;
                 let changed = user_of(&next) != user_of(&current);
+                theodore_telemetry::set_account(Some(&next.user.id));
                 *self.0.account.session.lock().expect("account lock") = Some(next.clone());
                 if changed {
                     self.emit(Ephemeral::AccountStatus {

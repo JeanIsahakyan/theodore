@@ -7,8 +7,10 @@
 //!                                                         └ 4xx, or out of attempts: dropped
 //! ```
 //!
-//! `distinct_id` is the random install id, never the account id, and no
-//! person profile is made (`$process_person_profile: false`).
+//! `distinct_id` is the signed-in account's id (a person, across installs
+//! and versions) when the sharing choice allows it, else an anonymous id
+//! with no person profile (`$process_person_profile: false`). `$identify`
+//! links the two. `Identity::usage_account` is what decides.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -19,6 +21,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::AppMeta;
+use crate::identity::Identity;
 use crate::record::Record;
 use crate::redact::Redactor;
 use crate::sink::Sink;
@@ -74,11 +77,17 @@ pub struct PosthogSink {
     discard: Arc<AtomicBool>,
     redactor: Redactor,
     meta: AppMeta,
+    identity: Arc<Identity>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl PosthogSink {
-    pub fn start(cfg: PosthogConfig, meta: AppMeta, redactor: Redactor) -> std::io::Result<Self> {
+    pub fn start(
+        cfg: PosthogConfig,
+        meta: AppMeta,
+        redactor: Redactor,
+        identity: Arc<Identity>,
+    ) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel(cfg.queue.max(1));
         let stats = Arc::new(Stats::default());
         let discard = Arc::new(AtomicBool::new(false));
@@ -100,6 +109,7 @@ impl PosthogSink {
             discard,
             redactor,
             meta,
+            identity,
             thread: Mutex::new(Some(thread)),
         })
     }
@@ -120,6 +130,49 @@ impl PosthogSink {
         }
     }
 
+    fn queue(&self, event: Value) {
+        let guard = self.tx.lock().unwrap_or_else(|p| p.into_inner());
+        let ok = guard
+            .as_ref()
+            .is_some_and(|tx| tx.try_send(Cmd::Event(event)).is_ok());
+        if !ok {
+            self.stats.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Links the anonymous id to the signed-in account and says what it
+    /// runs. Nothing when signed out, or when the choice doesn't allow it.
+    pub fn identify(&self) {
+        if let Some(event) = self.identify_event() {
+            self.queue(event);
+        }
+    }
+
+    /// PostHog's `$identify`. Never the email, name or login.
+    pub fn identify_event(&self) -> Option<Value> {
+        let account = self.identity.usage_account()?;
+        let now = Record::new(tracing::Level::INFO, crate::product::TARGET, "$identify");
+        Some(json!({
+            "event": "$identify",
+            "distinct_id": account,
+            "timestamp": now.ts_iso(),
+            "uuid": uuid::Uuid::now_v7().to_string(),
+            "properties": {
+                "$anon_distinct_id": self.identity.anon(),
+                "$set": {
+                    "app_version": self.meta.version,
+                    "channel": self.meta.channel,
+                    "os": self.meta.os,
+                    "arch": self.meta.arch,
+                    "commit": self.meta.commit,
+                    "build_env": self.meta.build_env,
+                },
+                "$lib": "theodore",
+                "$geoip_disable": true,
+            },
+        }))
+    }
+
     /// The PostHog event for a product record.
     pub fn event(&self, record: &Record) -> Option<Value> {
         let r = self.redactor.remote(record);
@@ -129,15 +182,17 @@ impl PosthogSink {
         props.remove("op_id");
         props.insert("app_version".into(), json!(self.meta.version));
         props.insert("os".into(), json!(self.meta.os));
+        props.insert("arch".into(), json!(self.meta.arch));
         props.insert("channel".into(), json!(self.meta.channel));
         props.insert("commit".into(), json!(self.meta.commit));
         props.insert("build_env".into(), json!(self.meta.build_env));
         props.insert("$lib".into(), json!("theodore"));
-        props.insert("$process_person_profile".into(), json!(false));
+        let account = self.identity.usage_account();
+        props.insert("$process_person_profile".into(), json!(account.is_some()));
         props.insert("$geoip_disable".into(), json!(true));
         Some(json!({
             "event": name,
-            "distinct_id": self.meta.install_id,
+            "distinct_id": account.unwrap_or_else(|| self.identity.anon()),
             "timestamp": r.ts_iso(),
             "uuid": uuid::Uuid::now_v7().to_string(),
             "properties": props,
@@ -147,13 +202,8 @@ impl PosthogSink {
 
 impl Sink for PosthogSink {
     fn write(&self, record: &Record) {
-        let Some(ev) = self.event(record) else { return };
-        let guard = self.tx.lock().unwrap_or_else(|p| p.into_inner());
-        let ok = guard
-            .as_ref()
-            .is_some_and(|tx| tx.try_send(Cmd::Event(ev)).is_ok());
-        if !ok {
-            self.stats.dropped.fetch_add(1, Ordering::Relaxed);
+        if let Some(ev) = self.event(record) {
+            self.queue(ev);
         }
     }
 
@@ -255,6 +305,7 @@ mod tests {
             version: "1.2.3".into(),
             channel: "nightly".into(),
             os: "macos".into(),
+            arch: "aarch64".into(),
             commit: "abc".into(),
             build_env: "staging".into(),
             install_id: "install-uuid".into(),
@@ -282,7 +333,18 @@ mod tests {
     }
 
     fn sink(cfg: PosthogConfig) -> PosthogSink {
-        PosthogSink::start(cfg, meta(), Redactor::new(None, "salt")).unwrap()
+        signed_as(cfg, None)
+    }
+
+    fn signed_as(cfg: PosthogConfig, account: Option<&str>) -> PosthogSink {
+        let identity = Arc::new(Identity::new("install-uuid"));
+        identity.set(account);
+        identity.set_links(true, true);
+        PosthogSink::start(cfg, meta(), Redactor::new(None, "salt"), identity).unwrap()
+    }
+
+    fn offline() -> PosthogConfig {
+        PosthogConfig::new("http://127.0.0.1:9".parse().unwrap(), "k")
     }
 
     fn pr_opened() -> Record {
@@ -312,11 +374,56 @@ mod tests {
         assert_eq!(p["valid_first_try"], true);
         assert_eq!(p["app_version"], "1.2.3");
         assert_eq!(p["os"], "macos");
+        assert_eq!(p["arch"], "aarch64");
         assert_eq!(p["channel"], "nightly");
         assert_eq!(p["commit"], "abc");
         assert_eq!(p["build_env"], "staging");
         assert_eq!(p["$process_person_profile"], false);
         assert!(p.get("event").is_none());
+        s.shutdown(false);
+    }
+
+    #[test]
+    fn signed_in_the_account_is_the_distinct_id_with_a_person() {
+        let s = signed_as(offline(), Some("user_01ABC"));
+        let ev = s.event(&pr_opened()).unwrap();
+        assert_eq!(ev["distinct_id"], "user_01ABC");
+        assert_eq!(ev["properties"]["$process_person_profile"], true);
+        s.shutdown(false);
+    }
+
+    #[test]
+    fn identify_links_the_anon_id_and_says_what_runs() {
+        let s = signed_as(offline(), Some("user_01ABC"));
+        let ev = s.identify_event().unwrap();
+        assert_eq!(ev["event"], "$identify");
+        assert_eq!(ev["distinct_id"], "user_01ABC");
+        let p = &ev["properties"];
+        assert_eq!(p["$anon_distinct_id"], "install-uuid");
+        assert_eq!(p["$set"]["app_version"], "1.2.3");
+        assert_eq!(p["$set"]["channel"], "nightly");
+        assert_eq!(p["$set"]["os"], "macos");
+        assert_eq!(p["$set"]["arch"], "aarch64");
+        s.shutdown(false);
+    }
+
+    #[test]
+    fn signed_in_under_the_old_terms_is_still_the_anon_id() {
+        let identity = Arc::new(Identity::new("install-uuid"));
+        identity.set(Some("user_01ABC"));
+        let s =
+            PosthogSink::start(offline(), meta(), Redactor::new(None, "salt"), identity).unwrap();
+        let ev = s.event(&pr_opened()).unwrap();
+        assert_eq!(ev["distinct_id"], "install-uuid");
+        assert_eq!(ev["properties"]["$process_person_profile"], false);
+        assert_eq!(s.identify_event(), None);
+        s.shutdown(false);
+    }
+
+    #[test]
+    fn signed_out_nothing_identifies() {
+        let s = sink(offline());
+        assert_eq!(s.identify_event(), None);
         s.shutdown(false);
     }
 

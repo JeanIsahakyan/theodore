@@ -74,18 +74,22 @@ impl Core {
             .find(|t| !t.undone)
             .and_then(|t| t.plan.clone())
             .ok_or_else(|| AppError::Invalid("the last turn has no plan to approve".into()))?;
-        self.space_send_as(
-            SpaceSendRequest {
-                space: row.id.clone(),
-                text: APPROVED_TEXT.into(),
-                agent: None,
-                model: None,
-                mode: Some(build_mode(row.build_mode)),
-                attachments: None,
-            },
-            Some(approved_prompt(&plan)),
-        )
-        .await
+        let sent = self
+            .space_send_as(
+                SpaceSendRequest {
+                    space: row.id.clone(),
+                    text: APPROVED_TEXT.into(),
+                    agent: None,
+                    model: None,
+                    mode: Some(build_mode(row.build_mode)),
+                    attachments: None,
+                    effort: None,
+                },
+                Some(approved_prompt(&plan)),
+            )
+            .await?;
+        crate::usecases::telemetry::space_action("plan_approved");
+        Ok(sent)
     }
 }
 

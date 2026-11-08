@@ -167,6 +167,7 @@ Read the doc before changing its area; keep it true when the change lands.
 | Project config (`.theodore/config.yaml`) | `docs/config.md` | `crates/app/src/config/` |
 | Logs, error codes, New Relic, PostHog | `docs/telemetry.md` | `crates/telemetry` |
 | Simulated host for demos and QA | `docs/sandbox.md` | `crates/sandbox`, `crates/fixtures` |
+| Click-testing the real app from a script | `docs/live-qa.md` | `scripts/qa/`, `apps/desktop/src/qa_driver.rs` |
 | Grouping quality and speed evals | `docs/grouping-eval.md`, `docs/eval/` | `crates/grouping`, `apps/cli` (`theodore eval`) |
 | Code intelligence: symbols, LSP, grammars (design) | `docs/code-intel.md` | `crates/code-intel` (planned) |
 

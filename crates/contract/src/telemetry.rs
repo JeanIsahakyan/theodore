@@ -46,6 +46,12 @@ pub enum UiEvent {
     /// An onboarding step was shown: `account`, `telemetry`, `github`,
     /// `agents`, `projects`, `done`.
     OnboardingStep { step: String },
+    /// Revise on a plan card. The revision itself is an ordinary send.
+    PlanRevised,
+    /// The report window opened: `app`, `chat`, `agent`.
+    ReportOpened { from: String },
+    /// Uses counted since the last flush, never one event per use.
+    UiCounts { tool_rows: u32, file_hovers: u32 },
 }
 
 /// One product event the app may send, with its field names (for "What's
@@ -64,10 +70,15 @@ pub struct TelemetryStatus {
     pub usage_available: bool,
     /// An error-report sink (warnings, errors, traces) is configured.
     pub errors_available: bool,
-    /// "Share anonymous usage data".
+    /// "Share usage data".
     pub usage: Option<bool>,
     /// "Send error reports".
     pub errors: Option<bool>,
+    /// "Share usage data" is on under the old terms ("not linked to your
+    /// account"): it stays anonymous until the user answers the prompt.
+    pub usage_needs_consent: bool,
+    /// The same for "Send error reports".
+    pub errors_needs_consent: bool,
     /// Every product event and its fields.
     pub events: Vec<TelemetryEventInfo>,
     /// What is never sent, one line each.
@@ -78,6 +89,14 @@ pub struct TelemetryStatus {
 pub struct TelemetryChoice {
     pub usage: bool,
     pub errors: bool,
+    /// This choice was made reading the current terms (the account id is
+    /// attached), so a switch left on counts as agreeing to them. Turning a
+    /// switch on always does; leaving one on otherwise doesn't.
+    #[serde(default)]
+    pub usage_consent: bool,
+    /// The same for `errors`.
+    #[serde(default)]
+    pub errors_consent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

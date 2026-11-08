@@ -15,6 +15,8 @@ const status: TelemetryStatus = {
   errors_available: true,
   usage: null,
   errors: null,
+  usage_needs_consent: false,
+  errors_needs_consent: false,
   events: [],
   never_sent: [],
 };
@@ -80,7 +82,14 @@ describe('Onboarding: Help improve Theodore', () => {
     await click(host.querySelector('.onb-next'));
     const calls = transport.calls.filter((c) => c.cmd === 'set_telemetry');
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.args).toEqual({ req: { usage: false, errors: true } });
+    expect(calls[0]!.args).toEqual({
+      req: {
+        usage: false,
+        errors: true,
+        usage_consent: true,
+        errors_consent: true,
+      },
+    });
     // Still here until the core has recorded it.
     expect(host.textContent).toContain('Help improve Theodore');
 
@@ -88,6 +97,24 @@ describe('Onboarding: Help improve Theodore', () => {
     await settle();
     expect(host.textContent).toContain('System follows macOS');
     expect(tracked()).toEqual(['telemetry', 'theme']);
+  });
+
+  it('never puts the account-link prompt on top of onboarding', async () => {
+    transport.onCall('telemetry_status', () => ({
+      ...status,
+      usage: true,
+      errors: false,
+      usage_needs_consent: true,
+    }));
+    store.ephemeral.setAccount({
+      available: true,
+      required: true,
+      user: { id: 'user_01ABC', email: 'a@b.c', name: null, avatar_url: null },
+      session_ended: false,
+    });
+    await render();
+    expect(m!.host.textContent).toContain('Step 1 of 6');
+    expect(document.querySelector('.sharing-prompt')).toBeNull();
   });
 
   it('is left out when nothing can be sent', async () => {

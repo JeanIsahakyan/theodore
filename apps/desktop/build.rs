@@ -52,6 +52,11 @@ fn stamp() {
         .unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").unwrap_or_default());
     let env = build_stamp::build_env(std::env::var("THEODORE_BUILD_ENV").ok().as_deref())
         .unwrap_or_else(|e| panic!("{e}"));
+    // Cargo reruns this script when the feature set changes.
+    let qa_driver = std::env::var_os("CARGO_FEATURE_QA_DRIVER").is_some();
+    if let Some(message) = build_stamp::qa_driver_error(env, qa_driver) {
+        panic!("\n\n{message}\n");
+    }
     let given = std::env::var("THEODORE_GIT_SHA").ok();
     let given = given.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let (sha, dirty) = match given {

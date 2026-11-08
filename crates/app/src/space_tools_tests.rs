@@ -473,6 +473,16 @@ async fn an_ai_panel_reply_records_the_model_it_ran_with() {
             })),
         }])
         .unwrap();
+    e.f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: "user:agents.claude.effort".into(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::json!({
+                "key": "agents.claude.effort", "scope": "user", "value": "medium"
+            })),
+        }])
+        .unwrap();
     e.f.agents.push_script(done("an answer"));
     e.core
         .ask(AskRequest {
@@ -500,5 +510,12 @@ async fn an_ai_panel_reply_records_the_model_it_ran_with() {
     assert_eq!(
         e.f.agents.last_request().unwrap().model.as_deref(),
         Some("claude-haiku-5-5")
+    );
+    assert_eq!(reply.effort.as_deref(), Some("medium"));
+    assert!(reply.effort_resolved);
+    assert_eq!(
+        e.f.agents.last_request().unwrap().effort.as_deref(),
+        Some("medium"),
+        "the request carries the effort the reply records"
     );
 }

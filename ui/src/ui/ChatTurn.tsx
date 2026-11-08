@@ -20,14 +20,18 @@ import type {
   AgentId,
   Attachment,
   ChatMessage as Message,
+  MessageVote,
 } from '../gen/contract';
+import { api } from '../core/api';
 import { useRootStore, useRootStoreOrNull } from '../stores/context';
 import { reportChat } from './reportChat';
 import { Md, rich } from '../highlight';
 import { MessageAttachments } from './attachments';
+import { RunIndicator, TurnEndMark } from './AgentMark';
 import { AgentTag, Btn } from './bits';
 import { LiveText } from './RunLive';
 import { ToolCalls } from './ToolCalls';
+import { ToolRunContext } from './toolPayload';
 import {
   LiveTimeline,
   LiveTimer,
@@ -105,24 +109,6 @@ export function ChatEmpty({
   );
 }
 
-/** Typing indicator: three dots, like a messenger. */
-export function Dots() {
-  return (
-    <span
-      className="inline-flex h-5 items-center gap-1"
-      aria-label="Agent is thinking"
-    >
-      {[0, 150, 300].map((d) => (
-        <span
-          key={d}
-          className="size-1.5 animate-bounce rounded-full bg-muted"
-          style={{ animationDelay: `${d}ms` }}
-        />
-      ))}
-    </span>
-  );
-}
-
 /** A run with no output in a while — a note, not a control: Stop is the
  *  composer's. */
 export function StalledHint() {
@@ -138,18 +124,22 @@ export function StalledHint() {
   );
 }
 
-/** Under an agent's reply: copy, a vote, (`onRetry`) ask again and
- *  (`onReport`) report a problem with it. */
+/** Under an agent's reply: copy, its vote (kept on the reply; pressed again,
+ *  taken back), (`onRetry`) ask again and (`onReport`) report a problem with
+ *  it. */
 export function MessageActions({
   text,
+  vote,
+  onVote,
   onRetry,
   onReport,
 }: {
   text: string;
+  vote: MessageVote | null;
+  onVote: (vote: MessageVote | null) => void;
   onRetry?: () => void;
   onReport?: () => void;
 }) {
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
   const [copied, setCopied] = useState(false);
   const act = (
     label: string,
@@ -185,13 +175,13 @@ export function MessageActions({
       {act(
         'Helpful',
         <ThumbsUp className="size-3.5" />,
-        () => setVote(vote === 'up' ? null : 'up'),
+        () => onVote(vote === 'up' ? null : 'up'),
         vote === 'up',
       )}
       {act(
         'Not helpful',
         <ThumbsDown className="size-3.5" />,
-        () => setVote(vote === 'down' ? null : 'down'),
+        () => onVote(vote === 'down' ? null : 'down'),
         vote === 'down',
       )}
       {onReport && act('Report this', <Flag className="size-3.5" />, onReport)}
@@ -340,12 +330,14 @@ export function ChatMessage({
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={m.author.agent} tagged={tagged} badges={badges} />
         {!!m.activity?.length && (
-          <TurnActivity
-            reply={m.id}
-            steps={m.activity}
-            pinLastText={!!m.text_in_steps || !m.text.trim()}
-            keepText={!!m.failed}
-          />
+          <ToolRunContext.Provider value={m.run ?? null}>
+            <TurnActivity
+              reply={m.id}
+              steps={m.activity}
+              pinLastText={!!m.text_in_steps || !m.text.trim()}
+              keepText={!!m.failed}
+            />
+          </ToolRunContext.Provider>
         )}
         {m.failed && m.text && !m.text_in_steps && (
           <div className="text-sm leading-relaxed">
@@ -383,6 +375,7 @@ export function ChatMessage({
                       Report this
                     </Button>
                   )}
+                  <TurnEndMark run={m.run} end="error" />
                 </div>
               )}
             </Alert.Content>
@@ -412,6 +405,12 @@ export function ChatMessage({
             {!m.failed && (
               <MessageActions
                 text={m.text}
+                vote={m.vote ?? null}
+                onVote={(vote) =>
+                  void api
+                    .setMessageVote({ message: m.id, vote })
+                    .catch(() => {})
+                }
                 onRetry={onAskAgain}
                 onReport={onReport}
               />
@@ -419,6 +418,7 @@ export function ChatMessage({
             {!!m.changed_files?.length && (
               <TurnFiles files={m.changed_files} onOpen={onOpenFile} />
             )}
+            {!m.failed && <TurnEndMark run={m.run} end="done" />}
           </div>
         )}
       </div>
@@ -427,8 +427,8 @@ export function ChatMessage({
 }
 
 /** The reply still being written: the agent's tag, then its text as it
- *  streams (dots until there is some) and its steps, or with `timeline` both
- *  as one list in the order they came, the time so far under them. Stalled: a
+ *  streams and its steps, or with `timeline` both as one list in the order
+ *  they came; under them the agent's indicator and the time so far. Stalled: a
  *  note under them, with Retry when `onRetry` is given. No Stop here — the
  *  composer has it. */
 export const ChatLive = observer(function ChatLive({
@@ -460,7 +460,6 @@ export const ChatLive = observer(function ChatLive({
   const store = useRootStore();
   const stalled = run != null && store.ephemeral.stalled.has(run);
   const tools = (!timeline && run && store.ephemeral.runLog.get(run)) || [];
-  const waiting = stalled ? null : <Dots />;
   return (
     <div
       data-variant="agent"
@@ -469,19 +468,23 @@ export const ChatLive = observer(function ChatLive({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={agent} tagged={tagged} badges={badges} />
-        {!run ? (
-          waiting
-        ) : timeline ? (
-          <LiveTimeline run={run} fallback={waiting} />
-        ) : (
-          <LiveText run={run} fallback={waiting} />
-        )}
+        {run &&
+          (timeline ? (
+            <ToolRunContext.Provider value={run}>
+              <LiveTimeline run={run} />
+            </ToolRunContext.Provider>
+          ) : (
+            <LiveText run={run} />
+          ))}
         {run && tools.length > 0 && (
           <ToolCalls tools={tools} running turn={run} />
         )}
-        {timeline && (run != null || since != null) && (
-          <LiveTimer run={run} since={since} />
-        )}
+        <div className="chat-status flex h-5 items-center gap-1.5">
+          <RunIndicator run={run} />
+          {timeline && (run != null || since != null) && (
+            <LiveTimer run={run} since={since} />
+          )}
+        </div>
         {stalled && <StalledHint />}
         {stalled && onRetry && (
           <Button

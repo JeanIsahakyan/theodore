@@ -10,14 +10,14 @@ use theodore_contract::{
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
     BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
-    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
-    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FilePreviewAnswer, FilePreviewRequest,
+    FileRequest, FindSymbolRequest, GetBlobRequest, HostAuthStatus, InterdiffEntry,
+    InterdiffRequest, LinearIssue, LinearIssuesRequest, LinearStatus, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest,
+    SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 use theodore_ports::{HostError, IssueTracker, NewIssue};
@@ -457,6 +457,13 @@ impl CoreApi for AppCore {
     async fn attachment_data(&self, id: String) -> Result<String, CommandError> {
         self.core.attachment_data(id).await.map_err(err)
     }
+    async fn tool_payload(
+        &self,
+        run: String,
+        call: String,
+    ) -> Result<Option<theodore_contract::ToolPayload>, CommandError> {
+        self.core.tool_payload(run, call).await.map_err(err)
+    }
     async fn cancel_run(&self, run: String) -> Result<(), CommandError> {
         self.core.cancel_run(run).await.map_err(err)
     }
@@ -632,6 +639,12 @@ impl CoreApi for AppCore {
     async fn get_blob(&self, req: GetBlobRequest) -> Result<BlobResponse, CommandError> {
         self.core.get_blob(req).await.map_err(err)
     }
+    async fn file_preview(
+        &self,
+        req: FilePreviewRequest,
+    ) -> Result<FilePreviewAnswer, CommandError> {
+        self.core.file_preview(req).await.map_err(err)
+    }
     async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {
         self.core.conflicts(pr).await.map_err(err)
     }
@@ -666,11 +679,14 @@ impl CoreApi for AppCore {
             .unwrap_or_default();
         // The stored choice is the truth; the sinks follow it.
         let s = self.core.telemetry_settings().await;
+        let choice = s.choice();
         Ok(theodore_contract::TelemetryStatus {
             usage_available,
             errors_available,
             usage: s.usage,
             errors: s.errors,
+            usage_needs_consent: choice.usage_needs_consent(),
+            errors_needs_consent: choice.errors_needs_consent(),
             events: theodore_telemetry::ProductEvent::catalog(),
             never_sent: theodore_telemetry::product::never_sent(),
         })
@@ -679,10 +695,7 @@ impl CoreApi for AppCore {
         &self,
         req: theodore_contract::TelemetryChoice,
     ) -> Result<theodore_contract::TelemetryStatus, CommandError> {
-        self.core
-            .set_telemetry_choice(req.usage, req.errors)
-            .await
-            .map_err(err)?;
+        self.core.set_telemetry_choice(&req).await.map_err(err)?;
         self.apply_telemetry().await;
         self.telemetry_status().await
     }
@@ -1091,6 +1104,12 @@ impl CoreApi for AppCore {
     ) -> Result<String, CommandError> {
         self.core.space_send_now(req).await.map_err(err)
     }
+    async fn set_message_vote(
+        &self,
+        req: theodore_contract::SetMessageVoteRequest,
+    ) -> Result<(), CommandError> {
+        self.core.set_message_vote(req).await.map_err(err)
+    }
     async fn space_queued(
         &self,
         req: theodore_contract::SpaceQueuedRequest,
@@ -1102,6 +1121,15 @@ impl CoreApi for AppCore {
     }
     async fn space_skills(&self, space: String) -> Result<Vec<SkillInfo>, CommandError> {
         self.core.space_skills(&space).await.map_err(err)
+    }
+    async fn project_skills(&self, project: String) -> Result<Vec<SkillInfo>, CommandError> {
+        self.core.project_skills(&project).await.map_err(err)
+    }
+    async fn set_space_settings(
+        &self,
+        req: theodore_contract::SetSpaceSettingsRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.set_space_settings(req).await.map_err(err)
     }
     async fn space_review(
         &self,

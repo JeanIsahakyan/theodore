@@ -12,6 +12,7 @@ import { api } from '../../core/api';
 import type { ChatMessage as Message } from '../../gen/contract';
 import { useRootStore } from '../../stores/context';
 import { ChatMessage } from '../ChatTurn';
+import { FilePreviewScope } from '../FileHoverPreview';
 import { CheckChip } from './SpaceCommands';
 import { PlanActions } from './SpacePlan';
 import { BackToHere } from './SpaceRewind';
@@ -62,44 +63,46 @@ export const SpaceMessage = memo(
       [store, spaceId],
     );
     return (
-      <ChatMessage
-        m={m}
-        tagged={tagged}
-        onOpenFile={onOpenFile}
-        className={v.undone ? 'space-undone opacity-50' : ''}
-        badges={
-          undoneReply || v.undoHere || v.back || v.plan ? (
-            <>
-              {v.plan && (
-                <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
-                  plan
-                </span>
-              )}
-              {undoneReply && (
-                <span className="rounded-full bg-default px-1.5 text-[10px] text-muted">
-                  undone
-                </span>
-              )}
-              {v.undoHere && (
-                <UndoTurn spaceId={spaceId} reason={v.undoReason} />
-              )}
-              {v.back && <SpaceBackToHere spaceId={spaceId} reply={m.id} />}
-            </>
-          ) : undefined
-        }
-        after={
-          agent ? (
-            <>
-              {v.check && (
-                <CheckChip check={v.check} keptAs={`check:${m.id}`} />
-              )}
-              {v.planHere && (
-                <SpacePlanActions spaceId={spaceId} onRevise={onRevise} />
-              )}
-            </>
-          ) : undefined
-        }
-      />
+      <FilePreviewScope space={spaceId} reply={m.id}>
+        <ChatMessage
+          m={m}
+          tagged={tagged}
+          onOpenFile={onOpenFile}
+          className={v.undone ? 'space-undone opacity-50' : ''}
+          badges={
+            undoneReply || v.undoHere || v.back || v.plan ? (
+              <>
+                {v.plan && (
+                  <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
+                    plan
+                  </span>
+                )}
+                {undoneReply && (
+                  <span className="rounded-full bg-default px-1.5 text-[10px] text-muted">
+                    undone
+                  </span>
+                )}
+                {v.undoHere && (
+                  <UndoTurn spaceId={spaceId} reason={v.undoReason} />
+                )}
+                {v.back && <SpaceBackToHere spaceId={spaceId} reply={m.id} />}
+              </>
+            ) : undefined
+          }
+          after={
+            agent ? (
+              <>
+                {v.check && (
+                  <CheckChip check={v.check} keptAs={`check:${m.id}`} />
+                )}
+                {v.planHere && (
+                  <SpacePlanActions spaceId={spaceId} onRevise={onRevise} />
+                )}
+              </>
+            ) : undefined
+          }
+        />
+      </FilePreviewScope>
     );
   }),
 );

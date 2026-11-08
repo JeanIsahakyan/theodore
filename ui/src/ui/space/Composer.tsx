@@ -24,6 +24,7 @@ import { observer } from 'mobx-react-lite';
 import type { AgentId, SkillInfo } from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore } from '../../stores/context';
+import type { RootStore } from '../../stores/RootStore';
 import { AgentMenu } from '../AgentMenu';
 import { isAgentEnabled } from '../Settings';
 import { K } from '../bits';
@@ -400,20 +401,54 @@ export const useEnabledAgents = (): AgentId[] => {
   return agents;
 };
 
+/** The agent a box with no pick of its own talks to, among those offered:
+ *  `value`, else `agents.chat` for this project, else yours, else the first. */
+export function boxAgent(
+  store: Pick<RootStore, 'models'>,
+  value: AgentId | null,
+  agents: AgentId[],
+  repo?: string,
+): AgentId | null {
+  if (value && agents.includes(value)) return value;
+  const chat = (scope: string) =>
+    store.models.settings.get(`${scope}:agents.chat`)?.value;
+  const wanted = [repo ? chat(`repo:${repo}`) : undefined, chat('user')];
+  for (const w of wanted) {
+    if (agents.includes(w as AgentId)) return w as AgentId;
+  }
+  return agents[0] ?? null;
+}
+
 /** The agent chip for a new space, with the agent's model and effort.
- *  `null` = the `agents.chat` default, shown as the first one offered. */
+ *  `null` = the `agents.chat` default. */
 export const AgentChip = observer(function AgentChip({
   value,
   onChange,
   isDisabled,
+  modelOf,
+  onPickModel,
+  effortOf,
+  onPickEffort,
+  repo,
 }: {
   value: AgentId | null;
   onChange: (a: AgentId) => void;
   isDisabled?: boolean;
+  /** A space's box: its own model for an agent, instead of the setting. */
+  modelOf?: (agent: AgentId) => string | null;
+  /** A space's box: a pick is this space's, not the agent's setting. */
+  onPickModel?: (agent: AgentId, model: string) => void;
+  /** A space's box: its own effort for an agent, instead of the setting. */
+  effortOf?: (agent: AgentId) => string | null;
+  /** A space's box: an effort picked is this space's, not the setting. */
+  onPickEffort?: (agent: AgentId, effort: string) => void;
+  /** `<owner>/<name>`: this project's `agents.chat`, for the default. */
+  repo?: string;
 }) {
+  const store = useRootStore();
   const agents = useEnabledAgents();
   if (!agents.length) return null;
-  const current = value && agents.includes(value) ? value : agents[0]!;
+  const current = boxAgent(store, value, agents, repo) ?? agents[0]!;
   return (
     <AgentMenu
       agents={agents}
@@ -421,6 +456,10 @@ export const AgentChip = observer(function AgentChip({
       onSelect={onChange}
       isDisabled={isDisabled}
       ultracode
+      modelOf={modelOf}
+      onPickModel={onPickModel}
+      effortOf={effortOf}
+      onPickEffort={onPickEffort}
     />
   );
 });

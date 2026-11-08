@@ -13,6 +13,8 @@ pub mod gate;
 pub mod menu;
 pub mod notify;
 pub mod op;
+#[cfg(feature = "qa-driver")]
+mod qa_driver;
 pub mod quit;
 pub mod relocate;
 pub mod shell_path;
@@ -43,6 +45,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::ask,
             commands::save_attachment,
             commands::attachment_data,
+            commands::tool_payload,
             commands::cancel_run,
             commands::submit_review,
             commands::detect_agents,
@@ -88,6 +91,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::linear_issues,
             commands::find_symbol,
             commands::get_blob,
+            commands::file_preview,
             commands::conflicts,
             commands::sandbox_status,
             commands::sandbox_set_fault,
@@ -99,6 +103,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::list_spaces,
             commands::space_send,
             commands::space_send_now,
+            commands::set_message_vote,
             commands::space_queued,
             commands::space_stop,
             commands::space_skills,
@@ -113,6 +118,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::revert_space_file,
             commands::unarchive_space,
             commands::set_space_pinned,
+            commands::set_space_settings,
+            commands::project_skills,
             commands::space_send_feedback,
             commands::space_base_status,
             commands::update_space_from_base,
@@ -271,6 +278,8 @@ pub fn run(
         .setup(move |app| {
             builder.mount_events(app);
             let handle = app.handle().clone();
+            #[cfg(feature = "qa-driver")]
+            qa_driver::start(&handle);
             // `Theodore Dev` and the rest: the title Mission Control and the
             // Window menu show (`tauri.conf.json` has production's).
             if let Some(main) = app.get_webview_window("main") {

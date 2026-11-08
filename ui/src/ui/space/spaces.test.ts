@@ -24,6 +24,10 @@ import {
   spaceGlyph,
   waitingSpaces,
   spacesIn,
+  sendEffort,
+  sendModel,
+  spaceOwnEffort,
+  spaceOwnModel,
   spaceTitle,
   nextMode,
   spaceKeyAction,
@@ -200,7 +204,7 @@ describe('spaces', () => {
     };
     expect(turnEnded({ status: 'running' }, next)).toEqual({
       level: 'info',
-      text: 'Fix it: turn done',
+      text: 'Fix it',
     });
     expect(
       turnEnded(
@@ -230,6 +234,46 @@ describe('spaces', () => {
     expect(
       turnEnded({ status: 'running' }, { ...next, status: 'running' }),
     ).toBeNull();
+  });
+
+  it('a space keeps its own model; only a pick or another agent names one', () => {
+    const space = { agent: 'claude' as const, model: 'haiku' };
+    const pick = { agent: 'claude' as const, model: 'opus' };
+    // The chip: the pick, else the space's own, else the agent's setting (null).
+    expect(spaceOwnModel(space, 'claude', null)).toBe('haiku');
+    expect(spaceOwnModel(space, 'claude', pick)).toBe('opus');
+    expect(spaceOwnModel(space, 'codex', null)).toBeNull();
+    expect(
+      spaceOwnModel({ agent: 'claude', model: null }, 'claude', null),
+    ).toBe(null);
+    // A send: never the setting silently; another agent's model when switching.
+    expect(sendModel(space, 'claude', null, 'opus')).toBeNull();
+    expect(sendModel(space, 'claude', pick, 'sonnet')).toBe('opus');
+    expect(sendModel(space, 'codex', null, 'gpt-6-sol')).toBe('gpt-6-sol');
+    expect(sendModel(space, 'codex', pick, 'gpt-6-sol')).toBe('gpt-6-sol');
+  });
+
+  it("a space's effort is its own; none follows the setting", () => {
+    const space = { agent: 'claude' as const, effort: 'high' };
+    const pick = { agent: 'claude' as const, effort: 'low' };
+    expect(spaceOwnEffort(space, 'claude', null)).toBe('high');
+    expect(spaceOwnEffort(space, 'claude', pick)).toBe('low');
+    expect(spaceOwnEffort(space, 'codex', null)).toBeNull();
+    expect(
+      spaceOwnEffort({ agent: 'claude', effort: null }, 'claude', null),
+    ).toBeNull();
+    expect(sendEffort('claude', pick)).toBe('low');
+    expect(sendEffort('claude', null)).toBeNull();
+    expect(sendEffort('codex', pick)).toBeNull();
+  });
+
+  it('a blank space reads "New space" until its chat starts', () => {
+    expect(
+      spaceTitle({ goal: '', name: 'new-space-a1b2c3', title: 'New space' }),
+    ).toBe('New space');
+    expect(
+      spaceTitle({ goal: 'Fix login', name: 'new-space-a1b2c3', title: null }),
+    ).toBe('Fix login');
   });
 
   it('sums a diff stat', () => {
