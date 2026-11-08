@@ -70,9 +70,9 @@ export class SyncClient {
     if (this.loadedPrs.has(pr)) return;
     const inFlight = this.loadingPrs.get(pr);
     if (inFlight) return inFlight;
-    const p = api.bootstrap({ scope: 'pr', pr }).then((boot) =>
-      this.inOrder(() => this.landPr(pr, boot)),
-    );
+    const p = api
+      .bootstrap({ scope: 'pr', pr })
+      .then((boot) => this.inOrder(() => this.landPr(pr, boot)));
     this.loadingPrs.set(pr, p);
     try {
       await p;
@@ -168,10 +168,13 @@ export class SyncClient {
    *  (the connection itself is still fine; only our local copy is stale). */
   private async resync(): Promise<void> {
     const openPrs = [...this.loadedPrs];
-    this.pool.clear();
-    this.loadedPrs.clear();
     const boot = await api.bootstrap({ scope: 'global' });
+    // Cleared and refilled in one action: an empty pool while online, even
+    // for the bootstrap's round trip, reads as "the active project is
+    // gone" and drops that workspace's saved tabs (RootStore).
     runInAction(() => {
+      this.pool.clear();
+      this.loadedPrs.clear();
       this.applyRows(boot.rows);
       this.lastSyncId = boot.last_sync_id;
     });

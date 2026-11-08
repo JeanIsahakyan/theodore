@@ -7,6 +7,7 @@ import type {
   WireAction,
   WireRow,
 } from '../gen/contract';
+import { reaction } from 'mobx';
 import { SyncClient } from './SyncClient';
 
 let transport: FakeTransport;
@@ -184,6 +185,44 @@ describe('SyncClient', () => {
     expect(client.pool.get('task', 't1')).toBeUndefined();
     expect(client.lastSyncId).toBe(10);
     expect(client.isPrLoaded('pr1')).toBe(true);
+  });
+
+  it('never shows an empty pool while it resyncs', async () => {
+    // An empty pool while online reads as "the active project is gone",
+    // which drops that workspace's saved tabs (RootStore).
+    const project = row('project', 'p1', { id: 'p1' });
+    transport.queueResult('bootstrap', {
+      last_sync_id: 0,
+      rows: [project],
+    } satisfies Bootstrap);
+    const client = new SyncClient();
+    await client.start();
+    const seen: boolean[] = [];
+    const stop = reaction(
+      () => !!client.pool.get('project', 'p1'),
+      (has) => seen.push(has),
+    );
+
+    transport.queueResult('catch_up', {
+      from_sync_id: 0,
+      last_sync_id: 10,
+      actions: [],
+      resync_required: true,
+    } satisfies SyncFrame);
+    transport.queueResult('bootstrap', {
+      last_sync_id: 10,
+      rows: [project],
+    } satisfies Bootstrap);
+    transport.emit('sync', {
+      from_sync_id: 3,
+      last_sync_id: 4,
+      actions: [],
+      resync_required: false,
+    });
+    await settle();
+    stop();
+    expect(seen).not.toContain(false);
+    expect(client.pool.get('project', 'p1')).toBeDefined();
   });
 
   it('ignores a stale/duplicate frame', async () => {
@@ -382,7 +421,11 @@ describe('SyncClient', () => {
         last_sync_id: 6,
         actions: [action(6, 'task', 't1', 'I', { title: 'six' })],
       } satisfies SyncFrame,
-      { from_sync_id: 6, last_sync_id: 7, actions: [seven] } satisfies SyncFrame,
+      {
+        from_sync_id: 6,
+        last_sync_id: 7,
+        actions: [seven],
+      } satisfies SyncFrame,
     );
     const opening = client.openPr('pr1');
     transport.emit('sync', {
