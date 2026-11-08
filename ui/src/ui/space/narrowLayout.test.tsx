@@ -3,19 +3,25 @@
  *  jsdom can see: the markup the rules hang on is there, the words are
  *  unchanged when nothing collapses, and the rules still name those
  *  classes. */
-import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, type Mounted } from '../../test/dom';
 import { BaseMovedText, baseMovedLabel } from './BaseUpdate';
 import { ChipMenu, Composer } from './Composer';
+
+// The stylesheet as text. The test runner skips CSS (a `?raw` import comes
+// back empty), and the UI's types have no Node: read it through a typed
+// dynamic import instead.
+const fs = (await import('node' + ':fs')) as {
+  readFileSync(path: string, encoding: 'utf8'): string;
+};
+// Vitest runs from `ui/`.
+const css = fs.readFileSync('src/styles.css', 'utf8');
 
 let m: Mounted | null = null;
 afterEach(() => {
   m?.unmount();
   m = null;
 });
-
-const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
 
 describe('Base moved, in parts a narrow header can drop', () => {
   it('reads the same as the label when nothing is dropped', async () => {
