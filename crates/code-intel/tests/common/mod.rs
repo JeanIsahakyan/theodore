@@ -137,6 +137,10 @@ pub fn workspace(root: &Path, trust: TrustMode) -> Workspace {
     }
 }
 
+/// A platform key no manifest entry downloads for: a toolchain on it never
+/// fetches a server.
+pub const NO_DOWNLOADS: &str = "no-downloads";
+
 /// Everything a facade needs on disk: a data dir and an empty `$PATH`, so
 /// no server installed on this machine is found.
 pub struct Env {
@@ -165,9 +169,14 @@ impl Env {
         }
     }
 
-    /// The builtin manifest; nothing on `$PATH`.
+    /// The builtin manifest; nothing on `$PATH`. Hermetic: the platform is
+    /// one the manifest has no server downloads for ([`NO_DOWNLOADS`]) and
+    /// grammars are `grammars`, so `install` and the like never reach the
+    /// network (CI runs on macOS, where the real rust-analyzer would be
+    /// fetched from GitHub).
     pub fn facade(&self, grammars: Arc<StaticGrammars>) -> CodeIntel {
         let tc = Toolchain::builder(&self.data)
+            .platform(NO_DOWNLOADS)
             .search_path(self.bin.clone().into_os_string())
             .java_lookup(JavaLookup::none())
             .build();
