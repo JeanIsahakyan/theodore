@@ -90,6 +90,7 @@ import {
   useSpaceLogsSeed,
 } from './SpaceCommands';
 import { TerminalDrawer, TerminalToggle } from './Terminal';
+import { useDrawerHeight } from './drawerHeight';
 import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
@@ -211,6 +212,15 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   );
   const logsOpen = drawer === 'logs';
   const terminalOpen = drawer === 'terminal';
+  // The drawer gives way to the chat: capped by the room left once the chat
+  // log keeps ~200 px and the composer its height, re-measured as the
+  // window resizes (`drawerHeight.ts`).
+  const panes = useRef<HTMLDivElement>(null);
+  const drawerH = useDrawerHeight(
+    panes,
+    terminalOpen ? 300 : 260,
+    drawer !== null,
+  );
   const toggleTerminal = () => toggle('terminal');
   // ⌃` toggles it from anywhere on the page, composer included — the same
   // reach as ⌘.'s stop, below.
@@ -337,8 +347,9 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
       />
       <UpdatingBanner space={space} />
       {/* The panes clip to this row, so a drawer below never sits under them;
-          the drawer is capped, so the chat keeps a usable height. */}
-      <div className="flex min-h-[200px] flex-1 overflow-hidden">
+          the drawer is capped by the room left, so the chat keeps a usable
+          height. */}
+      <div ref={panes} className="flex min-h-0 flex-1 overflow-hidden">
         <section
           className={
             showChanges
@@ -376,12 +387,19 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           </section>
         )}
       </div>
-      {logsOpen && <LogsDrawer space={space} onClose={() => toggle('logs')} />}
+      {logsOpen && (
+        <LogsDrawer
+          space={space}
+          onClose={() => toggle('logs')}
+          height={drawerH}
+        />
+      )}
       {terminalOpen && live && (
         <TerminalDrawer
           space={space.id}
           open={terminalOpen}
           onClose={() => toggle('terminal')}
+          height={drawerH}
         />
       )}
       {space.mirror && (

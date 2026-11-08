@@ -518,16 +518,22 @@ export function LogsToggle({
 export const LogsDrawer = observer(function LogsDrawer({
   space,
   onClose,
+  height,
 }: {
   space: Space;
   onClose: () => void;
+  /** px: the page caps it by the room the chat leaves (`drawerHeight`). */
+  height: number;
 }) {
   const store = useRootStore();
   const [filter, setFilter] = useState<LogFilter>('all');
   const lines = store.ephemeral.spaceLogs.get(space.id) ?? EMPTY;
   const counts = logCounts(lines);
   return (
-    <section className="space-logs flex h-[260px] max-h-[40vh] min-h-[140px] shrink flex-col border-t border-separator bg-background">
+    <section
+      className="space-logs flex shrink-0 flex-col border-t border-separator bg-background"
+      style={{ height }}
+    >
       <div className="flex items-center gap-2 px-4 pt-2">
         <Tabs
           data-plain

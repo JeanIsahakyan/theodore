@@ -122,10 +122,13 @@ export const TerminalDrawer = observer(function TerminalDrawer({
   space,
   open,
   onClose,
+  height,
 }: {
   space: string;
   open: boolean;
   onClose: () => void;
+  /** px: the page caps it by the room the chat leaves (`drawerHeight`). */
+  height: number;
 }) {
   const { terminals, active, setActive, openTab, closeTab } = useSpaceTerminals(
     space,
@@ -133,7 +136,10 @@ export const TerminalDrawer = observer(function TerminalDrawer({
   );
   if (!open) return null;
   return (
-    <section className="space-terminal flex h-[300px] max-h-[40vh] min-h-[140px] shrink flex-col border-t border-separator bg-background">
+    <section
+      className="space-terminal flex shrink-0 flex-col border-t border-separator bg-background"
+      style={{ height }}
+    >
       <div className="flex items-center gap-1 border-b border-separator px-2 py-1">
         {terminals.map((t) => (
           <TerminalTab
