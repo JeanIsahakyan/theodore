@@ -1,6 +1,7 @@
 /** The merge dialog under host errors: a sentence instead of the raw
  *  `host: host server error: …`, no toast, and it recovers on its own
- *  while open (asked again on a backoff, like the header's merge state). */
+ *  while open (asked again on a backoff, like the header's merge state).
+ *  And it follows the checks: one finishing while open asks again. */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MergeInfo } from '../gen/contract';
@@ -99,5 +100,48 @@ describe('the merge dialog under host errors', () => {
     expect(calls).toBe(3);
     expect(text()).not.toContain('having trouble');
     expect(document.body.querySelector('.do-merge')).not.toBeNull();
+  });
+});
+
+describe('the merge dialog while checks run', () => {
+  it('asks again when a check finishes while open', async () => {
+    // Required checks running: the host says blocked.
+    let state = 'blocked';
+    let calls = 0;
+    transport.onCall('merge_info', () => {
+      calls += 1;
+      return { ...info, state };
+    });
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <MergeDialog pr={PR} onClose={() => {}} />
+      </RootStoreProvider>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const text = () => document.body.textContent ?? '';
+    expect(calls).toBe(1);
+    expect(text()).toContain('Blocked by required checks or reviews');
+
+    state = 'clean';
+    await act(async () => {
+      store.sync.pool.put('pr_detail', PR, {
+        threads: [],
+        commits: [],
+        checks: [
+          {
+            id: 'ci',
+            name: 'ci',
+            status: 'pass',
+            url: null,
+            duration_ms: null,
+          },
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(calls).toBe(2);
+    expect(text()).not.toContain('Blocked by required checks or reviews');
   });
 });
