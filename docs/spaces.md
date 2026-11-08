@@ -974,7 +974,7 @@ the log:
 | git's stderr | The toast |
 | --- | --- |
 | `non-fast-forward`, `fetch first`, `[rejected]` | `<branch>` changed on the host since the last push; nothing was overwritten |
-| `refusing to allow … workflow … without \`workflow\` scope` | GitHub needs the workflow permission to push changes under .github/workflows. Sign in again with it, or push that file yourself. |
+| `refusing to allow … workflow … without \`workflow\` scope` | GitHub needs the workflow permission to push changes under .github/workflows. Sign in to GitHub again in Theodore to grant it (with the gh CLI: gh auth refresh -s workflow), or push that file yourself. Theodore's sign-in asks for `repo read:org workflow`; a token from before it lacks `workflow` until you sign in again. |
 
 Why detached plus a private ref, not a real branch in the cache:
 

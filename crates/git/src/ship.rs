@@ -81,7 +81,8 @@ fn check_space(id: &str) -> GitResult<()> {
 /// The `Refused` text for a folder whose checkout can't take a merge.
 /// What a push refused for a missing `workflow` scope tells the user.
 pub(crate) const WORKFLOW_SCOPE_REFUSAL: &str = "GitHub needs the workflow permission to push \
-    changes under .github/workflows. Sign in again with it, or push that file yourself.";
+    changes under .github/workflows. Sign in to GitHub again in Theodore to grant it (with the \
+    gh CLI: gh auth refresh -s workflow), or push that file yourself.";
 
 /// A push the host turned away for a reason the user can act on, from git's
 /// stderr: the branch moved, or GitHub wants the `workflow` scope for a file
