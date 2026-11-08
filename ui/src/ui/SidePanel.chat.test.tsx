@@ -108,7 +108,8 @@ describe('the AI panel chat', () => {
       'why is this here?',
     );
     expect(agent.querySelector('.user-bubble')).toBeNull();
-    expect(agent.querySelector('.agent-tag')?.textContent).toBe('claude');
+    // Claude, the default, isn't named on its replies.
+    expect(agent.querySelector('.agent-tag')).toBeNull();
   });
 
   it('a pending question shows as your bubble, the reply as the agent’s', async () => {

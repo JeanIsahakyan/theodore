@@ -206,10 +206,13 @@ function AgentHeader({
   agent: AgentId | null | undefined;
   badges?: ReactNode;
 }) {
-  if (!agent && !badges) return null;
+  // Claude is the default: its replies need no name. Another agent's do,
+  // so a switch mid-chat stays visible.
+  const named = agent && agent !== 'claude' ? agent : null;
+  if (!named && !badges) return null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      {agent && <AgentTag id={agent} />}
+      {named && <AgentTag id={named} />}
       {badges}
     </div>
   );

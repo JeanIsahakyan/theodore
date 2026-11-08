@@ -166,7 +166,8 @@ describe('the space chat', () => {
     expect(user.getAttribute('data-variant')).toBe('user');
     expect(user.querySelector('.user-bubble')?.textContent).toBe('add a flag');
     expect(agent.getAttribute('data-variant')).toBe('agent');
-    expect(agent.querySelector('.agent-tag')?.textContent).toBe('claude');
+    // Claude, the default, isn't named on its replies.
+    expect(agent.querySelector('.agent-tag')).toBeNull();
     expect(agent.querySelector('.message-actions')).not.toBeNull();
   });
 
