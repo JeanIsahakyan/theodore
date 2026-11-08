@@ -128,6 +128,8 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
+            run: None,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -160,7 +162,7 @@ impl Core {
             }
         };
 
-        let run_id = format!("ask:{message_id}");
+        let run_id = format!("{}{message_id}", theodore_ports::CHAT_RUN_PREFIX);
         let cancel = CancellationToken::new();
         self.0.runs.write().await.insert(
             run_id.clone(),
@@ -187,7 +189,10 @@ impl Core {
         });
         let core = self.clone();
         let pr = req.pr.clone();
-        tokio::spawn(
+        // Under the command's span; `run_id` tags the run's log lines (a
+        // chat report's logs, docs/telemetry.md).
+        let span = tracing::info_span!("chat_run", run_id = %run_id, agent = agent.as_str());
+        tokio::spawn(tracing::Instrument::instrument(
             async move {
                 let _lease = lease;
                 let question = Question {
@@ -195,9 +200,9 @@ impl Core {
                     attachments: agent_attachments(&attachments),
                 };
                 drive_ask(&core, run_id, pr, agent, question, cwd, cancel).await;
-            }
-            .in_current_span(),
-        );
+            },
+            span,
+        ));
         Ok(message_id)
     }
 
@@ -227,7 +232,7 @@ impl Core {
         if let Some(handle) = self.0.runs.write().await.remove(&run) {
             handle.cancel.cancel();
         }
-        if !run.starts_with("ask:") {
+        if !run.starts_with(theodore_ports::CHAT_RUN_PREFIX) {
             let data = serde_json::json!({ "status": RunStatus::Cancelled });
             let _ = self
                 .apply(vec![NewAction {
@@ -551,6 +556,22 @@ async fn count_findings(core: &Core, pr: &PrId, skill: &str) -> u32 {
 /// retryable record even after the app restarts. `pub(crate)`: also used by
 /// `usecases::tasks` for fix runs.
 pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentId, text: &str) {
+    persist_failed_run(core, pr, agent, text, None).await;
+}
+
+/// `persist_failed_message` for the run `run` (a chat question's) and the
+/// model it ran with: a report on it finds that run's logs and model.
+async fn persist_failed_run(
+    core: &Core,
+    pr: &PrId,
+    agent: AgentId,
+    text: &str,
+    run: Option<(String, Option<String>)>,
+) {
+    let (run, model, model_resolved) = match run {
+        Some((run, model)) => (Some(run), model, true),
+        None => (None, None, false),
+    };
     let message_id = uuid::Uuid::new_v4().to_string();
     let message = ChatMessage {
         id: message_id.clone(),
@@ -565,8 +586,10 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
         activity: vec![],
         duration_ms: None,
         changed_files: vec![],
-        model: None,
+        model,
         text_in_steps: false,
+        model_resolved,
+        run,
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -759,6 +782,9 @@ async fn drive_ask(
             Some(hint) => format!("{ASK_SYSTEM}\n{hint}"),
             None => ASK_SYSTEM.into(),
         }));
+    // Resolved here rather than by `AgentDefaults`: the reply records the
+    // model that ran, whatever the setting says later.
+    let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, None).await;
     let req = AgentRequest {
         agent,
         prompt: question.prompt,
@@ -766,7 +792,7 @@ async fn drive_ask(
         cwd,
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),
-        model: None,
+        model: model.clone(),
         effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
@@ -812,7 +838,7 @@ async fn drive_ask(
     // nothing was ever asked.
     if cancel.is_cancelled() || error.is_some() {
         let text = error.unwrap_or_else(|| "cancelled".into());
-        persist_failed_message(core, &pr, agent, &text).await;
+        persist_failed_run(core, &pr, agent, &text, Some((run_id, model))).await;
         return;
     }
 
@@ -831,8 +857,10 @@ async fn drive_ask(
         activity: vec![],
         duration_ms: None,
         changed_files: vec![],
-        model: None,
+        model,
         text_in_steps: false,
+        model_resolved: true,
+        run: Some(run_id),
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

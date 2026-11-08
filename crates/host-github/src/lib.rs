@@ -6,6 +6,7 @@ pub mod device_flow;
 mod graphql;
 mod logs;
 mod pagination;
+mod pr_etag;
 mod rest;
 pub mod testkit;
 mod time;

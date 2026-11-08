@@ -10,6 +10,7 @@ import {
   ArrowDown,
   Check,
   Copy,
+  Flag,
   ThumbsDown,
   ThumbsUp,
 } from '@gravity-ui/icons';
@@ -20,7 +21,8 @@ import type {
   Attachment,
   ChatMessage as Message,
 } from '../gen/contract';
-import { useRootStore } from '../stores/context';
+import { useRootStore, useRootStoreOrNull } from '../stores/context';
+import { reportChat } from './reportChat';
 import { Md, rich } from '../highlight';
 import { MessageAttachments } from './attachments';
 import { AgentTag, Btn } from './bits';
@@ -136,13 +138,16 @@ export function StalledHint() {
   );
 }
 
-/** Under an agent's reply: copy, a vote, and (`onRetry`) ask again. */
+/** Under an agent's reply: copy, a vote, (`onRetry`) ask again and
+ *  (`onReport`) report a problem with it. */
 export function MessageActions({
   text,
   onRetry,
+  onReport,
 }: {
   text: string;
   onRetry?: () => void;
+  onReport?: () => void;
 }) {
   const [vote, setVote] = useState<'up' | 'down' | null>(null);
   const [copied, setCopied] = useState(false);
@@ -189,6 +194,7 @@ export function MessageActions({
         () => setVote(vote === 'down' ? null : 'down'),
         vote === 'down',
       )}
+      {onReport && act('Report this', <Flag className="size-3.5" />, onReport)}
       {onRetry && (
         <Btn tone="ghost" className="ms-1 h-7 px-2 text-xs" onPress={onRetry}>
           Ask again
@@ -309,6 +315,10 @@ export function ChatMessage({
   onOpenFile?: (path: string | null) => void;
   className?: string;
 }) {
+  // "Report this" (docs/telemetry.md "Report from a chat"): wherever the
+  // message is shown with the app around it.
+  const store = useRootStoreOrNull();
+  const onReport = store ? () => void reportChat(store, m.pr, m.id) : undefined;
   if (m.author.kind === 'me') {
     return (
       <UserBubble
@@ -352,11 +362,27 @@ export function ChatMessage({
               <Alert.Description className="text-xs [overflow-wrap:anywhere]">
                 {m.failed}
               </Alert.Description>
-              {onRetryFailed && (
+              {(onRetryFailed || onReport) && (
                 <div className="mt-2 flex gap-1.5">
-                  <Button size="sm" variant="tertiary" onPress={onRetryFailed}>
-                    Retry
-                  </Button>
+                  {onRetryFailed && (
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      onPress={onRetryFailed}
+                    >
+                      Retry
+                    </Button>
+                  )}
+                  {onReport && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="report-this"
+                      onPress={onReport}
+                    >
+                      Report this
+                    </Button>
+                  )}
                 </div>
               )}
             </Alert.Content>
@@ -383,7 +409,13 @@ export function ChatMessage({
                 agent={m.author.agent}
               />
             )}
-            {!m.failed && <MessageActions text={m.text} onRetry={onAskAgain} />}
+            {!m.failed && (
+              <MessageActions
+                text={m.text}
+                onRetry={onAskAgain}
+                onReport={onReport}
+              />
+            )}
             {!!m.changed_files?.length && (
               <TurnFiles files={m.changed_files} onOpen={onOpenFile} />
             )}

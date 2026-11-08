@@ -214,13 +214,28 @@ export type ChatMessage = {
 	 *  At most 200; empty when it changed nothing or git couldn't tell.
 	 */
 	changed_files?: TurnFile[],
-	/**  The model a space reply's turn asked for; none: the CLI's default. */
+	/**
+	 *  The model an agent reply's run used: the space's or, failing that,
+	 *  the `agents.<id>.model` setting at the time; none: the CLI's
+	 *  default. On rows without `model_resolved`, only what a space turn
+	 *  asked for (the setting it fell back to wasn't kept).
+	 */
 	model?: string | null,
+	/**
+	 *  `model` was recorded after the setting's default was applied, so
+	 *  none means the CLI's default rather than "not recorded".
+	 */
+	model_resolved?: boolean,
 	/**
 	 *  A space reply with no final text: `text` is the text steps in
 	 *  `activity` joined, and only those show, in the order they came.
 	 */
 	text_in_steps?: boolean,
+	/**
+	 *  The agent run that wrote this reply: its log lines carry it as
+	 *  `run_id` (a chat report's logs). None on yours and older rows.
+	 */
+	run?: string | null,
 };
 
 export type Check = {
@@ -639,6 +654,27 @@ export type Draft = {
 
 export type DraftId = string;
 
+/**
+ *  `draft_report`: a problem report about a chat, prefilled from it.
+ *  "Report this", `/report` and the agents' `report_problem` tool all
+ *  end here; nothing is sent until you submit the report window.
+ */
+export type DraftReportRequest = {
+	/**
+	 *  The chat: a PR's id (its AI panel) or a space's chat key
+	 *  (`space:<id>`).
+	 */
+	chat: PrId,
+	/**  The message it is about; none: the chat's latest reply. */
+	message?: string | null,
+	title?: string | null,
+	description?: string | null,
+	/**  Default: `turn`. */
+	scope?: ReportScope | null,
+	/**  Default: on. */
+	include_logs?: boolean | null,
+};
+
 export type DraftStateRequest = {
 	pr: PrId,
 	draft: boolean,
@@ -704,6 +740,13 @@ server_trouble?: boolean } |
 /**  Empty when the host didn't say. */
 url: string } |
 /**
+ *  A followed report changed (docs/telemetry.md "My reports"): a
+ *  reply, closed as fixed or not planned, reopened, or its fix
+ *  released. `text` is what the toast and the notification say;
+ *  `title` is the issue's.
+ */
+{ type: "report_update"; number: number; url: string; title: string; text: string } |
+/**
  *  `code_intel.install: ask` and a language's server is missing
  *  (docs/code-intel.md §5.1): offer `code_intel_install(language)`,
  *  or `code_intel_decline(language)`. Once per language per session.
@@ -735,7 +778,12 @@ name: string; state: CodeInstallProgress } |
  */
 { type: "terminal_output"; space: string; terminal: string; seq: number; data: string } |
 /**  The terminal's shell exited (on its own, or `close_space_terminal`). */
-{ type: "terminal_exit"; space: string; terminal: string; exit_code: number | null; error: string | null };
+{ type: "terminal_exit"; space: string; terminal: string; exit_code: number | null; error: string | null } |
+/**
+ *  A chat report was drafted (`draft_report`, or an agent's
+ *  `report_problem`): open the report window on it. Nothing is sent.
+ */
+{ type: "report_draft"; draft: ReportDraft };
 
 export type FileDiff = {
 	path: string,
@@ -977,6 +1025,11 @@ export type IssuePreview = {
 	draft: string,
 	title: string,
 	body: string,
+	/**
+	 *  The conversation block in `body` (a chat report; folded in the
+	 *  preview).
+	 */
+	context?: string | null,
 	/**  The logs block `body` ends with (folded in the preview). */
 	logs: string | null,
 	log_lines: number,
@@ -994,6 +1047,11 @@ export type IssueRequest = {
 	 *  that expired) collects them afresh.
 	 */
 	draft?: string | null,
+	/**
+	 *  A chat report's id (`ReportDraft::id`): the body gets that
+	 *  conversation, and `with_logs` means that run's log lines only.
+	 */
+	context?: string | null,
 };
 
 /**  Where a report issue would go and whether it can be posted now. */
@@ -1006,6 +1064,12 @@ export type IssueTarget = {
 	login: string | null,
 	/**  Why issues can't be posted (signed out, sandbox); `None`: they can. */
 	unavailable: string | null,
+	/**
+	 *  Asking again may change the answer (a rate limit, the network, a
+	 *  sign-in): the window offers Retry. False when it never can (sandbox,
+	 *  fixtures) or nothing is wrong.
+	 */
+	retry?: boolean,
 };
 
 export type LineKind = "ctx" | "add" | "del";
@@ -1328,8 +1392,9 @@ export type QueuedSend = {
 	model?: string | null,
 	mode?: SpaceMode | null,
 	/**
-	 *  Waits for your "Send": the turn before it was stopped or failed,
-	 *  its own turn couldn't start, or Theodore restarted meanwhile.
+	 *  Waits for your "Send": Stop was pressed on the turn before it (even
+	 *  as that turn finished on its own), that turn failed, its own turn
+	 *  couldn't start, or Theodore restarted meanwhile.
 	 */
 	held?: boolean,
 };
@@ -1378,6 +1443,25 @@ export type RepoRef = {
 	name: string,
 };
 
+/**
+ *  A drafted chat report, waiting in the report window. Its conversation
+ *  is read when the window previews or posts it, so a turn still running
+ *  when it was drafted shows how it ended.
+ */
+export type ReportDraft = {
+	/**  Pass in `IssueRequest::context`. */
+	id: string,
+	chat: PrId,
+	scope: ReportScope,
+	title: string,
+	description: string,
+	include_logs: boolean,
+	/**  One line for the window: `Space turn 3 of 5 · claude`. */
+	about: string,
+	/**  Drafted by the agent (`report_problem`), not by you. */
+	by_agent: boolean,
+};
+
 export type ReportFile = {
 	name: string,
 	bytes: number,
@@ -1391,6 +1475,26 @@ export type ReportMode =
 "issue_with_logs" |
 /**  A local zip; nothing is uploaded. */
 "logs_only";
+
+/**  What a chat report is about (docs/telemetry.md "Report from a chat"). */
+export type ReportScope =
+/**  One message: its own text (and a reply's tool calls). */
+"message" |
+/**  Your message and the reply to it, tool calls, error, timings. */
+"turn" |
+/**  A space as a whole: where, agent, status; no message text. */
+"space" |
+/**  A PR's AI panel as a whole: the same. */
+"review";
+
+/**  Where a report stands, as "My reports" shows it. */
+export type ReportStatus = "open" |
+/**  Closed as completed; not in a release yet (or none could be found). */
+"fixed" |
+/**  The fix is in `TrackedReport::released_in`. */
+"released" |
+/**  Closed as not planned or as a duplicate (`close_reason`). */
+"not_planned";
 
 export type ReportedIssue = {
 	number: number,
@@ -2277,6 +2381,17 @@ export type StackInfo = {
 	children: number[],
 };
 
+/**
+ *  `stage_report_files`: a report's attached files, copied into one
+ *  folder under the reports folder for you to add on GitHub yourself
+ *  (docs/telemetry.md "Attachments"). Nothing is uploaded.
+ */
+export type StagedReportFiles = {
+	dir: string,
+	/**  Absolute paths, in the order given. */
+	paths: string[],
+};
+
 export type SubmitReviewRequest = {
 	pr: PrId,
 	event: ReviewEvent,
@@ -2419,6 +2534,34 @@ export type ToastLevel = "info" | "warn" | "error";
 export type TokenSource = "keychain" | "gh" | "env" | "none" |
 /**  The simulated sandbox host (docs/sandbox.md): no real token at all. */
 "sandbox";
+
+/**  One followed report. */
+export type TrackedReport = {
+	/**  `owner/name`. */
+	repo: string,
+	number: number,
+	url: string,
+	title: string,
+	status: ReportStatus,
+	filed_at: number,
+	/**  The issue's last activity on GitHub; `filed_at` until first checked. */
+	updated_at: number,
+	comments: number,
+	/**  GitHub's reason when closed: `completed`, `not_planned`, `duplicate`. */
+	close_reason?: string | null,
+	closed_at?: number | null,
+	/**  The PR that closed it. */
+	fixed_by?: number | null,
+	fixed_by_url?: string | null,
+	/**  The commit that landed the fix: what a release must contain. */
+	fix_sha?: string | null,
+	/**  The first release with the fix, without the `v` (`0.1.7`). */
+	released_in?: string | null,
+	/**  Who opened the issue: a comment by anyone else is a reply. */
+	author?: string | null,
+	/**  The version "fixed in this version" was said in, so it's said once. */
+	told_in?: string | null,
+};
 
 export type Transaction = {
 	/**  Client-generated, for de-duplication on retry. */

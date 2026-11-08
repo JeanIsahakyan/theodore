@@ -129,9 +129,11 @@ the file included.
 
 - **Secrets in any text:** GitHub tokens (`gh[pousr]_…`, `github_pat_…`), GitLab (`glpat-…` and
   the other `gl…-` prefixes), Atlassian/Bitbucket (`ATBB…`, `ATATT…`), passwords in URLs
-  (`https://user:pass@…`), `Bearer …`/`Basic …`, WorkOS keys (`sk_…`), JWTs, private keys,
-  `Authorization`/`Cookie`/`Private-Token` headers, `code=`/`state=`/`token=`/`key=`… query
-  parameters, and `token=`/`"secret": …`/`password: …` pairs.
+  (`https://user:pass@…`), `Bearer …`/`Basic …`, WorkOS keys (`sk_…`), model-provider keys
+  (`sk-…`), AWS key ids (`AKIA…`), Slack (`xox…-`), Google (`AIza…`) and npm (`npm_…`) tokens,
+  JWTs, private keys, `Authorization`/`Cookie`/`Private-Token` headers,
+  `code=`/`state=`/`token=`/`key=`… query parameters, `token=`/`"secret": …`/`password: …`
+  pairs, and env-style `*_KEY=`/`*_PAT=`/`*_PASS=`/`*_AUTH=`/`*_DSN=` assignments.
 - **Credential fields:** any field named or segmented `token`, `secret`, `password`,
   `authorization`, `cookie`, `code_verifier`, `api_key`, `credential(s)` → `[redacted]`.
 - **Content fields:** `diff`, `hunk(s)`, `patch`, `body`, `comment(s)`, `content(s)`,
@@ -208,8 +210,8 @@ tail -f theodore.jsonl | jq -c '{ts, level, msg, "error.code"}'
 
 ## Report a problem
 
-Settings → About & updates, Help → Report a Problem…, the account menu, or the "Something went
-wrong" screen. One dialog, three modes:
+Settings → About & updates, Help → Report a Problem…, the account menu, the "Something went
+wrong" screen, or a chat ("Report from a chat" below). One dialog, three modes:
 
 | Mode | Sends | Where |
 |---|---|---|
@@ -239,11 +241,135 @@ submit_issue(…, draft) ─▶ POST /repos/{owner}/{repo}/issues, label from-ap
 - **No GitHub sign-in, sandbox or fixture runs**: modes 1–2 are disabled with a one-line reason;
   sandbox and fixture runs have no issue tracker at all, so they can't reach GitHub even if asked.
   Errors show inline: an expired token reads "GitHub sign-in expired …".
+- **GitHub can't be checked** (rate limit, network, a 5xx, signed out): modes 1–2 wait with the
+  reason — a rate limit says how long, from GitHub's reset time ("… Try again in 12 minutes.") —
+  and **Retry**, which asks again and keeps the title, comment, files and a chat's draft. The
+  cause is logged as a warning (`error.code`, e.g. `host.rate_limited`).
 - **The zip** (`Save logs only`): `<tmp>/theodore-reports/theodore-report-<stamp>.zip` with
   `app-info.json` (version, commit, build environment and date, OS, agent CLI versions) and the
   newest logs up to 20 MB, redacted again with the remote rules (repository names and paths
   hashed). The dialog lists the files for review, then **Reveal in Finder** or **Copy summary**.
 - Either way, `problem_reported` records only the mode, never the text or the issue.
+
+### My reports
+
+An issue the dialog opened is remembered, then followed with the same GitHub token: Settings →
+About & updates lists it under **My reports** (status, comments, last activity; a click opens
+the issue), and a change says so.
+
+```text
+submit_issue ─▶ #N ─▶ `report` row (synced, keyed owner/name#N), status open
+poller: 20 s after start, then every 30 min (online, signed in)
+  issue_status (GraphQL): state, close reason, comments, last commenter, ClosedEvent.closer
+    closer = merged PR (its merge commit) or a commit ─▶ fix commit
+  fixed + fix commit ─▶ first_release_with: v* releases oldest first (REST),
+                        compare <sha>...<tag> = ahead|identical ─▶ released in <tag>
+                        (the newest one first: one compare while none has it)
+  changed ─▶ row written ─▶ ReportUpdate ─▶ toast "Open"; window in the background:
+                                            a notification, a click opens the issue
+```
+
+| Change | Says |
+|---|---|
+| A comment by anyone but the reporter | New reply on your report #N |
+| Closed as completed | Your report #N is fixed in #57 (or "was closed as fixed") |
+| Its fix in a release newer than this build | Your report #N is fixed in 0.1.7: update to get it |
+| Its fix in this build | Your report #N is fixed in this version — said once per version, also after an update, offline too |
+| Its fix in an older build | Your report #N was fixed in 0.1.7: you have it |
+| Closed as not planned / duplicate | Your report #N was closed as not planned / as a duplicate |
+| Reopened | Your report #N was reopened |
+
+- Followed: open reports; closed ones for 30 days after closing; a fix with a commit but no
+  release yet for 180 days.
+- Only reports filed from this install, from the version that added this on: older issues aren't
+  matched. Sandbox and fixture runs post none, so they follow none.
+- Nothing about it is a product event; the log has `report changed` with the number and status.
+
+### Report from a chat
+
+The same dialog, opened on one conversation — a space's chat or a PR's AI panel — instead of the
+whole app. Three ways in, one path:
+
+```text
+"Report this" under a reply ─┐
+/report <what went wrong>  ──┼─▶ draft_report ─▶ ReportDraft (memory) ─▶ report_draft event
+agent ─▶ report_problem (MCP)┘        nothing sent                      └─▶ the dialog, prefilled
+dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the conversation, read now
+```
+
+- **"Report this"** sits under every stored agent reply (next to Retry on a failed one; not on
+  one you stopped); `/report …` in either composer drafts about the chat's latest reply with
+  the rest of the line as the comment — it never reaches the agent (a skill of yours named
+  `report` still does).
+- **`report_problem { title, description, scope, include_logs }`** is a tool on Theodore's MCP
+  server for chats only: a space turn (`space-tools`) or an AI panel question (`review-tools`
+  with an `ask:` run); skill and fix runs never see it. The agent drafts — the dialog opens with
+  its title and comment and says "drafted by the agent" — and is told it cannot send. Only the
+  dialog's **Open issue** posts. Against a prompt injection that tells the agent to report:
+
+  | Guard | How |
+  |---|---|
+  | One window per turn | a run drafts once; a second call is refused (the last 256 runs remembered) |
+  | Never over your window | with any dialog open, the agent's draft waits: a toast offers it now (**Review**), and it opens by itself when that dialog closes, however it closes — never lost with the toast. Several wait in turn |
+  | No secrets in its text | title and comment redacted (`Redactor::text`) before the form shows them |
+  | No pings | its comment's `@login`, `#12`, `owner/repo#12`, `GH-12` and issue links become inline code |
+  | Bounded | title 256 chars, comment 20,000 |
+- **Scope**: `turn` (default) — your message as the agent got it (a `/skill` expanded, attached
+  files listed by path), the reply, its tool calls one line each (folded), the error; `message`
+  — that message alone; `space` / `review` — the conversation's header only, no message text.
+- **The context table**: where (`Space turn 3 of 5`, `AI panel reply 2 of 4`), scope, who
+  drafted it, agent CLI and version, model, effort, mode, status, when sent, how long it took,
+  files changed and tool calls (counts), the run id. No space, project, repo or branch names.
+  The model is the one the run was sent — the space's, else the `agents.<id>.model` setting at
+  the time, else the CLI's default — recorded on its reply when the run starts, so a later
+  settings change doesn't rewrite it; a reply from before that was recorded says `unknown`.
+  Each value is inline code, so nothing in one (a model name, a space's error) mentions, links
+  or cross-references.
+- **Logs** in a chat report are that run's only: every record of a space turn or an AI panel
+  question carries `run_id` from its span (`space_turn`, `chat_run`), and `report::run_logs`
+  keeps just those, redacted like the other issue logs. A reply from before runs were recorded
+  has none, and no app logs stand in for them.
+- **Redaction and caps**: the conversation keeps paths and names readable, as in the chat, but
+  secrets, emails and the home directory are redacted (`Redactor::text`); every text is fenced
+  (nothing in it renders or @mentions anyone; backticks or tildes, whichever the text can't
+  close with less) and capped (prompt 4 KB, reply 8 KB, error 2 KB, 40 tool calls of 200 bytes,
+  24 table rows). The whole block stays under 40 KB whatever is in it (`issue::MAX_CONTEXT`),
+  so the comment and logs keep room under GitHub's 65,536; a comment that doesn't fit next to
+  it is refused with "shorten the comment or leave the conversation out", never cut or sent
+  over the cap.
+- **What you see is what goes**: the preview opens at once with the conversation unfolded;
+  **Include the conversation** unticked makes it the plain report. The draft is read when the
+  dialog first previews it — a turn still running when the agent drafted shows how far it got —
+  and the post sends exactly that preview: while the preview is open, **Open issue** waits
+  until it shows the current mode. Drafts live in memory (the last 16) and expire.
+
+### Attachments
+
+Screenshots and files go with a report the way they go with a chat message — 📎, paste (⌘V)
+or drop on the comment, saved by `save_attachment`, shown as tiles (images as previews) — but
+Theodore never uploads them. GitHub has no API for issue attachments, and the other ways cost
+the reporter more than they give:
+
+| Option | Why not |
+|---|---|
+| GitHub's own upload (`user-attachments`) | web only: needs a browser session, not a token |
+| A gist under the reporter's account | the gist API takes text only; binary needs a git push and the `gist` scope, which Theodore's sign-in (`repo`, `read:org`) doesn't ask for; and secret gists are public by URL |
+| A branch or repo | no write access to Theodore's repo; a public fork or repo in the reporter's account just for screenshots is a lasting public side effect |
+| **The browser, after the issue opens** | chosen: works for every reporter, no new scope, and the user sees each file in GitHub's own editor before it goes |
+
+```text
+📎 / ⌘V / drop ─▶ save_attachment ─▶ tiles in the dialog ("Theodore doesn't upload these")
+preview ─▶ "Not in the issue: N files (…)"
+Open issue ─▶ the text, as today ─▶ "Add your N files" ─▶ Show files and open the issue
+   └─▶ stage_report_files(ids) ─▶ <tmp>/theodore-reports/theodore-files-<id>/ ─▶ Finder
+   └─▶ the issue in the browser ─▶ the user drops them into a comment ─▶ GitHub renders them
+```
+
+- Nothing is copied or opened before **Show files and open the issue**; `stage_report_files`
+  copies only saved attachments by id, into the reports folder (`reveal_report` shows nothing
+  else).
+- Not in **Save logs only**'s zip, and not available signed out (`save_attachment` waits for
+  sign-in like every local write).
 
 ## UI errors
 

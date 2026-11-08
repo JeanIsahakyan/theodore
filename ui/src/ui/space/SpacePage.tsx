@@ -57,6 +57,7 @@ import { useRootStore, useUi } from '../../stores/context';
 import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
+import { scrollIntoDiff } from '../review/headerClearance';
 import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
 import { SpaceLog } from './SpaceLog';
@@ -90,6 +91,7 @@ import {
   useSpaceLogsSeed,
 } from './SpaceCommands';
 import { TerminalDrawer, TerminalToggle } from './Terminal';
+import { reportChat, reportCommand } from '../reportChat';
 import { useDrawerHeight } from './drawerHeight';
 import {
   AUTO_ARCHIVE_KEY,
@@ -1008,6 +1010,13 @@ const SpaceComposer = observer(function SpaceComposer({
 
   const send = (now = false) => {
     const t = text.trim();
+    // `/report …`: a problem report about this chat, not a turn.
+    const report = reportCommand(t, skills);
+    if (report != null) {
+      setText('');
+      void reportChat(store, spaceChatKey(space.id), null, report);
+      return;
+    }
     if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
     const attached = files.saved;
@@ -1121,7 +1130,7 @@ function aimAt(id: string, frames = 30): () => void {
   let frame = 0;
   let left = frames;
   const tick = () => {
-    document.getElementById(id)?.scrollIntoView({ block: 'center' });
+    scrollIntoDiff(document.getElementById(id), { block: 'center' });
     left -= 1;
     if (left > 0) frame = requestAnimationFrame(tick);
   };

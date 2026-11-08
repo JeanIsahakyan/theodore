@@ -9,10 +9,11 @@ use theodore_domain::{
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, CreatedIssue, Fetched, HostAdapter, HostError, HostResult,
-    InboxSection, IssueTracker, MergeMethod, MergeState, MergeStatus, NewIssue, NewPr,
-    ReviewComment, ReviewSubmission, Searched, SubmittedReview, TrackedIssue,
+    InboxSection, IssueCloser, IssueStatus, IssueTracker, MergeMethod, MergeState, MergeStatus,
+    NewIssue, NewPr, ReviewComment, ReviewSubmission, Searched, SubmittedReview, TrackedIssue,
 };
 
+use crate::pr_etag::PrEtag;
 use crate::{anchor, graphql, logs, pagination, rest, time};
 
 /// `HostAdapter` for github.com and GitHub Enterprise Server.
@@ -103,6 +104,24 @@ impl GithubAdapter {
             cursor: "search-fallback".to_string(),
             poll_after_ms: Some(60_000),
         })
+    }
+
+    /// One conditional GET of a head commit's checks (`get_pr`). The token
+    /// not being allowed to read them is `Refused`, not an error: the PR
+    /// itself is still readable, and its ETag still applies.
+    async fn probe(&self, path: &str, etag: Option<&str>) -> HostResult<Probe> {
+        match self
+            .rest
+            .get_conditional::<serde_json::Value>(path, etag)
+            .await
+        {
+            Ok(Fetched::NotModified) => Ok(Probe::Same),
+            Ok(Fetched::Modified { etag, .. }) => Ok(Probe::Changed(etag)),
+            Err(HostError::Auth | HostError::Forbidden(_) | HostError::NotFound(_)) => {
+                Ok(Probe::Refused)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn fetch_pr_detail(&self, pr: &PrRef) -> HostResult<PrDetail> {
@@ -341,25 +360,60 @@ impl HostAdapter for GithubAdapter {
             .collect())
     }
 
+    /// Conditional on the PR *and* its head's checks (`pr_etag`): a check
+    /// finishing doesn't touch the PR resource, so its ETag alone would
+    /// 304 the Checks tab forever. The probes go before the GraphQL fetch,
+    /// so a change landing in between is seen by the next poll.
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
-        let path = format!(
-            "repos/{}/{}/pulls/{}",
-            pr.repo.owner, pr.repo.name, pr.number
-        );
-        match self
+        let prev = PrEtag::parse(etag);
+        let mut next = prev.clone();
+        let (owner, repo) = (pr.repo.owner.as_str(), pr.repo.name.as_str());
+        let path = format!("repos/{owner}/{repo}/pulls/{}", pr.number);
+        let mut changed = match self
             .rest
-            .get_conditional::<serde_json::Value>(&path, etag)
+            .get_conditional::<serde_json::Value>(&path, prev.pull.as_deref())
             .await?
         {
-            Fetched::NotModified => Ok(Fetched::NotModified),
-            Fetched::Modified { etag, .. } => {
-                let detail = self.fetch_pr_detail(pr).await?;
-                Ok(Fetched::Modified {
-                    etag,
-                    value: detail,
-                })
+            Fetched::NotModified => false,
+            Fetched::Modified { etag, value } => {
+                next.pull = etag;
+                let head = value.value["head"]["sha"].as_str().map(str::to_string);
+                next.move_head(head);
+                true
+            }
+        };
+        if let Some(head) = next.head.clone().filter(|_| !next.no_checks) {
+            let runs = format!("repos/{owner}/{repo}/commits/{head}/check-runs?per_page=100");
+            let statuses = format!("repos/{owner}/{repo}/commits/{head}/status?per_page=100");
+            match self.probe(&runs, next.runs.as_deref()).await? {
+                Probe::Same => {}
+                Probe::Changed(etag) => {
+                    next.runs = etag;
+                    changed = true;
+                }
+                Probe::Refused => next.no_checks = true,
+            }
+            if !next.no_checks {
+                match self.probe(&statuses, next.statuses.as_deref()).await? {
+                    Probe::Same => {}
+                    Probe::Changed(etag) => {
+                        next.statuses = etag;
+                        changed = true;
+                    }
+                    Probe::Refused => next.no_checks = true,
+                }
             }
         }
+        // A refusal is remembered even when nothing else moved: once per
+        // head, not a refused request every poll.
+        if !changed && next.no_checks == prev.no_checks {
+            return Ok(Fetched::NotModified);
+        }
+        let detail = self.fetch_pr_detail(pr).await?;
+        Ok(Fetched::Modified {
+            etag: Some(next.encode()),
+            value: detail,
+        })
     }
 
     async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
@@ -738,6 +792,97 @@ impl IssueTracker for GithubAdapter {
             url: created.html_url,
         })
     }
+
+    async fn issue_status(&self, owner: &str, name: &str, number: u64) -> HostResult<IssueStatus> {
+        let i = graphql::issue_status(&self.graphql, owner, name, number).await?;
+        let closed_by = i
+            .timeline_items
+            .nodes
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.closer)
+            .next_back()
+            .and_then(|c| match c.typename.as_str() {
+                "PullRequest" => Some(IssueCloser {
+                    pr: c.number,
+                    pr_url: c.url,
+                    sha: c.merge_commit.map(|m| m.oid),
+                }),
+                "Commit" => Some(IssueCloser {
+                    pr: None,
+                    pr_url: None,
+                    sha: c.oid,
+                }),
+                _ => None,
+            });
+        let open = i.state != "CLOSED";
+        Ok(IssueStatus {
+            number: i.number,
+            title: i.title,
+            url: i.url,
+            open,
+            close_reason: i
+                .state_reason
+                .filter(|_| !open)
+                .map(|r| r.to_ascii_lowercase()),
+            author: i.author.map(|a| a.login),
+            comments: i.comments.total_count,
+            last_commenter: i
+                .comments
+                .nodes
+                .into_iter()
+                .flatten()
+                .next_back()
+                .and_then(|c| c.author)
+                .map(|a| a.login),
+            updated_at: time::parse_millis(&i.updated_at),
+            closed_at: i.closed_at.as_deref().map(time::parse_millis),
+            closed_by: if open { None } else { closed_by },
+        })
+    }
+
+    /// Releases oldest first; containment only grows along the release
+    /// line, so the newest one answers "any yet?" and a binary search finds
+    /// the first: one compare while it isn't released, about log₂(30) once.
+    async fn first_release_with(
+        &self,
+        owner: &str,
+        name: &str,
+        sha: &str,
+    ) -> HostResult<Option<String>> {
+        let mut releases: Vec<(i64, String)> = rest::list_releases(&self.rest, owner, name)
+            .await?
+            .into_iter()
+            .filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with('v'))
+            .filter_map(|r| Some((time::parse_millis(r.published_at.as_deref()?), r.tag_name)))
+            .collect();
+        releases.sort();
+        let Some((_, newest)) = releases.last() else {
+            return Ok(None);
+        };
+        if !rest::ref_contains(&self.rest, owner, name, newest, sha).await? {
+            return Ok(None);
+        }
+        let (mut lo, mut hi) = (0, releases.len() - 1);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if rest::ref_contains(&self.rest, owner, name, &releases[mid].1, sha).await? {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        Ok(Some(releases[lo].1.clone()))
+    }
+}
+
+/// What a `probe` of a head's checks found.
+enum Probe {
+    Same,
+    /// Changed since the ETag sent (or none was sent); the new one.
+    Changed(Option<String>),
+    /// 401/403/404: this token can't see them.
+    Refused,
 }
 
 /// Pulls `{run_id}` out of an Actions check-run `detailsUrl`

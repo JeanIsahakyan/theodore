@@ -293,6 +293,67 @@ impl From<LogKindParam> for theodore_ports::SpaceCommandName {
     }
 }
 
+// ── report_problem ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportScopeParam {
+    /// The message the problem is in.
+    Message,
+    /// This turn: the user's message, your reply so far, tool calls, error.
+    Turn,
+    /// The space as a whole (where, agent, status; no message text).
+    Space,
+    /// The PR's AI panel as a whole.
+    Review,
+}
+
+impl From<ReportScopeParam> for crate::backend::ReportScope {
+    fn from(s: ReportScopeParam) -> Self {
+        use crate::backend::ReportScope as S;
+        match s {
+            ReportScopeParam::Message => S::Message,
+            ReportScopeParam::Turn => S::Turn,
+            ReportScopeParam::Space => S::Space,
+            ReportScopeParam::Review => S::Review,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReportProblemParams {
+    /// One line: what went wrong in Theodore.
+    pub title: Option<String>,
+    /// What the user did, what they expected, what happened instead, from
+    /// this conversation. No secrets: the report becomes a public issue.
+    pub description: Option<String>,
+    /// Default `turn`.
+    pub scope: Option<ReportScopeParam>,
+    /// Attach this run's redacted log lines. Default true.
+    pub include_logs: Option<bool>,
+}
+
+impl From<ReportProblemParams> for crate::backend::ReportRequest {
+    fn from(p: ReportProblemParams) -> Self {
+        crate::backend::ReportRequest {
+            title: p.title,
+            description: p.description,
+            scope: p.scope.map(Into::into),
+            include_logs: p.include_logs,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReportProblemResult {
+    pub draft: String,
+    /// What happens next, for the agent to tell the user.
+    pub note: &'static str,
+}
+
+/// Said back to the agent: it drafted, the user decides.
+pub const REPORT_NOTE: &str = "The report window is open with your draft. The user reviews it, sees exactly what will be posted, and sends it or not; you cannot send it. Tell the user it is waiting for them.";
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReadLogsParams {
     /// Which command's output: setup, run (the app), check or archive.

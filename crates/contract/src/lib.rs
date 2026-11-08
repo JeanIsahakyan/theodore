@@ -43,6 +43,8 @@ mod account;
 pub use account::*;
 mod attachments;
 pub use attachments::*;
+mod reports;
+pub use reports::*;
 mod telemetry;
 pub use telemetry::*;
 mod terminal;
@@ -69,6 +71,9 @@ pub mod models {
     /// Spaces (docs/spaces.md); their chat lives in `chat_message` rows
     /// keyed `pr = "space:<id>"`.
     pub const SPACE: &str = "space";
+    /// "My reports": an issue "Report a problem" opened, keyed
+    /// `owner/name#number` (`TrackedReport`).
+    pub const REPORT: &str = "report";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -86,6 +91,7 @@ pub mod models {
         SETTING,
         PROJECT,
         SPACE,
+        REPORT,
     ];
 }
 
@@ -636,6 +642,16 @@ pub enum Ephemeral {
         /// Empty when the host didn't say.
         url: String,
     },
+    /// A followed report changed (docs/telemetry.md "My reports"): a
+    /// reply, closed as fixed or not planned, reopened, or its fix
+    /// released. `text` is what the toast and the notification say;
+    /// `title` is the issue's.
+    ReportUpdate {
+        number: u64,
+        url: String,
+        title: String,
+        text: String,
+    },
     /// `code_intel.install: ask` and a language's server is missing
     /// (docs/code-intel.md §5.1): offer `code_intel_install(language)`,
     /// or `code_intel_decline(language)`. Once per language per session.
@@ -676,6 +692,11 @@ pub enum Ephemeral {
         terminal: String,
         exit_code: Option<i32>,
         error: Option<String>,
+    },
+    /// A chat report was drafted (`draft_report`, or an agent's
+    /// `report_problem`): open the report window on it. Nothing is sent.
+    ReportDraft {
+        draft: ReportDraft,
     },
 }
 
@@ -834,13 +855,24 @@ pub struct ChatMessage {
     /// At most 200; empty when it changed nothing or git couldn't tell.
     #[serde(default)]
     pub changed_files: Vec<TurnFile>,
-    /// The model a space reply's turn asked for; none: the CLI's default.
+    /// The model an agent reply's run used: the space's or, failing that,
+    /// the `agents.<id>.model` setting at the time; none: the CLI's
+    /// default. On rows without `model_resolved`, only what a space turn
+    /// asked for (the setting it fell back to wasn't kept).
     #[serde(default)]
     pub model: Option<String>,
+    /// `model` was recorded after the setting's default was applied, so
+    /// none means the CLI's default rather than "not recorded".
+    #[serde(default)]
+    pub model_resolved: bool,
     /// A space reply with no final text: `text` is the text steps in
     /// `activity` joined, and only those show, in the order they came.
     #[serde(default)]
     pub text_in_steps: bool,
+    /// The agent run that wrote this reply: its log lines carry it as
+    /// `run_id` (a chat report's logs). None on yours and older rows.
+    #[serde(default)]
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -1039,6 +1071,12 @@ pub fn types() -> specta::Types {
         .register::<IssueRequest>()
         .register::<IssuePreview>()
         .register::<ReportedIssue>()
+        .register::<ReportStatus>()
+        .register::<TrackedReport>()
+        .register::<ReportScope>()
+        .register::<DraftReportRequest>()
+        .register::<ReportDraft>()
+        .register::<StagedReportFiles>()
         .register::<TerminalStatus>()
         .register::<SpaceTerminalInfo>()
         .register::<OpenTerminalRequest>()

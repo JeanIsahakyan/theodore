@@ -1,8 +1,9 @@
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { click, mount, settle, typeInto, type Mounted } from '../test/dom';
 import { setTransport } from '../core/transport';
 import { FakeTransport } from '../test/fakeTransport';
-import type { IssuePreview, IssueTarget } from '../gen/contract';
+import type { IssuePreview, IssueTarget, ReportDraft } from '../gen/contract';
 import { ReportProblemView } from './ReportProblem';
 
 const signedIn: IssueTarget = {
@@ -49,6 +50,35 @@ async function open(target: IssueTarget): Promise<void> {
   await settle();
 }
 
+const conversation =
+  '\n\n<details><summary>Conversation: Space turn 2 of 2</summary>\n\n| Context | |\n|---|---|\n</details>';
+
+const chatDraft: ReportDraft = {
+  id: 'c1',
+  chat: 'space:s1',
+  scope: 'turn',
+  title: 'Agent ignored me',
+  description: 'I said not to touch the tests.',
+  include_logs: true,
+  about: 'Space turn 2 of 2 · claude',
+  by_agent: false,
+};
+
+async function openChat(d: ReportDraft): Promise<void> {
+  transport.onCall('issue_target', () => signedIn);
+  transport.onCall('preview_issue', () => ({
+    ...preview,
+    body:
+      'It is blank.\n\n| App info | |\n|---|---|\n| Version | 0.4.0 |' +
+      conversation +
+      logs,
+    context: conversation,
+  }));
+  m = await mount(<ReportProblemView draft={d} />);
+  await settle();
+  await settle();
+}
+
 async function fill(title: string, comment: string): Promise<void> {
   await typeInto(q('.report-title'), title);
   await typeInto(q('.report-comment'), comment);
@@ -90,6 +120,62 @@ describe('ReportProblemView', () => {
     await settle();
     expect(m!.host.textContent).toContain('app-info.json');
     expect(transport.calls.map((c) => c.cmd)).not.toContain('submit_issue');
+  });
+
+  it('a rate limit offers Retry, which rechecks and keeps the draft', async () => {
+    let limited = true;
+    transport.onCall('issue_target', () =>
+      limited
+        ? {
+            ...signedIn,
+            login: null,
+            unavailable:
+              "GitHub's rate limit is reached. Try again in 12 minutes.",
+            retry: true,
+          }
+        : signedIn,
+    );
+    transport.onCall('preview_issue', () => ({
+      ...preview,
+      context: conversation,
+    }));
+    m = await mount(<ReportProblemView draft={chatDraft} />);
+    await settle();
+    expect(mode('issue_with_logs').disabled).toBe(true);
+    expect(q('.report-unavailable')?.textContent).toBe(
+      "GitHub's rate limit is reached. Try again in 12 minutes.",
+    );
+    // Still limited: asked again, still says so.
+    await click(q('.report-retry'));
+    await settle();
+    expect(
+      transport.calls.filter((c) => c.cmd === 'issue_target'),
+    ).toHaveLength(2);
+    expect(q('.report-retry')?.textContent).toBe('Retry');
+
+    limited = false;
+    await click(q('.report-retry'));
+    await settle();
+    await settle();
+    expect(q('.report-unavailable')).toBeNull();
+    expect(mode('issue_with_logs').getAttribute('aria-checked')).toBe('true');
+    // The chat's draft is still there, not started over.
+    expect((q('.report-title') as HTMLInputElement).value).toBe(
+      'Agent ignored me',
+    );
+    expect((q('.report-comment') as HTMLTextAreaElement).value).toBe(
+      'I said not to touch the tests.',
+    );
+  });
+
+  it('a run that never posts offers no Retry', async () => {
+    await open({
+      ...signedIn,
+      login: null,
+      unavailable: 'Sandbox mode never posts to GitHub.',
+      retry: false,
+    });
+    expect(q('.report-retry')).toBeNull();
   });
 
   it('needs a title and a comment before it can open the issue', async () => {
@@ -197,6 +283,142 @@ describe('ReportProblemView', () => {
     await click(mode('issue'));
     expect((q('.report-comment') as HTMLTextAreaElement).value).toBe(
       'It is blank.',
+    );
+  });
+
+  it('from a chat: prefilled, the conversation and run logs shown before posting', async () => {
+    await openChat({ ...chatDraft, by_agent: true });
+    expect((q('.report-title') as HTMLInputElement).value).toBe(
+      'Agent ignored me',
+    );
+    expect((q('.report-comment') as HTMLTextAreaElement).value).toBe(
+      'I said not to touch the tests.',
+    );
+    expect(q('.report-about-line')?.textContent).toBe(
+      'Space turn 2 of 2 · claude',
+    );
+    expect(q('.report-by-agent')?.textContent).toContain(
+      'drafted by the agent',
+    );
+    expect(mode('issue_with_logs').textContent).toBe(
+      "Open an issue with this run's logs",
+    );
+    expect(q('.report-public')?.textContent).toContain(
+      "with this conversation and this run's redacted log lines",
+    );
+    // Shown from the start: the exact body, the conversation unfolded.
+    const req = transport.calls.find((c) => c.cmd === 'preview_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(req).toMatchObject({ context: 'c1', with_logs: true });
+    expect(q('.report-preview-body')?.textContent).toBe(
+      'It is blank.\n\n| App info | |\n|---|---|\n| Version | 0.4.0 |',
+    );
+    const conv = q('.report-preview-context') as HTMLDetailsElement;
+    expect(conv.open).toBe(true);
+    expect(conv.textContent).toContain('Conversation: Space turn 2 of 2');
+
+    transport.onCall('submit_issue', () => ({ number: 9, url: 'u' }));
+    await click(q('.report-send'));
+    await settle();
+    const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(sent).toMatchObject({ context: 'c1', draft: 'd1' });
+  });
+
+  it('from a chat: unticked, it is the plain report', async () => {
+    await openChat({ ...chatDraft, include_logs: false });
+    expect(mode('issue').getAttribute('aria-checked')).toBe('true');
+    transport.onCall('preview_issue', () => ({
+      ...preview,
+      body: 'It is blank.',
+      logs: null,
+    }));
+    await click(q('.report-with-chat'));
+    expect(mode('issue_with_logs').textContent).toBe('Open an issue with logs');
+    // The preview still shows the conversation: nothing goes until the
+    // new one lands.
+    expect((q('.report-send') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(q('.report-preview-context')).toBeNull();
+    expect((q('.report-send') as HTMLButtonElement).disabled).toBe(false);
+    transport.onCall('submit_issue', () => ({ number: 10, url: 'u' }));
+    await click(q('.report-send'));
+    await settle();
+    const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(sent).toMatchObject({ context: null, with_logs: false });
+  });
+
+  it('files: shown before, never posted, then handed to GitHub by the user', async () => {
+    await open(signedIn);
+    await fill('Blank pane', 'It is blank.');
+    transport.onCall('save_attachment', () => ({
+      id: 'a1',
+      name: 'steps.txt',
+      mime: 'text/plain',
+      size: 5,
+      path: '/data/attachments/a1/steps.txt',
+    }));
+    const input = q('.report-files-box input[type="file"]') as HTMLInputElement;
+    const file = new File(['hello'], 'steps.txt', { type: 'text/plain' });
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      configurable: true,
+    });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+    await settle();
+    expect(q('.report-attachment')?.textContent).toContain('steps.txt');
+    expect(q('.report-files-note')?.textContent).toContain(
+      "Theodore doesn't upload these",
+    );
+    transport.onCall('preview_issue', () => preview);
+    await click(q('.report-preview-toggle'));
+    await settle();
+    expect(q('.report-preview-files')?.textContent).toContain(
+      'Not in the issue: 1 file (steps.txt)',
+    );
+
+    transport.onCall('submit_issue', () => ({
+      number: 11,
+      url: 'https://github.com/acme/theodore/issues/11',
+    }));
+    await click(q('.report-send'));
+    await settle();
+    const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(Object.keys(sent)).not.toContain('attachments');
+    expect(q('.report-add-files')?.textContent).toContain(
+      'Add your 1 file (steps.txt)',
+    );
+    // Nothing is copied or opened until asked.
+    expect(transport.calls.map((c) => c.cmd)).not.toContain(
+      'stage_report_files',
+    );
+
+    transport.onCall('stage_report_files', () => ({
+      dir: '/tmp/theodore-reports/theodore-files-1',
+      paths: ['/tmp/theodore-reports/theodore-files-1/steps.txt'],
+    }));
+    transport.onCall('reveal_report', () => null);
+    const opened = vi.spyOn(window, 'open').mockImplementation(() => null);
+    await click(q('.report-stage'));
+    await settle();
+    expect(
+      transport.calls.find((c) => c.cmd === 'stage_report_files')?.args,
+    ).toEqual({ attachments: ['a1'] });
+    expect(
+      transport.calls.find((c) => c.cmd === 'reveal_report')?.args,
+    ).toEqual({
+      path: '/tmp/theodore-reports/theodore-files-1/steps.txt',
+    });
+    expect(opened).toHaveBeenCalledWith(
+      'https://github.com/acme/theodore/issues/11',
+      '_blank',
     );
   });
 });

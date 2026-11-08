@@ -194,6 +194,12 @@ impl Core {
                 "some turns aren't pushed yet; push them first so the merge has them".into(),
             ));
         }
+        // No row yet: the fetch after opening it failed. Merge goes by it.
+        if self.pr_ref(&pr).await.is_none()
+            && let Some(pr_ref) = self.space_pr_ref(&space, &pr).await
+        {
+            self.refresh_pr(&pr, &pr_ref).await;
+        }
         if self.pr_state(&pr).await == Some(PrState::Merged) {
             return Err(AppError::Invalid("the PR is already merged".into()));
         }

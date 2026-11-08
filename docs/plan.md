@@ -145,6 +145,7 @@ agent / poller ─────────────────────�
 | Findings, fixes, tasks | |
 | Chat messages (final), skill run status, usage | |
 | Settings | |
+| Problem reports you filed ("My reports", docs/telemetry.md) | |
 
 ### 3.3 Sync design choices
 
@@ -401,7 +402,10 @@ content creation.
 ```
 GitHub:    GET /notifications  (If-Modified-Since, honours X-Poll-Interval)
               └─ something changed ─▶ GraphQL for the changed PRs only
-           open PR: GET /pulls/{n} with ETag every 10–30 s (304s are free)
+           open PR: every 10–30 s, three conditional GETs (304s are free):
+              /pulls/{n} · /commits/{head}/check-runs · /commits/{head}/status
+              └─ any 200 ─▶ GraphQL detail
+              (a check finishing doesn't change the PR resource or its ETag)
            your PRs: search author:@me is:open every 60 s (no notification
               comes for your own actions); one it stopped returning ─▶
               GET /pulls/{n} with ETag
@@ -447,9 +451,17 @@ complete search ─▶ stored rows that claim open and it didn't return
   access to its repo does. A PR open in a tab keeps its row until the next launch.
 
 The sidebar's "Pull requests N" counts open and draft rows the workspace shows,
-everyone's in a project's repo and yours elsewhere, without branch reviews: the
-same rows as the page's All filter, whose "Branch reviews" section is separate.
-It isn't any one GitHub page's number: github.com/pulls lists only what you wrote.
+everyone's in a project's repo and ones you're on elsewhere, without branch
+reviews: the same rows as the page's All filter, whose "Branch reviews" section
+is separate. In a project it is that repo's Pull requests tab; under All
+projects it isn't any one GitHub page's number (github.com/pulls lists only what
+you wrote). Hovering the number says which.
+
+Removing a project drops the rows only its refresh kept: other people's PRs of
+its repo, which would otherwise count under All projects for as long as they
+stay open, with nothing refreshing them. Rows with inbox reasons, a live
+space's PR, a branch review and a PR open in a tab stay; threads, drafts and
+`inbox_state` stay too, as for a 404.
 
 ### 6.7 Outbox, idempotency, errors
 
@@ -1082,7 +1094,7 @@ app ──▶ on launch + every 6 h (wall clock, so sleep doesn't stretch it)
 | Versioning | semver; the tag must equal the version in `Cargo.toml` and `tauri.conf.json` (CI check) |
 | Tags | never re-tag a published release; ship a new patch instead |
 | Data | SQLite migrations forward-only; DB copied to `theodore.db.bak-<version>` before migrating; downgrade not supported |
-| UX | Settings → About: version, channel, "Check now", release notes of the pending update |
+| UX | Settings → About: version, channel, "Check now", release notes of the pending update; "My reports": the problem reports you filed, which release fixed them, and once after an update "Your report #N is fixed in this version" (docs/telemetry.md) |
 | Failure | download or signature failure → keep the current version, retry next check, show nothing scary |
 | Test | every release workflow run also tests the update path: install N-1, update to N, app starts |
 

@@ -106,6 +106,8 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
+            run: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -209,6 +211,8 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
+            run: None,
             ..message
         };
         self.start_turn(space, &req, message, true, None).await
@@ -236,10 +240,14 @@ impl Core {
             action: SyncActionCode::C,
             data: Some(serde_json::json!({ "attention_at": now, "updated_at": now })),
         });
+        // Held in the same write that ends the turn: the space never reads
+        // as stopped with its queue still set to go.
+        if end == TurnEnd::Interrupted {
+            actions.extend(self.hold_actions(space).await);
+        }
         let _ = self.apply(actions).await;
-        match end {
-            TurnEnd::Interrupted => self.hold_queue(space).await,
-            TurnEnd::Done => self.drain_queue(space).await,
+        if end == TurnEnd::Done {
+            self.drain_queue(space).await;
         }
     }
 
@@ -273,10 +281,18 @@ impl Core {
 
     /// Every queued message of the space waits for your "Send".
     pub(crate) async fn hold_queue(&self, space: &str) {
+        let actions = self.hold_actions(space).await;
+        if !actions.is_empty() {
+            let _ = self.apply(actions).await;
+        }
+    }
+
+    /// The writes that hold every queued message not held yet.
+    async fn hold_actions(&self, space: &str) -> Vec<NewAction> {
         let Ok(queue) = self.queued_messages(space).await else {
-            return;
+            return Vec::new();
         };
-        let actions: Vec<NewAction> = queue
+        queue
             .into_iter()
             .filter_map(|m| {
                 let mut q = m.queued?;
@@ -290,10 +306,7 @@ impl Core {
                     }
                 })
             })
-            .collect();
-        if !actions.is_empty() {
-            let _ = self.apply(actions).await;
-        }
+            .collect()
     }
 
     /// On start: the turns those messages waited for never finished, so
@@ -373,6 +386,8 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
+            run: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),

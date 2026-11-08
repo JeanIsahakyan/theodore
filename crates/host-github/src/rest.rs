@@ -419,6 +419,54 @@ pub(crate) async fn list_open_issues(
         .collect())
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GhRelease {
+    pub tag_name: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
+    pub published_at: Option<String>,
+}
+
+/// `GET /repos/{owner}/{repo}/releases`: the newest 30, drafts included
+/// (callers drop them).
+pub(crate) async fn list_releases(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+) -> HostResult<Vec<GhRelease>> {
+    let path = format!("repos/{owner}/{repo}/releases?per_page=30");
+    Ok(http.get::<Vec<GhRelease>>(&path).await?.value)
+}
+
+/// Whether `reference` (a tag) contains commit `sha`:
+/// `GET /repos/{owner}/{repo}/compare/{sha}...{reference}` says `ahead` or
+/// `identical`. One commit per page: only the status is read.
+pub(crate) async fn ref_contains(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    reference: &str,
+    sha: &str,
+) -> HostResult<bool> {
+    #[derive(Debug, Deserialize)]
+    struct Comparison {
+        status: String,
+    }
+    let path = format!(
+        "repos/{owner}/{repo}/compare/{}...{}?per_page=1",
+        urlencode(sha),
+        urlencode(reference)
+    );
+    match http.get::<Comparison>(&path).await {
+        Ok(r) => Ok(matches!(r.value.status.as_str(), "ahead" | "identical")),
+        // A commit the repo doesn't have (yet): not in that tag.
+        Err(HostError::NotFound(_) | HostError::Validation(_)) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }

@@ -111,3 +111,49 @@ async fn only_saved_ids_are_read() {
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
 }
+
+/// A problem report's files (docs/telemetry.md "Attachments"): copied into
+/// one folder for you to drop on GitHub yourself, names kept apart.
+#[tokio::test]
+async fn report_files_are_copied_into_one_folder() {
+    let f = fixtures();
+    let (core, _recv) = Core::start(f.deps());
+    let a = core
+        .save_attachment(save("shot.png", "", b"one"))
+        .await
+        .unwrap();
+    let b = core
+        .save_attachment(save("shot.png", "", b"two"))
+        .await
+        .unwrap();
+    let c = core
+        .save_attachment(save("notes", "", b"three"))
+        .await
+        .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let dir = out.path().join("files");
+
+    let paths = core
+        .stage_attachments(&[a.id.clone(), b.id, c.id, a.id], &dir)
+        .await
+        .unwrap();
+    let names: Vec<String> = paths
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        ["shot.png", "shot (2).png", "notes"],
+        "the repeat is dropped"
+    );
+    assert_eq!(std::fs::read(&paths[1]).unwrap(), b"two");
+    assert!(paths.iter().all(|p| p.starts_with(&dir)));
+
+    let none = core.stage_attachments(&[], &dir).await.unwrap_err();
+    assert!(matches!(none, AppError::Invalid(_)), "{none:?}");
+    let bad = core
+        .stage_attachments(&["../../etc".into()], &dir)
+        .await
+        .unwrap_err();
+    assert!(matches!(bad, AppError::Invalid(_)), "{bad:?}");
+}

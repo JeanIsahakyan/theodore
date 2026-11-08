@@ -44,6 +44,15 @@ struct IssueDraft {
     info: Vec<(String, String)>,
     /// Collected only once logs were asked for.
     logs: Option<theodore_telemetry::report::LogTail>,
+    /// A chat report's conversation, as the body quotes it.
+    context: Option<ChatBlock>,
+}
+
+#[derive(Clone)]
+struct ChatBlock {
+    /// The `ReportDraft` it came from (`IssueRequest::context`).
+    id: String,
+    block: String,
 }
 
 impl AppCore {
@@ -108,6 +117,25 @@ impl AppCore {
         issue::target_repo(Some(&setting))
     }
 
+    /// "My reports" remembers an issue a report just opened. Best effort:
+    /// the issue is posted either way.
+    async fn track_report(
+        &self,
+        owner: &str,
+        name: &str,
+        created: &theodore_ports::CreatedIssue,
+        title: &str,
+    ) {
+        let repo = format!("{owner}/{name}");
+        if let Err(e) = self
+            .core
+            .track_report(&repo, created.number, &created.url, title)
+            .await
+        {
+            tracing::warn!(error = %e, "report issue not remembered");
+        }
+    }
+
     /// The app-info table of a report issue: what the zip's
     /// `app-info.json` says about the build, minus agent CLIs.
     async fn issue_info(&self) -> Vec<(String, String)> {
@@ -132,10 +160,18 @@ impl AppCore {
         let lock = || self.issue_draft.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(d) = lock().as_ref()
             && req.draft.as_deref() == Some(d.id.as_str())
+            && req.context == d.context.as_ref().map(|c| c.id.clone())
             && (d.logs.is_some() || !req.with_logs)
         {
             return Ok(d.clone());
         }
+        // A chat report (docs/telemetry.md "Report from a chat"): its
+        // conversation, read now, and its run's log lines instead of the
+        // app's newest.
+        let chat = match &req.context {
+            Some(id) => Some(self.core.report_context(id).await.map_err(err)?),
+            None => None,
+        };
         let logs = if req.with_logs {
             let t = theodore_telemetry::global().ok_or_else(|| CommandError {
                 code: "internal".into(),
@@ -143,8 +179,15 @@ impl AppCore {
             })?;
             t.flush(std::time::Duration::from_secs(2));
             let (dir, redactor) = (t.logs_dir().to_path_buf(), t.redactor().clone());
-            let tail = tokio::task::spawn_blocking(move || {
-                theodore_telemetry::report::log_tail(&dir, &redactor, issue::MAX_BODY)
+            let run = chat.as_ref().map(|c| c.run.clone());
+            let tail = tokio::task::spawn_blocking(move || match run {
+                Some(Some(run)) => {
+                    theodore_telemetry::report::run_logs(&dir, &redactor, &run, issue::MAX_BODY)
+                }
+                // No run known (an older message): none of the app's lines
+                // stand in for it.
+                Some(None) => Ok(theodore_telemetry::report::LogTail::default()),
+                None => theodore_telemetry::report::log_tail(&dir, &redactor, issue::MAX_BODY),
             })
             .await
             .map_err(|e| internal(e.to_string()))?
@@ -153,10 +196,18 @@ impl AppCore {
         } else {
             None
         };
+        let context = match (&req.context, chat) {
+            (Some(id), Some(c)) => Some(ChatBlock {
+                id: id.clone(),
+                block: issue::context_block(&c.context, &issue::redactor()),
+            }),
+            _ => None,
+        };
         let draft = IssueDraft {
             id: uuid::Uuid::new_v4().simple().to_string(),
             info: self.issue_info().await,
             logs,
+            context,
         };
         *lock() = Some(draft.clone());
         Ok(draft)
@@ -175,7 +226,9 @@ impl AppCore {
         let body = issue::build(issue::IssueInput {
             comment: &req.comment,
             info: &draft.info,
+            context: draft.context.as_ref().map(|c| c.block.as_str()),
             logs: draft.logs.as_ref().filter(|_| req.with_logs),
+            run_logs: draft.context.is_some(),
         })
         .map_err(invalid)?;
         Ok((title, body))
@@ -186,6 +239,25 @@ fn internal(message: String) -> CommandError {
     CommandError {
         code: "internal".into(),
         message,
+    }
+}
+
+/// "GitHub's rate limit is reached. Try again in 12 minutes."
+fn github_rate_limited(reset_at: i64, now: i64) -> String {
+    format!(
+        "GitHub's rate limit is reached. {}",
+        try_again_in(reset_at, now)
+    )
+}
+
+/// Why the report window can't post right now, from the error `login`
+/// gave: the dialog shows it as it is.
+fn target_unavailable(e: &HostError, now: i64) -> String {
+    match e {
+        HostError::Auth => "GitHub sign-in expired. Sign in again in Settings → GitHub.".into(),
+        HostError::RateLimited { reset_at } => github_rate_limited(*reset_at, now),
+        HostError::Server(_) => "GitHub is having trouble right now.".into(),
+        _ => "Couldn't reach GitHub right now.".into(),
     }
 }
 
@@ -202,10 +274,7 @@ fn issue_err(e: HostError) -> CommandError {
             "not_found",
             "GitHub can't find that repository for this account.".to_string(),
         ),
-        HostError::RateLimited { .. } => (
-            "rate_limited",
-            "GitHub's rate limit was hit. Try again in a few minutes.".to_string(),
-        ),
+        HostError::RateLimited { reset_at } => ("rate_limited", github_rate_limited(reset_at, now_ms())),
         HostError::Network(_) => (
             "network",
             "Couldn't reach GitHub. Check the connection and try again.".to_string(),
@@ -332,10 +401,15 @@ fn err(e: AppError) -> CommandError {
 /// "rate limited until 1793393359000" means nothing to a person: say how
 /// long to wait instead.
 fn rate_limited_message(reset_at: i64, now: i64) -> String {
+    format!("Rate limit reached. {}", try_again_in(reset_at, now))
+}
+
+/// "Try again in 12 minutes.": whole minutes until `reset_at`, rounded up.
+fn try_again_in(reset_at: i64, now: i64) -> String {
     let minutes = (reset_at - now + 59_999).div_euclid(60_000);
     match minutes {
-        ..=1 => "Rate limit reached. Try again in a minute.".to_string(),
-        m => format!("Rate limit reached. Try again in {m} minutes."),
+        ..=1 => "Try again in a minute.".to_string(),
+        m => format!("Try again in {m} minutes."),
     }
 }
 
@@ -692,24 +766,44 @@ impl CoreApi for AppCore {
     async fn issue_target(&self) -> Result<theodore_contract::IssueTarget, CommandError> {
         let (owner, name) = self.report_repo().await;
         let repo = format!("{owner}/{name}");
-        let (login, unavailable) = match &self.issues {
-            None if self.sandbox.is_some() => (None, Some("Sandbox mode never posts to GitHub.")),
-            None => (None, Some("Fixture mode never posts to GitHub.")),
-            Some(t) if !t.has_token() => (None, Some("Sign in to GitHub to open an issue.")),
+        let (login, unavailable, retry) = match &self.issues {
+            None if self.sandbox.is_some() => (
+                None,
+                Some("Sandbox mode never posts to GitHub.".into()),
+                false,
+            ),
+            None => (
+                None,
+                Some("Fixture mode never posts to GitHub.".into()),
+                false,
+            ),
+            Some(t) if !t.has_token() => (
+                None,
+                Some("Sign in to GitHub to open an issue.".into()),
+                true,
+            ),
             Some(t) => match t.login().await {
-                Ok(login) => (Some(login), None),
-                Err(HostError::Auth) => (
-                    None,
-                    Some("GitHub sign-in expired. Sign in again in Settings → GitHub."),
-                ),
-                Err(_) => (None, Some("Couldn't reach GitHub right now.")),
+                Ok(login) => (Some(login), None, false),
+                Err(e) => {
+                    if matches!(e, HostError::Auth) {
+                        tracing::info!(error.code = e.code(), "report: GitHub sign-in expired");
+                    } else {
+                        tracing::warn!(
+                            error.code = e.code(),
+                            error = %e,
+                            "report: couldn't check GitHub for an issue"
+                        );
+                    }
+                    (None, Some(target_unavailable(&e, now_ms())), true)
+                }
             },
         };
         Ok(theodore_contract::IssueTarget {
             url: format!("https://github.com/{repo}"),
             repo,
             login,
-            unavailable: unavailable.map(str::to_string),
+            unavailable,
+            retry,
         })
     }
     async fn preview_issue(
@@ -722,6 +816,7 @@ impl CoreApi for AppCore {
             draft: draft.id,
             title,
             body: body.body,
+            context: body.context,
             logs: body.logs,
             log_lines: body.log_lines as u32,
             cut_lines: body.cut_lines as u32,
@@ -745,7 +840,7 @@ impl CoreApi for AppCore {
                 &owner,
                 &name,
                 &NewIssue {
-                    title,
+                    title: title.clone(),
                     body: body.body,
                     labels: vec![issue::LABEL.to_string()],
                 },
@@ -753,6 +848,7 @@ impl CoreApi for AppCore {
             .await
             .map_err(issue_err)?;
         *self.issue_draft.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        self.track_report(&owner, &name, &created, &title).await;
         tracing::info!(
             number = created.number,
             with_logs = req.with_logs,
@@ -769,6 +865,29 @@ impl CoreApi for AppCore {
         Ok(theodore_contract::ReportedIssue {
             number: created.number,
             url: created.url,
+        })
+    }
+    async fn draft_report(
+        &self,
+        req: theodore_contract::DraftReportRequest,
+    ) -> Result<theodore_contract::ReportDraft, CommandError> {
+        self.core.draft_report(req, None).await.map_err(err)
+    }
+    async fn stage_report_files(
+        &self,
+        attachments: Vec<String>,
+    ) -> Result<theodore_contract::StagedReportFiles, CommandError> {
+        let stamp = uuid::Uuid::new_v4().simple().to_string();
+        let dir = theodore_telemetry::report::reports_dir()
+            .join(format!("theodore-files-{}", &stamp[..12]));
+        let paths = self
+            .core
+            .stage_attachments(&attachments, &dir)
+            .await
+            .map_err(err)?;
+        Ok(theodore_contract::StagedReportFiles {
+            dir: dir.display().to_string(),
+            paths: paths.iter().map(|p| p.display().to_string()).collect(),
         })
     }
     async fn sandbox_status(
@@ -1201,6 +1320,8 @@ mod tests {
     struct FakeTracker {
         signed_out: bool,
         expired: bool,
+        /// `login` and posts fail with GitHub's rate limit, reset then.
+        rate_limited: Mutex<Option<i64>>,
         posted: Mutex<Vec<(String, String, NewIssue)>>,
     }
 
@@ -1212,6 +1333,9 @@ mod tests {
         async fn login(&self) -> theodore_ports::HostResult<String> {
             if self.expired {
                 return Err(HostError::Auth);
+            }
+            if let Some(reset_at) = *self.rate_limited.lock().unwrap() {
+                return Err(HostError::RateLimited { reset_at });
             }
             Ok("octocat".into())
         }
@@ -1248,7 +1372,90 @@ mod tests {
             comment: "It shows nothing after a push.".into(),
             with_logs: false,
             draft,
+            context: None,
         }
+    }
+
+    /// An app with an AI panel question and its reply on `github:acme/app#7`,
+    /// and a "Report this" draft about the reply.
+    async fn chat_report(
+        tracker: Arc<FakeTracker>,
+    ) -> (
+        AppCore,
+        theodore_app::Receivers,
+        theodore_contract::ReportDraft,
+    ) {
+        use theodore_ports::{NewAction, Store, SyncActionCode};
+        let f = theodore_app::testkit::fixtures();
+        let (core, rx) = Core::start(f.deps());
+        let app = AppCore::new(core).with_issues(Some(tracker as Arc<dyn IssueTracker>));
+        let pr = PrId::new("github:acme/app#7");
+        for (id, data) in [
+            (
+                "q1",
+                serde_json::json!({"id": "q1", "pr": pr.0, "author": {"kind": "me"},
+                    "text": "why is this slow?", "refs": [], "at": 1000}),
+            ),
+            (
+                "r1",
+                serde_json::json!({"id": "r1", "pr": pr.0,
+                    "author": {"kind": "agent", "agent": "claude"},
+                    "text": "Because of the loop.", "refs": [], "at": 2000, "run": "ask:q1"}),
+            ),
+        ] {
+            f.store
+                .apply(vec![NewAction {
+                    model: theodore_contract::models::CHAT_MESSAGE.into(),
+                    model_id: id.into(),
+                    action: SyncActionCode::I,
+                    data: Some(data),
+                }])
+                .unwrap();
+        }
+        let draft = app
+            .draft_report(theodore_contract::DraftReportRequest {
+                chat: pr,
+                message: Some("r1".into()),
+                title: None,
+                description: None,
+                scope: None,
+                include_logs: None,
+            })
+            .await
+            .unwrap();
+        (app, rx, draft)
+    }
+
+    /// "Report this" on an AI panel reply: the posted body quotes that
+    /// conversation, exactly as previewed; nothing goes without submit.
+    #[tokio::test]
+    async fn a_chat_report_posts_its_conversation_as_previewed() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx, draft) = chat_report(tracker.clone()).await;
+        assert!(
+            tracker.posted.lock().unwrap().is_empty(),
+            "a draft sends nothing"
+        );
+
+        let req = theodore_contract::IssueRequest {
+            context: Some(draft.id.clone()),
+            ..request(None)
+        };
+        let preview = app.preview_issue(req.clone()).await.unwrap();
+        let ctx = preview.context.clone().expect("the conversation");
+        assert!(preview.body.contains(&ctx));
+        assert!(ctx.contains("<summary>Conversation: AI panel reply 1 of 1 · claude</summary>"));
+        assert!(ctx.contains("why is this slow?") && ctx.contains("Because of the loop."));
+        assert!(ctx.contains("| Run | `ask:q1` |"));
+
+        app.submit_issue(theodore_contract::IssueRequest {
+            draft: Some(preview.draft.clone()),
+            ..req
+        })
+        .await
+        .unwrap();
+        let posted = tracker.posted.lock().unwrap();
+        assert_eq!(posted[0].2.body, preview.body);
     }
 
     #[tokio::test]
@@ -1299,6 +1506,72 @@ mod tests {
         assert!(e.message.starts_with("GitHub sign-in expired"), "{e:?}");
     }
 
+    /// GitHub's rate limit: the window says how long, offers Retry, and a
+    /// recheck once it lifts can post.
+    #[tokio::test]
+    async fn a_rate_limit_says_how_long_and_a_recheck_clears_it() {
+        let tracker = Arc::new(FakeTracker::default());
+        *tracker.rate_limited.lock().unwrap() = Some(now_ms() + 12 * 60_000 - 1_000);
+        let (a, _rx) = app(Some(tracker.clone()));
+        let t = a.issue_target().await.unwrap();
+        assert_eq!(t.login, None);
+        assert_eq!(
+            t.unavailable.as_deref(),
+            Some("GitHub's rate limit is reached. Try again in 12 minutes.")
+        );
+        assert!(t.retry);
+
+        *tracker.rate_limited.lock().unwrap() = None;
+        let t = a.issue_target().await.unwrap();
+        assert_eq!(
+            (t.login.as_deref(), t.unavailable, t.retry),
+            (Some("octocat"), None, false)
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_run_without_github_offers_no_retry() {
+        let (a, _rx) = app(None);
+        assert!(!a.issue_target().await.unwrap().retry);
+        let signed_out = Arc::new(FakeTracker {
+            signed_out: true,
+            ..Default::default()
+        });
+        let (a, _rx) = app(Some(signed_out));
+        assert!(a.issue_target().await.unwrap().retry, "sign in, then Retry");
+    }
+
+    #[test]
+    fn what_the_window_says_when_github_cant_be_checked() {
+        let now = 1_700_000_000_000;
+        assert_eq!(
+            target_unavailable(
+                &HostError::RateLimited {
+                    reset_at: now + 5_000
+                },
+                now
+            ),
+            "GitHub's rate limit is reached. Try again in a minute."
+        );
+        assert_eq!(
+            target_unavailable(&HostError::Network("dns".into()), now),
+            "Couldn't reach GitHub right now."
+        );
+        assert_eq!(
+            target_unavailable(&HostError::Server("502".into()), now),
+            "GitHub is having trouble right now."
+        );
+        let e = issue_err(HostError::RateLimited {
+            reset_at: now_ms() + 30 * 60_000,
+        });
+        assert_eq!(e.code, "rate_limited");
+        assert!(
+            e.message
+                .starts_with("GitHub's rate limit is reached. Try again in "),
+            "{e:?}"
+        );
+    }
+
     #[tokio::test]
     async fn the_posted_issue_is_exactly_the_preview() {
         let tracker = Arc::new(FakeTracker::default());
@@ -1328,6 +1601,68 @@ mod tests {
         assert_eq!(sent.title, preview.title);
         assert_eq!(sent.body, preview.body);
         assert_eq!(sent.labels, ["from-app"]);
+    }
+
+    #[tokio::test]
+    async fn a_posted_issue_is_listed_in_my_reports() {
+        let (app, _rx) = app(Some(Arc::new(FakeTracker::default())));
+        app.submit_issue(request(None)).await.unwrap();
+        let boot = app
+            .core
+            .bootstrap(theodore_contract::BootstrapScope::Global)
+            .await
+            .unwrap();
+        let row = boot
+            .rows
+            .into_iter()
+            .find(|r| r.model == theodore_contract::models::REPORT)
+            .expect("a report row");
+        let (owner, name) = issue::target_repo(None);
+        assert_eq!(row.id, format!("{owner}/{name}#7"));
+        let report: theodore_contract::TrackedReport = serde_json::from_value(row.data).unwrap();
+        assert_eq!(report.title, "Diff pane is blank");
+        assert_eq!(report.status, theodore_contract::ReportStatus::Open);
+    }
+
+    /// A report from a chat (with its conversation and the run's logs
+    /// asked for) is remembered in My reports like a plain one.
+    #[tokio::test]
+    async fn a_chat_report_is_listed_in_my_reports_too() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx, draft) = chat_report(tracker.clone()).await;
+        let req = theodore_contract::IssueRequest {
+            context: Some(draft.id.clone()),
+            ..request(None)
+        };
+        let preview = app.preview_issue(req.clone()).await.unwrap();
+        app.submit_issue(theodore_contract::IssueRequest {
+            draft: Some(preview.draft),
+            ..req
+        })
+        .await
+        .unwrap();
+        assert!(
+            tracker.posted.lock().unwrap()[0]
+                .2
+                .body
+                .contains("<summary>Conversation: AI panel reply 1 of 1"),
+            "posted with its conversation"
+        );
+        let boot = app
+            .core
+            .bootstrap(theodore_contract::BootstrapScope::Global)
+            .await
+            .unwrap();
+        let row = boot
+            .rows
+            .into_iter()
+            .find(|r| r.model == theodore_contract::models::REPORT)
+            .expect("a report row");
+        let (owner, name) = issue::target_repo(None);
+        assert_eq!(row.id, format!("{owner}/{name}#7"));
+        let report: theodore_contract::TrackedReport = serde_json::from_value(row.data).unwrap();
+        assert_eq!(report.title, "Diff pane is blank");
+        assert_eq!(report.status, theodore_contract::ReportStatus::Open);
     }
 
     #[tokio::test]

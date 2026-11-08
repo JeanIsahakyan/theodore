@@ -344,6 +344,27 @@ async fn a_skipped_checkpoint_holds_the_queue_and_keeps_its_error() {
     );
 }
 
+/// The agent's replies in the space, oldest first.
+fn replies(f: &Fixtures, id: &str) -> Vec<ChatMessage> {
+    let mut r: Vec<ChatMessage> = transcript(f, id)
+        .into_iter()
+        .filter(|m| matches!(m.author, Author::Agent(_)))
+        .collect();
+    r.sort_by_key(|m| m.at);
+    r
+}
+
+/// A Stop that lands once the agent is done (its checkpoint being written,
+/// or the run just about let go) holds the queue, but doesn't make the
+/// reply a stopped one: it's whole, and says so. The note over the queue
+/// says you pressed Stop, not that the turn stopped (`ui/.../queue.ts`).
+fn assert_reply_whole(f: &Fixtures, id: &str) {
+    let reply = replies(f, id).pop().expect("the turn's reply");
+    assert_eq!(reply.text, "ok", "everything the agent wrote");
+    assert_eq!(reply.failed, None, "the agent had finished: not stopped");
+    assert_eq!(space(f, id).error, None);
+}
+
 /// Stop lands after the agent finished, while its checkpoint is written.
 #[tokio::test]
 async fn stop_during_the_checkpoint_holds_the_queue() {
@@ -361,6 +382,62 @@ async fn stop_during_the_checkpoint_holds_the_queue() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
     assert!(held(&f, &a));
+    assert_reply_whole(&f, &s.id);
+}
+
+/// Stop takes the run after the turn last looked for a stop, just before
+/// the turn lets go of it: a stop all the same.
+#[tokio::test]
+async fn stop_as_the_turn_ends_on_its_own_holds_the_queue() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok"));
+    let (s, release) = running(&f, &core, &project).await;
+    let a = core.space_send(send(&s.id, "next")).await.unwrap();
+    let go = f.git.pause_next_checkpoint();
+    release();
+    wait_until(|| !f.git.checkpoints.lock().unwrap().is_empty()).await;
+    // Stop's first step, its cancel not landed yet.
+    let run = space(&f, &s.id).run.unwrap();
+    assert!(core.0.runs.write().await.remove(&run).is_some());
+    go.send(()).unwrap();
+    idle(&f, &s.id).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
+    assert!(held(&f, &a));
+    assert_reply_whole(&f, &s.id);
+}
+
+/// Stop lands once the turn let go of its run, before the next queued
+/// message starts: that next one is what it stops.
+#[tokio::test]
+async fn stop_while_the_turn_hands_over_stops_the_next_one() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok"));
+    let (s, release) = running(&f, &core, &project).await;
+    let a = core.space_send(send(&s.id, "next")).await.unwrap();
+    let b = core.space_send(send(&s.id, "after that")).await.unwrap();
+    let run = space(&f, &s.id).run.unwrap();
+    // The turn's end waits here, its run let go.
+    let queue = core.space_queue_lock(&s.id).await;
+    release();
+    wait_until(|| core.0.runs.try_read().is_ok_and(|r| !r.contains_key(&run))).await;
+    let stop = tokio::spawn({
+        let (core, id) = (core.clone(), s.id.clone());
+        async move { core.space_stop(&id).await }
+    });
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(!stop.is_finished(), "Stop waits for the handover");
+    f.agents.hang_next_run();
+    drop(queue);
+    stop.await.unwrap().unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(f.agents.requests().len(), 2, "the next one started");
+    assert!(f.agents.last_request().unwrap().prompt.ends_with("next"));
+    assert!(message(&f, &a).unwrap().queued.is_none());
+    assert_eq!(s.error, None, "stopped, not failed");
+    assert!(held(&f, &b));
 }
 
 #[tokio::test]

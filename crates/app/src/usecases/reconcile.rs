@@ -139,15 +139,78 @@ impl Core {
             .collect())
     }
 
-    /// Drops what `close_branch_review` would, for a PR the host can't find.
-    /// Threads, drafts and the inbox's done or snooze stay, so if the PR comes
-    /// back (access to the repo restored) nothing of yours is lost. A PR open
-    /// in a tab keeps its row until the next launch: its review reads it.
+    /// A removed project's rows only its refresh kept: other people's PRs of
+    /// its repo. Left behind, "All projects" listed and counted them as open
+    /// for as long as they stayed open, with nothing refreshing them. Yours
+    /// stay, as anywhere outside a project (the inbox keeps them), and so do
+    /// a live space's PR, a branch review and a row open in a tab.
+    ///
+    /// ```text
+    /// project removed ─▶ its repo's rows ─┬─ inbox reasons ─────▶ kept
+    ///                                     ├─ live space / tab ──▶ kept
+    ///                                     ├─ no host URL ───────▶ kept
+    ///                                     └─ the rest ──────────▶ dropped
+    /// ```
+    pub(crate) async fn drop_removed_project_prs(&self, repo: &RepoRef) -> AppResult<()> {
+        let store = self.0.deps.store.clone();
+        let (rows, projects) = tokio::task::spawn_blocking(move || {
+            Ok::<_, theodore_ports::StoreError>((
+                store.all(models::PR)?,
+                store.all(models::PROJECT)?,
+            ))
+        })
+        .await
+        .map_err(AppError::join)??;
+        // Another project of the same repo (spelled differently) still
+        // speaks for its rows.
+        let still_a_project = projects.into_iter().any(|r| {
+            r.data
+                .get("repo")
+                .and_then(|v| serde_json::from_value::<RepoRef>(v.clone()).ok())
+                .is_some_and(|p| same_repo(&p, repo))
+        });
+        if still_a_project {
+            return Ok(());
+        }
+        let behind_a_space = self.prs_behind_live_spaces().await?;
+        let mut changed = false;
+        for row in rows {
+            if row.archived {
+                continue;
+            }
+            let id = PrId(row.id);
+            let Ok(summary) = serde_json::from_value::<PrSummary>(row.data) else {
+                continue;
+            };
+            if same_repo(&summary.pr.repo, repo)
+                && !summary.url.is_empty()
+                && summary.reasons.is_empty()
+                && !behind_a_space.contains(&id)
+            {
+                changed |= self.remove_gone_pr(&id).await?;
+            }
+        }
+        if changed {
+            self.refresh_stacks().await?;
+        }
+        Ok(())
+    }
+
+    /// Drops what `close_branch_review` would, for a PR the host can't find
+    /// or a removed project's. Threads, drafts and the inbox's done or snooze
+    /// stay, so if the PR comes back (access to the repo restored, the
+    /// project added again) nothing of yours is lost. A PR open in a tab
+    /// keeps its row until the next launch: its review reads it.
     async fn remove_gone_pr(&self, pr: &PrId) -> AppResult<bool> {
         // Same lock opening a PR holds: a patch to this row in flight (the
         // stack links) would otherwise fail on the missing row.
         let _guard = self.0.open_lock.lock().await;
         if self.0.current_head.read().await.contains_key(pr) {
+            return Ok(false);
+        }
+        // Asked again: a space opening this PR writes its row before it
+        // links it, and may have linked it since `doubted_rows` looked.
+        if self.prs_behind_live_spaces().await?.contains(pr) {
             return Ok(false);
         }
         let mut actions = Vec::new();

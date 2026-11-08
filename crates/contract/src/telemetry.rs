@@ -2,10 +2,12 @@
 //! (`log_client`), the two sharing choices (`telemetry_status`,
 //! `set_telemetry`) and "Report a problem" (`report_problem`,
 //! `reveal_report`; as a GitHub issue: `issue_target`, `preview_issue`,
-//! `submit_issue`).
+//! `submit_issue`; from a chat: `draft_report`; attached files:
+//! `stage_report_files`).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use theodore_domain::PrId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +122,11 @@ pub struct IssueTarget {
     pub login: Option<String>,
     /// Why issues can't be posted (signed out, sandbox); `None`: they can.
     pub unavailable: Option<String>,
+    /// Asking again may change the answer (a rate limit, the network, a
+    /// sign-in): the window offers Retry. False when it never can (sandbox,
+    /// fixtures) or nothing is wrong.
+    #[serde(default)]
+    pub retry: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -132,6 +139,10 @@ pub struct IssueRequest {
     /// that expired) collects them afresh.
     #[serde(default)]
     pub draft: Option<String>,
+    /// A chat report's id (`ReportDraft::id`): the body gets that
+    /// conversation, and `with_logs` means that run's log lines only.
+    #[serde(default)]
+    pub context: Option<String>,
 }
 
 /// Exactly what `submit_issue` would post for the same request.
@@ -141,6 +152,10 @@ pub struct IssuePreview {
     pub draft: String,
     pub title: String,
     pub body: String,
+    /// The conversation block in `body` (a chat report; folded in the
+    /// preview).
+    #[serde(default)]
+    pub context: Option<String>,
     /// The logs block `body` ends with (folded in the preview).
     pub logs: Option<String>,
     pub log_lines: u32,
@@ -152,4 +167,69 @@ pub struct IssuePreview {
 pub struct ReportedIssue {
     pub number: u64,
     pub url: String,
+}
+
+/// What a chat report is about (docs/telemetry.md "Report from a chat").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportScope {
+    /// One message: its own text (and a reply's tool calls).
+    Message,
+    /// Your message and the reply to it, tool calls, error, timings.
+    Turn,
+    /// A space as a whole: where, agent, status; no message text.
+    Space,
+    /// A PR's AI panel as a whole: the same.
+    Review,
+}
+
+/// `draft_report`: a problem report about a chat, prefilled from it.
+/// "Report this", `/report` and the agents' `report_problem` tool all
+/// end here; nothing is sent until you submit the report window.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct DraftReportRequest {
+    /// The chat: a PR's id (its AI panel) or a space's chat key
+    /// (`space:<id>`).
+    pub chat: PrId,
+    /// The message it is about; none: the chat's latest reply.
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Default: `turn`.
+    #[serde(default)]
+    pub scope: Option<ReportScope>,
+    /// Default: on.
+    #[serde(default)]
+    pub include_logs: Option<bool>,
+}
+
+/// A drafted chat report, waiting in the report window. Its conversation
+/// is read when the window previews or posts it, so a turn still running
+/// when it was drafted shows how it ended.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ReportDraft {
+    /// Pass in `IssueRequest::context`.
+    pub id: String,
+    pub chat: PrId,
+    pub scope: ReportScope,
+    pub title: String,
+    pub description: String,
+    pub include_logs: bool,
+    /// One line for the window: `Space turn 3 of 5 · claude`.
+    pub about: String,
+    /// Drafted by the agent (`report_problem`), not by you.
+    pub by_agent: bool,
+}
+
+/// `stage_report_files`: a report's attached files, copied into one
+/// folder under the reports folder for you to add on GitHub yourself
+/// (docs/telemetry.md "Attachments"). Nothing is uploaded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct StagedReportFiles {
+    pub dir: String,
+    /// Absolute paths, in the order given.
+    pub paths: Vec<String>,
 }

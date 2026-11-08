@@ -36,6 +36,8 @@ pub fn seed_messages(space: &str, turns: usize, now_ms: u64, tag: u64) -> Vec<Ch
         changed_files: vec![],
         model: None,
         text_in_steps: false,
+        model_resolved: false,
+        run: None,
     };
     (0..turns)
         .flat_map(|n| {

@@ -159,6 +159,23 @@ export function gapTail(hunks: Hunk[], totalLines: number): Gap | null {
   return totalLines > end ? { from: end + 1, to: totalLines, shift } : null;
 }
 
+/** A file's lines for `gapTail`'s count: the newline that ends the last
+ *  line doesn't start one more (#130). */
+export function fileLines(text: string): string[] {
+  if (!text) return [];
+  return (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+}
+
+/** Whether the hunks alone show there's nothing after the last one: an
+ *  empty old side (an added file) puts the whole new file in the hunk, an
+ *  empty new side (a deleted file) has no lines to load (#130). */
+export function tailKnownEmpty(hunks: Hunk[]): boolean {
+  return (
+    hunks.some((h) => h.old_start === 0 && h.old_lines === 0) ||
+    hunks.every((h) => h.new_lines === 0)
+  );
+}
+
 export type SinceKind = 'new' | 'changed';
 
 const rangesOverlap = (a: Hunk, b: Hunk): boolean => {

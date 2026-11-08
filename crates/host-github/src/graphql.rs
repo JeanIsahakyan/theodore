@@ -61,9 +61,11 @@ pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
     let GqlResponse { data, errors } = resp.value;
 
     if let Some(errors) = errors.as_deref().filter(|e| !e.is_empty()) {
+        // A body-level RATE_LIMITED still comes with the quota's headers.
+        let reset_at = theodore_host_http::reset_at_from_headers(&resp.headers, http.now());
         let op = operation_label(query);
         if is_mutation(query)
-            && let Some(err) = classify_mutation_errors(errors, http.now())
+            && let Some(err) = classify_mutation_errors(errors, reset_at)
         {
             tracing::info!(
                 op = %op,
@@ -75,7 +77,7 @@ pub(crate) async fn graphql<T: for<'de> Deserialize<'de>>(
             return Err(err);
         }
         if data.is_none() {
-            return Err(classify_graphql_errors(errors, http.now()));
+            return Err(classify_graphql_errors(errors, reset_at));
         }
         tracing::warn!(
             op = %op,
@@ -142,7 +144,7 @@ fn error_message(errors: &[GqlError]) -> String {
 /// GitHub's own message, or `None` for an error type this doesn't know
 /// (the caller then goes on as for a query). Unlike a query's, a
 /// mutation's `FORBIDDEN` is about this one write, not the token.
-fn classify_mutation_errors(errors: &[GqlError], now_ms: i64) -> Option<HostError> {
+fn classify_mutation_errors(errors: &[GqlError], reset_at: i64) -> Option<HostError> {
     let message = error_message(errors);
     let kind = errors
         .iter()
@@ -154,18 +156,15 @@ fn classify_mutation_errors(errors: &[GqlError], now_ms: i64) -> Option<HostErro
         }
         "FORBIDDEN" | "INSUFFICIENT_SCOPES" => HostError::Forbidden(message),
         "NOT_FOUND" => HostError::NotFound(message),
-        "RATE_LIMITED" => HostError::RateLimited {
-            reset_at: now_ms + 60_000,
-        },
+        "RATE_LIMITED" => HostError::RateLimited { reset_at },
         _ => return None,
     })
 }
 
-/// `now_ms` backs `RATE_LIMITED`'s `reset_at`: GraphQL's body-level error
-/// carries no reset header the way a REST 403/429 does, so this falls back
-/// to `now + 60s`, same as `host_http::rate::reset_at_from_headers` does
-/// when a transport-level rate limit arrives with no reset header either.
-fn classify_graphql_errors(errors: &[GqlError], now_ms: i64) -> HostError {
+/// `reset_at` backs `RATE_LIMITED`: the response's `x-ratelimit-reset`
+/// (GitHub sends it with a body-level limit too), else `now + 60s` — what
+/// `host_http::reset_at_from_headers` gives a transport-level limit.
+fn classify_graphql_errors(errors: &[GqlError], reset_at: i64) -> HostError {
     let message = error_message(errors);
     let kind = errors
         .first()
@@ -174,9 +173,7 @@ fn classify_graphql_errors(errors: &[GqlError], now_ms: i64) -> HostError {
     match kind {
         "NOT_FOUND" => HostError::NotFound(message),
         "FORBIDDEN" | "INSUFFICIENT_SCOPES" => HostError::Auth,
-        "RATE_LIMITED" => HostError::RateLimited {
-            reset_at: now_ms + 60_000,
-        },
+        "RATE_LIMITED" => HostError::RateLimited { reset_at },
         _ => HostError::Validation(message),
     }
 }
@@ -1537,4 +1534,128 @@ pub(crate) async fn repo_info(
     .await?;
     data.repository
         .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}")))
+}
+
+// ── report issues ("My reports") ────────────────────────────────────────
+
+const ISSUE_STATUS_QUERY: &str = r#"
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      number
+      title
+      url
+      state
+      stateReason
+      updatedAt
+      closedAt
+      author { login }
+      comments(last: 1) { totalCount nodes { author { login } } }
+      timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {
+        nodes {
+          ... on ClosedEvent {
+            closer {
+              __typename
+              ... on PullRequest { number url mergeCommit { oid } }
+              ... on Commit { oid }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlLogin {
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlIssueComment {
+    pub author: Option<GqlLogin>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlIssueComments {
+    #[serde(rename = "totalCount")]
+    pub total_count: u32,
+    #[serde(default)]
+    pub nodes: Vec<Option<GqlIssueComment>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlOid {
+    pub oid: String,
+}
+
+/// A `ClosedEvent.closer`: a `PullRequest` (number, url, merge commit) or
+/// a `Commit` (oid).
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlCloser {
+    #[serde(rename = "__typename")]
+    pub typename: String,
+    pub number: Option<u64>,
+    pub url: Option<String>,
+    #[serde(rename = "mergeCommit")]
+    pub merge_commit: Option<GqlOid>,
+    pub oid: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlClosedEvent {
+    pub closer: Option<GqlCloser>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlClosedEvents {
+    #[serde(default)]
+    pub nodes: Vec<Option<GqlClosedEvent>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlIssueStatus {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    /// `OPEN` or `CLOSED`.
+    pub state: String,
+    /// `COMPLETED`, `NOT_PLANNED`, `DUPLICATE`, `REOPENED`.
+    #[serde(rename = "stateReason")]
+    pub state_reason: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    #[serde(rename = "closedAt")]
+    pub closed_at: Option<String>,
+    pub author: Option<GqlLogin>,
+    pub comments: GqlIssueComments,
+    #[serde(rename = "timelineItems")]
+    pub timeline_items: GqlClosedEvents,
+}
+
+/// One report issue: state, close reason, comments, and what closed it.
+pub(crate) async fn issue_status(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> HostResult<GqlIssueStatus> {
+    #[derive(Debug, Deserialize)]
+    struct Repo {
+        issue: Option<GqlIssueStatus>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        repository: Option<Repo>,
+    }
+    let data: Data = graphql(
+        http,
+        ISSUE_STATUS_QUERY,
+        json!({ "owner": owner, "repo": repo, "number": number }),
+    )
+    .await?;
+    data.repository
+        .and_then(|r| r.issue)
+        .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}#{number}")))
 }

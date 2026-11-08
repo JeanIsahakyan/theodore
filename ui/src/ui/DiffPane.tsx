@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -89,10 +90,12 @@ import { Btn, Spinner } from './bits';
 import { Composer, DraftView, plural, ThreadView } from './Comments';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import {
+  fileLines,
   gapsAbove,
   gapTail,
   sinceCountsFor,
   splitRows,
+  tailKnownEmpty,
   wordMarks,
   type Gap,
   type SinceKind,
@@ -110,6 +113,7 @@ import { interdiffByHunk, interdiffView } from './review/interdiff';
 import { SymbolPeek, type SymbolPeekTarget } from './SymbolPeek';
 import { CodeHoverHost } from './symbols/CodeHoverHost';
 import { identifierColAt } from './symbols/extract';
+import { HeaderSizer, keepHeaderAtTop } from './review/headerClearance';
 
 /** The PR's Files page on the host; `null` for a review with no host PR
  *  behind it (a space's branch before it is pushed, a local branch). */
@@ -199,6 +203,27 @@ export const pendingJump = { current: false };
 const ScrollRoot = createContext<{ current: HTMLElement | null }>({
   current: null,
 });
+
+/** The pane's one observer of its file headers' heights (`--file-h`). */
+const HeaderSizerCtx = createContext<HeaderSizer | null>(null);
+
+function PaneContext({
+  root,
+  sizer,
+  children,
+}: {
+  root: { current: HTMLElement | null };
+  sizer: HeaderSizer;
+  children: React.ReactNode;
+}) {
+  return (
+    <ScrollRoot.Provider value={root}>
+      <HeaderSizerCtx.Provider value={sizer}>
+        {children}
+      </HeaderSizerCtx.Provider>
+    </ScrollRoot.Provider>
+  );
+}
 
 /** A file's hunks mount once it is within ~1.5 viewports of the visible
  *  part of the diff, and stay mounted after that. */
@@ -323,6 +348,13 @@ export const DiffPane = observer(function DiffPane({
   const ui = useUi();
   const mainRef = useRef<HTMLDivElement>(null);
   const diffWidth = useElementWidth(mainRef, SPLIT_MIN_WIDTH);
+  // Every file header's height, for what scrolls a line to the top to clear
+  // it (review/headerClearance.ts).
+  const [headerSizer] = useState(() => new HeaderSizer());
+  useEffect(() => {
+    headerSizer.start(mainRef.current);
+    return () => headerSizer.stop();
+  }, [headerSizer]);
   // Split needs room for two readable halves; below that, unified is more
   // useful than two unreadably-thin columns.
   const splitRequested = ui.diffView === 'split';
@@ -539,10 +571,11 @@ export const DiffPane = observer(function DiffPane({
   );
 
   return (
-    <ScrollRoot.Provider value={mainRef}>
+    <PaneContext root={mainRef} sizer={headerSizer}>
       <main
         ref={mainRef}
         onScroll={(e) => ui.setReviewScroll(pr, e.currentTarget.scrollTop)}
+        // `pt-5`: a file header's `-top-5` pins it past this padding.
         className="diff min-w-0 overflow-auto bg-background px-6 pb-20 pt-5"
       >
         <CodeHoverHost pr={pr} rev={rev.head} root={mainRef} />
@@ -663,7 +696,7 @@ export const DiffPane = observer(function DiffPane({
           )}
         </div>
       </main>
-    </ScrollRoot.Provider>
+    </PaneContext>
   );
 });
 
@@ -1127,8 +1160,27 @@ const FileTail = observer(function FileTail({
       ? store.files.get(key, () => api.getFile({ pr, rev, path }))
       : null;
   const ready = res?.status === 'ready' && res.data != null;
-  const allLines = ready ? res!.data!.split('\n') : [];
+  const allLines = ready ? fileLines(res!.data!) : [];
   const gap = gapTail(hunks, allLines.length);
+  // The same fetch the file's hunks make for highlighting (`useHunkTokens`),
+  // with a grammar or not (a `.txt`): once it's in, a last hunk that
+  // reaches the end drops the button.
+  const [endKey, setEndKey] = useState<string | null>(null);
+  const warm = hunks.some(
+    (h) => h.new_start > 1 && h.lines.some((l) => l.kind !== 'del'),
+  );
+  useEffect(() => {
+    if (!warm) return;
+    let live = true;
+    const f = store.files.get(key, () => api.getFile({ pr, rev, path }, true));
+    void when(() => f.status !== 'loading').then(() => {
+      if (live && f.data != null)
+        setEndKey(gapTail(hunks, fileLines(f.data).length) ? null : key);
+    });
+    return () => {
+      live = false;
+    };
+  }, [store, key, warm, hunks, pr, rev, path]);
   const to = gap ? Math.min(gap.to, gap.from + shown - 1) : 0;
   const first = gap ? gap.from - 1 : 0;
   const slice = gap ? allLines.slice(first, to) : [];
@@ -1141,6 +1193,7 @@ const FileTail = observer(function FileTail({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
     [file, first, to, sideText, lang, shikiVersion],
   );
+  if (tailKnownEmpty(hunks)) return null;
   if (ready) {
     if (!gap) return null;
     const total = gap.to - gap.from + 1;
@@ -1172,6 +1225,7 @@ const FileTail = observer(function FileTail({
       </>
     );
   }
+  if (endKey === key) return null;
   return (
     <div className="gap flex items-center justify-center gap-2 border-t border-separator bg-surface-secondary px-4 py-1 text-xs text-muted">
       <Button
@@ -1384,8 +1438,23 @@ function FileBlockInner({
     // Focus left: a hand fold stays, and coming back is a jump again.
     setFold({ ...fold, arrival: null });
   }
-  const foldTo = (closed: boolean) =>
+  // Folding a file read from its pinned header (Viewed, the chevron, the
+  // menu, `V` on its hunk) would leave the pane scrolled to where its body
+  // was, deep in the next file: the fold scrolls back so its header stays
+  // at the top, the next file right after it.
+  const scrollRoot = useContext(ScrollRoot);
+  const keepHeader = useRef(false);
+  const holdHeader = () => {
+    keepHeader.current = true;
+  };
+  const foldTo = (closed: boolean) => {
+    holdHeader();
     setFold({ closed, viewed: isViewed, arrival });
+  };
+  const toggleViewed = () => {
+    holdHeader();
+    setFileViewed(store, pr, file.path, !isViewed);
+  };
   // Where focus was when Viewed last flipped: a file marked Viewed while
   // one of its hunks has focus (a click in it, J/K, `V`) still folds; only
   // a jump after that opens it. On mount nothing is "seen" yet, so a jump
@@ -1410,6 +1479,20 @@ function FileBlockInner({
     ? store.models.drafts.byPr(pr).filter((d) => d.anchor.path === file.path)
         .length
     : 0;
+  const wasCollapsed = useRef(collapsedFile);
+  useLayoutEffect(() => {
+    const folded = collapsedFile && !wasCollapsed.current;
+    wasCollapsed.current = collapsedFile;
+    const asked = keepHeader.current || !!focusHunk;
+    keepHeader.current = false;
+    if (folded && asked) keepHeaderAtTop(cardRef.current, scrollRoot.current);
+  }, [collapsedFile, focusHunk, scrollRoot]);
+  const headerSizer = useContext(HeaderSizerCtx);
+  const headerRef = useCallback(
+    (el: HTMLElement | null) =>
+      el && headerSizer ? headerSizer.add(el) : undefined,
+    [headerSizer],
+  );
   // Built when the menu opens, not on every render.
   const fileMenu = (e: React.MouseEvent) =>
     contextMenuHandler(store.ui, (): ContextMenuItem[] => {
@@ -1418,7 +1501,7 @@ function FileBlockInner({
         {
           id: 'mark-viewed',
           label: isViewed ? 'Mark not viewed' : 'Mark viewed',
-          onAction: () => setFileViewed(store, pr, file.path, !isViewed),
+          onAction: toggleViewed,
         },
         {
           id: 'copy-path',
@@ -1465,12 +1548,22 @@ function FileBlockInner({
   const last = file.hunks[file.hunks.length - 1];
 
   return (
-    <Card ref={cardRef} className="file mb-4 gap-0 overflow-hidden p-0">
+    // `overflow: clip`, not `hidden`: both round the corners, but `hidden`
+    // makes the card a scroll container, and the sticky header would stick
+    // to the card instead of the pane (#131). An older WebKit without `clip`
+    // keeps `hidden`: a header that scrolls away, as before.
+    <Card
+      ref={cardRef}
+      className="file mb-4 gap-0 overflow-hidden p-0 supports-[overflow:clip]:overflow-clip"
+    >
       <header
+        ref={headerRef}
         // In a narrow pane (a space's Changes) the controls wrap under the
         // name instead of being cut off at the card's edge; the name keeps
-        // room for itself.
-        className="file-h sticky top-0 z-[2] flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-separator bg-surface px-4 py-2.5 text-sm"
+        // room for itself. `-top-5` undoes the pane's `pt-5`, which a sticky
+        // offset counts from: the header pins at the pane's very top edge,
+        // no strip of code scrolling above it.
+        className="file-h sticky -top-5 z-[2] flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-separator bg-surface px-4 py-2.5 text-sm"
         onContextMenu={fileMenu}
       >
         <Button
@@ -1608,7 +1701,7 @@ function FileBlockInner({
         <ToggleButton
           size="sm"
           isSelected={isViewed}
-          onChange={() => setFileViewed(store, pr, file.path, !isViewed)}
+          onChange={toggleViewed}
           className="viewed-toggle shrink-0 gap-1.5"
           aria-label={local ? 'read' : 'Viewed — syncs with GitHub'}
         >

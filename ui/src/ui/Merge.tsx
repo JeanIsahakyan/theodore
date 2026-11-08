@@ -42,7 +42,11 @@ import type {
 } from '../gen/contract';
 import { mergePr, updateBranch } from '../actions';
 import { api } from '../core/api';
-import { mergeInfoProblem, useMergeInfoState } from './mergeInfo';
+import {
+  mergeInfoProblem,
+  mergeInfoVersion,
+  useMergeInfoState,
+} from './mergeInfo';
 import { useRootStore } from '../stores/context';
 import { Btn, Spinner } from './bits';
 
@@ -125,9 +129,11 @@ export function gatesFor(
           ? 'Draft — needs "Ready for review"'
           : 'Open for review',
     });
+    // A running check isn't a pass: the footer must not say "All checks
+    // passed." while one runs. It holds the merge only if the host says so.
     gates.push({
-      ok: failing === 0,
-      warn: failing > 0 && hostMerges,
+      ok: failing === 0 && pending === 0,
+      warn: (failing > 0 || pending > 0) && hostMerges,
       label: failing
         ? `${failing} ${failing === 1 ? 'check' : 'checks'} failing`
         : pending
@@ -178,7 +184,12 @@ export const MergeDialog = observer(function MergeDialog({
   const summary = store.models.prSummaries.get(pr);
   // Asked again on a backoff while the dialog is open: a host having
   // trouble (a 502) recovers on its own, said in a sentence meanwhile.
-  const { info, error: loadError } = useMergeInfoState(pr, 'dialog');
+  // And again when the PR or its checks move, so a check finishing while
+  // it's open doesn't leave "Some checks aren't passing".
+  const { info, error: loadError } = useMergeInfoState(
+    pr,
+    mergeInfoVersion(summary, store.models.prDetails.get(pr)?.checks),
+  );
   const [method, setMethod] = useState<MergeMethod>('squash');
   const [title, setTitle] = useState(summary ? `${summary.title}` : '');
   const [body, setBody] = useState('');

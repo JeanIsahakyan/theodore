@@ -21,14 +21,17 @@ export function splitQueue(messages: readonly ChatMessage[]): {
   return { sent, queued };
 }
 
-/** Why the queue waits for you, or `null` while it sends on its own. */
+/** Why the queue waits for you, or `null` while it sends on its own.
+ *  "You pressed Stop", not "the turn stopped": a Stop that lands while
+ *  the turn's checkpoint is written holds the queue, but the agent had
+ *  already finished, so its reply reads as a whole one. */
 export function heldReason(
   space: Pick<Space, 'status'>,
   queued: readonly ChatMessage[],
 ): string | null {
   if (!queued.some((m) => m.queued?.held)) return null;
   if (space.status === 'archived') return 'Unarchive the space to send these.';
-  return 'Not sent: the turn before them stopped or failed, or Theodore restarted. Send or drop each one.';
+  return 'Not sent: you pressed Stop, a turn failed, or Theodore restarted. Send or drop each one.';
 }
 
 /** "Send now" can go into the running turn: a Claude turn, and the message

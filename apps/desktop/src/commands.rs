@@ -1093,6 +1093,31 @@ pub async fn notify_space(
     .await
 }
 
+/// Shows a "My reports" notification (a report changed) while the window
+/// is in the background; a click opens the issue in the browser. `true`
+/// when the click will be acted on.
+#[tauri::command]
+#[specta::specta]
+pub async fn notify_report(
+    op: crate::op::Op,
+    url: String,
+    title: String,
+    body: Option<String>,
+    app: AppHandle,
+    notifier: State<'_, Arc<dyn crate::notify::Notifier>>,
+) -> Result<bool, CommandError> {
+    op.run(async move {
+        use crate::notify::{MainWindow, Notice};
+        Ok(crate::notify::notify_report(
+            notifier.inner().as_ref(),
+            MainWindow(app),
+            url,
+            Notice { title, body },
+        ))
+    })
+    .await
+}
+
 /// Un-minimizes and focuses the main window (also after a sign-in redirect
 /// reached the app through its URL scheme).
 pub fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
@@ -1509,6 +1534,31 @@ pub async fn submit_issue(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<theodore_contract::ReportedIssue, CommandError> {
     op.run(async move { core.submit_issue(req).await }).await
+}
+
+/// "Report this" / `/report` in a chat: a prefilled report about it. The
+/// report window opens on the `report_draft` event; nothing is sent.
+#[tauri::command]
+#[specta::specta]
+pub async fn draft_report(
+    op: crate::op::Op,
+    req: theodore_contract::DraftReportRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ReportDraft, CommandError> {
+    op.run(async move { core.draft_report(req).await }).await
+}
+
+/// A report's attached files, copied into one folder under the reports
+/// folder (`reveal_report` shows it) for you to add on GitHub yourself.
+#[tauri::command]
+#[specta::specta]
+pub async fn stage_report_files(
+    op: crate::op::Op,
+    attachments: Vec<String>,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::StagedReportFiles, CommandError> {
+    op.run(async move { core.stage_report_files(attachments).await })
+        .await
 }
 
 /// Shows a problem report in Finder. Only paths inside the reports folder.

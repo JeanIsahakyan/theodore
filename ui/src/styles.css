@@ -272,9 +272,12 @@ body.cmd .lines .src span:hover {
     25% 25%;
 }
 
-/* A hunk scrolled to its top clears its file's sticky header */
-[id^='H-'] {
-  scroll-margin-top: 56px;
+/* A hunk or a line scrolled to its top clears its file's pinned header:
+   `--file-h` is that header's measured height, set on its card and on the
+   pane (ui/review/headerClearance.ts); 53px is one row of it. */
+[id^='H-'],
+.file .ln {
+  scroll-margin-top: calc(var(--file-h, 53px) + 4px);
 }
 
 /* big PRs: the browser skips layout and paint for file cards off screen */

@@ -529,12 +529,16 @@ happens here; "PR" still opens the normal review.
 | Threads | the PR's threads and drafts: Reply · Resolve · Send to agent; unresolved count on the tab | the review side panel's `Threads` |
 | Checks | review decision + approvals, mergeable state (`merge_info`), conflicting files (`conflicts`) with Update branch, then every check with Re-run (`rerun_check`) | `Checks`, `ReviewerStrip` |
 
-The PR is asked for while the page is open (`refresh_space_pr`, one
-conditional fetch by ETag, so an unchanged PR is a 304): every 10 s while
+The PR is asked for while the page is open (`refresh_space_pr`, a
+conditional fetch by ETag of the PR and of its head's check runs and
+statuses, so an unchanged PR is three 304s and a check finishing is seen
+though the PR itself didn't change): every 10 s while
 its checks run, every 30 s otherwise, never once it merged or closed. Its
 review tab needn't be open for a failure to show. The Merge line agrees with
 Merge: a draft or conflicts on the PR row say so even while `merge_info`
-still says clean.
+still says clean. `merge_info` is asked again when the PR's head, update
+time or checks change (a check finishing moves only the last), so the line
+and the merge dialog follow the checks without polling of their own.
 
 **Merge** (`merge_space`, through `merge_pr` and the outbox):
 
@@ -929,6 +933,7 @@ configured commands, never a shell of the agent's choosing.
 | `set_base` | a new base branch: fetched, the diff is vs the merge-base from then on |
 | `update_progress` | the turn's plan as steps (pending · active · done) above the composer |
 | `ask_user` | asks you 1–3 multiple-choice questions and waits for the answer (§5 Questions) |
+| `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -958,6 +963,10 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
   chat"), Theodore's own by what they do.
 - Review chat, skills and fixes on a space's PR also get the read-only
   `read_logs` and `app_status` next to `review-tools`.
+- `report_problem` is for chats only: every space turn, and an AI panel
+  question on `review-tools`; skill and fix runs don't list it. "Report
+  this" under a reply and `/report …` in the composer take the same path
+  without the agent.
 
 Details, limits and errors: `docs/config.md` §7.
 
@@ -1340,7 +1349,8 @@ send ─▶ running? ── no ──▶ turn now
 | Turn ended | The queue |
 | --- | --- |
 | on its own (a failing `check` included: the next turn hears it) | the first waiting message runs as the next turn, then the next |
-| stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped |
+| stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped. The agent had already finished there, so its reply stays a whole one, not "stopped"; the note over the queue says you pressed Stop, not that the turn stopped |
+| stopped just as it ended on its own | the first waiting message, if it had already started, is stopped instead; the rest held |
 | failed, its checkpoint skipped, conflicts left, or a queued one couldn't start | held |
 | Theodore restarted | held (§7 Crash recovery) |
 

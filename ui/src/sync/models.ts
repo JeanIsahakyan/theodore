@@ -167,6 +167,7 @@ export function modelAccessors(pool: ObjectPool) {
     settings: of('setting'),
     projects: of('project'),
     spaces: of('space'),
+    reports: of('report'),
   };
 }
 

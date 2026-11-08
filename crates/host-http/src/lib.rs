@@ -13,4 +13,5 @@ pub use client::{
     CONNECT_TIMEOUT, HttpClient, HttpResponse, REQUEST_TIMEOUT, RawResponse, RetryConfig,
     host_reqwest_client,
 };
+pub use rate::reset_at_from_headers;
 pub use token::{StaticToken, TokenSource};

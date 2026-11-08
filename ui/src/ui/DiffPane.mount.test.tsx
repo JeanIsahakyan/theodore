@@ -80,4 +80,24 @@ describe('DiffPane lazy file mounting', () => {
     await act(async () => view.controls().setFocus('f0h0'));
     expect(hunkOf('f30h1')).not.toBeNull();
   });
+
+  it('pins each file header to the pane while its file scrolls (#131)', () => {
+    for (const card of files()) {
+      // One header per card, its first child: sticky within the card, so
+      // the next file's header pushes it out.
+      expect(card.querySelectorAll('.file-h')).toHaveLength(1);
+      const head = card.firstElementChild!;
+      expect(head.classList.contains('file-h')).toBe(true);
+      expect(head.classList).toContain('sticky');
+      // At the pane's very top edge: `-top-5` undoes the pane's `pt-5`,
+      // which sticky offsets count from.
+      expect(head.classList).toContain('-top-5');
+      // Opaque, so code scrolled under it doesn't show through.
+      expect(head.classList).toContain('bg-surface');
+      // `overflow: hidden` would make the card the sticky scroll container.
+      expect(card.classList).toContain(
+        'supports-[overflow:clip]:overflow-clip',
+      );
+    }
+  });
 });

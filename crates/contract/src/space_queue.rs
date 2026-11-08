@@ -21,8 +21,9 @@ pub struct QueuedSend {
     pub model: Option<String>,
     #[serde(default)]
     pub mode: Option<SpaceMode>,
-    /// Waits for your "Send": the turn before it was stopped or failed,
-    /// its own turn couldn't start, or Theodore restarted meanwhile.
+    /// Waits for your "Send": Stop was pressed on the turn before it (even
+    /// as that turn finished on its own), that turn failed, its own turn
+    /// couldn't start, or Theodore restarted meanwhile.
     #[serde(default)]
     pub held: bool,
 }

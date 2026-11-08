@@ -453,3 +453,52 @@ async fn review_runs_get_the_space_reads_only_on_a_spaces_pr() {
     let last = e.f.tools.registered().pop().unwrap();
     assert_eq!(last.space, None);
 }
+
+/// An AI panel answer records the model its run was sent (the setting's,
+/// read once), for a report on it later.
+#[tokio::test]
+async fn an_ai_panel_reply_records_the_model_it_ran_with() {
+    use theodore_contract::{ChatMessage, models};
+    use theodore_ports::{NewAction, Store, SyncActionCode};
+    let e = start_env(true).await;
+    let s = e.create("").await;
+    let review = s.review_pr.clone().expect("the space's review");
+    e.f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: "user:agents.claude.model".into(),
+            action: SyncActionCode::I,
+            data: Some(serde_json::json!({
+                "key": "agents.claude.model", "scope": "user", "value": "claude-haiku-5-5"
+            })),
+        }])
+        .unwrap();
+    e.f.agents.push_script(done("an answer"));
+    e.core
+        .ask(AskRequest {
+            pr: review.clone(),
+            question: "does it build?".into(),
+            about: None,
+            group: None,
+            agent: Some(AgentId::Claude),
+            attachments: None,
+        })
+        .await
+        .expect("ask");
+    let reply = || {
+        e.f.store
+            .query(models::CHAT_MESSAGE, "pr", &review.0)
+            .unwrap()
+            .into_iter()
+            .map(|r| serde_json::from_value::<ChatMessage>(r.data).unwrap())
+            .find(|m| m.text == "an answer")
+    };
+    wait_until(|| reply().is_some()).await;
+    let reply = reply().unwrap();
+    assert_eq!(reply.model.as_deref(), Some("claude-haiku-5-5"));
+    assert!(reply.model_resolved);
+    assert_eq!(
+        e.f.agents.last_request().unwrap().model.as_deref(),
+        Some("claude-haiku-5-5")
+    );
+}

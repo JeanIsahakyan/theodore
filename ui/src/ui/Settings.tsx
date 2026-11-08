@@ -62,6 +62,7 @@ import { AccountCard } from './AccountCard';
 import { buildLabel, buildReport, builtAtIso } from './buildStamp';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
+import { MyReports } from './MyReports';
 import { PrivacyCard } from './Privacy';
 import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SandboxPage } from './sandbox/SandboxPage';
@@ -986,6 +987,7 @@ const AboutPage = observer(function AboutPage() {
           Report a problem…
         </Button>
       </Card>
+      <MyReports />
       <Card
         variant="secondary"
         className="flex flex-row items-center gap-3 p-4"

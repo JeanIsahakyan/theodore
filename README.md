@@ -249,7 +249,8 @@ local folder:  Merge locally  ·  Keep as branch
 - Both use a random install id, not your account; repository names are hashed.
 - **Report a problem** (Help menu, Settings, the error screen) opens a public GitHub issue as you —
   your comment plus app info, optionally the newest redacted logs, previewed first — or just zips
-  the logs locally. Events, codes, rules and settings: `docs/telemetry.md`.
+  the logs locally. **My reports** (Settings → About) follows the issues you opened: replies,
+  fixed, and the release with the fix. Events, codes, rules and settings: `docs/telemetry.md`.
 
 ## How it works
 
