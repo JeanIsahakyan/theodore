@@ -892,5 +892,12 @@ async fn telemetry_hears_a_new_sign_in() {
         .await;
     page.await.unwrap();
     poll_until_done(&core).await;
+    // The sign-in finishes on its own task: the event can land just after.
+    for _ in 0..400 {
+        if identity(&log).last() == Some(&serde_json::json!(true)) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
     assert_eq!(identity(&log).last(), Some(&serde_json::json!(true)));
 }
