@@ -1610,6 +1610,7 @@ const BARE_SLICE = {
   findings: NO_FINDINGS,
   lineAsk: undefined,
   composer: null,
+  composerCode: '',
   peek: null,
 };
 
