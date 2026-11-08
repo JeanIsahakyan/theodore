@@ -871,7 +871,10 @@ impl Core {
         let mut parts: Vec<String> = Vec::new();
         let mut reviews = 0;
         for root in roots {
-            match spaces.iter().find(|s| Path::new(&s.worktree) == root) {
+            match spaces
+                .iter()
+                .find(|s| same_path(Path::new(&s.worktree), root))
+            {
                 Some(s) => parts.push(format!("space “{}”", s.name)),
                 None => reviews += 1,
             }
@@ -1552,6 +1555,17 @@ pub(crate) fn splice(text: &str, edits: &[&TextEdit]) -> Result<String, String> 
         out.replace_range(s..e, new);
     }
     Ok(out)
+}
+
+/// The same directory, however it's spelled: the language servers (and git)
+/// report a root by its real path, while a stored worktree may run through
+/// a symlink (`/tmp` → `/private/tmp`). A path that's gone compares as is.
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    real(a) == real(b)
 }
 
 #[cfg(test)]

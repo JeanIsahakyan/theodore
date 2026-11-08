@@ -1656,6 +1656,31 @@ async fn a_refused_remove_names_the_space_not_its_path() {
     assert!(!err.contains(&s.worktree), "{err}");
 }
 
+/// The language servers report a root by its real path: a data dir under
+/// a symlink (`/tmp` → `/private/tmp`) still names the space.
+#[tokio::test]
+async fn a_refused_remove_names_the_space_under_a_symlinked_data_dir() {
+    let e = code_env().await;
+    let s = e.create("").await;
+    let wt = PathBuf::from(&s.worktree);
+    assert!(wt.is_dir(), "{wt:?}");
+    let links = tempfile::tempdir().unwrap();
+    let alias = links.path().join("alias");
+    std::os::unix::fs::symlink(wt.parent().unwrap(), &alias).unwrap();
+    let through_link = alias.join(wt.file_name().unwrap());
+    *e.f.code_intel.remove_error.lock().unwrap() = Some(CodeIntelError::InUse {
+        language: "typescript".into(),
+        roots: vec![through_link],
+    });
+    let err = e
+        .core
+        .code_intel_remove("typescript")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains(&format!("(space “{}”)", s.name)), "{err}");
+}
+
 #[tokio::test]
 async fn remove_closes_the_settings_worktree_and_counts_as_declined() {
     let e = code_env().await;

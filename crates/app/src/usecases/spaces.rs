@@ -902,7 +902,7 @@ fn resumable_session(space: &Space, agent: AgentId, cwd: &Path) -> Option<String
     space
         .agent_session
         .as_ref()
-        .filter(|s| s.agent == agent && Path::new(&s.cwd) == cwd)
+        .filter(|s| s.agent == agent && super::code_intel::same_path(Path::new(&s.cwd), cwd))
         .map(|s| s.id.clone())
 }
 
