@@ -1,7 +1,7 @@
 {
   "productName": "Theodore",
   "mainBinaryName": "theodore-app",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "identifier": "app.theodore.desktop",
   "build": {
     "frontendDist": "../../ui/dist",
