@@ -649,3 +649,88 @@ async fn an_inbox_search_cut_short_changes_nothing() {
     assert_eq!(row.data["state"], json!("open"));
     assert_eq!(row.data["reasons"], json!(["authored"]));
 }
+
+// ── a removed project ───────────────────────────────────────────────────────
+
+/// Other people's PRs of a removed project's repo kept counting under All
+/// projects, with nothing refreshing them; yours stay, as outside any project.
+#[tokio::test]
+async fn removing_a_project_drops_the_rows_only_it_kept() {
+    let f = fixtures();
+    let (core, _recv) = started(&f).await;
+    let r = repo("acme", "widgets");
+    let project = seed_project(&core, &r).await;
+    let theirs = seed_row(&f, &pr_ref(&r, 1), PrState::Open);
+    let merged = seed_row(&f, &pr_ref(&r, 2), PrState::Merged);
+    let cased = seed_row(&f, &pr_ref(&repo("Acme", "Widgets"), 3), PrState::Open);
+    let in_tab = seed_row(&f, &pr_ref(&r, 4), PrState::Open);
+    core.0
+        .current_head
+        .write()
+        .await
+        .insert(in_tab.clone(), Sha::new("h"));
+    let mine_ref = pr_ref(&r, 5);
+    let mut mine_summary = testkit::sample_pr_summary(&mine_ref, &Sha::new("h"));
+    mine_summary.reasons = vec![theodore_domain::InboxReason::Authored];
+    let mine = mine_ref.id();
+    put(
+        &f,
+        models::PR,
+        &mine.0,
+        serde_json::to_value(&mine_summary).unwrap(),
+    );
+    let branch_ref = pr_ref(&r, 2681023619);
+    let mut branch_summary = testkit::sample_pr_summary(&branch_ref, &Sha::new("h"));
+    branch_summary.url = String::new();
+    let branch = branch_ref.id();
+    put(
+        &f,
+        models::PR,
+        &branch.0,
+        serde_json::to_value(&branch_summary).unwrap(),
+    );
+    let elsewhere = seed_row(&f, &pr_ref(&repo("else", "where"), 1), PrState::Open);
+    let state = InboxState {
+        pr: theirs.clone(),
+        done: true,
+        snooze: None,
+    };
+    put(
+        &f,
+        models::INBOX_STATE,
+        &theirs.0,
+        serde_json::to_value(&state).unwrap(),
+    );
+
+    core.remove_project(&project).await.unwrap();
+
+    for gone in [&theirs, &merged, &cased] {
+        assert_eq!(state_of(&f, gone), None, "{gone}");
+    }
+    for kept in [&in_tab, &mine, &branch, &elsewhere] {
+        assert_eq!(state_of(&f, kept), Some(json!("open")), "{kept}");
+    }
+    assert!(
+        f.store
+            .get(models::INBOX_STATE, &theirs.0)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(get_pr_calls(&f), 0);
+}
+
+/// The same repo is still a project under another spelling: its refresh
+/// still speaks for the rows.
+#[tokio::test]
+async fn removing_a_duplicate_project_keeps_the_rows() {
+    let f = fixtures();
+    let (core, _recv) = started(&f).await;
+    let r = repo("acme", "widgets");
+    seed_project(&core, &r).await;
+    let other = seed_project(&core, &repo("Acme", "Widgets")).await;
+    let theirs = seed_row(&f, &pr_ref(&r, 1), PrState::Open);
+
+    core.remove_project(&other).await.unwrap();
+
+    assert_eq!(state_of(&f, &theirs), Some(json!("open")));
+}

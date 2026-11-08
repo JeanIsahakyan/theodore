@@ -6,6 +6,7 @@ import {
   filterCount,
   isPrFilter,
   openPrCount,
+  openPrCountHint,
   prGroups,
   scopeToWorkspace,
   type PrGroup,
@@ -191,7 +192,7 @@ describe('the Pull requests number', () => {
     expect(filterCount([review], 'all', 'me')).toBe(0);
   });
 
-  it('counts drafts and other people\'s PRs, as the list under it shows them', () => {
+  it("counts drafts and other people's PRs, as the list under it shows them", () => {
     const rows = [
       pr({ id: 'mine', author: me }),
       pr({ id: 'theirs', author: them }),
@@ -205,5 +206,12 @@ describe('the Pull requests number', () => {
       .flatMap((g) => g.items);
     expect(openPrCount(rows)).toBe(3);
     expect(listed.map((p) => p.id).sort()).toEqual(['draft', 'mine', 'theirs']);
+  });
+
+  it('says what it counts: a repo, or more than any one GitHub page', () => {
+    expect(openPrCountHint(project(web))).toBe(
+      'Open pull requests in acme/web, drafts included',
+    );
+    expect(openPrCountHint(null)).toMatch(/everyone's in your projects/);
   });
 });

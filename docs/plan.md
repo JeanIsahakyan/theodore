@@ -447,9 +447,17 @@ complete search ─▶ stored rows that claim open and it didn't return
   access to its repo does. A PR open in a tab keeps its row until the next launch.
 
 The sidebar's "Pull requests N" counts open and draft rows the workspace shows,
-everyone's in a project's repo and yours elsewhere, without branch reviews: the
-same rows as the page's All filter, whose "Branch reviews" section is separate.
-It isn't any one GitHub page's number: github.com/pulls lists only what you wrote.
+everyone's in a project's repo and ones you're on elsewhere, without branch
+reviews: the same rows as the page's All filter, whose "Branch reviews" section
+is separate. In a project it is that repo's Pull requests tab; under All
+projects it isn't any one GitHub page's number (github.com/pulls lists only what
+you wrote). Hovering the number says which.
+
+Removing a project drops the rows only its refresh kept: other people's PRs of
+its repo, which would otherwise count under All projects for as long as they
+stay open, with nothing refreshing them. Rows with inbox reasons, a live
+space's PR, a branch review and a PR open in a tab stay; threads, drafts and
+`inbox_state` stay too, as for a 404.
 
 ### 6.7 Outbox, idempotency, errors
 
