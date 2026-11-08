@@ -707,7 +707,8 @@ mod tests {
         );
 
         // Its report comes later, under the call.
-        let (kept, _) = recorded(&[agent, launched, nested("ag", back)]).finish(Some(""));
+        let (kept, _) =
+            recorded(&[agent.clone(), launched.clone(), nested("ag", back)]).finish(Some(""));
         let [
             TurnStep::Tool {
                 summary,
@@ -722,6 +723,20 @@ mod tests {
             (summary.as_deref(), *background),
             (Some("Heading is Foo."), true)
         );
+
+        // Or as the call's second result (the CLI's `task_notification`).
+        let (kept, _) = recorded(&[agent, launched, result("ag", true, "pong")]).finish(Some(""));
+        let [
+            TurnStep::Tool {
+                summary,
+                background,
+                ..
+            },
+        ] = kept.as_slice()
+        else {
+            panic!("{kept:?}");
+        };
+        assert_eq!((summary.as_deref(), *background), (Some("pong"), true));
 
         // A foreground one is not marked.
         let (kept, _) = recorded(&[

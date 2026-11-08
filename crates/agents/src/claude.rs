@@ -7,7 +7,9 @@
 //! not exercised live here (sandboxed shell denied a tool-using prompt); see
 //! `tests/fixtures/claude_tool_call.jsonl`, built from that documented shape.
 //! A subagent's lines carry `parent_tool_use_id` (recorded from a real 2.1.319
-//! run, redacted: `tests/fixtures/claude_subagent.jsonl`).
+//! run, redacted: `tests/fixtures/claude_subagent.jsonl`). One in the
+//! background reports with a `task_notification`, and the CLI takes the turn
+//! up again in the same run (`tests/fixtures/claude_subagent_background.jsonl`).
 //!
 //! A steerable run (`build_steerable_args`, docs/spaces.md §8 "Send now")
 //! reads its messages from stdin instead (`--input-format stream-json
@@ -351,6 +353,11 @@ pub struct ClaudeParser {
     usage: Usage,
     /// Turns finished in this run and not reported yet.
     results: u32,
+    /// Subagents working in the background (`task_started`), by task id.
+    background: Vec<String>,
+    /// Background subagents done since the last turn began: the CLI takes
+    /// the turn up again for them.
+    unanswered: u32,
 }
 
 impl ClaudeParser {
@@ -367,14 +374,27 @@ impl ClaudeParser {
         }
     }
 
-    fn on_stdin_line(&mut self, line: &str) -> Vec<AgentEvent> {
-        if let Ok(v) = serde_json::from_str::<Value>(line.trim())
-            && v.get("type").and_then(Value::as_str) == Some("user")
-            && v.get("isReplay").and_then(Value::as_bool) == Some(true)
-        {
-            // One of ours, taken into the conversation.
-            self.pending = self.pending.saturating_sub(1);
-            return vec![];
+    /// A turn's `result` is the run's end only once nothing will take it up
+    /// again: no written message pending, no subagent still working or done
+    /// and not yet answered. A background subagent's run (2.1.319,
+    /// `tests/fixtures/claude_subagent_background.jsonl`):
+    ///
+    /// ```text
+    /// init ─ Agent ─ "launched" ─ task_notification ─ text ─ result   held
+    /// init ─ text "it replied: pong" ─ result                         Done, both
+    /// ```
+    fn on_any_line(&mut self, line: &str) -> Vec<AgentEvent> {
+        let v = serde_json::from_str::<Value>(line.trim()).ok();
+        if let Some(v) = &v {
+            if self.stdin_input
+                && v.get("type").and_then(Value::as_str) == Some("user")
+                && v.get("isReplay").and_then(Value::as_bool) == Some(true)
+            {
+                // One of ours, taken into the conversation.
+                self.pending = self.pending.saturating_sub(1);
+                return vec![];
+            }
+            self.track_tasks(v);
         }
         let mut out = Vec::new();
         for ev in parse_line(line) {
@@ -385,14 +405,54 @@ impl ClaudeParser {
                     }
                     self.usage += usage;
                     self.results += 1;
-                    if self.pending == 0 {
+                    if !self.held() {
                         out.push(self.done());
                     }
                 }
                 other => out.push(other),
             }
         }
+        // Idle with no subagent still working: a subagent's report the turn
+        // already took in, or no message of ours to take up.
+        if v.as_ref().is_some_and(is_idle) {
+            self.unanswered = 0;
+            if self.results > 0 && !self.held() {
+                out.push(self.done());
+            }
+        }
         out
+    }
+
+    fn held(&self) -> bool {
+        self.pending > 0 || !self.background.is_empty() || self.unanswered > 0
+    }
+
+    /// Background subagents: started, done, and the turn that answers them.
+    fn track_tasks(&mut self, v: &Value) {
+        if v.get("type").and_then(Value::as_str) != Some("system") {
+            return;
+        }
+        let task = v
+            .get("task_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        match v.get("subtype").and_then(Value::as_str) {
+            Some("init") => self.unanswered = 0,
+            Some("task_started")
+                if v.get("is_backgrounded").and_then(Value::as_bool) == Some(true)
+                    && v.get("task_type").and_then(Value::as_str) == Some("local_agent") =>
+            {
+                self.background.push(task);
+            }
+            Some("task_notification") => {
+                if let Some(at) = self.background.iter().position(|t| *t == task) {
+                    self.background.remove(at);
+                    self.unanswered += 1;
+                }
+            }
+            _ => {}
+        }
     }
 
     fn done(&mut self) -> AgentEvent {
@@ -454,11 +514,13 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
         Some("result") => result_events(&v),
         // Only with `--include-partial-messages`: the raw API stream.
         Some("stream_event") => stream_event(&v).into_iter().collect(),
-        // `init` opens every run with the session id `--resume` takes.
-        Some("system") if v.get("subtype").and_then(Value::as_str) == Some("init") => {
-            session_event(&v).into_iter().collect()
-        }
-        _ => vec![], // system/rate_limit_event/etc: not user-visible stream content
+        Some("system") => match v.get("subtype").and_then(Value::as_str) {
+            // `init` opens every run with the session id `--resume` takes.
+            Some("init") => session_event(&v).into_iter().collect(),
+            Some("task_notification") => task_report(&v).into_iter().collect(),
+            _ => vec![],
+        },
+        _ => vec![], // rate_limit_event/etc: not user-visible stream content
     };
     match v.get("parent_tool_use_id").and_then(Value::as_str) {
         Some(parent) if !parent.is_empty() => nested(parent, events),
@@ -506,6 +568,28 @@ fn text_delta(event: &Value) -> Option<AgentEvent> {
     (!text.is_empty()).then(|| AgentEvent::TextDelta {
         text: text.to_string(),
     })
+}
+
+/// A background subagent done (2.1.319): its report, as the result of the
+/// call that started it. That call's own result only said it started.
+fn task_report(v: &Value) -> Option<AgentEvent> {
+    let id = v.get("tool_use_id").and_then(Value::as_str)?;
+    (!id.is_empty()).then(|| AgentEvent::ToolResult {
+        id: id.to_string(),
+        ok: v.get("status").and_then(Value::as_str) == Some("completed"),
+        output: v
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+/// The CLI has nothing left to do (`session_state_changed`, 2.1.319).
+fn is_idle(v: &Value) -> bool {
+    v.get("type").and_then(Value::as_str) == Some("system")
+        && v.get("subtype").and_then(Value::as_str) == Some("session_state_changed")
+        && v.get("state").and_then(Value::as_str) == Some("idle")
 }
 
 fn session_event(v: &Value) -> Option<AgentEvent> {
@@ -656,11 +740,7 @@ fn claude_usage(u: &Value, usd: f64) -> Usage {
 
 impl LineParser for ClaudeParser {
     fn on_line(&mut self, line: &str) -> Vec<AgentEvent> {
-        let mut events = if self.stdin_input {
-            self.on_stdin_line(line)
-        } else {
-            parse_line(line)
-        };
+        let mut events = self.on_any_line(line);
         let plans = plans(&events);
         // Before `Done`: the plan is part of the run, not after it.
         let at = events
@@ -1316,6 +1396,100 @@ mod model_and_effort_tests {
             e,
             AgentEvent::Done { final_text, .. } if final_text == "first line here"
         )));
+    }
+
+    fn background_run(parser: &mut ClaudeParser) -> Vec<AgentEvent> {
+        include_str!("../tests/fixtures/claude_subagent_background.jsonl")
+            .lines()
+            .flat_map(|l| parser.on_line(l))
+            .collect()
+    }
+
+    /// A real run's lines, redacted (2.1.319): the `Agent` call answers at
+    /// once, its report comes with the CLI's `task_notification`.
+    #[test]
+    fn a_background_subagents_report_is_its_calls_result() {
+        let events = background_run(&mut ClaudeParser::new());
+        let results: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolResult { id, ok, output } if id == "toolu_agent" => {
+                    Some((*ok, output.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 2, "{results:?}");
+        assert!(results[0].1.starts_with("Async agent launched"));
+        assert_eq!(results[1], (true, "pong"));
+    }
+
+    /// The CLI takes the turn up again once the subagent is done: one `Done`,
+    /// at the end, with what each part answered, and nothing after it.
+    #[test]
+    fn a_turn_taken_up_after_a_background_subagent_is_one_run() {
+        for mut parser in [ClaudeParser::new(), ClaudeParser::with_stdin_input()] {
+            if parser.stdin_input {
+                parser.on_input();
+                parser.on_line(r#"{"type":"user","isReplay":true}"#);
+            }
+            let events = background_run(&mut parser);
+            let done: Vec<_> = events
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| matches!(e, AgentEvent::Done { .. }))
+                .collect();
+            assert_eq!(done.len(), 1, "{events:?}");
+            let (at, AgentEvent::Done { final_text, usage }) = done[0] else {
+                unreachable!()
+            };
+            assert_eq!(at, events.len() - 1);
+            assert_eq!(
+                final_text,
+                "I've started a subagent with the instruction to reply \"pong\". \
+                 I'll report back when it finishes.\n\nThe subagent replied: pong\n\nDone."
+            );
+            assert_eq!(usage.output_tokens, 425 + 211);
+            assert!(events.iter().any(|e| matches!(
+                e,
+                AgentEvent::Text { text } if text == "The subagent replied: pong\n\nDone."
+            )));
+        }
+    }
+
+    /// A turn that ends while its subagent still works isn't the run's end.
+    #[test]
+    fn a_result_while_a_background_subagent_runs_waits_for_it() {
+        let mut parser = ClaudeParser::new();
+        let lines: Vec<&str> = include_str!("../tests/fixtures/claude_subagent_background.jsonl")
+            .lines()
+            .collect();
+        let started = lines
+            .iter()
+            .position(|l| l.contains("task_started"))
+            .unwrap();
+        for l in &lines[..=started] {
+            parser.on_line(l);
+        }
+        let done = |events: Vec<AgentEvent>| {
+            events
+                .into_iter()
+                .find(|e| matches!(e, AgentEvent::Done { .. }))
+        };
+        let early = r#"{"type":"result","subtype":"success","is_error":false,"result":"Started it.","usage":{}}"#;
+        let idle = r#"{"type":"system","subtype":"session_state_changed","state":"idle"}"#;
+        assert_eq!(done(parser.on_line(early)), None);
+        assert_eq!(done(parser.on_line(idle)), None, "the subagent still works");
+        let notified = lines
+            .iter()
+            .find(|l| l.contains("task_notification"))
+            .unwrap();
+        assert_eq!(done(parser.on_line(notified)), None);
+        // Quiet after its report with nothing taken up: what it has is the run's.
+        assert!(matches!(
+            done(parser.on_line(idle)),
+            Some(AgentEvent::Done { final_text, .. }) if final_text == "Started it."
+        ));
     }
 
     #[test]

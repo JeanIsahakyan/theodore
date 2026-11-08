@@ -337,7 +337,11 @@ never reach the reply. Its `SubagentHandback` call is no row: its message is the
 row's summary. A call that runs in the background gets only the CLI's launch
 note back, which is plumbing for the agent and shows nowhere: the step is marked
 `background` and the row says `running in background` (spinner) until its
-report comes, `ran in background` once its turn is over. A note beside a row is
+report comes, `ran in background` once its turn is over. The report is the
+CLI's `task_notification`, read as the call's result; the CLI then takes the
+turn up again, and that text is the same turn's, after what came before
+(`claude_subagent_background.jsonl`): the run ends at the last `result` once no
+subagent works and none is left unanswered. A note beside a row is
 one line; the full report shows when the row is opened. Codex and Gemini report
 no nested steps.
 
