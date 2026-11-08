@@ -63,6 +63,16 @@ pub struct OutboxItem {
     pub last_error: Option<String>,
 }
 
+/// Which tool call a stored payload belongs to: `call` ids only mean
+/// something within their `run` (Codex's start over each turn).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallKey {
+    pub run: String,
+    pub call: String,
+    /// The space it goes away with.
+    pub space: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("sqlite: {0}")]
@@ -125,6 +135,34 @@ pub trait Store: Send + Sync {
         let applied = self.apply(actions)?;
         let outbox_id = self.outbox_push(op, payload)?;
         Ok((applied, outbox_id))
+    }
+
+    /// Sets one part (`input`, `result`, `report`, `ended`) of what a tool
+    /// call took and gave. Not synced, never in a bootstrap: read only when
+    /// its row opens. Default: dropped, for stores that keep none.
+    fn tool_payload_put(
+        &self,
+        _call: &ToolCallKey,
+        _part: &str,
+        _value: &serde_json::Value,
+    ) -> StoreResult<()> {
+        Ok(())
+    }
+
+    /// The parts stored for a call, as an object by part; `None`: none.
+    fn tool_payload_get(&self, _run: &str, _call: &str) -> StoreResult<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    /// Drops the oldest calls of `space` until the rest fit in `max_bytes`.
+    /// How many went.
+    fn tool_payloads_prune(&self, _space: &str, _max_bytes: u64) -> StoreResult<u64> {
+        Ok(0)
+    }
+
+    /// Drops everything stored for `space`. How many calls went.
+    fn tool_payloads_delete_space(&self, _space: &str) -> StoreResult<u64> {
+        Ok(0)
     }
 
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>>;

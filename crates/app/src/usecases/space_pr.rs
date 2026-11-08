@@ -215,6 +215,9 @@ impl Core {
             queue,
         })
         .await?;
+        theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceShipped {
+            how: "merge_pr".into(),
+        });
         Ok(MergeSpaceResult {
             method,
             auto,

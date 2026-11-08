@@ -107,13 +107,13 @@ a separate feature island.
 
 | Glyph | Meaning | Source |
 | --- | --- | --- |
-| ◐ | agent running | `space.status = running` |
+| ◐ | agent running: the glasses indicator (`AgentMark.tsx`), its state from the running turn's latest step, `done` / `error` once as the turn ends; also on the tab, and `turn` (a soft pulse) while a question or plan waits on you | `space.status = running`, `space.question` |
 | ● | a turn ended or a question came since you last looked; a plan is ready when its turn ends | `space.attention_at` > last seen (UI-local); other writes that bump `updated_at` (PR opened, Update from base, undo, archive) don't light it |
 | ○ | idle | `idle` |
 | ✕ | last turn failed or was interrupted | `failed` |
 | ⎇ #n | has a PR; tinted by its checks (green · red · amber), the merge icon once merged | `space.pr` + its `pr` row (`checks`, `state`) |
 
-◐, ✕ and ● win over ⎇; the label keeps `#n` either way.
+◐, ✕ and ● win over ⎇; the label keeps `#n` either way. The indicator's state comes from `indicatorState` (`agentIndicator.ts`), with a short hold so a burst of tool calls doesn't flicker.
 
 **Pin / mark as unread** (finding a space again, GitHub #77): right-click
 a row, or type "pin"/"unread" in ⌘K.
@@ -153,22 +153,80 @@ webview's own find there; `settings` has no sidebar to search either.
 ### New space
 
 ```
-┌ New space ──────────────────────────────────────┐
-│ Project    migratro                        ▾    │
-│ What should change?                             │
-│ ┌─────────────────────────────────────────────┐ │
-│ │ Retry the export job on 429s with backoff   │ │
-│ └─────────────────────────────────────────────┘ │
-│ Name       retry-export-429   (from the goal)   │
-│ Branch     ada/retry-export-429   from  main ▾  │
-│ Agent      claude ▾   Mode  Edit ▾              │
-│                              [Cancel] [Start ⏎] │
-└─────────────────────────────────────────────────┘
+┌ [migratro ▾] › New space ─────────────────────────────────────────┐
+│ ┌───────────────────────────────────────────────────────────────┐ │
+│ │ Retry the export job on 429s with backoff                     │ │
+│ │                                                               │ │
+│ │ [/] [Model ▾] [Edit ▾] [A new branch ▾] from main [Create ⏎]  │ │
+│ └───────────────────────────────────────────────────────────────┘ │
+│ The agent works in its own worktree.                              │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-"Start" creates the worktree and sends the goal as the first message — the
-first turn starts immediately. Name and branch are derived from the goal and
-editable.
+"Create" makes the worktree and sends the goal as the first message — the
+first turn starts immediately. The name and branch come from the goal
+(below); the dialog doesn't ask for them. "A new branch" can be swapped for
+an existing issue, branch or PR. Create is enabled on an untouched form: see
+"A blank space" below.
+
+The goal box is a space's composer: `/` lists the skills a space of this
+project would see (yours and the repo's at its default branch,
+`project_skills`), and a picked skill becomes the first message.
+
+**What the chips pick is this space's alone.** Agent, model, effort and mode
+start from your settings (`agents.chat`, `agents.<id>.model`,
+`agents.<id>.effort`, Edit) and write none of them; nothing remembers the
+last pick, so the next dialog starts from your settings again.
+
+| | Writes | Where |
+| --- | --- | --- |
+| a pick in New space | the new `space` row | that space only |
+| a pick in a space, idle | `set_space_settings`, at once | that space only |
+| a pick in a space, a turn running | waits, goes with the next send, a queued message keeps it (§8) | that space only |
+| the AI panel, Settings | `agents.<id>.*` | everywhere, as before |
+
+A space's effort is pinned at creation like its model (`agents.<id>.effort`
+unless the dialog picked one); a space from before this has none and follows
+that setting until changed. Another agent starts from its own settings. The
+chip and ⌘⇧/ in a space use the space's effort; a model without effort levels
+hides the chip, and the run needs nothing special.
+
+#### A blank space
+
+```
+Create, empty form ─▶ worktree, setup as usual ─▶ goal "", title "New space",
+                                                  name new-space-<id>,
+                                                  branch <login>/new-space-<id>,
+                                                  composer focused
+first message ─ words ──────▶ goal = the text, title cleared ─▶ naming (below)
+              └ files only ─▶ title = the first file's name, still blank:
+                              the first words still name it
+```
+
+- Created by an untouched form: no goal, no start, no name or branch typed.
+  Several at once are fine: the slug comes from the id, so even two created
+  in the same moment can't collide, and all read "New space".
+- The first message is yours (`space_send`), not Theodore's: "Set up with
+  agent", Fix CI, feedback or an update's conflicts (`system_send`) start a
+  turn and leave it blank.
+- A slash command or a `/report` start the same way as from the composer;
+  `/report` files a report and leaves the space blank.
+- Abandoned ones stay listed and archivable like any other.
+
+**The branch and the worktree.** A space has no local branch to rename:
+its worktree is detached at `~/.theodore/spaces/<id>` (§6) and `branch` is a
+name on its row, pushed on Open PR. So the rename is only that field, the
+same rule as `create_space`'s, kept to while nothing is pushed:
+
+| When the name arrives | `branch` |
+| --- | --- |
+| nothing pushed, no PR | renamed, as creation would have named it |
+| shipped, or a PR exists | kept: it is the host's name now |
+
+| Across the rename | |
+| --- | --- |
+| worktree path, mirror, `spaces.check` | unaffected: keyed by the space's id, or read fresh |
+| `$THEODORE_BRANCH` | new for commands started after it; a terminal already open and the setup that ran keep the neutral one |
 
 | Goal | Name |
 | --- | --- |
@@ -253,7 +311,7 @@ A live snapshot is never a checkpoint: no ref, no `turn_log` entry; the
 worktree's index isn't written (`status --no-optional-locks`).
 
 ```
-┌ ◐ fix-login-redirect ── ada/fix-login-redirect ← main ── Drafting ── $0.42 / $5.00 ┐
+┌ ◐ fix-login-redirect ── ada/fix-login-redirect ← main ── Drafting ─────────────────┐
 │ claude                             [Review] [Open PR ▾] [Archive]                │
 ├──────────── chat ──────────────────┬──────────── changes ────────────────────────┤
 │ you  The login page should send    │ 3 files  +42 −7   vs main · after turn 2    │
@@ -289,7 +347,7 @@ running    every row flat and growing, a spinner on each call still going
               RunTextBreak ────▶ the next delta starts a new text row
               RunStep ─────────▶ a tool, thinking or subagent row
               RunStepDone id ──▶ marks that call, whichever is newest
-              12s under the rows: ticks through its node, no render
+              the agent's indicator + 12s under the rows: no render per tick
               │ the reply lands (its stored steps take over)
               ▼
 finished   ▸ 3 tool calls, 5 messages, 2 agents  >_ ▤   opens in place
@@ -328,6 +386,60 @@ with a tooltip.
 | question | `Waiting for your answer`, then `Asked you` | the question |
 | anything else | what it does | its target |
 
+**Every row opens in place** (click, chevron, Enter or Space; `aria-expanded`),
+with what a closed row can't say. The open state is kept like the others. Nothing
+is fetched or rendered until it opens; a failed call opens too, but stays closed
+by default so opening it fetches and grows nothing in the fold.
+
+```
+Run            command, whole and selectable · description · exit, time · output
+                 (Stdout and Stderr apart only when both really hold something)
+Read, search   arguments · the lines, matches or files
+Edit, Write    − old / + new from the input, or the content written
+MCP, own       arguments and result, JSON pretty-printed
+background     running in the background / how it ended, its final output
+Agent          prompt · type, the model it ran on · status · its steps · the report,
+                 whole and once
+group          opens to its rows, each opens too
+```
+
+Where those come from:
+
+```
+ToolCall ─────────▶ input ┐
+ToolDetail ───────▶ held  │
+ToolResult ───────▶ result├─▶ tool_payloads (run, call) ─▶ tool_payload(run, call)
+ToolDetail{end} ──▶ ended │   not synced, no bootstrap      only when a row opens
+Handback, result ─▶ report┘
+```
+
+- `tool_payloads` is a table of its own: `TurnStep` keeps its light fields and
+  every sync frame stays small. A payload is written before its row hears of the
+  event, so a row that's open re-reads what just landed.
+- Bounds: 256 KB per text and per input, cut with the start and end kept and the
+  original size said in the row; 64 MB a space, the oldest calls going first
+  (`tool_payloads_prune`, end of each turn). Archive keeps them, like the chat
+  rows; **Delete** (not built) is to call `tool_payloads_delete_space`.
+- Output too long for the stream: Claude Code stops `stdout` at 30,000
+  characters and keeps the rest in a file (`persistedOutputPath`,
+  `persistedOutputSize`). It's read as the result is stored, while it exists,
+  only if it's a regular file at an absolute path: the last 256 KB (what a
+  command ended on matters most), and the row states the whole size. If it
+  can't be read, the row keeps the 30,000 and still states the size.
+- A turn from before this has no payload: the row opens with what the step knows
+  and says the full output wasn't recorded.
+- Reports stay one line per call: `report.rs` reads `activity`, never this table.
+
+| Stream | Has | Doesn't have |
+| --- | --- | --- |
+| Claude Code | input, result, stdout and interrupted (`tool_use_result`), exit code from a failure's text, background start, end (`task_notification`), subagent prompt, report and model (`resolvedModel`) | stdout and stderr apart: 2.1.319 joins them in `stdout` with `stderr` empty, and a failure is one text (shown as the error, its exit code read from it). A subagent's calls carry no `tool_use_result`: only their combined text. A background command's final output needs `output_file`, read at the notification; it runs together stdout and stderr |
+| Codex | command, combined output, exit code, MCP arguments and result | stdout/stderr apart, a file change's row (it has no call event), a web search's results |
+| Gemini | arguments, output, error | stdout/stderr apart, exit code |
+
+A background command the turn outlives never reports back: the stream ends with
+the turn, and a turn isn't held for it the way it is for a background subagent.
+Its row says the turn ended first.
+
 Consecutive calls of one read-only tool, or to one MCP server, are one row once
 the turn is done: `Read 4 files` opens on them. Edits and commands stay a row
 each. Thinking is a muted one-line chip, opening as markdown.
@@ -353,7 +465,11 @@ no nested steps.
 at most 200) when it ends; a failure leaves them empty and never fails the
 turn, and a turn that merged the base shows none. Up to 3 chips, then `+N more`
 with the total of the rest. A chip opens the Changes pane on its file, `+N more`
-the pane. On hover the time shows the model and start → end.
+the pane. On hover the time shows the model and start → end. Hovering a file,
+here or on a tool row, opens a popover after 300 ms with its diff for that turn
+(`file_preview`: between the turn's checkpoints; while a turn runs, the worktree
+against the last checkpoint): a file it only read shows its first lines, Markdown
+rendered, an image as an image, anything else its name and size.
 
 | Run ended with | Reply | Text in the steps |
 | --- | --- | --- |
@@ -399,7 +515,7 @@ or opened for the first time, it opens at the bottom.
 **What you do shows before the core answers**, in the row it belongs to:
 
 ```
-send ──▶ your message + working dots, at once       (starting a turn can take a while)
+send ──▶ your message + working indicator, at once       (starting a turn can take a while)
            ├─ its row arrives ─▶ takes over in the same chat row, nothing remounts
            └─ refused ─────────▶ gone, the text and files back in the box
 send while it runs ──▶ in the queue at once, marked sending, its Edit and Cancel once stored
@@ -658,7 +774,8 @@ Tracking each item as a `task` assigned to the space's agent is planned.
 
 | Event | Space open | Elsewhere in the app | App in background |
 | --- | --- | --- | --- |
-| turn finished | diff refreshes | toast "fix-login: turn done" [Open] + ● | notification "fix-login: turn finished" |
+| turn finished | diff refreshes | toast "fix-login: changes ready" [Open] + ● | notification "fix-login" + "Changes ready" / "Plan ready" / "Replied" |
+| turn stopped | "(stopped)" in chat | toast "fix-login" [Open] | notification "fix-login", nothing more: Stop isn't an outcome |
 | turn failed | error in chat | error toast [Open] + ✕ | notification "fix-login: turn failed" + the error |
 | agent asks (`ask_user`) | question card in chat | toast "fix-login: question" [Open] | notification "fix-login: question" + the first question |
 | PR checks / reviews | header + tabs | existing inbox | existing |
@@ -781,7 +898,9 @@ remaining prompts and limits.
   each turn continues it (below), so the agent still has the files it read,
   the commands it ran and its todo list; a different agent picks up from the
   replayed transcript.
-- **Switch agent or model** per message (picker in the header).
+- **Switch agent or model** per message (picker in the header). The picker
+  shows and sends the space's own model; a pick there is the space's, not the
+  agent's setting, and a send without one leaves the space's model alone.
 - **Context**: `@path` mentions (stored as refs), `@terminal` attaches an
   open terminal's tail as a text attachment (§3 "Terminal"), paste a PR
   link to attach its description and diff stats, `/skill` runs a skill as
@@ -1249,7 +1368,8 @@ New synced model `space` (core-owned, written only by commands):
 | `branch`, `base`, `base_sha`, `head_sha` | `branch` (`<login>/<slug>`, `space/<slug>` without a login) is pushed on Open PR; `head_sha` = last checkpoint |
 | `worktree` | absolute path |
 | `status` | `idle · running · failed · archived` |
-| `agent`, `model`, `mode` | sticky per space |
+| `agent`, `model`, `effort`, `mode` | the space's own (§3 "New space"); `model` and `effort` start as the agent's settings at creation; a space with no `effort` follows `agents.<id>.effort` until changed |
+| `blank` | created with nothing to start from; cleared by the first message with words in it (§3 "A blank space") |
 | `review_pr` | the branch review the diff and Review use |
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
@@ -1270,6 +1390,7 @@ New synced model `space` (core-owned, written only by commands):
 | --- | --- |
 | Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8); a reply carries its turn's `activity`, `duration_ms`, `changed_files` and `model` (§3 "A turn in the chat") |
 | Streaming text, tool and thinking lines | `Ephemeral::AgentDelta` / `RunLog` / `RunStep` / `RunStepDone` / `RunTextBreak` with run id `space:<id>:<msg>`; not persisted (the reply's `activity` is) |
+| A tool call's input and output | `tool_payloads` (run, call), apart from the models: not synced, read when its row opens (§3 "Every row opens in place") |
 | A turn | on the space row: `status`, `turns`, `head_sha`, and an entry in `turn_log` (what undo moves back to). Later: `space_run` rows (agent, mode, usage, session id) for per-turn diffs and native resume |
 | Code | the worktree and `refs/theodore/spaces/<id>` |
 
@@ -1312,7 +1433,8 @@ ship lock and leaves it alone.
 | Update from base (§6) | off: "Base moved" hides and the core refuses; Continue is the way onto the new base |
 | An Update from base still resolving | Continue waits: complete or abort it first |
 
-Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
+Not built yet: **Delete** (archive plus deleting the ref, the chat rows and the
+tool payloads);
 **GC** (archived spaces whose branch was never pushed lose their ref after
 `spaces.gc_days`, 30); removing a project archiving its spaces first.
 
@@ -1410,7 +1532,9 @@ downloaded to this Mac yet".
 
 | Command | Does |
 | --- | --- |
-| `create_space` | worktree + ref at the base, `space` row; sends `goal` as turn 1 when given |
+| `create_space` | worktree + ref at the base, `space` row; sends `goal` as turn 1 when given, else a blank space (§3) |
+| `set_space_settings` | a space's agent, model, effort or mode, that space only; refused during a turn |
+| `project_skills` | what a new space of the project would see, for New space's `/` |
 | `list_spaces` | rows of one project or all (the UI reads the synced rows) |
 | `space_send` | chat row, then a turn in the worktree; checkpoint; refresh the diff. While a turn runs: a queued chat row (§8) |
 | `space_send_now` | into the running Claude turn when it can take it (§8 "Send now"), else as `space_send` |
@@ -1463,7 +1587,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; live diff during a turn; sidebar section with the `⎇ #n` glyph; space page with chat + diff; Review opens the grouped review; crash → failed. Start from a goal, an issue (yours first, or a pasted URL / `#n`), a branch or a PR. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch), filled from the repo's PR template and linking back (`theodore://space/<id>`), and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`; Unarchive; Undo last turn (`turn_log`). In review on the space page: Changes · Threads · Checks tabs, Merge (`merge_space`: host default method, auto-merge, merge queue), Continue after merge (`continue_space`, `rounds`). "Send to agent" on a space PR's / own review's threads, drafts and findings, and the "Send N to agent" footer, both marking what was sent (`sent_feedback`). One agent session per space (Claude Code `--resume`, Codex `exec resume`); sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn. Background notifications and the dock badge (`spaces.notify`). Names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`). `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" for setup and "Fix with agent" on the Checks tab, sending a failing check's log (GitHub Actions) or link as one turn. Update from base (merge, never rebase): "Base moved: N commits behind", conflicts resolved by an agent turn, Complete merge / Abort. The agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer), `read_terminal` over `space_terminal_tail`. Interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit; `@terminal` in the composer attaching a terminal's tail as a text attachment. Mirroring into a local folder's own working tree — on / Sync now / off with Discard, at most one per folder, paused (not auto-written) across a restart (§6 "Mirror into a local folder") |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; live diff during a turn; sidebar section with the `⎇ #n` glyph; space page with chat + diff; Review opens the grouped review; crash → failed. Start from a goal, an issue (yours first, or a pasted URL / `#n`), a branch or a PR. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch), filled from the repo's PR template and linking back (`theodore://space/<id>`), and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Plan / Edit / Run; Archive button and `spaces.auto_archive_days`; Unarchive; Undo last turn (`turn_log`). In review on the space page: Changes · Threads · Checks tabs, Merge (`merge_space`: host default method, auto-merge, merge queue), Continue after merge (`continue_space`, `rounds`). "Send to agent" on a space PR's / own review's threads, drafts and findings, and the "Send N to agent" footer, both marking what was sent (`sent_feedback`). One agent session per space (Claude Code `--resume`, Codex `exec resume`); sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn. Background notifications and the dock badge (`spaces.notify`). Names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`). `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" for setup and "Fix with agent" on the Checks tab, sending a failing check's log (GitHub Actions) or link as one turn. Update from base (merge, never rebase): "Base moved: N commits behind", conflicts resolved by an agent turn, Complete merge / Abort. The agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer), `read_terminal` over `space_terminal_tail`. Interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit; `@terminal` in the composer attaching a terminal's tail as a text attachment. Mirroring into a local folder's own working tree — on / Sync now / off with Discard, at most one per folder, paused (not auto-written) across a restart (§6 "Mirror into a local folder") |
 | **v2** | My PRs "Drafting" group; feedback tracked as tasks; `space_run` rows and per-turn diffs; Delete and ref GC; `max_parallel`; Continue for a space merged locally or kept as a branch |
 | **Later** | OS sandbox for agents; signed shipped commits; spaces started from a failing check; several agents racing one goal, pick the best diff |
 

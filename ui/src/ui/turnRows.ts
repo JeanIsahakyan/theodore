@@ -29,9 +29,24 @@ export function stepFailed(step: ToolStep): boolean {
   return step.ok === false && !REFUSED_IN_PRINT.has(step.name);
 }
 
+/** A call that waits for you: a question, a plan to approve. */
+export function stepWaitsForYou(step: ToolStep): boolean {
+  return step.name === ASK || REFUSED_IN_PRINT.has(step.name);
+}
+
 /** How many of the same, with its plural. */
 const n = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
+
+/** `<1s`, `42s`, `1m 12s`, `1h 3m`. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return '<1s';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
 
 // ── a row's words ───────────────────────────────────────────────────────────
 
@@ -79,7 +94,13 @@ export function toolView(step: ToolStep, running = false): ToolView {
   if (kind === 'agent') {
     return { ...view, label: step.detail ?? label, chip: null };
   }
-  if (kind === 'run') return { ...view, label: step.detail ?? label };
+  if (kind === 'run') {
+    return {
+      ...view,
+      label: step.detail ?? label,
+      note: step.background ? 'in background' : null,
+    };
+  }
   if (READS.has(step.name)) {
     return {
       ...view,
@@ -111,7 +132,7 @@ export function toolView(step: ToolStep, running = false): ToolView {
       removed: step.removed ?? null,
     };
   }
-  return view;
+  return step.background ? { ...view, note: 'in background' } : view;
 }
 
 // ── consecutive calls as one row ────────────────────────────────────────────
@@ -209,6 +230,23 @@ export function splitSteps(steps: readonly TurnStep[]): {
     else under.set(of, [s]);
   }
   return { own, under };
+}
+
+/** A subagent's steps without the text its report repeats: its last message,
+ *  when that is the report (a stored text may be cut with `…`). */
+export function withoutReportStep(
+  steps: readonly TurnStep[],
+  report: string,
+): TurnStep[] {
+  const at = steps.map((s) => s.kind).lastIndexOf('text');
+  const last = at >= 0 ? steps[at] : undefined;
+  if (last?.kind !== 'text') return [...steps];
+  const said = last.text.trim();
+  const whole = report.trim();
+  const same =
+    said === whole ||
+    (said.endsWith('…') && whole.startsWith(said.slice(0, -1)));
+  return same ? steps.filter((_, i) => i !== at) : [...steps];
 }
 
 /** The items a list of steps shows, in the order they happened. */

@@ -60,7 +60,9 @@ impl Core {
                     changed = true;
                 }
                 Ok(_) => {}
-                Err(HostError::NotFound(_)) => changed |= self.remove_gone_pr(&id).await?,
+                Err(HostError::NotFound(_)) => {
+                    changed |= self.remove_gone_pr(&id, "host_not_found").await?;
+                }
                 Err(e) if Self::is_connection_error(&e) => break,
                 Err(e) => {
                     tracing::warn!(pr = %id, error.code = e.code(), "couldn't reconcile a PR");
@@ -187,7 +189,7 @@ impl Core {
                 && summary.reasons.is_empty()
                 && !behind_a_space.contains(&id)
             {
-                changed |= self.remove_gone_pr(&id).await?;
+                changed |= self.remove_gone_pr(&id, "project_removed").await?;
             }
         }
         if changed {
@@ -201,7 +203,7 @@ impl Core {
     /// stay, so if the PR comes back (access to the repo restored, the
     /// project added again) nothing of yours is lost. A PR open in a tab
     /// keeps its row until the next launch: its review reads it.
-    async fn remove_gone_pr(&self, pr: &PrId) -> AppResult<bool> {
+    async fn remove_gone_pr(&self, pr: &PrId, why: &str) -> AppResult<bool> {
         // Same lock opening a PR holds: a patch to this row in flight (the
         // stack links) would otherwise fail on the missing row.
         let _guard = self.0.open_lock.lock().await;
@@ -225,6 +227,7 @@ impl Core {
             }
         }
         self.apply(actions).await?;
+        tracing::info!(pr = %pr, why, "PR row removed");
         Ok(true)
     }
 

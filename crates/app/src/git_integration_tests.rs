@@ -232,6 +232,8 @@ fn no_goal(project: &str) -> CreateSpaceRequest {
         agent: None,
         model: None,
         start_from: None,
+        effort: None,
+        mode: None,
     }
 }
 
@@ -339,6 +341,7 @@ async fn copied_env_files_stay_out_of_checkpoints_and_commits() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -395,6 +398,7 @@ async fn the_diff_tool_only_calls_new_edits_uncommitted() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -449,6 +453,7 @@ async fn a_stopped_turn_checkpoints_what_the_agent_wrote_while_dying() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -533,6 +538,7 @@ async fn open_pr_finds_its_own_push_after_a_quit_before_the_row() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();

@@ -9,6 +9,7 @@ import type { ChatMessage, Space } from '../../gen/contract';
 import { useRootStore } from '../../stores/context';
 import type { SpaceSend } from '../../stores/EphemeralStore';
 import { ChatEmpty, ChatLive, ChatLog, mixedAgents } from '../ChatTurn';
+import { FilePreviewScope } from '../FileHoverPreview';
 import {
   chatRows,
   estimateRowHeight,
@@ -216,17 +217,19 @@ const SpaceLive = observer(function SpaceLive({
   // Before its run starts: the agent you picked for it.
   const sending = ephemeral.spaceSends.get(spaceId)?.find((s) => !s.queued);
   return (
-    <ChatLive
-      run={run}
-      agent={run ? space.agent : (sending?.agent ?? space.agent)}
-      tagged={tagged}
-      timeline
-      since={since}
-      badges={
-        run && ephemeral.stoppingRuns.has(run) ? (
-          <span className="space-stopping text-xs text-muted">Stopping…</span>
-        ) : undefined
-      }
-    />
+    <FilePreviewScope space={spaceId} reply={null}>
+      <ChatLive
+        run={run}
+        agent={run ? space.agent : (sending?.agent ?? space.agent)}
+        tagged={tagged}
+        timeline
+        since={since}
+        badges={
+          run && ephemeral.stoppingRuns.has(run) ? (
+            <span className="space-stopping text-xs text-muted">Stopping…</span>
+          ) : undefined
+        }
+      />
+    </FilePreviewScope>
   );
 });

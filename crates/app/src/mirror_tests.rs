@@ -87,6 +87,8 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project, goal: &str) -> S
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -103,6 +105,7 @@ async fn turn(f: &Fixtures, core: &Core, s: &Space, text: &str, head: &str) -> S
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -287,6 +290,8 @@ async fn switching_isnt_refused_for_the_files_the_first_space_mirrored() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -334,6 +339,8 @@ async fn switching_restores_the_first_space_then_mirrors_the_second() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -370,6 +377,8 @@ async fn switching_is_refused_while_the_other_folder_was_edited() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

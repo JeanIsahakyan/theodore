@@ -6,8 +6,90 @@ use std::sync::Arc;
 use std::thread;
 
 use serde_json::json;
-use theodore_ports::{NewAction, OutboxStatus, Store, StoreError, SyncActionCode};
+use theodore_ports::{NewAction, OutboxStatus, Store, StoreError, SyncActionCode, ToolCallKey};
 use theodore_store::SqliteStore;
+
+fn call(run: &str, call: &str, space: &str) -> ToolCallKey {
+    ToolCallKey {
+        run: run.into(),
+        call: call.into(),
+        space: space.into(),
+    }
+}
+
+#[test]
+fn a_tool_payload_builds_up_part_by_part_and_stays_out_of_the_sync_log() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let key = call("r1", "c1", "s1");
+    store
+        .tool_payload_put(&key, "input", &json!({"value": {"command": "ls"}}))
+        .unwrap();
+    store
+        .tool_payload_put(&key, "result", &json!({"ok": true}))
+        .unwrap();
+    store
+        .tool_payload_put(&key, "result", &json!({"ok": false}))
+        .unwrap();
+    assert_eq!(
+        store.tool_payload_get("r1", "c1").unwrap().unwrap(),
+        json!({"input": {"value": {"command": "ls"}}, "result": {"ok": false}})
+    );
+    assert_eq!(store.tool_payload_get("r2", "c1").unwrap(), None);
+    assert_eq!(store.last_sync_id().unwrap(), 0);
+}
+
+#[test]
+fn a_call_id_is_only_unique_within_its_run() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    store
+        .tool_payload_put(&call("r1", "item_0", "s1"), "input", &json!(1))
+        .unwrap();
+    store
+        .tool_payload_put(&call("r2", "item_0", "s1"), "input", &json!(2))
+        .unwrap();
+    assert_eq!(
+        store.tool_payload_get("r1", "item_0").unwrap().unwrap(),
+        json!({"input": 1})
+    );
+    assert_eq!(
+        store.tool_payload_get("r2", "item_0").unwrap().unwrap(),
+        json!({"input": 2})
+    );
+}
+
+#[test]
+fn pruning_drops_a_spaces_oldest_calls_and_no_other_spaces() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let text = json!("x".repeat(1000));
+    for i in 0..5 {
+        store
+            .tool_payload_put(&call("r", &format!("c{i}"), "s1"), "input", &text)
+            .unwrap();
+    }
+    store
+        .tool_payload_put(&call("r", "other", "s2"), "input", &text)
+        .unwrap();
+    assert_eq!(store.tool_payloads_prune("s1", 2500).unwrap(), 3);
+    assert!(store.tool_payload_get("r", "c0").unwrap().is_none());
+    assert!(store.tool_payload_get("r", "c2").unwrap().is_none());
+    assert!(store.tool_payload_get("r", "c3").unwrap().is_some());
+    assert!(store.tool_payload_get("r", "c4").unwrap().is_some());
+    assert!(store.tool_payload_get("r", "other").unwrap().is_some());
+}
+
+#[test]
+fn deleting_a_space_takes_its_payloads_with_it() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    store
+        .tool_payload_put(&call("r", "a", "s1"), "input", &json!(1))
+        .unwrap();
+    store
+        .tool_payload_put(&call("r", "b", "s2"), "input", &json!(1))
+        .unwrap();
+    assert_eq!(store.tool_payloads_delete_space("s1").unwrap(), 1);
+    assert!(store.tool_payload_get("r", "a").unwrap().is_none());
+    assert!(store.tool_payload_get("r", "b").unwrap().is_some());
+}
 
 fn insert(store: &SqliteStore, model: &str, id: &str, data: serde_json::Value) -> u64 {
     let actions = store

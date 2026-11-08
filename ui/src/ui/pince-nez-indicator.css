@@ -1,0 +1,310 @@
+/*
+ * The agent's animated turn indicator, without eyes (PinceNezIndicator.tsx).
+ * State comes from data-state on .pn:
+ *   idle | turn | thinking | reading | writing | loading | done | error
+ * Colours are the variables below; the dark theme is .dark or
+ * [data-theme="dark"] on the root (UiStore's applyTheme sets both).
+ */
+
+.pn {
+  /* The accent follows the build, like the logo (styles.css): one colour
+     drives the glass, the rim and the arcs. */
+  --pn-accent: var(--accent, #0485f7);
+  --pn-rim: color-mix(
+    in oklab,
+    var(--pn-accent) 78%,
+    black
+  ); /* rim and bridge */
+  --pn-glass-top: color-mix(
+    in oklab,
+    var(--pn-accent) 62%,
+    white
+  ); /* glass, top of the gradient */
+  --pn-glass-bottom: color-mix(
+    in oklab,
+    var(--pn-accent) 78%,
+    black
+  ); /* glass, bottom of the gradient */
+  --pn-stripe: #ffffff; /* stripes, lines, sweep */
+  --pn-spin: color-mix(
+    in oklab,
+    var(--pn-accent) 40%,
+    black
+  ); /* loading arcs */
+  --pn-error: var(--danger, #ff383c); /* error flash: the theme's danger */
+
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  line-height: 0;
+}
+
+/* Under a pixel of arc on the rim reads as nothing: darker on top of wider
+   (strokeTier). Before the dark rules, which win at the same specificity. */
+.pn[data-small] {
+  --pn-spin: color-mix(in oklab, var(--pn-accent) 25%, black);
+}
+
+.dark .pn,
+[data-theme='dark'] .pn {
+  --pn-rim: color-mix(in oklab, var(--pn-accent) 55%, white);
+  --pn-spin: #ffffff;
+}
+
+.pn svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pn * {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* ---------- parts ---------- */
+
+.pn .pn-stop-a {
+  stop-color: var(--pn-glass-top);
+}
+.pn .pn-stop-b {
+  stop-color: var(--pn-glass-bottom);
+}
+.pn .pn-sweep-edge {
+  stop-color: var(--pn-stripe);
+  stop-opacity: 0;
+}
+.pn .pn-sweep-mid {
+  stop-color: var(--pn-stripe);
+  stop-opacity: 0.95;
+}
+
+.pn .pn-rim {
+  fill: none;
+  stroke: var(--pn-rim);
+}
+.pn .pn-bridge {
+  fill: none;
+  stroke: var(--pn-rim);
+  stroke-linecap: round;
+}
+.pn .pn-stripes {
+  stroke: var(--pn-stripe);
+  stroke-opacity: 0.6;
+}
+.pn .pn-typing {
+  fill: none;
+  stroke: var(--pn-stripe);
+  stroke-linecap: round;
+  stroke-dasharray: 220;
+}
+.pn .pn-spin circle {
+  fill: none;
+  stroke: var(--pn-spin);
+  stroke-linecap: round;
+  stroke-dasharray: 240 702;
+}
+.pn .pn-tint {
+  fill: var(--pn-error);
+  opacity: 0;
+}
+
+/* layers only some states need */
+.pn .pn-stripes,
+.pn .pn-typing,
+.pn .pn-spin,
+.pn .pn-sweep {
+  display: none;
+}
+
+.pn[data-state='reading'] .pn-stripes {
+  display: inline;
+}
+.pn[data-state='writing'] .pn-typing {
+  display: inline;
+}
+.pn[data-state='loading'] .pn-spin {
+  display: inline;
+}
+.pn[data-state='done'] .pn-sweep {
+  display: inline;
+}
+
+/* ---------- keyframes ---------- */
+
+@keyframes pn-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+@keyframes pn-alt {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes pn-scroll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-110px);
+  }
+}
+@keyframes pn-type {
+  0% {
+    stroke-dashoffset: 220;
+  }
+  35%,
+  85% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+@keyframes pn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pn-pop {
+  0% {
+    transform: scale(1);
+  }
+  10% {
+    transform: scale(1.08);
+  }
+  22%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes pn-sweep {
+  0% {
+    transform: translateX(-620px);
+  }
+  40%,
+  100% {
+    transform: translateX(620px);
+  }
+}
+@keyframes pn-shake {
+  0%,
+  34%,
+  100% {
+    transform: translateX(0);
+  }
+  6% {
+    transform: translateX(-26px);
+  }
+  12% {
+    transform: translateX(24px);
+  }
+  18% {
+    transform: translateX(-16px);
+  }
+  24% {
+    transform: translateX(10px);
+  }
+}
+@keyframes pn-flash {
+  0%,
+  34%,
+  100% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.4;
+  }
+}
+
+/* ---------- states ---------- */
+
+/* Your turn: a soft pulse, forever */
+.pn[data-state='turn'] .pn-lenses {
+  animation: pn-pulse 1.8s ease-in-out infinite;
+}
+
+/* Thinking: the lenses brighten in turn */
+.pn[data-state='thinking'] .pn-glass-l {
+  animation: pn-alt 1.2s ease-in-out infinite;
+}
+.pn[data-state='thinking'] .pn-glass-r {
+  animation: pn-alt 1.2s ease-in-out 0.6s infinite;
+}
+
+/* Reading code: stripes run up */
+.pn[data-state='reading'] .pn-stripes {
+  animation: pn-scroll 1.4s linear infinite;
+}
+
+/* Writing: lines type in */
+.pn[data-state='writing'] .pn-t1 {
+  animation: pn-type 2.6s ease-out infinite;
+}
+.pn[data-state='writing'] .pn-t2 {
+  animation: pn-type 2.6s ease-out 0.25s infinite;
+}
+
+/* Loading: arcs spin in opposite directions */
+.pn[data-state='loading'] .pn-spin-l {
+  animation: pn-spin 1.1s linear infinite;
+}
+.pn[data-state='loading'] .pn-spin-r {
+  animation: pn-spin 1.1s linear infinite reverse;
+}
+
+/* Done: a pop and a sweep. Once by default; data-loop repeats it */
+.pn[data-state='done'] .pn-lenses {
+  animation: pn-pop 2.4s ease-out 1;
+}
+.pn[data-state='done'] .pn-sweep {
+  animation: pn-sweep 2.4s ease-out 1 forwards;
+}
+.pn[data-state='done'][data-loop] .pn-lenses,
+.pn[data-state='done'][data-loop] .pn-sweep {
+  animation-iteration-count: infinite;
+}
+
+/* Error: a shudder and a red flash. Once by default; data-loop repeats it */
+.pn[data-state='error'] .pn-lenses {
+  animation: pn-shake 1.6s ease-in-out 1;
+}
+.pn[data-state='error'] .pn-tint {
+  animation: pn-flash 1.6s ease-in-out 1;
+}
+.pn[data-state='error'][data-loop] .pn-lenses,
+.pn[data-state='error'][data-loop] .pn-tint {
+  animation-iteration-count: infinite;
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .pn * {
+    animation: none !important;
+  }
+  /* static hints instead of motion */
+  .pn[data-state='thinking'] .pn-glass-r {
+    opacity: 0.55;
+  }
+  .pn[data-state='writing'] .pn-typing {
+    stroke-dashoffset: 0;
+  }
+  .pn[data-state='error'] .pn-tint {
+    opacity: 0.35;
+  }
+  .pn[data-state='done'] .pn-sweep {
+    display: none;
+  }
+}

@@ -19,6 +19,7 @@ pub mod client;
 pub mod config;
 pub mod console;
 pub mod file;
+pub mod identity;
 pub mod issue;
 pub mod layer;
 pub mod otlp;
@@ -47,18 +48,20 @@ pub use redact::Redactor;
 use crate::layer::{Shared, TelemetryLayer};
 use crate::sink::Sink;
 
-/// What every remote record says about the app (and nothing about the
-/// person): version, channel, OS, commit, build environment, and the
-/// random install id.
+/// What every remote record says about the app: version, channel, OS,
+/// architecture, commit, build environment, and the random install id.
+/// Who it is from is `identity::Identity`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AppMeta {
     pub version: String,
     pub channel: String,
     pub os: String,
+    pub arch: String,
     pub commit: String,
     /// `production` | `staging` | `nightly` | `dev` (the build stamp).
     pub build_env: String,
-    /// A random UUID kept in the data dir: the only id remote sinks see.
+    /// A random UUID kept in the data dir. Repository names are hashed
+    /// with it; PostHog's id until the first sign-in.
     pub install_id: String,
 }
 
@@ -146,6 +149,7 @@ pub fn init(cfg: InitConfig) -> &'static Telemetry {
         version: cfg.version,
         channel: cfg.channel,
         os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
         commit: cfg.commit,
         build_env: cfg.build_env,
         install_id: install.clone(),
@@ -161,7 +165,9 @@ pub fn init(cfg: InitConfig) -> &'static Telemetry {
     if cfg.stderr {
         local.push(Arc::new(console::StderrSink));
     }
+    let anon = identity::stored_anon_id(&cfg.data_dir, &install);
     let shared = Arc::new(Shared::new(Redactor::new(dirs::home_dir(), install), local));
+    shared.identity.seed(&anon, Some(cfg.data_dir.clone()));
     let (filter, handle) = reload::Layer::new(env_filter(cfg.level.as_deref()));
     let installed = tracing_subscriber::registry()
         .with(filter)
@@ -182,6 +188,7 @@ impl Telemetry {
     /// on it, tests drive it with their own subscriber
     /// (`TelemetryLayer::new(t.shared())`).
     pub fn detached(shared: Arc<Shared>, meta: AppMeta, logs_dir: PathBuf) -> Self {
+        shared.identity.seed(&meta.install_id, None);
         Telemetry {
             shared,
             file: None,
@@ -215,6 +222,30 @@ impl Telemetry {
         &self.shared.redactor
     }
 
+    /// Who is signed in: the account provider's user id, `None` signed out.
+    /// Remote sinks send it from here on, each only if its sharing choice
+    /// allows it (`Choice::links_usage`); PostHog hears the anonymous id it
+    /// replaces (`$identify`). Anything not shaped like such an id is treated
+    /// as signed out.
+    pub fn set_account(&self, id: Option<&str>) {
+        let valid = id.filter(|i| identity::is_account_id(i));
+        if id.is_some() && valid.is_none() {
+            tracing::warn!("account id has an unexpected shape, left out of telemetry");
+        }
+        if self.shared.identity.set(valid)
+            && valid.is_some()
+            && let Some(p) = self.shared.posthog()
+        {
+            p.identify();
+        }
+    }
+
+    /// A new anonymous id, for the moment linking starts; see
+    /// [`identity::Identity::renew_anon`].
+    pub fn renew_anon(&self) {
+        self.shared.identity.renew_anon();
+    }
+
     /// The `log.level` setting; ignored when `THEODORE_LOG` is set.
     pub fn set_level(&self, level: Option<&str>) {
         if self.env_level {
@@ -243,6 +274,11 @@ impl Telemetry {
         let errors_on = |c: &RemoteConfig, ch: &Choice| c.otlp.is_some() && ch.errors == Some(true);
         let (old_cfg, old_choice, old_meta) = (&state.0, &state.1, &state.2);
         let meta_changed = *old_meta != meta;
+        let newly_linked = !old_choice.links_usage() && choice.links_usage();
+        // Before the sinks below start: starting one identifies at once.
+        self.shared
+            .identity
+            .set_links(choice.links_usage(), choice.links_errors());
 
         let posthog_changed = usage_on(old_cfg, old_choice) != usage_on(&config, &choice)
             || old_cfg.posthog != config.posthog
@@ -264,8 +300,11 @@ impl Telemetry {
                     c.clone(),
                     meta.clone(),
                     self.shared.redactor.clone(),
+                    self.shared.identity.clone(),
                 ) {
                     Ok(s) => {
+                        // Each start: a new version reaches the person.
+                        s.identify();
                         *self
                             .shared
                             .posthog
@@ -275,6 +314,9 @@ impl Telemetry {
                     Err(e) => tracing::warn!(error = %e, "usage data sink didn't start"),
                 }
             }
+        } else if newly_linked && let Some(p) = self.shared.posthog() {
+            // Agreed while already sending: the running sink links it now.
+            p.identify();
         }
 
         let otlp_changed = errors_on(old_cfg, old_choice) != errors_on(&config, &choice)
@@ -293,7 +335,12 @@ impl Telemetry {
             if errors_on(&config, &choice)
                 && let Some(c) = &config.otlp
             {
-                match otlp::OtlpSink::start(c, &meta, self.shared.redactor.clone()) {
+                match otlp::OtlpSink::start(
+                    c,
+                    &meta,
+                    self.shared.redactor.clone(),
+                    self.shared.identity.clone(),
+                ) {
                     Ok(s) => {
                         *self.shared.otlp.write().unwrap_or_else(|p| p.into_inner()) =
                             Some(Arc::new(s))
@@ -342,6 +389,24 @@ impl Telemetry {
         if let Some(f) = &self.file {
             f.flush(Duration::from_secs(2));
         }
+    }
+}
+
+/// Target of the record `set_account` leaves. Says only signed in or out.
+pub const IDENTITY_TARGET: &str = "theodore::identity";
+
+/// Who is signed in, for the remote sinks; see [`Telemetry::set_account`].
+pub fn set_account(id: Option<&str>) {
+    tracing::debug!(target: IDENTITY_TARGET, signed_in = id.is_some(), "telemetry identity");
+    if let Some(t) = global() {
+        t.set_account(id);
+    }
+}
+
+/// See [`Telemetry::renew_anon`].
+pub fn renew_anon() {
+    if let Some(t) = global() {
+        t.renew_anon();
     }
 }
 

@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use theodore_contract::{Ephemeral, SaveSkillRequest, SkillBody, SkillInfo, ToastLevel};
+use theodore_contract::{Ephemeral, Project, SaveSkillRequest, SkillBody, SkillInfo, ToastLevel};
 use theodore_domain::{HostKind, PrId};
 
 use crate::core::Core;
@@ -120,6 +120,15 @@ fn skills_in_dir(root: &Path, source: &str) -> Vec<SkillInfo> {
         }
     }
     out
+}
+
+/// How a skills list names the repo a skill comes from.
+fn repo_label(project: &Project) -> String {
+    if project.repo.host == HostKind::Local {
+        project.repo.name.clone()
+    } else {
+        project.repo.slug()
+    }
 }
 
 pub(crate) fn builtin_content(id: &str) -> Option<&'static str> {
@@ -258,15 +267,41 @@ impl Core {
         let space = self.space_row(space).await?;
         let project = self.space_project(&space).await?;
         let mut out = skills_in_dir(&self.0.deps.claude_home, "~/.claude/skills");
-        let label = if project.repo.host == HostKind::Local {
-            project.repo.name.clone()
-        } else {
-            project.repo.slug()
-        };
+        let label = repo_label(&project);
         out.extend(skills_in_dir(
             &Path::new(&space.worktree).join(".claude/skills"),
             &format!("{label} · .claude/skills"),
         ));
+        Ok(out)
+    }
+
+    /// What a new space of `project` would see (`space_skills`), before it
+    /// has a worktree: yours and the repo's at its default branch, from the
+    /// cache a space's worktree comes from. A cache not ready yet just has
+    /// no repo skills.
+    pub async fn project_skills(&self, project: &str) -> AppResult<Vec<SkillInfo>> {
+        let project = self
+            .project_row(project)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("project {project}")))?;
+        let mut out = skills_in_dir(&self.0.deps.claude_home, "~/.claude/skills");
+        if let Some(base) = &project.default_branch
+            && let Ok(repo_path) = self.ensure_project_cache(&project).await
+            && let Ok(rev) = self.0.deps.git.resolve_ref(&repo_path, base).await
+        {
+            let git = &self.0.deps.git;
+            let source = format!("{} · .claude/skills", repo_label(&project));
+            let ids = git
+                .list_dir(&repo_path, &rev, ".claude/skills")
+                .await
+                .unwrap_or_default();
+            for id in ids {
+                let path = format!(".claude/skills/{id}/SKILL.md");
+                if let Ok(Some(bytes)) = git.show(&repo_path, &rev, &path).await {
+                    out.push(skill_info(&id, &String::from_utf8_lossy(&bytes), &source));
+                }
+            }
+        }
         Ok(out)
     }
 

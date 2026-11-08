@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use theodore_domain::{
-    CheckRollup, Commit, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef, Revision,
-    Sha,
+    CheckRollup, Commit, FileDiff, Millis, Person, PrDetail, PrRef, PrState, PrSummary, RepoRef,
+    Revision, Sha,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -206,6 +206,41 @@ pub trait GitPort: Send + Sync {
     ) -> GitResult<Revision>;
     /// File contents at `rev`, `None` if absent.
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>>;
+    /// The names directly under `dir` at `rev`; empty when it has none.
+    async fn list_dir(&self, _repo: &Path, _rev: &Sha, _dir: &str) -> GitResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+    /// One file's change between two commits (not their merge base), `None`
+    /// when it didn't change. A rename shows as an add: only `path` is looked at.
+    async fn diff_file(
+        &self,
+        repo: &Path,
+        from: &Sha,
+        to: &Sha,
+        path: &str,
+        opts: &DiffOptions,
+    ) -> GitResult<Option<FileDiff>> {
+        let _ = (repo, from, to, path, opts);
+        Err(GitError::Unsupported("diff_file"))
+    }
+    /// A file's size at `rev`, without reading it; `None` if there is no such
+    /// file (a directory or a submodule isn't one).
+    async fn blob_size(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<u64>> {
+        let _ = (repo, rev, path);
+        Err(GitError::Unsupported("blob_size"))
+    }
+    /// The first `max` bytes of a file `blob_size` found at `rev`: git is
+    /// stopped there, so a big file isn't read whole.
+    async fn blob_head(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+        max: usize,
+    ) -> GitResult<Vec<u8>> {
+        let _ = (repo, rev, path, max);
+        Err(GitError::Unsupported("blob_head"))
+    }
     /// The files that differ between two commits (not their merge base), with
     /// lines added and removed; a binary file counts as 0 and 0.
     async fn numstat(&self, repo: &Path, from: &Sha, to: &Sha) -> GitResult<Vec<FileStat>> {

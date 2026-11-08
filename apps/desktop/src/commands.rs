@@ -8,14 +8,14 @@ use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
     BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
-    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
-    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FilePreviewAnswer, FilePreviewRequest,
+    FileRequest, FindSymbolRequest, GetBlobRequest, HostAuthStatus, InterdiffEntry,
+    InterdiffRequest, LinearIssue, LinearIssuesRequest, LinearStatus, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest,
+    SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 
@@ -130,6 +130,18 @@ pub async fn attachment_data(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<String, CommandError> {
     op.run(async move { core.attachment_data(id).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tool_payload(
+    op: crate::op::Op,
+    run: String,
+    call: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Option<theodore_contract::ToolPayload>, CommandError> {
+    op.run(async move { core.tool_payload(run, call).await })
+        .await
 }
 
 #[tauri::command]
@@ -621,6 +633,17 @@ pub async fn get_blob(
     op.run(async move { core.get_blob(req).await }).await
 }
 
+/// Hovering a file in a chat: its diff for that turn, or a preview.
+#[tauri::command]
+#[specta::specta]
+pub async fn file_preview(
+    op: crate::op::Op,
+    req: FilePreviewRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<FilePreviewAnswer, CommandError> {
+    op.run(async move { core.file_preview(req).await }).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn conflicts(
@@ -728,6 +751,18 @@ pub async fn space_send(
 }
 
 /// "Send now": into the running turn when it takes messages, else queued.
+/// A reply's thumbs up or down; `vote: null` takes it back.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_message_vote(
+    op: crate::op::Op,
+    req: theodore_contract::SetMessageVoteRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.set_message_vote(req).await })
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn space_send_now(
@@ -874,6 +909,28 @@ pub async fn unarchive_space(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<theodore_contract::Space, CommandError> {
     op.run(async move { core.unarchive_space(space).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_space_settings(
+    op: crate::op::Op,
+    req: theodore_contract::SetSpaceSettingsRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.set_space_settings(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_skills(
+    op: crate::op::Op,
+    project: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<SkillInfo>, CommandError> {
+    op.run(async move { core.project_skills(project).await })
         .await
 }
 

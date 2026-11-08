@@ -164,13 +164,14 @@ impl Core {
         };
         if let Some(goal) = pending
             && let Err(e) = self
-                .space_send(SpaceSendRequest {
+                .system_send(SpaceSendRequest {
                     space: id.to_string(),
                     text: goal,
                     agent: None,
                     model: None,
                     mode: None,
                     attachments: None,
+                    effort: None,
                 })
                 .await
         {
@@ -321,13 +322,14 @@ impl Core {
     /// look at the repo and write them. Edit mode, so it can actually
     /// write the file — not the space's sticky mode, which may be Ask.
     pub async fn space_setup_assist(&self, space: &str) -> AppResult<Space> {
-        self.space_send(SpaceSendRequest {
+        self.system_send(SpaceSendRequest {
             space: space.to_string(),
             text: crate::usecases::space_setup_assist::setup_assist_prompt(),
             agent: None,
             model: None,
             mode: Some(SpaceMode::Edit),
             attachments: None,
+            effort: None,
         })
         .await?;
         self.space_row(space).await
@@ -362,13 +364,14 @@ impl Core {
                 .map(|l| l.line.clone())
                 .collect::<Vec<_>>()
         });
-        self.space_send(SpaceSendRequest {
+        self.system_send(SpaceSendRequest {
             space: space.to_string(),
             text: crate::usecases::space_setup_assist::fix_setup_prompt(&script, &failure, &tail),
             agent: None,
             model: None,
             mode: Some(SpaceMode::Edit),
             attachments: None,
+            effort: None,
         })
         .await?;
         self.space_row(space).await
@@ -377,6 +380,12 @@ impl Core {
     /// "Run commands from this repo?": Allow (stored for the project
     /// against `hash`) or Not now (skipped in this space).
     pub async fn space_trust(&self, req: SpaceTrustRequest) -> AppResult<Space> {
+        tracing::info!(
+            space = %req.space,
+            allow = req.allow,
+            hash = req.hash.get(..8).unwrap_or(&req.hash),
+            "repo commands answered"
+        );
         let space = self.space_row(&req.space).await?;
         let project = self.space_project(&space).await?;
         let cfg = self.prompt_config_of(&space, &project).await;

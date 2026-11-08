@@ -180,13 +180,14 @@ impl Core {
                 }
                 // Resolving means editing: an Ask space edits for this turn
                 // on (the mode is sticky, as for any send).
-                self.space_send(SpaceSendRequest {
+                self.system_send(SpaceSendRequest {
                     space: space.id.clone(),
                     text: prompt,
                     agent: None,
                     model: None,
                     mode: (space.mode == SpaceMode::Ask).then_some(SpaceMode::Edit),
                     attachments: None,
+                    effort: None,
                 })
                 .await?;
             }

@@ -40,6 +40,7 @@ import type {
   AgentId,
   FileDiff,
   HunkId,
+  SetSpaceSettingsRequest,
   ShipAction,
   SkillInfo,
   Space,
@@ -66,13 +67,26 @@ import type { VirtualChatControl } from './VirtualChat';
 import { canSendNow } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
 import { latinKey, useViewKeys } from '../keys';
-import { AgentChip, ChipMenu, Composer } from './Composer';
+import {
+  AgentChip,
+  boxAgent,
+  ChipMenu,
+  Composer,
+  useEnabledAgents,
+} from './Composer';
+import { running } from '../AgentMenu';
+import { useAgentModels } from '../useAgentModels';
 import { agentModel } from '../agentModel';
 import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
-import { parseIssueRef, startFooter, type StartKind } from './newSpaceStart';
+import {
+  parseIssueRef,
+  parsePrRef,
+  startFooter,
+  type StartKind,
+} from './newSpaceStart';
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
@@ -112,7 +126,13 @@ import {
   spaceTitle,
   plainError,
   toggleDrawer,
+  sendModel,
+  sendEffort,
+  spaceOwnEffort,
+  spaceOwnModel,
   type Drawer,
+  type EffortPick,
+  type ModelPick,
 } from './spaces';
 
 /** What the agent may do in a turn (docs/spaces.md §5). */
@@ -977,6 +997,16 @@ const SpaceComposer = observer(function SpaceComposer({
     if (planHere == null) setRevising(false);
   }, [planHere]);
 
+  // A space owns what it runs with: a pick is written to it at once, so
+  // it's still there after you leave the page, and changes nothing else.
+  // During a turn a pick waits and goes with the next send instead.
+  const own = (settings: Omit<SetSpaceSettingsRequest, 'space'>) => {
+    if (!run && space.status !== 'archived') {
+      void api
+        .setSpaceSettings({ space: space.id, ...settings })
+        .catch(() => {});
+    }
+  };
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
   useEffect(() => setMode(space.mode), [space.mode]);
@@ -998,10 +1028,40 @@ const SpaceComposer = observer(function SpaceComposer({
   // The agent for the next turn, with its model and effort (the chip).
   const [agent, setAgent] = useState<AgentId>(space.agent);
   useEffect(() => setAgent(space.agent), [space.agent]);
+  // The effort picked here, until the space holds it, as for the model.
+  const [pickedEffort, setPickedEffort] = useState<EffortPick | null>(null);
+  useEffect(() => setPickedEffort(null), [space.id]);
+  useEffect(() => {
+    if (
+      pickedEffort?.agent === space.agent &&
+      pickedEffort.effort === space.effort
+    ) {
+      setPickedEffort(null);
+    }
+  }, [pickedEffort, space.agent, space.effort]);
+  // A model picked here is this space's; the space's own otherwise. Done
+  // once the space holds it.
+  const [picked, setPicked] = useState<ModelPick | null>(null);
+  useEffect(() => setPicked(null), [space.id]);
+  useEffect(() => {
+    if (picked?.agent === space.agent && picked.model === space.model) {
+      setPicked(null);
+    }
+  }, [picked, space.agent, space.model]);
+  const pickMode = (m: SpaceMode) => {
+    setMode(m);
+    own({ mode: m });
+  };
   handle.current = {
     focus: () => input.current?.focus(),
-    cycleMode: () => !locked && setMode((m) => nextMode(m)),
+    cycleMode: () => !locked && pickMode(nextMode(mode)),
   };
+  // A blank space is waiting for you: focus lands in the box the moment it
+  // can be typed in (setup done).
+  const waitingForYou = !!space.blank && !settingUp(space) && !locked;
+  useEffect(() => {
+    if (waitingForYou) input.current?.focus();
+  }, [waitingForYou]);
   revise.current = () => {
     setMode('plan');
     setRevising(true);
@@ -1031,9 +1091,12 @@ const SpaceComposer = observer(function SpaceComposer({
         space: space.id,
         text: t,
         agent: agent === space.agent ? null : agent,
-        // The chip's model, so a change there reaches the next turn; "Send
-        // now" keeps the running turn's.
-        model: now ? null : agentModel(store, agent),
+        // A pick reaches the next turn; otherwise the space keeps its model
+        // (and "Send now" the running turn's).
+        model: now
+          ? null
+          : sendModel(space, agent, picked, agentModel(store, agent)),
+        effort: now ? null : sendEffort(agent, pickedEffort),
         mode: mode === space.mode ? null : mode,
         attachments: attached.length ? attached.map((a) => a.id) : null,
       },
@@ -1104,15 +1167,28 @@ const SpaceComposer = observer(function SpaceComposer({
             <>
               <AgentChip
                 value={agent}
-                onChange={setAgent}
+                onChange={(a) => {
+                  setAgent(a);
+                  own({ agent: a });
+                }}
                 isDisabled={locked}
+                modelOf={(a) => spaceOwnModel(space, a, picked)}
+                onPickModel={(a, model) => {
+                  setPicked({ agent: a, model });
+                  own({ agent: a, model });
+                }}
+                effortOf={(a) => spaceOwnEffort(space, a, pickedEffort)}
+                onPickEffort={(a, effort) => {
+                  setPickedEffort({ agent: a, effort });
+                  own({ agent: a, effort });
+                }}
               />
               <ChipMenu
                 ariaLabel="Mode"
                 label={MODES.find((m) => m.id === mode)?.label ?? mode}
                 items={MODES}
                 selected={mode}
-                onSelect={setMode}
+                onSelect={pickMode}
                 isDisabled={locked}
                 keep
               />
@@ -1232,6 +1308,13 @@ const SpaceChanges = observer(function SpaceChanges({
   );
 });
 
+/** What Create says when the field can't name a start. */
+const START_NEEDS: Record<Exclude<StartKind, 'goal'>, string> = {
+  issue: 'Enter an issue as #123 or its URL.',
+  branch: 'Enter a branch name.',
+  pr: 'Enter a PR as #123 or its URL.',
+};
+
 const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
   { id: 'goal', label: 'A new branch', hint: 'from the goal' },
   { id: 'issue', label: 'An existing issue' },
@@ -1240,10 +1323,12 @@ const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
 ];
 
 /** New space: a composer, not a form — say what you want; the project,
- *  agent and base sit as chips around it. ⏎ creates and sends it as the
- *  first turn; the space opens on that turn. Picking "An existing issue /
- *  branch / PR" adopts it instead: the worktree starts on its tip, and
- *  shipping pushes back to it rather than a fresh `<login>/<slug>`. */
+ *  agent and base sit as chips around it. ⏎ creates it and sends what you
+ *  typed as the first turn; nothing typed, a blank space opens instead,
+ *  waiting for its first message. Picking "An existing issue / branch / PR"
+ *  adopts it instead: the worktree starts on its tip, and shipping pushes
+ *  back to it rather than a fresh `<login>/<slug>`. What the chips pick is
+ *  this space's alone; they start from your settings and write none. */
 export const NewSpaceModal = observer(function NewSpaceModal() {
   const store = useRootStore();
   const ui = useUi();
@@ -1255,10 +1340,18 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   );
   const [goal, setGoal] = useState('');
   const [agent, setAgent] = useState<AgentId | null>(null);
+  const [pickedModel, setPickedModel] = useState<ModelPick | null>(null);
+  const [pickedEffort, setPickedEffort] = useState<EffortPick | null>(null);
+  const [mode, setMode] = useState<SpaceMode>('edit');
+  const offered = useEnabledAgents();
+  const catalog = useAgentModels(offered);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [startKind, setStartKind] = useState<StartKind>('goal');
   const [issueId, setIssueId] = useState<string | null>(null);
   const [startText, setStartText] = useState('');
+  // Create was pressed on a start that isn't one yet: say so.
+  const [startRefused, setStartRefused] = useState(false);
   const chosen = ready.find((p) => p.id === project);
   const { issues, unsupported: pickerNoIssues } = useProjectIssues(
     startKind === 'issue' ? project : null,
@@ -1281,8 +1374,9 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   useEffect(() => {
     setIssueId(null);
     setStartText('');
+    setStartRefused(false);
   }, [project, startKind]);
-  const prNumber = Number(startText.trim());
+  const prNumber = parsePrRef(startText);
   // A picked issue, else a typed `#n` / URL (docs: it resolves directly).
   const issueNumber = issueId ? Number(issueId) : parseIssueRef(startText);
   const startFrom: SpaceStart | null =
@@ -1290,33 +1384,72 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
       ? { kind: 'issue', value: String(issueNumber) }
       : startKind === 'branch' && startText.trim()
         ? { kind: 'branch', value: startText.trim() }
-        : startKind === 'pr' &&
-            startText.trim() &&
-            Number.isInteger(prNumber) &&
-            prNumber > 0
+        : startKind === 'pr' && prNumber
           ? { kind: 'pr', value: prNumber }
           : null;
   // A plain goal needs the text; an adopted issue/branch/PR needs that
   // picked/typed instead — the goal becomes an optional extra note.
-  const canStart =
-    startKind === 'goal' ? goal.trim() !== '' : startFrom !== null;
+  const canStart = startKind === 'goal' || startFrom !== null;
+  // Text the start can't use still gets a Create, for it to say why.
+  const startTyped = startKind !== 'goal' && startText.trim() !== '';
+  // The issue field's own note already says why Create can't start.
+  const noIssuesShown = startKind === 'issue' && noIssues;
+  // `/` in the box: what a space of this project would see.
+  useEffect(() => {
+    if (!project) return;
+    let live = true;
+    void api
+      .projectSkills(project)
+      .then((list) => live && setSkills(list))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [project]);
+  const repo = chosen ? `${chosen.repo.owner}/${chosen.repo.name}` : undefined;
+  const modelOf = (a: AgentId) =>
+    pickedModel?.agent === a ? pickedModel.model : null;
+  const effortOf = (a: AgentId) =>
+    pickedEffort?.agent === a ? pickedEffort.effort : null;
   const start = async () => {
-    if (!project || !canStart || busy) return;
+    if (!project || busy) return;
+    if (!canStart) {
+      setStartRefused(true);
+      return;
+    }
     setBusy(true);
+    // What's shown is what runs.
+    const current = boxAgent(store, agent, offered, repo);
+    const shown = current
+      ? running(
+          store,
+          current,
+          catalog[current],
+          modelOf(current),
+          effortOf(current),
+        )
+      : null;
+    const typed = goal.trim();
+    // `/report …`: as in a space's box, a report about this chat, not a turn.
+    const report = reportCommand(typed, skills);
     try {
       const s = await api.createSpace({
         project,
-        goal: goal.trim(),
+        goal: report == null ? typed : '',
         name: null,
         branch: null,
         base: null,
-        agent,
-        // The agent's model setting applies at each turn.
-        model: null,
+        agent: current,
+        model: shown?.model?.id ?? null,
+        effort: shown?.effort ?? null,
+        mode,
         start_from: startFrom,
       });
       ui.closeModal();
       ui.go({ name: 'space', id: s.id });
+      if (report != null) {
+        void reportChat(store, spaceChatKey(s.id), null, report);
+      }
     } catch (e) {
       // Anything else is toasted by api.ts.
       if (e instanceof CommandFailure && e.code === HOST_UNSUPPORTED)
@@ -1370,11 +1503,32 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             quiet
             autoFocus
             disabled={busy || !project}
-            canSubmitEmpty={startKind !== 'goal' && startFrom !== null}
+            canSubmitEmpty={canStart || startTyped}
             submit={busy ? 'Creating…' : 'Create'}
+            skills={skills}
             chips={
               <>
-                <AgentChip value={agent} onChange={setAgent} />
+                <AgentChip
+                  value={agent}
+                  onChange={setAgent}
+                  repo={repo}
+                  modelOf={modelOf}
+                  onPickModel={(a, model) =>
+                    setPickedModel({ agent: a, model })
+                  }
+                  effortOf={effortOf}
+                  onPickEffort={(a, effort) =>
+                    setPickedEffort({ agent: a, effort })
+                  }
+                />
+                <ChipMenu
+                  ariaLabel="Mode"
+                  label={MODES.find((m) => m.id === mode)?.label ?? mode}
+                  items={MODES}
+                  selected={mode}
+                  onSelect={setMode}
+                  keep
+                />
                 <ChipMenu
                   ariaLabel="Start from"
                   label={
@@ -1445,26 +1599,27 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
                 value={startText}
                 onChange={setStartText}
                 aria-label={
-                  startKind === 'branch' ? 'Branch name' : 'PR number'
+                  startKind === 'branch' ? 'Branch name' : 'PR number or URL'
                 }
                 autoFocus
               >
-                <InputGroup className="w-56 rounded-xl">
-                  {startKind === 'pr' && (
-                    <InputGroup.Prefix className="text-xs text-muted">
-                      #
-                    </InputGroup.Prefix>
-                  )}
+                <InputGroup className="w-72 rounded-xl">
                   <InputGroup.Input
                     placeholder={
-                      startKind === 'branch' ? 'feature/retry-export' : '123'
+                      startKind === 'branch'
+                        ? 'feature/retry-export'
+                        : '#123 or a PR URL'
                     }
-                    inputMode={startKind === 'pr' ? 'numeric' : 'text'}
                     className="w-full text-sm"
                   />
                 </InputGroup>
               </TextField>
             </div>
+          )}
+          {startRefused && !canStart && !noIssuesShown && (
+            <span role="alert" className="px-2 text-xs text-danger">
+              {START_NEEDS[startKind]}
+            </span>
           )}
           <span className="px-2 text-xs text-muted">
             {startFooter(startKind, chosen?.default_branch ?? undefined)}

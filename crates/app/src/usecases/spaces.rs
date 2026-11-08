@@ -9,8 +9,9 @@
 use std::path::{Path, PathBuf};
 
 use theodore_contract::{
-    ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, Space, SpaceMode,
-    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel, models,
+    ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, SetSpaceSettingsRequest,
+    Space, SpaceMode, SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel,
+    models,
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
@@ -27,6 +28,7 @@ use crate::usecases::live::LiveRun;
 use crate::usecases::projects::stable_hash_u32;
 use crate::usecases::skills::{expand_skill, space_skill_content};
 use crate::usecases::space_queue::TurnEnd;
+use crate::usecases::tool_payloads::ToolPayloads;
 use crate::usecases::turn_steps::TurnSteps;
 
 /// The `chat_message.pr` key a space's transcript is stored under.
@@ -49,6 +51,7 @@ impl Core {
         // From a host issue (rewrites `req.goal`), an existing branch, or an
         // existing PR (docs/spaces.md §3 "New space") — `None` for the
         // common case, a fresh branch off the project's default.
+        let from = crate::usecases::telemetry::start_label(req.start_from.as_ref());
         let start = self.resolve_space_start(&project, &mut req).await?;
         let base = req
             .base
@@ -57,6 +60,7 @@ impl Core {
             .ok_or_else(|| {
                 AppError::Invalid(format!("project {} has no default branch yet", project.id))
             })?;
+        let id = new_space_id();
         // Whether the dialog's own name/branch wins over the agent's later
         // proposal (`space_naming::apply`, docs/spaces.md §3 "New space").
         let user_named = req
@@ -68,8 +72,18 @@ impl Core {
         // either — it's not this space's to rename, and `fork_sha` tracks
         // it by this exact name.
         let user_branched = req.branch.is_some() || start.adopt.is_some();
+        // Nothing to start from at all: `space_blank`.
+        let blank = req.goal.trim().is_empty()
+            && start.adopt.is_none()
+            && start.title.is_none()
+            && start.issue.is_none()
+            && !user_named
+            && !user_branched;
         let name = match req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(n) => n.to_string(),
+            // No siblings to dedupe against: the id can't collide, not even
+            // with a blank space created at the same moment.
+            None if blank => crate::usecases::space_blank::blank_name(&id),
             // Named after the goal; a second "fix login" in the project
             // becomes `fix-login-2`, and so does its branch.
             None => {
@@ -115,7 +129,6 @@ impl Core {
             }
         };
 
-        let id = new_space_id();
         let wt = self
             .0
             .deps
@@ -172,8 +185,17 @@ impl Core {
             worktree: wt.path.display().to_string(),
             status: SpaceStatus::Idle,
             agent,
-            model: req.model.clone(),
-            mode: SpaceMode::Edit,
+            // Pinned now: a later change to the setting doesn't change a
+            // space that started on this model, or at this effort.
+            model: crate::agent_defaults::run_model(&self.0.deps.store, agent, req.model.clone())
+                .await,
+            effort: crate::agent_defaults::run_effort(
+                &self.0.deps.store,
+                agent,
+                req.effort.clone(),
+            )
+            .await,
+            mode: req.mode.unwrap_or(SpaceMode::Edit),
             review_pr: None,
             pr: adopted_pr.as_ref().map(|(r, _)| r.id()),
             turns: 0,
@@ -193,7 +215,14 @@ impl Core {
             attention_at: None,
             // An adopted branch or PR with no note has no goal to title it
             // by: it is called by its branch, or by "#<n> <title>".
-            title: if has_goal { None } else { start.title.clone() },
+            title: if blank {
+                Some(crate::usecases::space_blank::BLANK_TITLE.to_string())
+            } else if has_goal {
+                None
+            } else {
+                start.title.clone()
+            },
+            blank,
             handoff_summary: None,
             progress: None,
             updating: None,
@@ -218,6 +247,7 @@ impl Core {
         self.spawn_space_code(&space, &project);
         theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceCreated {
             mode: crate::usecases::telemetry::wire_str(&space.mode),
+            from: from.to_string(),
         });
         // An adopted PR (`start_from: Pr`, or a `Branch` that already has
         // one): store what's known now, fetch the rest, so the space opens
@@ -251,32 +281,22 @@ impl Core {
                 model: None,
                 mode: None,
                 attachments: None,
+                effort: None,
             })
             .await?;
         }
         // A better name and a chat title, from the chat agent (never turn
         // 1's own, which the dialog may have overridden): backgrounded, so
         // it never delays turn 1 (`space_naming`).
-        if crate::usecases::space_naming::has_something_to_name(&space.goal) {
-            let configured = self
-                .setting_agent_scoped("agents.chat", Some(&project.repo.slug()), AgentId::Claude)
-                .await;
-            let chat_agent = self.effective_agent(configured).await;
-            let core = self.clone();
-            let (id2, goal, cwd) = (id.clone(), space.goal.clone(), wt.path.clone());
-            tokio::spawn(async move {
-                crate::usecases::space_naming::apply(
-                    &core,
-                    id2,
-                    chat_agent,
-                    goal,
-                    cwd,
-                    user_named,
-                    user_branched,
-                )
-                .await;
-            });
-        }
+        self.spawn_naming(
+            &project,
+            &id,
+            space.goal.clone(),
+            wt.path.clone(),
+            user_named,
+            user_branched,
+        )
+        .await;
         self.space_row(&id).await
     }
 
@@ -300,6 +320,26 @@ impl Core {
     /// (docs/spaces.md §8). Returns the message id; the reply arrives as a
     /// `chat_message` row.
     pub async fn space_send(&self, req: SpaceSendRequest) -> AppResult<String> {
+        let queue = self.space_queue_lock(&req.space).await;
+        // Yours, so a blank space's first one: that's what starts it.
+        let start = self.begin_blank(&req).await?;
+        let sent = self.space_send_as(req, None).await;
+        match (&sent, start) {
+            (Err(_), Some(start)) => self.undo_begin_blank(start).await,
+            (Ok(_), Some(start)) => {
+                // Finding the chat agent isn't the queue's business.
+                drop(queue);
+                self.name_started_blank(start).await;
+            }
+            (_, None) => {}
+        }
+        sent
+    }
+
+    /// `space_send`, for a turn Theodore starts itself ("Set up with
+    /// agent", Fix CI, a review's feedback, an update's merge conflicts):
+    /// never a blank space's first message, so it names nothing.
+    pub(crate) async fn system_send(&self, req: SpaceSendRequest) -> AppResult<String> {
         let _queue = self.space_queue_lock(&req.space).await;
         self.space_send_as(req, None).await
     }
@@ -351,7 +391,11 @@ impl Core {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -385,8 +429,20 @@ impl Core {
         let (text, attachments) = (message.text.clone(), message.attachments.clone());
 
         let agent = req.agent.unwrap_or(space.agent);
-        let model = req.model.clone().or_else(|| space.model.clone());
+        // A send naming no model keeps the space's, which is another agent's
+        // to keep when this one takes over.
+        let model = req.model.clone().or_else(|| {
+            (agent == space.agent)
+                .then(|| space.model.clone())
+                .flatten()
+        });
         let mode = req.mode.unwrap_or(space.mode);
+        // Like the model: another agent starts from its own setting.
+        let effort = req.effort.clone().or_else(|| {
+            (agent == space.agent)
+                .then(|| space.effort.clone())
+                .flatten()
+        });
 
         // A worktree removed by hand comes back from the checkpoint ref.
         let repo_path = self.ensure_project_cache(&project).await?;
@@ -406,6 +462,7 @@ impl Core {
             "run": run_id,
             "agent": agent,
             "model": model,
+            "effort": effort,
             "mode": mode,
             "error": null,
             // Said once, in this turn's prompt.
@@ -453,8 +510,12 @@ impl Core {
                 .unwrap_or_else(|| text.clone())
         });
         let ask = with_attachments(ask, &attachments);
+        // The space's own, else the setting it follows.
         let ultracode = agent == AgentId::Claude
-            && self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE;
+            && match &effort {
+                Some(e) => e.trim() == ULTRACODE,
+                None => self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE,
+            };
         let wrap = |prompt: String| {
             let prompt = crate::usecases::space_pr::with_continue_note(&space, prompt);
             let prompt = crate::usecases::space_checkpoints::with_reverts(&space, prompt);
@@ -499,6 +560,7 @@ impl Core {
             space: space.clone(),
             agent,
             model,
+            effort,
             mode,
             prompt,
             resume,
@@ -540,13 +602,16 @@ impl Core {
     /// Cancels the turn in flight; its edits are still checkpointed.
     pub async fn space_stop(&self, space: &str) -> AppResult<()> {
         if self.cancel_space_run(space).await? {
+            crate::usecases::telemetry::space_action("stop");
             return Ok(());
         }
         // No run to cancel: a turn may be handing over to the next queued
         // message, or starting. Once that's done (the queue lock), whatever
         // runs now is what Stop was pressed on.
         let _queue = self.space_queue_lock(space).await;
-        self.cancel_space_run(space).await?;
+        if self.cancel_space_run(space).await? {
+            crate::usecases::telemetry::space_action("stop");
+        }
         Ok(())
     }
 
@@ -664,7 +729,9 @@ impl Core {
     /// Undo last turn (docs/spaces.md §3): `rewind_space` to just before
     /// the last turn not undone yet.
     pub async fn undo_space_turn(&self, space: &str) -> AppResult<Space> {
-        self.rewind_space_from(space, None).await
+        let rewound = self.rewind_space_from(space, None).await?;
+        crate::usecases::telemetry::space_action("undo");
+        Ok(rewound)
     }
 
     /// Brings an archived space back: its worktree is recreated from the
@@ -741,6 +808,54 @@ impl Core {
     /// Pin/unpin a space (docs/spaces.md §3): pinned spaces sort first in
     /// the sidebar and ⌘K. Works on an archived space too; it keeps no
     /// worktree state.
+    /// What the space's next turn runs with; that space only, never a
+    /// setting. Refused during a turn: what a send carries then is what
+    /// the queue keeps.
+    pub async fn set_space_settings(&self, req: SetSpaceSettingsRequest) -> AppResult<Space> {
+        let _queue = self.space_queue_lock(&req.space).await;
+        let row = self.space_row(&req.space).await?;
+        match row.status {
+            SpaceStatus::Archived => {
+                return Err(AppError::Invalid("this space is archived".into()));
+            }
+            SpaceStatus::Running => {
+                return Err(AppError::Invalid(
+                    "the agent is still working in this space".into(),
+                ));
+            }
+            SpaceStatus::Idle | SpaceStatus::Failed => {}
+        }
+        let mut patch = serde_json::Map::new();
+        if let Some(agent) = req.agent {
+            patch.insert("agent".into(), serde_json::json!(agent));
+            if agent != row.agent {
+                // The old agent's: this one starts from its own settings.
+                patch.insert("model".into(), serde_json::Value::Null);
+                patch.insert("effort".into(), serde_json::Value::Null);
+            }
+        }
+        if let Some(model) = req.model {
+            patch.insert("model".into(), serde_json::json!(model));
+        }
+        if let Some(effort) = req.effort {
+            patch.insert("effort".into(), serde_json::json!(effort));
+        }
+        if let Some(mode) = req.mode {
+            patch.insert("mode".into(), serde_json::json!(mode));
+        }
+        if patch.is_empty() {
+            return Ok(row);
+        }
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: row.id,
+            action: SyncActionCode::C,
+            data: Some(serde_json::Value::Object(patch)),
+        }])
+        .await?;
+        self.space_row(&req.space).await
+    }
+
     pub async fn set_space_pinned(&self, space: &str, pinned: bool) -> AppResult<Space> {
         let row = self.space_row(space).await?;
         if row.pinned == pinned {
@@ -900,6 +1015,8 @@ struct Turn {
     space: Space,
     agent: AgentId,
     model: Option<String>,
+    /// `None` follows the setting (`AgentDefaults`).
+    effort: Option<String>,
     mode: SpaceMode,
     prompt: String,
     /// The agent session this turn continues; `prompt` is then only the
@@ -958,6 +1075,7 @@ async fn stream_run(
     req: AgentRequest,
     cancel: &CancellationToken,
     run_id: &str,
+    space: &str,
 ) -> Streamed {
     let agent = req.agent;
     let resumed = req.resume.is_some();
@@ -975,6 +1093,7 @@ async fn stream_run(
         }
     };
     let mut live = LiveRun::new(run_id, agent);
+    let mut payloads = ToolPayloads::new(run_id, space);
     let _unsteer = Unsteer { core, run: run_id };
     // Stopped: the turn goes on until the process is gone, so its checkpoint
     // has the last writes and nothing starts on top of a dying agent.
@@ -1004,6 +1123,8 @@ async fn stream_run(
                     continue;
                 }
                 let event = with_worktree_paths(event, &cwd);
+                // Before the row hears of it: an open row re-reads on the news.
+                payloads.record(core, &event).await;
                 // Quiet because it waits on your answer, not stuck.
                 if !(event == AgentEvent::Stalled && core.asking(run_id)) {
                     live.show(core, &event);
@@ -1037,12 +1158,14 @@ async fn stream_run(
                     | AgentEvent::Nested { .. }
                     | AgentEvent::ToolCall { .. }
                     | AgentEvent::ToolResult { .. }
+                    | AgentEvent::ToolDetail { .. }
                     | AgentEvent::Stalled
                     | AgentEvent::Usage { .. } => {}
                 }
             }
         }
     }
+    payloads.finish(core).await;
     // Cut off mid-block (Stop): the deltas are all there is of it.
     let partial = std::mem::take(&mut out.partial);
     out.steps.record_cut_off(&partial);
@@ -1124,7 +1247,7 @@ impl Drop for Unsteer<'_> {
 async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
     match core.0.runs.write().await.remove(run_id) {
         Some(_) => end,
-        None => TurnEnd::Interrupted,
+        None => TurnEnd::Interrupted("stopped"),
     }
 }
 
@@ -1135,6 +1258,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         space,
         agent,
         model,
+        effort,
         mode,
         prompt,
         resume,
@@ -1162,6 +1286,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // reply records what ran, whatever the setting says later.
     let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, model).await;
     let ran_model = model.clone();
+    let effort = crate::agent_defaults::run_effort(&core.0.deps.store, agent, effort).await;
+    let ran_effort = effort.clone();
     let mut req = AgentRequest {
         agent,
         prompt,
@@ -1175,7 +1301,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         },
         mcp,
         model,
-        effort: None,
+        effort,
         stall_after_ms: core.stall_after_ms().await,
         env,
         user_mcp: core.user_mcp_allowed().await,
@@ -1184,9 +1310,18 @@ async fn drive_turn(core: &Core, turn: Turn) {
         stream_text: true,
     };
     let started = std::time::Instant::now();
+    tracing::info!(
+        space = %space.id,
+        agent = agent.as_str(),
+        model = ran_model.as_deref().unwrap_or("default"),
+        effort = ran_effort.as_deref().unwrap_or("default"),
+        mode = crate::usecases::telemetry::wire_str(&mode),
+        resumed,
+        "space turn started"
+    );
     // The diff follows the agent's edits while it works (no checkpoints).
     let live = crate::usecases::space_live_diff::start(core, &space.id, &cwd);
-    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id).await;
+    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id, &space.id).await;
     let session_gone = streamed.session_gone && !cancel.is_cancelled();
     if session_gone && let Some(replay) = replay {
         // The CLI lost it (cleaned up, another machine): once more as a new
@@ -1198,7 +1333,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         );
         req.resume = None;
         req.prompt = replay;
-        streamed = stream_run(core, req, &cancel, &run_id).await;
+        streamed = stream_run(core, req, &cancel, &run_id, &space.id).await;
     }
     let Streamed {
         text,
@@ -1272,11 +1407,6 @@ async fn drive_turn(core: &Core, turn: Turn) {
             "space turn failed"
         );
     }
-    theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceTurn {
-        ms,
-        mode: crate::usecases::telemetry::wire_str(&mode),
-        ok: error.is_none() && !cancelled,
-    });
     if cancelled && error.is_none() {
         error = Some("stopped".into());
     }
@@ -1324,6 +1454,36 @@ async fn drive_turn(core: &Core, turn: Turn) {
         }
         _ => Vec::new(),
     };
+    // After the checkpoint: one that failed fails the turn.
+    let outcome = match (cancelled, &error) {
+        (true, _) => "stopped",
+        (false, Some(_)) => "failed",
+        (false, None) => "ok",
+    };
+    let tools = crate::usecases::telemetry::tool_calls(&activity);
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceTurn {
+        ms,
+        mode: crate::usecases::telemetry::wire_str(&mode),
+        ok: outcome == "ok",
+        turn: theodore_telemetry::product::TurnFacts::new(
+            agent.as_str(),
+            (ran_model.as_deref(), true),
+            ran_effort.as_deref(),
+            outcome,
+            Some(ms),
+            (tools, changed_files.len() as u32),
+        ),
+    });
+    tracing::info!(
+        space = %space.id,
+        agent = agent.as_str(),
+        model = ran_model.as_deref().unwrap_or("default"),
+        outcome,
+        duration_ms = ms,
+        tools,
+        files = changed_files.len(),
+        "space turn finished"
+    );
     let key = space_chat_key(&space.id);
     let reply = ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1343,6 +1503,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
         model_resolved: true,
         text_in_steps,
         run: Some(run_id.clone()),
+        vote: None,
+        effort: ran_effort,
+        effort_resolved: true,
+        mode: Some(mode),
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1402,6 +1566,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),
             reverted: vec![],
+            stopped: cancel.is_cancelled(),
         });
         patch["turn_log"] = serde_json::json!(log);
     }
@@ -1423,8 +1588,12 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // Stopped (the checkpoint took a while: maybe just now), failed, or its
     // checkpoint skipped: whatever is queued waits for you, and the next turn
     // doesn't clear what the space says about it.
-    let end = if cancel.is_cancelled() || error.is_some() || skipped.is_some() {
-        TurnEnd::Interrupted
+    let end = if cancel.is_cancelled() {
+        TurnEnd::Interrupted("stopped")
+    } else if error.is_some() {
+        TurnEnd::Interrupted("failed")
+    } else if skipped.is_some() {
+        TurnEnd::Interrupted("checkpoint_skipped")
     } else {
         TurnEnd::Done
     };
@@ -1463,7 +1632,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         // A failing check isn't a failed turn: the next one hears it. Stop
         // during the check is a stop.
         let end = if cancel.is_cancelled() {
-            TurnEnd::Interrupted
+            TurnEnd::Interrupted("stopped")
         } else {
             end
         };
@@ -1716,7 +1885,9 @@ fn base_system_prompt(space: &Space) -> String {
          user to Ship in the space's header. Theodore commits your edits after every turn, \
          so you don't need to. End each turn with a short summary of what you \
          changed and anything left to do.",
-        goal = if space.goal.is_empty() {
+        goal = if space.blank {
+            "not stated yet; the user's messages say what this space is for"
+        } else if space.goal.is_empty() {
             &space.name
         } else {
             &space.goal
@@ -1878,7 +2049,11 @@ mod tests {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         }
     }
 

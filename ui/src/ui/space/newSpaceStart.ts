@@ -22,6 +22,15 @@ export function parseIssueRef(input: string): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
+/** The PR number in a pasted PR URL, `#n` or `n`; `null` for anything else,
+ *  an issue's URL included: its number would name some other PR. */
+export function parsePrRef(input: string): number | null {
+  const s = input.trim();
+  if (!/^https?:\/\//.test(s)) return parseIssueRef(s);
+  const m = /\/(?:pull|pull-requests|merge_requests)\/(\d+)(?:[/?#]|$)/.exec(s);
+  return m ? parseIssueRef(m[1]!) : null;
+}
+
 /** The line under the composer: what the chosen start does to the
  *  worktree and to shipping. Each kind says its own. */
 export function startFooter(kind: StartKind, defaultBranch?: string): string {

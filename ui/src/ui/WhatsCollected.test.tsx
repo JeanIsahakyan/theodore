@@ -8,6 +8,8 @@ const status: TelemetryStatus = {
   errors_available: true,
   usage: true,
   errors: false,
+  usage_needs_consent: false,
+  errors_needs_consent: false,
   events: [
     { name: 'app_started', fields: ['version', 'os'] },
     { name: 'review_opened', fields: ['files', 'repo_hash'] },

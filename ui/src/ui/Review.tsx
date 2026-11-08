@@ -60,6 +60,7 @@ import { SidePanel } from './SidePanel';
 import { readProgress } from './review/progress';
 import { RevisionError } from './review/RevisionError';
 import { StatusChip } from './review/StatusChip';
+import { ReviewAgentStatus } from './AgentMark';
 import { latinKey, useViewKeys } from './keys';
 
 type PrTab = 'overview' | 'diff' | 'checks' | 'commits';
@@ -624,6 +625,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
                 progress={readProgress(store, pr)}
                 className="shrink-0"
               />
+              <ReviewAgentStatus pr={pr} />
             </>
           ) : (
             <Spinner size="sm" />

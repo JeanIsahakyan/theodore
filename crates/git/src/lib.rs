@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use theodore_domain::{PrRef, RepoRef, Revision, Sha};
+use theodore_domain::{FileDiff, PrRef, RepoRef, Revision, Sha};
 use theodore_ports::{
     BranchInfo, CommitLog, ConflictEntry, CredentialSource, DiffOptions, GitError, GitPort,
     GitResult, GrepHit, Identity, SpaceCommit, WorkingState, Worktree,
@@ -375,6 +375,35 @@ impl GitPort for GitCli {
 
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>> {
         self.show_op(repo, rev, path).await
+    }
+
+    async fn list_dir(&self, repo: &Path, rev: &Sha, dir: &str) -> GitResult<Vec<String>> {
+        self.list_dir_op(repo, rev, dir).await
+    }
+
+    async fn diff_file(
+        &self,
+        repo: &Path,
+        from: &Sha,
+        to: &Sha,
+        path: &str,
+        opts: &DiffOptions,
+    ) -> GitResult<Option<FileDiff>> {
+        self.diff_file_op(repo, from, to, path, opts).await
+    }
+
+    async fn blob_size(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<u64>> {
+        self.blob_size_op(repo, rev, path).await
+    }
+
+    async fn blob_head(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+        max: usize,
+    ) -> GitResult<Vec<u8>> {
+        self.blob_head_op(repo, rev, path, max).await
     }
 
     async fn cached_repo(&self, repo: &RepoRef) -> GitResult<Option<PathBuf>> {

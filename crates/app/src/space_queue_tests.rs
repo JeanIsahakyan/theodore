@@ -83,6 +83,8 @@ fn request(project: &Project, goal: &str) -> CreateSpaceRequest {
         agent: None,
         model: None,
         start_from: None,
+        effort: None,
+        mode: None,
     }
 }
 
@@ -94,6 +96,7 @@ fn send(id: &str, text: &str) -> SpaceSendRequest {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     }
 }
 
@@ -186,6 +189,7 @@ async fn a_queued_message_keeps_its_agent_mode_and_attachments() {
             agent: Some(AgentId::Codex),
             mode: Some(SpaceMode::Ask),
             attachments: Some(vec![att.id.clone()]),
+            effort: None,
             ..send(&s.id, "look at this")
         })
         .await

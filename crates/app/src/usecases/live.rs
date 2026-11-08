@@ -33,12 +33,12 @@ use std::collections::{HashMap, HashSet};
 
 use theodore_contract::{Ephemeral, TurnStep};
 use theodore_domain::AgentId;
-use theodore_ports::AgentEvent;
+use theodore_ports::{AgentEvent, ToolResultDetail};
 
 use crate::core::Core;
 use crate::usecases::agents::{tool_label, tool_log_line_with};
 use crate::usecases::turn_steps::{
-    THINKING_MAX, call_step, capped, handback, launched_in_background, result_summary,
+    THINKING_MAX, call_step, capped, end_summary, handback, launched_in_background, result_summary,
 };
 
 /// One run's live view: maps its `AgentEvent`s to the `Ephemeral`s the UI
@@ -105,6 +105,7 @@ impl LiveRun {
             }
             AgentEvent::ToolCall { id, name, input } => self.call(id, None, name, input),
             AgentEvent::ToolResult { id, ok, output } => self.result(id, *ok, output),
+            AgentEvent::ToolDetail { id, detail } => self.detail(id, detail),
             AgentEvent::Stalled => vec![
                 self.log("stalled".into()),
                 Ephemeral::RunStalled {
@@ -138,8 +139,25 @@ impl LiveRun {
             }
             AgentEvent::ToolCall { id, name, input } => self.call(id, Some(parent), name, input),
             AgentEvent::ToolResult { id, ok, output } => self.result(id, *ok, output),
+            AgentEvent::ToolDetail { id, detail } => self.detail(id, detail),
             _ => vec![],
         }
+    }
+
+    /// What a detail changes on its row: only a call going to the background
+    /// or ending there. The rest is for when it is opened.
+    fn detail(&mut self, id: &str, detail: &ToolResultDetail) -> Vec<Ephemeral> {
+        let summary = detail.end.as_ref().map(end_summary);
+        if self.hidden.contains(id) || (!detail.background && summary.is_none()) {
+            return vec![];
+        }
+        vec![Ephemeral::RunStepDone {
+            run: self.run.clone(),
+            id: id.to_string(),
+            ok: None,
+            summary,
+            background: detail.background,
+        }]
     }
 
     fn call(
@@ -283,6 +301,58 @@ mod tests {
 
     fn live() -> LiveRun {
         LiveRun::new("r1", AgentId::Claude)
+    }
+
+    #[test]
+    fn a_detail_only_moves_a_row_when_it_went_to_the_background_or_ended_there() {
+        let mut l = live();
+        let plain = AgentEvent::ToolDetail {
+            id: "c".into(),
+            detail: theodore_ports::ToolResultDetail {
+                stdout: Some("out".into()),
+                ..Default::default()
+            },
+        };
+        assert!(l.map(&plain).is_empty());
+        let moved = AgentEvent::ToolDetail {
+            id: "c".into(),
+            detail: theodore_ports::ToolResultDetail {
+                background: true,
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            l.map(&moved),
+            vec![Ephemeral::RunStepDone {
+                run: "r1".into(),
+                id: "c".into(),
+                ok: None,
+                summary: None,
+                background: true,
+            }]
+        );
+        let ended = AgentEvent::ToolDetail {
+            id: "c".into(),
+            detail: theodore_ports::ToolResultDetail {
+                end: Some(theodore_ports::TaskEnd {
+                    status: "completed".into(),
+                    summary: None,
+                    output_file: None,
+                    duration_ms: None,
+                }),
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            l.map(&ended),
+            vec![Ephemeral::RunStepDone {
+                run: "r1".into(),
+                id: "c".into(),
+                ok: None,
+                summary: Some("completed".into()),
+                background: false,
+            }]
+        );
     }
 
     #[test]

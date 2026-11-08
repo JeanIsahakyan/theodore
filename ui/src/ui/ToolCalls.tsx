@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { countUse } from '../core/useCounts';
 import { CircleCheck } from '@gravity-ui/icons';
 import { Disclosure } from '@heroui/react';
 import { Spinner } from './bits';
@@ -29,6 +30,7 @@ export function ToolCalls({
     turn ? (stepsOpen.get(turn) ?? false) : false,
   );
   const toggle = (next: boolean) => {
+    if (next) countUse('tool_rows');
     if (turn) stepsOpen.set(turn, next);
     setOpen(next);
   };

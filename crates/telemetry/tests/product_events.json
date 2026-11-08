@@ -33,7 +33,8 @@
     "skill": "",
     "agents": 0,
     "findings": 0,
-    "ms": 0
+    "ms": 0,
+    "outcome": ""
   },
   {
     "event": "chat_asked",
@@ -58,13 +59,62 @@
   },
   {
     "event": "space_created",
-    "mode": ""
+    "mode": "",
+    "from": ""
   },
   {
     "event": "space_turn",
     "ms": 0,
     "mode": "",
-    "ok": false
+    "ok": false,
+    "agent": "",
+    "model": "",
+    "effort": "",
+    "outcome": "",
+    "duration": "",
+    "tools": 0,
+    "files": 0
+  },
+  {
+    "event": "chat_answered",
+    "agent": "",
+    "model": "",
+    "effort": "",
+    "outcome": "",
+    "duration": "",
+    "tools": 0,
+    "files": 0
+  },
+  {
+    "event": "message_voted",
+    "vote": "",
+    "surface": "",
+    "mode": "",
+    "agent": "",
+    "model": "",
+    "effort": "",
+    "outcome": "",
+    "duration": "",
+    "tools": 0,
+    "files": 0
+  },
+  {
+    "event": "space_action",
+    "action": ""
+  },
+  {
+    "event": "queue_held",
+    "reason": "",
+    "messages": 0
+  },
+  {
+    "event": "report_opened",
+    "from": ""
+  },
+  {
+    "event": "ui_counts",
+    "tool_rows": 0,
+    "file_hovers": 0
   },
   {
     "event": "space_shipped",

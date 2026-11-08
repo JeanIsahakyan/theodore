@@ -589,8 +589,7 @@ pub enum Ephemeral {
         id: String,
         ok: Option<bool>,
         summary: Option<String>,
-        /// The call was a subagent launched in the background: its result
-        /// only says it started.
+        /// The call runs in the background: its result only says it started.
         #[serde(default)]
         background: bool,
     },
@@ -809,8 +808,9 @@ pub enum TurnStep {
         added: Option<u32>,
         #[serde(default)]
         removed: Option<u32>,
-        /// A subagent launched in the background: its result only says it
-        /// started, its report (`summary`) comes later, or never.
+        /// It runs in the background (a command, a monitor, a subagent): its
+        /// result only says it started, its end (`summary`) comes later, or
+        /// never.
         #[serde(default)]
         background: bool,
     },
@@ -822,6 +822,103 @@ pub struct TurnFile {
     pub path: String,
     pub additions: u32,
     pub deletions: u32,
+}
+
+/// A stored piece of a tool call's text; `original_bytes` is set when it was
+/// cut, and says how large it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CappedText {
+    pub text: String,
+    #[serde(default)]
+    pub original_bytes: Option<u64>,
+}
+
+/// What a tool call was given, as the agent sent it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ToolInput {
+    #[specta(type = specta_typescript::Unknown)]
+    pub value: serde_json::Value,
+    #[serde(default)]
+    pub original_bytes: Option<u64>,
+}
+
+/// How a tool call's result came back. A call that went to the background has
+/// its start here and its end in [`ToolEnd`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ToolOutcome {
+    pub ok: bool,
+    /// The result's text, when the stream gave no separate stdout and stderr.
+    #[serde(default)]
+    pub output: Option<CappedText>,
+    #[serde(default)]
+    pub stdout: Option<CappedText>,
+    #[serde(default)]
+    pub stderr: Option<CappedText>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub interrupted: bool,
+    #[serde(default)]
+    pub background: bool,
+    /// Output too long for the CLI's stream, which kept the whole of it in a
+    /// file: how much of it `stdout` holds.
+    #[serde(default)]
+    pub saved: Option<SavedOutput>,
+    /// The concrete model a subagent ran on.
+    #[serde(default)]
+    pub resolved_model: Option<String>,
+}
+
+/// A command's output that outgrew the CLI's stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SavedOutput {
+    /// Its whole size.
+    pub bytes: u64,
+    pub kept: SavedKept,
+}
+
+/// What `stdout` holds of output the CLI saved to a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedKept {
+    /// All of it: the file fit the bound.
+    Whole,
+    /// The end of the file, as much as the bound allows.
+    End,
+    /// Only what the stream carried: the file couldn't be read.
+    Preview,
+}
+
+/// How a call that went to the background ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ToolEnd {
+    /// `completed`, `failed` or `stopped`.
+    pub status: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// Its final output, when the CLI kept it somewhere Theodore can read.
+    #[serde(default)]
+    pub output: Option<CappedText>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+}
+
+/// All that's stored of one tool call, fetched when its row opens. Not part
+/// of `TurnStep`: bootstrap and every sync frame stay light. Any part may be
+/// missing; a call from before these were recorded has none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Type)]
+pub struct ToolPayload {
+    #[serde(default)]
+    pub input: Option<ToolInput>,
+    #[serde(default)]
+    pub result: Option<ToolOutcome>,
+    /// A subagent's whole report.
+    #[serde(default)]
+    pub report: Option<CappedText>,
+    #[serde(default)]
+    pub ended: Option<ToolEnd>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -873,6 +970,37 @@ pub struct ChatMessage {
     /// `run_id` (a chat report's logs). None on yours and older rows.
     #[serde(default)]
     pub run: Option<String>,
+    /// Your thumbs on an agent's reply; none until you vote, or after you
+    /// take it back.
+    #[serde(default)]
+    pub vote: Option<MessageVote>,
+    /// The effort the reply's run asked for, the setting's default applied;
+    /// none: the CLI's default, on rows with `effort_resolved`.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// `effort` was recorded after the setting's default was applied, so
+    /// none means the CLI's default rather than "not recorded". Apart from
+    /// `model_resolved`: replies with that flag predate this field.
+    #[serde(default)]
+    pub effort_resolved: bool,
+    /// The mode of the space turn that wrote this reply.
+    #[serde(default)]
+    pub mode: Option<SpaceMode>,
+}
+
+/// A thumbs up or down on an agent's reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageVote {
+    Up,
+    Down,
+}
+
+/// Sets the vote on a reply; `vote: None` takes it back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SetMessageVoteRequest {
+    pub message: String,
+    pub vote: Option<MessageVote>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -911,8 +1039,15 @@ pub fn types() -> specta::Types {
         .register::<CheckTick>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
+        .register::<MessageVote>()
+        .register::<SetMessageVoteRequest>()
         .register::<TurnStep>()
         .register::<TurnFile>()
+        .register::<CappedText>()
+        .register::<ToolInput>()
+        .register::<ToolOutcome>()
+        .register::<ToolEnd>()
+        .register::<ToolPayload>()
         .register::<Attachment>()
         .register::<SaveAttachmentRequest>()
         .register::<Setting>()
@@ -981,6 +1116,11 @@ pub fn types() -> specta::Types {
         .register::<DiffSide>()
         .register::<GetBlobRequest>()
         .register::<BlobResponse>()
+        .register::<PreviewSource>()
+        .register::<FilePreviewRequest>()
+        .register::<PreviewGap>()
+        .register::<FilePreview>()
+        .register::<FilePreviewAnswer>()
         .register::<ConflictKind>()
         .register::<ConflictFile>()
         .register::<SandboxInfo>()
@@ -1017,6 +1157,7 @@ pub fn types() -> specta::Types {
         .register::<SpaceBaseStatus>()
         .register::<SpaceFixCiRequest>()
         .register::<SetSpacePinnedRequest>()
+        .register::<SetSpaceSettingsRequest>()
         .register::<SpaceQuestion>()
         .register::<SpaceQuestionItem>()
         .register::<SpaceAnswerRequest>()

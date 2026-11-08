@@ -78,7 +78,13 @@ pub(crate) async fn apply(
             .map(|s| s.name.as_str())
             .collect();
         let name = unique_name(&identity.name, &taken);
-        if !user_branched && let Ok(project) = core.space_project(&space).await {
+        // The branch is only `space.branch`, a name kept for the first push
+        // (the worktree is detached at `~/.theodore/spaces/<id>`): once a
+        // PR exists it's the host's name, and stays.
+        if !user_branched
+            && space.pr.is_none()
+            && let Ok(project) = core.space_project(&space).await
+        {
             patch["branch"] = serde_json::json!(branch_for(core, &project, &name).await);
         }
         patch["name"] = serde_json::json!(name);
@@ -91,6 +97,34 @@ pub(crate) async fn apply(
             data: Some(patch),
         }])
         .await;
+}
+
+impl Core {
+    /// `apply` in the background, from the chat agent (never turn 1's own,
+    /// which the dialog may have overridden): it never delays a turn.
+    /// Nothing to name from, no call.
+    pub(crate) async fn spawn_naming(
+        &self,
+        project: &Project,
+        space: &str,
+        goal: String,
+        cwd: PathBuf,
+        user_named: bool,
+        user_branched: bool,
+    ) {
+        if !has_something_to_name(&goal) {
+            return;
+        }
+        let configured = self
+            .setting_agent_scoped("agents.chat", Some(&project.repo.slug()), AgentId::Claude)
+            .await;
+        let chat_agent = self.effective_agent(configured).await;
+        let core = self.clone();
+        let id = space.to_string();
+        tokio::spawn(async move {
+            apply(&core, id, chat_agent, goal, cwd, user_named, user_branched).await;
+        });
+    }
 }
 
 /// `false` for an empty or blank goal: there is nothing to propose a name

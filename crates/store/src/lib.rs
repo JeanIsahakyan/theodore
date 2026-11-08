@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OptionalExtension, params};
 use theodore_ports::{
     ModelRow, NewAction, OutboxItem, OutboxStatus, Store, StoreError, StoreResult, SyncAction,
-    SyncActionCode,
+    SyncActionCode, ToolCallKey,
 };
 
 pub struct SqliteStore {
@@ -190,6 +190,65 @@ fn apply_actions_in_tx(
 }
 
 impl Store for SqliteStore {
+    fn tool_payload_put(
+        &self,
+        key: &ToolCallKey,
+        part: &str,
+        value: &serde_json::Value,
+    ) -> StoreResult<()> {
+        let json = serde_json::to_string(value).map_err(se)?;
+        let bytes = json.len() as i64;
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO tool_payloads (run, call, space, data, bytes)
+             VALUES (?1, ?2, ?3, json_object(?4, json(?5)), ?6)
+             ON CONFLICT (run, call) DO UPDATE SET
+               data = json_set(data, '$.' || ?4, json(?5)),
+               bytes = bytes + ?6",
+            params![key.run, key.call, key.space, part, json, bytes],
+        )
+        .map_err(de)?;
+        Ok(())
+    }
+
+    fn tool_payload_get(&self, run: &str, call: &str) -> StoreResult<Option<serde_json::Value>> {
+        let conn = self.lock()?;
+        let text: Option<String> = conn
+            .query_row(
+                "SELECT data FROM tool_payloads WHERE run = ?1 AND call = ?2",
+                params![run, call],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(de)?;
+        text.map(|t| serde_json::from_str(&t).map_err(se))
+            .transpose()
+    }
+
+    fn tool_payloads_prune(&self, space: &str, max_bytes: u64) -> StoreResult<u64> {
+        let conn = self.lock()?;
+        let gone = conn
+            .execute(
+                "DELETE FROM tool_payloads WHERE rowid IN (
+                   SELECT rowid FROM (
+                     SELECT rowid, SUM(bytes) OVER (ORDER BY rowid DESC) AS newer
+                     FROM tool_payloads WHERE space = ?1
+                   ) WHERE newer > ?2
+                 )",
+                params![space, max_bytes as i64],
+            )
+            .map_err(de)?;
+        Ok(gone as u64)
+    }
+
+    fn tool_payloads_delete_space(&self, space: &str) -> StoreResult<u64> {
+        let conn = self.lock()?;
+        let gone = conn
+            .execute("DELETE FROM tool_payloads WHERE space = ?1", params![space])
+            .map_err(de)?;
+        Ok(gone as u64)
+    }
+
     fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(de)?;

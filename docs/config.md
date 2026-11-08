@@ -489,7 +489,8 @@ Claude and Gemini get the server over HTTP, Codex through its
 
 ## 8. Creating and saving the config from Theodore
 
-Workspace switcher → Project settings → **Config**.
+Project settings → **Config**: a page of its own, from the workspace switcher
+(under a project), ⌘K, or a row in Manage projects….
 
 ```
 Create from current settings ─▶ the repo's file, else your local file, else generated:

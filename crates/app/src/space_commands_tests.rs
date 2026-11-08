@@ -115,6 +115,8 @@ impl Env {
                 agent: None,
                 model: None,
                 start_from: None,
+                effort: None,
+                mode: None,
             })
             .await
             .expect("create_space")
@@ -323,6 +325,7 @@ async fn sending_is_refused_while_setting_up() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap_err();
@@ -379,6 +382,7 @@ async fn repo_commands_wait_for_approval_and_a_change_asks_again() {
     assert!(stale.is_err(), "a hash the user didn't see is refused");
 
     e.f.agents.push_script(done("ok"));
+    let (log, guard) = crate::testkit::capture_lines();
     e.core
         .space_trust(SpaceTrustRequest {
             space: s.id.clone(),
@@ -387,6 +391,13 @@ async fn repo_commands_wait_for_approval_and_a_change_asks_again() {
         })
         .await
         .unwrap();
+    drop(guard);
+    let answered = log.matching("repo commands answered");
+    assert_eq!(answered.len(), 1, "{answered:?}");
+    assert!(answered[0].contains("allow=true"), "{}", answered[0]);
+    assert!(answered[0].contains(&s.id), "{}", answered[0]);
+    assert!(answered[0].contains(&repo.hash[..8]), "{}", answered[0]);
+    assert!(!answered[0].contains(&repo.hash), "only a prefix is logged");
     e.until(&s.id, |s| {
         setup_status(s) == Some(SetupStatus::Done) && s.turns == 1
     })
@@ -508,6 +519,7 @@ async fn check_runs_after_a_turn_that_changed_files() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -1323,6 +1335,8 @@ async fn retry_in_a_host_project_reads_the_worktree_too() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

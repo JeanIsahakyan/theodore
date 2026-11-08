@@ -96,6 +96,8 @@ const CATALOG: Record<string, unknown[]> = {
   claude: [
     model('claude-opus-5-5', 'Opus 5.5', CLAUDE, 'medium'),
     model('claude-fable-5-1', 'Fable 5.1', CLAUDE, 'high'),
+    model('claude-small-2', 'Small 2', ['low', 'medium'], 'medium'),
+    model('claude-small-1', 'Small 1', [], null),
     model('claude-opus-4-6', 'Opus 4.6', ['low', 'high'], 'high', true),
   ],
   codex: [
@@ -150,6 +152,16 @@ describe('AgentMenu', () => {
       el.textContent?.trim().startsWith(name),
     ) as HTMLElement | undefined;
 
+  /** Opens a submenu until `name` shows in it: on a loaded machine the first
+   *  synthetic click can come before react-aria is ready for it. */
+  async function openForItem(trigger: string, name: string) {
+    for (let i = 0; i < 20 && !item(name); i++) {
+      await click(item(trigger)!);
+      await settle();
+    }
+    expect(item(name)).toBeTruthy();
+  }
+
   it('names the model and effort the agent runs', async () => {
     const store = new RootStore();
     setAgentModel(store, 'claude', 'claude-fable-5-1');
@@ -170,6 +182,76 @@ describe('AgentMenu', () => {
     expect(agentEffort(store, 'claude')).toBe('medium');
     expect(agentModel(store, 'codex')).toBe('gpt-6-sol');
     expect(agentEffort(store, 'codex')).toBe('medium');
+  });
+
+  describe('a box with its own effort (a space, New space)', () => {
+    async function renderBox(
+      store: RootStore,
+      efforts: { value: string | null; picks: string[] },
+    ) {
+      m = await mount(
+        <RootStoreProvider store={store}>
+          <div>
+            <textarea aria-label="box" />
+            <AgentMenu
+              agents={['claude']}
+              selected="claude"
+              onSelect={() => {}}
+              ultracode
+              modelOf={() => 'claude-fable-5-1'}
+              onPickModel={() => {}}
+              effortOf={() => efforts.value}
+              onPickEffort={(_a, e) => efforts.picks.push(e)}
+            />
+          </div>
+        </RootStoreProvider>,
+      );
+      await settle();
+      await settle();
+      return m.host.querySelector('button[aria-label="Model"]')!;
+    }
+
+    it('shows its own effort over the setting, and writes none', async () => {
+      const store = new RootStore();
+      setAgentEffort(store, 'claude', 'low');
+      const efforts = { value: 'high', picks: [] as string[] };
+      const chip = await renderBox(store, efforts);
+      expect(chip.textContent).toBe('Fable 5.1 High');
+      expect(agentEffort(store, 'claude')).toBe('low');
+    });
+
+    it('fills in no setting, unlike the AI panel', async () => {
+      const store = new RootStore();
+      await renderBox(store, { value: 'high', picks: [] });
+      expect(agentModel(store, 'claude')).toBeNull();
+      expect(agentEffort(store, 'claude')).toBeNull();
+    });
+
+    it('⌘⇧/ cycles the box, not the setting', async () => {
+      const store = new RootStore();
+      setAgentEffort(store, 'claude', 'low');
+      const efforts = { value: 'high', picks: [] as string[] };
+      await renderBox(store, efforts);
+      m!.host.querySelector('textarea')!.focus();
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            code: 'Slash',
+            metaKey: true,
+            shiftKey: true,
+          }),
+        );
+      });
+      expect(efforts.picks).toEqual(['xhigh']);
+      expect(agentEffort(store, 'claude')).toBe('low');
+    });
+
+    it('with no effort of its own follows the setting', async () => {
+      const store = new RootStore();
+      setAgentEffort(store, 'claude', 'max');
+      const chip = await renderBox(store, { value: null, picks: [] });
+      expect(chip.textContent).toBe('Fable 5.1 Max');
+    });
   });
 
   it('a row per agent with what it runs; a row switches to that agent', async () => {
@@ -210,6 +292,98 @@ describe('AgentMenu', () => {
     expect(agentEffort(store, 'claude')).toBe('high');
   });
 
+  describe("in a space's box, with a model of its own", () => {
+    let pickedModel: { agent: AgentId; model: string } | null = null;
+
+    async function renderOwn(store: RootStore, own: string | null) {
+      pickedModel = null;
+      m = await mount(
+        <RootStoreProvider store={store}>
+          <AgentMenu
+            agents={['claude', 'codex']}
+            selected="claude"
+            onSelect={(next) => (picked = next)}
+            modelOf={(a) => (a === 'claude' ? own : null)}
+            onPickModel={(agent, model) => (pickedModel = { agent, model })}
+          />
+        </RootStoreProvider>,
+      );
+      await settle();
+      await settle();
+      return m.host.querySelector('button[aria-label="Model"]')!;
+    }
+
+    it("shows the space's model, not the agent's setting", async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      const chip = await renderOwn(store, 'claude-fable-5-1');
+      expect(chip.textContent).toContain('Fable 5.1');
+      expect(chip.textContent).not.toContain('Opus 5.5');
+    });
+
+    it('fails safe on a name it has never heard of: as typed', async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      const chip = await renderOwn(store, 'claude-haiku-5-5');
+      expect(chip.textContent).toContain('claude-haiku-5-5');
+    });
+
+    // Whatever the model takes, a pick here leaves `agents.<id>.*` as it was.
+    it.each([
+      ['Small 1', ''],
+      ['Small 2', 'Medium'],
+    ])('picking %s writes no global setting', async (label, effortShown) => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      setAgentEffort(store, 'claude', 'xhigh');
+      const chip = await renderOwn(store, 'claude-opus-5-5');
+      await click(chip);
+      await settle();
+      await openForItem('Models', label);
+      await click(item(label)!);
+      await settle();
+      expect(pickedModel?.model).toContain('small');
+      expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
+      expect(agentEffort(store, 'claude')).toBe('xhigh');
+      const pick = pickedModel!.model;
+      m!.unmount();
+      // What the box shows for that model comes from the model, not a write.
+      const shown = await renderOwn(store, pick);
+      expect(shown.textContent?.trim()).toBe(`${label} ${effortShown}`.trim());
+      expect(agentEffort(store, 'claude')).toBe('xhigh');
+    });
+
+    it("an effort picked here is still the agent's, everywhere", async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      setAgentEffort(store, 'claude', 'medium');
+      const chip = await renderOwn(store, 'claude-fable-5-1');
+      await click(chip);
+      await settle();
+      await click(item('Effort')!);
+      await settle();
+      await click(item('Max')!);
+      await settle();
+      expect(agentEffort(store, 'claude')).toBe('max');
+    });
+
+    it("leaves the agent's setting alone, and a pick stays this box's", async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      const chip = await renderOwn(store, 'claude-fable-5-1');
+      expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
+      await click(chip);
+      await settle();
+      await click(item('Models')!);
+      await settle();
+      await click(item('GPT-6-Luna')!);
+      await settle();
+      expect(pickedModel).toEqual({ agent: 'codex', model: 'gpt-6-luna' });
+      expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
+      expect(picked).toBe('codex');
+    });
+  });
+
   it("picking another CLI's model switches to that agent", async () => {
     const store = new RootStore();
     const chip = await render(store, 'claude');
@@ -221,6 +395,37 @@ describe('AgentMenu', () => {
     await settle();
     expect(agentModel(store, 'codex')).toBe('gpt-6-luna');
     expect(picked).toBe('codex');
+  });
+
+  it('a pick for one agent writes nothing about another', async () => {
+    const store = new RootStore();
+    // An alias stays an alias: it's only read through the catalog.
+    setAgentModel(store, 'claude', 'small');
+    setAgentEffort(store, 'claude', 'low');
+    const transport = new FakeTransport();
+    setTransport(transport);
+    const ops: string[] = [];
+    transport.onCall('transact', (a) => {
+      const tx = a?.tx as { ops: { id: string }[] };
+      ops.push(...tx.ops.map((o) => o.id));
+      return { status: 'ok', last_sync_id: 1 };
+    });
+    transport.onCall('agent_models', (a) => CATALOG[String(a?.agent)] ?? []);
+    const chip = await render(store, 'claude');
+    expect(agentModel(store, 'claude')).toBe('small');
+
+    await click(chip);
+    await settle();
+    await click(item('Models')!);
+    await settle();
+    await click(item('GPT-6-Luna')!);
+    await settle();
+    await settle();
+
+    expect(agentModel(store, 'codex')).toBe('gpt-6-luna');
+    expect(agentModel(store, 'claude')).toBe('small');
+    expect(agentEffort(store, 'claude')).toBe('low');
+    expect(ops.filter((id) => id.includes('agents.claude'))).toEqual([]);
   });
 
   it("Effort offers the current model's own levels", async () => {

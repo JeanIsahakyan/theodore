@@ -85,6 +85,11 @@ export function ReportProblemView({
   /** A chat report to open on; none: the plain report. */
   draft?: ReportDraft | null;
 }) {
+  // Opened against `problem_reported`: how many who start one send it.
+  const from = draft ? (draft.by_agent ? 'agent' : 'chat') : 'app';
+  useEffect(() => {
+    void api.trackUi({ event: 'report_opened', from });
+  }, [from]);
   const [target, setTarget] = useState<IssueTarget | null>(null);
   // `null` until the user picks: then the default follows the target.
   const [picked, setPicked] = useState<ReportMode | null>(null);

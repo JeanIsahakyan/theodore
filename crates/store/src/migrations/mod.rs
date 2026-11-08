@@ -26,6 +26,11 @@ pub static MIGRATIONS: &[Migration] = &[
         name: "0002_outbox_last_error",
         sql: include_str!("0002_outbox_last_error.sql"),
     },
+    Migration {
+        version: 3,
+        name: "0003_tool_payloads",
+        sql: include_str!("0003_tool_payloads.sql"),
+    },
 ];
 
 /// How many backup copies of the database to keep around a migration run.

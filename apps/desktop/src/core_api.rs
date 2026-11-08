@@ -9,14 +9,14 @@ use theodore_contract::{
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
     BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
-    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
-    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FilePreviewAnswer, FilePreviewRequest,
+    FileRequest, FindSymbolRequest, GetBlobRequest, HostAuthStatus, InterdiffEntry,
+    InterdiffRequest, LinearIssue, LinearIssuesRequest, LinearStatus, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest,
+    SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_contract::{
     OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, TerminalMention,
@@ -53,6 +53,12 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Attachment, CommandError>;
     /// A saved attachment as a `data:<mime>;base64,…` URL.
     async fn attachment_data(&self, id: String) -> Result<String, CommandError>;
+    /// What's stored of a tool call, for its row when opened; `None`: nothing.
+    async fn tool_payload(
+        &self,
+        run: String,
+        call: String,
+    ) -> Result<Option<theodore_contract::ToolPayload>, CommandError>;
     async fn cancel_run(&self, run: String) -> Result<(), CommandError>;
     async fn submit_review(&self, req: SubmitReviewRequest) -> Result<(), CommandError>;
     async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError>;
@@ -113,6 +119,10 @@ pub trait CoreApi: Send + Sync {
     async fn find_symbol(&self, req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError>;
     /// Raw bytes of a changed file at `base`/`head`, base64'd (plan "image diff").
     async fn get_blob(&self, req: GetBlobRequest) -> Result<BlobResponse, CommandError>;
+    async fn file_preview(
+        &self,
+        req: FilePreviewRequest,
+    ) -> Result<FilePreviewAnswer, CommandError>;
     /// Locally-detected conflicting paths (plan "conflicts"); `Unsupported`
     /// on a `git` older than 2.38 — the UI hides the list on that code.
     async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError>;
@@ -254,6 +264,13 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<String, CommandError> {
         Err(not_ready())
     }
+    /// Your thumbs on an agent's reply.
+    async fn set_message_vote(
+        &self,
+        _req: theodore_contract::SetMessageVoteRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
     /// "Send now": into the running turn, or queued like `space_send`.
     async fn space_send_now(
         &self,
@@ -345,6 +362,17 @@ pub trait CoreApi: Send + Sync {
         &self,
         _req: theodore_contract::SetSpacePinnedRequest,
     ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// What a space's next turn runs with, for that space only.
+    async fn set_space_settings(
+        &self,
+        _req: theodore_contract::SetSpaceSettingsRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// The skills a new space of this project would see (New space's `/`).
+    async fn project_skills(&self, _project: String) -> Result<Vec<SkillInfo>, CommandError> {
         Err(not_ready())
     }
     /// "Send to agent": review threads / drafts / findings as the next turn.
@@ -643,6 +671,13 @@ impl CoreApi for NotReadyCoreApi {
     async fn attachment_data(&self, _id: String) -> Result<String, CommandError> {
         Err(not_ready())
     }
+    async fn tool_payload(
+        &self,
+        _run: String,
+        _call: String,
+    ) -> Result<Option<theodore_contract::ToolPayload>, CommandError> {
+        Err(not_ready())
+    }
     async fn cancel_run(&self, _run: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
@@ -779,6 +814,12 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn get_blob(&self, _req: GetBlobRequest) -> Result<BlobResponse, CommandError> {
+        Err(not_ready())
+    }
+    async fn file_preview(
+        &self,
+        _req: FilePreviewRequest,
+    ) -> Result<FilePreviewAnswer, CommandError> {
         Err(not_ready())
     }
     async fn conflicts(&self, _pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {

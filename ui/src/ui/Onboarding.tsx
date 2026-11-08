@@ -503,6 +503,9 @@ export const Onboarding = observer(function Onboarding() {
                   .setTelemetry({
                     usage: telemetry.usage_available && share.usage,
                     errors: telemetry.errors_available && share.errors,
+                    // Chosen reading the current words.
+                    usage_consent: true,
+                    errors_consent: true,
                   })
                   .then(() => setStep(step + 1))
                   .catch(() => {
@@ -539,7 +542,7 @@ export function TelemetryStep({
       <Typography.Heading level={4}>Help improve Theodore</Typography.Heading>
       <Typography.Paragraph size="sm" color="muted">
         Choose what Theodore may send to help fix bugs and improve features.
-        Nothing is sent until you press Next. {TELEMETRY_CLAIM}
+        Nothing is sent until you choose. {TELEMETRY_CLAIM}
       </Typography.Paragraph>
       <div className="flex flex-col gap-3">
         {SHARE_ROWS.map(({ kind, label, hint }) => {

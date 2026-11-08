@@ -184,6 +184,15 @@ export type BootstrapScope =
 /**  Models of one open PR (lazy load). */
 { scope: "pr"; pr: PrId };
 
+/**
+ *  A stored piece of a tool call's text; `original_bytes` is set when it was
+ *  cut, and says how large it was.
+ */
+export type CappedText = {
+	text: string,
+	original_bytes?: number | null,
+};
+
 export type ChatMessage = {
 	id: string,
 	pr: PrId,
@@ -236,6 +245,24 @@ export type ChatMessage = {
 	 *  `run_id` (a chat report's logs). None on yours and older rows.
 	 */
 	run?: string | null,
+	/**
+	 *  Your thumbs on an agent's reply; none until you vote, or after you
+	 *  take it back.
+	 */
+	vote?: MessageVote | null,
+	/**
+	 *  The effort the reply's run asked for, the setting's default applied;
+	 *  none: the CLI's default, on rows with `effort_resolved`.
+	 */
+	effort?: string | null,
+	/**
+	 *  `effort` was recorded after the setting's default was applied, so
+	 *  none means the CLI's default rather than "not recorded". Apart from
+	 *  `model_resolved`: replies with that flag predate this field.
+	 */
+	effort_resolved?: boolean,
+	/**  The mode of the space turn that wrote this reply. */
+	mode?: SpaceMode | null,
 };
 
 export type Check = {
@@ -606,6 +633,10 @@ export type CreateSpaceRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	start_from?: SpaceStart | null,
+	/**  Defaults to the `agents.<id>.effort` setting. */
+	effort?: string | null,
+	/**  Defaults to Edit. */
+	mode?: SpaceMode | null,
 };
 
 export type DelegateRequest = {
@@ -705,10 +736,7 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
 { type: "run_step"; run: string; step: TurnStep } |
 /**  The tool call `id` of `run` ended, or (`ok` none) learned its summary. */
 { type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null;
-/**
- *  The call was a subagent launched in the background: its result
- *  only says it started.
- */
+/**  The call runs in the background: its result only says it started. */
 background?: boolean } |
 /**  The next `AgentDelta` of `run` starts a new text row. */
 { type: "run_text_break"; run: string } |
@@ -803,6 +831,35 @@ export type FileFlag = { kind: "binary"; old_size: number | null; new_size: numb
 { kind: "generated"; reason: string } |
 /**  Over the size limit; hunks omitted. */
 { kind: "oversize"; lines: number };
+
+/**
+ *  What hovering a file shows. Every list in it is capped; `more_lines` says
+ *  how much of what was read didn't fit.
+ */
+export type FilePreview =
+/**  It changed: its diff, at most `PREVIEW_MAX_LINES` lines. */
+{ kind: "diff"; file: FileDiff; more_lines: number } |
+/**
+ *  It only was read, or the diff is too big to show: its first lines.
+ *  `cut`: the file is longer than what was read, `more_lines` counts only
+ *  what was.
+ */
+{ kind: "text"; text: string; bytes: number; more_lines: number; cut: boolean } | { kind: "image"; mime: string; base64: string; bytes: number } | { kind: "unavailable"; reason: PreviewGap; bytes: number | null };
+
+export type FilePreviewAnswer = {
+	preview: FilePreview,
+	/**
+	 *  The file as of its turn or the PR's head, which doesn't change. `false`:
+	 *  the worktree as it is now, which a later hover may see differently.
+	 */
+	pinned: boolean,
+};
+
+export type FilePreviewRequest = {
+	source: PreviewSource,
+	/**  Relative to the repo's root. */
+	path: string,
+};
 
 export type FileRequest = {
 	pr: PrId,
@@ -1175,6 +1232,9 @@ export type MergeSpaceResult = {
 
 export type MergeState = "clean" | "blocked" | "behind" | "dirty" | "unstable" | "unknown";
 
+/**  A thumbs up or down on an agent's reply. */
+export type MessageVote = "up" | "down";
+
 /**
  *  Mirroring into a local folder project ("Try in my folder" — some
  *  projects can't run from a separate worktree: fixed ports, one local
@@ -1296,6 +1356,19 @@ export type PrSummary = {
 	stack?: StackInfo | null,
 };
 
+/**  Why a file shows no preview. */
+export type PreviewGap = "missing" | "binary" | "too_large";
+
+/**  Where a file chip in a chat looks its file up (`file_preview`). */
+export type PreviewSource =
+/**
+ *  A space's chat. `reply`: the agent's reply, whose turn it is; none: the
+ *  turn still running.
+ */
+{ kind: "space"; space: string; reply: string | null } |
+/**  The review's AI panel: the PR's own diff. */
+{ kind: "pr"; pr: PrId };
+
 /**
  *  A problem report built on disk for the user to review: nothing is
  *  uploaded.
@@ -1391,6 +1464,7 @@ export type QueuedSend = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+	effort?: string | null,
 	/**
 	 *  Waits for your "Send": Stop was pressed on the turn before it (even
 	 *  as that turn finished on its own), that turn failed, its own turn
@@ -1679,6 +1753,22 @@ export type SaveSkillRequest = {
 	body: string,
 };
 
+/**  What `stdout` holds of output the CLI saved to a file. */
+export type SavedKept =
+/**  All of it: the file fit the bound. */
+"whole" |
+/**  The end of the file, as much as the bound allows. */
+"end" |
+/**  Only what the stream carried: the file couldn't be read. */
+"preview";
+
+/**  A command's output that outgrew the CLI's stream. */
+export type SavedOutput = {
+	/**  Its whole size. */
+	bytes: number,
+	kept: SavedKept,
+};
+
 /**
  *  One item a "Send to agent" sent, and the turn it went as — `Space::turns`
  *  once that turn finishes (`space_send_feedback`, docs/spaces.md §3).
@@ -1696,6 +1786,12 @@ export type SetLinearTokenRequest = {
 	token: string | null,
 };
 
+/**  Sets the vote on a reply; `vote: None` takes it back. */
+export type SetMessageVoteRequest = {
+	message: string,
+	vote: MessageVote | null,
+};
+
 /**
  *  "Pin"/"Unpin" on a space (docs/spaces.md §3): sidebar context menu and
  *  ⌘K.
@@ -1703,6 +1799,20 @@ export type SetLinearTokenRequest = {
 export type SetSpacePinnedRequest = {
 	space: string,
 	pinned: boolean,
+};
+
+/**
+ *  Changes what a space's next turn runs with, right away and for that
+ *  space only (docs/spaces.md §3 "New space"). `None` leaves a field as it
+ *  is; another `agent` starts from that agent's settings unless it comes
+ *  with its own `model` / `effort`.
+ */
+export type SetSpaceSettingsRequest = {
+	space: string,
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
+	mode?: SpaceMode | null,
 };
 
 export type SetTokenRequest = {
@@ -1955,6 +2065,18 @@ export type Space = {
 	 *  (a new space, or a checkpoint from before snapshots).
 	 */
 	worktree_head?: Sha | null,
+	/**
+	 *  The effort this space's turns run at (`agents.<id>.effort`'s values).
+	 *  `None` follows that setting: spaces from before efforts were per
+	 *  space, until changed here.
+	 */
+	effort?: string | null,
+	/**
+	 *  Created with nothing to start from: no goal, no first turn, called
+	 *  "New space" (docs/spaces.md §3 "New space"). The first message with
+	 *  words in it ends this: it becomes the goal and names the space.
+	 */
+	blank?: boolean,
 };
 
 export type SpaceAnswerItem = {
@@ -2194,6 +2316,8 @@ export type SpaceSendRequest = {
 	mode?: SpaceMode | null,
 	/**  `save_attachment` ids sent with the message. */
 	attachments?: string[] | null,
+	/**  From this turn on; `None` keeps the space's. */
+	effort?: string | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */
@@ -2351,6 +2475,8 @@ export type SpaceTurn = {
 	 *  `reply` is its own `message`, and the next turn's prompt says so.
 	 */
 	reverted?: string[],
+	/**  Ended by Stop: what it left isn't an outcome to announce. */
+	stopped?: boolean,
 };
 
 /**
@@ -2472,6 +2598,14 @@ export type TaskStatus = "todo" | "progress" |
 export type TelemetryChoice = {
 	usage: boolean,
 	errors: boolean,
+	/**
+	 *  This choice was made reading the current terms (the account id is
+	 *  attached), so a switch left on counts as agreeing to them. Turning a
+	 *  switch on always does; leaving one on otherwise doesn't.
+	 */
+	usage_consent?: boolean,
+	/**  The same for `errors`. */
+	errors_consent?: boolean,
 };
 
 /**
@@ -2492,10 +2626,17 @@ export type TelemetryStatus = {
 	usage_available: boolean,
 	/**  An error-report sink (warnings, errors, traces) is configured. */
 	errors_available: boolean,
-	/**  "Share anonymous usage data". */
+	/**  "Share usage data". */
 	usage: boolean | null,
 	/**  "Send error reports". */
 	errors: boolean | null,
+	/**
+	 *  "Share usage data" is on under the old terms ("not linked to your
+	 *  account"): it stays anonymous until the user answers the prompt.
+	 */
+	usage_needs_consent: boolean,
+	/**  The same for "Send error reports". */
+	errors_needs_consent: boolean,
 	/**  Every product event and its fields. */
 	events: TelemetryEventInfo[],
 	/**  What is never sent, one line each. */
@@ -2534,6 +2675,58 @@ export type ToastLevel = "info" | "warn" | "error";
 export type TokenSource = "keychain" | "gh" | "env" | "none" |
 /**  The simulated sandbox host (docs/sandbox.md): no real token at all. */
 "sandbox";
+
+/**  How a call that went to the background ended. */
+export type ToolEnd = {
+	/**  `completed`, `failed` or `stopped`. */
+	status: string,
+	summary?: string | null,
+	/**  Its final output, when the CLI kept it somewhere Theodore can read. */
+	output?: CappedText | null,
+	duration_ms?: number | null,
+};
+
+/**  What a tool call was given, as the agent sent it. */
+export type ToolInput = {
+	value: unknown,
+	original_bytes?: number | null,
+};
+
+/**
+ *  How a tool call's result came back. A call that went to the background has
+ *  its start here and its end in [`ToolEnd`].
+ */
+export type ToolOutcome = {
+	ok: boolean,
+	/**  The result's text, when the stream gave no separate stdout and stderr. */
+	output?: CappedText | null,
+	stdout?: CappedText | null,
+	stderr?: CappedText | null,
+	exit_code?: number | null,
+	duration_ms?: number | null,
+	interrupted?: boolean,
+	background?: boolean,
+	/**
+	 *  Output too long for the CLI's stream, which kept the whole of it in a
+	 *  file: how much of it `stdout` holds.
+	 */
+	saved?: SavedOutput | null,
+	/**  The concrete model a subagent ran on. */
+	resolved_model?: string | null,
+};
+
+/**
+ *  All that's stored of one tool call, fetched when its row opens. Not part
+ *  of `TurnStep`: bootstrap and every sync frame stay light. Any part may be
+ *  missing; a call from before these were recorded has none.
+ */
+export type ToolPayload = {
+	input?: ToolInput | null,
+	result?: ToolOutcome | null,
+	/**  A subagent's whole report. */
+	report?: CappedText | null,
+	ended?: ToolEnd | null,
+};
 
 /**  One followed report. */
 export type TrackedReport = {
@@ -2625,8 +2818,9 @@ summary?: string | null;
 /**  Lines an edit adds and removes, from its input. */
 added?: number | null; removed?: number | null;
 /**
- *  A subagent launched in the background: its result only says it
- *  started, its report (`summary`) comes later, or never.
+ *  It runs in the background (a command, a monitor, a subagent): its
+ *  result only says it started, its end (`summary`) comes later, or
+ *  never.
  */
 background?: boolean };
 
@@ -2639,7 +2833,13 @@ export type UiEvent =
  *  An onboarding step was shown: `account`, `telemetry`, `github`,
  *  `agents`, `projects`, `done`.
  */
-{ event: "onboarding_step"; step: string };
+{ event: "onboarding_step"; step: string } |
+/**  Revise on a plan card. The revision itself is an ordinary send. */
+{ event: "plan_revised" } |
+/**  The report window opened: `app`, `chat`, `agent`. */
+{ event: "report_opened"; from: string } |
+/**  Uses counted since the last flush, never one event per use. */
+{ event: "ui_counts"; tool_rows: number; file_hovers: number };
 
 export type UnmirrorSpaceRequest = {
 	space: string,

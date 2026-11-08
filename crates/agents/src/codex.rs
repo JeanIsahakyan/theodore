@@ -27,7 +27,7 @@
 
 use serde_json::Value;
 use theodore_domain::Usage;
-use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
+use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest, ToolResultDetail};
 
 use crate::config::AgentBinaryConfig;
 use crate::process::LineParser;
@@ -272,11 +272,22 @@ fn item_completed(item: Option<&Value>, last_agent_message: &mut String) -> Vec<
                 .get("aggregated_output")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            vec![AgentEvent::ToolResult {
-                id,
-                ok: exit_code == Some(0),
-                output: output.to_string(),
-            }]
+            // One combined output, so no stdout and stderr to tell apart.
+            let detail = ToolResultDetail {
+                exit_code: exit_code.and_then(|c| i32::try_from(c).ok()),
+                ..ToolResultDetail::default()
+            };
+            vec![
+                AgentEvent::ToolDetail {
+                    id: id.clone(),
+                    detail,
+                },
+                AgentEvent::ToolResult {
+                    id,
+                    ok: exit_code == Some(0),
+                    output: output.to_string(),
+                },
+            ]
         }
         Some("mcp_tool_call") => {
             let ok = item.get("status").and_then(Value::as_str) == Some("completed")
@@ -406,11 +417,20 @@ mod tests {
         let completed = r#"{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"ls","aggregated_output":"a.rs\n","exit_code":0,"status":"completed"}}"#;
         assert_eq!(
             line(completed),
-            vec![AgentEvent::ToolResult {
-                id: "c1".into(),
-                ok: true,
-                output: "a.rs\n".into()
-            }]
+            vec![
+                AgentEvent::ToolDetail {
+                    id: "c1".into(),
+                    detail: ToolResultDetail {
+                        exit_code: Some(0),
+                        ..ToolResultDetail::default()
+                    },
+                },
+                AgentEvent::ToolResult {
+                    id: "c1".into(),
+                    ok: true,
+                    output: "a.rs\n".into()
+                },
+            ]
         );
     }
 

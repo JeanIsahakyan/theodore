@@ -90,6 +90,8 @@ fn request(project: &Project, goal: &str) -> CreateSpaceRequest {
         agent: None,
         model: None,
         start_from: None,
+        effort: None,
+        mode: None,
     }
 }
 
@@ -112,6 +114,91 @@ fn done(text: &str, usd: f64) -> Vec<AgentEvent> {
 async fn idle(f: &Fixtures, id: &str) -> Space {
     wait_until(|| space(f, id).status != SpaceStatus::Running).await;
     space(f, id)
+}
+
+fn send(id: &str, agent: Option<AgentId>, model: Option<&str>) -> SpaceSendRequest {
+    SpaceSendRequest {
+        space: id.into(),
+        text: "next".into(),
+        agent,
+        model: model.map(str::to_string),
+        mode: None,
+        attachments: None,
+        effort: None,
+    }
+}
+
+/// `agents.<id>.model` at the moment of creating is what the space keeps: a
+/// later change to it, from any box, doesn't reach it (docs/spaces.md §7).
+#[tokio::test]
+async fn a_space_keeps_the_model_it_started_on() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("haiku"));
+    f.agents.push_script(done("one", 0.0));
+    let created = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+    assert_eq!(s.model.as_deref(), Some("haiku"));
+    assert_eq!(
+        f.agents.last_request().unwrap().model.as_deref(),
+        Some("haiku")
+    );
+
+    put_setting(&f, "agents.claude.model", json!("opus"));
+    f.agents.push_script(done("two", 0.0));
+    core.space_send(send(&s.id, None, None)).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.model.as_deref(), Some("haiku"), "a send names no model");
+    assert_eq!(
+        f.agents.last_request().unwrap().model.as_deref(),
+        Some("haiku")
+    );
+}
+
+/// A pick is a pick: the send that names a model changes the space's.
+#[tokio::test]
+async fn a_send_naming_a_model_changes_the_spaces_model() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("haiku"));
+    f.agents.push_script(done("one", 0.0));
+    let created = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+
+    f.agents.push_script(done("two", 0.0));
+    core.space_send(send(&s.id, None, Some("opus")))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.model.as_deref(), Some("opus"));
+}
+
+/// A send to another agent without a model doesn't hand it the first agent's.
+#[tokio::test]
+async fn a_spaces_model_doesnt_go_to_another_agent() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("haiku"));
+    f.agents.push_script(done("one", 0.0));
+    let created = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+
+    f.agents.push_script(done("two", 0.0));
+    core.space_send(send(&s.id, Some(AgentId::Codex), None))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.agent, AgentId::Codex);
+    assert_eq!(s.model, None, "no model named, none of Claude's kept");
 }
 
 #[tokio::test]
@@ -230,6 +317,7 @@ async fn a_slash_skill_runs_as_the_turns_instructions_and_is_stored_as_typed() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     };
     f.agents.push_script(done("Polished.", 0.0));
     core.space_send(send("/polish the export  ")).await.unwrap();
@@ -323,6 +411,7 @@ async fn later_turns_replay_the_transcript_and_can_switch_agent() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -365,6 +454,7 @@ async fn attachments_ride_on_the_message_and_reach_the_agent() {
             model: None,
             mode: None,
             attachments: Some(vec![att.id.clone()]),
+            effort: None,
         })
         .await
         .unwrap();
@@ -403,6 +493,7 @@ async fn attachments_ride_on_the_message_and_reach_the_agent() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -436,6 +527,7 @@ async fn an_unknown_attachment_fails_the_send_before_anything_is_stored() {
             model: None,
             mode: None,
             attachments: Some(vec!["0b6e8a52-3c1f-4d7e-9a1b-2f3c4d5e6f70".into()]),
+            effort: None,
         })
         .await
         .unwrap_err();
@@ -464,6 +556,7 @@ async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -537,6 +630,8 @@ async fn a_note_goes_on_top_of_the_issue_it_starts_from() {
     let s = core
         .create_space(CreateSpaceRequest {
             start_from: Some(theodore_contract::SpaceStart::Issue("7".into())),
+            effort: None,
+            mode: None,
             ..request(&project, "use backoff")
         })
         .await
@@ -570,6 +665,8 @@ async fn a_pr_start_compares_against_what_the_pr_targets() {
     let s = core
         .create_space(CreateSpaceRequest {
             start_from: Some(theodore_contract::SpaceStart::Pr(9)),
+            effort: None,
+            mode: None,
             ..request(&project, "note")
         })
         .await
@@ -602,6 +699,7 @@ async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -668,6 +766,7 @@ async fn a_leftover_space_budget_no_longer_stops_turns() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .expect("over an old budget, the turn still starts");
@@ -749,6 +848,7 @@ async fn a_file_new_since_the_grouping_is_in_a_catch_all_group() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -812,6 +912,7 @@ async fn archive_removes_the_worktree_and_review_but_keeps_the_transcript() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .is_err()
@@ -1048,6 +1149,483 @@ async fn a_shipped_space_is_not_renamed_even_if_the_answer_lands_late() {
     );
 }
 
+// ── blank spaces ────────────────────────────────────────────────────────────
+
+/// The space stored after `core.space_send` of `text`, no attachments.
+async fn say(core: &Core, f: &Fixtures, id: &str, text: &str) -> Space {
+    core.space_send(SpaceSendRequest {
+        space: id.into(),
+        text: text.into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+        effort: None,
+    })
+    .await
+    .unwrap();
+    idle(f, id).await
+}
+
+fn identity_calls(f: &Fixtures) -> usize {
+    f.agents
+        .utility_requests()
+        .iter()
+        .filter(|r| is_identity_call(r))
+        .count()
+}
+
+#[tokio::test]
+async fn an_empty_form_creates_a_blank_space_with_no_goal_and_no_turn() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = core.create_space(request(&project, "")).await.unwrap();
+
+    assert!(s.blank);
+    assert_eq!(s.goal, "");
+    assert_eq!(s.title.as_deref(), Some("New space"));
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert!(s.name.starts_with("new-space-"), "{}", s.name);
+    assert_eq!(s.branch, format!("space/{}", s.name));
+    assert!(f.agents.requests().is_empty(), "no first turn");
+    assert!(f.agents.utility_requests().is_empty(), "nothing to name");
+}
+
+#[tokio::test]
+async fn blank_spaces_get_unique_slugs_and_all_read_new_space() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let a = core.create_space(request(&project, "")).await.unwrap();
+    let b = core.create_space(request(&project, "")).await.unwrap();
+
+    assert_ne!(a.name, b.name);
+    assert_ne!(a.branch, b.branch);
+    assert_eq!(a.title, b.title);
+    assert_eq!(a.title.as_deref(), Some("New space"));
+}
+
+#[tokio::test]
+async fn an_adopted_start_or_a_typed_goal_is_not_blank() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    let typed = core
+        .create_space(request(&project, "Fix the login"))
+        .await
+        .unwrap();
+    assert!(!typed.blank);
+    assert_eq!(typed.title, None);
+}
+
+#[tokio::test]
+async fn the_first_message_becomes_the_goal_and_naming_runs_once() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("retry-export-backoff", "Retry export on 429s"),
+    );
+    f.agents.push_script(done("one", 0.0));
+    f.agents.push_script(done("two", 0.0));
+    let s = core.create_space(request(&project, "")).await.unwrap();
+
+    let after = say(&core, &f, &s.id, "Retry the export job on 429s").await;
+    assert!(!after.blank);
+    assert_eq!(after.goal, "Retry the export job on 429s");
+    wait_until(|| space(&f, &s.id).title.as_deref() == Some("Retry export on 429s")).await;
+    let named = space(&f, &s.id);
+    assert_eq!(named.name, "retry-export-backoff");
+    assert_eq!(named.branch, "space/retry-export-backoff");
+    assert_eq!(named.worktree, s.worktree, "the worktree stays where it is");
+
+    say(&core, &f, &s.id, "and log it").await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(identity_calls(&f), 1, "only the first message names it");
+    assert_eq!(space(&f, &s.id).goal, "Retry the export job on 429s");
+}
+
+#[tokio::test]
+async fn a_slash_command_can_start_a_blank_space() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    let s = core.create_space(request(&project, "")).await.unwrap();
+
+    let after = say(&core, &f, &s.id, "/changelog").await;
+    assert!(!after.blank);
+    assert_eq!(after.goal, "/changelog");
+    assert_eq!(f.agents.requests().len(), 1, "the turn ran");
+    wait_until(|| identity_calls(&f) == 1).await;
+}
+
+#[tokio::test]
+async fn files_alone_start_a_blank_space_but_the_first_words_name_it() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("one", 0.0));
+    f.agents.push_script(done("two", 0.0));
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    let file = core
+        .save_attachment(theodore_contract::SaveAttachmentRequest {
+            name: "shot.png".into(),
+            mime: "image/png".into(),
+            data: "aGk=".into(),
+        })
+        .await
+        .unwrap();
+
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: String::new(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: Some(vec![file.id]),
+        effort: None,
+    })
+    .await
+    .unwrap();
+    let started_with_files = idle(&f, &s.id).await;
+    assert_eq!(f.agents.requests().len(), 1, "the turn ran");
+    assert_eq!(started_with_files.title.as_deref(), Some("shot.png"));
+    assert_eq!(started_with_files.goal, "");
+    assert!(started_with_files.blank, "still waits for its first words");
+    assert_eq!(identity_calls(&f), 0, "nothing to name from yet");
+
+    let after = say(&core, &f, &s.id, "Fix what the screenshot shows").await;
+    assert_eq!(after.goal, "Fix what the screenshot shows");
+    assert!(!after.blank);
+    wait_until(|| identity_calls(&f) == 1).await;
+}
+
+#[tokio::test]
+async fn a_blank_space_is_renamed_only_while_nothing_is_pushed() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    f.git.push_checkpoint(Sha::new("kept1"));
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    let s = say(&core, &f, &s.id, "Tidy the exports").await;
+    wait_until(|| identity_calls(&f) == 1).await;
+
+    // The name was taken by a ship before the answer got here.
+    core.ship_space(theodore_contract::ShipSpaceRequest {
+        space: s.id.clone(),
+        action: theodore_contract::ShipAction::KeepBranch,
+        title: None,
+    })
+    .await
+    .unwrap();
+    let pushed = space(&f, &s.id);
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("tidy-the-exports", "Tidy the exports"),
+    );
+    crate::usecases::space_naming::apply(
+        &core,
+        s.id.clone(),
+        AgentId::Claude,
+        "Tidy the exports".into(),
+        std::path::PathBuf::from(&s.worktree),
+        false,
+        false,
+    )
+    .await;
+    let after = space(&f, &s.id);
+    assert_eq!(after.branch, pushed.branch, "pushed: the branch stays");
+    assert_eq!(after.name, pushed.name);
+    assert_eq!(after.title.as_deref(), Some("Tidy the exports"));
+}
+
+#[tokio::test]
+async fn a_pr_keeps_its_branch_when_the_name_arrives() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    let s = say(&core, &f, &s.id, "Tidy the exports").await;
+    wait_until(|| identity_calls(&f) == 1).await;
+    let branch = space(&f, &s.id).branch;
+    f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: s.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(json!({ "pr": "github:o/r#7" })),
+        }])
+        .unwrap();
+
+    f.agents.push_tagged(
+        is_identity_call,
+        identity_answer("tidy-the-exports", "Tidy the exports"),
+    );
+    crate::usecases::space_naming::apply(
+        &core,
+        s.id.clone(),
+        AgentId::Claude,
+        "Tidy the exports".into(),
+        std::path::PathBuf::from(&s.worktree),
+        false,
+        false,
+    )
+    .await;
+    assert_eq!(space(&f, &s.id).branch, branch);
+}
+
+#[tokio::test]
+async fn set_up_with_agent_is_not_a_blank_spaces_first_message() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    let s = core.create_space(request(&project, "")).await.unwrap();
+
+    core.space_setup_assist(&s.id).await.unwrap();
+    let after = idle(&f, &s.id).await;
+    assert!(after.blank);
+    assert_eq!(after.goal, "");
+    assert_eq!(after.title.as_deref(), Some("New space"));
+    assert_eq!(identity_calls(&f), 0);
+}
+
+// ── per-space settings ──────────────────────────────────────────────────────
+
+fn create_with(
+    project: &Project,
+    agent: Option<AgentId>,
+    model: Option<&str>,
+    effort: Option<&str>,
+    mode: Option<theodore_contract::SpaceMode>,
+) -> CreateSpaceRequest {
+    CreateSpaceRequest {
+        agent,
+        model: model.map(str::to_string),
+        effort: effort.map(str::to_string),
+        mode,
+        ..request(project, "Fix it")
+    }
+}
+
+#[tokio::test]
+async fn the_dialogs_picks_stay_in_the_space_they_made() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("sonnet"));
+    put_setting(&f, "agents.claude.effort", json!("medium"));
+    f.agents.push_script(done("ok", 0.0));
+
+    let s = core
+        .create_space(create_with(
+            &project,
+            None,
+            Some("opus"),
+            Some("high"),
+            Some(theodore_contract::SpaceMode::Plan),
+        ))
+        .await
+        .unwrap();
+    let after = idle(&f, &s.id).await;
+
+    assert_eq!(after.model.as_deref(), Some("opus"));
+    assert_eq!(after.effort.as_deref(), Some("high"));
+    let turn = f.agents.last_request().unwrap();
+    assert_eq!(turn.model.as_deref(), Some("opus"));
+    assert_eq!(turn.effort.as_deref(), Some("high"));
+    assert_eq!(turn.mode, AgentMode::Plan);
+    // No setting was written by any of it.
+    let setting = |key: &str| {
+        f.store
+            .get(models::SETTING, &format!("user:{key}"))
+            .unwrap()
+            .map(|r| r.data["value"].clone())
+    };
+    assert_eq!(setting("agents.claude.model"), Some(json!("sonnet")));
+    assert_eq!(setting("agents.claude.effort"), Some(json!("medium")));
+}
+
+#[tokio::test]
+async fn an_untouched_dialog_pins_the_settings_like_it_pins_the_model() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.effort", json!("low"));
+    f.agents.push_script(done("ok", 0.0));
+
+    let s = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    assert_eq!(s.effort.as_deref(), Some("low"));
+    let _ = idle(&f, &s.id).await;
+    put_setting(&f, "agents.claude.effort", json!("max"));
+    assert_eq!(space(&f, &s.id).effort.as_deref(), Some("low"));
+    assert_eq!(
+        f.agents.last_request().unwrap().effort.as_deref(),
+        Some("low")
+    );
+}
+
+#[tokio::test]
+async fn a_spaces_change_stays_in_that_space() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.effort", json!("medium"));
+    f.agents.push_script(done("a", 0.0));
+    f.agents.push_script(done("b", 0.0));
+    let a = core.create_space(request(&project, "One")).await.unwrap();
+    let b = core.create_space(request(&project, "Two")).await.unwrap();
+    idle(&f, &a.id).await;
+    idle(&f, &b.id).await;
+
+    core.set_space_settings(theodore_contract::SetSpaceSettingsRequest {
+        space: a.id.clone(),
+        agent: None,
+        model: Some("haiku".into()),
+        effort: Some("high".into()),
+        mode: Some(theodore_contract::SpaceMode::Ask),
+    })
+    .await
+    .unwrap();
+
+    let (a, b) = (space(&f, &a.id), space(&f, &b.id));
+    assert_eq!(a.effort.as_deref(), Some("high"));
+    assert_eq!(a.model.as_deref(), Some("haiku"));
+    assert_eq!(a.mode, theodore_contract::SpaceMode::Ask);
+    assert_eq!(b.effort.as_deref(), Some("medium"), "another space");
+    assert_eq!(b.mode, theodore_contract::SpaceMode::Edit);
+    let row = f.store.get(models::SETTING, "user:agents.claude.effort");
+    assert_eq!(row.unwrap().unwrap().data["value"], json!("medium"));
+
+    f.agents.push_script(done("next", 0.0));
+    say(&core, &f, &a.id, "next").await;
+    assert_eq!(
+        f.agents.last_request().unwrap().effort.as_deref(),
+        Some("high"),
+        "the next turn runs at the space's effort"
+    );
+}
+
+#[tokio::test]
+async fn another_agent_starts_from_its_own_settings() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("ok", 0.0));
+    let s = core
+        .create_space(create_with(
+            &project,
+            None,
+            Some("opus"),
+            Some("high"),
+            None,
+        ))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+
+    core.set_space_settings(theodore_contract::SetSpaceSettingsRequest {
+        space: s.id.clone(),
+        agent: Some(AgentId::Codex),
+        model: None,
+        effort: None,
+        mode: None,
+    })
+    .await
+    .unwrap();
+    let after = space(&f, &s.id);
+    assert_eq!(after.agent, AgentId::Codex);
+    assert_eq!(after.model, None);
+    assert_eq!(after.effort, None);
+}
+
+#[tokio::test]
+async fn settings_stay_put_during_a_turn() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let s = core.create_space(request(&project, "")).await.unwrap();
+    f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: s.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(json!({ "status": SpaceStatus::Running })),
+        }])
+        .unwrap();
+
+    let err = core
+        .set_space_settings(theodore_contract::SetSpaceSettingsRequest {
+            space: s.id.clone(),
+            agent: None,
+            model: None,
+            effort: Some("low".into()),
+            mode: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_spaces_ultracode_opens_the_prompt_whatever_the_setting() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.effort", json!("medium"));
+    f.agents.push_script(done("ok", 0.0));
+    let s = core
+        .create_space(create_with(&project, None, None, Some("ultracode"), None))
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+    let turn = f.agents.last_request().unwrap();
+    assert_eq!(turn.effort.as_deref(), Some("ultracode"));
+    assert!(turn.prompt.starts_with("ultracode"), "{}", turn.prompt);
+}
+
+#[test]
+fn a_space_from_before_these_fields_still_loads() {
+    let mut row = serde_json::to_value(Space {
+        effort: Some("high".into()),
+        blank: true,
+        ..sample_space()
+    })
+    .unwrap();
+    let map = row.as_object_mut().unwrap();
+    map.remove("effort");
+    map.remove("blank");
+
+    let back: Space = serde_json::from_value(row).unwrap();
+    assert_eq!(back.effort, None, "follows the setting until changed");
+    assert!(!back.blank);
+}
+
+fn sample_space() -> Space {
+    serde_json::from_value(json!({
+        "id": "s1", "project": "p1", "name": "fix", "goal": "fix", "branch": "b",
+        "base": "main", "base_sha": "base000", "head_sha": "base000", "worktree": "/w",
+        "status": "idle", "agent": "claude", "mode": "edit", "turns": 0,
+        "turn_log": [], "ports": [], "created_at": 0, "updated_at": 0,
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_new_space_lists_the_skills_its_worktree_will_have() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let home = f.claude_home.path().join("mine");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("SKILL.md"), "---\nname: mine\n---\n").unwrap();
+    let base = Sha::new("base000");
+    f.git.put_file(
+        &base,
+        ".claude/skills/repo-skill/SKILL.md",
+        b"---\nname: repo skill\n---\n",
+    );
+
+    let skills = core.project_skills(&project.id).await.unwrap();
+    let ids: Vec<&str> = skills.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["mine", "repo-skill"]);
+    assert_eq!(skills[1].title, "repo skill");
+    assert!(skills[1].source.ends_with(" · .claude/skills"));
+}
+
 // ── real git ────────────────────────────────────────────────────────────────
 
 mod real_git {
@@ -1080,6 +1658,73 @@ mod real_git {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// New space's `/` on real git: `project_skills` reads the repo's skills
+    /// from the cache at the default branch, a blank space's worktree is
+    /// there, and its row carries no branch of its own to rename.
+    #[tokio::test]
+    async fn a_new_space_sees_the_repos_skills_and_a_blank_one_has_a_detached_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("app");
+        let skill = folder.join(".claude/skills/docs");
+        std::fs::create_dir_all(&skill).unwrap();
+        run(&folder, &["init", "-q", "-b", "main"]);
+        run(&folder, &["config", "user.email", "a@b.com"]);
+        run(&folder, &["config", "user.name", "test"]);
+        std::fs::write(skill.join("SKILL.md"), "---\nname: docs\n---\nUpdate.\n").unwrap();
+        std::fs::write(folder.join("readme.md"), "hello\n").unwrap();
+        run(&folder, &["add", "-A"]);
+        run(
+            &folder,
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        );
+
+        let root = tmp.path().join("theodore");
+        std::fs::create_dir_all(&root).unwrap();
+        let f = fixtures();
+        let deps = crate::Deps {
+            git: Arc::new(theodore_git::GitCli::new(root.clone(), Arc::new(NoAuth))),
+            ..f.deps()
+        };
+        let (core, _recv) = Core::start(deps);
+        let project = core
+            .add_project(AddProjectRequest {
+                repo: None,
+                path: Some(folder.display().to_string()),
+            })
+            .await
+            .unwrap();
+        wait_until(|| {
+            f.store
+                .get(models::PROJECT, &project.id)
+                .unwrap()
+                .is_some_and(|r| r.data["status"] == json!("ready"))
+        })
+        .await;
+
+        let skills = core.project_skills(&project.id).await.unwrap();
+        assert_eq!(
+            skills.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["docs"]
+        );
+
+        let s = core.create_space(request(&project, "")).await.unwrap();
+        assert!(s.blank);
+        assert_eq!(
+            run(
+                Path::new(&s.worktree),
+                &["rev-parse", "--abbrev-ref", "HEAD"]
+            ),
+            "HEAD"
+        );
     }
 
     /// A local folder project on real git: the space's worktree and
@@ -1150,6 +1795,7 @@ mod real_git {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();

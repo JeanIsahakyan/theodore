@@ -8,6 +8,7 @@
 //! nothing here blocks a caller.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _, Severity};
@@ -24,6 +25,7 @@ use serde_json::{Map, Value};
 use tracing::Level;
 
 use crate::AppMeta;
+use crate::identity::Identity;
 use crate::record::Record;
 use crate::redact::Redactor;
 use crate::sink::Sink;
@@ -72,7 +74,12 @@ pub struct OtlpSink {
     traces: SdkTracerProvider,
     tracer: SdkTracer,
     redactor: Redactor,
+    identity: Arc<Identity>,
 }
+
+/// The signed-in account's id on a log or span; the name New Relic reads
+/// as the affected user.
+const USER_ATTRIBUTE: &str = "enduser.id";
 
 /// An exported span, kept in the `tracing` span's extensions until it
 /// closes.
@@ -90,13 +97,19 @@ fn resource(meta: &AppMeta) -> Resource {
             KeyValue::new("deployment.environment.name", meta.build_env.clone()),
             KeyValue::new("theodore.update_channel", meta.channel.clone()),
             KeyValue::new("os.type", meta.os.clone()),
+            KeyValue::new("host.arch", meta.arch.clone()),
             KeyValue::new("vcs.ref.head.revision", meta.commit.clone()),
         ])
         .build()
 }
 
 impl OtlpSink {
-    pub fn start(cfg: &OtlpConfig, meta: &AppMeta, redactor: Redactor) -> Result<Self, String> {
+    pub fn start(
+        cfg: &OtlpConfig,
+        meta: &AppMeta,
+        redactor: Redactor,
+        identity: Arc<Identity>,
+    ) -> Result<Self, String> {
         let headers: HashMap<String, String> = cfg.headers.iter().cloned().collect();
         let log_exporter = opentelemetry_otlp::LogExporter::builder()
             .with_http()
@@ -146,6 +159,7 @@ impl OtlpSink {
             tracer: traces.tracer("theodore"),
             traces,
             redactor,
+            identity,
         })
     }
 
@@ -156,6 +170,10 @@ impl OtlpSink {
         fields: &Map<String, Value>,
         parent: Option<&SpanContext>,
     ) -> OtelSpan {
+        let mut attributes = self.attributes(fields);
+        if let Some(id) = self.identity.errors_account() {
+            attributes.push(KeyValue::new(USER_ATTRIBUTE, id));
+        }
         let parent_cx = match parent {
             Some(p) => Context::new().with_remote_span_context(p.clone()),
             None => Context::new(),
@@ -165,7 +183,7 @@ impl OtlpSink {
             .span_builder(name)
             .with_kind(SpanKind::Internal)
             .with_start_time(SystemTime::now())
-            .with_attributes(self.attributes(fields));
+            .with_attributes(attributes);
         let span = self.tracer.build_with_context(builder, &parent_cx);
         let cx = span.span_context().clone();
         OtelSpan { span, cx }
@@ -241,6 +259,11 @@ impl Sink for OtlpSink {
         for (k, v) in &r.fields {
             lr.add_attribute(k.clone(), any_value(v));
         }
+        // Past the redaction, which would hash it: this one is meant to be
+        // looked up.
+        if let Some(id) = self.identity.errors_account() {
+            lr.add_attribute(USER_ATTRIBUTE, id);
+        }
         if let Some(t) = r.trace {
             lr.set_trace_context(
                 opentelemetry::trace::TraceId::from_bytes(t.trace_id),
@@ -268,6 +291,7 @@ mod tests {
             version: "1.0.0".into(),
             channel: "stable".into(),
             os: "macos".into(),
+            arch: "aarch64".into(),
             commit: "abc".into(),
             build_env: "staging".into(),
             install_id: "install-1".into(),
@@ -282,6 +306,7 @@ mod tests {
         assert_eq!(get("vcs.ref.head.revision"), Some("abc".into()));
         assert_eq!(get("deployment.environment.name"), Some("staging".into()));
         assert_eq!(get("theodore.update_channel"), Some("stable".into()));
+        assert_eq!(get("host.arch"), Some("aarch64".into()));
     }
 
     #[test]
@@ -324,7 +349,8 @@ mod tests {
             parse_headers("api-key=nr-test"),
         );
         let sink = tokio::task::spawn_blocking(move || {
-            let sink = OtlpSink::start(&cfg, &meta(), Redactor::new(None, "s")).unwrap();
+            let identity = Arc::new(Identity::new("install-1"));
+            let sink = OtlpSink::start(&cfg, &meta(), Redactor::new(None, "s"), identity).unwrap();
             let mut fields = Map::new();
             fields.insert("repo".into(), "acme/app".into());
             let span = sink.start_span("op", &fields, None);

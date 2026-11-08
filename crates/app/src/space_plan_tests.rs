@@ -67,6 +67,8 @@ async fn new_space(core: &Core, project: &Project) -> Space {
         agent: None,
         model: None,
         start_from: None,
+        effort: None,
+        mode: None,
     })
     .await
     .unwrap()
@@ -80,6 +82,7 @@ fn send(space: &Space, text: &str, mode: Option<SpaceMode>) -> SpaceSendRequest 
         model: None,
         mode,
         attachments: None,
+        effort: None,
     }
 }
 

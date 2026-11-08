@@ -4,7 +4,9 @@
  * one this box talks to. "Models" holds every model each CLI offers (older
  * versions one level down), "Effort" the levels the current model takes,
  * and ⌘⇧/ cycles the effort from the box the chip sits in. Model and effort
- * are the agent's settings, shared everywhere. The same chip sits in a
+ * are the agent's settings, shared everywhere, except in a box that has its
+ * own (a space's, New space's: `modelOf`, `onPickModel`, `effortOf`,
+ * `onPickEffort`), which never writes a setting. The same chip sits in a
  * space's box and in the AI panel's.
  */
 import { useEffect, useMemo, useRef } from 'react';
@@ -46,16 +48,19 @@ function rawEffort(store: RootStore, agent: AgentId): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
-/** The concrete model and effort `agent` runs with, given its catalog: the
- *  setting (as typed when the catalog lacks it), else the catalog's first
- *  current model; the effort set when that model takes it, else the
- *  model's own default. */
+/** The concrete model and effort `agent` runs with, given its catalog:
+ *  `boxModel` when this box has one, else the setting (as typed when the
+ *  catalog lacks it), else the catalog's first current model; `boxEffort`,
+ *  else the effort set, when that model takes it, else the model's own
+ *  default. */
 export function running(
   store: RootStore,
   agent: AgentId,
   catalog: AgentModel[] | undefined,
+  boxModel?: string | null,
+  boxEffort?: string | null,
 ): Running {
-  const id = agentModel(store, agent);
+  const id = boxModel ?? agentModel(store, agent);
   const list = catalog ?? [];
   const typed: AgentModel | null = id
     ? {
@@ -76,7 +81,7 @@ export function running(
       : (list.find((m) => !m.older) ?? list[0]));
   const model = listedModel ?? typed ?? null;
   const efforts = takesEffort(agent) ? (model?.efforts ?? []) : [];
-  const set = rawEffort(store, agent);
+  const set = boxEffort ?? rawEffort(store, agent);
   // Picked in a space, kept everywhere (it runs at max outside spaces).
   if (agent === 'claude' && set === ULTRACODE && efforts.length) {
     return { model, listed: !!listedModel, efforts, effort: set };
@@ -126,6 +131,10 @@ export const AgentMenu = observer(function AgentMenu({
   onSelect,
   isDisabled,
   ultracode,
+  modelOf,
+  onPickModel,
+  effortOf,
+  onPickEffort,
 }: {
   /** Offered: installed and enabled. */
   agents: AgentId[];
@@ -135,6 +144,14 @@ export const AgentMenu = observer(function AgentMenu({
   isDisabled?: boolean;
   /** A space's box: Claude also offers Ultracode, past Max. */
   ultracode?: boolean;
+  /** This box's own model for an agent; `null` is that agent's setting. */
+  modelOf?: (agent: AgentId) => string | null;
+  /** A pick goes here instead of into the agent's setting. */
+  onPickModel?: (agent: AgentId, model: string) => void;
+  /** This box's own effort for an agent; `null` is that agent's setting. */
+  effortOf?: (agent: AgentId) => string | null;
+  /** An effort picked or cycled here: instead of the agent's setting. */
+  onPickEffort?: (agent: AgentId, effort: string) => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -142,7 +159,9 @@ export const AgentMenu = observer(function AgentMenu({
   const catalog = useAgentModels(agents);
   const primary = selected ?? agents[0] ?? null;
   const now: Partial<Record<AgentId, Running>> = {};
-  for (const a of agents) now[a] = running(store, a, catalog[a]);
+  for (const a of agents) {
+    now[a] = running(store, a, catalog[a], modelOf?.(a), effortOf?.(a));
+  }
   const cur = primary ? now[primary] : undefined;
   const levels = useMemo(
     () =>
@@ -153,23 +172,35 @@ export const AgentMenu = observer(function AgentMenu({
   );
 
   // What's shown is what runs: once its catalog is in, an agent with no
-  // model or effort set gets the one shown.
-  const fill = agents
-    .map((a) => {
-      const r = now[a];
-      return r?.listed && r.model ? `${a}|${r.model.id}|${r.effort ?? ''}` : '';
-    })
-    .join(',');
+  // model or effort set gets the one shown. A model that's set stays as
+  // written, alias or not: `running` only reads it through the catalog, and
+  // a pick for one agent reruns this for them all. The setting's own, not a
+  // box's: a box with its own effort (a space's, New space's) writes no
+  // setting.
+  const fill = onPickEffort
+    ? ''
+    : agents
+        .map((a) => {
+          const r = running(store, a, catalog[a]);
+          return r.listed && r.model
+            ? `${a}|${r.model.id}|${r.effort ?? ''}`
+            : '';
+        })
+        .join(',');
   useEffect(() => {
     for (const part of fill.split(',')) {
       const [a, id, effort] = part.split('|') as [AgentId, string, string];
       if (!a || !id) continue;
-      if (agentModel(store, a) !== id) setAgentModel(store, a, id);
+      if (agentModel(store, a) === null) setAgentModel(store, a, id);
       if (effort && rawEffort(store, a) !== effort) {
         setAgentEffort(store, a, effort);
       }
     }
   }, [fill, store]);
+
+  // The latest closures, for the key below.
+  const box = useRef({ effortOf, onPickEffort });
+  box.current = { effortOf, onPickEffort };
 
   // ⌘⇧/ in the box this chip sits in: the next effort.
   useEffect(() => {
@@ -182,8 +213,11 @@ export const AgentMenu = observer(function AgentMenu({
       for (let i = 0; scope && i < 4; i++, scope = scope.parentElement) {
         if (scope.contains(active)) {
           e.preventDefault();
-          const at = rawEffort(store, primary);
-          setAgentEffort(store, primary, nextEffort(at, levels));
+          const own = box.current;
+          const at = own.effortOf?.(primary) ?? rawEffort(store, primary);
+          const next = nextEffort(at, levels);
+          if (own.onPickEffort && next) own.onPickEffort(primary, next);
+          else setAgentEffort(store, primary, next);
           return;
         }
       }
@@ -198,9 +232,25 @@ export const AgentMenu = observer(function AgentMenu({
   const pick = (key: string) => {
     const [agent, id] = key.split('|') as [AgentId, string];
     if (!agent || !id) return;
-    setAgentModel(store, agent, id);
-    // A level the new model doesn't take: its own default instead.
-    setAgentEffort(store, agent, running(store, agent, catalog[agent]).effort);
+    if (onPickModel) {
+      // This box's model only: the agent's settings stay as they are, and the
+      // chip shows the model's own default for a level it doesn't take.
+      onPickModel(agent, id);
+      // A level of its own the new model doesn't take: its default instead.
+      const own = effortOf?.(agent);
+      if (own && onPickEffort) {
+        const next = running(store, agent, catalog[agent], id, own).effort;
+        if (next && next !== own) onPickEffort(agent, next);
+      }
+    } else {
+      setAgentModel(store, agent, id);
+      // A level the new model doesn't take: its own default instead.
+      setAgentEffort(
+        store,
+        agent,
+        running(store, agent, catalog[agent], id).effort,
+      );
+    }
     switchTo(agent);
   };
 
@@ -329,7 +379,11 @@ export const AgentMenu = observer(function AgentMenu({
                 <Dropdown.Popover placement="right top">
                   <Dropdown.Menu
                     aria-label="Effort"
-                    onAction={(k) => setAgentEffort(store, primary, String(k))}
+                    onAction={(k) =>
+                      onPickEffort
+                        ? onPickEffort(primary, String(k))
+                        : setAgentEffort(store, primary, String(k))
+                    }
                   >
                     {levels.map((l) => (
                       <Dropdown.Item
