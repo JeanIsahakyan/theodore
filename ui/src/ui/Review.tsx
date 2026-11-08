@@ -27,6 +27,7 @@ import { observer } from 'mobx-react-lite';
 import type { Anchor, HunkId, PrId } from '../gen/contract';
 import { api } from '../core/api';
 import { markGroupRead, setDraft, setFileViewed } from '../actions';
+import { scrollIntoDiff } from './review/headerClearance';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, Hints, K } from './bits';
@@ -517,7 +518,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     if (!jumpStart) {
       // J/K: a small step, smooth is fine and nothing above it moves.
       const id = requestAnimationFrame(() =>
-        target()?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+        scrollIntoDiff(target(), { block: 'nearest', behavior: 'smooth' }),
       );
       return () => cancelAnimationFrame(id);
     }
@@ -538,7 +539,7 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
       setTimeout(() => {
         const l = line();
         if (l) {
-          l.scrollIntoView({ block: 'center', behavior: 'auto' });
+          scrollIntoDiff(l, { block: 'center', behavior: 'auto' });
           if (ms === steps.at(-1)) flash(l);
           return;
         }

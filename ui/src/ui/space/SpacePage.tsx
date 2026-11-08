@@ -57,6 +57,7 @@ import { useRootStore, useUi } from '../../stores/context';
 import { Hints, K, Spinner } from '../bits';
 import { DiffPane, type ComposerState } from '../DiffPane';
 import { RevisionError } from '../review/RevisionError';
+import { scrollIntoDiff } from '../review/headerClearance';
 import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
 import { SpaceLog } from './SpaceLog';
@@ -1129,7 +1130,7 @@ function aimAt(id: string, frames = 30): () => void {
   let frame = 0;
   let left = frames;
   const tick = () => {
-    document.getElementById(id)?.scrollIntoView({ block: 'center' });
+    scrollIntoDiff(document.getElementById(id), { block: 'center' });
     left -= 1;
     if (left > 0) frame = requestAnimationFrame(tick);
   };

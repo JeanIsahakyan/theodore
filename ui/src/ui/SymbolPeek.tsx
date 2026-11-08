@@ -10,6 +10,7 @@ import {
   sourceChip,
 } from './symbols/display';
 import { SymbolViewer } from './symbols/SymbolViewer';
+import { scrollIntoDiff } from './review/headerClearance';
 import type { DiffSide, HunkId, PrId, Sha, SymbolHit } from '../gen/contract';
 
 export interface SymbolPeekTarget {
@@ -80,9 +81,10 @@ export function SymbolPeek({
     const hunk = diffPaths.has(hit.path) ? findHunk(hit.path, hit.line) : null;
     if (hunk) {
       onClose();
-      document
-        .getElementById(`H-${hunk}`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrollIntoDiff(document.getElementById(`H-${hunk}`), {
+        behavior: 'smooth',
+        block: 'center',
+      });
     } else {
       setViewing(hit);
     }

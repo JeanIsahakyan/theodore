@@ -26,6 +26,7 @@ function revisionOf(
   kind: DiffLine['kind'],
   start: number,
   n: number,
+  path = PATH,
 ): Revision {
   const lines = Array.from({ length: n }, (_, i) => ({
     kind,
@@ -35,7 +36,7 @@ function revisionOf(
   }));
   const hunk = {
     id: 'h0',
-    path: PATH,
+    path,
     old_start: kind === 'add' ? 0 : start,
     old_lines: kind === 'add' ? 0 : n,
     new_start: kind === 'del' ? 0 : start,
@@ -48,7 +49,7 @@ function revisionOf(
     head: HEAD,
     files: [
       {
-        path: PATH,
+        path,
         old_path: null,
         status,
         similarity: null,
@@ -167,6 +168,28 @@ describe('the load-to-end-of-file button', () => {
     expect(transport.calls.some((c) => c.cmd === 'get_file')).toBe(true);
     expect(loadButton(host)).toBeNull();
     expect(newNos(host)).not.toContain('34');
+  });
+
+  it('goes for a file with no grammar, from the same fetch', async () => {
+    // Plain text has no highlighter, so no hunk fetches the file for
+    // tokens: the tail's own check must fetch it all the same.
+    const { host, transport } = await mount(
+      revisionOf('modified', 'ctx', 31, 3, 'docs/notes.txt'),
+      fileOf(33),
+    );
+    await settleUntil(() => loadButton(host) == null);
+    expect(transport.calls.some((c) => c.cmd === 'get_file')).toBe(true);
+    expect(loadButton(host)).toBeNull();
+  });
+
+  it('stays on a file with no grammar while lines are left', async () => {
+    const { host } = await mount(
+      revisionOf('modified', 'ctx', 31, 3, 'docs/notes.txt'),
+      fileOf(40),
+    );
+    await settle();
+    await settle();
+    expect(loadButton(host)).not.toBeNull();
   });
 
   it('stays while lines are left, and loads exactly those', async () => {

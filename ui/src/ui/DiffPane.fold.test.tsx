@@ -283,3 +283,102 @@ describe('DiffPane folds a file', () => {
     expect(folded()).not.toBeNull();
   });
 });
+
+/** jsdom has no layout: the pane at `top` 0 scrolled `scrollTop` down, the
+ *  file card's top `cardTop` from the pane's (above it while reading it). */
+function layout(cardTop: number, scrollTop: number) {
+  const main = m!.host.querySelector<HTMLElement>('main.diff')!;
+  const card = m!.host.querySelector<HTMLElement>('.file')!;
+  let top = scrollTop;
+  Object.defineProperty(main, 'scrollTop', {
+    configurable: true,
+    get: () => top,
+    set: (v: number) => {
+      top = v;
+    },
+  });
+  main.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+  // The card moves up as the pane scrolls down.
+  card.getBoundingClientRect = () =>
+    ({ top: cardTop + scrollTop - top }) as DOMRect;
+  return { main, card };
+}
+
+describe('DiffPane folds a file read from its pinned header', () => {
+  it('keeps its header at the top when marked Viewed', async () => {
+    m = await open();
+    const { main } = layout(-1200, 1500);
+    await click(viewedToggle());
+    expect(folded()).not.toBeNull();
+    // Scrolled back up by the 1200px of it above the pane: its header is at
+    // the top edge, the next file right after.
+    expect(main.scrollTop).toBe(300);
+  });
+
+  it('keeps its header at the top when folded from the chevron', async () => {
+    m = await open();
+    const { main } = layout(-400, 900);
+    await click(chevron());
+    expect(folded()).not.toBeNull();
+    expect(main.scrollTop).toBe(500);
+  });
+
+  it('does not scroll a file whose top is in view', async () => {
+    m = await open();
+    const { main } = layout(120, 900);
+    await click(viewedToggle());
+    expect(folded()).not.toBeNull();
+    expect(main.scrollTop).toBe(900);
+  });
+
+  it('does not scroll when it opens again', async () => {
+    m = await open(true);
+    const { main } = layout(-400, 900);
+    await click(chevron());
+    expect(folded()).toBeNull();
+    expect(main.scrollTop).toBe(900);
+  });
+});
+
+describe('DiffPane measures its file headers', () => {
+  const realRO = globalThis.ResizeObserver;
+  afterEach(() => {
+    globalThis.ResizeObserver = realRO;
+  });
+
+  it('sets --file-h on the card and the pane from the header height', async () => {
+    const watched = new Map<Element, ResizeObserverCallback>();
+    globalThis.ResizeObserver = class {
+      constructor(private readonly cb: ResizeObserverCallback) {}
+      observe(el: Element) {
+        watched.set(el, this.cb);
+      }
+      unobserve(el: Element) {
+        watched.delete(el);
+      }
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    m = await open();
+    const main = m.host.querySelector<HTMLElement>('main.diff')!;
+    const header = m.host.querySelector<HTMLElement>('.file-h')!;
+    // Pinned at the pane's top edge, past its `pt-5`.
+    expect(header.classList).toContain('-top-5');
+    expect(main.classList).toContain('pt-5');
+    const cb = watched.get(header);
+    expect(cb).toBeDefined();
+    await act(async () =>
+      cb!(
+        [
+          {
+            target: header,
+            borderBoxSize: [{ blockSize: 83, inlineSize: 600 }],
+          } as unknown as ResizeObserverEntry,
+        ],
+        {} as ResizeObserver,
+      ),
+    );
+    const card = m.host.querySelector<HTMLElement>('.file')!;
+    expect(card.style.getPropertyValue('--file-h')).toBe('83px');
+    expect(main.style.getPropertyValue('--file-h')).toBe('83px');
+  });
+});
