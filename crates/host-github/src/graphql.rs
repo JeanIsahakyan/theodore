@@ -1538,3 +1538,127 @@ pub(crate) async fn repo_info(
     data.repository
         .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}")))
 }
+
+// ── report issues ("My reports") ────────────────────────────────────────
+
+const ISSUE_STATUS_QUERY: &str = r#"
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      number
+      title
+      url
+      state
+      stateReason
+      updatedAt
+      closedAt
+      author { login }
+      comments(last: 1) { totalCount nodes { author { login } } }
+      timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {
+        nodes {
+          ... on ClosedEvent {
+            closer {
+              __typename
+              ... on PullRequest { number url mergeCommit { oid } }
+              ... on Commit { oid }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlLogin {
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlIssueComment {
+    pub author: Option<GqlLogin>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlIssueComments {
+    #[serde(rename = "totalCount")]
+    pub total_count: u32,
+    #[serde(default)]
+    pub nodes: Vec<Option<GqlIssueComment>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlOid {
+    pub oid: String,
+}
+
+/// A `ClosedEvent.closer`: a `PullRequest` (number, url, merge commit) or
+/// a `Commit` (oid).
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlCloser {
+    #[serde(rename = "__typename")]
+    pub typename: String,
+    pub number: Option<u64>,
+    pub url: Option<String>,
+    #[serde(rename = "mergeCommit")]
+    pub merge_commit: Option<GqlOid>,
+    pub oid: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlClosedEvent {
+    pub closer: Option<GqlCloser>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlClosedEvents {
+    #[serde(default)]
+    pub nodes: Vec<Option<GqlClosedEvent>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct GqlIssueStatus {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    /// `OPEN` or `CLOSED`.
+    pub state: String,
+    /// `COMPLETED`, `NOT_PLANNED`, `DUPLICATE`, `REOPENED`.
+    #[serde(rename = "stateReason")]
+    pub state_reason: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    #[serde(rename = "closedAt")]
+    pub closed_at: Option<String>,
+    pub author: Option<GqlLogin>,
+    pub comments: GqlIssueComments,
+    #[serde(rename = "timelineItems")]
+    pub timeline_items: GqlClosedEvents,
+}
+
+/// One report issue: state, close reason, comments, and what closed it.
+pub(crate) async fn issue_status(
+    http: &HttpClient,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> HostResult<GqlIssueStatus> {
+    #[derive(Debug, Deserialize)]
+    struct Repo {
+        issue: Option<GqlIssueStatus>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Data {
+        repository: Option<Repo>,
+    }
+    let data: Data = graphql(
+        http,
+        ISSUE_STATUS_QUERY,
+        json!({ "owner": owner, "repo": repo, "number": number }),
+    )
+    .await?;
+    data.repository
+        .and_then(|r| r.issue)
+        .ok_or_else(|| HostError::NotFound(format!("{owner}/{repo}#{number}")))
+}

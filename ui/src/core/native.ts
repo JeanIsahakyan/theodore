@@ -45,6 +45,21 @@ export async function notifySpace(
   });
 }
 
+/** Shows a "My reports" notification; a click opens the issue at `url`.
+ *  `false` outside the desktop window or without permission. */
+export async function notifyReport(
+  url: string,
+  title: string,
+  body?: string,
+): Promise<boolean> {
+  if (!isTauri() || !(await allowed())) return false;
+  return getTransport().invoke<boolean>('notify_report', {
+    url,
+    title,
+    body: body ?? null,
+  });
+}
+
 /** The number on the app's dock icon; 0 clears it. */
 export async function setBadge(count: number): Promise<void> {
   if (!isTauri()) return;

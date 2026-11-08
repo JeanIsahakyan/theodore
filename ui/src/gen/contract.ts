@@ -704,6 +704,13 @@ server_trouble?: boolean } |
 /**  Empty when the host didn't say. */
 url: string } |
 /**
+ *  A followed report changed (docs/telemetry.md "My reports"): a
+ *  reply, closed as fixed or not planned, reopened, or its fix
+ *  released. `text` is what the toast and the notification say;
+ *  `title` is the issue's.
+ */
+{ type: "report_update"; number: number; url: string; title: string; text: string } |
+/**
  *  `code_intel.install: ask` and a language's server is missing
  *  (docs/code-intel.md §5.1): offer `code_intel_install(language)`,
  *  or `code_intel_decline(language)`. Once per language per session.
@@ -1391,6 +1398,15 @@ export type ReportMode =
 "issue_with_logs" |
 /**  A local zip; nothing is uploaded. */
 "logs_only";
+
+/**  Where a report stands, as "My reports" shows it. */
+export type ReportStatus = "open" |
+/**  Closed as completed; not in a release yet (or none could be found). */
+"fixed" |
+/**  The fix is in `TrackedReport::released_in`. */
+"released" |
+/**  Closed as not planned or as a duplicate (`close_reason`). */
+"not_planned";
 
 export type ReportedIssue = {
 	number: number,
@@ -2419,6 +2435,34 @@ export type ToastLevel = "info" | "warn" | "error";
 export type TokenSource = "keychain" | "gh" | "env" | "none" |
 /**  The simulated sandbox host (docs/sandbox.md): no real token at all. */
 "sandbox";
+
+/**  One followed report. */
+export type TrackedReport = {
+	/**  `owner/name`. */
+	repo: string,
+	number: number,
+	url: string,
+	title: string,
+	status: ReportStatus,
+	filed_at: number,
+	/**  The issue's last activity on GitHub; `filed_at` until first checked. */
+	updated_at: number,
+	comments: number,
+	/**  GitHub's reason when closed: `completed`, `not_planned`, `duplicate`. */
+	close_reason?: string | null,
+	closed_at?: number | null,
+	/**  The PR that closed it. */
+	fixed_by?: number | null,
+	fixed_by_url?: string | null,
+	/**  The commit that landed the fix: what a release must contain. */
+	fix_sha?: string | null,
+	/**  The first release with the fix, without the `v` (`0.1.7`). */
+	released_in?: string | null,
+	/**  Who opened the issue: a comment by anyone else is a reply. */
+	author?: string | null,
+	/**  The version "fixed in this version" was said in, so it's said once. */
+	told_in?: string | null,
+};
 
 export type Transaction = {
 	/**  Client-generated, for de-duplication on retry. */

@@ -48,8 +48,32 @@ pub(crate) async fn run(inner: Arc<Inner>) {
         poll_authored(inner.clone()),
         poll_projects(inner.clone()),
         poll_spaces(inner.clone()),
+        poll_reports(inner.clone()),
         probe_host(inner)
     );
+}
+
+/// "My reports" (`usecases/reports.rs`): shortly after start, then every
+/// 30 minutes.
+async fn poll_reports(inner: Arc<Inner>) {
+    use crate::usecases::reports::{REPORTS_FIRST_MS, REPORTS_POLL_MS};
+    let core = Core(inner.clone());
+    let mut next_due = inner.deps.clock.now() + REPORTS_FIRST_MS;
+    loop {
+        // Held while signed out where sign-in is required (no host calls).
+        if !core.account_hold().await {
+            return;
+        }
+        let now = inner.deps.clock.now();
+        if now >= next_due {
+            next_due = now + REPORTS_POLL_MS;
+            core.check_reports().await;
+        }
+        tokio::select! {
+            _ = inner.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(REAL_TICK_MS)) => {},
+        }
+    }
 }
 
 /// When the next "is the host back?" probe is due. Armed by `note_host`

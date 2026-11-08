@@ -38,6 +38,7 @@ import {
   type InstallProgressMap,
 } from '../ui/project/languages';
 import { api } from '../core/api';
+import { notifyReport } from '../core/native';
 import { openExternal } from '../core/openExternal';
 import { accountGate, type AccountGate } from '../core/accountGate';
 
@@ -688,6 +689,21 @@ export class EphemeralStore {
           ];
           return;
         }
+        case 'report_update':
+          this.toasts = [
+            ...this.toasts,
+            {
+              id: this.nextToastId++,
+              level: 'info',
+              text: e.text,
+              action: { label: 'Open', onAction: () => openExternal(e.url) },
+            },
+          ];
+          // In the background, the system says it too.
+          if (typeof document !== 'undefined' && !document.hasFocus()) {
+            void notifyReport(e.url, e.text, e.title).catch(() => false);
+          }
+          return;
         case 'code_intel_progress':
           this.installProgress = withProgress(this.installProgress, e);
           return;

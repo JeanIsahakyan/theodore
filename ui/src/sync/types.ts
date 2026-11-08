@@ -20,6 +20,7 @@ import type {
   Project,
   Space,
   Setting,
+  TrackedReport,
   SkillRun,
   Task,
 } from '../gen/contract';
@@ -40,6 +41,7 @@ export const MODEL_NAMES = [
   'setting',
   'project',
   'space',
+  'report',
 ] as const;
 
 export type ModelName = (typeof MODEL_NAMES)[number];
@@ -66,6 +68,7 @@ export interface ModelRows {
   setting: WithId<Setting>;
   project: WithId<Project>;
   space: WithId<Space>;
+  report: WithId<TrackedReport>;
 }
 
 /**

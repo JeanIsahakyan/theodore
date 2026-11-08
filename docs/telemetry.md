@@ -245,6 +245,40 @@ submit_issue(…, draft) ─▶ POST /repos/{owner}/{repo}/issues, label from-ap
   hashed). The dialog lists the files for review, then **Reveal in Finder** or **Copy summary**.
 - Either way, `problem_reported` records only the mode, never the text or the issue.
 
+### My reports
+
+An issue the dialog opened is remembered, then followed with the same GitHub token: Settings →
+About & updates lists it under **My reports** (status, comments, last activity; a click opens
+the issue), and a change says so.
+
+```text
+submit_issue ─▶ #N ─▶ `report` row (synced, keyed owner/name#N), status open
+poller: 20 s after start, then every 30 min (online, signed in)
+  issue_status (GraphQL): state, close reason, comments, last commenter, ClosedEvent.closer
+    closer = merged PR (its merge commit) or a commit ─▶ fix commit
+  fixed + fix commit ─▶ first_release_with: v* releases oldest first (REST),
+                        compare <sha>...<tag> = ahead|identical ─▶ released in <tag>
+                        (the newest one first: one compare while none has it)
+  changed ─▶ row written ─▶ ReportUpdate ─▶ toast "Open"; window in the background:
+                                            a notification, a click opens the issue
+```
+
+| Change | Says |
+|---|---|
+| A comment by anyone but the reporter | New reply on your report #N |
+| Closed as completed | Your report #N is fixed in #57 (or "was closed as fixed") |
+| Its fix in a release newer than this build | Your report #N is fixed in 0.1.7: update to get it |
+| Its fix in this build | Your report #N is fixed in this version — said once per version, also after an update, offline too |
+| Its fix in an older build | Your report #N was fixed in 0.1.7: you have it |
+| Closed as not planned / duplicate | Your report #N was closed as not planned / as a duplicate |
+| Reopened | Your report #N was reopened |
+
+- Followed: open reports; closed ones for 30 days after closing; a fix with a commit but no
+  release yet for 180 days.
+- Only reports filed from this install, from the version that added this on: older issues aren't
+  matched. Sandbox and fixture runs post none, so they follow none.
+- Nothing about it is a product event; the log has `report changed` with the number and status.
+
 ## UI errors
 
 `window.onerror`, `unhandledrejection` and the top-level error boundary forward to `log_client`

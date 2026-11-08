@@ -1093,6 +1093,31 @@ pub async fn notify_space(
     .await
 }
 
+/// Shows a "My reports" notification (a report changed) while the window
+/// is in the background; a click opens the issue in the browser. `true`
+/// when the click will be acted on.
+#[tauri::command]
+#[specta::specta]
+pub async fn notify_report(
+    op: crate::op::Op,
+    url: String,
+    title: String,
+    body: Option<String>,
+    app: AppHandle,
+    notifier: State<'_, Arc<dyn crate::notify::Notifier>>,
+) -> Result<bool, CommandError> {
+    op.run(async move {
+        use crate::notify::{MainWindow, Notice};
+        Ok(crate::notify::notify_report(
+            notifier.inner().as_ref(),
+            MainWindow(app),
+            url,
+            Notice { title, body },
+        ))
+    })
+    .await
+}
+
 /// Un-minimizes and focuses the main window (also after a sign-in redirect
 /// reached the app through its URL scheme).
 pub fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {

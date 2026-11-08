@@ -9,8 +9,8 @@ use theodore_domain::{
 use theodore_host_http::{HttpClient, TokenSource};
 use theodore_ports::{
     Capabilities, Changes, Clock, CreatedIssue, Fetched, HostAdapter, HostError, HostResult,
-    InboxSection, IssueTracker, MergeMethod, MergeState, MergeStatus, NewIssue, NewPr,
-    ReviewComment, ReviewSubmission, Searched, SubmittedReview, TrackedIssue,
+    InboxSection, IssueCloser, IssueStatus, IssueTracker, MergeMethod, MergeState, MergeStatus,
+    NewIssue, NewPr, ReviewComment, ReviewSubmission, Searched, SubmittedReview, TrackedIssue,
 };
 
 use crate::{anchor, graphql, logs, pagination, rest, time};
@@ -737,6 +737,88 @@ impl IssueTracker for GithubAdapter {
             number: created.number,
             url: created.html_url,
         })
+    }
+
+    async fn issue_status(&self, owner: &str, name: &str, number: u64) -> HostResult<IssueStatus> {
+        let i = graphql::issue_status(&self.graphql, owner, name, number).await?;
+        let closed_by = i
+            .timeline_items
+            .nodes
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.closer)
+            .next_back()
+            .and_then(|c| match c.typename.as_str() {
+                "PullRequest" => Some(IssueCloser {
+                    pr: c.number,
+                    pr_url: c.url,
+                    sha: c.merge_commit.map(|m| m.oid),
+                }),
+                "Commit" => Some(IssueCloser {
+                    pr: None,
+                    pr_url: None,
+                    sha: c.oid,
+                }),
+                _ => None,
+            });
+        let open = i.state != "CLOSED";
+        Ok(IssueStatus {
+            number: i.number,
+            title: i.title,
+            url: i.url,
+            open,
+            close_reason: i
+                .state_reason
+                .filter(|_| !open)
+                .map(|r| r.to_ascii_lowercase()),
+            author: i.author.map(|a| a.login),
+            comments: i.comments.total_count,
+            last_commenter: i
+                .comments
+                .nodes
+                .into_iter()
+                .flatten()
+                .next_back()
+                .and_then(|c| c.author)
+                .map(|a| a.login),
+            updated_at: time::parse_millis(&i.updated_at),
+            closed_at: i.closed_at.as_deref().map(time::parse_millis),
+            closed_by: if open { None } else { closed_by },
+        })
+    }
+
+    /// Releases oldest first; containment only grows along the release
+    /// line, so the newest one answers "any yet?" and a binary search finds
+    /// the first: one compare while it isn't released, about log₂(30) once.
+    async fn first_release_with(
+        &self,
+        owner: &str,
+        name: &str,
+        sha: &str,
+    ) -> HostResult<Option<String>> {
+        let mut releases: Vec<(i64, String)> = rest::list_releases(&self.rest, owner, name)
+            .await?
+            .into_iter()
+            .filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with('v'))
+            .filter_map(|r| Some((time::parse_millis(r.published_at.as_deref()?), r.tag_name)))
+            .collect();
+        releases.sort();
+        let Some((_, newest)) = releases.last() else {
+            return Ok(None);
+        };
+        if !rest::ref_contains(&self.rest, owner, name, newest, sha).await? {
+            return Ok(None);
+        }
+        let (mut lo, mut hi) = (0, releases.len() - 1);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if rest::ref_contains(&self.rest, owner, name, &releases[mid].1, sha).await? {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        Ok(Some(releases[lo].1.clone()))
     }
 }
 

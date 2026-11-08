@@ -145,6 +145,7 @@ agent / poller ─────────────────────�
 | Findings, fixes, tasks | |
 | Chat messages (final), skill run status, usage | |
 | Settings | |
+| Problem reports you filed ("My reports", docs/telemetry.md) | |
 
 ### 3.3 Sync design choices
 
@@ -1082,7 +1083,7 @@ app ──▶ on launch + every 6 h (wall clock, so sleep doesn't stretch it)
 | Versioning | semver; the tag must equal the version in `Cargo.toml` and `tauri.conf.json` (CI check) |
 | Tags | never re-tag a published release; ship a new patch instead |
 | Data | SQLite migrations forward-only; DB copied to `theodore.db.bak-<version>` before migrating; downgrade not supported |
-| UX | Settings → About: version, channel, "Check now", release notes of the pending update |
+| UX | Settings → About: version, channel, "Check now", release notes of the pending update; "My reports": the problem reports you filed, which release fixed them, and once after an update "Your report #N is fixed in this version" (docs/telemetry.md) |
 | Failure | download or signature failure → keep the current version, retry next check, show nothing scary |
 | Test | every release workflow run also tests the update path: install N-1, update to N, app starts |
 

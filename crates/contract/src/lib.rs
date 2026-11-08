@@ -43,6 +43,8 @@ mod account;
 pub use account::*;
 mod attachments;
 pub use attachments::*;
+mod reports;
+pub use reports::*;
 mod telemetry;
 pub use telemetry::*;
 mod terminal;
@@ -69,6 +71,9 @@ pub mod models {
     /// Spaces (docs/spaces.md); their chat lives in `chat_message` rows
     /// keyed `pr = "space:<id>"`.
     pub const SPACE: &str = "space";
+    /// "My reports": an issue "Report a problem" opened, keyed
+    /// `owner/name#number` (`TrackedReport`).
+    pub const REPORT: &str = "report";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -86,6 +91,7 @@ pub mod models {
         SETTING,
         PROJECT,
         SPACE,
+        REPORT,
     ];
 }
 
@@ -636,6 +642,16 @@ pub enum Ephemeral {
         /// Empty when the host didn't say.
         url: String,
     },
+    /// A followed report changed (docs/telemetry.md "My reports"): a
+    /// reply, closed as fixed or not planned, reopened, or its fix
+    /// released. `text` is what the toast and the notification say;
+    /// `title` is the issue's.
+    ReportUpdate {
+        number: u64,
+        url: String,
+        title: String,
+        text: String,
+    },
     /// `code_intel.install: ask` and a language's server is missing
     /// (docs/code-intel.md §5.1): offer `code_intel_install(language)`,
     /// or `code_intel_decline(language)`. Once per language per session.
@@ -1039,6 +1055,8 @@ pub fn types() -> specta::Types {
         .register::<IssueRequest>()
         .register::<IssuePreview>()
         .register::<ReportedIssue>()
+        .register::<ReportStatus>()
+        .register::<TrackedReport>()
         .register::<TerminalStatus>()
         .register::<SpaceTerminalInfo>()
         .register::<OpenTerminalRequest>()
