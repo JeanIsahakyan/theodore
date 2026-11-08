@@ -39,7 +39,7 @@ import { Avatar, K, Spinner } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ListSearchBar } from './ListSearchBar';
 import { inInbox } from './List';
-import { openPrCount } from './prs/filters';
+import { openPrCount, openPrCountHint } from './prs/filters';
 import { matchesSearch, spaceSearchText } from './search';
 import { sectionsOf, type Section } from '../core/workspaces';
 import { SandboxBadge } from './sandbox/SandboxBadge';
@@ -62,6 +62,8 @@ interface NavItem {
   icon: ReactNode;
   label: string;
   n?: number;
+  /** What `n` counts, on hover. */
+  nTitle?: string;
   route?: Route;
   /** An action instead of a route, e.g. "New space". */
   onPress?: () => void;
@@ -234,6 +236,7 @@ export const Sidebar = observer(function Sidebar() {
       icon: <CodePullRequest />,
       label: 'Pull requests',
       n: openPrCount(prs),
+      nTitle: openPrCountHint(ws.active),
       route: { name: 'prs' },
     },
     branches: {
@@ -396,7 +399,10 @@ export const Sidebar = observer(function Sidebar() {
                     />
                   )}
                   {i.n !== undefined && i.n !== 0 && (
-                    <span className="shrink-0 text-xs tabular-nums text-muted">
+                    <span
+                      className="shrink-0 text-xs tabular-nums text-muted"
+                      title={i.nTitle}
+                    >
                       {i.n}
                     </span>
                   )}

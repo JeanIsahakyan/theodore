@@ -89,10 +89,12 @@ import { Btn, Spinner } from './bits';
 import { Composer, DraftView, plural, ThreadView } from './Comments';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import {
+  fileLines,
   gapsAbove,
   gapTail,
   sinceCountsFor,
   splitRows,
+  tailKnownEmpty,
   wordMarks,
   type Gap,
   type SinceKind,
@@ -1127,8 +1129,26 @@ const FileTail = observer(function FileTail({
       ? store.files.get(key, () => api.getFile({ pr, rev, path }))
       : null;
   const ready = res?.status === 'ready' && res.data != null;
-  const allLines = ready ? res!.data!.split('\n') : [];
+  const allLines = ready ? fileLines(res!.data!) : [];
   const gap = gapTail(hunks, allLines.length);
+  // The file's hunks fetch it anyway for highlighting (`useHunkTokens`):
+  // once it's in, a last hunk that reaches the end drops the button.
+  const [endKey, setEndKey] = useState<string | null>(null);
+  const warm =
+    grammarReady(lang) &&
+    hunks.some((h) => h.new_start > 1 && h.lines.some((l) => l.kind !== 'del'));
+  useEffect(() => {
+    if (!warm) return;
+    let live = true;
+    const f = store.files.get(key, () => api.getFile({ pr, rev, path }, true));
+    void when(() => f.status !== 'loading').then(() => {
+      if (live && f.data != null)
+        setEndKey(gapTail(hunks, fileLines(f.data).length) ? null : key);
+    });
+    return () => {
+      live = false;
+    };
+  }, [store, key, warm, hunks, pr, rev, path]);
   const to = gap ? Math.min(gap.to, gap.from + shown - 1) : 0;
   const first = gap ? gap.from - 1 : 0;
   const slice = gap ? allLines.slice(first, to) : [];
@@ -1141,6 +1161,7 @@ const FileTail = observer(function FileTail({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shikiVersion forces a recompute once Shiki/the grammar finishes loading; it isn't read inside
     [file, first, to, sideText, lang, shikiVersion],
   );
+  if (tailKnownEmpty(hunks)) return null;
   if (ready) {
     if (!gap) return null;
     const total = gap.to - gap.from + 1;
@@ -1172,6 +1193,7 @@ const FileTail = observer(function FileTail({
       </>
     );
   }
+  if (endKey === key) return null;
   return (
     <div className="gap flex items-center justify-center gap-2 border-t border-separator bg-surface-secondary px-4 py-1 text-xs text-muted">
       <Button
@@ -1465,7 +1487,14 @@ function FileBlockInner({
   const last = file.hunks[file.hunks.length - 1];
 
   return (
-    <Card ref={cardRef} className="file mb-4 gap-0 overflow-hidden p-0">
+    // `overflow: clip`, not `hidden`: both round the corners, but `hidden`
+    // makes the card a scroll container, and the sticky header would stick
+    // to the card instead of the pane (#131). An older WebKit without `clip`
+    // keeps `hidden`: a header that scrolls away, as before.
+    <Card
+      ref={cardRef}
+      className="file mb-4 gap-0 overflow-hidden p-0 supports-[overflow:clip]:overflow-clip"
+    >
       <header
         // In a narrow pane (a space's Changes) the controls wrap under the
         // name instead of being cut off at the card's edge; the name keeps

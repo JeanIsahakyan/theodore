@@ -1,4 +1,4 @@
-import { $, expect } from '@wdio/globals';
+import { $, browser, expect } from '@wdio/globals';
 import {
   button,
   completeOnboardingIfPresent,
@@ -24,7 +24,13 @@ describe('commenting and submitting a review', () => {
 
     const line = await $(LINE);
     await line.waitForDisplayed({ timeout: 15_000 });
-    await line.scrollIntoView();
+    // Centred, as a reader would scroll to it: at the very top it would sit
+    // under its file's sticky header, which takes the hover.
+    await browser.execute(
+      (el: { scrollIntoView(o: { block: 'center' }): void }) =>
+        el.scrollIntoView({ block: 'center' }),
+      line as unknown as { scrollIntoView(o: { block: 'center' }): void },
+    );
     // The line's "+" (comment) only shows while the line is hovered
     // (`.ln:hover .ln-act` in `ui/src/styles.css`).
     await line.moveTo();

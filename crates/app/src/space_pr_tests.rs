@@ -343,6 +343,52 @@ async fn merge_from_the_space_uses_the_hosts_default_method() {
     assert_eq!(f.host.merge_calls()[0].0, MergeMethod::Squash);
 }
 
+/// Merge shows once `space.pr` is linked, so the PR's row is there by then.
+#[tokio::test]
+async fn an_opened_pr_has_its_row_by_the_time_the_space_links_it() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: sample_pr_detail(&pr_ref(100), &Sha::new("base000"), &Sha::new("squash1")),
+    }));
+    core.ship_space(open_pr(&s)).await.unwrap();
+    wait_until(|| space(&f, &s.id).pr.is_some()).await;
+    let id = pr_ref(100).id();
+    assert!(f.store.get(models::PR, &id.0).unwrap().is_some());
+}
+
+/// The fetch right after opening failed: Merge fetches the PR itself
+/// rather than failing on the missing row.
+#[tokio::test]
+async fn merge_from_the_space_fetches_a_pr_the_open_couldnt() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    f.host
+        .push_get_pr(Err(theodore_ports::HostError::Server("502".into())));
+    core.ship_space(open_pr(&s)).await.unwrap();
+    wait_until(|| space(&f, &s.id).pr.is_some()).await;
+    let id = pr_ref(100).id();
+    assert!(f.store.get(models::PR, &id.0).unwrap().is_none());
+
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: sample_pr_detail(&pr_ref(100), &Sha::new("base000"), &Sha::new("squash1")),
+    }));
+    f.host
+        .push_merge_status(Ok(status(MergeState::Clean, Some(true))));
+    core.merge_space(MergeSpaceRequest {
+        space: s.id.clone(),
+        method: None,
+    })
+    .await
+    .unwrap();
+    wait_until(|| !f.host.merge_calls().is_empty()).await;
+    assert_eq!(f.host.merge_calls()[0].0, MergeMethod::Squash);
+}
+
 #[tokio::test]
 async fn a_blocked_pr_auto_merges_when_the_repo_allows_it() {
     let f = fixtures();
