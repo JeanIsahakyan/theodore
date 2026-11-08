@@ -189,6 +189,14 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::ReportedIssue, CommandError> {
         Err(not_ready())
     }
+    /// "Report this" / `/report`: a problem report about a chat, prefilled;
+    /// the report window opens on it. Nothing is sent.
+    async fn draft_report(
+        &self,
+        _req: theodore_contract::DraftReportRequest,
+    ) -> Result<theodore_contract::ReportDraft, CommandError> {
+        Err(not_ready())
+    }
 
     /// Settings → Sandbox (docs/sandbox.md); `None` outside sandbox mode.
     async fn sandbox_status(&self) -> Result<Option<SandboxStatus>, CommandError> {

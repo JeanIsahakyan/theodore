@@ -9,21 +9,110 @@
 //! |---|---|                    OS, arch: no ids, no paths
 //! | Version | 0.4.0 |
 //!
+//! <details><summary>Conversation: Space turn 3 of 5</summary>   a chat report only
+//!   | Context | |  …           where, agent, CLI, model, effort, mode, status, timings
+//!   **Prompt** / **Reply** / **Error**   fenced, capped, secrets redacted
+//!   <details>Tool calls (N)</details>
+//! </details>
+//!
 //! <details><summary>Logs (last N lines; M older lines cut)</summary>
 //!
 //! ```jsonl                     the newest lines that fit, oldest first
-//! …
+//! …                            (a chat report: that run's lines only)
 //! ```
 //!
 //! </details>
 //! ```
 //!
-//! GitHub caps a body at 65,536 characters: the logs get what the comment
-//! and the table leave, and the summary says how many older lines were cut.
+//! GitHub caps a body at 65,536 characters: the logs get what the comment,
+//! the table and the conversation leave, and the summary says how many
+//! older lines were cut.
 
 use std::fmt;
 
+use crate::redact::{Redactor, truncate};
 use crate::report::LogTail;
+
+/// A chat report's conversation (docs/telemetry.md "Report from a chat"):
+/// gathered by the core, redacted and capped by [`context_block`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatContext {
+    /// One line: `Space turn 3 of 5`, `AI panel reply 2 of 4`.
+    pub about: String,
+    /// `(label, value)` rows: where, agent, CLI, model, effort, mode…
+    pub rows: Vec<(String, String)>,
+    /// Your message as sent (skill and attached files expanded).
+    pub prompt: Option<String>,
+    pub reply: Option<String>,
+    /// One line per tool call, in order.
+    pub tools: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// Caps on a conversation's parts, so the logs keep room under GitHub's.
+pub const MAX_PROMPT: usize = 4_000;
+pub const MAX_REPLY: usize = 8_000;
+pub const MAX_ERROR: usize = 2_000;
+pub const MAX_TOOLS: usize = 40;
+pub const MAX_TOOL_LINE: usize = 200;
+
+/// A fenced block: the text can't close it, and nothing in it renders
+/// (no @mention notifies anyone, no image loads).
+fn fenced(lang: &str, text: &str) -> String {
+    let lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let f = fence(&lines);
+    format!("{f}{lang}\n{}\n{f}\n", text.trim_end())
+}
+
+/// The conversation as posted: folded, every text fenced, each part capped
+/// and redacted (secrets, emails, the home directory) — paths and names
+/// stay readable, as in the conversation itself.
+pub fn context_block(c: &ChatContext, redactor: &Redactor) -> String {
+    let clean = |s: &str, max: usize, tail: bool| truncate(&redactor.text(s), max, tail);
+    let mut out = format!(
+        "\n\n<details><summary>Conversation: {}</summary>\n\n| Context | |\n|---|---|\n",
+        cell(&redactor.text(&c.about))
+    );
+    for (k, v) in &c.rows {
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            cell(k),
+            cell(&clean(v, MAX_TOOL_LINE, false))
+        ));
+    }
+    for (label, text, max, tail) in [
+        ("Prompt", &c.prompt, MAX_PROMPT, false),
+        ("Reply", &c.reply, MAX_REPLY, false),
+        ("Error", &c.error, MAX_ERROR, true),
+    ] {
+        if let Some(t) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+            out.push_str(&format!(
+                "\n**{label}**\n\n{}",
+                fenced("text", &clean(t, max, tail))
+            ));
+        }
+    }
+    if !c.tools.is_empty() {
+        let shown: Vec<String> = c
+            .tools
+            .iter()
+            .take(MAX_TOOLS)
+            .map(|t| clean(&t.replace(['\r', '\n'], " "), MAX_TOOL_LINE, false))
+            .collect();
+        let more = c.tools.len().saturating_sub(MAX_TOOLS);
+        let mut list = shown.join("\n");
+        if more > 0 {
+            list.push_str(&format!("\n… {more} more"));
+        }
+        out.push_str(&format!(
+            "\n<details><summary>Tool calls ({})</summary>\n\n{}\n</details>\n",
+            c.tools.len(),
+            fenced("text", &list)
+        ));
+    }
+    out.push_str("\n</details>");
+    out
+}
 
 /// GitHub's cap on an issue body, in characters. Bytes are counted here:
 /// never fewer than characters, so a body that fits in bytes fits.
@@ -106,13 +195,19 @@ pub struct IssueInput<'a> {
     pub comment: &'a str,
     /// `(label, value)` rows of the app-info table, in order.
     pub info: &'a [(String, String)],
+    /// A chat report's [`context_block`], after the table.
+    pub context: Option<&'a str>,
     pub logs: Option<&'a LogTail>,
+    /// The logs are one run's (a chat report's): their summary says so.
+    pub run_logs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueBody {
     /// Exactly what is posted.
     pub body: String,
+    /// The conversation block in `body`, so a preview can fold it.
+    pub context: Option<String>,
     /// The logs block `body` ends with, so a preview can fold it.
     pub logs: Option<String>,
     pub log_lines: usize,
@@ -136,11 +231,12 @@ fn fence(lines: &[String]) -> String {
     "`".repeat(longest.max(2) + 1)
 }
 
-fn logs_block(lines: &[String], cut: usize) -> String {
+fn logs_block(lines: &[String], cut: usize, run: bool) -> String {
+    let what = if run { "Logs of this run" } else { "Logs" };
     let summary = match (lines.len(), cut) {
-        (0, 0) => "Logs (empty)".to_string(),
-        (n, 0) => format!("Logs (last {n} lines)"),
-        (n, c) => format!("Logs (last {n} lines; {c} older lines cut)"),
+        (0, 0) => format!("{what} (empty)"),
+        (n, 0) => format!("{what} (last {n} lines)"),
+        (n, c) => format!("{what} (last {n} lines; {c} older lines cut)"),
     };
     let mut out = format!("\n\n<details><summary>{summary}</summary>\n\n");
     if !lines.is_empty() {
@@ -160,7 +256,11 @@ pub fn build(input: IssueInput<'_>) -> Result<IssueBody, IssueError> {
     for (k, v) in input.info {
         head.push_str(&format!("| {} | {} |\n", cell(k), cell(v)));
     }
-    let head = head.trim_end().to_string();
+    let mut head = head.trim_end().to_string();
+    let context = input.context.map(str::to_string);
+    if let Some(c) = &context {
+        head.push_str(c);
+    }
     let frame = if input.logs.is_some() { LOGS_FRAME } else { 0 };
     if head.len() + frame > MAX_BODY {
         return Err(IssueError::CommentTooLong);
@@ -168,6 +268,7 @@ pub fn build(input: IssueInput<'_>) -> Result<IssueBody, IssueError> {
     let Some(tail) = input.logs else {
         return Ok(IssueBody {
             body: format!("{head}\n"),
+            context,
             logs: None,
             log_lines: 0,
             cut_lines: 0,
@@ -190,7 +291,7 @@ pub fn build(input: IssueInput<'_>) -> Result<IssueBody, IssueError> {
     loop {
         let lines = &tail.lines[start..];
         let cut = tail.older + start;
-        let block = logs_block(lines, cut);
+        let block = logs_block(lines, cut, input.run_logs);
         // A long backtick run can outgrow the frame: drop one more line.
         if head.len() + block.len() > MAX_BODY && start < tail.lines.len() {
             start += 1;
@@ -198,6 +299,7 @@ pub fn build(input: IssueInput<'_>) -> Result<IssueBody, IssueError> {
         }
         return Ok(IssueBody {
             body: format!("{head}{block}"),
+            context,
             logs: Some(block),
             log_lines: lines.len(),
             cut_lines: cut,
@@ -230,7 +332,9 @@ mod tests {
         let b = build(IssueInput {
             comment: "  The diff pane is blank.  ",
             info: &info,
+            context: None,
             logs: None,
+            run_logs: false,
         })
         .unwrap();
         assert_eq!(
@@ -239,6 +343,72 @@ mod tests {
              | Version | 0.4.0 |\n| Commit | a1b2c3d |\n"
         );
         assert_eq!((b.logs, b.log_lines, b.cut_lines), (None, 0, 0));
+    }
+
+    fn chat() -> ChatContext {
+        ChatContext {
+            about: "Space turn 2 of 3".into(),
+            rows: vec![
+                ("Agent".into(), "claude 2.1.0".into()),
+                ("Mode".into(), "Edit".into()),
+            ],
+            prompt: Some("fix the login, token ghp_abcdefghijklmnopqrstuvwxyz0123456789".into()),
+            reply: Some("Done, see @octocat\n```rust\nfn x() {}\n```".into()),
+            tools: vec!["✓ Bash · cargo test — 12 lines".into()],
+            error: None,
+        }
+    }
+
+    #[test]
+    fn a_chat_report_folds_the_conversation_between_the_table_and_the_logs() {
+        let info = info();
+        let redactor = Redactor::new(None, "s");
+        let ctx = context_block(&chat(), &redactor);
+        let tail = LogTail {
+            lines: vec![r#"{"run_id":"r1"}"#.into()],
+            older: 0,
+        };
+        let b = build(IssueInput {
+            comment: "It ignored me.",
+            info: &info,
+            context: Some(&ctx),
+            logs: Some(&tail),
+            run_logs: true,
+        })
+        .unwrap();
+        let table = b.body.find("| App info |").unwrap();
+        let conv = b
+            .body
+            .find("<summary>Conversation: Space turn 2 of 3")
+            .unwrap();
+        let logs = b
+            .body
+            .find("<summary>Logs of this run (last 1 lines)")
+            .unwrap();
+        assert!(table < conv && conv < logs, "{}", b.body);
+        assert_eq!(b.context.as_deref(), Some(ctx.as_str()));
+        assert!(b.body.contains("| Agent | claude 2.1.0 |"));
+        assert!(!b.body.contains("ghp_"), "secrets redacted: {}", b.body);
+        // The reply's own fence can't close the block it's quoted in.
+        assert!(b.body.contains("\n````text\nDone, see @octocat\n```rust"));
+        assert!(b.body.contains("<summary>Tool calls (1)</summary>"));
+        assert!(!b.body.contains("**Error**"), "no error: no section");
+    }
+
+    #[test]
+    fn a_conversation_is_capped() {
+        let redactor = Redactor::new(None, "s");
+        let mut c = chat();
+        c.reply = Some("r".repeat(MAX_REPLY * 3));
+        c.tools = (0..MAX_TOOLS + 5).map(|i| format!("tool {i}")).collect();
+        let block = context_block(&c, &redactor);
+        assert!(
+            block.len() < MAX_REPLY + MAX_PROMPT + 10_000,
+            "{}",
+            block.len()
+        );
+        assert!(block.contains("[truncated"));
+        assert!(block.contains("… 5 more"));
     }
 
     #[test]
@@ -251,7 +421,9 @@ mod tests {
         let b = build(IssueInput {
             comment: "Blank.",
             info: &info,
+            context: None,
             logs: Some(&tail),
+            run_logs: false,
         })
         .unwrap();
         let logs = b.logs.clone().unwrap();
@@ -274,7 +446,9 @@ mod tests {
         let b = build(IssueInput {
             comment: "Blank.",
             info: &info,
+            context: None,
             logs: Some(&tail),
+            run_logs: false,
         })
         .unwrap();
         assert!(b.body.len() <= MAX_BODY, "{}", b.body.len());
@@ -298,7 +472,9 @@ mod tests {
         let b = build(IssueInput {
             comment: "c",
             info: &info,
+            context: None,
             logs: Some(&tail),
+            run_logs: false,
         })
         .unwrap();
         assert!(b.body.contains("\n`````jsonl\n"), "{}", b.body);
@@ -310,7 +486,9 @@ mod tests {
         let b = build(IssueInput {
             comment: "c",
             info: &info,
+            context: None,
             logs: None,
+            run_logs: false,
         })
         .unwrap();
         assert!(b.body.contains("| OS | mac\\|OS 15 |"));
@@ -325,14 +503,18 @@ mod tests {
         let empty = build(IssueInput {
             comment: " \n",
             info: &info,
+            context: None,
             logs: None,
+            run_logs: false,
         });
         assert_eq!(empty, Err(IssueError::NoComment));
         let huge = "c".repeat(MAX_BODY);
         let long = build(IssueInput {
             comment: &huge,
             info: &info,
+            context: None,
             logs: None,
+            run_logs: false,
         });
         assert_eq!(long, Err(IssueError::CommentTooLong));
     }

@@ -39,8 +39,9 @@ use crate::tools::{
     CodeAnswerResult, CodeEditResult, CodeStatusResult, DiagnosticItem, DiagnosticsParams,
     FindSymbolParams, GetBaseFileParams, GetGroupParams, GetSymbolParams, GroupResult, HitItem,
     InsertAfterSymbolParams, PositionParams, PrContextResult, ProposePatchParams,
-    ProposePatchResult, ReadLogsParams, ReadTerminalParams, RenameSymbolParams,
-    ReplaceSymbolBodyParams, SymbolBodyResult, SymbolItem,
+    ProposePatchResult, REPORT_NOTE, ReadLogsParams, ReadTerminalParams, RenameSymbolParams,
+    ReplaceSymbolBodyParams, ReportProblemParams, ReportProblemResult, SymbolBodyResult,
+    SymbolItem,
 };
 
 /// Live run registrations: bearer token → run context. Shared between the auth
@@ -269,6 +270,27 @@ impl ReviewToolsServer {
         {
             Ok(()) => {
                 let result = ProposePatchResult { ok: true };
+                Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
+            }
+            Err(err) => Ok(backend_error_result(err)),
+        }
+    }
+
+    #[tool(
+        description = "Draft a problem report about Theodore itself (not the user's code) from this conversation: Theodore misbehaved, a tool failed oddly, the app showed something wrong, or the user asks to report this. Opens Theodore's report window prefilled with your title and description plus this turn's context (agent, model, prompt, reply, tool calls, error, this run's redacted logs). You only draft: the user reviews exactly what will be posted as a public GitHub issue and sends it or not. Write no secrets in it."
+    )]
+    async fn report_problem(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(params): Parameters<ReportProblemParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let run = run_context(&parts)?;
+        match self.backend.report_problem(&run, params.into()).await {
+            Ok(draft) => {
+                let result = ReportProblemResult {
+                    draft,
+                    note: REPORT_NOTE,
+                };
                 Ok(CallToolResult::success(vec![ContentBlock::json(result)?]))
             }
             Err(err) => Ok(backend_error_result(err)),

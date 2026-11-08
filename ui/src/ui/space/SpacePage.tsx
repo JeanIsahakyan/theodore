@@ -90,6 +90,7 @@ import {
   useSpaceLogsSeed,
 } from './SpaceCommands';
 import { TerminalDrawer, TerminalToggle } from './Terminal';
+import { reportChat, reportCommand } from '../reportChat';
 import { useDrawerHeight } from './drawerHeight';
 import {
   AUTO_ARCHIVE_KEY,
@@ -1008,6 +1009,13 @@ const SpaceComposer = observer(function SpaceComposer({
 
   const send = (now = false) => {
     const t = text.trim();
+    // `/report …`: a problem report about this chat, not a turn.
+    const report = reportCommand(t, skills);
+    if (report != null) {
+      setText('');
+      void reportChat(store, spaceChatKey(space.id), null, report);
+      return;
+    }
     if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
     const attached = files.saved;

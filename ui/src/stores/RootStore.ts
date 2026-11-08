@@ -51,7 +51,12 @@ export class RootStore {
     setAccountRequiredHandler(() => void loadAccount(this));
     this.unlistenEphemeral = await getTransport().listen<Ephemeral>(
       'ephemeral',
-      (e) => this.ephemeral.handle(e),
+      (e) => {
+        // An agent (or "Report this") drafted a chat report: the report
+        // window opens on it, wherever you are.
+        if (e.type === 'report_draft') this.ui.openReport(e.draft);
+        else this.ephemeral.handle(e);
+      },
     );
     // The shell downloaded and installed an update: offer the restart.
     this.unlistenUpdate = await getTransport().listen<UpdateInfo>(

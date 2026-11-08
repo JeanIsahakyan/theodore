@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { click, mount, settle, typeInto, type Mounted } from '../test/dom';
 import { setTransport } from '../core/transport';
 import { FakeTransport } from '../test/fakeTransport';
-import type { IssuePreview, IssueTarget } from '../gen/contract';
+import type { IssuePreview, IssueTarget, ReportDraft } from '../gen/contract';
 import { ReportProblemView } from './ReportProblem';
 
 const signedIn: IssueTarget = {
@@ -46,6 +46,35 @@ const mode = (name: string) =>
 async function open(target: IssueTarget): Promise<void> {
   transport.onCall('issue_target', () => target);
   m = await mount(<ReportProblemView />);
+  await settle();
+}
+
+const conversation =
+  '\n\n<details><summary>Conversation: Space turn 2 of 2</summary>\n\n| Context | |\n|---|---|\n</details>';
+
+const chatDraft: ReportDraft = {
+  id: 'c1',
+  chat: 'space:s1',
+  scope: 'turn',
+  title: 'Agent ignored me',
+  description: 'I said not to touch the tests.',
+  include_logs: true,
+  about: 'Space turn 2 of 2 · claude',
+  by_agent: false,
+};
+
+async function openChat(d: ReportDraft): Promise<void> {
+  transport.onCall('issue_target', () => signedIn);
+  transport.onCall('preview_issue', () => ({
+    ...preview,
+    body:
+      'It is blank.\n\n| App info | |\n|---|---|\n| Version | 0.4.0 |' +
+      conversation +
+      logs,
+    context: conversation,
+  }));
+  m = await mount(<ReportProblemView draft={d} />);
+  await settle();
   await settle();
 }
 
@@ -198,5 +227,57 @@ describe('ReportProblemView', () => {
     expect((q('.report-comment') as HTMLTextAreaElement).value).toBe(
       'It is blank.',
     );
+  });
+
+  it('from a chat: prefilled, the conversation and run logs shown before posting', async () => {
+    await openChat({ ...chatDraft, by_agent: true });
+    expect((q('.report-title') as HTMLInputElement).value).toBe(
+      'Agent ignored me',
+    );
+    expect((q('.report-comment') as HTMLTextAreaElement).value).toBe(
+      'I said not to touch the tests.',
+    );
+    expect(q('.report-about-line')?.textContent).toBe(
+      'Space turn 2 of 2 · claude',
+    );
+    expect(q('.report-by-agent')?.textContent).toContain(
+      'drafted by the agent',
+    );
+    expect(mode('issue_with_logs').textContent).toBe(
+      "Open an issue with this run's logs",
+    );
+    expect(q('.report-public')?.textContent).toContain(
+      "with this conversation and this run's redacted log lines",
+    );
+    // Shown from the start: the exact body, the conversation unfolded.
+    const req = transport.calls.find((c) => c.cmd === 'preview_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(req).toMatchObject({ context: 'c1', with_logs: true });
+    expect(q('.report-preview-body')?.textContent).toBe(
+      'It is blank.\n\n| App info | |\n|---|---|\n| Version | 0.4.0 |',
+    );
+    const conv = q('.report-preview-context') as HTMLDetailsElement;
+    expect(conv.open).toBe(true);
+    expect(conv.textContent).toContain('Conversation: Space turn 2 of 2');
+
+    transport.onCall('submit_issue', () => ({ number: 9, url: 'u' }));
+    await click(q('.report-send'));
+    await settle();
+    const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(sent).toMatchObject({ context: 'c1', draft: 'd1' });
+  });
+
+  it('from a chat: unticked, it is the plain report', async () => {
+    await openChat({ ...chatDraft, include_logs: false });
+    expect(mode('issue').getAttribute('aria-checked')).toBe('true');
+    await click(q('.report-with-chat'));
+    expect(mode('issue_with_logs').textContent).toBe('Open an issue with logs');
+    transport.onCall('submit_issue', () => ({ number: 10, url: 'u' }));
+    await click(q('.report-send'));
+    await settle();
+    const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(sent).toMatchObject({ context: null, with_logs: false });
   });
 });

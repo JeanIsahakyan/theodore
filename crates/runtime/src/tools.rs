@@ -14,9 +14,9 @@ use theodore_domain::{
 use theodore_mcp::{
     AppStatus, BackendError, BaseChange, CheckOutcome, CodeEditOutcome, CodeTools,
     CodeToolsBackend, FileSummary, GroupSummary, GroupWithHunks, LogTail, McpHandle, McpServer,
-    NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReviewItem,
-    ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
-    SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReportRequest, ReportScope,
+    ReviewItem, ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction, SpaceCommandName,
+    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
 };
 use theodore_ports::{
     Answer, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic, LanguageStatus, McpEndpoint, Position,
@@ -175,6 +175,40 @@ impl ReviewToolsBackend for CoreTools {
         )
         .await
         .map_err(|e| BackendError::Invalid(e.to_string()))
+    }
+
+    async fn report_problem(
+        &self,
+        run: &RunContext,
+        req: ReportRequest,
+    ) -> Result<String, BackendError> {
+        // The server lists it only for chats; said again here.
+        if !run.is_chat() {
+            return Err(BackendError::Invalid(
+                "report_problem is for chats with the user".into(),
+            ));
+        }
+        let scope = req.scope.map(|s| match s {
+            ReportScope::Message => theodore_contract::ReportScope::Message,
+            ReportScope::Turn => theodore_contract::ReportScope::Turn,
+            ReportScope::Space => theodore_contract::ReportScope::Space,
+            ReportScope::Review => theodore_contract::ReportScope::Review,
+        });
+        self.core()?
+            .draft_report(
+                theodore_contract::DraftReportRequest {
+                    chat: run.pr.clone(),
+                    message: None,
+                    title: req.title,
+                    description: req.description,
+                    scope,
+                    include_logs: req.include_logs,
+                },
+                Some(run.run_id.0.clone()),
+            )
+            .await
+            .map(|d| d.id)
+            .map_err(|e| BackendError::Invalid(e.to_string()))
     }
 }
 

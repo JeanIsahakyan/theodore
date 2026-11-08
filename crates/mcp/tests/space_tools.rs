@@ -252,7 +252,9 @@ async fn a_space_turn_gets_only_the_space_tools() {
     assert_eq!(endpoint.name, "space-tools");
     let client = connect(&endpoint.url, &endpoint.token).await;
 
-    assert_eq!(names(&client).await, sorted(SPACE_TOOL_NAMES));
+    // A turn is a chat with the user: it may draft a problem report too.
+    let with_report = [SPACE_TOOL_NAMES, &[theodore_mcp::REPORT_TOOL]].concat();
+    assert_eq!(names(&client).await, sorted(&with_report));
     let refused = client
         .call_tool(CallToolRequestParams::new("get_pr_context"))
         .await;

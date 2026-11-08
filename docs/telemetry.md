@@ -208,8 +208,8 @@ tail -f theodore.jsonl | jq -c '{ts, level, msg, "error.code"}'
 
 ## Report a problem
 
-Settings → About & updates, Help → Report a Problem…, the account menu, or the "Something went
-wrong" screen. One dialog, three modes:
+Settings → About & updates, Help → Report a Problem…, the account menu, the "Something went
+wrong" screen, or a chat ("Report from a chat" below). One dialog, three modes:
 
 | Mode | Sends | Where |
 |---|---|---|
@@ -278,6 +278,45 @@ poller: 20 s after start, then every 30 min (online, signed in)
 - Only reports filed from this install, from the version that added this on: older issues aren't
   matched. Sandbox and fixture runs post none, so they follow none.
 - Nothing about it is a product event; the log has `report changed` with the number and status.
+
+### Report from a chat
+
+The same dialog, opened on one conversation — a space's chat or a PR's AI panel — instead of the
+whole app. Three ways in, one path:
+
+```text
+"Report this" under a reply ─┐
+/report <what went wrong>  ──┼─▶ draft_report ─▶ ReportDraft (memory) ─▶ report_draft event
+agent ─▶ report_problem (MCP)┘        nothing sent                      └─▶ the dialog, prefilled
+dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the conversation, read now
+```
+
+- **"Report this"** sits under every agent reply (and next to Retry on a failed one); `/report …`
+  in either composer drafts about the chat's latest reply with the rest of the line as the
+  comment — it never reaches the agent (a skill of yours named `report` still does).
+- **`report_problem { title, description, scope, include_logs }`** is a tool on Theodore's MCP
+  server for chats only: a space turn (`space-tools`) or an AI panel question (`review-tools`
+  with an `ask:` run); skill and fix runs never see it. The agent drafts — the dialog opens with
+  its title and comment and says "drafted by the agent" — and is told it cannot send. Only the
+  dialog's **Open issue** posts.
+- **Scope**: `turn` (default) — your message as the agent got it (a `/skill` expanded, attached
+  files listed by path), the reply, its tool calls one line each (folded), the error; `message`
+  — that message alone; `space` / `review` — the conversation's header only, no message text.
+- **The context table**: where (`Space turn 3 of 5`, `AI panel reply 2 of 4`), scope, who
+  drafted it, agent CLI and version, model, effort, mode, status, when sent, how long it took,
+  files changed and tool calls (counts), the run id. No space, project, repo or branch names.
+- **Logs** in a chat report are that run's only: every record of a space turn or an AI panel
+  question carries `run_id` from its span (`space_turn`, `chat_run`), and `report::run_logs`
+  keeps just those, redacted like the other issue logs. A reply from before runs were recorded
+  has none, and no app logs stand in for them.
+- **Redaction and caps**: the conversation keeps paths and names readable, as in the chat, but
+  secrets, emails and the home directory are redacted (`Redactor::text`); every text is fenced
+  (nothing in it renders or @mentions anyone) and capped (prompt 4 KB, reply 8 KB, error 2 KB,
+  40 tool calls), so the logs keep room under GitHub's cap.
+- **What you see is what goes**: the preview opens at once with the conversation unfolded;
+  **Include the conversation** unticked makes it the plain report. The draft is read when the
+  dialog first previews it — a turn still running when the agent drafted shows how far it got —
+  and the post sends exactly that preview. Drafts live in memory (the last 16) and expire.
 
 ## UI errors
 

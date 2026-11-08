@@ -55,6 +55,8 @@ import type {
   ReactRequest,
   ReplyRequest,
   ReportedIssue,
+  ReportDraft,
+  DraftReportRequest,
   RerunCheckRequest,
   ResizeTerminalRequest,
   Revision,
@@ -492,6 +494,11 @@ export const api = {
     call<IssuePreview>('preview_issue', { req }, true),
   submitIssue: (req: IssueRequest) =>
     call<ReportedIssue>('submit_issue', { req }, true),
+  /** A problem report about a chat ("Report this", `/report`): the core
+   *  drafts it and the report window opens on its `report_draft` event.
+   *  Nothing is sent. */
+  draftReport: (req: DraftReportRequest) =>
+    call<ReportDraft>('draft_report', { req }),
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */

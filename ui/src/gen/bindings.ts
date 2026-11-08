@@ -282,6 +282,11 @@ export const commands = {
 	previewIssue: (req: IssueRequest) => typedError<IssuePreview, CommandError>(__TAURI_INVOKE("preview_issue", { req })),
 	/**  Posts the report as a public issue with the user's GitHub token. */
 	submitIssue: (req: IssueRequest) => typedError<ReportedIssue, CommandError>(__TAURI_INVOKE("submit_issue", { req })),
+	/**
+	 *  "Report this" / `/report` in a chat: a prefilled report about it. The
+	 *  report window opens on the `report_draft` event; nothing is sent.
+	 */
+	draftReport: (req: DraftReportRequest) => typedError<ReportDraft, CommandError>(__TAURI_INVOKE("draft_report", { req })),
 };
 
 /* Types */
@@ -817,6 +822,27 @@ export type DiffLine = {
  */
 export type DiffSide = "base" | "head";
 
+/**
+ *  `draft_report`: a problem report about a chat, prefilled from it.
+ *  "Report this", `/report` and the agents' `report_problem` tool all
+ *  end here; nothing is sent until you submit the report window.
+ */
+export type DraftReportRequest = {
+	/**
+	 *  The chat: a PR's id (its AI panel) or a space's chat key
+	 *  (`space:<id>`).
+	 */
+	chat: PrId,
+	/**  The message it is about; none: the chat's latest reply. */
+	message?: string | null,
+	title?: string | null,
+	description?: string | null,
+	/**  Default: `turn`. */
+	scope?: ReportScope | null,
+	/**  Default: on. */
+	include_logs?: boolean | null,
+};
+
 export type DraftStateRequest = {
 	pr: PrId,
 	draft: boolean,
@@ -920,7 +946,12 @@ name: string; state: CodeInstallProgress } |
  */
 { type: "terminal_output"; space: string; terminal: string; seq: number; data: string } |
 /**  The terminal's shell exited (on its own, or `close_space_terminal`). */
-{ type: "terminal_exit"; space: string; terminal: string; exit_code: number | null; error: string | null };
+{ type: "terminal_exit"; space: string; terminal: string; exit_code: number | null; error: string | null } |
+/**
+ *  A chat report was drafted (`draft_report`, or an agent's
+ *  `report_problem`): open the report window on it. Nothing is sent.
+ */
+{ type: "report_draft"; draft: ReportDraft };
 
 export type FileDiff = {
 	path: string,
@@ -1076,6 +1107,11 @@ export type IssuePreview = {
 	draft: string,
 	title: string,
 	body: string,
+	/**
+	 *  The conversation block in `body` (a chat report; folded in the
+	 *  preview).
+	 */
+	context?: string | null,
 	/**  The logs block `body` ends with (folded in the preview). */
 	logs: string | null,
 	log_lines: number,
@@ -1093,6 +1129,11 @@ export type IssueRequest = {
 	 *  that expired) collects them afresh.
 	 */
 	draft?: string | null,
+	/**
+	 *  A chat report's id (`ReportDraft::id`): the body gets that
+	 *  conversation, and `with_logs` means that run's log lines only.
+	 */
+	context?: string | null,
 };
 
 /**  Where a report issue would go and whether it can be posted now. */
@@ -1377,10 +1418,40 @@ export type RepoRef = {
 	name: string,
 };
 
+/**
+ *  A drafted chat report, waiting in the report window. Its conversation
+ *  is read when the window previews or posts it, so a turn still running
+ *  when it was drafted shows how it ended.
+ */
+export type ReportDraft = {
+	/**  Pass in `IssueRequest::context`. */
+	id: string,
+	chat: PrId,
+	scope: ReportScope,
+	title: string,
+	description: string,
+	include_logs: boolean,
+	/**  One line for the window: `Space turn 3 of 5 · claude`. */
+	about: string,
+	/**  Drafted by the agent (`report_problem`), not by you. */
+	by_agent: boolean,
+};
+
 export type ReportFile = {
 	name: string,
 	bytes: number,
 };
+
+/**  What a chat report is about (docs/telemetry.md "Report from a chat"). */
+export type ReportScope =
+/**  One message: its own text (and a reply's tool calls). */
+"message" |
+/**  Your message and the reply to it, tool calls, error, timings. */
+"turn" |
+/**  A space as a whole: where, agent, status; no message text. */
+"space" |
+/**  A PR's AI panel as a whole: the same. */
+"review";
 
 export type ReportedIssue = {
 	number: number,

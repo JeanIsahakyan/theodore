@@ -1536,6 +1536,18 @@ pub async fn submit_issue(
     op.run(async move { core.submit_issue(req).await }).await
 }
 
+/// "Report this" / `/report` in a chat: a prefilled report about it. The
+/// report window opens on the `report_draft` event; nothing is sent.
+#[tauri::command]
+#[specta::specta]
+pub async fn draft_report(
+    op: crate::op::Op,
+    req: theodore_contract::DraftReportRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::ReportDraft, CommandError> {
+    op.run(async move { core.draft_report(req).await }).await
+}
+
 /// Shows a problem report in Finder. Only paths inside the reports folder.
 #[tauri::command]
 #[specta::specta]

@@ -693,6 +693,11 @@ pub enum Ephemeral {
         exit_code: Option<i32>,
         error: Option<String>,
     },
+    /// A chat report was drafted (`draft_report`, or an agent's
+    /// `report_problem`): open the report window on it. Nothing is sent.
+    ReportDraft {
+        draft: ReportDraft,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -857,6 +862,10 @@ pub struct ChatMessage {
     /// `activity` joined, and only those show, in the order they came.
     #[serde(default)]
     pub text_in_steps: bool,
+    /// The agent run that wrote this reply: its log lines carry it as
+    /// `run_id` (a chat report's logs). None on yours and older rows.
+    #[serde(default)]
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -1057,6 +1066,9 @@ pub fn types() -> specta::Types {
         .register::<ReportedIssue>()
         .register::<ReportStatus>()
         .register::<TrackedReport>()
+        .register::<ReportScope>()
+        .register::<DraftReportRequest>()
+        .register::<ReportDraft>()
         .register::<TerminalStatus>()
         .register::<SpaceTerminalInfo>()
         .register::<OpenTerminalRequest>()
