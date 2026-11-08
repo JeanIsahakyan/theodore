@@ -127,3 +127,59 @@ async fn handle_pr_reads(core: &Core, pr: &PrId, new_hunks: Vec<HunkId>) {
         queue_viewed_sync(core, pr, &path).await;
     }
 }
+
+/// The host's per-file Viewed (a file marked on the host's own UI) as
+/// `file_viewed` writes, on every fresh `PrDetail`. Only rows that differ
+/// from the stored state; a path whose `set_viewed` is still pending keeps
+/// the local choice — the host hasn't heard it yet.
+pub(crate) async fn host_viewed_actions(
+    core: &Core,
+    pr: &PrId,
+    host: &[theodore_domain::FileViewed],
+) -> Vec<NewAction> {
+    if host.is_empty() {
+        return Vec::new();
+    }
+    let store = core.0.deps.store.clone();
+    let (pr, host) = (pr.clone(), host.to_vec());
+    tokio::task::spawn_blocking(move || {
+        let stored: HashMap<String, ViewedState> = store
+            .query(models::FILE_VIEWED, "pr", &pr.0)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<FileViewedRow>(r.data).ok())
+            .map(|r| (r.path, r.state))
+            .collect();
+        host.into_iter()
+            .filter(|f| {
+                let local = stored.get(&f.path).unwrap_or(&ViewedState::Unviewed);
+                *local != f.state
+            })
+            .filter(|f| {
+                let probe = serde_json::to_value(SetViewedPayload {
+                    pr: pr.clone(),
+                    path: f.path.clone(),
+                })
+                .expect("serializable");
+                !store
+                    .outbox_has_pending("set_viewed", &probe)
+                    .unwrap_or(true)
+            })
+            .map(|f| NewAction {
+                model: models::FILE_VIEWED.into(),
+                model_id: format!("{}:{}", pr.0, f.path),
+                action: SyncActionCode::U,
+                data: Some(
+                    serde_json::to_value(FileViewedRow {
+                        pr: pr.clone(),
+                        path: f.path,
+                        state: f.state,
+                    })
+                    .expect("serializable"),
+                ),
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}

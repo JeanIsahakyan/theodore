@@ -511,7 +511,10 @@ impl Core {
         self.keep_inbox_reasons(&pr_s, &mut summary_data).await;
         let detail_data = serde_json::to_value(detail)
             .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
-        let actions = vec![
+        let viewed =
+            crate::reading::host_viewed_actions(self, &detail.summary.pr.id(), &detail.viewed)
+                .await;
+        let mut actions = vec![
             NewAction {
                 model: models::PR.into(),
                 model_id: pr_s.clone(),
@@ -525,6 +528,7 @@ impl Core {
                 data: Some(detail_data),
             },
         ];
+        actions.extend(viewed);
         self.apply(actions).await?;
         Ok(())
     }

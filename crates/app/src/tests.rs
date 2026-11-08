@@ -929,6 +929,95 @@ async fn a_failed_unview_puts_viewed_back() {
     .await;
 }
 
+fn detail_with_viewed(state: ViewedState) -> theodore_domain::PrDetail {
+    let mut detail = testkit::sample_pr_detail(
+        &fixture_pr_ref(),
+        &Sha::new("base000"),
+        &Sha::new("head111"),
+    );
+    detail.viewed = vec![theodore_domain::FileViewed {
+        path: "src/lib.rs".into(),
+        state,
+    }];
+    detail
+}
+
+#[tokio::test]
+async fn a_file_marked_viewed_on_the_host_shows_viewed_after_open() {
+    let f = fixtures();
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-1".into()),
+        value: detail_with_viewed(ViewedState::Viewed),
+    }));
+    let (core, _recv) = Core::start(f.deps());
+    let resp = core
+        .open_pr(OpenPrRequest {
+            url: "https://github.com/acme/widgets/pull/7".into(),
+        })
+        .await
+        .expect("open_pr");
+
+    let fv = file_viewed_row(&f, &resp.pr, "src/lib.rs").expect("file_viewed row");
+    assert_eq!(fv.state, ViewedState::Viewed);
+    assert!(
+        f.store.outbox_snapshot().is_empty(),
+        "the host's own state is not written back to it"
+    );
+}
+
+#[tokio::test]
+async fn a_pending_viewed_write_wins_over_the_host_state_on_refresh() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+
+    // The local Viewed write fails on the network: it waits, pending.
+    f.host
+        .push_set_viewed(Err(HostError::Network("timeout".into())));
+    core.transact(file_viewed_tx(
+        "fv-1",
+        &pr,
+        "src/lib.rs",
+        ViewedState::Viewed,
+        false,
+    ))
+    .await;
+    wait_until(|| {
+        f.store
+            .outbox_snapshot()
+            .first()
+            .is_some_and(|i| i.attempts >= 1 && i.status == OutboxStatus::Pending)
+    })
+    .await;
+
+    // The host still says Unviewed: the pending local choice stays.
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-2".into()),
+        value: detail_with_viewed(ViewedState::Unviewed),
+    }));
+    core.refresh_pr(&pr, &fixture_pr_ref())
+        .await
+        .expect("refreshed");
+    assert_eq!(
+        file_viewed_row(&f, &pr, "src/lib.rs").map(|r| r.state),
+        Some(ViewedState::Viewed)
+    );
+
+    // Once the write landed, an unmark on the host comes through.
+    f.clock.advance(10_000);
+    wait_until(|| f.store.outbox_snapshot()[0].status == OutboxStatus::Done).await;
+    f.host.push_get_pr(Ok(Fetched::Modified {
+        etag: Some("etag-3".into()),
+        value: detail_with_viewed(ViewedState::Unviewed),
+    }));
+    core.refresh_pr(&pr, &fixture_pr_ref())
+        .await
+        .expect("refreshed");
+    assert_eq!(
+        file_viewed_row(&f, &pr, "src/lib.rs").map(|r| r.state),
+        Some(ViewedState::Unviewed)
+    );
+}
+
 // ── outbox retry / backoff / auth pause / compensation ──────────────────
 
 #[tokio::test]

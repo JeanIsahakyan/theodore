@@ -166,6 +166,8 @@ change first, sends it through the outbox, and reconciles:
 - success → nothing to do (or merge server ids into the model);
 - user-visible failure → compensating action + toast;
 - conflict on poll (someone else changed it) → GitHub wins, UI gets the delta.
+  Viewed included: every fresh PR fetch takes the host's per-file state,
+  except a file whose own write still waits in the outbox.
 
 Offline / 401 / rate limit → outbox pauses; reads come from SQLite. A host
 refusal (validation, forbidden, not found, a malformed answer) fails the
