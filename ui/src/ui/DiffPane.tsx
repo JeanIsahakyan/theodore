@@ -1465,7 +1465,14 @@ function FileBlockInner({
   const last = file.hunks[file.hunks.length - 1];
 
   return (
-    <Card ref={cardRef} className="file mb-4 gap-0 overflow-hidden p-0">
+    // `overflow: clip`, not `hidden`: both round the corners, but `hidden`
+    // makes the card a scroll container, and the sticky header would stick
+    // to the card instead of the pane (#131). An older WebKit without `clip`
+    // keeps `hidden`: a header that scrolls away, as before.
+    <Card
+      ref={cardRef}
+      className="file mb-4 gap-0 overflow-hidden p-0 supports-[overflow:clip]:overflow-clip"
+    >
       <header
         // In a narrow pane (a space's Changes) the controls wrap under the
         // name instead of being cut off at the card's edge; the name keeps
