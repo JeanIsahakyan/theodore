@@ -340,6 +340,7 @@ mod tests {
                 title: "t".into(),
                 body: String::new(),
                 url: String::new(),
+                closed: false,
             })
         }
     }

@@ -20,6 +20,9 @@ pub(crate) struct GlIssue {
     pub title: String,
     pub description: Option<String>,
     pub web_url: String,
+    /// `opened` or `closed`.
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -924,6 +924,7 @@ fn gl_issue_to_tracked(issue: crate::model::GlIssue) -> TrackedIssue {
         title: issue.title,
         body: issue.description.unwrap_or_default(),
         url: issue.web_url,
+        closed: issue.state.as_deref() == Some("closed"),
     }
 }
 

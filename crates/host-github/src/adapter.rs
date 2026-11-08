@@ -1011,6 +1011,7 @@ fn gh_issue_to_tracked(issue: rest::GhIssueFull) -> TrackedIssue {
         title: issue.title,
         body: issue.body.unwrap_or_default(),
         url: issue.html_url,
+        closed: issue.state.as_deref() == Some("closed"),
     }
 }
 

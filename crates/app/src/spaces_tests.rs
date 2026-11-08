@@ -530,6 +530,7 @@ async fn a_note_goes_on_top_of_the_issue_it_starts_from() {
         title: "Login loops".into(),
         body: "After SSO it redirects forever.".into(),
         url: "https://example.test/7".into(),
+        closed: false,
     }));
     f.agents.push_script(done("ok", 0.0));
     f.git.push_checkpoint(Sha::new("turn111"));

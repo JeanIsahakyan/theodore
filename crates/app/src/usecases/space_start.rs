@@ -215,6 +215,7 @@ mod tests {
             title: "Fix the login redirect".into(),
             body: "It sends people to /undefined.".into(),
             url: "https://github.com/acme/widgets/issues/123".into(),
+            closed: false,
         };
         assert_eq!(
             issue_goal(&issue),
@@ -236,6 +237,7 @@ mod tests {
             title: "Typo".into(),
             body: String::new(),
             url: "https://github.com/acme/widgets/issues/7".into(),
+            closed: false,
         };
         assert_eq!(
             issue_goal(&issue),

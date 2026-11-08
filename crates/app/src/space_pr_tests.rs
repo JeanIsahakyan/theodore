@@ -607,6 +607,84 @@ async fn the_pr_after_a_continue_takes_the_chat_agents_proposed_title() {
     );
 }
 
+/// `s` as if started from host issue `n` (`Space::issue`).
+fn patch_issue(f: &Fixtures, id: &str, n: u64) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: id.to_string(),
+            action: SyncActionCode::C,
+            data: Some(json!({ "issue": n })),
+        }])
+        .unwrap();
+}
+
+fn pr_bodies(f: &Fixtures) -> Vec<String> {
+    let calls = f.host.create_pr_calls.lock().unwrap();
+    calls.iter().map(|c| c.1.body.clone()).collect()
+}
+
+/// The first round's PR closed issue #12 when it merged: the next round's
+/// doesn't say "Closes #12" again (the host can't tell its state here).
+#[tokio::test]
+async fn closes_is_not_repeated_after_a_continue() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Fix the login loop").await;
+    patch_issue(&f, &s.id, 12);
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: sample_pr_detail(&pr_ref(100), &Sha::new("base000"), &Sha::new("squash1")),
+    }));
+    core.ship_space(open_pr(&space(&f, &s.id))).await.unwrap();
+    wait_until(|| space(&f, &s.id).pr.is_some()).await;
+    assert!(
+        pr_bodies(&f)[0].contains("Closes #12"),
+        "{:?}",
+        pr_bodies(&f)
+    );
+
+    merge_on_host(&f, &core, 100).await;
+    base_moved(&f, "main222");
+    let c = core.continue_space(&s.id).await.unwrap();
+    f.clock.advance(1_000);
+    let c = send(&f, &core, &c, "One more thing", Some("turn222")).await;
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: sample_pr_detail(&pr_ref(101), &Sha::new("main222"), &Sha::new("squash2")),
+    }));
+    core.ship_space(open_pr(&c)).await.unwrap();
+    wait_until(|| f.host.create_pr_calls.lock().unwrap().len() == 2).await;
+    assert!(
+        !pr_bodies(&f)[1].contains("Closes #12"),
+        "{:?}",
+        pr_bodies(&f)
+    );
+}
+
+/// An issue the host says is closed already gets no "Closes #n".
+#[tokio::test]
+async fn closes_is_left_out_for_an_issue_the_host_says_is_closed() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Fix the login loop").await;
+    patch_issue(&f, &s.id, 12);
+    f.host.push_get_issue(Ok(theodore_ports::TrackedIssue {
+        number: 12,
+        title: "Login loops".into(),
+        body: String::new(),
+        url: "https://example.test/12".into(),
+        closed: true,
+    }));
+    core.ship_space(open_pr(&space(&f, &s.id))).await.unwrap();
+    wait_until(|| !f.host.create_pr_calls.lock().unwrap().is_empty()).await;
+    assert!(
+        !pr_bodies(&f)[0].contains("Closes #12"),
+        "{:?}",
+        pr_bodies(&f)
+    );
+}
+
 #[tokio::test]
 async fn continue_moves_the_space_to_a_new_branch_on_the_fresh_base() {
     let f = fixtures();

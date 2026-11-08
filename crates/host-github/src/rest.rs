@@ -377,6 +377,9 @@ pub(crate) struct GhIssueFull {
     pub html_url: String,
     #[serde(default)]
     pub pull_request: Option<serde_json::Value>,
+    /// `open` or `closed`.
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 /// `GET /repos/{owner}/{repo}/issues/{number}`.

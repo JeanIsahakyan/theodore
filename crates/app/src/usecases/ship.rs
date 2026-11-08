@@ -185,7 +185,7 @@ impl Core {
                 let body = self
                     .space_pr_body(&about, &repo_path, &head, pr_body(&title, &about.goal))
                     .await;
-                let body = with_closes(body, space.issue);
+                let body = with_closes(body, self.issue_to_close(&space, &project.repo).await);
                 let payload = CreateSpacePrPayload {
                     space: space.id.clone(),
                     repo: project.repo.clone(),
@@ -530,6 +530,17 @@ impl Core {
         self.change_summary(space, project, repo_path, from, head, since)
             .await
             .message()
+    }
+
+    /// The issue this PR closes (`Space::issue`), unless it's closed
+    /// already: the host says so, or — when the host can't say — an
+    /// earlier round's PR of this space closed it as it merged.
+    async fn issue_to_close(&self, space: &Space, repo: &RepoRef) -> Option<u64> {
+        let n = space.issue?;
+        match self.0.deps.host.get_issue(repo, n).await {
+            Ok(issue) => (!issue.closed).then_some(n),
+            Err(_) => space.rounds.is_empty().then_some(n),
+        }
     }
 
     /// The outbox opened (or found) the space's PR: link it and fetch it so

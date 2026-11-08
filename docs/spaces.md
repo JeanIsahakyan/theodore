@@ -230,6 +230,10 @@ in the picker instead of a toast; a local folder doesn't offer the choice.
 The line under the composer says what each choice does. The goal box becomes an
 optional note on top of what's picked or typed, rather than required.
 
+"Closes #n" goes in only while the issue is open: Open PR asks the host
+(`get_issue`) and leaves it out for a closed one; when the host can't say,
+it's left out after a Continue, the earlier round's PR having closed it.
+
 ### Space page — drafting
 
 Chat left, changes right. The diff is the whole branch vs its base, the same

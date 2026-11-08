@@ -203,6 +203,10 @@ pub struct TrackedIssue {
     pub title: String,
     pub body: String,
     pub url: String,
+    /// Closed on the host: a space's next PR says no "Closes #<number>"
+    /// for it.
+    #[serde(default)]
+    pub closed: bool,
 }
 
 /// `HostAdapter::open_issues`' order: `mine` first, then the rest of `all`,

@@ -36,6 +36,21 @@ async fn get_issue_reads_number_title_body_and_url() {
     assert_eq!(got.title, "Fix the login redirect");
     assert_eq!(got.body, "It sends people to /undefined.");
     assert_eq!(got.url, "https://github.com/acme/widgets/issues/42");
+    assert!(!got.closed, "no state reads as open");
+}
+
+#[tokio::test]
+async fn get_issue_reads_a_closed_state() {
+    let s = support::servers().await;
+    let mut issue = gh_issue(12);
+    issue["state"] = serde_json::json!("closed");
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/widgets/issues/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(issue))
+        .mount(&s.rest)
+        .await;
+
+    assert!(s.adapter.get_issue(&repo(), 12).await.unwrap().closed);
 }
 
 #[tokio::test]
