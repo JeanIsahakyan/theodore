@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { mount, type Mounted } from '../test/dom';
@@ -7,6 +6,12 @@ import {
   PinceNezIndicator,
   type PinceNezState,
 } from './PinceNezIndicator';
+
+// The stylesheet as text: the runner skips CSS and the UI's types have no
+// Node, so it's read through a typed dynamic import.
+const fs = (await import('node' + ':fs')) as {
+  readFileSync(path: string, encoding: 'utf8'): string;
+};
 
 const STATES: PinceNezState[] = [
   'idle',
@@ -85,7 +90,7 @@ describe('PinceNezIndicator', () => {
 });
 
 describe('its CSS', () => {
-  const css = readFileSync('src/ui/pince-nez-indicator.css', 'utf8');
+  const css = fs.readFileSync('src/ui/pince-nez-indicator.css', 'utf8');
   const motion = /prefers-reduced-motion: reduce\) \{([\s\S]*)\}\s*$/.exec(
     css,
   )?.[1];
