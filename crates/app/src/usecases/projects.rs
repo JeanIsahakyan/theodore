@@ -95,6 +95,7 @@ impl Core {
             data: None,
         }])
         .await?;
+        self.drop_removed_project_prs(&project.repo).await?;
         Ok(())
     }
 
