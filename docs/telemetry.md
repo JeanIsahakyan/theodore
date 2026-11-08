@@ -241,6 +241,10 @@ submit_issue(…, draft) ─▶ POST /repos/{owner}/{repo}/issues, label from-ap
 - **No GitHub sign-in, sandbox or fixture runs**: modes 1–2 are disabled with a one-line reason;
   sandbox and fixture runs have no issue tracker at all, so they can't reach GitHub even if asked.
   Errors show inline: an expired token reads "GitHub sign-in expired …".
+- **GitHub can't be checked** (rate limit, network, a 5xx, signed out): modes 1–2 wait with the
+  reason — a rate limit says how long, from GitHub's reset time ("… Try again in 12 minutes.") —
+  and **Retry**, which asks again and keeps the title, comment, files and a chat's draft. The
+  cause is logged as a warning (`error.code`, e.g. `host.rate_limited`).
 - **The zip** (`Save logs only`): `<tmp>/theodore-reports/theodore-report-<stamp>.zip` with
   `app-info.json` (version, commit, build environment and date, OS, agent CLI versions) and the
   newest logs up to 20 MB, redacted again with the remote rules (repository names and paths

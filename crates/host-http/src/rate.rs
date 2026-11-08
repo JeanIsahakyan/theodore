@@ -63,7 +63,7 @@ fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
 /// `x-ratelimit-reset` (unix seconds, absolute). Falls back to `now + 60s`
 /// when a 429/403 carries neither (GitHub always sends one, but other hosts
 /// built on this client might not).
-pub(crate) fn reset_at_from_headers(headers: &HeaderMap, now_ms: Millis) -> Millis {
+pub fn reset_at_from_headers(headers: &HeaderMap, now_ms: Millis) -> Millis {
     if let Some(secs) = header_u64(headers, "retry-after") {
         return now_ms + secs as i64 * 1000;
     }

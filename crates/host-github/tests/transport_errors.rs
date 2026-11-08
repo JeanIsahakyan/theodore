@@ -86,6 +86,30 @@ async fn graphql_rate_limited_error_gets_a_future_reset_at_not_zero() {
 }
 
 #[tokio::test]
+async fn graphql_rate_limited_error_takes_the_reset_from_the_headers() {
+    let s = support::servers().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-ratelimit-remaining", "0")
+                .insert_header("x-ratelimit-reset", "1700000900")
+                .set_body_json(serde_json::json!({
+                    "errors": [{ "message": "API rate limit exceeded", "type": "RATE_LIMITED" }]
+                })),
+        )
+        .mount(&s.graphql)
+        .await;
+
+    match s.adapter.list_repos().await.unwrap_err() {
+        // 15 minutes after the fixed clock's 1_700_000_000_000.
+        HostError::RateLimited { reset_at } => assert_eq!(reset_at, 1_700_000_900_000),
+        other => panic!("expected RateLimited, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn a_403_without_rate_limit_headers_is_auth_not_rate_limited() {
     let s = support::servers().await;
 
