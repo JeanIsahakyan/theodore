@@ -56,6 +56,15 @@ export function openPrCount(prs: InboxPr[]): number {
   return prs.filter((p) => openish(p) && !isBranchReview(p)).length;
 }
 
+/** What `openPrCount` counts, said on the sidebar's number. In a project
+ *  it's the repo's own Pull requests tab; All projects has no GitHub page
+ *  of its own (github.com/pulls lists only what you wrote). */
+export function openPrCountHint(project: Pick<Project, 'repo'> | null): string {
+  return project
+    ? `Open pull requests in ${project.repo.owner}/${project.repo.name}, drafts included`
+    : "Open pull requests, drafts included: everyone's in your projects, and ones you're on elsewhere";
+}
+
 /** Non-empty groups of `prs` (already scoped) under `filter`. `viewer` is
  *  the signed-in host login; with none, "Mine" is empty. */
 export function prGroups(
