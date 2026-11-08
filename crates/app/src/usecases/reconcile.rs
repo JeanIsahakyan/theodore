@@ -208,6 +208,11 @@ impl Core {
         if self.0.current_head.read().await.contains_key(pr) {
             return Ok(false);
         }
+        // Asked again: a space opening this PR writes its row before it
+        // links it, and may have linked it since `doubted_rows` looked.
+        if self.prs_behind_live_spaces().await?.contains(pr) {
+            return Ok(false);
+        }
         let mut actions = Vec::new();
         for model in [models::PR, models::PR_DETAIL, models::GROUPING] {
             if model == models::PR || self.get_row(model, &pr.0).await?.is_some() {
