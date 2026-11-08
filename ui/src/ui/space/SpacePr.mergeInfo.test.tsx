@@ -6,7 +6,7 @@ import type { MergeInfo } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { FakeTransport } from '../../test/fakeTransport';
 import { mount, type Mounted } from '../../test/dom';
-import { mergeInfoRetryMs, useMergeInfo } from './SpacePr';
+import { mergeInfoRetryMs, useMergeInfo } from '../mergeInfo';
 
 const PR = 'gh:acme/app#1';
 

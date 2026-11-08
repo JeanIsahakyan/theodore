@@ -42,6 +42,7 @@ import type {
 } from '../gen/contract';
 import { mergePr, updateBranch } from '../actions';
 import { api } from '../core/api';
+import { mergeInfoProblem, useMergeInfoState } from './mergeInfo';
 import { useRootStore } from '../stores/context';
 import { Btn, Spinner } from './bits';
 
@@ -175,8 +176,9 @@ export const MergeDialog = observer(function MergeDialog({
 }) {
   const store = useRootStore();
   const summary = store.models.prSummaries.get(pr);
-  const [info, setInfo] = useState<MergeInfo | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Asked again on a backoff while the dialog is open: a host having
+  // trouble (a 502) recovers on its own, said in a sentence meanwhile.
+  const { info, error: loadError } = useMergeInfoState(pr, 'dialog');
   const [method, setMethod] = useState<MergeMethod>('squash');
   const [title, setTitle] = useState(summary ? `${summary.title}` : '');
   const [body, setBody] = useState('');
@@ -190,32 +192,25 @@ export const MergeDialog = observer(function MergeDialog({
     null,
   );
 
+  // The host's pick (your last method, else the repo's default), once its
+  // first answer is in.
+  const [picked, setPicked] = useState(false);
   useEffect(() => {
-    let live = true;
-    void api
-      .mergeInfo(pr)
-      .then((i) => {
-        if (!live) return;
-        setInfo(i);
-        // The host's pick (your last method, else the repo's default).
-        const d = i.default_method;
-        if (d && (!i.allowed_methods.length || i.allowed_methods.includes(d))) {
-          setMethod(d);
-        } else if (
-          i.allowed_methods.length &&
-          !i.allowed_methods.includes(method)
-        ) {
-          setMethod(i.allowed_methods[0]!);
-        }
-      })
-      .catch(
-        (e) => live && setLoadError(e instanceof Error ? e.message : String(e)),
-      );
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pr]);
+    if (!info || picked) return;
+    setPicked(true);
+    const d = info.default_method;
+    if (
+      d &&
+      (!info.allowed_methods.length || info.allowed_methods.includes(d))
+    ) {
+      setMethod(d);
+    } else if (
+      info.allowed_methods.length &&
+      !info.allowed_methods.includes(method)
+    ) {
+      setMethod(info.allowed_methods[0]!);
+    }
+  }, [info, picked, method]);
 
   useEffect(() => {
     if (!summary?.conflicts) return;
@@ -320,12 +315,14 @@ export const MergeDialog = observer(function MergeDialog({
             </Modal.Heading>
           </Modal.Header>
           <Modal.Body className="flex flex-col gap-3">
-            {loadError && (
-              <Alert status="danger">
+            {loadError != null && (
+              <Alert status="warning" className="merge-info-problem">
                 <Alert.Indicator />
                 <Alert.Content>
-                  <Alert.Title>Can't check merge status</Alert.Title>
-                  <Alert.Description>{loadError}</Alert.Description>
+                  <Alert.Title>Can't check merge status yet</Alert.Title>
+                  <Alert.Description>
+                    {mergeInfoProblem(summary.pr.repo.host, loadError)}
+                  </Alert.Description>
                 </Alert.Content>
               </Alert>
             )}

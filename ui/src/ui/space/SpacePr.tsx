@@ -16,7 +16,6 @@ import { Alert, Button, Chip, Dropdown, Tabs, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
   ConflictFile,
-  MergeInfo,
   MergeMethod,
   PrId,
   PrSummary,
@@ -32,6 +31,7 @@ import {
   MergeDialog,
   STATE_LABEL,
 } from '../Merge';
+import { useMergeInfo } from '../mergeInfo';
 import { Threads } from '../SidePanel';
 import {
   autoArchiveDays,
@@ -65,51 +65,6 @@ export function PrGlyph({ pr }: { pr: PrSummary | undefined }) {
       aria-label={`PR ${tint === 'none' ? 'open' : tint}`}
     />
   );
-}
-
-/** How long before asking `merge_info` again after `attempt` failed (or
- *  the host hadn't finished checking): 2 s, doubling, capped at 30 s. */
-export function mergeInfoRetryMs(attempt: number): number {
-  return Math.min(2_000 * 2 ** attempt, 30_000);
-}
-
-/** `merge_info` of an open PR, asked again whenever `version` changes
- *  (the PR row's head and update time); the last answer stays meanwhile.
- *  A failed ask (a host having trouble) or an `unknown` answer is asked
- *  again on a backoff, so "Checking…" doesn't stay until you leave.
- *  Quiet: the caller says what's unknown. */
-export function useMergeInfo(
-  pr: PrId | null,
-  version: string,
-): MergeInfo | null {
-  const [got, setGot] = useState<{ pr: PrId; info: MergeInfo } | null>(null);
-  const [attempt, setAttempt] = useState({ key: '', n: 0 });
-  const key = `${pr}@${version}`;
-  const n = attempt.key === key ? attempt.n : 0;
-  useEffect(() => {
-    if (!pr) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const again = () => {
-      timer = setTimeout(
-        () => live && setAttempt({ key, n: n + 1 }),
-        mergeInfoRetryMs(n),
-      );
-    };
-    void api
-      .mergeInfo(pr, true)
-      .then((info) => {
-        if (!live) return;
-        setGot({ pr, info });
-        if (info.state === 'unknown') again();
-      })
-      .catch(() => live && again());
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [pr, key, n]);
-  return got && got.pr === pr ? got.info : null;
 }
 
 /** The conflicting files of `pr` at `head` (`conflicts`, computed
