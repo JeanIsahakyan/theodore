@@ -272,8 +272,9 @@ body.cmd .lines .src span:hover {
     25% 25%;
 }
 
-/* A hunk scrolled to its top clears its file's sticky header */
-[id^='H-'] {
+/* A hunk or a line scrolled to its top clears its file's sticky header */
+[id^='H-'],
+.file .ln {
   scroll-margin-top: 56px;
 }
 
