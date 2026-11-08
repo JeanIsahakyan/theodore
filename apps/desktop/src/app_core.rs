@@ -1343,15 +1343,19 @@ mod tests {
         }
     }
 
-    /// "Report this" on an AI panel reply: the posted body quotes that
-    /// conversation, exactly as previewed; nothing goes without submit.
-    #[tokio::test]
-    async fn a_chat_report_posts_its_conversation_as_previewed() {
+    /// An app with an AI panel question and its reply on `github:acme/app#7`,
+    /// and a "Report this" draft about the reply.
+    async fn chat_report(
+        tracker: Arc<FakeTracker>,
+    ) -> (
+        AppCore,
+        theodore_app::Receivers,
+        theodore_contract::ReportDraft,
+    ) {
         use theodore_ports::{NewAction, Store, SyncActionCode};
         let f = theodore_app::testkit::fixtures();
-        let (core, _rx) = Core::start(f.deps());
-        let tracker = Arc::new(FakeTracker::default());
-        let app = AppCore::new(core).with_issues(Some(tracker.clone() as Arc<dyn IssueTracker>));
+        let (core, rx) = Core::start(f.deps());
+        let app = AppCore::new(core).with_issues(Some(tracker as Arc<dyn IssueTracker>));
         let pr = PrId::new("github:acme/app#7");
         for (id, data) in [
             (
@@ -1386,6 +1390,15 @@ mod tests {
             })
             .await
             .unwrap();
+        (app, rx, draft)
+    }
+
+    /// "Report this" on an AI panel reply: the posted body quotes that
+    /// conversation, exactly as previewed; nothing goes without submit.
+    #[tokio::test]
+    async fn a_chat_report_posts_its_conversation_as_previewed() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx, draft) = chat_report(tracker.clone()).await;
         assert!(
             tracker.posted.lock().unwrap().is_empty(),
             "a draft sends nothing"
@@ -1495,6 +1508,47 @@ mod tests {
     async fn a_posted_issue_is_listed_in_my_reports() {
         let (app, _rx) = app(Some(Arc::new(FakeTracker::default())));
         app.submit_issue(request(None)).await.unwrap();
+        let boot = app
+            .core
+            .bootstrap(theodore_contract::BootstrapScope::Global)
+            .await
+            .unwrap();
+        let row = boot
+            .rows
+            .into_iter()
+            .find(|r| r.model == theodore_contract::models::REPORT)
+            .expect("a report row");
+        let (owner, name) = issue::target_repo(None);
+        assert_eq!(row.id, format!("{owner}/{name}#7"));
+        let report: theodore_contract::TrackedReport = serde_json::from_value(row.data).unwrap();
+        assert_eq!(report.title, "Diff pane is blank");
+        assert_eq!(report.status, theodore_contract::ReportStatus::Open);
+    }
+
+    /// A report from a chat (with its conversation and the run's logs
+    /// asked for) is remembered in My reports like a plain one.
+    #[tokio::test]
+    async fn a_chat_report_is_listed_in_my_reports_too() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx, draft) = chat_report(tracker.clone()).await;
+        let req = theodore_contract::IssueRequest {
+            context: Some(draft.id.clone()),
+            ..request(None)
+        };
+        let preview = app.preview_issue(req.clone()).await.unwrap();
+        app.submit_issue(theodore_contract::IssueRequest {
+            draft: Some(preview.draft),
+            ..req
+        })
+        .await
+        .unwrap();
+        assert!(
+            tracker.posted.lock().unwrap()[0]
+                .2
+                .body
+                .contains("<summary>Conversation: AI panel reply 1 of 1"),
+            "posted with its conversation"
+        );
         let boot = app
             .core
             .bootstrap(theodore_contract::BootstrapScope::Global)
