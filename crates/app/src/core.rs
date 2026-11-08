@@ -130,6 +130,9 @@ pub(crate) struct Inner {
     /// (`usecases::space_questions`).
     pub questions:
         std::sync::Mutex<HashMap<String, crate::usecases::space_questions::PendingQuestion>>,
+    /// "My reports": what follows report issues (`Core::follow_reports`);
+    /// `None` until the shell sets one, and for good in sandbox/fixtures.
+    pub reports: std::sync::Mutex<Option<crate::usecases::reports::ReportsFollow>>,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -185,6 +188,7 @@ impl Core {
             space_queue: Default::default(),
             space_link_scheme: std::sync::Mutex::new(None),
             questions: std::sync::Mutex::new(HashMap::new()),
+            reports: std::sync::Mutex::new(None),
         });
 
         let core = Core(inner.clone());

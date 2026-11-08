@@ -156,6 +156,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::focus_window,
             commands::take_pending_space,
             commands::notify_space,
+            commands::notify_report,
             commands::log_client,
             commands::track_ui,
             commands::telemetry_status,

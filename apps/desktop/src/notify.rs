@@ -8,6 +8,9 @@
 //!   │    returns true: the UI keeps no fallback
 //!   elsewhere (dev run, bare binary, other OS) ── notification plugin
 //!        returns false: the UI opens the space on the next window focus
+//!
+//! UI ── notify_report(url, title, body) ──▶ Notifier::show   ("My reports")
+//!        click ──▶ the issue opens in the browser
 //! ```
 
 use std::sync::Arc;
@@ -80,6 +83,37 @@ pub fn notify_update(notifier: &dyn Notifier, window: impl UpdateWindow, version
             window.restart_when_idle();
         }),
     )
+}
+
+/// What a click on a report's notification does ("My reports").
+pub trait ReportWindow: Send + 'static {
+    /// Opens the report's issue in the browser.
+    fn open_issue(&self, url: &str);
+}
+
+/// "Your report #42 is fixed in #57", shown while the window is in the
+/// background (the toast covers the foreground). A click opens the issue.
+pub fn notify_report(
+    notifier: &dyn Notifier,
+    window: impl ReportWindow,
+    url: String,
+    notice: Notice,
+) -> bool {
+    notifier.show(notice, Box::new(move || window.open_issue(&url)))
+}
+
+impl<R: Runtime> ReportWindow for MainWindow<R> {
+    fn open_issue(&self, url: &str) {
+        use tauri_plugin_opener::OpenerExt;
+        // Only a GitHub page: the URL came from the core, but a click is
+        // no place to open anything else.
+        if !url.starts_with("https://") {
+            return;
+        }
+        if let Err(err) = self.0.opener().open_url(url, None::<&str>) {
+            tracing::warn!(?err, "failed to open a report's issue");
+        }
+    }
 }
 
 /// The real window: the existing focus helper and a Tauri event.
@@ -342,6 +376,30 @@ mod tests {
         assert_eq!(body.as_deref(), Some("Click to restart into it."));
         click();
         assert_eq!(*window.0.lock().unwrap(), ["focus", "restart"]);
+    }
+
+    impl ReportWindow for FakeWindow {
+        fn open_issue(&self, url: &str) {
+            self.0.lock().unwrap().push(format!("open {url}"));
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_report_notice_opens_its_issue() {
+        let notifier = FakeNotifier::default();
+        let window = FakeWindow::default();
+        let url = "https://github.com/acme/theodore/issues/42";
+        let notice = Notice {
+            title: "Your report #42 is fixed in #57".into(),
+            body: Some("Diff pane is blank".into()),
+        };
+        assert!(notify_report(&notifier, window.clone(), url.into(), notice));
+        assert!(window.0.lock().unwrap().is_empty());
+
+        let (title, _, click) = notifier.shown.lock().unwrap().pop().unwrap();
+        assert_eq!(title, "Your report #42 is fixed in #57");
+        click();
+        assert_eq!(*window.0.lock().unwrap(), [format!("open {url}")]);
     }
 
     #[test]

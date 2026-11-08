@@ -40,6 +40,7 @@ impl Core {
                     models::SETTING,
                     models::PROJECT,
                     models::SPACE,
+                    models::REPORT,
                 ] {
                     out.extend(store.all(m)?);
                 }

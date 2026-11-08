@@ -255,6 +255,12 @@ export const commands = {
 	 */
 	notifySpace: (space: string, title: string, body: string | null) => typedError<boolean, CommandError>(__TAURI_INVOKE("notify_space", { space, title, body })),
 	/**
+	 *  Shows a "My reports" notification (a report changed) while the window
+	 *  is in the background; a click opens the issue in the browser. `true`
+	 *  when the click will be acted on.
+	 */
+	notifyReport: (url: string, title: string, body: string | null) => typedError<boolean, CommandError>(__TAURI_INVOKE("notify_report", { url, title, body })),
+	/**
 	 *  A UI error or event for the core's log (docs/telemetry.md). Never
 	 *  fails: a dropped log line is not worth an error toast.
 	 */
@@ -875,6 +881,13 @@ server_trouble?: boolean } |
 { type: "config_pr"; project: string; number: number;
 /**  Empty when the host didn't say. */
 url: string } |
+/**
+ *  A followed report changed (docs/telemetry.md "My reports"): a
+ *  reply, closed as fixed or not planned, reopened, or its fix
+ *  released. `text` is what the toast and the notification say;
+ *  `title` is the issue's.
+ */
+{ type: "report_update"; number: number; url: string; title: string; text: string } |
 /**
  *  `code_intel.install: ask` and a language's server is missing
  *  (docs/code-intel.md §5.1): offer `code_intel_install(language)`,

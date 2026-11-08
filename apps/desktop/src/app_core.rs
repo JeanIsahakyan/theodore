@@ -108,6 +108,25 @@ impl AppCore {
         issue::target_repo(Some(&setting))
     }
 
+    /// "My reports" remembers an issue a report just opened. Best effort:
+    /// the issue is posted either way.
+    async fn track_report(
+        &self,
+        owner: &str,
+        name: &str,
+        created: &theodore_ports::CreatedIssue,
+        title: &str,
+    ) {
+        let repo = format!("{owner}/{name}");
+        if let Err(e) = self
+            .core
+            .track_report(&repo, created.number, &created.url, title)
+            .await
+        {
+            tracing::warn!(error = %e, "report issue not remembered");
+        }
+    }
+
     /// The app-info table of a report issue: what the zip's
     /// `app-info.json` says about the build, minus agent CLIs.
     async fn issue_info(&self) -> Vec<(String, String)> {
@@ -745,7 +764,7 @@ impl CoreApi for AppCore {
                 &owner,
                 &name,
                 &NewIssue {
-                    title,
+                    title: title.clone(),
                     body: body.body,
                     labels: vec![issue::LABEL.to_string()],
                 },
@@ -753,6 +772,7 @@ impl CoreApi for AppCore {
             .await
             .map_err(issue_err)?;
         *self.issue_draft.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        self.track_report(&owner, &name, &created, &title).await;
         tracing::info!(
             number = created.number,
             with_logs = req.with_logs,
@@ -1328,6 +1348,27 @@ mod tests {
         assert_eq!(sent.title, preview.title);
         assert_eq!(sent.body, preview.body);
         assert_eq!(sent.labels, ["from-app"]);
+    }
+
+    #[tokio::test]
+    async fn a_posted_issue_is_listed_in_my_reports() {
+        let (app, _rx) = app(Some(Arc::new(FakeTracker::default())));
+        app.submit_issue(request(None)).await.unwrap();
+        let boot = app
+            .core
+            .bootstrap(theodore_contract::BootstrapScope::Global)
+            .await
+            .unwrap();
+        let row = boot
+            .rows
+            .into_iter()
+            .find(|r| r.model == theodore_contract::models::REPORT)
+            .expect("a report row");
+        let (owner, name) = issue::target_repo(None);
+        assert_eq!(row.id, format!("{owner}/{name}#7"));
+        let report: theodore_contract::TrackedReport = serde_json::from_value(row.data).unwrap();
+        assert_eq!(report.title, "Diff pane is blank");
+        assert_eq!(report.status, theodore_contract::ReportStatus::Open);
     }
 
     #[tokio::test]

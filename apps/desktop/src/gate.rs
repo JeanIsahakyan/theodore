@@ -217,6 +217,7 @@ mod tests {
             // shell-side
             "pick_folder",
             "notify_space",
+            "notify_report",
             "open_global_config",
         ] {
             assert!(registered.contains(name), "{name} isn't a command");
