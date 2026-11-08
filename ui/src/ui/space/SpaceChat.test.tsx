@@ -166,9 +166,46 @@ describe('the space chat', () => {
     expect(user.getAttribute('data-variant')).toBe('user');
     expect(user.querySelector('.user-bubble')?.textContent).toBe('add a flag');
     expect(agent.getAttribute('data-variant')).toBe('agent');
-    // Claude, the default, isn't named on its replies.
+    // One agent in the chat: no tag on its replies.
     expect(agent.querySelector('.agent-tag')).toBeNull();
     expect(agent.querySelector('.message-actions')).not.toBeNull();
+  });
+
+  it('names no agent while every reply is one agent, whichever it is', async () => {
+    const store = await render(space({ agent: 'codex' }));
+    act(() =>
+      store.sync.pool.merge('chat_message', 'a1', {
+        author: { kind: 'agent', agent: 'codex' },
+      }),
+    );
+    await settle();
+    expect(m!.host.querySelectorAll('.agent-tag')).toHaveLength(0);
+  });
+
+  it('names the agent on every reply once two agents have answered', async () => {
+    const store = await render(space());
+    act(() => {
+      store.sync.pool.put(
+        'chat_message',
+        'u2',
+        message('u2', { text: 'and now?', at: 3 }),
+      );
+      store.sync.pool.put(
+        'chat_message',
+        'a2',
+        message('a2', {
+          author: { kind: 'agent', agent: 'codex' },
+          text: 'Done.',
+          at: 4,
+        }),
+      );
+    });
+    await settle();
+    const tag = (id: string) =>
+      m!.host.querySelector(`.chat-message[data-msg="${id}"] .agent-tag`)
+        ?.textContent;
+    expect(tag('a1')).toBe('claude');
+    expect(tag('a2')).toBe('codex');
   });
 
   it('a turn you stopped is a quiet "Stopped", not a failure card', async () => {

@@ -108,8 +108,46 @@ describe('the AI panel chat', () => {
       'why is this here?',
     );
     expect(agent.querySelector('.user-bubble')).toBeNull();
-    // Claude, the default, isn't named on its replies.
+    // One agent in the chat: no tag on its replies.
     expect(agent.querySelector('.agent-tag')).toBeNull();
+  });
+
+  it('names no agent while every reply is one agent, whichever it is', async () => {
+    await put(message('u1', { text: 'why?' }));
+    await put(
+      message('a1', {
+        author: { kind: 'agent', agent: 'codex' },
+        text: 'it caches',
+        at: Date.now() + 1,
+      }),
+    );
+    expect(m.host.querySelectorAll('.agent-tag')).toHaveLength(0);
+  });
+
+  it('names the agent on every reply once two agents have answered', async () => {
+    const at = Date.now();
+    await put(message('u1', { text: 'why?', at }));
+    await put(
+      message('a1', {
+        author: { kind: 'agent', agent: 'claude' },
+        text: 'it caches',
+        at: at + 1,
+      }),
+    );
+    expect(m.host.querySelectorAll('.agent-tag')).toHaveLength(0);
+    await put(message('u2', { text: 'and?', at: at + 2 }));
+    await put(
+      message('a2', {
+        author: { kind: 'agent', agent: 'codex' },
+        text: 'agreed',
+        at: at + 3,
+      }),
+    );
+    const tag = (id: string) =>
+      m.host.querySelector(`.chat-message[data-msg="${id}"] .agent-tag`)
+        ?.textContent;
+    expect(tag('a1')).toBe('claude');
+    expect(tag('a2')).toBe('codex');
   });
 
   it('a pending question shows as your bubble, the reply as the agent’s', async () => {

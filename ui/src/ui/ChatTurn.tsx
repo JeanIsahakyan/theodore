@@ -198,17 +198,28 @@ export function MessageActions({
   );
 }
 
-/** The agent's tag and whatever the chat puts beside it. */
+/** Whether a conversation names the agent on its replies: only when its
+ *  replies come from more than one. Computed once per list and passed down,
+ *  so a row re-renders only when the answer flips. */
+export function mixedAgents(
+  agents: Iterable<AgentId | null | undefined>,
+): boolean {
+  const seen = new Set<AgentId>();
+  for (const a of agents) if (a) seen.add(a);
+  return seen.size > 1;
+}
+
+/** The agent's tag (when `tagged`) and whatever the chat puts beside it. */
 function AgentHeader({
   agent,
+  tagged,
   badges,
 }: {
   agent: AgentId | null | undefined;
+  tagged?: boolean;
   badges?: ReactNode;
 }) {
-  // Claude is the default: its replies need no name. Another agent's do,
-  // so a switch mid-chat stays visible.
-  const named = agent && agent !== 'claude' ? agent : null;
+  const named = tagged && agent ? agent : null;
   if (!named && !badges) return null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -275,6 +286,7 @@ export function ChatMessage({
   m,
   refs,
   badges,
+  tagged,
   after,
   onAskAgain,
   onRetryFailed,
@@ -286,6 +298,8 @@ export function ChatMessage({
   refs?: ReactNode;
   /** Beside the agent's tag (undone, Undo). */
   badges?: ReactNode;
+  /** Name the agent: this chat has replies from more than one. */
+  tagged?: boolean;
   /** Under the agent's reply, before its actions. */
   after?: ReactNode;
   /** "Ask again" under the agent's reply. */
@@ -314,7 +328,7 @@ export function ChatMessage({
       className={`chat-message msg agent flex gap-3 ${className}`}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
-        <AgentHeader agent={m.author.agent} badges={badges} />
+        <AgentHeader agent={m.author.agent} tagged={tagged} badges={badges} />
         {!!m.activity?.length && (
           <TurnActivity
             reply={m.id}
@@ -389,6 +403,7 @@ export const ChatLive = observer(function ChatLive({
   run,
   agent,
   badges,
+  tagged,
   timeline = false,
   since,
   onRetry,
@@ -399,6 +414,8 @@ export const ChatLive = observer(function ChatLive({
   run: string | null;
   agent?: AgentId | null;
   badges?: ReactNode;
+  /** Name the agent: this chat has replies from more than one. */
+  tagged?: boolean;
   /** A space turn: text and steps chronological. */
   timeline?: boolean;
   /** When a space turn started, for its timer. */
@@ -419,7 +436,7 @@ export const ChatLive = observer(function ChatLive({
       {...data}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
-        <AgentHeader agent={agent} badges={badges} />
+        <AgentHeader agent={agent} tagged={tagged} badges={badges} />
         {!run ? (
           waiting
         ) : timeline ? (

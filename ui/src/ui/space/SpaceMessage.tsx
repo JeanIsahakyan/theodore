@@ -31,10 +31,13 @@ export const SpaceMessage = memo(
   observer(function SpaceMessage({
     spaceId,
     m,
+    tagged,
     onRevise,
   }: {
     spaceId: string;
     m: Message;
+    /** Name the agent: this chat has replies from more than one. */
+    tagged: boolean;
     onRevise: () => void;
   }) {
     const store = useRootStore();
@@ -61,6 +64,7 @@ export const SpaceMessage = memo(
     return (
       <ChatMessage
         m={m}
+        tagged={tagged}
         onOpenFile={onOpenFile}
         className={v.undone ? 'space-undone opacity-50' : ''}
         badges={

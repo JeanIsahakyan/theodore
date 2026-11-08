@@ -8,7 +8,7 @@ import { observer } from 'mobx-react-lite';
 import type { ChatMessage, Space } from '../../gen/contract';
 import { useRootStore } from '../../stores/context';
 import type { SpaceSend } from '../../stores/EphemeralStore';
-import { ChatEmpty, ChatLive, ChatLog } from '../ChatTurn';
+import { ChatEmpty, ChatLive, ChatLog, mixedAgents } from '../ChatTurn';
 import {
   chatRows,
   estimateRowHeight,
@@ -56,6 +56,16 @@ export const SpaceLog = observer(function SpaceLog({
     run != null &&
     [...runsByReply(space.id, space.turn_log).values()].includes(run);
   const live = run != null ? !replied : sends.some((s) => !s.queued);
+  // Replies are named only when more than one agent wrote them, the live
+  // one included.
+  const tagged = mixedAgents([
+    ...sent.map((m) => (m.author.kind === 'agent' ? m.author.agent : null)),
+    live
+      ? run
+        ? space.agent
+        : (sends.find((s) => !s.queued)?.agent ?? space.agent)
+      : null,
+  ]);
   const setup = setupView(space);
   const asking = run != null && space.question?.run === run;
   const head = (
@@ -77,7 +87,7 @@ export const SpaceLog = observer(function SpaceLog({
     </>
   );
 
-  const renderRow = useRowRenderer(space.id, onRevise, head, tail);
+  const renderRow = useRowRenderer(space.id, onRevise, head, tail, tagged);
   if (turns.length === 0 && !run && !live) {
     return (
       <ChatLog scope={space.id}>
@@ -115,6 +125,7 @@ function useRowRenderer(
   onRevise: () => void,
   head: ReactNode,
   tail: ReactNode,
+  tagged: boolean,
 ) {
   return useCallback(
     (row: ChatRow) => {
@@ -124,19 +135,20 @@ function useRowRenderer(
         case 'tail':
           return tail;
         case 'live':
-          return <SpaceLive spaceId={spaceId} />;
+          return <SpaceLive spaceId={spaceId} tagged={tagged} />;
         case 'turn':
           return (
             <TurnRow
               spaceId={spaceId}
               messages={row.messages}
               live={row.live}
+              tagged={tagged}
               onRevise={onRevise}
             />
           );
       }
     },
-    [spaceId, onRevise, head, tail],
+    [spaceId, onRevise, head, tail, tagged],
   );
 }
 
@@ -147,11 +159,13 @@ const TurnRow = memo(
     spaceId,
     messages,
     live,
+    tagged,
     onRevise,
   }: {
     spaceId: string;
     messages: ChatMessage[];
     live: boolean;
+    tagged: boolean;
     onRevise: () => void;
   }) {
     return (
@@ -162,16 +176,24 @@ const TurnRow = memo(
             key={i === 0 ? 'first' : m.id}
             spaceId={spaceId}
             m={m}
+            tagged={tagged}
             onRevise={onRevise}
           />
         ))}
-        {live && <SpaceLive spaceId={spaceId} since={messages[0]?.at} />}
+        {live && (
+          <SpaceLive
+            spaceId={spaceId}
+            tagged={tagged}
+            since={messages[0]?.at}
+          />
+        )}
       </>
     );
   },
   (a, b) =>
     a.spaceId === b.spaceId &&
     a.live === b.live &&
+    a.tagged === b.tagged &&
     a.onRevise === b.onRevise &&
     a.messages.length === b.messages.length &&
     a.messages.every((m, i) => m === b.messages[i]),
@@ -179,9 +201,11 @@ const TurnRow = memo(
 
 const SpaceLive = observer(function SpaceLive({
   spaceId,
+  tagged,
   since,
 }: {
   spaceId: string;
+  tagged: boolean;
   /** When its turn started: your message's time. */
   since?: number;
 }) {
@@ -195,6 +219,7 @@ const SpaceLive = observer(function SpaceLive({
     <ChatLive
       run={run}
       agent={run ? space.agent : (sending?.agent ?? space.agent)}
+      tagged={tagged}
       timeline
       since={since}
       badges={

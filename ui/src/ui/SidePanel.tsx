@@ -81,6 +81,7 @@ import {
   ChatLive,
   ChatLog,
   ChatMessage as ChatMessageView,
+  mixedAgents,
   UserBubble,
 } from './ChatTurn';
 import { Composer } from './space/Composer';
@@ -188,10 +189,12 @@ const LineAskBubble = observer(function LineAskBubble({
   askKey,
   a,
   asked,
+  tagged,
 }: {
   askKey: string;
   a: LineAsk;
   asked: boolean;
+  tagged: boolean;
 }) {
   const store = useRootStore();
   return (
@@ -202,6 +205,7 @@ const LineAskBubble = observer(function LineAskBubble({
       <ChatLive
         run={a.message ? askRunId(a.message) : null}
         agent={a.agent}
+        tagged={tagged}
         badges={<Ref a={a.anchor} pr={a.pr} />}
         className="line-ask"
         data={{ 'data-line-ask': askKey }}
@@ -812,6 +816,13 @@ const AiLog = observer(function AiLog({
   const turns = aiTurns(runs, messages);
   const rows: AiRow[] = turns.map((t) => ({ kind: 'turn', ...t }));
   if (tail) rows.push({ kind: 'tail', key: 'tail' });
+  // Replies are named only when more than one agent wrote them, the live
+  // ones included.
+  const tagged = mixedAgents([
+    ...messages.map((m) => (m.author.kind === 'me' ? null : m.author.agent)),
+    pending && !answered ? pending.agent : null,
+    ...lineAsks.map(([, a]) => a.agent),
+  ]);
 
   // A line ask (DiffPane) wants its question or answer in view: the row it
   // is in is scrolled to, mounted or not, and its message glows.
@@ -843,10 +854,11 @@ const AiLog = observer(function AiLog({
   const renderRow = useCallback(
     (row: AiRow) =>
       row.kind === 'tail' ? (
-        <AiTail pr={pr} />
+        <AiTail pr={pr} tagged={tagged} />
       ) : (
         <AiTurn
           pr={pr}
+          tagged={tagged}
           items={row.items}
           flash={
             flash &&
@@ -856,7 +868,7 @@ const AiLog = observer(function AiLog({
           }
         />
       ),
-    [pr, flash],
+    [pr, flash, tagged],
   );
 
   if (rows.length === 0) {
@@ -922,9 +934,11 @@ const AiTurn = memo(
     pr,
     items,
     flash,
+    tagged,
   }: {
     pr: PrId;
     items: AiItem[];
+    tagged: boolean;
     flash: AskFlash | null;
   }) {
     const store = useRootStore();
@@ -953,6 +967,7 @@ const AiTurn = memo(
               // A repeat focus restarts the glow.
               key={glow ? `${m.id}:${flash.seq}` : m.id}
               m={m}
+              tagged={tagged}
               className={glow ? 'ask-flash' : ''}
               refs={
                 m.refs.length > 0
@@ -970,6 +985,7 @@ const AiTurn = memo(
   (a, b) =>
     a.pr === b.pr &&
     a.flash === b.flash &&
+    a.tagged === b.tagged &&
     a.items.length === b.items.length &&
     a.items.every((x, i) => {
       const y = b.items[i]!;
@@ -982,7 +998,13 @@ const AiTurn = memo(
 /** The answer still being written, under the last turn: the question you
  *  just asked until its stored message shows, the agent's live reply, and
  *  the line asks still going. */
-const AiTail = observer(function AiTail({ pr }: { pr: PrId }) {
+const AiTail = observer(function AiTail({
+  pr,
+  tagged,
+}: {
+  pr: PrId;
+  tagged: boolean;
+}) {
   const store = useRootStore();
   const { pending, answered, lineAsks, stored } = pendingView(store, pr);
   return (
@@ -996,6 +1018,7 @@ const AiTail = observer(function AiTail({ pr }: { pr: PrId }) {
           <ChatLive
             run={pending.run}
             agent={pending.agent}
+            tagged={tagged}
             className="chat-pending"
             onRetry={() => {
               const { question, agent } = pending;
@@ -1012,7 +1035,13 @@ const AiTail = observer(function AiTail({ pr }: { pr: PrId }) {
         </>
       )}
       {lineAsks.map(([key, a]) => (
-        <LineAskBubble key={key} askKey={key} a={a} asked={stored(a.message)} />
+        <LineAskBubble
+          key={key}
+          askKey={key}
+          a={a}
+          asked={stored(a.message)}
+          tagged={tagged}
+        />
       ))}
     </>
   );
