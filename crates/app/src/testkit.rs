@@ -3690,6 +3690,13 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ProductLog {
 #[cfg(test)]
 pub fn capture_product() -> (ProductLog, tracing::subscriber::DefaultGuard) {
     use tracing_subscriber::layer::SubscriberExt as _;
+    // `tracing` caches whether anyone wants an event at its call site, and
+    // parallel tests' short-lived subscribers race on that cache: a capture
+    // could lose an event. One subscriber that always lives keeps it "yes".
+    static ALWAYS_INTERESTED: std::sync::Once = std::sync::Once::new();
+    ALWAYS_INTERESTED.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
+    });
     let log = ProductLog::default();
     let subscriber = tracing_subscriber::registry().with(log.clone());
     (log, tracing::subscriber::set_default(subscriber))
