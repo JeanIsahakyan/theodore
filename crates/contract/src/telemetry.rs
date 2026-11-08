@@ -2,7 +2,8 @@
 //! (`log_client`), the two sharing choices (`telemetry_status`,
 //! `set_telemetry`) and "Report a problem" (`report_problem`,
 //! `reveal_report`; as a GitHub issue: `issue_target`, `preview_issue`,
-//! `submit_issue`; from a chat: `draft_report`).
+//! `submit_issue`; from a chat: `draft_report`; attached files:
+//! `stage_report_files`).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -216,4 +217,14 @@ pub struct ReportDraft {
     pub about: String,
     /// Drafted by the agent (`report_problem`), not by you.
     pub by_agent: bool,
+}
+
+/// `stage_report_files`: a report's attached files, copied into one
+/// folder under the reports folder for you to add on GitHub yourself
+/// (docs/telemetry.md "Attachments"). Nothing is uploaded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct StagedReportFiles {
+    pub dir: String,
+    /// Absolute paths, in the order given.
+    pub paths: Vec<String>,
 }

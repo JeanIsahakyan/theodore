@@ -1,3 +1,4 @@
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { click, mount, settle, typeInto, type Mounted } from '../test/dom';
 import { setTransport } from '../core/transport';
@@ -279,5 +280,76 @@ describe('ReportProblemView', () => {
     const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
       ?.req as Record<string, unknown>;
     expect(sent).toMatchObject({ context: null, with_logs: false });
+  });
+
+  it('files: shown before, never posted, then handed to GitHub by the user', async () => {
+    await open(signedIn);
+    await fill('Blank pane', 'It is blank.');
+    transport.onCall('save_attachment', () => ({
+      id: 'a1',
+      name: 'steps.txt',
+      mime: 'text/plain',
+      size: 5,
+      path: '/data/attachments/a1/steps.txt',
+    }));
+    const input = q('.report-files-box input[type="file"]') as HTMLInputElement;
+    const file = new File(['hello'], 'steps.txt', { type: 'text/plain' });
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      configurable: true,
+    });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+    await settle();
+    expect(q('.report-attachment')?.textContent).toContain('steps.txt');
+    expect(q('.report-files-note')?.textContent).toContain(
+      "Theodore doesn't upload these",
+    );
+    transport.onCall('preview_issue', () => preview);
+    await click(q('.report-preview-toggle'));
+    await settle();
+    expect(q('.report-preview-files')?.textContent).toContain(
+      'Not in the issue: 1 file (steps.txt)',
+    );
+
+    transport.onCall('submit_issue', () => ({
+      number: 11,
+      url: 'https://github.com/acme/theodore/issues/11',
+    }));
+    await click(q('.report-send'));
+    await settle();
+    const sent = transport.calls.find((c) => c.cmd === 'submit_issue')?.args
+      ?.req as Record<string, unknown>;
+    expect(Object.keys(sent)).not.toContain('attachments');
+    expect(q('.report-add-files')?.textContent).toContain(
+      'Add your 1 file (steps.txt)',
+    );
+    // Nothing is copied or opened until asked.
+    expect(transport.calls.map((c) => c.cmd)).not.toContain(
+      'stage_report_files',
+    );
+
+    transport.onCall('stage_report_files', () => ({
+      dir: '/tmp/theodore-reports/theodore-files-1',
+      paths: ['/tmp/theodore-reports/theodore-files-1/steps.txt'],
+    }));
+    transport.onCall('reveal_report', () => null);
+    const opened = vi.spyOn(window, 'open').mockImplementation(() => null);
+    await click(q('.report-stage'));
+    await settle();
+    expect(
+      transport.calls.find((c) => c.cmd === 'stage_report_files')?.args,
+    ).toEqual({ attachments: ['a1'] });
+    expect(
+      transport.calls.find((c) => c.cmd === 'reveal_report')?.args,
+    ).toEqual({
+      path: '/tmp/theodore-reports/theodore-files-1/steps.txt',
+    });
+    expect(opened).toHaveBeenCalledWith(
+      'https://github.com/acme/theodore/issues/11',
+      '_blank',
+    );
   });
 });

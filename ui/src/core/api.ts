@@ -56,6 +56,7 @@ import type {
   ReplyRequest,
   ReportedIssue,
   ReportDraft,
+  StagedReportFiles,
   DraftReportRequest,
   RerunCheckRequest,
   ResizeTerminalRequest,
@@ -499,6 +500,10 @@ export const api = {
    *  Nothing is sent. */
   draftReport: (req: DraftReportRequest) =>
     call<ReportDraft>('draft_report', { req }),
+  /** A report's files, copied into one folder for the user to add on
+   *  GitHub themselves. Nothing is uploaded. */
+  stageReportFiles: (attachments: string[]) =>
+    call<StagedReportFiles>('stage_report_files', { attachments }, true),
   /** `null` means "can't tell" (an old local `git`, code `unsupported`) —
    *  the Merge dialog hides the list instead of toasting a routine
    *  degrade; any other failure still toasts like every other command. */

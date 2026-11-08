@@ -291,9 +291,10 @@ agent ─▶ report_problem (MCP)┘        nothing sent                      �
 dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the conversation, read now
 ```
 
-- **"Report this"** sits under every agent reply (and next to Retry on a failed one); `/report …`
-  in either composer drafts about the chat's latest reply with the rest of the line as the
-  comment — it never reaches the agent (a skill of yours named `report` still does).
+- **"Report this"** sits under every stored agent reply (next to Retry on a failed one; not on
+  one you stopped); `/report …` in either composer drafts about the chat's latest reply with
+  the rest of the line as the comment — it never reaches the agent (a skill of yours named
+  `report` still does).
 - **`report_problem { title, description, scope, include_logs }`** is a tool on Theodore's MCP
   server for chats only: a space turn (`space-tools`) or an AI panel question (`review-tools`
   with an `ask:` run); skill and fix runs never see it. The agent drafts — the dialog opens with
@@ -317,6 +318,34 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
   **Include the conversation** unticked makes it the plain report. The draft is read when the
   dialog first previews it — a turn still running when the agent drafted shows how far it got —
   and the post sends exactly that preview. Drafts live in memory (the last 16) and expire.
+
+### Attachments
+
+Screenshots and files go with a report the way they go with a chat message — 📎, paste (⌘V)
+or drop on the comment, saved by `save_attachment`, shown as tiles (images as previews) — but
+Theodore never uploads them. GitHub has no API for issue attachments, and the other ways cost
+the reporter more than they give:
+
+| Option | Why not |
+|---|---|
+| GitHub's own upload (`user-attachments`) | web only: needs a browser session, not a token |
+| A gist under the reporter's account | the gist API takes text only; binary needs a git push and the `gist` scope, which Theodore's sign-in (`repo`, `read:org`) doesn't ask for; and secret gists are public by URL |
+| A branch or repo | no write access to Theodore's repo; a public fork or repo in the reporter's account just for screenshots is a lasting public side effect |
+| **The browser, after the issue opens** | chosen: works for every reporter, no new scope, and the user sees each file in GitHub's own editor before it goes |
+
+```text
+📎 / ⌘V / drop ─▶ save_attachment ─▶ tiles in the dialog ("Theodore doesn't upload these")
+preview ─▶ "Not in the issue: N files (…)"
+Open issue ─▶ the text, as today ─▶ "Add your N files" ─▶ Show files and open the issue
+   └─▶ stage_report_files(ids) ─▶ <tmp>/theodore-reports/theodore-files-<id>/ ─▶ Finder
+   └─▶ the issue in the browser ─▶ the user drops them into a comment ─▶ GitHub renders them
+```
+
+- Nothing is copied or opened before **Show files and open the issue**; `stage_report_files`
+  copies only saved attachments by id, into the reports folder (`reveal_report` shows nothing
+  else).
+- Not in **Save logs only**'s zip, and not available signed out (`save_attachment` waits for
+  sign-in like every local write).
 
 ## UI errors
 

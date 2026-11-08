@@ -1548,6 +1548,19 @@ pub async fn draft_report(
     op.run(async move { core.draft_report(req).await }).await
 }
 
+/// A report's attached files, copied into one folder under the reports
+/// folder (`reveal_report` shows it) for you to add on GitHub yourself.
+#[tauri::command]
+#[specta::specta]
+pub async fn stage_report_files(
+    op: crate::op::Op,
+    attachments: Vec<String>,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::StagedReportFiles, CommandError> {
+    op.run(async move { core.stage_report_files(attachments).await })
+        .await
+}
+
 /// Shows a problem report in Finder. Only paths inside the reports folder.
 #[tauri::command]
 #[specta::specta]

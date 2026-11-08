@@ -845,6 +845,23 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::ReportDraft, CommandError> {
         self.core.draft_report(req, None).await.map_err(err)
     }
+    async fn stage_report_files(
+        &self,
+        attachments: Vec<String>,
+    ) -> Result<theodore_contract::StagedReportFiles, CommandError> {
+        let stamp = uuid::Uuid::new_v4().simple().to_string();
+        let dir = theodore_telemetry::report::reports_dir()
+            .join(format!("theodore-files-{}", &stamp[..12]));
+        let paths = self
+            .core
+            .stage_attachments(&attachments, &dir)
+            .await
+            .map_err(err)?;
+        Ok(theodore_contract::StagedReportFiles {
+            dir: dir.display().to_string(),
+            paths: paths.iter().map(|p| p.display().to_string()).collect(),
+        })
+    }
     async fn sandbox_status(
         &self,
     ) -> Result<Option<theodore_contract::SandboxStatus>, CommandError> {

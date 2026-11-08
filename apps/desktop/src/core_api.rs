@@ -197,6 +197,14 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::ReportDraft, CommandError> {
         Err(not_ready())
     }
+    /// A report's attached files, copied into one folder under the reports
+    /// folder for the user to add on GitHub. Nothing is uploaded.
+    async fn stage_report_files(
+        &self,
+        _attachments: Vec<String>,
+    ) -> Result<theodore_contract::StagedReportFiles, CommandError> {
+        Err(not_ready())
+    }
 
     /// Settings → Sandbox (docs/sandbox.md); `None` outside sandbox mode.
     async fn sandbox_status(&self) -> Result<Option<SandboxStatus>, CommandError> {

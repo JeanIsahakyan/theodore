@@ -17,10 +17,16 @@
  *  From a chat ("Report this", `/report`, an agent's `report_problem`) the
  *  view opens on a `ReportDraft`: title and comment prefilled, and the
  *  conversation (`context: draft.id`) and that run's logs go with it unless
- *  unticked. The preview shows both, folded, before anything is posted. */
+ *  unticked. The preview shows both, folded, before anything is posted.
+ *
+ *  Files (📎, paste, drop) are never posted: GitHub has no API for issue
+ *  attachments. After the issue opens, "Show files and open the issue"
+ *  copies them into one folder (`stage_report_files`), shows it in Finder
+ *  and opens the issue, for the user to drop them into a comment. */
 import { useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import type {
+  Attachment,
   IssuePreview,
   IssueTarget,
   ProblemReport,
@@ -31,6 +37,7 @@ import type {
 import { api, CommandFailure } from '../core/api';
 import { openExternal } from '../core/openExternal';
 import { useUi } from '../stores/context';
+import { fileHandlers, useAttachments, type Attachments } from './attachments';
 import { Shell } from './bits';
 
 export function formatBytes(n: number): string {
@@ -85,6 +92,8 @@ export function ReportProblemView({
   // The conversation goes with a chat report unless you untick it.
   const [withChat, setWithChat] = useState(true);
   const chat = draft && withChat ? draft : null;
+  // Kept across mode switches, like the text.
+  const files = useAttachments();
 
   useEffect(() => {
     let live = true;
@@ -183,9 +192,99 @@ export function ReportProblemView({
           context={chat?.id ?? null}
           title={title}
           comment={comment}
+          files={files}
           onTitle={setTitle}
           onComment={setComment}
         />
+      )}
+    </div>
+  );
+}
+
+/** 📎, a paste or a drop, as in a chat; the files stay on this Mac until
+ *  the user adds them to the issue on GitHub (no API takes them). */
+function ReportFiles({
+  files,
+  disabled,
+}: {
+  files: Attachments;
+  disabled: boolean;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className="report-files-box flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label="Attach files"
+          className="report-attach button button--sm button--secondary"
+          disabled={disabled}
+          onClick={() => input.current?.click()}
+        >
+          📎 Attach files
+        </button>
+        <span className="text-xs text-muted">or paste, or drop</span>
+        <input
+          ref={input}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.currentTarget.files?.length) files.add(e.currentTarget.files);
+            e.currentTarget.value = '';
+          }}
+        />
+      </div>
+      {files.items.length > 0 && (
+        <>
+          <ul className="report-attachments flex flex-wrap gap-2">
+            {files.items.map((p) => (
+              <li
+                key={p.key}
+                className="report-attachment relative flex h-14 max-w-48 items-center gap-2 overflow-hidden rounded-xl border border-separator pe-6"
+                title={p.error ? `${p.name}: ${p.error}` : p.name}
+              >
+                {p.preview ? (
+                  <img
+                    src={p.preview}
+                    alt={p.name}
+                    className="h-full w-14 object-cover"
+                  />
+                ) : (
+                  <span className="grid h-full w-12 place-items-center bg-default text-lg">
+                    📄
+                  </span>
+                )}
+                <span className="flex min-w-0 flex-col text-xs">
+                  <span className="truncate">{p.name}</span>
+                  <span
+                    className={p.error ? 'text-danger' : 'text-muted'}
+                    data-state={
+                      p.error ? 'failed' : p.saved ? 'ready' : 'saving'
+                    }
+                  >
+                    {p.error ??
+                      (p.saved ? formatBytes(p.saved.size) : 'Adding…')}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${p.name}`}
+                  className="absolute end-1 top-1 text-xs text-muted"
+                  disabled={disabled}
+                  onClick={() => files.remove(p.key)}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+          <span className="report-files-note text-xs text-muted">
+            Theodore doesn't upload these: GitHub takes files only on its own
+            page. Once the issue is open, you drop them into a comment there,
+            and you see them before they go.
+          </span>
+        </>
       )}
     </div>
   );
@@ -195,7 +294,7 @@ type Send =
   | { phase: 'editing' }
   | { phase: 'sending' }
   | { phase: 'failed'; message: string }
-  | { phase: 'done'; issue: ReportedIssue };
+  | { phase: 'done'; issue: ReportedIssue; files: Attachment[] };
 
 function IssueForm({
   target,
@@ -203,6 +302,7 @@ function IssueForm({
   context,
   title,
   comment,
+  files,
   onTitle,
   onComment,
 }: {
@@ -212,6 +312,8 @@ function IssueForm({
   context: string | null;
   title: string;
   comment: string;
+  /** Files to add on GitHub after the issue opens (never posted). */
+  files: Attachments;
   onTitle: (v: string) => void;
   onComment: (v: string) => void;
 }) {
@@ -256,9 +358,12 @@ function IssueForm({
     };
   }, [showPreview, filled, title, comment, withLogs, context]);
 
-  if (send.phase === 'done') return <Opened issue={send.issue} />;
+  if (send.phase === 'done')
+    return <Opened issue={send.issue} files={send.files} />;
 
   const submit = () => {
+    // The files go after the issue, by the user on GitHub: kept here.
+    const attached = files.saved;
     setSend({ phase: 'sending' });
     api
       .submitIssue({
@@ -270,10 +375,11 @@ function IssueForm({
       })
       .then(
         (issue) => {
-          setSend({ phase: 'done', issue });
+          setSend({ phase: 'done', issue, files: attached });
           // Posted: coming back to this mode starts a new report.
           onTitle('');
           onComment('');
+          files.clear();
         },
         (e: unknown) => setSend({ phase: 'failed', message: message(e) }),
       );
@@ -323,8 +429,10 @@ function IssueForm({
           placeholder="What you did, what you expected, what happened instead"
           disabled={sending}
           onChange={(e) => onComment(e.target.value)}
+          {...fileHandlers(files.add)}
         />
       </label>
+      <ReportFiles files={files} disabled={sending} />
       <div className="flex flex-col gap-2">
         <button
           type="button"
@@ -347,7 +455,17 @@ function IssueForm({
                 <PlainSpinner /> Building the preview…
               </span>
             ) : (
-              <PreviewBody preview={shown} />
+              <>
+                <PreviewBody preview={shown} />
+                {files.saved.length > 0 && (
+                  <span className="report-preview-files text-xs text-muted">
+                    Not in the issue: {files.saved.length}{' '}
+                    {files.saved.length === 1 ? 'file' : 'files'} (
+                    {files.saved.map((a) => a.name).join(', ')}), for you to add
+                    on GitHub once it's open.
+                  </span>
+                )}
+              </>
             )}
           </div>
         )}
@@ -359,7 +477,7 @@ function IssueForm({
         <button
           type="button"
           className="report-send button button--sm button--primary"
-          disabled={!filled || sending}
+          disabled={!filled || sending || files.busy}
           onClick={submit}
         >
           {sending ? (
@@ -415,7 +533,13 @@ function PreviewBody({ preview }: { preview: IssuePreview }) {
   );
 }
 
-function Opened({ issue }: { issue: ReportedIssue }) {
+function Opened({
+  issue,
+  files,
+}: {
+  issue: ReportedIssue;
+  files: Attachment[];
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="report-opened flex flex-col gap-2">
@@ -444,6 +568,70 @@ function Opened({ issue }: { issue: ReportedIssue }) {
           {copied ? 'Copied' : 'Copy link'}
         </button>
       </div>
+      {files.length > 0 && <AddOnGitHub issue={issue} files={files} />}
+    </div>
+  );
+}
+
+type Staged =
+  | { phase: 'idle' }
+  | { phase: 'staging' }
+  | { phase: 'ready'; dir: string }
+  | { phase: 'failed'; message: string };
+
+/** The files, for the user to add on GitHub: copied into one folder shown
+ *  in Finder, and the issue opened in the browser, to drop them into a
+ *  comment. GitHub uploads them there, as the user; Theodore never does. */
+function AddOnGitHub({
+  issue,
+  files,
+}: {
+  issue: ReportedIssue;
+  files: Attachment[];
+}) {
+  const [staged, setStaged] = useState<Staged>({ phase: 'idle' });
+  const go = () => {
+    setStaged({ phase: 'staging' });
+    api.stageReportFiles(files.map((a) => a.id)).then(
+      (s) => {
+        setStaged({ phase: 'ready', dir: s.dir });
+        const first = s.paths[0];
+        if (first) void api.revealReport(first).catch(() => {});
+        openExternal(issue.url);
+      },
+      (e: unknown) => setStaged({ phase: 'failed', message: message(e) }),
+    );
+  };
+  const n = files.length;
+  return (
+    <div className="report-add-files flex flex-col gap-2 rounded-xl bg-default/50 px-3 py-2">
+      <span className="text-xs">
+        Add your {n} {n === 1 ? 'file' : 'files'} (
+        {files.map((a) => a.name).join(', ')}): GitHub takes them only on its
+        own page. Drag them from Finder into a comment on #{issue.number}.
+      </span>
+      {staged.phase === 'failed' && (
+        <span className="text-xs text-danger">{staged.message}</span>
+      )}
+      {staged.phase === 'ready' && (
+        <span className="report-staged break-all font-mono text-xs text-muted">
+          {staged.dir}
+        </span>
+      )}
+      <button
+        type="button"
+        className="report-stage button button--sm button--secondary self-start"
+        disabled={staged.phase === 'staging'}
+        onClick={go}
+      >
+        {staged.phase === 'staging' ? (
+          <>
+            <PlainSpinner /> Copying…
+          </>
+        ) : (
+          'Show files and open the issue'
+        )}
+      </button>
     </div>
   );
 }

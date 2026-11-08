@@ -121,6 +121,31 @@ impl Core {
         Ok(out)
     }
 
+    /// Copies the attachments `ids` names into `dir` (created), one file
+    /// each, names kept (`name (2).png` when two share one): a problem
+    /// report's files, for you to add on GitHub yourself (docs/telemetry.md
+    /// "Attachments"). Returns the copies' paths, in order.
+    pub async fn stage_attachments(&self, ids: &[String], dir: &Path) -> AppResult<Vec<PathBuf>> {
+        let atts = self.resolve_attachments(Some(ids)).await?;
+        if atts.is_empty() {
+            return Err(AppError::Invalid("no files to stage".into()));
+        }
+        let dir = dir.to_path_buf();
+        tokio::task::spawn_blocking(move || -> std::io::Result<Vec<PathBuf>> {
+            std::fs::create_dir_all(&dir)?;
+            let mut out: Vec<PathBuf> = Vec::new();
+            for a in &atts {
+                let to = free_name(&dir, &a.name, &out);
+                std::fs::copy(&a.path, &to)?;
+                out.push(to);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(AppError::join)?
+        .map_err(|e| AppError::Invalid(format!("couldn't copy the files: {e}")))
+    }
+
     /// `None` for an id that isn't saved; `Invalid` for one that isn't an
     /// id at all (no path ever leaves the attachments dir).
     async fn load_attachment(&self, id: &str) -> AppResult<Option<Attachment>> {
@@ -133,6 +158,21 @@ impl Core {
             .await
             .map_err(AppError::join)
     }
+}
+
+/// `dir/name`, or `dir/stem (n).ext` when `taken` (or the disk) has it.
+fn free_name(dir: &Path, name: &str, taken: &[PathBuf]) -> PathBuf {
+    let p = Path::new(name);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    let ext = p.extension().and_then(|e| e.to_str());
+    (1..)
+        .map(|n| match (n, ext) {
+            (1, _) => dir.join(name),
+            (n, Some(e)) => dir.join(format!("{stem} ({n}).{e}")),
+            (n, None) => dir.join(format!("{stem} ({n})")),
+        })
+        .find(|c| !taken.contains(c) && !c.exists())
+        .expect("some name is free")
 }
 
 fn read_attachment(dir: &Path, id: String) -> Option<Attachment> {

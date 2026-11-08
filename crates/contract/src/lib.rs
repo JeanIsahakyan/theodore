@@ -1069,6 +1069,7 @@ pub fn types() -> specta::Types {
         .register::<ReportScope>()
         .register::<DraftReportRequest>()
         .register::<ReportDraft>()
+        .register::<StagedReportFiles>()
         .register::<TerminalStatus>()
         .register::<SpaceTerminalInfo>()
         .register::<OpenTerminalRequest>()

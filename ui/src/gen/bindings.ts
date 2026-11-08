@@ -287,6 +287,11 @@ export const commands = {
 	 *  report window opens on the `report_draft` event; nothing is sent.
 	 */
 	draftReport: (req: DraftReportRequest) => typedError<ReportDraft, CommandError>(__TAURI_INVOKE("draft_report", { req })),
+	/**
+	 *  A report's attached files, copied into one folder under the reports
+	 *  folder (`reveal_report` shows it) for you to add on GitHub yourself.
+	 */
+	stageReportFiles: (attachments: string[]) => typedError<StagedReportFiles, CommandError>(__TAURI_INVOKE("stage_report_files", { attachments })),
 };
 
 /* Types */
@@ -2278,6 +2283,17 @@ export type SpaceUpdate = {
 	/**  Files with conflicts, as of the last look. */
 	conflicts?: string[],
 	started_at: number,
+};
+
+/**
+ *  `stage_report_files`: a report's attached files, copied into one
+ *  folder under the reports folder for you to add on GitHub yourself
+ *  (docs/telemetry.md "Attachments"). Nothing is uploaded.
+ */
+export type StagedReportFiles = {
+	dir: string,
+	/**  Absolute paths, in the order given. */
+	paths: string[],
 };
 
 export type SubmitReviewRequest = {

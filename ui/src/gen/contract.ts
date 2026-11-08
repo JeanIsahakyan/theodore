@@ -2364,6 +2364,17 @@ export type StackInfo = {
 	children: number[],
 };
 
+/**
+ *  `stage_report_files`: a report's attached files, copied into one
+ *  folder under the reports folder for you to add on GitHub yourself
+ *  (docs/telemetry.md "Attachments"). Nothing is uploaded.
+ */
+export type StagedReportFiles = {
+	dir: string,
+	/**  Absolute paths, in the order given. */
+	paths: string[],
+};
+
 export type SubmitReviewRequest = {
 	pr: PrId,
 	event: ReviewEvent,
