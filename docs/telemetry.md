@@ -310,7 +310,7 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
   | Guard | How |
   |---|---|
   | One window per turn | a run drafts once; a second call is refused (the last 256 runs remembered) |
-  | Never over your window | with any dialog open, the agent's draft waits behind a toast (**Review**) |
+  | Never over your window | with any dialog open, the agent's draft waits: a toast offers it now (**Review**), and it opens by itself when that dialog closes, however it closes — never lost with the toast. Several wait in turn |
   | No secrets in its text | title and comment redacted (`Redactor::text`) before the form shows them |
   | No pings | its comment's `@login`, `#12`, `owner/repo#12`, `GH-12` and issue links become inline code |
   | Bounded | title 256 chars, comment 20,000 |
