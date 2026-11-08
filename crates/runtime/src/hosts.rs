@@ -166,6 +166,13 @@ impl HostAdapter for Hosts {
             .reply_with_marker(pr, thread, body, marker)
             .await
     }
+    async fn find_markers(
+        &self,
+        pr: &PrRef,
+        markers: &[String],
+    ) -> HostResult<std::collections::HashSet<String>> {
+        self.for_pr(pr)?.find_markers(pr, markers).await
+    }
     async fn resolve(&self, pr: &PrRef, thread: &ThreadId, resolved: bool) -> HostResult<()> {
         self.for_pr(pr)?.resolve(pr, thread, resolved).await
     }
