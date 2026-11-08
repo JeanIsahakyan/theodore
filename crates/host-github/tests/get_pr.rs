@@ -1,10 +1,11 @@
 mod support;
 
+use serde_json::json;
 use theodore_domain::{
     CheckRollup, CheckStatus, HostKind, PrRef, PrState, RepoRef, ReviewerState, ViewedState,
 };
 use theodore_ports::{Fetched, HostAdapter};
-use wiremock::matchers::{body_string_contains, method, path};
+use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 fn pr() -> PrRef {
@@ -63,7 +64,8 @@ async fn get_pr_probes_etag_then_builds_full_detail_from_graphql() {
     else {
         panic!("expected Modified on first fetch");
     };
-    assert_eq!(etag, Some("\"rest-etag-1\"".to_string()));
+    // Opaque, but it carries the PR's own ETag for the next conditional GET.
+    assert!(etag.unwrap().contains("rest-etag-1"));
 
     assert_eq!(detail.summary.title, "Add feature X");
     assert_eq!(detail.summary.state, PrState::Open);
@@ -149,27 +151,170 @@ async fn get_pr_probes_etag_then_builds_full_detail_from_graphql() {
     assert!(!reactions.iter().any(|r| r.emoji == "rocket"));
 }
 
-#[tokio::test]
-async fn get_pr_returns_not_modified_without_touching_graphql() {
-    let s = support::servers().await;
+// ── Conditional fetches: the PR and its head's checks ─────────────────────
 
+const HEAD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const PULL: &str = "/repos/acme/widgets/pulls/42";
+const RUNS: &str =
+    "/repos/acme/widgets/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/check-runs";
+const STATUS: &str = "/repos/acme/widgets/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/status";
+
+async fn mount_detail(s: &support::Servers) {
+    for (needle, file) in [
+        ("statusCheckRollup", "pr_core.json"),
+        ("viewerViewedState", "pr_files_page2.json"),
+        ("reviewThreads", "pr_threads_page2.json"),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .and(body_string_contains(needle))
+            .respond_with(ResponseTemplate::new(200).set_body_json(support::fixture(file)))
+            .mount(&s.graphql)
+            .await;
+    }
+}
+
+/// `GET at` without a matching `If-None-Match` answers 200 with `etag`.
+async fn mount_fresh(s: &support::Servers, at: &str, etag: &str, body: serde_json::Value) {
     Mock::given(method("GET"))
-        .and(path("/repos/acme/widgets/pulls/42"))
-        .and(wiremock::matchers::header(
-            "if-none-match",
-            "\"rest-etag-1\"",
-        ))
-        .respond_with(ResponseTemplate::new(304))
+        .and(path(at))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", etag)
+                .set_body_json(body),
+        )
+        .with_priority(5)
+        .mount(&s.rest)
+        .await;
+}
+
+/// `GET at` with `If-None-Match: sent` answers `status` (with `etag`).
+async fn mount_cond(s: &support::Servers, at: &str, sent: &str, status: u16, etag: Option<&str>) {
+    let mut resp = ResponseTemplate::new(status);
+    if let Some(e) = etag {
+        resp = resp
+            .insert_header("etag", e)
+            .set_body_json(serde_json::json!({}));
+    }
+    Mock::given(method("GET"))
+        .and(path(at))
+        .and(header("if-none-match", sent))
+        .respond_with(resp)
+        .with_priority(1)
+        .mount(&s.rest)
+        .await;
+}
+
+async fn requests_to(server: &wiremock::MockServer, at: &str) -> usize {
+    let all = server.received_requests().await.unwrap();
+    all.iter().filter(|r| r.url.path() == at).count()
+}
+
+async fn graphql_calls(s: &support::Servers) -> usize {
+    s.graphql.received_requests().await.unwrap().len()
+}
+
+fn modified(f: Fetched<theodore_domain::PrDetail>) -> String {
+    match f {
+        Fetched::Modified { etag, .. } => etag.expect("get_pr always hands back an etag"),
+        Fetched::NotModified => panic!("expected Modified"),
+    }
+}
+
+/// The QA report: CI finished, GitHub showed `test` passing, the Checks tab
+/// stayed empty — the PR resource doesn't change when a check does, so its
+/// 304 hid it. The head's check runs are asked too, and their change alone
+/// refetches the detail; once nothing moved it's 304s and no GraphQL.
+#[tokio::test]
+async fn a_check_finishing_refetches_though_the_pr_is_unchanged() {
+    let s = support::servers().await;
+    mount_detail(&s).await;
+    mount_fresh(&s, PULL, "\"p1\"", json!({ "head": { "sha": HEAD } })).await;
+    mount_cond(&s, PULL, "\"p1\"", 304, None).await;
+    mount_fresh(&s, RUNS, "\"r1\"", json!({ "check_runs": [] })).await;
+    mount_cond(&s, RUNS, "\"r1\"", 200, Some("\"r2\"")).await;
+    mount_cond(&s, RUNS, "\"r2\"", 304, None).await;
+    mount_fresh(&s, STATUS, "\"s1\"", json!({ "statuses": [] })).await;
+    mount_cond(&s, STATUS, "\"s1\"", 304, None).await;
+
+    let first = modified(s.adapter.get_pr(&pr(), None).await.unwrap());
+    let fetched_once = graphql_calls(&s).await;
+    assert!(fetched_once > 0);
+
+    // Only the check runs moved (`r1` → `r2`): a fresh detail.
+    let second = modified(s.adapter.get_pr(&pr(), Some(&first)).await.unwrap());
+    assert!(
+        graphql_calls(&s).await > fetched_once,
+        "the detail is refetched"
+    );
+    assert_ne!(first, second);
+
+    // Nothing moved: three 304s, no GraphQL.
+    let fetched_twice = graphql_calls(&s).await;
+    let third = s.adapter.get_pr(&pr(), Some(&second)).await.unwrap();
+    assert!(matches!(third, Fetched::NotModified));
+    assert_eq!(graphql_calls(&s).await, fetched_twice);
+    assert_eq!(requests_to(&s.rest, PULL).await, 3);
+    assert_eq!(requests_to(&s.rest, RUNS).await, 3);
+    assert_eq!(requests_to(&s.rest, STATUS).await, 3);
+}
+
+/// A plain commit status (a CI reporting through the statuses API, not
+/// check runs) moving is a change too.
+#[tokio::test]
+async fn a_commit_status_moving_refetches_too() {
+    let s = support::servers().await;
+    mount_detail(&s).await;
+    mount_fresh(&s, PULL, "\"p1\"", json!({ "head": { "sha": HEAD } })).await;
+    mount_cond(&s, PULL, "\"p1\"", 304, None).await;
+    mount_fresh(&s, RUNS, "\"r1\"", json!({ "check_runs": [] })).await;
+    mount_cond(&s, RUNS, "\"r1\"", 304, None).await;
+    mount_fresh(&s, STATUS, "\"s1\"", json!({ "statuses": [] })).await;
+    mount_cond(&s, STATUS, "\"s1\"", 200, Some("\"s2\"")).await;
+
+    let first = modified(s.adapter.get_pr(&pr(), None).await.unwrap());
+    let before = graphql_calls(&s).await;
+    modified(s.adapter.get_pr(&pr(), Some(&first)).await.unwrap());
+    assert!(graphql_calls(&s).await > before);
+}
+
+/// A token that may not read checks (fine-grained, no "Checks: read") still
+/// gets the PR, and isn't refused again every poll: the PR's own ETag
+/// decides until the head moves.
+#[tokio::test]
+async fn a_token_refused_the_checks_falls_back_to_the_prs_etag() {
+    let s = support::servers().await;
+    mount_detail(&s).await;
+    mount_fresh(&s, PULL, "\"p1\"", json!({ "head": { "sha": HEAD } })).await;
+    mount_cond(&s, PULL, "\"p1\"", 304, None).await;
+    Mock::given(method("GET"))
+        .and(path(RUNS))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "message": "Resource not accessible by personal access token"
+        })))
         .mount(&s.rest)
         .await;
 
-    let result = s
-        .adapter
-        .get_pr(&pr(), Some("\"rest-etag-1\""))
-        .await
-        .unwrap();
-    assert!(matches!(result, Fetched::NotModified));
-    // No GraphQL mock mounted at all: a stray call would 404 inside wiremock
-    // and the adapter would surface that as an error, failing the `unwrap()`.
-    assert!(s.graphql.received_requests().await.unwrap().is_empty());
+    let first = modified(s.adapter.get_pr(&pr(), None).await.unwrap());
+    let before = graphql_calls(&s).await;
+    for _ in 0..2 {
+        let again = s.adapter.get_pr(&pr(), Some(&first)).await.unwrap();
+        assert!(matches!(again, Fetched::NotModified));
+    }
+    assert_eq!(graphql_calls(&s).await, before);
+    assert_eq!(requests_to(&s.rest, RUNS).await, 1, "asked once per head");
+    assert_eq!(requests_to(&s.rest, STATUS).await, 0);
+}
+
+/// An ETag from before the checks were part of it (a bare one) is
+/// "nothing known": a full fetch, never a stale 304.
+#[tokio::test]
+async fn a_bare_etag_is_a_full_fetch() {
+    let s = support::servers().await;
+    mount_detail(&s).await;
+    mount_fresh(&s, PULL, "\"p1\"", json!({ "head": { "sha": HEAD } })).await;
+    mount_cond(&s, PULL, "\"p1\"", 304, None).await;
+
+    let got = s.adapter.get_pr(&pr(), Some("\"p1\"")).await.unwrap();
+    assert!(matches!(got, Fetched::Modified { .. }));
 }

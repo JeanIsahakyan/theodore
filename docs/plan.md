@@ -402,7 +402,10 @@ content creation.
 ```
 GitHub:    GET /notifications  (If-Modified-Since, honours X-Poll-Interval)
               └─ something changed ─▶ GraphQL for the changed PRs only
-           open PR: GET /pulls/{n} with ETag every 10–30 s (304s are free)
+           open PR: every 10–30 s, three conditional GETs (304s are free):
+              /pulls/{n} · /commits/{head}/check-runs · /commits/{head}/status
+              └─ any 200 ─▶ GraphQL detail
+              (a check finishing doesn't change the PR resource or its ETag)
            your PRs: search author:@me is:open every 60 s (no notification
               comes for your own actions); one it stopped returning ─▶
               GET /pulls/{n} with ETag
