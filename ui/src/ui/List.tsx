@@ -929,8 +929,34 @@ function ListBody({
 const order = (groups: { items: InboxPr[] }[]) =>
   groups.flatMap((g) => g.items.map((p) => p.id));
 
+/** Where the selection goes when the list changes under it, `null` to keep
+ *  it. The selected PR leaving what's waiting (done, snoozed) moves it to
+ *  the row that took its place; a snoozed or done row you picked yourself
+ *  keeps it, so its Peek shows. */
+export function followSelection({
+  sel,
+  prev,
+  order,
+  shown,
+  lastIndex,
+}: {
+  sel: PrId | null;
+  /** The selection last time, and whether it was waiting then. */
+  prev: { sel: PrId | null; inOrder: boolean };
+  /** What's waiting, in order: J/K's rows. */
+  order: PrId[];
+  /** Every row on screen, snoozed and done ones too. */
+  shown: PrId[];
+  lastIndex: number;
+}): PrId | null {
+  if (sel && order.includes(sel)) return null;
+  const left = !!sel && sel === prev.sel && prev.inOrder;
+  if (sel && !left && shown.includes(sel)) return null;
+  return order.length ? order[Math.min(lastIndex, order.length - 1)]! : null;
+}
+
 /** Linear-style single-key verbs for the list. */
-function useListKeys(order: PrId[]) {
+function useListKeys(order: PrId[], shown: PrId[]) {
   const store = useRootStore();
   const ui = useUi();
   useViewKeys(
@@ -982,13 +1008,25 @@ function useListKeys(order: PrId[]) {
   // When the selected PR leaves the list (done, snoozed), select the one
   // that took its place — not the top of the list.
   const lastIndex = useRef(0);
+  const prev = useRef<{ sel: PrId | null; inOrder: boolean }>({
+    sel: null,
+    inOrder: false,
+  });
   useEffect(() => {
-    if (ui.selected && order.includes(ui.selected)) {
+    const next = followSelection({
+      sel: ui.selected,
+      prev: prev.current,
+      order,
+      shown,
+      lastIndex: lastIndex.current,
+    });
+    prev.current = {
+      sel: ui.selected,
+      inOrder: !!ui.selected && order.includes(ui.selected),
+    };
+    if (ui.selected && order.includes(ui.selected))
       lastIndex.current = order.indexOf(ui.selected);
-      return;
-    }
-    if (order.length)
-      ui.select(order[Math.min(lastIndex.current, order.length - 1)]!);
+    if (next) ui.select(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.join(), ui.selected]);
 
@@ -1064,6 +1102,7 @@ export const Inbox = observer(function Inbox() {
   // done leaves the selection, which moves on to the next one.
   useListKeys(
     order(visibleGroups.filter((g) => g.id !== 'snoozed' && g.id !== 'done')),
+    order(visibleGroups),
   );
 
   return (
