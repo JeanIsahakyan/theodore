@@ -1274,6 +1274,10 @@ function FileBlockInner({
     ? fold.closed
     : ((!!generatedFlag || file.status === 'deleted') && !arrival) ||
       (isViewed && !jumpedIn);
+  const foldedDrafts = collapsedFile
+    ? store.models.drafts.byPr(pr).filter((d) => d.anchor.path === file.path)
+        .length
+    : 0;
   // Built when the menu opens, not on every render.
   const fileMenu = (e: React.MouseEvent) =>
     contextMenuHandler(store.ui, (): ContextMenuItem[] => {
@@ -1493,6 +1497,13 @@ function FileBlockInner({
                 ? `Whole file deleted: ${plural(file.deletions, 'line', 'lines')}`
                 : `${plural(file.hunks.length, 'hunk', 'hunks')} hidden`}
           </span>
+          {/* Your pending comments are inside: say so, or a Viewed file
+              hides them until you happen to open it. */}
+          {foldedDrafts > 0 && (
+            <span className="folded-drafts font-medium text-accent">
+              {plural(foldedDrafts, 'draft', 'drafts')}
+            </span>
+          )}
           <Button
             size="sm"
             variant="tertiary"

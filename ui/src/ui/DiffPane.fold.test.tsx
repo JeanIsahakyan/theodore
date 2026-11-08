@@ -251,7 +251,7 @@ describe('DiffPane folds a file', () => {
     expect(contextLines()).toBe(loaded);
   });
 
-  it.skip('counts the drafts a folded file hides', async () => {
+  it('counts the drafts a folded file hides', async () => {
     const store = new RootStore();
     seed(store, true);
     store.sync.pool.put('draft', 'd1', {
