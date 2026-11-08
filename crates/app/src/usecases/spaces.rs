@@ -531,13 +531,25 @@ impl Core {
 
     /// Cancels the turn in flight; its edits are still checkpointed.
     pub async fn space_stop(&self, space: &str) -> AppResult<()> {
-        let space = self.space_row(space).await?;
-        if let Some(run) = &space.run
-            && let Some(handle) = self.0.runs.write().await.remove(run)
-        {
-            handle.cancel.cancel();
+        if self.cancel_space_run(space).await? {
+            return Ok(());
         }
+        // No run to cancel: a turn may be handing over to the next queued
+        // message, or starting. Once that's done (the queue lock), whatever
+        // runs now is what Stop was pressed on.
+        let _queue = self.space_queue_lock(space).await;
+        self.cancel_space_run(space).await?;
         Ok(())
+    }
+
+    /// Cancels the space's current run; `false` when there is none.
+    async fn cancel_space_run(&self, space: &str) -> AppResult<bool> {
+        let space = self.space_row(space).await?;
+        let Some(run) = &space.run else {
+            return Ok(false);
+        };
+        let handle = self.0.runs.write().await.remove(run);
+        Ok(handle.map(|h| h.cancel.cancel()).is_some())
     }
 
     /// Opens (or refreshes, after a new checkpoint) the branch review of
@@ -1096,6 +1108,16 @@ impl Drop for Unsteer<'_> {
     }
 }
 
+/// The turn lets go of its run handle. Gone already: Stop took it, after
+/// the turn last looked at its cancel token — a stop all the same, so its
+/// queue is held instead of sent.
+async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
+    match core.0.runs.write().await.remove(run_id) {
+        Some(_) => end,
+        None => TurnEnd::Interrupted,
+    }
+}
+
 async fn drive_turn(core: &Core, turn: Turn) {
     let Turn {
         run_id,
@@ -1394,7 +1416,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     if checking {
         let _ = core.apply(actions).await;
     } else {
-        core.0.runs.write().await.remove(&run_id);
+        let end = release_run(core, &run_id, end).await;
         core.end_turn(&space.id, actions, end).await;
     }
 
@@ -1423,7 +1445,14 @@ async fn drive_turn(core: &Core, turn: Turn) {
 
     if checking {
         let check = core.run_check(&space, cancel.clone()).await;
-        core.0.runs.write().await.remove(&run_id);
+        // A failing check isn't a failed turn: the next one hears it. Stop
+        // during the check is a stop.
+        let end = if cancel.is_cancelled() {
+            TurnEnd::Interrupted
+        } else {
+            end
+        };
+        let end = release_run(core, &run_id, end).await;
         let mut log = core
             .space_row(&space.id)
             .await
@@ -1432,13 +1461,6 @@ async fn drive_turn(core: &Core, turn: Turn) {
         if let Some(t) = log.iter_mut().rev().find(|t| t.reply == reply.id) {
             t.check = check;
         }
-        // A failing check isn't a failed turn: the next one hears it. Stop
-        // during the check is a stop.
-        let end = if cancel.is_cancelled() {
-            TurnEnd::Interrupted
-        } else {
-            end
-        };
         core.end_turn(
             &space.id,
             vec![NewAction {
