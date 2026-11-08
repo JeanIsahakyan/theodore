@@ -724,6 +724,8 @@ above it clip to their own row.
   re-lists and re-attaches whatever is still running, scrollback included.
   Closed on archive (before the worktree is removed) and on a clean app
   quit — never left running past the space, or past Theodore itself.
+  SIGTERM and SIGINT quit the same way as ⌘Q. Stopping commands and
+  terminals waits at most 4 s, then the app exits anyway (`quit.rs`).
 - **Bounded, twice.** The core keeps a raw tail (ANSI intact) per terminal
   to reseed the view on reattach, and a separate ANSI-stripped line tail
   (`space_terminal_tail`, 2,000 lines) the agent reads as plain text

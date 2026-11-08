@@ -13,6 +13,7 @@ pub mod gate;
 pub mod menu;
 pub mod notify;
 pub mod op;
+pub mod quit;
 pub mod relocate;
 pub mod shell_path;
 pub mod updater;
@@ -280,6 +281,8 @@ pub fn run(
                 });
             }
             app.manage(notify::for_app(&handle));
+            // SIGTERM / SIGINT quit like ⌘Q, with the same cleanup.
+            quit::exit_on_signal(handle.clone(), core.clone());
             forward(emitter(handle.clone()));
             deep_link::listen(&handle, core.clone());
             if let Some(data_dir) = offer_move {
@@ -293,20 +296,14 @@ pub fn run(
         .build(tauri::generate_context!())
         .expect("error while building the Theodore app")
         .run(move |_handle, event| {
-            // A clean quit stops every space's `run` command first: left to
-            // `kill_on_drop` alone, a SIGTERM'd process never runs its
-            // destructors, so its process group would be orphaned to PID 1
-            // (docs/spaces.md "Crash recovery") — the same way an unclean
-            // exit does, just needlessly.
+            // A clean quit stops every space's `run` command first, then
+            // flushes telemetry; each step has a time limit, so a hung one
+            // never keeps the app from exiting (`quit`).
             if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
-                tauri::async_runtime::block_on(exit_core.stop_all_space_commands());
+                quit::stop_spaces(exit_core.clone());
             }
-            // Last: send what the remote sinks still hold, flush the file.
-            if let tauri::RunEvent::Exit = event
-                && let Some(t) = theodore_telemetry::global()
-            {
-                tracing::info!("Theodore quitting");
-                t.shutdown();
+            if let tauri::RunEvent::Exit = event {
+                quit::shutdown_telemetry();
             }
         });
 }
