@@ -555,11 +555,23 @@ waiting for auto-archive (§7):
                               next turn's prompt: "the previous PR (#123) merged…"
 ```
 
-The next round's Open PR isn't about the goal any more: its title is what
-the first turn since that changed files did (the first sentence of the
-agent's reply with three words or more, cut at a word), the other turns
-listed under it, `Update <name>` when no reply says. Your own messages
-never go in: a "Yes, do that" or a feedback prompt is no title.
+The next round's Open PR isn't about the goal any more, and its title is
+never a sentence copied from the chat (an agent's reply is first person and
+tells the round's story, edits it undid included). It is an imperative
+summary of the round's net change (`ship_title.rs`):
+
+```
+net diff (base ─▶ head) ─┬─ empty ──────────────────────────▶ Update <name>
+                         └─ chat agent, cheapest model, 30 s ─┬─ TITLE ok ─▶ title + SUMMARY bullets
+   (diff stat + the agent's replies to the round's turns       └─ else ────▶ Update notes/t3.md
+    that changed files; your messages never go in)                           Update 3 files in notes/
+```
+
+A proposed title is refused, never cut: over 72 characters, first person
+("I created …"), or naming a path the net diff doesn't have. A summary line
+is a whole sentence or dropped, the same way. The PR body is those lines,
+the commit message the title and those lines. Open PR's title field starts
+empty after a Continue; left empty, this is the title, typed, yours is.
 
 **Send to agent** sits next to a thread's Resolve, a draft's edit/delete and
 a finding's Add to review — in the diff and in the side panel — but only when
@@ -1089,8 +1101,9 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   folder's own config first, then the cache's, i.e. your global one); on
   GitHub without either, your login with its noreply address. Unsigned:
   Theodore can't answer a passphrase prompt. Message: the title (editable
-  in the confirm popover, default the goal's first line), then the goal
-  when it says more.
+  in the confirm popover, default the goal's first line; after a Continue,
+  the round's net-change summary, §3 "Continue"), then the goal when it
+  says more.
 - *Open PR*: the commit's parent is the base. If the branch name is
   already taken on the host, nothing is pushed. After the push the outbox
   item `create_space_pr` asks the host for an open PR from that branch
@@ -1135,11 +1148,11 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   | moved (someone pushed to it) | parent = their tip, tree = their tip + the turns since the last push (three-way, no worktree); refused if that conflicts |
   | gone | parent = last push, pushed again |
 
-  Its message says what changed, never what was said: the subject is the
-  first sentence (three words or more) of the agent's reply to the first
-  turn since the last push that changed files, cut at a word; the other
-  turns' are listed under it. No reply says → `Update <name>`. Your
-  messages, a feedback prompt or a Fix CI prompt never go into git.
+  Its message says what changed, never what was said: the net change
+  since the last push, summarized the way a round's PR title is (§3
+  "Continue"): the chat agent's proposed title and whole-sentence lines,
+  else `Update <path>` / `Update N files in <dir>/`. Your messages, a
+  feedback prompt or a Fix CI prompt never go into git.
 
 - *Merge locally*: refused, folder untouched, on a dirty working tree
   (untracked files count), a detached `HEAD`, or a merge that would

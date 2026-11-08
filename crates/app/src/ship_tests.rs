@@ -452,8 +452,9 @@ async fn push_adds_one_commit_on_top_of_the_pr_branch() {
         let c = &ship.commits[1].1;
         assert_eq!(c.parent, Sha::new("squash1"), "on top, not a rewrite");
         assert_eq!(c.replay_from, None);
-        // The agent's "ok" says nothing; your message never goes in.
-        assert_eq!(c.message, format!("Update {}", s.name));
+        // No proposal (the chat agent's "ok" doesn't parse), and your
+        // message never goes in: the path the push changes.
+        assert_eq!(c.message, "Update src/lib.rs");
         assert_eq!(ship.pushes[1], (s.branch.clone(), Sha::new("squash2")));
     }
     let err = core
@@ -463,8 +464,9 @@ async fn push_adds_one_commit_on_top_of_the_pr_branch() {
     assert!(err.to_string().contains("nothing new"), "{err}");
 }
 
-/// Push's commit says what the turns since the last push changed, from the
-/// agent's replies: never a chat message, a feedback or a Fix CI prompt.
+/// Push's commit says what the turns since the last push changed: the chat
+/// agent's title from the diff stat and the agent's replies, never a
+/// sentence copied from them, a chat message, a feedback or a Fix CI prompt.
 #[tokio::test]
 async fn a_push_commit_says_what_changed_not_what_was_said() {
     let f = fixtures();
@@ -505,13 +507,36 @@ async fn a_push_commit_says_what_changed_not_what_was_said() {
         .await
         .unwrap();
     let s = idle(&f, &s.id).await;
+    let is_ship_title = |r: &theodore_ports::AgentRequest| {
+        r.system.as_deref() == Some(crate::usecases::ship_title::SHIP_TITLE_SYSTEM)
+    };
+    f.agents.push_tagged(
+        is_ship_title,
+        done(
+            "TITLE: Soften the dead-state message\nSUMMARY:\n\
+             - Start the hunger timer at zero.",
+            0.0,
+        ),
+    );
     core.ship_space(ship(&s, ShipAction::Push)).await.unwrap();
 
+    let ask = f
+        .agents
+        .utility_requests()
+        .into_iter()
+        .find(|r| is_ship_title(r))
+        .expect("asked for a title");
+    assert!(
+        ask.prompt.contains("Your pet has passed on"),
+        "{}",
+        ask.prompt
+    );
+    assert!(ask.prompt.contains("hunger timer"), "{}", ask.prompt);
+    assert!(!ask.prompt.contains("check is failing"), "{}", ask.prompt);
     let ship = f.git.ship.lock().unwrap();
     assert_eq!(
         ship.commits[1].1.message,
-        "The dead-state message now reads \"Your pet has passed on\"\n\n\
-         - Fixed the failing test: the hunger timer now starts at zero"
+        "Soften the dead-state message\n\n- Start the hunger timer at zero."
     );
 }
 

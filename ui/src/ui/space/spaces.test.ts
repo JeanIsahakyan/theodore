@@ -11,7 +11,6 @@ import {
   defaultReviewSkill,
   defaultTitle,
   shipTitle,
-  subjectOf,
   reviewAgentDefault,
   reviewRunning,
   sentTurnDone,
@@ -306,19 +305,7 @@ describe('shipping', () => {
     );
   });
 
-  it('after a Continue, proposes what the turns since changed', () => {
-    const turn = (reply: string, after = 'b') => ({
-      message: `m-${reply}`,
-      reply,
-      before: 'a',
-      after,
-    });
-    const reply = (id: string, text: string, at: number) => ({
-      id,
-      text,
-      at,
-      author: { kind: 'agent' as const, agent: 'claude' as const },
-    });
+  it('after a Continue, leaves the title to the core’s net-change summary', () => {
     const s = {
       goal: 'Initialize a tiny static tamagotchi',
       name: 'tama',
@@ -331,36 +318,12 @@ describe('shipping', () => {
           at: 100,
         },
       ],
-      turn_log: [turn('r0'), turn('r1'), turn('r2', 'a')],
     };
-    const messages = [
-      reply('r0', 'Built the pet and its timers.', 50),
-      reply('r1', 'Done. Added a Credits section to the README.', 150),
-      reply('r2', 'Looked around; nothing to change here.', 160),
-    ];
-    expect(shipTitle(s, messages)).toBe(
-      'Added a Credits section to the README',
-    );
-    expect(shipTitle({ ...s, rounds: [] }, messages)).toBe(
+    // Never a sentence copied from the chat: empty, the core proposes it.
+    expect(shipTitle(s)).toBe('');
+    expect(shipTitle({ ...s, rounds: [] })).toBe(
       'Initialize a tiny static tamagotchi',
     );
-    expect(shipTitle(s, [reply('r1', 'ok', 150)])).toBe('Update tama');
-  });
-
-  it('a subject is the reply’s first sentence that says something', () => {
-    expect(subjectOf('Done. Changed the dead-state message. Tests pass.')).toBe(
-      'Changed the dead-state message',
-    );
-    expect(
-      subjectOf('## Summary\n\n**Added** a `Credits` section.\n\nMore.'),
-    ).toBe('Added a Credits section');
-    expect(subjectOf('ok')).toBeNull();
-    const long =
-      'Reworked the hunger and happiness timers so the pet no longer starves while the tab sits in the background';
-    const s = subjectOf(long)!;
-    expect(s.length).toBeLessThanOrEqual(72);
-    expect(long.startsWith(s)).toBe(true);
-    expect(long[s.length]).toBe(' ');
   });
 });
 

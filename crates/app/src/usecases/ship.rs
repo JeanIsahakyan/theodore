@@ -19,7 +19,7 @@ use theodore_contract::{
     Ephemeral, Project, ShipAction, ShipKind, ShipSpaceRequest, Space, SpaceShipped, SpaceStatus,
     ToastLevel, models,
 };
-use theodore_domain::{Author, HostKind, PrRef, PrState, PrSummary, RepoRef, Sha};
+use theodore_domain::{HostKind, PrRef, PrState, PrSummary, RepoRef, Sha};
 use theodore_ports::{
     GitError, Identity, NewAction, NewPr, SpaceCommit, SyncActionCode, shipped_ref,
 };
@@ -169,7 +169,7 @@ impl Core {
                     ));
                 }
                 // After a Continue, what the turns since changed; else the goal.
-                let about = self.round_about(&space).await;
+                let about = self.round_about(&space, &project, &repo_path, &head).await;
                 let title = title_or(req.title.as_deref(), &about);
                 let message = commit_message(&title, &about.goal);
                 let shipped = self
@@ -183,7 +183,7 @@ impl Core {
                 .await?;
                 // The repo's PR template when it has one, and a link back.
                 let body = self
-                    .space_pr_body(&about, &repo_path, &head, pr_body(&about.goal))
+                    .space_pr_body(&about, &repo_path, &head, pr_body(&title, &about.goal))
                     .await;
                 let body = with_closes(body, space.issue);
                 let payload = CreateSpacePrPayload {
@@ -209,7 +209,7 @@ impl Core {
                 }
                 let title = match req.title.as_deref().map(str::trim) {
                     Some(t) if !t.is_empty() => t.to_string(),
-                    _ => self.push_title(&space).await,
+                    _ => self.push_title(&space, &project, &repo_path, &head).await,
                 };
                 let shipped = self
                     .push_squashed(&space, &project, &repo_path, &head, &title, &author)
@@ -490,66 +490,46 @@ impl Core {
         ))
     }
 
-    /// What the agent changed in the turns since `since`, oldest first: the
-    /// subject (`subject_of`) of each live turn's reply that changed files.
-    /// Your messages never go in: a feedback or Fix CI prompt is no subject.
-    pub(crate) async fn turn_subjects(&self, space: &Space, since: i64) -> Vec<String> {
-        let store = self.0.deps.store.clone();
-        let key = crate::usecases::spaces::space_chat_key(&space.id).0;
-        let rows =
-            tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
-        let replies: std::collections::HashMap<String, theodore_contract::ChatMessage> = rows
-            .into_iter()
-            .filter_map(|r| serde_json::from_value::<theodore_contract::ChatMessage>(r.data).ok())
-            .filter(|m| m.author != Author::Me && m.at >= since)
-            .map(|m| (m.id.clone(), m))
-            .collect();
-        let mut turns: Vec<&theodore_contract::ChatMessage> = space
-            .turn_log
-            .iter()
-            .filter(|t| {
-                !t.undone && t.reverted.is_empty() && t.base_before.is_none() && t.before != t.after
-            })
-            .filter_map(|t| replies.get(&t.reply))
-            .collect();
-        turns.sort_by_key(|m| m.at);
-        turns.iter().filter_map(|m| subject_of(&m.text)).collect()
-    }
-
     /// The space as this round's PR is about: itself before any Continue;
-    /// after one, its goal is what the turns since changed (`turn_subjects`):
-    /// the first as the title, the others listed under it.
-    pub(crate) async fn round_about(&self, space: &Space) -> Space {
+    /// after one, its goal is what the round's net change does
+    /// (`change_summary`): the title, then whole sentences under it.
+    pub(crate) async fn round_about(
+        &self,
+        space: &Space,
+        project: &Project,
+        repo_path: &Path,
+        head: &Sha,
+    ) -> Space {
         let Some(round) = space.rounds.last() else {
             return space.clone();
         };
-        let subjects = self.turn_subjects(space, round.at).await;
-        let goal = match subjects.split_first() {
-            None => format!("Update {}", space.name),
-            Some((first, [])) => first.clone(),
-            Some((first, rest)) => format!("{first}\n\n{}", bullets(rest)),
-        };
+        let summary = self
+            .change_summary(space, project, repo_path, &space.base_sha, head, round.at)
+            .await;
         Space {
-            goal,
+            goal: summary.message(),
             ..space.clone()
         }
     }
 
-    /// The default Push message: what the turns since the last push changed
-    /// (`turn_subjects`), the first as the subject and the others listed
-    /// under it; `Update <name>` when no reply says.
-    async fn push_title(&self, space: &Space) -> String {
-        let since = space.shipped.as_ref().map_or(0, |s| s.at);
-        let subjects = self.turn_subjects(space, since).await;
-        match subjects.split_first() {
-            None => format!("Update {}", space.name),
-            Some((first, [])) => first.clone(),
-            Some((first, rest)) => format!("{first}\n\n{}", bullets(rest)),
-        }
+    /// The default Push message: what the turns since the last push changed,
+    /// net (`change_summary`) — the title, then whole sentences under it.
+    async fn push_title(
+        &self,
+        space: &Space,
+        project: &Project,
+        repo_path: &Path,
+        head: &Sha,
+    ) -> String {
+        let last = space.shipped.as_ref().filter(|s| s.how == ShipKind::Pr);
+        let since = last.map_or(0, |s| s.at);
+        let from = last
+            .map(|s| &s.head)
+            .or(space.fork_sha.as_ref())
+            .unwrap_or(&space.base_sha);
+        self.change_summary(space, project, repo_path, from, head, since)
+            .await
+            .message()
     }
 
     /// The outbox opened (or found) the space's PR: link it and fetch it so
@@ -716,77 +696,6 @@ fn first_line(text: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
-/// `- a` per line.
-fn bullets(lines: &[String]) -> String {
-    lines
-        .iter()
-        .map(|l| format!("- {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// `text` cut at a word to at most a subject line's length, no ellipsis.
-fn cut_at_word(text: &str) -> String {
-    if text.chars().count() <= TITLE_CHARS {
-        return text.to_string();
-    }
-    let head: String = text.chars().take(TITLE_CHARS + 1).collect();
-    let cut = head
-        .rfind(char::is_whitespace)
-        .map_or(head.as_str(), |i| &head[..i]);
-    let cut = cut.trim_end_matches(|c: char| c.is_whitespace() || ",;:—-(".contains(c));
-    if cut.is_empty() {
-        text.chars().take(TITLE_CHARS).collect()
-    } else {
-        cut.to_string()
-    }
-}
-
-/// A commit subject from an agent's reply: its first sentence that says
-/// something (three words or more; "Done." or a "## Summary" heading
-/// doesn't), markdown marks off, no closing period, cut at a word. `None`
-/// when no sentence does.
-pub(crate) fn subject_of(reply: &str) -> Option<String> {
-    reply.split("\n\n").find_map(paragraph_subject)
-}
-
-fn paragraph_subject(para: &str) -> Option<String> {
-    let flat = para
-        .lines()
-        .map(|l| {
-            l.trim()
-                .trim_start_matches('#')
-                .trim_start_matches(['-', '*', '>'])
-                .trim()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace(['`'], "")
-        .replace("**", "")
-        .replace("__", "");
-    let mut sentences = Vec::new();
-    let mut start = 0;
-    let chars: Vec<(usize, char)> = flat.char_indices().collect();
-    for (k, &(i, c)) in chars.iter().enumerate() {
-        let next = chars.get(k + 1).map(|&(_, n)| n);
-        // "Here's what changed:" ending its line only leads in to a list.
-        let lead_in = c == ':' && next.is_none_or(|n| n == '\n');
-        if lead_in || (matches!(c, '.' | '!' | '?') && next.is_none_or(char::is_whitespace)) {
-            sentences.push((&flat[start..i], lead_in));
-            start = i + c.len_utf8();
-        }
-    }
-    if start < flat.len() {
-        sentences.push((&flat[start..], false));
-    }
-    sentences
-        .into_iter()
-        .filter(|(_, lead_in)| !lead_in)
-        .map(|(s, _)| s.split_whitespace().collect::<Vec<_>>().join(" "))
-        .find(|s| s.split(' ').count() >= 3)
-        .map(|s| cut_at_word(&s))
-}
-
 /// An edited title, else the goal's first line, else the space's name.
 fn title_or(edited: Option<&str>, space: &Space) -> String {
     let edited = edited.map(first_line).filter(|t| !t.is_empty());
@@ -795,9 +704,9 @@ fn title_or(edited: Option<&str>, space: &Space) -> String {
         .unwrap_or_else(|| space.name.clone())
 }
 
-/// Title, then the whole goal when it says more than the title does.
+/// Title, then what the goal says beyond it (`pr_body`).
 fn commit_message(title: &str, goal: &str) -> String {
-    let body = pr_body(goal);
+    let body = pr_body(title, goal);
     if body.is_empty() || body == title {
         title.to_string()
     } else {
@@ -805,8 +714,17 @@ fn commit_message(title: &str, goal: &str) -> String {
     }
 }
 
-fn pr_body(goal: &str) -> String {
+/// What the goal says beyond the title: the paragraphs after it when the
+/// goal opens with the title as a paragraph of its own (a round's change
+/// summary), else the whole goal when it says more than one short line.
+fn pr_body(title: &str, goal: &str) -> String {
     let goal = goal.trim();
+    if let Some(rest) = goal
+        .strip_prefix(title)
+        .and_then(|r| r.strip_prefix("\n\n"))
+    {
+        return rest.trim().to_string();
+    }
     if goal.lines().filter(|l| !l.trim().is_empty()).count() <= 1
         && goal.chars().count() <= TITLE_CHARS
     {
@@ -849,41 +767,17 @@ mod tests {
     }
 
     #[test]
-    fn a_subject_is_the_replys_first_sentence_that_says_something() {
-        assert_eq!(
-            subject_of("Done. Changed the dead-state message to \"RIP\". Tests pass.").as_deref(),
-            Some("Changed the dead-state message to \"RIP\"")
-        );
-        assert_eq!(
-            subject_of("## Summary\n\n**Added** a `Credits` section to the README.\n\nMore.")
-                .as_deref(),
-            Some("Added a Credits section to the README")
-        );
-        assert_eq!(
-            subject_of("Here's what changed:\n- Bumped the timeout to 30 s").as_deref(),
-            Some("Bumped the timeout to 30 s")
-        );
-        assert_eq!(subject_of("ok"), None);
-        assert_eq!(subject_of("Done."), None);
-        assert_eq!(subject_of(""), None);
-        // Cut at a word, never mid-word, no ellipsis.
-        let long = "Reworked the hunger and happiness timers so the pet no longer starves \
-                    while the tab sits in the background";
-        let s = subject_of(long).unwrap();
-        assert!(s.chars().count() <= TITLE_CHARS, "{s}");
-        assert!(long.starts_with(&s));
-        assert!(long[s.len()..].starts_with(' '), "{s}");
-        assert!(!s.ends_with('…'));
-    }
-
-    #[test]
     fn a_short_goal_is_the_whole_message() {
         assert_eq!(commit_message("Retry", "Retry"), "Retry");
-        assert_eq!(pr_body("Retry"), "");
+        assert_eq!(pr_body("Retry", "Retry"), "");
         assert_eq!(
             commit_message("Retry", "Retry\nwith backoff"),
             "Retry\n\nRetry\nwith backoff"
         );
+        // A round's summary: the title once, the sentences under it.
+        let round = "Add t3 notes\n\n- Add notes/t3.md.";
+        assert_eq!(commit_message("Add t3 notes", round), round);
+        assert_eq!(pr_body("Add t3 notes", round), "- Add notes/t3.md.");
     }
 
     #[test]

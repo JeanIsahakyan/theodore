@@ -480,24 +480,19 @@ async fn refresh_space_pr_brings_the_hosts_checks() {
 
 // ── Continue after merge ──────────────────────────────────────────────────
 
-/// After a Continue, the next PR is about the turns since, not the goal.
-#[tokio::test]
-async fn the_pr_after_a_continue_is_titled_by_its_own_turns() {
-    let f = fixtures();
-    let (core, _recv, project) = host_project(&f).await;
-    let s = in_review(&f, &core, &project, "Initialize a tiny static tamagotchi").await;
-    merge_on_host(&f, &core, 100).await;
-    base_moved(&f, "main222");
-    let c = core.continue_space(&s.id).await.unwrap();
-
-    f.clock.advance(1_000);
-    f.agents.push_script(done(
-        "Done. Added a Credits section to the README.\n\nIt lists who drew the sprites.",
-    ));
-    f.git.push_checkpoint(Sha::new("turn222"));
+async fn send_reply(
+    f: &Fixtures,
+    core: &Core,
+    s: &Space,
+    text: &str,
+    reply: &str,
+    head: &str,
+) -> Space {
+    f.agents.push_script(done(reply));
+    f.git.push_checkpoint(Sha::new(head));
     core.space_send(SpaceSendRequest {
-        space: c.id.clone(),
-        text: "Yes, add credits please".into(),
+        space: s.id.clone(),
+        text: text.into(),
         agent: None,
         model: None,
         mode: None,
@@ -505,24 +500,110 @@ async fn the_pr_after_a_continue_is_titled_by_its_own_turns() {
     })
     .await
     .unwrap();
-    let c = idle(&f, &c.id).await;
+    idle(f, &s.id).await
+}
+
+/// The round from the report: a workflow edit made and undone within it,
+/// a note added. Only the note is in the net diff.
+async fn a_round_with_an_undone_edit(f: &Fixtures, core: &Core, project: &Project) -> Space {
+    let s = in_review(f, core, project, "Initialize a tiny static tamagotchi").await;
+    merge_on_host(f, core, 100).await;
+    base_moved(f, "main222");
+    let mut c = core.continue_space(&s.id).await.unwrap();
+    for (reply, head) in [
+        (
+            "Added # qa3 note as the first line of .github/workflows/test.yml",
+            "turn222",
+        ),
+        ("I created notes/t3.md with the round's notes.", "turn333"),
+        (
+            ".github/workflows/test.yml now matches its original content, with the # qa3 \
+             line removed so the workflow runs exactly as it did before.",
+            "turn444",
+        ),
+    ] {
+        f.clock.advance(1_000);
+        c = send_reply(f, core, &c, "Yes, do that", reply, head).await;
+    }
+    let (base, head) = (Sha::new("main222"), Sha::new("turn444"));
+    f.git.set_revision(crate::testkit::two_hunk_revision(
+        &base,
+        &head,
+        "notes/t3.md",
+    ));
     f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
         etag: None,
-        value: sample_pr_detail(&pr_ref(101), &Sha::new("main222"), &Sha::new("squash2")),
+        value: sample_pr_detail(&pr_ref(101), &base, &Sha::new("squash2")),
     }));
+    c
+}
+
+fn is_ship_title(r: &theodore_ports::AgentRequest) -> bool {
+    r.system.as_deref() == Some(crate::usecases::ship_title::SHIP_TITLE_SYSTEM)
+}
+
+/// After a Continue, the next PR is titled by its net change — never by a
+/// sentence copied from the chat, never by an edit the round undid. With
+/// no usable proposal (the chat agent's "ok"): the changed path.
+#[tokio::test]
+async fn the_pr_after_a_continue_is_titled_by_its_net_change() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let c = a_round_with_an_undone_edit(&f, &core, &project).await;
     core.ship_space(open_pr(&c)).await.unwrap();
     wait_until(|| f.host.create_pr_calls.lock().unwrap().len() == 2).await;
     let calls = f.host.create_pr_calls.lock().unwrap().clone();
-    assert_eq!(calls[1].1.title, "Added a Credits section to the README");
-    assert!(
-        !calls[1].1.body.contains("tamagotchi"),
-        "{}",
-        calls[1].1.body
+    let (title, body) = (&calls[1].1.title, &calls[1].1.body);
+    assert_eq!(title, "Update notes/t3.md");
+    for chat in ["Added #", "I created", "workflows", "tamagotchi"] {
+        assert!(!body.contains(chat), "{chat}: {body}");
+    }
+    let ship = f.git.ship.lock().unwrap();
+    assert_eq!(ship.commits.last().unwrap().1.message, "Update notes/t3.md");
+}
+
+/// The chat agent's proposal from the round's diff stat and replies: its
+/// title, and its whole sentences about files in the net diff only.
+#[tokio::test]
+async fn the_pr_after_a_continue_takes_the_chat_agents_proposed_title() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let c = a_round_with_an_undone_edit(&f, &core, &project).await;
+    f.agents.push_tagged(
+        is_ship_title,
+        done(
+            "TITLE: Add the round's t3 notes\nSUMMARY:\n\
+             - Add notes/t3.md with what the round found.\n\
+             - Restore .github/workflows/test.yml to its original content.",
+        ),
     );
+    core.ship_space(open_pr(&c)).await.unwrap();
+    wait_until(|| f.host.create_pr_calls.lock().unwrap().len() == 2).await;
+    let calls = f.host.create_pr_calls.lock().unwrap().clone();
+    let (title, body) = (&calls[1].1.title, &calls[1].1.body);
+    assert_eq!(title, "Add the round's t3 notes");
+    assert!(
+        body.contains("- Add notes/t3.md with what the round found."),
+        "{body}"
+    );
+    assert!(!body.contains("workflows"), "{body}");
+    let ask = f
+        .agents
+        .utility_requests()
+        .into_iter()
+        .find(is_ship_title)
+        .expect("asked for a title");
+    assert!(ask.prompt.contains("- notes/t3.md (+"), "{}", ask.prompt);
+    assert!(
+        ask.prompt.contains("I created notes/t3.md"),
+        "{}",
+        ask.prompt
+    );
+    assert!(!ask.prompt.contains("Yes, do that"), "{}", ask.prompt);
     let ship = f.git.ship.lock().unwrap();
     assert_eq!(
         ship.commits.last().unwrap().1.message,
-        "Added a Credits section to the README"
+        "Add the round's t3 notes\n\n- Add notes/t3.md with what the round found."
     );
 }
 

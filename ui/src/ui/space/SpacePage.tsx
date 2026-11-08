@@ -700,9 +700,7 @@ const ShipControls = observer(function ShipControls({
   const disabled = running || busy || !changed || shippedLocally;
   const start = (c: ShipChoice) => {
     setChoice(c);
-    setTitle(
-      shipTitle(space, store.models.chatMessages.byPr(spaceChatKey(space.id))),
-    );
+    setTitle(shipTitle(space));
     setOpen(true);
   };
   const current = choice ?? primary;
@@ -741,9 +739,10 @@ const ShipControls = observer(function ShipControls({
               <Label>Title</Label>
               <Input
                 className="text-sm"
+                placeholder="Left empty, written from the change"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && title.trim()) {
-                    void ship(current.action, title.trim());
+                  if (e.key === 'Enter') {
+                    void ship(current.action, title.trim() || null);
                   }
                 }}
               />
@@ -756,8 +755,7 @@ const ShipControls = observer(function ShipControls({
               <Button
                 size="sm"
                 isPending={busy}
-                isDisabled={!title.trim()}
-                onPress={() => void ship(current.action, title.trim())}
+                onPress={() => void ship(current.action, title.trim() || null)}
               >
                 {current.label}
               </Button>

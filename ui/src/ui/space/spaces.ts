@@ -5,7 +5,6 @@
  */
 import type {
   AgentId,
-  ChatMessage,
   MergeInfo,
   MergeMethod,
   PrId,
@@ -254,100 +253,13 @@ export function defaultTitle(
   return (placeholder && s.branch?.trim()) || s.name;
 }
 
-/** A subject line's length (the core's `TITLE_CHARS`). */
-const TITLE_CHARS = 72;
-
-/** `text` cut at a word to at most a subject line's length, no ellipsis. */
-function cutAtWord(text: string): string {
-  const chars = [...text];
-  if (chars.length <= TITLE_CHARS) return text;
-  const head = chars.slice(0, TITLE_CHARS + 1).join('');
-  const space = head.search(/\s\S*$/);
-  const cut = (space > 0 ? head.slice(0, space) : head).replace(
-    /[\s,;:—\-(]+$/,
-    '',
-  );
-  return cut || chars.slice(0, TITLE_CHARS).join('');
-}
-
-/** A commit subject from an agent's reply, as the core makes it
- *  (`ship.rs` `subject_of`): its first sentence of three words or more,
- *  markdown marks off, no closing period, cut at a word. Push's commit
- *  subject is made the same way in the core. */
-export function subjectOf(reply: string): string | null {
-  for (const para of reply.split('\n\n')) {
-    const flat = para
-      .split('\n')
-      .map((l) =>
-        l
-          .trim()
-          .replace(/^#+/, '')
-          .replace(/^[-*>]+/, '')
-          .trim(),
-      )
-      .join('\n')
-      .replace(/`/g, '')
-      .replace(/\*\*|__/g, '');
-    const sentences: { text: string; leadIn: boolean }[] = [];
-    let start = 0;
-    for (let i = 0; i < flat.length; i++) {
-      const c = flat[i]!;
-      const next = flat[i + 1];
-      // "Here's what changed:" ending its line only leads in to a list.
-      const leadIn = c === ':' && (next === undefined || next === '\n');
-      if (
-        leadIn ||
-        ('.!?'.includes(c) && (next === undefined || /\s/.test(next)))
-      ) {
-        sentences.push({ text: flat.slice(start, i), leadIn });
-        start = i + 1;
-      }
-    }
-    if (start < flat.length)
-      sentences.push({ text: flat.slice(start), leadIn: false });
-    const hit = sentences
-      .filter((s) => !s.leadIn)
-      .map((s) => s.text.split(/\s+/).filter(Boolean).join(' '))
-      .find((s) => s.split(' ').length >= 3);
-    if (hit) return cutAtWord(hit);
-  }
-  return null;
-}
-
 /** The title Open PR proposes: the goal's (`defaultTitle`) — or after a
- *  Continue, what the first turn since that changed files did, as the core
- *  would title it (`round_about`), never your own message. */
+ *  Continue, nothing: left empty, the core writes it from the round's net
+ *  change (`ship_title.rs`), never from a sentence in the chat. */
 export function shipTitle(
-  s: Pick<Space, 'goal' | 'name' | 'rounds' | 'turn_log'> & {
-    branch?: string;
-  },
-  messages: readonly Pick<ChatMessage, 'id' | 'text' | 'at' | 'author'>[],
+  s: Pick<Space, 'goal' | 'name' | 'rounds'> & { branch?: string },
 ): string {
-  const round = s.rounds?.at(-1);
-  if (!round) return defaultTitle(s);
-  const replies = new Map(
-    messages
-      .filter((m) => m.author.kind !== 'me' && m.at >= round.at)
-      .map((m) => [m.id, m]),
-  );
-  const subjects = (s.turn_log ?? [])
-    .filter(
-      (t) =>
-        !t.undone &&
-        !t.reverted?.length &&
-        !t.base_before &&
-        t.before !== t.after,
-    )
-    .flatMap((t) => {
-      const m = replies.get(t.reply);
-      return m ? [m] : [];
-    })
-    .sort((a, b) => a.at - b.at)
-    .flatMap((m) => {
-      const subject = subjectOf(m.text);
-      return subject ? [subject] : [];
-    });
-  return subjects[0] ?? `Update ${s.name}`;
+  return s.rounds?.length ? '' : defaultTitle(s);
 }
 
 /** "3 files +42 −7" for the changes pane header. */

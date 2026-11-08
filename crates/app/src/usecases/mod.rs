@@ -21,6 +21,7 @@ pub mod review;
 pub mod review_config;
 pub mod revision;
 pub mod ship;
+pub(crate) mod ship_title;
 pub mod skills;
 pub mod space_agent_tools;
 pub mod space_checkpoints;
