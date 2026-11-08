@@ -158,8 +158,12 @@ fn share_line(redactor: &Redactor, line: &str) -> Option<String> {
         .fields
         .remove("msg")
         .and_then(|m| m.as_str().map(str::to_string));
+    // The local step again: a line written by an older build missed the
+    // patterns added since (it changes nothing on a line that has them).
+    redactor.local(&mut rec);
     let mut out = redactor.remote(&rec).fields;
     if let Some(m) = msg {
+        let m = redactor.text(&m);
         out.insert("msg".into(), Value::String(redactor.remote_text(&m)));
     }
     Some(Value::Object(out).to_string())
@@ -347,6 +351,19 @@ mod tests {
         let tail = log_tail(logs.path(), &redactor, three).unwrap();
         assert_eq!(tail.lines, all.lines[2..].to_vec());
         assert_eq!(tail.older, 2, "the two lines left in the older file");
+    }
+
+    /// A line an older build wrote, before a pattern existed, is redacted
+    /// on its way into an issue all the same.
+    #[test]
+    fn an_older_builds_line_is_redacted_again() {
+        let logs = tempfile::tempdir().unwrap();
+        let raw = r#"{"msg":"key sk-ant-api03-AbCdEfGhIjKlMnOpQrSt","detail":"AWS_SECRET_ACCESS_KEY=abc","prompt":"my text"}"#;
+        std::fs::write(logs.path().join(FILE_NAME), format!("{raw}\n")).unwrap();
+        let tail = log_tail(logs.path(), &Redactor::new(None, "s"), usize::MAX).unwrap();
+        let line = &tail.lines[0];
+        assert!(!line.contains("sk-ant") && !line.contains("=abc"), "{line}");
+        assert!(!line.contains("my text"), "{line}");
     }
 
     #[test]
