@@ -316,6 +316,9 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
 - **The context table**: where (`Space turn 3 of 5`, `AI panel reply 2 of 4`), scope, who
   drafted it, agent CLI and version, model, effort, mode, status, when sent, how long it took,
   files changed and tool calls (counts), the run id. No space, project, repo or branch names.
+  The model is the one the run was sent — the space's, else the `agents.<id>.model` setting at
+  the time, else the CLI's default — recorded on its reply when the run starts, so a later
+  settings change doesn't rewrite it; a reply from before that was recorded says `unknown`.
   Each value is inline code, so nothing in one (a model name, a space's error) mentions, links
   or cross-references.
 - **Logs** in a chat report are that run's only: every record of a space turn or an AI panel

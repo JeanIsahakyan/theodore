@@ -211,6 +211,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
         };
         let mut log = space.turn_log.clone();

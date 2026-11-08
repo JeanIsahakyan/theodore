@@ -214,8 +214,18 @@ export type ChatMessage = {
 	 *  At most 200; empty when it changed nothing or git couldn't tell.
 	 */
 	changed_files?: TurnFile[],
-	/**  The model a space reply's turn asked for; none: the CLI's default. */
+	/**
+	 *  The model an agent reply's run used: the space's or, failing that,
+	 *  the `agents.<id>.model` setting at the time; none: the CLI's
+	 *  default. On rows without `model_resolved`, only what a space turn
+	 *  asked for (the setting it fell back to wasn't kept).
+	 */
 	model?: string | null,
+	/**
+	 *  `model` was recorded after the setting's default was applied, so
+	 *  none means the CLI's default rather than "not recorded".
+	 */
+	model_resolved?: boolean,
 	/**
 	 *  A space reply with no final text: `text` is the text steps in
 	 *  `activity` joined, and only those show, in the order they came.
