@@ -1,0 +1,31 @@
+# Theodore project config. Every key: docs/config.md.
+spaces:
+  # Tauri desktop app: `run` opens its own window, nothing listens on
+  # $THEODORE_PORT. Vite is pinned to 1420 (ui/vite.config.ts, strictPort)
+  # because apps/desktop/tauri.conf.json hard-codes devUrl, so only one
+  # space can `run` at a time.
+  ports: 0
+
+  # Dependencies: pnpm for ui/ (CI uses --frozen-lockfile), crates for the
+  # Cargo workspace. `cargo tauri dev` also needs tauri-cli installed once
+  # per machine (README "Run it"); that is not per space, so not here.
+  setup: |
+    set -e
+    pnpm -C ui install --frozen-lockfile
+    cargo fetch
+
+  # README "Run it".
+  run: cd apps/desktop && cargo tauri dev --no-watch
+
+  # The CI matrix and the lefthook pre-push gate (README "Checks").
+  check: |
+    set -e
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+    pnpm -C ui typecheck
+    pnpm -C ui lint
+    pnpm -C ui test
+
+  # A cold Rust build of the workspace outruns the 600 s defaults.
+  timeout_s: { setup: 1200, check: 1800 }
