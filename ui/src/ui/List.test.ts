@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoRef } from '../gen/contract';
-import { PEEK_FITS_FROM, peekFits, prIdFor } from './List';
+import { PEEK_FITS_FROM, peekFits, prIdFor, rowColumns } from './List';
+
+describe('rowColumns', () => {
+  it('gives the number column room for the repo name in front of it', () => {
+    // 72px cut "tamagochi" to "tamagoc…".
+    expect(rowColumns(['id'], true).split(' ')[2]).toBe('160px');
+    expect(rowColumns(['id'], false).split(' ')[2]).toBe('72px');
+  });
+});
 
 describe('prIdFor', () => {
   it('builds a github id matching PrRef::id()', () => {

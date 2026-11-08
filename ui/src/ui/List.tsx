@@ -126,6 +126,22 @@ export const COL: Record<RowProp, string> = {
   age: '40px',
 };
 
+/** The number column with the repo name in front: room for a typical
+ *  name before it truncates (the full slug is in its tooltip). */
+const ID_WITH_REPO = '160px';
+
+/** A row's grid columns: pick box, status, number, title, the rest. */
+export function rowColumns(props: readonly RowProp[], repo: boolean): string {
+  const on = (k: RowProp) => props.includes(k);
+  return [
+    '16px',
+    '16px',
+    ...(on('id') ? [repo ? ID_WITH_REPO : COL.id] : []),
+    'minmax(200px,1.5fr)',
+    ...ROW_PROPS.filter((k) => k !== 'id' && on(k)).map((k) => COL[k]),
+  ].join(' ');
+}
+
 export interface Display {
   groupBy: 'section' | 'status' | 'repo' | 'none';
   sort: 'activity' | 'size';
@@ -314,13 +330,7 @@ export const PrRow = observer(function PrRow({
   });
   if (!p) return null;
   const on = (k: RowProp) => props.includes(k);
-  const cols = [
-    '16px',
-    '16px',
-    ...(on('id') ? [COL.id] : []),
-    'minmax(200px,1.5fr)',
-    ...ROW_PROPS.filter((k) => k !== 'id' && on(k)).map((k) => COL[k]),
-  ].join(' ');
+  const cols = rowColumns(props, repo);
   return (
     <div
       id={`R-${id}`}
@@ -350,7 +360,7 @@ export const PrRow = observer(function PrRow({
       <PrStatusIcon summary={p} progress={readProgress(store, id)} />
       {on('id') && (
         <span
-          className="flex min-w-0 max-w-36 whitespace-nowrap text-xs tabular-nums text-muted"
+          className="flex min-w-0 whitespace-nowrap text-xs tabular-nums text-muted"
           title={
             p.url
               ? `${p.pr.repo.owner}/${p.pr.repo.name} #${p.pr.number}`
