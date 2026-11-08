@@ -129,9 +129,11 @@ the file included.
 
 - **Secrets in any text:** GitHub tokens (`gh[pousr]_…`, `github_pat_…`), GitLab (`glpat-…` and
   the other `gl…-` prefixes), Atlassian/Bitbucket (`ATBB…`, `ATATT…`), passwords in URLs
-  (`https://user:pass@…`), `Bearer …`/`Basic …`, WorkOS keys (`sk_…`), JWTs, private keys,
-  `Authorization`/`Cookie`/`Private-Token` headers, `code=`/`state=`/`token=`/`key=`… query
-  parameters, and `token=`/`"secret": …`/`password: …` pairs.
+  (`https://user:pass@…`), `Bearer …`/`Basic …`, WorkOS keys (`sk_…`), model-provider keys
+  (`sk-…`), AWS key ids (`AKIA…`), Slack (`xox…-`), Google (`AIza…`) and npm (`npm_…`) tokens,
+  JWTs, private keys, `Authorization`/`Cookie`/`Private-Token` headers,
+  `code=`/`state=`/`token=`/`key=`… query parameters, `token=`/`"secret": …`/`password: …`
+  pairs, and env-style `*_KEY=`/`*_PAT=`/`*_PASS=`/`*_AUTH=`/`*_DSN=` assignments.
 - **Credential fields:** any field named or segmented `token`, `secret`, `password`,
   `authorization`, `cookie`, `code_verifier`, `api_key`, `credential(s)` → `[redacted]`.
 - **Content fields:** `diff`, `hunk(s)`, `patch`, `body`, `comment(s)`, `content(s)`,
