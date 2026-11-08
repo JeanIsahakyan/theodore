@@ -45,6 +45,23 @@ describe('merge gates', () => {
     );
   });
 
+  it('a running check on an unprotected repo: a warning, not a pass', () => {
+    const store = seed('open', ['pass', 'pending']);
+    const gates = gatesFor(store, PR, info('unstable'));
+    expect(blockingGates(gates)).toEqual([]);
+    expect(gates.filter((g) => !g.ok && g.warn).map((g) => g.label)).toEqual([
+      '1 check still running',
+    ]);
+  });
+
+  it('a running check the host waits for blocks', () => {
+    const store = seed('open', ['pending']);
+    const gates = gatesFor(store, PR, info('blocked'));
+    expect(blockingGates(gates).map((g) => g.label)).toContain(
+      '1 check still running',
+    );
+  });
+
   it('a draft blocks until it is ready for review', () => {
     const store = seed('draft', ['pass']);
     const gates = gatesFor(store, PR, info('clean'));
