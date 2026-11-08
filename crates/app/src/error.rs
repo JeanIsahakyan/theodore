@@ -17,6 +17,10 @@ pub enum AppError {
     NotFound(String),
     #[error("invalid request: {0}")]
     Invalid(String),
+    /// The host refused a write the caller waited on: its own words, as
+    /// they'd show in the outbox's toast.
+    #[error("{0}")]
+    Refused(String),
     #[error("background task failed: {0}")]
     Join(String),
     #[error("account: {0}")]
@@ -51,6 +55,7 @@ impl AppError {
             AppError::Grouper(e) => e.code(),
             AppError::NotFound(_) => "app.not_found",
             AppError::Invalid(_) => "app.invalid",
+            AppError::Refused(_) => "host.refused",
             AppError::Join(_) => "app.internal",
             AppError::Account(e) => e.code(),
             AppError::AccountRequired => "account.required",
@@ -84,6 +89,7 @@ impl AppError {
             self,
             AppError::NotFound(_)
                 | AppError::Invalid(_)
+                | AppError::Refused(_)
                 | AppError::AccountRequired
                 | AppError::OfflineNotCached
                 | AppError::Offline

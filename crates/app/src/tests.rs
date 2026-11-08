@@ -1139,24 +1139,22 @@ async fn outbox_fails_a_protocol_error_at_once_and_keeps_the_hosts_message() {
 #[tokio::test]
 async fn outbox_fails_a_refused_review_with_githubs_message() {
     let f = fixtures();
-    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
 
     f.host.push_submit_review(Err(HostError::Validation(
         "Can not approve your own pull request".into(),
     )));
-    core.submit_review(SubmitReviewRequest {
-        pr: pr.clone(),
-        event: ReviewEvent::Approve,
-        body: String::new(),
-    })
-    .await
-    .expect("queued");
-
-    let event = expect_ephemeral(&mut recv, |e| matches!(e, Ephemeral::Toast { .. })).await;
-    assert!(matches!(
-        event,
-        Ephemeral::Toast { ref text, .. } if text == "Can not approve your own pull request"
-    ));
+    // The submit waits for the host: its error is the message (the UI
+    // toasts it); see `a_refused_submit_fails_the_command_with_the_hosts_words_once`.
+    let err = core
+        .submit_review(SubmitReviewRequest {
+            pr: pr.clone(),
+            event: ReviewEvent::Approve,
+            body: String::new(),
+        })
+        .await
+        .expect_err("refused");
+    assert_eq!(err.to_string(), "Can not approve your own pull request");
     wait_until(|| {
         f.store
             .outbox_snapshot()
@@ -2242,6 +2240,57 @@ async fn a_submitted_draft_is_never_posted_again_by_a_later_submit() {
             "archived drafts aren't skipped drafts: {e:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_refused_submit_fails_the_command_with_the_hosts_words_once() {
+    let f = fixtures();
+    let (core, mut recv, pr, _head) = open_fixture_pr(&f).await;
+    f.host.push_submit_review(Err(HostError::Validation(
+        "Can not approve your own pull request".into(),
+    )));
+
+    let err = core
+        .submit_review(SubmitReviewRequest {
+            pr: pr.clone(),
+            event: ReviewEvent::Approve,
+            body: String::new(),
+        })
+        .await
+        .expect_err("the host refused it");
+    assert!(
+        err.to_string()
+            .contains("Can not approve your own pull request"),
+        "{err}"
+    );
+    // The command's error is the toast: the outbox doesn't add a second.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    while let Ok(e) = recv.ephemeral.try_recv() {
+        assert!(
+            !matches!(
+                &e,
+                Ephemeral::Toast {
+                    level: ToastLevel::Error,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_landed_submit_returns_once_the_host_has_it() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    core.submit_review(SubmitReviewRequest {
+        pr,
+        event: ReviewEvent::Comment,
+        body: "notes".into(),
+    })
+    .await
+    .expect("submit_review");
+    assert_eq!(f.host.submit_review_calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

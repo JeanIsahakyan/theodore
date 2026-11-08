@@ -211,6 +211,9 @@ async fn process_item(core: &Core, item: OutboxItem) {
         Ok(()) => {
             let id = item.id;
             let _ = tokio::task::spawn_blocking(move || store.outbox_done(id)).await;
+            if let Some(waiter) = core.0.outbox_waiters.lock().await.remove(&id) {
+                let _ = waiter.send(None);
+            }
             // A write got through: the host is reachable and the token
             // good — clear an offline / auth / rate-limit banner now rather
             // than at the next poll.
@@ -247,10 +250,16 @@ async fn process_item(core: &Core, item: OutboxItem) {
             );
             let error = message.clone();
             let _ = tokio::task::spawn_blocking(move || store.outbox_fail(id, &error)).await;
-            core.emit(Ephemeral::Toast {
-                level: ToastLevel::Error,
-                text: message,
-            });
+            // A caller still waiting reports it itself (its command fails
+            // with this message): one toast, not two.
+            let waiter = core.0.outbox_waiters.lock().await.remove(&id);
+            match waiter.map(|w| w.send(Some(message.clone()))) {
+                Some(Ok(())) => {}
+                _ => core.emit(Ephemeral::Toast {
+                    level: ToastLevel::Error,
+                    text: message,
+                }),
+            }
         }
     }
 }

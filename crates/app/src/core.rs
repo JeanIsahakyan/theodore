@@ -58,6 +58,11 @@ pub(crate) struct Inner {
     /// Wakes the outbox worker as soon as an item is pushed, so it doesn't
     /// wait for its idle poll (which is paced by `Clock`, not wall time).
     pub outbox_notify: Notify,
+    /// Callers waiting on one outbox item's outcome (`enqueue_and_wait`):
+    /// `None` when it landed, the host's message when it failed for good —
+    /// then the caller reports it and the worker shows no toast of its own.
+    pub outbox_waiters:
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Option<String>>>>,
     pub shutdown: CancellationToken,
     /// Serializes PR opens so two callers never clone/fetch the same PR twice.
     pub open_lock: tokio::sync::Mutex<()>,
@@ -156,6 +161,7 @@ impl Core {
             etags: RwLock::new(HashMap::new()),
             runs: RwLock::new(HashMap::new()),
             outbox_notify: Notify::new(),
+            outbox_waiters: tokio::sync::Mutex::new(HashMap::new()),
             shutdown: CancellationToken::new(),
             open_lock: tokio::sync::Mutex::new(()),
             ship_lock: tokio::sync::Mutex::new(()),
@@ -372,6 +378,35 @@ impl Core {
             .map_err(|e| theodore_ports::StoreError::Db(e.to_string()))??;
         self.0.outbox_notify.notify_one();
         Ok(id)
+    }
+
+    /// `enqueue_outbox`, then waits up to `wait` for the item's outcome:
+    /// `Ok` once it landed — or if it's still going (offline, backing
+    /// off), where the outbox carries on as usual — `Err` with the host's
+    /// words if it refused, which the caller reports instead of a toast.
+    pub(crate) async fn enqueue_and_wait(
+        &self,
+        op: &'static str,
+        payload: serde_json::Value,
+        wait: std::time::Duration,
+    ) -> Result<(), crate::error::AppError> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let id = {
+            // Held across the push: the worker can't settle the item
+            // before its waiter is in place.
+            let mut waiters = self.0.outbox_waiters.lock().await;
+            let id = self.enqueue_outbox(op, payload).await?;
+            waiters.insert(id, tx);
+            id
+        };
+        match tokio::time::timeout(wait, rx).await {
+            Ok(Ok(Some(message))) => Err(crate::error::AppError::Refused(message)),
+            Ok(_) => Ok(()),
+            Err(_) => {
+                self.0.outbox_waiters.lock().await.remove(&id);
+                Ok(())
+            }
+        }
     }
 
     /// `apply` plus `enqueue_outbox`, atomically (plan "Fix target" accept

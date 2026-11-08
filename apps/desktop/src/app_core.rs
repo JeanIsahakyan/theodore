@@ -304,6 +304,7 @@ fn err(e: AppError) -> CommandError {
         AppError::Grouper(_) => "grouping",
         AppError::NotFound(_) => "not_found",
         AppError::Invalid(_) => "invalid",
+        AppError::Refused(_) => "host",
         AppError::Join(_) => "internal",
         AppError::Account(_) => "account",
         // The UI shows the sign-in screen on this code (plan §6.12).
