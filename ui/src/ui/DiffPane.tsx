@@ -874,6 +874,8 @@ const ContextGap = observer(function ContextGap({
   lang,
   expand,
   onFullyRevealed,
+  shown,
+  setShown,
 }: {
   pr: PrId;
   rev: Revision['head'];
@@ -889,9 +891,12 @@ const ContextGap = observer(function ContextGap({
    *  reveal mechanics themselves (#52: its header hint is redundant once
    *  every line above it is visible). */
   onFullyRevealed?: (full: boolean) => void;
+  /** Lines revealed so far, kept by the file: folding it and opening it
+   *  again doesn't drop them. */
+  shown: number;
+  setShown: (n: number) => void;
 }) {
   const store = useRootStore();
-  const [shown, setShown] = useState(0);
   const total = gap.to - gap.from + 1;
   const appliedExpand = useRef<number | null>(null);
   useEffect(() => {
@@ -899,7 +904,7 @@ const ContextGap = observer(function ContextGap({
       appliedExpand.current = expand;
       setShown(total);
     }
-  }, [expand, total]);
+  }, [expand, total, setShown]);
   const key = `${pr}@${rev}:${path}`;
   const res =
     shown > 0
@@ -933,7 +938,7 @@ const ContextGap = observer(function ContextGap({
             <Expander
               left={left}
               dir="up"
-              onReveal={(n) => setShown((s) => Math.min(total, s + n))}
+              onReveal={(n) => setShown(Math.min(total, shown + n))}
             />
           </div>
         )}
@@ -973,15 +978,19 @@ const FileTail = observer(function FileTail({
   path,
   hunks,
   lang,
+  shown,
+  setShown,
 }: {
   pr: PrId;
   rev: Revision['head'];
   path: string;
   hunks: Hunk[];
   lang: ReturnType<typeof langOf>;
+  /** As `ContextGap`'s: kept by the file across a fold. */
+  shown: number;
+  setShown: (n: number) => void;
 }) {
   const store = useRootStore();
-  const [shown, setShown] = useState(0);
   const key = `${pr}@${rev}:${path}`;
   const res =
     shown > 0
@@ -1023,7 +1032,7 @@ const FileTail = observer(function FileTail({
             <Expander
               left={left}
               dir="down"
-              onReveal={(n) => setShown((s) => Math.min(total, s + n))}
+              onReveal={(n) => setShown(Math.min(total, shown + n))}
             />
             <span>to end of file</span>
           </div>
@@ -1191,6 +1200,16 @@ function FileBlockInner({
       !!current[id] === full ? current : { ...current, [id]: full },
     );
   }, []);
+  // Context lines revealed per gap (a hunk id, or `tail`): kept here, not
+  // in the gaps, so a fold — which unmounts them — keeps what was loaded.
+  const [revealed, setRevealed] = useState<Record<string, number>>({});
+  const reveal = useCallback(
+    (key: string, n: number) =>
+      setRevealed((current) =>
+        current[key] === n ? current : { ...current, [key]: n },
+      ),
+    [],
+  );
   const cardRef = useRef<HTMLDivElement>(null);
   // Anything that jumps here (J/K focus, `E`, `C`, a peek) forces the hunks
   // in first so the jump finds its `H-<id>` element.
@@ -1513,6 +1532,8 @@ function FileBlockInner({
                     lang={lang}
                     expand={expandHunk?.hunk === h.id ? expandHunk.nonce : null}
                     onFullyRevealed={(full) => reportGapRevealed(h.id, full)}
+                    shown={revealed[h.id] ?? 0}
+                    setShown={(n) => reveal(h.id, n)}
                   />
                 )}
                 <HunkComponent
@@ -1540,6 +1561,8 @@ function FileBlockInner({
               path={file.path}
               hunks={file.hunks}
               lang={lang}
+              shown={revealed.tail ?? 0}
+              setShown={(n) => reveal('tail', n)}
             />
           )}
         </>
