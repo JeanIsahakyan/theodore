@@ -29,6 +29,9 @@
 //! older lines were cut.
 
 use std::fmt;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use crate::redact::{Redactor, truncate};
 use crate::report::LogTail;
@@ -55,13 +58,102 @@ pub const MAX_REPLY: usize = 8_000;
 pub const MAX_ERROR: usize = 2_000;
 pub const MAX_TOOLS: usize = 40;
 pub const MAX_TOOL_LINE: usize = 200;
+/// Rows of the context table (the core writes about 15).
+pub const MAX_ROWS: usize = 24;
+/// The most a conversation block can take, whatever is in it (fences,
+/// escapes and markers included): the comment and logs keep the rest.
+pub const MAX_CONTEXT: usize = 40_000;
 
 /// A fenced block: the text can't close it, and nothing in it renders
-/// (no @mention notifies anyone, no image loads).
+/// (no @mention notifies anyone, no #ref links, no image loads). Backticks
+/// or tildes, whichever needs the shorter fence, so a text made of one
+/// can't double its size.
 fn fenced(lang: &str, text: &str) -> String {
-    let lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let f = fence(&lines);
+    let f = [fence_of(text, '`'), fence_of(text, '~')]
+        .into_iter()
+        .min_by_key(String::len)
+        .expect("two fences");
     format!("{f}{lang}\n{}\n{f}\n", text.trim_end())
+}
+
+/// `c` repeated once more than its longest run in `text` (at least 3).
+fn fence_of(text: &str, c: char) -> String {
+    let longest = text.split(|x| x != c).map(str::len).max().unwrap_or(0);
+    c.to_string().repeat(longest.max(2) + 1)
+}
+
+/// A table cell as inline code: an @mention, a #ref or a URL in it stays
+/// text (code spans don't notify, link or cross-reference).
+fn code_cell(v: &str) -> String {
+    let v = v.replace(['\r', '\n'], " ");
+    if v.trim().is_empty() {
+        return String::new();
+    }
+    let ticks = "`".repeat(v.split(|x| x != '`').map(str::len).max().unwrap_or(0) + 1);
+    let pad = if v.starts_with(['`', ' ']) || v.ends_with(['`', ' ']) {
+        " "
+    } else {
+        ""
+    };
+    format!("{ticks}{pad}{}{pad}{ticks}", v.replace('|', "\\|"))
+}
+
+/// `<`, `>` and `&` as entities: text inside an HTML tag (`<summary>`).
+fn html_text(v: &str) -> String {
+    v.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// What GitHub turns into a notification or a cross-reference: `@login`,
+/// `@org/team`, `#12`, `owner/repo#12`, `GH-12`, and links to an issue,
+/// pull request or discussion.
+static PINGS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"https?://github\.com/[^\s/]+/[^\s/]+/(?:issues|pull|discussions)/\d+[^\s)\]>`]*",
+        r"|\B@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9_.-]+)?",
+        r"|(?:\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#\d+\b",
+        r"|\bGH-\d+\b",
+    ))
+    .expect("valid ping regex")
+});
+
+/// An agent's text (`report_problem`'s description) made quiet: every
+/// mention, #ref and issue link in it wrapped as inline code, so the issue
+/// pings no one and cross-references nothing. The user sees the result in
+/// the form and can still write a mention of their own.
+pub fn quiet(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for m in PINGS.find_iter(text) {
+        out.push_str(&text[last..m.start()]);
+        // Already inline code: left as it is.
+        let coded = text[..m.start()].ends_with('`') && text[m.end()..].starts_with('`');
+        if coded {
+            out.push_str(m.as_str());
+        } else {
+            out.push('`');
+            out.push_str(m.as_str());
+            out.push('`');
+        }
+        last = m.end();
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// The redactor report text goes through: the log's, or (where logging
+/// isn't set up, as in tests) a fresh one for this user's home directory,
+/// so the text is redacted the same either way.
+pub fn redactor() -> Redactor {
+    crate::global()
+        .map(|t| t.redactor().clone())
+        .unwrap_or_else(|| {
+            Redactor::new(
+                std::env::var_os("HOME").map(std::path::PathBuf::from),
+                "report",
+            )
+        })
 }
 
 /// The conversation as posted: folded, every text fenced, each part capped
@@ -71,13 +163,13 @@ pub fn context_block(c: &ChatContext, redactor: &Redactor) -> String {
     let clean = |s: &str, max: usize, tail: bool| truncate(&redactor.text(s), max, tail);
     let mut out = format!(
         "\n\n<details><summary>Conversation: {}</summary>\n\n| Context | |\n|---|---|\n",
-        cell(&redactor.text(&c.about))
+        html_text(&cell(&clean(&c.about, MAX_TOOL_LINE, false)))
     );
-    for (k, v) in &c.rows {
+    for (k, v) in c.rows.iter().take(MAX_ROWS) {
         out.push_str(&format!(
             "| {} | {} |\n",
             cell(k),
-            cell(&clean(v, MAX_TOOL_LINE, false))
+            code_cell(&clean(v, MAX_TOOL_LINE, false))
         ));
     }
     for (label, text, max, tail) in [
@@ -164,6 +256,8 @@ pub enum IssueError {
     NoComment,
     /// The comment alone leaves no room under GitHub's cap.
     CommentTooLong,
+    /// The comment and a chat report's conversation together don't fit.
+    WithConversationTooLong,
 }
 
 impl fmt::Display for IssueError {
@@ -173,6 +267,10 @@ impl fmt::Display for IssueError {
             IssueError::TitleTooLong => "the title is longer than GitHub allows (256 characters)",
             IssueError::NoComment => "a comment is required",
             IssueError::CommentTooLong => "the comment is too long for a GitHub issue",
+            IssueError::WithConversationTooLong => {
+                "the comment and the conversation are too long for one GitHub issue: shorten \
+                 the comment or leave the conversation out"
+            }
         })
     }
 }
@@ -261,9 +359,14 @@ pub fn build(input: IssueInput<'_>) -> Result<IssueBody, IssueError> {
     if let Some(c) = &context {
         head.push_str(c);
     }
-    let frame = if input.logs.is_some() { LOGS_FRAME } else { 0 };
+    // Without logs the body ends with a newline: one more byte.
+    let frame = if input.logs.is_some() { LOGS_FRAME } else { 1 };
     if head.len() + frame > MAX_BODY {
-        return Err(IssueError::CommentTooLong);
+        return Err(if context.is_some() {
+            IssueError::WithConversationTooLong
+        } else {
+            IssueError::CommentTooLong
+        });
     }
     let Some(tail) = input.logs else {
         return Ok(IssueBody {
@@ -387,10 +490,10 @@ mod tests {
             .unwrap();
         assert!(table < conv && conv < logs, "{}", b.body);
         assert_eq!(b.context.as_deref(), Some(ctx.as_str()));
-        assert!(b.body.contains("| Agent | claude 2.1.0 |"));
+        assert!(b.body.contains("| Agent | `claude 2.1.0` |"));
         assert!(!b.body.contains("ghp_"), "secrets redacted: {}", b.body);
         // The reply's own fence can't close the block it's quoted in.
-        assert!(b.body.contains("\n````text\nDone, see @octocat\n```rust"));
+        assert!(b.body.contains("\n~~~text\nDone, see @octocat\n```rust"));
         assert!(b.body.contains("<summary>Tool calls (1)</summary>"));
         assert!(!b.body.contains("**Error**"), "no error: no section");
     }
@@ -409,6 +512,132 @@ mod tests {
         );
         assert!(block.contains("[truncated"));
         assert!(block.contains("… 5 more"));
+    }
+
+    /// Nothing in a quoted text closes its fence, whichever fence it uses.
+    #[test]
+    fn a_quoted_text_cannot_close_its_fence() {
+        for text in [
+            "a\n```\n@octocat",
+            "a\n~~~\n@octocat",
+            "```` and ~~~~~ and ``````` ~~~",
+            "   ```\n~~~~\n",
+        ] {
+            let block = fenced("text", text);
+            let fence: String = block
+                .chars()
+                .take_while(|c| *c == '`' || *c == '~')
+                .collect();
+            let c = fence.chars().next().unwrap();
+            let inner = &block[fence.len() + "text\n".len()..block.len() - fence.len() - 1];
+            assert!(
+                inner.lines().all(|l| {
+                    let run = l.trim_start().chars().take_while(|x| *x == c).count();
+                    run < fence.len()
+                }),
+                "{block}"
+            );
+            assert!(block.ends_with(&format!("\n{fence}\n")), "{block}");
+        }
+        // Made of one fence char: the other fence, no blow-up.
+        let ticks = "`".repeat(3_000);
+        assert!(fenced("text", &ticks).len() < 3_000 + 20);
+    }
+
+    #[test]
+    fn context_rows_ping_no_one() {
+        let redactor = Redactor::new(None, "s");
+        let mut c = chat();
+        c.about = "Space </summary><img src=x>".into();
+        c.rows = vec![
+            ("Model".into(), "@octocat's #12 | acme/app#3".into()),
+            ("Space error".into(), "see `code` here".into()),
+        ];
+        let block = context_block(&c, &redactor);
+        assert!(
+            block.contains("| Model | `@octocat's #12 \\| acme/app#3` |"),
+            "{block}"
+        );
+        assert!(
+            block.contains("| Space error | ``see `code` here`` |"),
+            "{block}"
+        );
+        assert!(block.contains("Conversation: Space &lt;/summary&gt;&lt;img src=x&gt;"));
+    }
+
+    #[test]
+    fn an_agents_text_is_made_quiet() {
+        assert_eq!(
+            quiet("cc @octocat and @acme/core, see #12, acme/app#3 and GH-4"),
+            "cc `@octocat` and `@acme/core`, see `#12`, `acme/app#3` and `GH-4`"
+        );
+        assert_eq!(
+            quiet("as in https://github.com/acme/app/issues/9#top."),
+            "as in `https://github.com/acme/app/issues/9#top.`"
+        );
+        assert_eq!(quiet("already `@octocat`"), "already `@octocat`");
+        assert_eq!(quiet("mail me at a@b and x"), "mail me at a@b and x");
+    }
+
+    /// The worst a conversation can be still leaves room under GitHub's cap,
+    /// and no comment makes the body go over it.
+    #[test]
+    fn the_worst_conversation_never_breaks_githubs_cap() {
+        let redactor = Redactor::new(None, "s");
+        // Alternating fence chars and multibyte text: long fences, cuts on
+        // char boundaries, `|` doubled by the table.
+        let nasty = |n: usize| {
+            let mut s = String::new();
+            while s.len() < n {
+                s.push_str(&"`".repeat(40));
+                s.push_str(&"~".repeat(40));
+                s.push_str("é|&<");
+            }
+            s
+        };
+        let c = ChatContext {
+            about: nasty(1_000),
+            rows: (0..100).map(|i| (format!("r{i}"), nasty(1_000))).collect(),
+            prompt: Some(nasty(MAX_PROMPT * 4)),
+            reply: Some(nasty(MAX_REPLY * 4)),
+            tools: (0..500).map(|_| nasty(1_000)).collect(),
+            error: Some(nasty(MAX_ERROR * 4)),
+        };
+        let block = context_block(&c, &redactor);
+        assert!(block.len() <= MAX_CONTEXT, "{}", block.len());
+        let info = info();
+        let tail = LogTail {
+            lines: vec!["x".repeat(500); 400],
+            older: 0,
+        };
+        for comment_len in [1, 10_000, 30_000, MAX_BODY - block.len() - 600, 60_000] {
+            let comment = "c".repeat(comment_len);
+            for logs in [None, Some(&tail)] {
+                let b = build(IssueInput {
+                    comment: &comment,
+                    info: &info,
+                    context: Some(&block),
+                    logs,
+                    run_logs: true,
+                });
+                match b {
+                    Ok(b) => assert!(b.body.len() <= MAX_BODY, "{}", b.body.len()),
+                    Err(e) => assert_eq!(e, IssueError::WithConversationTooLong),
+                }
+            }
+        }
+        // A comment that leaves the conversation its room fits.
+        let comment = "c".repeat(MAX_BODY - MAX_CONTEXT - 2_000);
+        assert!(
+            build(IssueInput {
+                comment: &comment,
+                info: &info,
+                context: Some(&block),
+                logs: Some(&tail),
+                run_logs: true,
+            })
+            .is_ok()
+        );
     }
 
     #[test]

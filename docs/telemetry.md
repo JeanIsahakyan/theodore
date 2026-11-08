@@ -301,25 +301,40 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
   server for chats only: a space turn (`space-tools`) or an AI panel question (`review-tools`
   with an `ask:` run); skill and fix runs never see it. The agent drafts — the dialog opens with
   its title and comment and says "drafted by the agent" — and is told it cannot send. Only the
-  dialog's **Open issue** posts.
+  dialog's **Open issue** posts. Against a prompt injection that tells the agent to report:
+
+  | Guard | How |
+  |---|---|
+  | One window per turn | a run drafts once; a second call is refused (the last 256 runs remembered) |
+  | Never over your window | with any dialog open, the agent's draft waits behind a toast (**Review**) |
+  | No secrets in its text | title and comment redacted (`Redactor::text`) before the form shows them |
+  | No pings | its comment's `@login`, `#12`, `owner/repo#12`, `GH-12` and issue links become inline code |
+  | Bounded | title 256 chars, comment 20,000 |
 - **Scope**: `turn` (default) — your message as the agent got it (a `/skill` expanded, attached
   files listed by path), the reply, its tool calls one line each (folded), the error; `message`
   — that message alone; `space` / `review` — the conversation's header only, no message text.
 - **The context table**: where (`Space turn 3 of 5`, `AI panel reply 2 of 4`), scope, who
   drafted it, agent CLI and version, model, effort, mode, status, when sent, how long it took,
   files changed and tool calls (counts), the run id. No space, project, repo or branch names.
+  Each value is inline code, so nothing in one (a model name, a space's error) mentions, links
+  or cross-references.
 - **Logs** in a chat report are that run's only: every record of a space turn or an AI panel
   question carries `run_id` from its span (`space_turn`, `chat_run`), and `report::run_logs`
   keeps just those, redacted like the other issue logs. A reply from before runs were recorded
   has none, and no app logs stand in for them.
 - **Redaction and caps**: the conversation keeps paths and names readable, as in the chat, but
   secrets, emails and the home directory are redacted (`Redactor::text`); every text is fenced
-  (nothing in it renders or @mentions anyone) and capped (prompt 4 KB, reply 8 KB, error 2 KB,
-  40 tool calls), so the logs keep room under GitHub's cap.
+  (nothing in it renders or @mentions anyone; backticks or tildes, whichever the text can't
+  close with less) and capped (prompt 4 KB, reply 8 KB, error 2 KB, 40 tool calls of 200 bytes,
+  24 table rows). The whole block stays under 40 KB whatever is in it (`issue::MAX_CONTEXT`),
+  so the comment and logs keep room under GitHub's 65,536; a comment that doesn't fit next to
+  it is refused with "shorten the comment or leave the conversation out", never cut or sent
+  over the cap.
 - **What you see is what goes**: the preview opens at once with the conversation unfolded;
   **Include the conversation** unticked makes it the plain report. The draft is read when the
   dialog first previews it — a turn still running when the agent drafted shows how far it got —
-  and the post sends exactly that preview. Drafts live in memory (the last 16) and expire.
+  and the post sends exactly that preview: while the preview is open, **Open issue** waits
+  until it shows the current mode. Drafts live in memory (the last 16) and expire.
 
 ### Attachments
 

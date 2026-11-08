@@ -277,7 +277,7 @@ impl ReviewToolsServer {
     }
 
     #[tool(
-        description = "Draft a problem report about Theodore itself (not the user's code) from this conversation: Theodore misbehaved, a tool failed oddly, the app showed something wrong, or the user asks to report this. Opens Theodore's report window prefilled with your title and description plus this turn's context (agent, model, prompt, reply, tool calls, error, this run's redacted logs). You only draft: the user reviews exactly what will be posted as a public GitHub issue and sends it or not. Write no secrets in it."
+        description = "Draft a problem report about Theodore itself (not the user's code) from this conversation: Theodore misbehaved, a tool failed oddly, the app showed something wrong, or the user asks to report this. Opens Theodore's report window prefilled with your title and description plus this turn's context (agent, model, prompt, reply, tool calls, error, this run's redacted logs). You only draft: the user reviews exactly what will be posted as a public GitHub issue and sends it or not. Once per turn: a second call is refused. Write no secrets in it."
     )]
     async fn report_problem(
         &self,

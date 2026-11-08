@@ -45,11 +45,18 @@ struct Stored {
 
 /// Drafted chat reports, in memory only: a restart forgets them.
 #[derive(Default)]
-pub struct ReportDrafts(std::sync::Mutex<VecDeque<Stored>>);
+pub struct ReportDrafts {
+    drafts: std::sync::Mutex<VecDeque<Stored>>,
+    /// Agent runs that drafted one (newest last, as many as `CLAIMS`).
+    claimed: std::sync::Mutex<VecDeque<String>>,
+}
+
+/// Agent runs remembered as having drafted: far more than ever run at once.
+const CLAIMS: usize = 256;
 
 impl ReportDrafts {
     fn put(&self, s: Stored) {
-        let mut q = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut q = self.drafts.lock().unwrap_or_else(|p| p.into_inner());
         q.push_back(s);
         while q.len() > KEEP {
             q.pop_front();
@@ -57,9 +64,33 @@ impl ReportDrafts {
     }
 
     fn get(&self, id: &str) -> Option<Stored> {
-        let q = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let q = self.drafts.lock().unwrap_or_else(|p| p.into_inner());
         q.iter().find(|s| s.draft.id == id).cloned()
     }
+
+    /// Claims the agent run `run`'s one draft: `false` when it had it.
+    fn claim(&self, run: &str) -> bool {
+        let mut q = self.claimed.lock().unwrap_or_else(|p| p.into_inner());
+        if q.iter().any(|r| r == run) {
+            return false;
+        }
+        q.push_back(run.to_string());
+        while q.len() > CLAIMS {
+            q.pop_front();
+        }
+        true
+    }
+}
+
+/// An agent's prefill as the form shows it: redacted like the
+/// conversation, and (the description) with every mention, #ref and issue
+/// link made inline code — a prompt-injected agent can't make the issue
+/// leak a secret or ping anyone the user didn't see.
+fn agent_prefill(title: String, description: String) -> (String, String) {
+    let r = theodore_telemetry::issue::redactor();
+    let title = r.text(&title).replace(['\r', '\n'], " ");
+    let description = theodore_telemetry::issue::quiet(&r.text(&description));
+    (title, description)
 }
 
 /// What a report says about its chat, read now.
@@ -151,6 +182,16 @@ impl Core {
         req: DraftReportRequest,
         run: Option<String>,
     ) -> AppResult<ReportDraft> {
+        // One report window per agent turn: an agent told to call it over
+        // and over (a prompt injection in the repo) opens it once.
+        if let Some(r) = &run
+            && !self.0.report_drafts.claim(r)
+        {
+            return Err(AppError::Invalid(
+                "a report from this turn is already waiting for the user; don't draft another"
+                    .into(),
+            ));
+        }
         let space = match space_of(&req.chat) {
             Some(id) => Some(self.space_row(id).await?),
             None => None,
@@ -170,13 +211,21 @@ impl Core {
             (ReportScope::Space, None) => ReportScope::Review,
             (s, _) => s,
         };
+        let (title, description) = (
+            clip(req.title, MAX_TITLE),
+            clip(req.description, MAX_DESCRIPTION),
+        );
+        let (title, description) = match run {
+            Some(_) => agent_prefill(title, description),
+            None => (title, description),
+        };
         let stored = Stored {
             draft: ReportDraft {
                 id: uuid::Uuid::new_v4().simple().to_string(),
                 chat: req.chat.clone(),
                 scope,
-                title: clip(req.title, MAX_TITLE),
-                description: clip(req.description, MAX_DESCRIPTION),
+                title,
+                description,
                 include_logs: req.include_logs.unwrap_or(true),
                 about: String::new(),
                 by_agent: run.is_some(),

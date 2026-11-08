@@ -199,7 +199,7 @@ impl AppCore {
         let context = match (&req.context, chat) {
             (Some(id), Some(c)) => Some(ChatBlock {
                 id: id.clone(),
-                block: issue::context_block(&c.context, &report_redactor()),
+                block: issue::context_block(&c.context, &issue::redactor()),
             }),
             _ => None,
         };
@@ -233,19 +233,6 @@ impl AppCore {
         .map_err(invalid)?;
         Ok((title, body))
     }
-}
-
-/// The log's redactor; a fresh one where logging isn't set up (tests):
-/// a conversation is redacted the same either way.
-fn report_redactor() -> theodore_telemetry::redact::Redactor {
-    theodore_telemetry::global()
-        .map(|t| t.redactor().clone())
-        .unwrap_or_else(|| {
-            theodore_telemetry::redact::Redactor::new(
-                std::env::var_os("HOME").map(std::path::PathBuf::from),
-                "report",
-            )
-        })
 }
 
 fn internal(message: String) -> CommandError {
@@ -1413,7 +1400,7 @@ mod tests {
         assert!(preview.body.contains(&ctx));
         assert!(ctx.contains("<summary>Conversation: AI panel reply 1 of 1 · claude</summary>"));
         assert!(ctx.contains("why is this slow?") && ctx.contains("Because of the loop."));
-        assert!(ctx.contains("| Run | ask:q1 |"));
+        assert!(ctx.contains("| Run | `ask:q1` |"));
 
         app.submit_issue(theodore_contract::IssueRequest {
             draft: Some(preview.draft.clone()),

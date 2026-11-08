@@ -221,6 +221,52 @@ async fn the_agents_draft_follows_its_run_to_the_reply() {
     );
 }
 
+/// A prompt-injected agent: its prefill is redacted and pings no one, and
+/// calling the tool again in the same turn opens no second window.
+#[tokio::test]
+async fn an_agent_drafts_once_per_turn_and_quietly() {
+    let f = fixtures();
+    let (core, mut recv, s) = two_turns(&f).await;
+    let chat = transcript(&f, &s.id);
+    let asked = chat.iter().find(|m| m.text == "second").unwrap();
+    let run = format!("space:{}:{}", s.id, asked.id);
+    let req = DraftReportRequest {
+        title: Some("leak ghp_abcdefghijklmnopqrstuvwxyz0123456789\nnow".into()),
+        description: Some("cc @octocat, see #1 and sk-ant-api03-AbCdEfGhIjKlMnOpQrSt".into()),
+        ..about(space_chat_key(&s.id), None)
+    };
+    while recv.ephemeral.try_recv().is_ok() {}
+
+    let draft = core
+        .draft_report(req.clone(), Some(run.clone()))
+        .await
+        .unwrap();
+    assert_eq!(draft.title, "leak [redacted:github] now");
+    assert_eq!(
+        draft.description,
+        "cc `@octocat`, see `#1` and [redacted:key]"
+    );
+
+    let again = core
+        .draft_report(req.clone(), Some(run.clone()))
+        .await
+        .unwrap_err();
+    assert!(matches!(again, AppError::Invalid(_)), "{again:?}");
+    let mut windows = 0;
+    while let Ok(e) = recv.ephemeral.try_recv() {
+        if matches!(e, Ephemeral::ReportDraft { .. }) {
+            windows += 1;
+        }
+    }
+    assert_eq!(windows, 1, "one window for the turn");
+
+    // You can still report it yourself, as often as you like, as typed.
+    for _ in 0..2 {
+        let mine = core.draft_report(req.clone(), None).await.unwrap();
+        assert!(mine.description.contains("@octocat, see #1"));
+    }
+}
+
 #[tokio::test]
 async fn a_turn_still_running_reports_its_message_and_no_reply_yet() {
     let f = fixtures();
