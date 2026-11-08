@@ -6,12 +6,14 @@ import type {
   InterdiffWordSpan,
 } from '../gen/contract';
 import {
+  fileLines,
   gapTail,
   gapsAbove,
   interdiffLines,
   sinceCountsFor,
   sinceHunks,
   splitRows,
+  tailKnownEmpty,
   wordMarks,
 } from './diff';
 
@@ -132,6 +134,28 @@ describe('gapsAbove / gapTail', () => {
     });
     expect(gapTail([h], 20)).toEqual({ from: 6, to: 20, shift: 0 });
     expect(gapTail([h], 5)).toBeNull();
+  });
+
+  it('counts a file by its lines, not its newlines (#130)', () => {
+    expect(fileLines('a\nb\n')).toEqual(['a', 'b']);
+    expect(fileLines('a\nb')).toEqual(['a', 'b']);
+    expect(fileLines('a\n\n')).toEqual(['a', '']);
+    expect(fileLines('')).toEqual([]);
+  });
+
+  it('knows from the hunks alone when nothing follows the last (#130)', () => {
+    const at = (old_start: number, old_lines: number, new_lines: number) =>
+      hunk({
+        id: 'h',
+        old_start,
+        old_lines,
+        new_start: 1,
+        new_lines,
+        lines: [],
+      });
+    expect(tailKnownEmpty([at(0, 0, 5)])).toBe(true); // added
+    expect(tailKnownEmpty([at(1, 5, 0)])).toBe(true); // deleted
+    expect(tailKnownEmpty([at(1, 5, 5)])).toBe(false);
   });
 });
 
