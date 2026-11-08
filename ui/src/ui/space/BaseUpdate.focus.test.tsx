@@ -1,14 +1,14 @@
 /** A local folder's base moves with a commit made in the folder, which no
  *  turn or fetch reports: coming back to the window asks again. */
 import { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Space } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { FakeTransport } from '../../test/fakeTransport';
 import { mount, settle, type Mounted } from '../../test/dom';
-import { useBaseStatus } from './BaseUpdate';
+import { BASE_STATUS_POLL_MS, useBaseStatus } from './BaseUpdate';
 
 const space: Space = {
   id: 's1',
@@ -70,5 +70,64 @@ describe('Base moved', () => {
     });
     await settle();
     expect(m.host.textContent).toBe('2 behind');
+  });
+
+  it('fetches a stale project when the page mounts, then asks again', async () => {
+    let behind = 0;
+    transport.onCall('space_base_status', () => ({ base_tip: 't', behind }));
+    const store = new RootStore();
+    store.sync.pool.put('project', 'local:app', {
+      id: 'local:app',
+      repo: { host: 'github', owner: 'acme', name: 'app' },
+      path: null,
+      status: 'ready',
+      last_fetched_at: Date.now() - 60 * 60_000,
+    });
+    transport.onCall('refresh_project', () => {
+      // The fetch brings the moved base; the core stamps the project.
+      behind = 3;
+      store.sync.pool.put('project', 'local:app', {
+        id: 'local:app',
+        repo: { host: 'github', owner: 'acme', name: 'app' },
+        path: null,
+        status: 'ready',
+        last_fetched_at: Date.now(),
+      });
+      return null;
+    });
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <Probe />
+      </RootStoreProvider>,
+    );
+    await settle();
+    await settle();
+    expect(transport.calls.some((c) => c.cmd === 'refresh_project')).toBe(true);
+    expect(m.host.textContent).toBe('3 behind');
+  });
+
+  it('asks again while the page stays open', async () => {
+    vi.useFakeTimers();
+    try {
+      let behind = 0;
+      transport.onCall('space_base_status', () => ({ base_tip: 't', behind }));
+      m = await mount(
+        <RootStoreProvider store={new RootStore()}>
+          <Probe />
+        </RootStoreProvider>,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(m.host.textContent).toBe('0 behind');
+      // Something fetched the copy without the page being told.
+      behind = 1;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(BASE_STATUS_POLL_MS);
+      });
+      expect(m.host.textContent).toBe('1 behind');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

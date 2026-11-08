@@ -12,6 +12,7 @@ import { observer } from 'mobx-react-lite';
 import type { Space, SpaceBaseStatus } from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore } from '../../stores/context';
+import { useProjectAutoRefresh } from '../project/freshness';
 
 /** "Base moved: 3 commits behind", or `null` when there is nothing to
  *  show (up to date, resolving, archived). */
@@ -53,20 +54,34 @@ export function updateOutcome(
     : `Merged ${after.base} into the space`;
 }
 
+/** How often an open space page asks `space_base_status` again (a read of
+ *  the copy on this Mac: a few ms). */
+export const BASE_STATUS_POLL_MS = 60_000;
+
 /** The base's distance, re-read when the space or its project's copy
- *  changes (a turn, an update, the poller's fetch) and when the window
- *  comes back to the front: a local folder's base moves with a commit made
- *  there, which nothing else tells. */
+ *  changes (a turn, an update, the poller's fetch), every minute while the
+ *  page is open, and when the window comes back to the front: a local
+ *  folder's base moves with a commit made there, which nothing else tells. */
 export function useBaseStatus(space: Space): SpaceBaseStatus | null {
   const store = useRootStore();
-  const fetchedAt = store.models.projects.get(space.project)?.last_fetched_at;
+  const project = store.models.projects.get(space.project) ?? null;
+  const fetchedAt = project?.last_fetched_at;
   const [status, setStatus] = useState<SpaceBaseStatus | null>(null);
   const [focused, setFocused] = useState(0);
   const live = space.status !== 'archived' && space.status !== 'running';
+  // Opening the page fetches a project a few minutes stale, as its own
+  // page does: the base may have moved since (the stamp re-reads below).
+  useProjectAutoRefresh(project);
   useEffect(() => {
     const again = () => setFocused((n) => n + 1);
     window.addEventListener('focus', again);
-    return () => window.removeEventListener('focus', again);
+    // And now and then while the page stays open: a PR refresh fetches the
+    // copy without stamping the project.
+    const poll = setInterval(again, BASE_STATUS_POLL_MS);
+    return () => {
+      window.removeEventListener('focus', again);
+      clearInterval(poll);
+    };
   }, []);
   useEffect(() => {
     if (!live) return;
