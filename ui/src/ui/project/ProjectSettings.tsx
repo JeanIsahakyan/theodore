@@ -6,7 +6,7 @@
  * config file's editor, `ConfigEditor`).
  */
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, Code, FileText, Folder, Sliders } from '@gravity-ui/icons';
+import { ArrowLeft, Code, FileText, Sliders } from '@gravity-ui/icons';
 import { Button, Card, ListBox, Typography } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { Project } from '../../gen/contract';
@@ -94,15 +94,15 @@ export const ProjectSettingsNav = observer(function ProjectSettingsNav({
           <span className="flex-1" />
           <K>Esc</K>
         </Button>
-        <div className="mt-3 flex min-w-0 items-center gap-2 px-2">
-          <Folder className="size-4 shrink-0 text-muted" />
-          <Typography.Heading
-            level={6}
-            className="project-settings-name min-w-0 flex-1 truncate"
+        {/* Titled like Settings; the project is named under it, quietly. */}
+        <div className="mt-3 flex min-w-0 flex-col px-2">
+          <Typography.Heading level={6}>Project settings</Typography.Heading>
+          <span
+            className="project-settings-name min-w-0 truncate text-xs text-muted"
             title={project ? projectLabel(project) : id}
           >
-            {project ? projectLabel(project) : 'Project'}
-          </Typography.Heading>
+            {project ? projectLabel(project) : id}
+          </span>
         </div>
       </div>
       {project ? (
