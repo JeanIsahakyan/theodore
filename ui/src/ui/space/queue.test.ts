@@ -35,6 +35,13 @@ describe('the queue', () => {
     expect(heldReason({ status: 'idle' }, held)).toMatch(/Send or drop/);
     expect(heldReason({ status: 'archived' }, held)).toMatch(/Unarchive/);
   });
+
+  it("doesn't claim the turn stopped: a late Stop holds a finished reply's queue", () => {
+    const held = [msg('a', 1, { seq: 1, held: true })];
+    const why = heldReason({ status: 'idle' }, held)!;
+    expect(why).toMatch(/you pressed Stop/);
+    expect(why).not.toMatch(/turn before them stopped/);
+  });
 });
 
 describe('send now', () => {

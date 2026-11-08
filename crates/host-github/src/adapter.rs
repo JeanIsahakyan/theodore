@@ -13,6 +13,7 @@ use theodore_ports::{
     NewIssue, NewPr, ReviewComment, ReviewSubmission, Searched, SubmittedReview, TrackedIssue,
 };
 
+use crate::pr_etag::PrEtag;
 use crate::{anchor, graphql, logs, pagination, rest, time};
 
 /// `HostAdapter` for github.com and GitHub Enterprise Server.
@@ -103,6 +104,24 @@ impl GithubAdapter {
             cursor: "search-fallback".to_string(),
             poll_after_ms: Some(60_000),
         })
+    }
+
+    /// One conditional GET of a head commit's checks (`get_pr`). The token
+    /// not being allowed to read them is `Refused`, not an error: the PR
+    /// itself is still readable, and its ETag still applies.
+    async fn probe(&self, path: &str, etag: Option<&str>) -> HostResult<Probe> {
+        match self
+            .rest
+            .get_conditional::<serde_json::Value>(path, etag)
+            .await
+        {
+            Ok(Fetched::NotModified) => Ok(Probe::Same),
+            Ok(Fetched::Modified { etag, .. }) => Ok(Probe::Changed(etag)),
+            Err(HostError::Auth | HostError::Forbidden(_) | HostError::NotFound(_)) => {
+                Ok(Probe::Refused)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn fetch_pr_detail(&self, pr: &PrRef) -> HostResult<PrDetail> {
@@ -341,25 +360,60 @@ impl HostAdapter for GithubAdapter {
             .collect())
     }
 
+    /// Conditional on the PR *and* its head's checks (`pr_etag`): a check
+    /// finishing doesn't touch the PR resource, so its ETag alone would
+    /// 304 the Checks tab forever. The probes go before the GraphQL fetch,
+    /// so a change landing in between is seen by the next poll.
     async fn get_pr(&self, pr: &PrRef, etag: Option<&str>) -> HostResult<Fetched<PrDetail>> {
-        let path = format!(
-            "repos/{}/{}/pulls/{}",
-            pr.repo.owner, pr.repo.name, pr.number
-        );
-        match self
+        let prev = PrEtag::parse(etag);
+        let mut next = prev.clone();
+        let (owner, repo) = (pr.repo.owner.as_str(), pr.repo.name.as_str());
+        let path = format!("repos/{owner}/{repo}/pulls/{}", pr.number);
+        let mut changed = match self
             .rest
-            .get_conditional::<serde_json::Value>(&path, etag)
+            .get_conditional::<serde_json::Value>(&path, prev.pull.as_deref())
             .await?
         {
-            Fetched::NotModified => Ok(Fetched::NotModified),
-            Fetched::Modified { etag, .. } => {
-                let detail = self.fetch_pr_detail(pr).await?;
-                Ok(Fetched::Modified {
-                    etag,
-                    value: detail,
-                })
+            Fetched::NotModified => false,
+            Fetched::Modified { etag, value } => {
+                next.pull = etag;
+                let head = value.value["head"]["sha"].as_str().map(str::to_string);
+                next.move_head(head);
+                true
+            }
+        };
+        if let Some(head) = next.head.clone().filter(|_| !next.no_checks) {
+            let runs = format!("repos/{owner}/{repo}/commits/{head}/check-runs?per_page=100");
+            let statuses = format!("repos/{owner}/{repo}/commits/{head}/status?per_page=100");
+            match self.probe(&runs, next.runs.as_deref()).await? {
+                Probe::Same => {}
+                Probe::Changed(etag) => {
+                    next.runs = etag;
+                    changed = true;
+                }
+                Probe::Refused => next.no_checks = true,
+            }
+            if !next.no_checks {
+                match self.probe(&statuses, next.statuses.as_deref()).await? {
+                    Probe::Same => {}
+                    Probe::Changed(etag) => {
+                        next.statuses = etag;
+                        changed = true;
+                    }
+                    Probe::Refused => next.no_checks = true,
+                }
             }
         }
+        // A refusal is remembered even when nothing else moved: once per
+        // head, not a refused request every poll.
+        if !changed && next.no_checks == prev.no_checks {
+            return Ok(Fetched::NotModified);
+        }
+        let detail = self.fetch_pr_detail(pr).await?;
+        Ok(Fetched::Modified {
+            etag: Some(next.encode()),
+            value: detail,
+        })
     }
 
     async fn find_open_pr(&self, repo: &RepoRef, head: &str) -> HostResult<Option<PrRef>> {
@@ -820,6 +874,15 @@ impl IssueTracker for GithubAdapter {
         }
         Ok(Some(releases[lo].1.clone()))
     }
+}
+
+/// What a `probe` of a head's checks found.
+enum Probe {
+    Same,
+    /// Changed since the ETag sent (or none was sent); the new one.
+    Changed(Option<String>),
+    /// 401/403/404: this token can't see them.
+    Refused,
 }
 
 /// Pulls `{run_id}` out of an Actions check-run `detailsUrl`

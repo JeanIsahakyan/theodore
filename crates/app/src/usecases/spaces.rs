@@ -1117,7 +1117,9 @@ impl Drop for Unsteer<'_> {
 
 /// The turn lets go of its run handle. Gone already: Stop took it, after
 /// the turn last looked at its cancel token — a stop all the same, so its
-/// queue is held instead of sent.
+/// queue is held instead of sent. The reply stays a whole one: the agent
+/// had finished by then, and the queue's note says you pressed Stop, not
+/// that the turn stopped.
 async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
     match core.0.runs.write().await.remove(run_id) {
         Some(_) => end,
