@@ -1376,8 +1376,9 @@ export type QueuedSend = {
 	model?: string | null,
 	mode?: SpaceMode | null,
 	/**
-	 *  Waits for your "Send": the turn before it was stopped or failed,
-	 *  its own turn couldn't start, or Theodore restarted meanwhile.
+	 *  Waits for your "Send": Stop was pressed on the turn before it (even
+	 *  as that turn finished on its own), that turn failed, its own turn
+	 *  couldn't start, or Theodore restarted meanwhile.
 	 */
 	held?: boolean,
 };

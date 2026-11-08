@@ -344,6 +344,27 @@ async fn a_skipped_checkpoint_holds_the_queue_and_keeps_its_error() {
     );
 }
 
+/// The agent's replies in the space, oldest first.
+fn replies(f: &Fixtures, id: &str) -> Vec<ChatMessage> {
+    let mut r: Vec<ChatMessage> = transcript(f, id)
+        .into_iter()
+        .filter(|m| matches!(m.author, Author::Agent(_)))
+        .collect();
+    r.sort_by_key(|m| m.at);
+    r
+}
+
+/// A Stop that lands once the agent is done (its checkpoint being written,
+/// or the run just about let go) holds the queue, but doesn't make the
+/// reply a stopped one: it's whole, and says so. The note over the queue
+/// says you pressed Stop, not that the turn stopped (`ui/.../queue.ts`).
+fn assert_reply_whole(f: &Fixtures, id: &str) {
+    let reply = replies(f, id).pop().expect("the turn's reply");
+    assert_eq!(reply.text, "ok", "everything the agent wrote");
+    assert_eq!(reply.failed, None, "the agent had finished: not stopped");
+    assert_eq!(space(f, id).error, None);
+}
+
 /// Stop lands after the agent finished, while its checkpoint is written.
 #[tokio::test]
 async fn stop_during_the_checkpoint_holds_the_queue() {
@@ -361,6 +382,7 @@ async fn stop_during_the_checkpoint_holds_the_queue() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
     assert!(held(&f, &a));
+    assert_reply_whole(&f, &s.id);
 }
 
 /// Stop takes the run after the turn last looked for a stop, just before
@@ -383,6 +405,7 @@ async fn stop_as_the_turn_ends_on_its_own_holds_the_queue() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
     assert!(held(&f, &a));
+    assert_reply_whole(&f, &s.id);
 }
 
 /// Stop lands once the turn let go of its run, before the next queued

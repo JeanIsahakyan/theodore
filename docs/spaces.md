@@ -1347,7 +1347,7 @@ send ─▶ running? ── no ──▶ turn now
 | Turn ended | The queue |
 | --- | --- |
 | on its own (a failing `check` included: the next turn hears it) | the first waiting message runs as the next turn, then the next |
-| stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped |
+| stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped. The agent had already finished there, so its reply stays a whole one, not "stopped"; the note over the queue says you pressed Stop, not that the turn stopped |
 | stopped just as it ended on its own | the first waiting message, if it had already started, is stopped instead; the rest held |
 | failed, its checkpoint skipped, conflicts left, or a queued one couldn't start | held |
 | Theodore restarted | held (§7 Crash recovery) |
