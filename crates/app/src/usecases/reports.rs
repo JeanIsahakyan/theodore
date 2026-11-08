@@ -138,8 +138,10 @@ impl Core {
                         tracing::debug!(error = %e, "reports: GitHub unreachable, later");
                         online = false;
                     }
+                    // Not a blip: a check that keeps failing (a query the
+                    // host refuses) must show in the normal log.
                     Err(e) => {
-                        tracing::debug!(number = before.number, error = %e, "report not checked")
+                        tracing::warn!(number = before.number, error = %e, "report not checked")
                     }
                 }
             }
