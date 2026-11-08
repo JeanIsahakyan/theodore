@@ -89,7 +89,9 @@ describe('DiffPane lazy file mounting', () => {
       const head = card.firstElementChild!;
       expect(head.classList.contains('file-h')).toBe(true);
       expect(head.classList).toContain('sticky');
-      expect(head.classList).toContain('top-0');
+      // At the pane's very top edge: `-top-5` undoes the pane's `pt-5`,
+      // which sticky offsets count from.
+      expect(head.classList).toContain('-top-5');
       // Opaque, so code scrolled under it doesn't show through.
       expect(head.classList).toContain('bg-surface');
       // `overflow: hidden` would make the card the sticky scroll container.
