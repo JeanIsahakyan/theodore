@@ -69,6 +69,8 @@ fn request(project: &Project, goal: &str) -> CreateSpaceRequest {
         base: None,
         agent: None,
         model: None,
+        effort: None,
+        mode: None,
         start_from: None,
     }
 }
@@ -81,6 +83,7 @@ fn send(id: &str, text: &str, mode: Option<SpaceMode>) -> SpaceSendRequest {
         model: None,
         mode,
         attachments: None,
+        effort: None,
     }
 }
 
