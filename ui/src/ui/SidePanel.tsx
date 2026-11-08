@@ -53,6 +53,7 @@ import {
   ask,
   askAboutLine,
   askPending,
+  chatAgentGuess,
   askRunId,
   cancelRun,
   commitSuggestions,
@@ -73,7 +74,7 @@ import { Md, rich } from '../highlight';
 import { latinKey } from './keys';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
-import { AgentMenu } from './AgentMenu';
+import { SkillAgentsMenu } from './SkillAgentsMenu';
 import { matchSkills } from './SkillMenu';
 import { useAttachments } from './attachments';
 import {
@@ -84,7 +85,7 @@ import {
   mixedAgents,
   UserBubble,
 } from './ChatTurn';
-import { Composer } from './space/Composer';
+import { AgentChip, Composer } from './space/Composer';
 import { estimateRowHeight, groupTurns } from './space/chatTurns';
 import { VirtualChat, type VirtualChatControl } from './space/VirtualChat';
 import { AgentTag, Avatar, Btn, Sev, Spinner } from './bits';
@@ -717,15 +718,19 @@ function Chat({ pr }: { pr: PrId }) {
   const [installed, setInstalled] = useState<AgentId[] | null>(null);
   // Default to the agents actually installed on this machine, minus any the
   // user has disabled (plan "enable/disable agents": hidden from the chat
-  // picker, skipped for skills).
+  // chip, skipped for skills). The first one is the agent the panel talks
+  // to; the rest are the others skills also run on.
   useEffect(() => {
     let live = true;
     void api
       .detectAgents()
       .then((all) => {
+        // The `agents.chat` agent leads: the chip shows it, questions go to it.
+        const first = chatAgentGuess(store);
         const ids = all
           .filter((a) => a.installed && isAgentEnabled(store, a.id))
-          .map((a) => a.id);
+          .map((a) => a.id)
+          .sort((a, b) => Number(b === first) - Number(a === first));
         if (!live) return;
         setInstalled(ids);
         if (ids.length > 0) setSkillAgents(ids);
@@ -1073,6 +1078,20 @@ const AiComposer = observer(function AiComposer({
   const store = useRootStore();
   const [text, setText] = useState('');
   const files = useAttachments();
+  // Only agents installed on this computer and not disabled in Settings →
+  // Agents are offered.
+  const enabled = (installed ?? []).filter((a) => isAgentEnabled(store, a));
+  // The agent the panel talks to, as the chip shows it: the first of the
+  // chosen ones that is offered. Its model and effort are the agent's
+  // settings, which core reads when it asks.
+  const chatAgent =
+    (skillAgents[0] && enabled.includes(skillAgents[0])
+      ? skillAgents[0]
+      : enabled[0]) ??
+    skillAgents[0] ??
+    null;
+  const pickChat = (a: AgentId) =>
+    onSkillAgents([a, ...skillAgents.filter((x) => x !== a)]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     clearText.current = () => setText('');
@@ -1160,13 +1179,13 @@ const AiComposer = observer(function AiComposer({
         pr,
         anchor: lineRef,
         question: t,
-        picked: skillAgents[0] ?? null,
+        picked: chatAgent,
         attachments: files.ids.length ? files.ids : null,
       });
       store.ephemeral.clearLineRef(pr);
       files.clear();
     } else {
-      const agent = skillAgents[0] ?? null;
+      const agent = chatAgent;
       void askPending(store, {
         pr,
         question: t,
@@ -1236,16 +1255,17 @@ const AiComposer = observer(function AiComposer({
           lineRef ? () => store.ephemeral.clearLineRef(pr) : undefined
         }
         chips={
-          /* Only agents installed on this computer and not disabled in
-             Settings → Agents are offered. */
-          <AgentMenu
-            multiple
-            agents={(installed ?? AGENTS).filter((a) =>
-              isAgentEnabled(store, a),
+          <>
+            <AgentChip value={chatAgent} onChange={pickChat} />
+            {chatAgent && (
+              <SkillAgentsMenu
+                agents={enabled}
+                primary={chatAgent}
+                selected={skillAgents}
+                onSelect={onSkillAgents}
+              />
             )}
-            selected={skillAgents}
-            onSelect={onSkillAgents}
-          />
+          </>
         }
       />
       <div className="flex items-center gap-2 px-2 text-xs text-muted">

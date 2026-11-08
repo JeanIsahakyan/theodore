@@ -417,8 +417,8 @@ export const AgentChip = observer(function AgentChip({
   return (
     <AgentMenu
       agents={agents}
-      selected={[current]}
-      onSelect={(next) => next[0] && onChange(next[0])}
+      selected={current}
+      onSelect={onChange}
       isDisabled={isDisabled}
       ultracode
     />

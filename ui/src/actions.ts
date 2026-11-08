@@ -318,7 +318,7 @@ const AGENT_IDS: readonly AgentId[] = ['claude', 'codex', 'gemini'];
 /** The agent a chat question with no agent picked goes to — the
  *  `agents.chat` setting, else core's default. A label, not a choice:
  *  core resolves the real one (repo scope, disabled agents). */
-function chatAgentGuess(store: RootStore): AgentId {
+export function chatAgentGuess(store: RootStore): AgentId {
   const v = store.models.settings.get(settingId('user', 'agents.chat'))?.value;
   return AGENT_IDS.find((a) => a === v) ?? 'claude';
 }
