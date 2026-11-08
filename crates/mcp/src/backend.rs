@@ -55,6 +55,11 @@ pub const SPACE_TOOL_NAMES: &[&str] = &[
     "ask_user",
 ];
 
+/// Drafts a problem report about the run's chat (docs/telemetry.md
+/// "Report from a chat"): a space turn's, or an AI panel question's —
+/// never a skill or fix run's ([`RunContext::is_chat`]).
+pub const REPORT_TOOL: &str = "report_problem";
+
 /// The code tools, in both tool sets when the run has them
 /// ([`RunContext::code`]): read-only.
 pub const CODE_TOOL_NAMES: &[&str] = &[
@@ -135,12 +140,25 @@ impl RunContext {
         if CODE_EDIT_TOOL_NAMES.contains(&tool) {
             return self.code_edits();
         }
+        if tool == REPORT_TOOL {
+            return self.is_chat();
+        }
         match self.tools {
             ToolSet::Review => {
                 REVIEW_TOOL_NAMES.contains(&tool)
                     || (self.space.is_some() && REVIEW_SPACE_TOOL_NAMES.contains(&tool))
             }
             ToolSet::Space => self.space.is_some() && SPACE_TOOL_NAMES.contains(&tool),
+            ToolSet::Code => false,
+        }
+    }
+
+    /// A chat with the user: a space's turn, or an AI panel question
+    /// (`ask:<message>`). Skill and fix runs aren't.
+    pub fn is_chat(&self) -> bool {
+        match self.tools {
+            ToolSet::Space => self.space.is_some(),
+            ToolSet::Review => self.run_id.0.starts_with(theodore_ports::CHAT_RUN_PREFIX),
             ToolSet::Code => false,
         }
     }
@@ -213,6 +231,27 @@ pub struct NewPatch {
     pub note: String,
 }
 
+/// What a chat report is about (`report_problem`'s `scope`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportScope {
+    Message,
+    Turn,
+    Space,
+    Review,
+}
+
+/// An agent's draft of a problem report (`report_problem`). The user sees
+/// it in the report window, edits it and decides whether to send it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportRequest {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    /// Default: the run's turn.
+    pub scope: Option<ReportScope>,
+    /// Default: on (that run's log lines only).
+    pub include_logs: Option<bool>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
     #[error("not found: {0}")]
@@ -246,6 +285,19 @@ pub trait ReviewToolsBackend: Send + Sync {
         finding: NewFinding,
     ) -> Result<FindingId, BackendError>;
     async fn propose_patch(&self, run: &RunContext, patch: NewPatch) -> Result<(), BackendError>;
+    /// Drafts a problem report about `run`'s chat and opens the report
+    /// window on it; returns the draft's id. Never sends it: only the
+    /// user does, from the window.
+    async fn report_problem(
+        &self,
+        run: &RunContext,
+        req: ReportRequest,
+    ) -> Result<String, BackendError> {
+        let _ = (run, req);
+        Err(BackendError::Invalid(
+            "reporting isn't available here".into(),
+        ))
+    }
 }
 
 /// For a server without PRs (`code-tools`): every call fails, and no

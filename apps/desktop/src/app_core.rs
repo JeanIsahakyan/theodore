@@ -44,6 +44,15 @@ struct IssueDraft {
     info: Vec<(String, String)>,
     /// Collected only once logs were asked for.
     logs: Option<theodore_telemetry::report::LogTail>,
+    /// A chat report's conversation, as the body quotes it.
+    context: Option<ChatBlock>,
+}
+
+#[derive(Clone)]
+struct ChatBlock {
+    /// The `ReportDraft` it came from (`IssueRequest::context`).
+    id: String,
+    block: String,
 }
 
 impl AppCore {
@@ -151,10 +160,18 @@ impl AppCore {
         let lock = || self.issue_draft.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(d) = lock().as_ref()
             && req.draft.as_deref() == Some(d.id.as_str())
+            && req.context == d.context.as_ref().map(|c| c.id.clone())
             && (d.logs.is_some() || !req.with_logs)
         {
             return Ok(d.clone());
         }
+        // A chat report (docs/telemetry.md "Report from a chat"): its
+        // conversation, read now, and its run's log lines instead of the
+        // app's newest.
+        let chat = match &req.context {
+            Some(id) => Some(self.core.report_context(id).await.map_err(err)?),
+            None => None,
+        };
         let logs = if req.with_logs {
             let t = theodore_telemetry::global().ok_or_else(|| CommandError {
                 code: "internal".into(),
@@ -162,8 +179,15 @@ impl AppCore {
             })?;
             t.flush(std::time::Duration::from_secs(2));
             let (dir, redactor) = (t.logs_dir().to_path_buf(), t.redactor().clone());
-            let tail = tokio::task::spawn_blocking(move || {
-                theodore_telemetry::report::log_tail(&dir, &redactor, issue::MAX_BODY)
+            let run = chat.as_ref().map(|c| c.run.clone());
+            let tail = tokio::task::spawn_blocking(move || match run {
+                Some(Some(run)) => {
+                    theodore_telemetry::report::run_logs(&dir, &redactor, &run, issue::MAX_BODY)
+                }
+                // No run known (an older message): none of the app's lines
+                // stand in for it.
+                Some(None) => Ok(theodore_telemetry::report::LogTail::default()),
+                None => theodore_telemetry::report::log_tail(&dir, &redactor, issue::MAX_BODY),
             })
             .await
             .map_err(|e| internal(e.to_string()))?
@@ -172,10 +196,18 @@ impl AppCore {
         } else {
             None
         };
+        let context = match (&req.context, chat) {
+            (Some(id), Some(c)) => Some(ChatBlock {
+                id: id.clone(),
+                block: issue::context_block(&c.context, &issue::redactor()),
+            }),
+            _ => None,
+        };
         let draft = IssueDraft {
             id: uuid::Uuid::new_v4().simple().to_string(),
             info: self.issue_info().await,
             logs,
+            context,
         };
         *lock() = Some(draft.clone());
         Ok(draft)
@@ -194,7 +226,9 @@ impl AppCore {
         let body = issue::build(issue::IssueInput {
             comment: &req.comment,
             info: &draft.info,
+            context: draft.context.as_ref().map(|c| c.block.as_str()),
             logs: draft.logs.as_ref().filter(|_| req.with_logs),
+            run_logs: draft.context.is_some(),
         })
         .map_err(invalid)?;
         Ok((title, body))
@@ -741,6 +775,7 @@ impl CoreApi for AppCore {
             draft: draft.id,
             title,
             body: body.body,
+            context: body.context,
             logs: body.logs,
             log_lines: body.log_lines as u32,
             cut_lines: body.cut_lines as u32,
@@ -789,6 +824,29 @@ impl CoreApi for AppCore {
         Ok(theodore_contract::ReportedIssue {
             number: created.number,
             url: created.url,
+        })
+    }
+    async fn draft_report(
+        &self,
+        req: theodore_contract::DraftReportRequest,
+    ) -> Result<theodore_contract::ReportDraft, CommandError> {
+        self.core.draft_report(req, None).await.map_err(err)
+    }
+    async fn stage_report_files(
+        &self,
+        attachments: Vec<String>,
+    ) -> Result<theodore_contract::StagedReportFiles, CommandError> {
+        let stamp = uuid::Uuid::new_v4().simple().to_string();
+        let dir = theodore_telemetry::report::reports_dir()
+            .join(format!("theodore-files-{}", &stamp[..12]));
+        let paths = self
+            .core
+            .stage_attachments(&attachments, &dir)
+            .await
+            .map_err(err)?;
+        Ok(theodore_contract::StagedReportFiles {
+            dir: dir.display().to_string(),
+            paths: paths.iter().map(|p| p.display().to_string()).collect(),
         })
     }
     async fn sandbox_status(
@@ -1268,7 +1326,90 @@ mod tests {
             comment: "It shows nothing after a push.".into(),
             with_logs: false,
             draft,
+            context: None,
         }
+    }
+
+    /// An app with an AI panel question and its reply on `github:acme/app#7`,
+    /// and a "Report this" draft about the reply.
+    async fn chat_report(
+        tracker: Arc<FakeTracker>,
+    ) -> (
+        AppCore,
+        theodore_app::Receivers,
+        theodore_contract::ReportDraft,
+    ) {
+        use theodore_ports::{NewAction, Store, SyncActionCode};
+        let f = theodore_app::testkit::fixtures();
+        let (core, rx) = Core::start(f.deps());
+        let app = AppCore::new(core).with_issues(Some(tracker as Arc<dyn IssueTracker>));
+        let pr = PrId::new("github:acme/app#7");
+        for (id, data) in [
+            (
+                "q1",
+                serde_json::json!({"id": "q1", "pr": pr.0, "author": {"kind": "me"},
+                    "text": "why is this slow?", "refs": [], "at": 1000}),
+            ),
+            (
+                "r1",
+                serde_json::json!({"id": "r1", "pr": pr.0,
+                    "author": {"kind": "agent", "agent": "claude"},
+                    "text": "Because of the loop.", "refs": [], "at": 2000, "run": "ask:q1"}),
+            ),
+        ] {
+            f.store
+                .apply(vec![NewAction {
+                    model: theodore_contract::models::CHAT_MESSAGE.into(),
+                    model_id: id.into(),
+                    action: SyncActionCode::I,
+                    data: Some(data),
+                }])
+                .unwrap();
+        }
+        let draft = app
+            .draft_report(theodore_contract::DraftReportRequest {
+                chat: pr,
+                message: Some("r1".into()),
+                title: None,
+                description: None,
+                scope: None,
+                include_logs: None,
+            })
+            .await
+            .unwrap();
+        (app, rx, draft)
+    }
+
+    /// "Report this" on an AI panel reply: the posted body quotes that
+    /// conversation, exactly as previewed; nothing goes without submit.
+    #[tokio::test]
+    async fn a_chat_report_posts_its_conversation_as_previewed() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx, draft) = chat_report(tracker.clone()).await;
+        assert!(
+            tracker.posted.lock().unwrap().is_empty(),
+            "a draft sends nothing"
+        );
+
+        let req = theodore_contract::IssueRequest {
+            context: Some(draft.id.clone()),
+            ..request(None)
+        };
+        let preview = app.preview_issue(req.clone()).await.unwrap();
+        let ctx = preview.context.clone().expect("the conversation");
+        assert!(preview.body.contains(&ctx));
+        assert!(ctx.contains("<summary>Conversation: AI panel reply 1 of 1 · claude</summary>"));
+        assert!(ctx.contains("why is this slow?") && ctx.contains("Because of the loop."));
+        assert!(ctx.contains("| Run | `ask:q1` |"));
+
+        app.submit_issue(theodore_contract::IssueRequest {
+            draft: Some(preview.draft.clone()),
+            ..req
+        })
+        .await
+        .unwrap();
+        let posted = tracker.posted.lock().unwrap();
+        assert_eq!(posted[0].2.body, preview.body);
     }
 
     #[tokio::test]
@@ -1354,6 +1495,47 @@ mod tests {
     async fn a_posted_issue_is_listed_in_my_reports() {
         let (app, _rx) = app(Some(Arc::new(FakeTracker::default())));
         app.submit_issue(request(None)).await.unwrap();
+        let boot = app
+            .core
+            .bootstrap(theodore_contract::BootstrapScope::Global)
+            .await
+            .unwrap();
+        let row = boot
+            .rows
+            .into_iter()
+            .find(|r| r.model == theodore_contract::models::REPORT)
+            .expect("a report row");
+        let (owner, name) = issue::target_repo(None);
+        assert_eq!(row.id, format!("{owner}/{name}#7"));
+        let report: theodore_contract::TrackedReport = serde_json::from_value(row.data).unwrap();
+        assert_eq!(report.title, "Diff pane is blank");
+        assert_eq!(report.status, theodore_contract::ReportStatus::Open);
+    }
+
+    /// A report from a chat (with its conversation and the run's logs
+    /// asked for) is remembered in My reports like a plain one.
+    #[tokio::test]
+    async fn a_chat_report_is_listed_in_my_reports_too() {
+        let tracker = Arc::new(FakeTracker::default());
+        let (app, _rx, draft) = chat_report(tracker.clone()).await;
+        let req = theodore_contract::IssueRequest {
+            context: Some(draft.id.clone()),
+            ..request(None)
+        };
+        let preview = app.preview_issue(req.clone()).await.unwrap();
+        app.submit_issue(theodore_contract::IssueRequest {
+            draft: Some(preview.draft),
+            ..req
+        })
+        .await
+        .unwrap();
+        assert!(
+            tracker.posted.lock().unwrap()[0]
+                .2
+                .body
+                .contains("<summary>Conversation: AI panel reply 1 of 1"),
+            "posted with its conversation"
+        );
         let boot = app
             .core
             .bootstrap(theodore_contract::BootstrapScope::Global)

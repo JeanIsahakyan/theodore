@@ -183,6 +183,12 @@ static SECRET_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| 
             "[redacted:atlassian]",
         ),
         p(r"\bsk_(?:live_|test_)?[A-Za-z0-9_]{16,}", "[redacted:key]"),
+        // Model-provider keys: `sk-…`, `sk-ant-…`, `sk-proj-…`.
+        p(r"\bsk-[A-Za-z0-9_\-]{20,}", "[redacted:key]"),
+        p(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b", "[redacted:aws]"),
+        p(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}", "[redacted:slack]"),
+        p(r"\bAIza[0-9A-Za-z_\-]{35}", "[redacted:google]"),
+        p(r"\bnpm_[A-Za-z0-9]{36}", "[redacted:npm]"),
         p(
             r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}",
             "[redacted:jwt]",
@@ -195,6 +201,12 @@ static SECRET_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| 
         // `token=…`, `"client_secret": "…"`, `password: …` in free text.
         p(
             r#"(?i)("?\b[a-z0-9_]*(?:token|secret|password|passwd|api_?key|code_verifier)"?\s*[:=]\s*"?)[^\s"',;&}]+"#,
+            "${1}[redacted]",
+        ),
+        // An environment dump: `AWS_ACCESS_KEY_ID=…`, `DEPLOY_PAT=…`,
+        // `SENTRY_DSN=…` (upper case, as env vars are written).
+        p(
+            r#"\b([A-Z][A-Z0-9_]*_(?:KEY|PAT|PASS|PWD|AUTH|DSN|CREDENTIALS?)(?:_[A-Z0-9]+)*\s*[=:]\s*"?)[^\s"']+"#,
             "${1}[redacted]",
         ),
     ]
@@ -497,6 +509,46 @@ mod tests {
         assert_eq!(
             r.text("jwt eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyXzEifQ.c2lnbmF0dXJl end"),
             "jwt [redacted:jwt] end"
+        );
+    }
+
+    #[test]
+    fn provider_keys_and_env_dumps_are_redacted() {
+        let r = r();
+        for (input, want) in [
+            (
+                "key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+                "key [redacted:key]",
+            ),
+            (
+                "OPENAI sk-proj-AbCdEfGhIjKlMnOpQrStUvWx",
+                "OPENAI [redacted:key]",
+            ),
+            ("id AKIAABCDEFGHIJKLMNOP", "id [redacted:aws]"),
+            ("slack xoxb-1234567890-abcdef", "slack [redacted:slack]"),
+            (
+                "maps AIzaSyA1234567890abcdefghijklmnopqrstuv",
+                "maps [redacted:google]",
+            ),
+            (
+                "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG",
+                "AWS_SECRET_ACCESS_KEY=[redacted]",
+            ),
+            ("DEPLOY_PAT=abc123 x", "DEPLOY_PAT=[redacted] x"),
+            ("SENTRY_DSN=https://k@o1.ingest", "SENTRY_DSN=[redacted]"),
+            ("GH_AUTH: zzz", "GH_AUTH: [redacted]"),
+            (
+                "github_pat_11ABCDEFG0123456789_abcdefghij",
+                "[redacted:github]",
+            ),
+            ("gho_abcdefghijklmnop1234", "[redacted:github]"),
+        ] {
+            assert_eq!(r.text(input), want, "{input}");
+        }
+        // Words that only look like a name stay.
+        assert_eq!(
+            r.text("MY_KEYBOARD=us task-runner"),
+            "MY_KEYBOARD=us task-runner"
         );
     }
 

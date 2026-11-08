@@ -76,6 +76,7 @@ import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ago } from './List';
 import { SkillAgentsMenu } from './SkillAgentsMenu';
 import { matchSkills } from './SkillMenu';
+import { reportChat, reportCommand } from './reportChat';
 import { useAttachments } from './attachments';
 import {
   ChatEmpty,
@@ -1159,6 +1160,13 @@ const AiComposer = observer(function AiComposer({
   const send = () => {
     const t = text.trim();
     if (!t || files.busy) return;
+    // `/report …`: a problem report about this chat, not a question.
+    const report = reportCommand(t, skills);
+    if (report != null) {
+      void reportChat(store, pr, null, report);
+      setText('');
+      return;
+    }
     // What you sent is at the bottom: you are there to see it.
     log.current?.jumpToLatest();
     if (t.startsWith('/')) {

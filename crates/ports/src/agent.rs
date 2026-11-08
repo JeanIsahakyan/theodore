@@ -42,6 +42,9 @@ pub const CODE_TOOLS: &str = "code-tools";
 /// The tool every Theodore MCP server has for Claude Code's permission
 /// prompts (`--permission-prompt-tool mcp__<server>__approve_tool`).
 pub const APPROVE_TOOL: &str = "approve_tool";
+/// An AI panel question's run id starts with this (`ask:<message id>`):
+/// a chat run, unlike a skill or fix run on the same PR.
+pub const CHAT_RUN_PREFIX: &str = "ask:";
 
 fn review_tools() -> String {
     REVIEW_TOOLS.to_string()

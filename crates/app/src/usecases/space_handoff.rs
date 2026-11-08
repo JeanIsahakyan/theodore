@@ -122,6 +122,7 @@ mod tests {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            run: None,
         }
     }
 

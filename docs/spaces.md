@@ -929,6 +929,7 @@ configured commands, never a shell of the agent's choosing.
 | `set_base` | a new base branch: fetched, the diff is vs the merge-base from then on |
 | `update_progress` | the turn's plan as steps (pending · active · done) above the composer |
 | `ask_user` | asks you 1–3 multiple-choice questions and waits for the answer (§5 Questions) |
+| `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -958,6 +959,10 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
   chat"), Theodore's own by what they do.
 - Review chat, skills and fixes on a space's PR also get the read-only
   `read_logs` and `app_status` next to `review-tools`.
+- `report_problem` is for chats only: every space turn, and an AI panel
+  question on `review-tools`; skill and fix runs don't list it. "Report
+  this" under a reply and `/report …` in the composer take the same path
+  without the agent.
 
 Details, limits and errors: `docs/config.md` §7.
 

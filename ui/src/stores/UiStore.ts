@@ -13,7 +13,7 @@ import {
   runInAction,
   reaction,
 } from 'mobx';
-import type { PrId } from '../gen/contract';
+import type { PrId, ReportDraft } from '../gen/contract';
 import {
   ALL,
   homeRoute,
@@ -284,6 +284,9 @@ export class UiStore {
   modal: ModalName | null = null;
   /** ids the open modal acts on — PRs for `snooze`, a task id for `assign`. */
   modalTargets: string[] = [];
+  /** The chat report the report window opens on (`openReport`); `null`:
+   *  the plain "Report a problem". */
+  reportDraft: ReportDraft | null = null;
   /** The one custom context menu, open at a pointer point — see `ContextMenu.tsx`. */
   contextMenu: ContextMenuState | null = null;
   /** Tabs mid close animation (`JSON.stringify(route)`); removed after it. */
@@ -322,6 +325,7 @@ export class UiStore {
       diffView: observable,
       modal: observableRef,
       modalTargets: observableShallow,
+      reportDraft: observableRef,
       contextMenu: observableRef,
       closingTabs: observableShallow,
       listSearch: observable,
@@ -668,6 +672,17 @@ export class UiStore {
     runInAction(() => {
       this.modal = m;
       this.modalTargets = targets;
+      this.reportDraft = null;
+    });
+  }
+
+  /** The report window on a chat report (docs/telemetry.md "Report from a
+   *  chat"): "Report this", `/report`, or an agent's `report_problem`. */
+  openReport(draft: ReportDraft): void {
+    runInAction(() => {
+      this.modal = 'report-problem';
+      this.modalTargets = [];
+      this.reportDraft = draft;
     });
   }
 

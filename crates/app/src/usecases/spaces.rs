@@ -350,6 +350,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            run: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -521,7 +522,13 @@ impl Core {
             code,
         };
         let core = self.clone();
-        let span = tracing::info_span!("space_turn", space = %space.id, agent = agent.as_str());
+        // `run_id` tags the turn's log lines (a chat report's logs).
+        let span = tracing::info_span!(
+            "space_turn",
+            space = %space.id,
+            agent = agent.as_str(),
+            run_id = %turn.run_id
+        );
         tokio::spawn(tracing::Instrument::instrument(
             async move { drive_turn(&core, turn).await },
             span,
@@ -1328,6 +1335,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         changed_files,
         model: asked_model,
         text_in_steps,
+        run: Some(run_id.clone()),
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1862,6 +1870,7 @@ mod tests {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            run: None,
         }
     }
 

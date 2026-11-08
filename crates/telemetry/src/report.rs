@@ -2,7 +2,7 @@
 //! sharing: repository names and paths hashed) plus app info, built in a
 //! temp folder for the user to review. Nothing is uploaded. An issue body
 //! (`issue.rs`) takes its log lines from `log_tail`: the same redaction,
-//! only the newest lines.
+//! only the newest lines; a chat report's from `run_logs`: that run's only.
 //!
 //! ```text
 //! <tmp>/theodore-reports/theodore-report-<stamp>/
@@ -87,6 +87,31 @@ pub struct LogTail {
 /// counted), reading back from the current file into rotated ones. Only
 /// the files it needs are read.
 pub fn log_tail(dir: &Path, redactor: &Redactor, max_bytes: usize) -> std::io::Result<LogTail> {
+    tail_where(dir, redactor, max_bytes, |_| true)
+}
+
+/// The newest lines of one agent run (its records carry `run_id`, from
+/// the run's span), redacted like `log_tail`: a chat report's logs.
+pub fn run_logs(
+    dir: &Path,
+    redactor: &Redactor,
+    run_id: &str,
+    max_bytes: usize,
+) -> std::io::Result<LogTail> {
+    let want = Value::String(run_id.to_string());
+    tail_where(dir, redactor, max_bytes, |raw| {
+        // Most lines aren't the run's: skip them before parsing.
+        raw.contains(run_id)
+            && serde_json::from_str::<Value>(raw).is_ok_and(|v| v.get("run_id") == Some(&want))
+    })
+}
+
+fn tail_where(
+    dir: &Path,
+    redactor: &Redactor,
+    max_bytes: usize,
+    keep: impl Fn(&str) -> bool,
+) -> std::io::Result<LogTail> {
     let mut newest: Vec<String> = Vec::new();
     let mut used = 0;
     let mut older = 0;
@@ -100,11 +125,14 @@ pub fn log_tail(dir: &Path, redactor: &Redactor, max_bytes: usize) -> std::io::R
         let text = String::from_utf8_lossy(&bytes);
         let mut lines = text.lines().rev();
         while let Some(raw) = lines.next() {
+            if !keep(raw) {
+                continue;
+            }
             let Some(line) = share_line(redactor, raw) else {
                 continue;
             };
             if used + line.len() + 1 > max_bytes {
-                older = 1 + lines.filter(|l| !l.trim().is_empty()).count();
+                older = 1 + lines.filter(|l| !l.trim().is_empty() && keep(l)).count();
                 break 'files;
             }
             used += line.len() + 1;
@@ -130,8 +158,12 @@ fn share_line(redactor: &Redactor, line: &str) -> Option<String> {
         .fields
         .remove("msg")
         .and_then(|m| m.as_str().map(str::to_string));
+    // The local step again: a line written by an older build missed the
+    // patterns added since (it changes nothing on a line that has them).
+    redactor.local(&mut rec);
     let mut out = redactor.remote(&rec).fields;
     if let Some(m) = msg {
+        let m = redactor.text(&m);
         out.insert("msg".into(), Value::String(redactor.remote_text(&m)));
     }
     Some(Value::Object(out).to_string())
@@ -319,6 +351,59 @@ mod tests {
         let tail = log_tail(logs.path(), &redactor, three).unwrap();
         assert_eq!(tail.lines, all.lines[2..].to_vec());
         assert_eq!(tail.older, 2, "the two lines left in the older file");
+    }
+
+    /// A line an older build wrote, before a pattern existed, is redacted
+    /// on its way into an issue all the same.
+    #[test]
+    fn an_older_builds_line_is_redacted_again() {
+        let logs = tempfile::tempdir().unwrap();
+        let raw = r#"{"msg":"key sk-ant-api03-AbCdEfGhIjKlMnOpQrSt","detail":"AWS_SECRET_ACCESS_KEY=abc","prompt":"my text"}"#;
+        std::fs::write(logs.path().join(FILE_NAME), format!("{raw}\n")).unwrap();
+        let tail = log_tail(logs.path(), &Redactor::new(None, "s"), usize::MAX).unwrap();
+        let line = &tail.lines[0];
+        assert!(!line.contains("sk-ant") && !line.contains("=abc"), "{line}");
+        assert!(!line.contains("my text"), "{line}");
+    }
+
+    #[test]
+    fn a_runs_logs_are_its_own_lines_only() {
+        let logs = tempfile::tempdir().unwrap();
+        let line = |run: Option<&str>, n: u32| {
+            let r = Record::new(tracing::Level::INFO, "theodore_agents", "agent event")
+                .with_field("repo", "acme/app")
+                .with_field("n", n);
+            match run {
+                Some(id) => r.with_field("run_id", id),
+                None => r,
+            }
+            .to_line()
+        };
+        let lines = [
+            line(Some("space:s1:m1"), 0),
+            line(None, 1),
+            // Names the run in its text, not as its run: not its line.
+            Record::new(tracing::Level::INFO, "theodore_app", "after space:s1:m1").to_line(),
+            line(Some("space:s1:m2"), 2),
+            line(Some("space:s1:m1"), 3),
+        ];
+        std::fs::write(logs.path().join(FILE_NAME), lines.join("\n") + "\n").unwrap();
+        let redactor = Redactor::new(None, "s");
+
+        let run = run_logs(logs.path(), &redactor, "space:s1:m1", usize::MAX).unwrap();
+        assert_eq!(run.lines.len(), 2, "{:?}", run.lines);
+        assert!(run.lines[0].contains(r#""n":0"#), "oldest first");
+        assert!(run.lines[1].contains(r#""n":3"#));
+        assert!(run.lines.iter().all(|l| !l.contains("acme")), "redacted");
+        assert_eq!(run.older, 0);
+
+        let one = run.lines[1].len() + 1;
+        let tail = run_logs(logs.path(), &redactor, "space:s1:m1", one).unwrap();
+        assert_eq!(tail.lines, run.lines[1..].to_vec());
+        assert_eq!(tail.older, 1, "only the run's own older line counts");
+
+        let none = run_logs(logs.path(), &redactor, "space:s9:m9", usize::MAX).unwrap();
+        assert!(none.lines.is_empty());
     }
 
     #[test]
