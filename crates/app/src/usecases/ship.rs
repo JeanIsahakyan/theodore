@@ -543,17 +543,19 @@ impl Core {
         }
     }
 
-    /// The outbox opened (or found) the space's PR: link it and fetch it so
-    /// it shows in Pull requests and the Inbox right away.
+    /// The outbox opened (or found) the space's PR: fetch it so it shows in
+    /// Pull requests and the Inbox right away, then link it. Fetched first:
+    /// a linked `space.pr` shows Merge, and Merge needs the PR's row. A
+    /// failed fetch still links; `merge_space` and the sweep fetch it then.
     pub(crate) async fn space_pr_opened(&self, space: &str, pr_ref: &PrRef) {
         let pr = pr_ref.id();
+        self.refresh_pr(&pr, pr_ref).await;
         let _ = self
             .apply(vec![self.patch(
                 space,
                 serde_json::json!({ "pr": pr, "updated_at": self.0.deps.clock.now() }),
             )])
             .await;
-        self.refresh_pr(&pr, pr_ref).await;
         self.emit(Ephemeral::Toast {
             level: ToastLevel::Info,
             text: format!("Opened PR #{}", pr_ref.number),
@@ -610,7 +612,11 @@ impl Core {
     /// The host ref of a space's PR: the stored row's, else rebuilt from
     /// the project and the number (the first fetch after opening it may
     /// have failed).
-    async fn space_pr_ref(&self, space: &Space, pr: &theodore_domain::PrId) -> Option<PrRef> {
+    pub(crate) async fn space_pr_ref(
+        &self,
+        space: &Space,
+        pr: &theodore_domain::PrId,
+    ) -> Option<PrRef> {
         if let Some(r) = self.pr_ref(pr).await {
             return Some(r);
         }
