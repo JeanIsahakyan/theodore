@@ -1,7 +1,12 @@
 import { getTransport } from '../core/transport';
 import { resourceCache, type ResourceCache } from '../core/resource';
 import { SyncClient, modelAccessors, type ModelAccessors } from '../sync';
-import type { Ephemeral, Revision, UpdateInfo } from '../gen/contract';
+import type {
+  Ephemeral,
+  ReportDraft,
+  Revision,
+  UpdateInfo,
+} from '../gen/contract';
 import type { Tok } from '../highlight';
 import { reaction } from 'mobx';
 import { loadAccount, loadAppInfo, loadViewer } from '../actions';
@@ -51,12 +56,10 @@ export class RootStore {
     setAccountRequiredHandler(() => void loadAccount(this));
     this.unlistenEphemeral = await getTransport().listen<Ephemeral>(
       'ephemeral',
-      (e) => {
-        // An agent (or "Report this") drafted a chat report: the report
-        // window opens on it, wherever you are.
-        if (e.type === 'report_draft') this.ui.openReport(e.draft);
-        else this.ephemeral.handle(e);
-      },
+      (e) =>
+        e.type === 'report_draft'
+          ? this.reportDrafted(e.draft)
+          : this.ephemeral.handle(e),
     );
     // The shell downloaded and installed an update: offer the restart.
     this.unlistenUpdate = await getTransport().listen<UpdateInfo>(
@@ -108,6 +111,21 @@ export class RootStore {
         if (healthy && !this.ephemeral.viewer) void loadViewer(this);
       },
     );
+  }
+
+  /** A chat report was drafted (`report_draft`): the report window opens
+   *  on it, wherever you are — but an agent's draft never replaces a
+   *  window you have open (a report you're writing included): it waits
+   *  behind a toast. */
+  reportDrafted(draft: ReportDraft): void {
+    if (!draft.by_agent || this.ui.modal === null) {
+      this.ui.openReport(draft);
+    } else if (this.ui.reportDraft?.id !== draft.id) {
+      this.ephemeral.toast('The agent drafted a problem report', 'info', {
+        label: 'Review',
+        onAction: () => this.ui.openReport(draft),
+      });
+    }
   }
 
   dispose(): void {

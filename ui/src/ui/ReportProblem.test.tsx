@@ -272,8 +272,21 @@ describe('ReportProblemView', () => {
   it('from a chat: unticked, it is the plain report', async () => {
     await openChat({ ...chatDraft, include_logs: false });
     expect(mode('issue').getAttribute('aria-checked')).toBe('true');
+    transport.onCall('preview_issue', () => ({
+      ...preview,
+      body: 'It is blank.',
+      logs: null,
+    }));
     await click(q('.report-with-chat'));
     expect(mode('issue_with_logs').textContent).toBe('Open an issue with logs');
+    // The preview still shows the conversation: nothing goes until the
+    // new one lands.
+    expect((q('.report-send') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(q('.report-preview-context')).toBeNull();
+    expect((q('.report-send') as HTMLButtonElement).disabled).toBe(false);
     transport.onCall('submit_issue', () => ({ number: 10, url: 'u' }));
     await click(q('.report-send'));
     await settle();

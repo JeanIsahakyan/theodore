@@ -477,7 +477,9 @@ function IssueForm({
         <button
           type="button"
           className="report-send button button--sm button--primary"
-          disabled={!filled || sending || files.busy}
+          // With the preview open, nothing goes until it shows what goes
+          // (a mode or the conversation just switched: logs not yet seen).
+          disabled={!filled || sending || files.busy || (showPreview && !shown)}
           onClick={submit}
         >
           {sending ? (

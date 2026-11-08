@@ -80,6 +80,27 @@ describe('reporting from a chat', () => {
     expect(store.ui.reportDraft).toBeNull();
   });
 
+  it("an agent's draft never replaces a window you have open", () => {
+    const store = new RootStore();
+    const agents: ReportDraft = { ...drafted, id: 'a1', by_agent: true };
+    store.reportDrafted(agents);
+    expect(store.ui.reportDraft?.id).toBe('a1');
+
+    // Writing a report of your own: the agent's waits behind a toast.
+    store.ui.openModal('report-problem');
+    store.reportDrafted({ ...agents, id: 'a2' });
+    expect(store.ui.reportDraft).toBeNull();
+    const toast = store.ephemeral.toasts.at(-1);
+    expect(toast?.text).toBe('The agent drafted a problem report');
+    toast?.action?.onAction();
+    expect(store.ui.reportDraft?.id).toBe('a2');
+
+    // Yours ("Report this") opens at once.
+    store.ui.openModal('snooze');
+    store.reportDrafted(drafted);
+    expect(store.ui.reportDraft?.id).toBe('d1');
+  });
+
   it('"Report this" under a reply drafts about that message', async () => {
     const store = new RootStore();
     transport.onCall('draft_report', () => drafted);
