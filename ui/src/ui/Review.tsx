@@ -27,7 +27,7 @@ import { observer } from 'mobx-react-lite';
 import type { Anchor, HunkId, PrId } from '../gen/contract';
 import { api } from '../core/api';
 import { markGroupRead, setDraft, setFileViewed } from '../actions';
-import { scrollIntoDiff } from './review/headerClearance';
+import { scrollIntoDiff, scrollToHunk } from './review/headerClearance';
 import { FEATURES } from '../features';
 import { useRootStore, useUi } from '../stores/context';
 import { Btn, CheckIcon, Hints, K } from './bits';
@@ -516,10 +516,10 @@ export const Review = observer(function Review({ pr }: { pr: PrId }) {
     if (!focusHunk) return;
     const target = () => document.getElementById(`H-${focusHunk}`);
     if (!jumpStart) {
-      // J/K: a small step, smooth is fine and nothing above it moves.
-      const id = requestAnimationFrame(() =>
-        scrollIntoDiff(target(), { block: 'nearest', behavior: 'smooth' }),
-      );
+      // J/K: a small step, smooth is fine and nothing above it moves. A
+      // hunk whose top is out of sight above (K inside a tall one) goes to
+      // the top, clear of the pinned header.
+      const id = requestAnimationFrame(() => scrollToHunk(target(), 'smooth'));
       return () => cancelAnimationFrame(id);
     }
     // A jump (file click, group switch): files above the target mount as

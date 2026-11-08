@@ -105,3 +105,32 @@ export function keepHeaderAtTop(
   const by = scrollToKeepHeader(card, pane);
   if (by) pane.scrollTop += by;
 }
+
+/** J/K's block for a hunk in `pane`: `start` when its top is above the
+ *  visible part — under the pinned header or past the pane's top edge, where
+ *  `nearest` leaves a hunk taller than the view as it is — else `nearest`. */
+export function hunkBlock(
+  hunk: Element,
+  pane: Element | null,
+): 'start' | 'nearest' {
+  if (!pane) return 'nearest';
+  const top = pane.getBoundingClientRect().top + pane.clientTop;
+  // Where `start` puts it: clear of the header (`scroll-margin-top`).
+  const clear = parseFloat(getComputedStyle(hunk).scrollMarginTop) || 0;
+  // A pixel of slack: a hunk `start` already put there stays put.
+  return hunk.getBoundingClientRect().top < top + clear - 1
+    ? 'start'
+    : 'nearest';
+}
+
+/** Scrolls J/K's hunk into the diff: its top to the top edge, clear of the
+ *  pinned header, when that top is out of sight above; else `nearest`. */
+export function scrollToHunk(
+  hunk: Element | null | undefined,
+  behavior: ScrollBehavior,
+): void {
+  if (!hunk) return;
+  syncClearance(hunk);
+  const block = hunkBlock(hunk, hunk.closest('main.diff'));
+  hunk.scrollIntoView({ block, behavior });
+}

@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HEADER_VAR,
   HeaderSizer,
+  hunkBlock,
   recordHeader,
   scrollIntoDiff,
+  scrollToHunk,
   scrollToKeepHeader,
 } from './headerClearance';
 
@@ -127,5 +129,53 @@ describe('the pinned header clearance', () => {
     // A card already in view stays where it is.
     card.getBoundingClientRect = () => rect(300);
     expect(scrollToKeepHeader(card, main)).toBe(0);
+  });
+});
+
+describe('J/K onto a hunk', () => {
+  /** A pane at y=100 with one hunk, clear of an 83px header (+4). */
+  function hunkIn(top: number) {
+    const { main, card } = pane();
+    main.className = 'diff';
+    main.getBoundingClientRect = () => rect(100);
+    const hunk = document.createElement('div');
+    hunk.id = 'H-h1';
+    hunk.style.scrollMarginTop = '87px';
+    hunk.getBoundingClientRect = () => rect(top);
+    hunk.scrollIntoView = vi.fn();
+    card.append(hunk);
+    return { main, hunk };
+  }
+
+  it('brings a tall hunk whose top is out of sight above to the top', () => {
+    // K inside a tall hunk: its top is 2000px above the pane.
+    const { main, hunk } = hunkIn(-1900);
+    expect(hunkBlock(hunk, main)).toBe('start');
+    scrollToHunk(hunk, 'smooth');
+    expect(hunk.scrollIntoView).toHaveBeenCalledWith({
+      block: 'start',
+      behavior: 'smooth',
+    });
+  });
+
+  it('counts a top under the pinned header as out of sight', () => {
+    const { main, hunk } = hunkIn(150);
+    expect(hunkBlock(hunk, main)).toBe('start');
+  });
+
+  it('keeps nearest for a hunk in view, already at the top, or below', () => {
+    const shown = hunkIn(400);
+    expect(hunkBlock(shown.hunk, shown.main)).toBe('nearest');
+    // Where `start` put it: no re-scroll.
+    const { main, hunk } = hunkIn(187);
+    expect(hunkBlock(hunk, main)).toBe('nearest');
+    const below = hunkIn(5000);
+    scrollToHunk(below.hunk, 'smooth');
+    expect(below.hunk.scrollIntoView).toHaveBeenCalledWith({
+      block: 'nearest',
+      behavior: 'smooth',
+    });
+    // Outside a pane: nearest, as before.
+    expect(hunkBlock(hunk, null)).toBe('nearest');
   });
 });
