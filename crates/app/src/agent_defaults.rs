@@ -35,23 +35,42 @@ impl AgentDefaults {
         Self { inner, store }
     }
 
-    /// A non-empty string setting, `None` when unset, `null` or blank.
     async fn text(&self, key: String) -> Option<String> {
-        let store = self.store.clone();
-        let rows = tokio::task::spawn_blocking(move || store.query(models::SETTING, "key", &key))
-            .await
-            .ok()?
-            .ok()?;
-        // User scope only: like `agents.<id>.enabled`, a machine preference.
-        let rows = rows
-            .into_iter()
-            .filter(|r| r.data.get("scope").and_then(|s| s.as_str()) == Some(SCOPE_USER))
-            .collect();
-        pick_setting(rows, None)?
-            .as_str()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
+        setting_text(&self.store, key).await
+    }
+}
+
+/// A non-empty string setting, `None` when unset, `null` or blank.
+async fn setting_text(store: &Arc<dyn Store>, key: String) -> Option<String> {
+    let store = store.clone();
+    let rows = tokio::task::spawn_blocking(move || store.query(models::SETTING, "key", &key))
+        .await
+        .ok()?
+        .ok()?;
+    // User scope only: like `agents.<id>.enabled`, a machine preference.
+    let rows = rows
+        .into_iter()
+        .filter(|r| r.data.get("scope").and_then(|s| s.as_str()) == Some(SCOPE_USER))
+        .collect();
+    pick_setting(rows, None)?
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// The model a run asking for `asked` gets: `asked`, else the
+/// `agents.<id>.model` setting, else none (the CLI's default) — what
+/// `AgentDefaults` would fill in. A caller that records which model ran
+/// resolves it first and sends that, so the record is what ran.
+pub(crate) async fn run_model(
+    store: &Arc<dyn Store>,
+    agent: AgentId,
+    asked: Option<String>,
+) -> Option<String> {
+    match asked {
+        Some(m) => Some(m),
+        None => setting_text(store, model_key(agent)).await,
     }
 }
 

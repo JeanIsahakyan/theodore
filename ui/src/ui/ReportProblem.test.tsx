@@ -122,6 +122,62 @@ describe('ReportProblemView', () => {
     expect(transport.calls.map((c) => c.cmd)).not.toContain('submit_issue');
   });
 
+  it('a rate limit offers Retry, which rechecks and keeps the draft', async () => {
+    let limited = true;
+    transport.onCall('issue_target', () =>
+      limited
+        ? {
+            ...signedIn,
+            login: null,
+            unavailable:
+              "GitHub's rate limit is reached. Try again in 12 minutes.",
+            retry: true,
+          }
+        : signedIn,
+    );
+    transport.onCall('preview_issue', () => ({
+      ...preview,
+      context: conversation,
+    }));
+    m = await mount(<ReportProblemView draft={chatDraft} />);
+    await settle();
+    expect(mode('issue_with_logs').disabled).toBe(true);
+    expect(q('.report-unavailable')?.textContent).toBe(
+      "GitHub's rate limit is reached. Try again in 12 minutes.",
+    );
+    // Still limited: asked again, still says so.
+    await click(q('.report-retry'));
+    await settle();
+    expect(
+      transport.calls.filter((c) => c.cmd === 'issue_target'),
+    ).toHaveLength(2);
+    expect(q('.report-retry')?.textContent).toBe('Retry');
+
+    limited = false;
+    await click(q('.report-retry'));
+    await settle();
+    await settle();
+    expect(q('.report-unavailable')).toBeNull();
+    expect(mode('issue_with_logs').getAttribute('aria-checked')).toBe('true');
+    // The chat's draft is still there, not started over.
+    expect((q('.report-title') as HTMLInputElement).value).toBe(
+      'Agent ignored me',
+    );
+    expect((q('.report-comment') as HTMLTextAreaElement).value).toBe(
+      'I said not to touch the tests.',
+    );
+  });
+
+  it('a run that never posts offers no Retry', async () => {
+    await open({
+      ...signedIn,
+      login: null,
+      unavailable: 'Sandbox mode never posts to GitHub.',
+      retry: false,
+    });
+    expect(q('.report-retry')).toBeNull();
+  });
+
   it('needs a title and a comment before it can open the issue', async () => {
     await open(signedIn);
     const send = q('.report-send') as HTMLButtonElement;

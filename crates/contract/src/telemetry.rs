@@ -122,6 +122,11 @@ pub struct IssueTarget {
     pub login: Option<String>,
     /// Why issues can't be posted (signed out, sandbox); `None`: they can.
     pub unavailable: Option<String>,
+    /// Asking again may change the answer (a rate limit, the network, a
+    /// sign-in): the window offers Retry. False when it never can (sandbox,
+    /// fixtures) or nothing is wrong.
+    #[serde(default)]
+    pub retry: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

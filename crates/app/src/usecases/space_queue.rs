@@ -106,6 +106,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
         };
         self.apply(vec![NewAction {
@@ -210,6 +211,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
             ..message
         };
@@ -384,6 +386,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
         };
         self.apply(vec![NewAction {

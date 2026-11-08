@@ -2,6 +2,7 @@
  *  logs, or a local zip — one view, three modes.
  *
  *  open ─▶ api.issueTarget() ─▶ repo + @login, or why issues can't be posted
+ *         Retry ─┘ (rate limit, network, sign-in): the text and draft stay
  *
  *  Open an issue ··········· title + comment + app info ──┐
  *  Open an issue with logs · + the newest redacted logs ──┼─▶ api.submitIssue ─▶ Open / Copy link
@@ -23,7 +24,7 @@
  *  attachments. After the issue opens, "Show files and open the issue"
  *  copies them into one folder (`stage_report_files`), shows it in Finder
  *  and opens the issue, for the user to drop them into a comment. */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import type {
   Attachment,
@@ -95,23 +96,42 @@ export function ReportProblemView({
   // Kept across mode switches, like the text.
   const files = useAttachments();
 
+  // A recheck (Retry) keeps everything above: the text, the files, the
+  // chat's draft. Only the target changes.
+  const [checking, setChecking] = useState(false);
+  const live = useRef(true);
+  const check = useCallback(
+    () =>
+      api.issueTarget().then(
+        (t) => {
+          if (live.current) setTarget(t);
+        },
+        (e: unknown) => {
+          if (live.current)
+            setTarget({
+              repo: '',
+              url: '',
+              login: null,
+              unavailable: `Couldn't check GitHub: ${message(e)}`,
+              retry: true,
+            });
+        },
+      ),
+    [],
+  );
   useEffect(() => {
-    let live = true;
-    api.issueTarget().then(
-      (t) => live && setTarget(t),
-      (e: unknown) =>
-        live &&
-        setTarget({
-          repo: '',
-          url: '',
-          login: null,
-          unavailable: `Couldn't check GitHub: ${message(e)}`,
-        }),
-    );
+    live.current = true;
+    void check();
     return () => {
-      live = false;
+      live.current = false;
     };
-  }, []);
+  }, [check]);
+  const retry = () => {
+    setChecking(true);
+    void check().finally(() => {
+      if (live.current) setChecking(false);
+    });
+  };
 
   if (!target) {
     return (
@@ -179,9 +199,27 @@ export function ReportProblemView({
         })}
       </div>
       {!canPost && (
-        <span className="report-unavailable text-xs text-muted">
-          {target.unavailable}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="report-unavailable text-xs text-muted">
+            {target.unavailable}
+          </span>
+          {target.retry && (
+            <button
+              type="button"
+              className="report-retry button button--sm button--secondary"
+              disabled={checking}
+              onClick={retry}
+            >
+              {checking ? (
+                <>
+                  <PlainSpinner /> Checking…
+                </>
+              ) : (
+                'Retry'
+              )}
+            </button>
+          )}
+        </div>
       )}
       {mode === 'logs_only' ? (
         <SaveLogs />

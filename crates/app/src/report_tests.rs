@@ -373,6 +373,11 @@ async fn an_ai_panel_reply_brings_its_question() {
     assert_eq!(row(&c.rows, "Mode"), Some("ask (read-only)"));
     assert_eq!(row(&c.rows, "Took"), Some("3.0 s"));
     assert_eq!(row(&c.rows, "Space status"), None);
+    // A reply from before the model was recorded: no guess from settings.
+    assert_eq!(
+        row(&c.rows, "Model"),
+        Some("unknown (not recorded on this reply)")
+    );
 }
 
 #[tokio::test]
@@ -391,4 +396,61 @@ async fn unknown_messages_and_expired_drafts_are_refused() {
     assert!(matches!(e, AppError::Invalid(_)), "an empty chat: {e:?}");
     let e = core.report_context("expired").await.unwrap_err();
     assert!(matches!(e, AppError::NotFound(_)), "{e:?}");
+}
+
+fn set_model(f: &Fixtures, value: serde_json::Value) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: "user:agents.claude.model".into(),
+            action: SyncActionCode::I,
+            data: Some(json!({ "key": "agents.claude.model", "scope": "user", "value": value })),
+        }])
+        .unwrap();
+}
+
+/// New space with a model picked in the menu: the space asks for none, the
+/// `agents.claude.model` setting decides — the reply records the model the
+/// run was sent, and a later change to the setting doesn't rewrite it.
+#[tokio::test]
+async fn the_model_row_is_the_one_the_run_used_from_the_setting() {
+    let f = fixtures();
+    set_model(&f, json!("claude-haiku-5-5"));
+    let (core, _recv, s) = two_turns(&f).await;
+    assert_eq!(s.model, None, "the space pins no model");
+    assert_eq!(
+        f.agents.last_request().unwrap().model.as_deref(),
+        Some("claude-haiku-5-5"),
+        "the run got the setting's model"
+    );
+    let chat = transcript(&f, &s.id);
+    let first = chat.iter().find(|m| m.text == "one").unwrap();
+    assert_eq!(first.model.as_deref(), Some("claude-haiku-5-5"));
+    assert!(first.model_resolved);
+
+    set_model(&f, json!("claude-opus-5-5"));
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(first.id.clone())), None)
+        .await
+        .unwrap();
+    let r = core.report_context(&draft.id).await.unwrap();
+    assert_eq!(row(&r.context.rows, "Model"), Some("claude-haiku-5-5"));
+}
+
+#[tokio::test]
+async fn the_model_row_says_the_cli_default_only_when_it_was() {
+    let f = fixtures();
+    let (core, _recv, s) = two_turns(&f).await;
+    let chat = transcript(&f, &s.id);
+    let reply = chat.iter().find(|m| m.text == "two").unwrap();
+    assert_eq!(reply.model, None);
+    assert!(reply.model_resolved);
+    // Set after the run: not what it used.
+    set_model(&f, json!("claude-opus-5-5"));
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(reply.id.clone())), None)
+        .await
+        .unwrap();
+    let r = core.report_context(&draft.id).await.unwrap();
+    assert_eq!(row(&r.context.rows, "Model"), Some("the CLI's default"));
 }

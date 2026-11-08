@@ -417,13 +417,7 @@ impl Core {
                 })
                 .unwrap_or_else(|| a.as_str().to_string());
             row("Agent CLI", cli);
-            let model = f
-                .reply
-                .as_ref()
-                .and_then(|r| r.model.clone())
-                .or_else(|| f.space.as_ref().and_then(|sp| sp.model.clone()))
-                .unwrap_or_else(|| "the CLI's default".into());
-            row("Model", model);
+            row("Model", ran_model(f));
             let effort = self
                 .setting_string(&format!("agents.{}.effort", a.as_str()), "")
                 .await;
@@ -522,6 +516,27 @@ impl Core {
             None => p.text.clone(),
         };
         with_attachments(text, &p.attachments)
+    }
+}
+
+/// The model the reported run used, as its reply recorded it — never the
+/// settings now, which may have changed since. A reply from before the
+/// setting's default was recorded named only a model the turn asked for
+/// (which the run did get); without one, nobody knows.
+fn ran_model(f: &Found) -> String {
+    const DEFAULT: &str = "the CLI's default";
+    match &f.reply {
+        Some(r) => match (&r.model, r.model_resolved) {
+            (Some(m), _) => m.clone(),
+            (None, true) => DEFAULT.into(),
+            (None, false) => "unknown (not recorded on this reply)".into(),
+        },
+        // Still running: the space's own model is what it asked for and
+        // got; otherwise the run hasn't said yet.
+        None => match f.space.as_ref().and_then(|sp| sp.model.clone()) {
+            Some(m) => m,
+            None => "unknown (no reply yet)".into(),
+        },
     }
 }
 

@@ -242,6 +242,25 @@ fn internal(message: String) -> CommandError {
     }
 }
 
+/// "GitHub's rate limit is reached. Try again in 12 minutes."
+fn github_rate_limited(reset_at: i64, now: i64) -> String {
+    format!(
+        "GitHub's rate limit is reached. {}",
+        try_again_in(reset_at, now)
+    )
+}
+
+/// Why the report window can't post right now, from the error `login`
+/// gave: the dialog shows it as it is.
+fn target_unavailable(e: &HostError, now: i64) -> String {
+    match e {
+        HostError::Auth => "GitHub sign-in expired. Sign in again in Settings → GitHub.".into(),
+        HostError::RateLimited { reset_at } => github_rate_limited(*reset_at, now),
+        HostError::Server(_) => "GitHub is having trouble right now.".into(),
+        _ => "Couldn't reach GitHub right now.".into(),
+    }
+}
+
 /// A failed issue post, in words the dialog shows as they are.
 fn issue_err(e: HostError) -> CommandError {
     tracing::warn!(error.code = e.code(), error = %e, "problem report issue failed");
@@ -255,10 +274,7 @@ fn issue_err(e: HostError) -> CommandError {
             "not_found",
             "GitHub can't find that repository for this account.".to_string(),
         ),
-        HostError::RateLimited { .. } => (
-            "rate_limited",
-            "GitHub's rate limit was hit. Try again in a few minutes.".to_string(),
-        ),
+        HostError::RateLimited { reset_at } => ("rate_limited", github_rate_limited(reset_at, now_ms())),
         HostError::Network(_) => (
             "network",
             "Couldn't reach GitHub. Check the connection and try again.".to_string(),
@@ -385,10 +401,15 @@ fn err(e: AppError) -> CommandError {
 /// "rate limited until 1793393359000" means nothing to a person: say how
 /// long to wait instead.
 fn rate_limited_message(reset_at: i64, now: i64) -> String {
+    format!("Rate limit reached. {}", try_again_in(reset_at, now))
+}
+
+/// "Try again in 12 minutes.": whole minutes until `reset_at`, rounded up.
+fn try_again_in(reset_at: i64, now: i64) -> String {
     let minutes = (reset_at - now + 59_999).div_euclid(60_000);
     match minutes {
-        ..=1 => "Rate limit reached. Try again in a minute.".to_string(),
-        m => format!("Rate limit reached. Try again in {m} minutes."),
+        ..=1 => "Try again in a minute.".to_string(),
+        m => format!("Try again in {m} minutes."),
     }
 }
 
@@ -745,24 +766,44 @@ impl CoreApi for AppCore {
     async fn issue_target(&self) -> Result<theodore_contract::IssueTarget, CommandError> {
         let (owner, name) = self.report_repo().await;
         let repo = format!("{owner}/{name}");
-        let (login, unavailable) = match &self.issues {
-            None if self.sandbox.is_some() => (None, Some("Sandbox mode never posts to GitHub.")),
-            None => (None, Some("Fixture mode never posts to GitHub.")),
-            Some(t) if !t.has_token() => (None, Some("Sign in to GitHub to open an issue.")),
+        let (login, unavailable, retry) = match &self.issues {
+            None if self.sandbox.is_some() => (
+                None,
+                Some("Sandbox mode never posts to GitHub.".into()),
+                false,
+            ),
+            None => (
+                None,
+                Some("Fixture mode never posts to GitHub.".into()),
+                false,
+            ),
+            Some(t) if !t.has_token() => (
+                None,
+                Some("Sign in to GitHub to open an issue.".into()),
+                true,
+            ),
             Some(t) => match t.login().await {
-                Ok(login) => (Some(login), None),
-                Err(HostError::Auth) => (
-                    None,
-                    Some("GitHub sign-in expired. Sign in again in Settings → GitHub."),
-                ),
-                Err(_) => (None, Some("Couldn't reach GitHub right now.")),
+                Ok(login) => (Some(login), None, false),
+                Err(e) => {
+                    if matches!(e, HostError::Auth) {
+                        tracing::info!(error.code = e.code(), "report: GitHub sign-in expired");
+                    } else {
+                        tracing::warn!(
+                            error.code = e.code(),
+                            error = %e,
+                            "report: couldn't check GitHub for an issue"
+                        );
+                    }
+                    (None, Some(target_unavailable(&e, now_ms())), true)
+                }
             },
         };
         Ok(theodore_contract::IssueTarget {
             url: format!("https://github.com/{repo}"),
             repo,
             login,
-            unavailable: unavailable.map(str::to_string),
+            unavailable,
+            retry,
         })
     }
     async fn preview_issue(
@@ -1279,6 +1320,8 @@ mod tests {
     struct FakeTracker {
         signed_out: bool,
         expired: bool,
+        /// `login` and posts fail with GitHub's rate limit, reset then.
+        rate_limited: Mutex<Option<i64>>,
         posted: Mutex<Vec<(String, String, NewIssue)>>,
     }
 
@@ -1290,6 +1333,9 @@ mod tests {
         async fn login(&self) -> theodore_ports::HostResult<String> {
             if self.expired {
                 return Err(HostError::Auth);
+            }
+            if let Some(reset_at) = *self.rate_limited.lock().unwrap() {
+                return Err(HostError::RateLimited { reset_at });
             }
             Ok("octocat".into())
         }
@@ -1458,6 +1504,72 @@ mod tests {
         let e = a.submit_issue(request(None)).await.unwrap_err();
         assert_eq!(e.code, "github_auth");
         assert!(e.message.starts_with("GitHub sign-in expired"), "{e:?}");
+    }
+
+    /// GitHub's rate limit: the window says how long, offers Retry, and a
+    /// recheck once it lifts can post.
+    #[tokio::test]
+    async fn a_rate_limit_says_how_long_and_a_recheck_clears_it() {
+        let tracker = Arc::new(FakeTracker::default());
+        *tracker.rate_limited.lock().unwrap() = Some(now_ms() + 12 * 60_000 - 1_000);
+        let (a, _rx) = app(Some(tracker.clone()));
+        let t = a.issue_target().await.unwrap();
+        assert_eq!(t.login, None);
+        assert_eq!(
+            t.unavailable.as_deref(),
+            Some("GitHub's rate limit is reached. Try again in 12 minutes.")
+        );
+        assert!(t.retry);
+
+        *tracker.rate_limited.lock().unwrap() = None;
+        let t = a.issue_target().await.unwrap();
+        assert_eq!(
+            (t.login.as_deref(), t.unavailable, t.retry),
+            (Some("octocat"), None, false)
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_run_without_github_offers_no_retry() {
+        let (a, _rx) = app(None);
+        assert!(!a.issue_target().await.unwrap().retry);
+        let signed_out = Arc::new(FakeTracker {
+            signed_out: true,
+            ..Default::default()
+        });
+        let (a, _rx) = app(Some(signed_out));
+        assert!(a.issue_target().await.unwrap().retry, "sign in, then Retry");
+    }
+
+    #[test]
+    fn what_the_window_says_when_github_cant_be_checked() {
+        let now = 1_700_000_000_000;
+        assert_eq!(
+            target_unavailable(
+                &HostError::RateLimited {
+                    reset_at: now + 5_000
+                },
+                now
+            ),
+            "GitHub's rate limit is reached. Try again in a minute."
+        );
+        assert_eq!(
+            target_unavailable(&HostError::Network("dns".into()), now),
+            "Couldn't reach GitHub right now."
+        );
+        assert_eq!(
+            target_unavailable(&HostError::Server("502".into()), now),
+            "GitHub is having trouble right now."
+        );
+        let e = issue_err(HostError::RateLimited {
+            reset_at: now_ms() + 30 * 60_000,
+        });
+        assert_eq!(e.code, "rate_limited");
+        assert!(
+            e.message
+                .starts_with("GitHub's rate limit is reached. Try again in "),
+            "{e:?}"
+        );
     }
 
     #[tokio::test]

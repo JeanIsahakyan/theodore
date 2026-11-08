@@ -115,16 +115,22 @@ export class RootStore {
 
   /** A chat report was drafted (`report_draft`): the report window opens
    *  on it, wherever you are — but an agent's draft never replaces a
-   *  window you have open (a report you're writing included): it waits
-   *  behind a toast. */
+   *  window you have open (a report you're writing included): it waits,
+   *  and opens when that window closes (`UiStore.holdReport`); its toast
+   *  offers it sooner. */
   reportDrafted(draft: ReportDraft): void {
     if (!draft.by_agent || this.ui.modal === null) {
       this.ui.openReport(draft);
     } else if (this.ui.reportDraft?.id !== draft.id) {
-      this.ephemeral.toast('The agent drafted a problem report', 'info', {
-        label: 'Review',
-        onAction: () => this.ui.openReport(draft),
-      });
+      this.ui.holdReport(draft);
+      this.ephemeral.toast(
+        'The agent drafted a problem report: it opens when this window closes',
+        'info',
+        {
+          label: 'Review',
+          onAction: () => this.ui.openReport(draft),
+        },
+      );
     }
   }
 

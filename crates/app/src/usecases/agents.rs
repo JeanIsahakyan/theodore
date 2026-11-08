@@ -128,6 +128,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
@@ -558,15 +559,19 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
     persist_failed_run(core, pr, agent, text, None).await;
 }
 
-/// `persist_failed_message` for the run `run` (a chat question's): a
-/// report on it finds that run's logs.
+/// `persist_failed_message` for the run `run` (a chat question's) and the
+/// model it ran with: a report on it finds that run's logs and model.
 async fn persist_failed_run(
     core: &Core,
     pr: &PrId,
     agent: AgentId,
     text: &str,
-    run: Option<String>,
+    run: Option<(String, Option<String>)>,
 ) {
+    let (run, model, model_resolved) = match run {
+        Some((run, model)) => (Some(run), model, true),
+        None => (None, None, false),
+    };
     let message_id = uuid::Uuid::new_v4().to_string();
     let message = ChatMessage {
         id: message_id.clone(),
@@ -581,8 +586,9 @@ async fn persist_failed_run(
         activity: vec![],
         duration_ms: None,
         changed_files: vec![],
-        model: None,
+        model,
         text_in_steps: false,
+        model_resolved,
         run,
     };
     if let Ok(data) = serde_json::to_value(&message) {
@@ -776,6 +782,9 @@ async fn drive_ask(
             Some(hint) => format!("{ASK_SYSTEM}\n{hint}"),
             None => ASK_SYSTEM.into(),
         }));
+    // Resolved here rather than by `AgentDefaults`: the reply records the
+    // model that ran, whatever the setting says later.
+    let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, None).await;
     let req = AgentRequest {
         agent,
         prompt: question.prompt,
@@ -783,7 +792,7 @@ async fn drive_ask(
         cwd,
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),
-        model: None,
+        model: model.clone(),
         effort: None,
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
@@ -829,7 +838,7 @@ async fn drive_ask(
     // nothing was ever asked.
     if cancel.is_cancelled() || error.is_some() {
         let text = error.unwrap_or_else(|| "cancelled".into());
-        persist_failed_run(core, &pr, agent, &text, Some(run_id)).await;
+        persist_failed_run(core, &pr, agent, &text, Some((run_id, model))).await;
         return;
     }
 
@@ -848,8 +857,9 @@ async fn drive_ask(
         activity: vec![],
         duration_ms: None,
         changed_files: vec![],
-        model: None,
+        model,
         text_in_steps: false,
+        model_resolved: true,
         run: Some(run_id),
     };
     if let Ok(data) = serde_json::to_value(&reply) {

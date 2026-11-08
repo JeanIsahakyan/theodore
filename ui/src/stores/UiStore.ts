@@ -287,6 +287,10 @@ export class UiStore {
   /** The chat report the report window opens on (`openReport`); `null`:
    *  the plain "Report a problem". */
   reportDraft: ReportDraft | null = null;
+  /** Agents' drafts that came while a window was open, oldest first: the
+   *  next one opens when the window closes, however it closes — never lost
+   *  with the toast that announced it. The core keeps the last 16. */
+  heldReports: ReportDraft[] = [];
   /** The one custom context menu, open at a pointer point — see `ContextMenu.tsx`. */
   contextMenu: ContextMenuState | null = null;
   /** Tabs mid close animation (`JSON.stringify(route)`); removed after it. */
@@ -326,6 +330,7 @@ export class UiStore {
       modal: observableRef,
       modalTargets: observableShallow,
       reportDraft: observableRef,
+      heldReports: observableRef,
       contextMenu: observableRef,
       closingTabs: observableShallow,
       listSearch: observable,
@@ -334,6 +339,14 @@ export class UiStore {
     reaction(
       () => this.snapshot(),
       (v) => saveSnapshot(this.workspace, v),
+    );
+    // No window open and an agent's draft waiting: it opens now.
+    reaction(
+      () => this.modal === null && this.heldReports.length > 0,
+      (go) => {
+        const next = this.heldReports[0];
+        if (go && next) this.openReport(next);
+      },
     );
   }
 
@@ -683,6 +696,16 @@ export class UiStore {
       this.modal = 'report-problem';
       this.modalTargets = [];
       this.reportDraft = draft;
+      this.heldReports = this.heldReports.filter((d) => d.id !== draft.id);
+    });
+  }
+
+  /** An agent's draft that can't open now (a window is open): it opens
+   *  when that window closes, or earlier from its toast. */
+  holdReport(draft: ReportDraft): void {
+    runInAction(() => {
+      if (this.heldReports.some((d) => d.id === draft.id)) return;
+      this.heldReports = [...this.heldReports, draft].slice(-16);
     });
   }
 

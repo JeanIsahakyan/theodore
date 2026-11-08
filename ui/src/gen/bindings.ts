@@ -1151,6 +1151,12 @@ export type IssueTarget = {
 	login: string | null,
 	/**  Why issues can't be posted (signed out, sandbox); `None`: they can. */
 	unavailable: string | null,
+	/**
+	 *  Asking again may change the answer (a rate limit, the network, a
+	 *  sign-in): the window offers Retry. False when it never can (sandbox,
+	 *  fixtures) or nothing is wrong.
+	 */
+	retry?: boolean,
 };
 
 export type LineKind = "ctx" | "add" | "del";

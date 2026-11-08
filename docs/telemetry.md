@@ -241,6 +241,10 @@ submit_issue(…, draft) ─▶ POST /repos/{owner}/{repo}/issues, label from-ap
 - **No GitHub sign-in, sandbox or fixture runs**: modes 1–2 are disabled with a one-line reason;
   sandbox and fixture runs have no issue tracker at all, so they can't reach GitHub even if asked.
   Errors show inline: an expired token reads "GitHub sign-in expired …".
+- **GitHub can't be checked** (rate limit, network, a 5xx, signed out): modes 1–2 wait with the
+  reason — a rate limit says how long, from GitHub's reset time ("… Try again in 12 minutes.") —
+  and **Retry**, which asks again and keeps the title, comment, files and a chat's draft. The
+  cause is logged as a warning (`error.code`, e.g. `host.rate_limited`).
 - **The zip** (`Save logs only`): `<tmp>/theodore-reports/theodore-report-<stamp>.zip` with
   `app-info.json` (version, commit, build environment and date, OS, agent CLI versions) and the
   newest logs up to 20 MB, redacted again with the remote rules (repository names and paths
@@ -306,7 +310,7 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
   | Guard | How |
   |---|---|
   | One window per turn | a run drafts once; a second call is refused (the last 256 runs remembered) |
-  | Never over your window | with any dialog open, the agent's draft waits behind a toast (**Review**) |
+  | Never over your window | with any dialog open, the agent's draft waits: a toast offers it now (**Review**), and it opens by itself when that dialog closes, however it closes — never lost with the toast. Several wait in turn |
   | No secrets in its text | title and comment redacted (`Redactor::text`) before the form shows them |
   | No pings | its comment's `@login`, `#12`, `owner/repo#12`, `GH-12` and issue links become inline code |
   | Bounded | title 256 chars, comment 20,000 |
@@ -316,6 +320,9 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
 - **The context table**: where (`Space turn 3 of 5`, `AI panel reply 2 of 4`), scope, who
   drafted it, agent CLI and version, model, effort, mode, status, when sent, how long it took,
   files changed and tool calls (counts), the run id. No space, project, repo or branch names.
+  The model is the one the run was sent — the space's, else the `agents.<id>.model` setting at
+  the time, else the CLI's default — recorded on its reply when the run starts, so a later
+  settings change doesn't rewrite it; a reply from before that was recorded says `unknown`.
   Each value is inline code, so nothing in one (a model name, a space's error) mentions, links
   or cross-references.
 - **Logs** in a chat report are that run's only: every record of a space turn or an AI panel

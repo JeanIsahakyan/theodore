@@ -350,6 +350,7 @@ impl Core {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
@@ -1157,7 +1158,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mcp: mcp.clone(),
     };
     let resumed = resume.is_some();
-    let asked_model = model.clone();
+    // The model this run gets, the setting's default filled in here: the
+    // reply records what ran, whatever the setting says later.
+    let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, model).await;
+    let ran_model = model.clone();
     let mut req = AgentRequest {
         agent,
         prompt,
@@ -1335,7 +1339,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         activity,
         duration_ms: Some(ms),
         changed_files,
-        model: asked_model,
+        model: ran_model,
+        model_resolved: true,
         text_in_steps,
         run: Some(run_id.clone()),
     };
@@ -1872,6 +1877,7 @@ mod tests {
             changed_files: vec![],
             model: None,
             text_in_steps: false,
+            model_resolved: false,
             run: None,
         }
     }

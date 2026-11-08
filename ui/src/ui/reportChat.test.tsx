@@ -91,14 +91,41 @@ describe('reporting from a chat', () => {
     store.reportDrafted({ ...agents, id: 'a2' });
     expect(store.ui.reportDraft).toBeNull();
     const toast = store.ephemeral.toasts.at(-1);
-    expect(toast?.text).toBe('The agent drafted a problem report');
+    expect(toast?.text).toBe(
+      'The agent drafted a problem report: it opens when this window closes',
+    );
     toast?.action?.onAction();
     expect(store.ui.reportDraft?.id).toBe('a2');
+    expect(store.ui.heldReports).toEqual([]);
 
     // Yours ("Report this") opens at once.
     store.ui.openModal('snooze');
     store.reportDrafted(drafted);
     expect(store.ui.reportDraft?.id).toBe('d1');
+  });
+
+  it("an agent's draft outlives its toast: it opens when the window closes", () => {
+    const store = new RootStore();
+    const a1: ReportDraft = { ...drafted, id: 'a1', by_agent: true };
+    const a2: ReportDraft = { ...drafted, id: 'a2', by_agent: true };
+    store.ui.openModal('snooze');
+    store.reportDrafted(a1);
+    store.reportDrafted(a1); // the event twice: held once
+    store.reportDrafted(a2);
+    // The toast is gone (timed out); the drafts are not.
+    store.ephemeral.toasts.forEach((t) => store.ephemeral.dismissToast(t.id));
+    expect(store.ui.modal).toBe('snooze');
+    expect(store.ui.heldReports.map((d) => d.id)).toEqual(['a1', 'a2']);
+
+    store.ui.closeModal();
+    expect(store.ui.modal).toBe('report-problem');
+    expect(store.ui.reportDraft?.id).toBe('a1');
+    // Closed (dismissed): the next one, then nothing.
+    store.ui.closeModal();
+    expect(store.ui.reportDraft?.id).toBe('a2');
+    store.ui.closeModal();
+    expect(store.ui.modal).toBeNull();
+    expect(store.ui.heldReports).toEqual([]);
   });
 
   it('"Report this" under a reply drafts about that message', async () => {
