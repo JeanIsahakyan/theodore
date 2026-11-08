@@ -3,10 +3,10 @@
  *  string's closing quote stays code in both, in the real diff (#133). */
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { setTransport } from '../core/transport';
 import type { Revision } from '../gen/contract';
-import { loadShiki } from '../highlight';
+import { loadShiki, WHOLE_FILE_MAX_CHARS } from '../highlight';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
@@ -80,11 +80,12 @@ describe('a diff break inside a multi-line string', () => {
 
   afterEach(() => cleanup());
 
-  async function mount(rev: Revision) {
+  async function mount(rev: Revision, file = LINES.join('\n')) {
     const transport = new FakeTransport();
-    transport.onCall('get_file', () => LINES.join('\n'));
+    transport.onCall('get_file', () => file);
     setTransport(transport);
     const store = new RootStore();
+    const tokenized = vi.spyOn(store.fileTokens, 'get');
     store.sync.pool.put('pr', PR, {
       pr: { repo: { host: 'github', owner: 'acme', name: 'app' }, number: 1 },
       url: 'https://example.test/acme/app/pull/1',
@@ -125,7 +126,7 @@ describe('a diff break inside a multi-line string', () => {
       act(() => root.unmount());
       host.remove();
     };
-    return { host, transport };
+    return { host, transport, tokenized };
   }
 
   /** The colour of the `const` on the row for new-side line `no`. */
@@ -157,5 +158,17 @@ describe('a diff break inside a multi-line string', () => {
   it('fetches nothing for a hunk at the top of the file', async () => {
     const { transport } = await mount(revisionAt(1));
     expect(transport.calls.some((c) => c.cmd === 'get_file')).toBe(false);
+  });
+
+  it('keeps a file over the size limit out of the token cache', async () => {
+    // Long enough that its text, as a cache key, would be a copy of it.
+    const big = `${LINES.join('\n')}\n${'// pad\n'.repeat(WHOLE_FILE_MAX_CHARS / 7)}`;
+    const { host, transport, tokenized } = await mount(revisionAt(13), big);
+    await settleUntil(() => transport.calls.some((c) => c.cmd === 'get_file'));
+    await settle();
+    expect(transport.calls.some((c) => c.cmd === 'get_file')).toBe(true);
+    expect(tokenized).not.toHaveBeenCalled();
+    // The hunk still shows, tokenized from its own lines.
+    expect(host.textContent).toContain('const v14 = 0;');
   });
 });

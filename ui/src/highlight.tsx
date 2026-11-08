@@ -289,8 +289,8 @@ const listeners = new Set<() => void>();
 /** Longest file, and longest line in one, tokenized whole; past either a
  *  diff keeps tokenizing only what it shows. A line this long is minified or
  *  generated: many times slower per character, and nobody is reading it. */
-const WHOLE_FILE_MAX_CHARS = 512 * 1024;
-const WHOLE_FILE_MAX_LINE = 2000;
+export const WHOLE_FILE_MAX_CHARS = 512 * 1024;
+export const WHOLE_FILE_MAX_LINE = 2000;
 /** How long tokenizing a whole file may hold the main thread: at a stretch,
  *  and in all, after which it gives up on the file. */
 const WHOLE_FILE_SLICE_MS = 8;
@@ -417,6 +417,23 @@ export function tokenizeLines(src: string, lang: Lang): Tok[][] {
 /** Whether `tokenizeFile` can run yet: `lang`'s grammar is in. */
 export const grammarReady = (lang: Lang): boolean => langReady(lang);
 
+/** Whether `text` is within both whole-file limits, so worth tokenizing
+ *  whole. Scans for the longest line rather than splitting, so a caller can
+ *  ask before it builds anything from the text: a cache key from a multi-MB
+ *  file is a copy of it. Lines end as `tokenizeInSlices` splits them, at
+ *  `\n` or `\r\n`. */
+export function fitsWholeFile(text: string): boolean {
+  if (text.length > WHOLE_FILE_MAX_CHARS) return false;
+  for (let start = 0; start <= text.length;) {
+    const nl = text.indexOf('\n', start);
+    const end = nl < 0 ? text.length : nl;
+    const cr = nl > start && text[nl - 1] === '\r' ? 1 : 0;
+    if (end - start - cr > WHOLE_FILE_MAX_LINE) return false;
+    start = end + 1;
+  }
+  return true;
+}
+
 /** Every line of a file, tokenized from its top, or `null` for a file too
  *  long, minified or slow to be worth it. A hunk or a context gap can start
  *  anywhere, so only the whole file knows whether its first line sits inside
@@ -443,9 +460,8 @@ async function tokenizeInSlices(
   text: string,
   lang: Lang,
 ): Promise<Tok[][] | null> {
-  if (text.length > WHOLE_FILE_MAX_CHARS) return null;
+  if (!fitsWholeFile(text)) return null;
   const lines = text.split(/\r?\n/);
-  if (lines.some((l) => l.length > WHOLE_FILE_MAX_LINE)) return null;
   const out: Tok[][] = [];
   let grammarState: GrammarState | undefined;
   let spent = 0;

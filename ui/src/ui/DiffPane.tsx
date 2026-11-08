@@ -45,6 +45,7 @@ import { when } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import {
   Code,
+  fitsWholeFile,
   grammarReady,
   hunkLineTokens,
   langOf,
@@ -901,7 +902,8 @@ function useFileTokens(
   const text = store.files.get(`${pr}@${rev}:${path}`, () =>
     api.getFile({ pr, rev, path }),
   ).data;
-  if (text == null) return null;
+  // Before the cache key: past the limits it would be a copy of the file.
+  if (text == null || !fitsWholeFile(text)) return null;
   return (
     store.fileTokens.get(tokensKey(text, lang), () => tokenizeFile(text, lang))
       .data ?? null
@@ -924,7 +926,7 @@ async function loadFileTokens(
   );
   await when(() => file.status !== 'loading');
   const text = file.data;
-  if (text == null) return null;
+  if (text == null || !fitsWholeFile(text)) return null;
   const toks = store.fileTokens.get(tokensKey(text, lang), () =>
     tokenizeFile(text, lang),
   );

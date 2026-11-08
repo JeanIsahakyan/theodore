@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  fitsWholeFile,
   grammarReady,
   hunkLineTokens,
   langOf,
@@ -9,6 +10,8 @@ import {
   tokenizeLines,
   tokens,
   type Lang,
+  WHOLE_FILE_MAX_CHARS,
+  WHOLE_FILE_MAX_LINE,
 } from './highlight';
 
 describe('langOf', () => {
@@ -271,6 +274,20 @@ describe('a hunk that starts inside a string (real Shiki, #133)', () => {
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => (now += 1000));
     expect(await tokenizeFile('const a = 1;\n'.repeat(50), 'ts')).toBeNull();
+  });
+
+  it('checks both limits before a file is tokenized whole', () => {
+    const line = (n: number) => 'x'.repeat(n);
+    expect(fitsWholeFile('')).toBe(true);
+    expect(fitsWholeFile(`a\n${line(WHOLE_FILE_MAX_LINE)}\nb`)).toBe(true);
+    expect(fitsWholeFile(`a\n${line(WHOLE_FILE_MAX_LINE + 1)}\nb`)).toBe(false);
+    expect(fitsWholeFile(`a\n${line(WHOLE_FILE_MAX_LINE + 1)}`)).toBe(false);
+    // `\r\n` ends a line as `\n` does: the `\r` is not part of it.
+    expect(fitsWholeFile(`${line(WHOLE_FILE_MAX_LINE)}\r\nb`)).toBe(true);
+    expect(fitsWholeFile('a\n'.repeat(WHOLE_FILE_MAX_CHARS / 2))).toBe(true);
+    expect(fitsWholeFile(`${'a\n'.repeat(WHOLE_FILE_MAX_CHARS / 2)}a`)).toBe(
+      false,
+    );
   });
 
   it('leaves a minified file to the hunks, and an oversized one', async () => {
