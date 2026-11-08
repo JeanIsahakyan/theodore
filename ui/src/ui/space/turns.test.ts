@@ -5,6 +5,7 @@ import {
   NOTIFY_KEY,
   archivedSpacesIn,
   nativeNotice,
+  turnEnded,
   notifyOn,
   spaceOfReview,
   lastAgentTurn,
@@ -232,7 +233,7 @@ describe('notifications', () => {
         goal: 'Fix the login redirect',
         error: null,
       }),
-    ).toEqual({ title: 'Fix the login redirect: turn finished' });
+    ).toEqual({ title: 'Fix the login redirect' });
     expect(
       nativeNotice(running, {
         status: 'failed',
@@ -250,6 +251,38 @@ describe('notifications', () => {
     expect(
       nativeNotice(undefined, { ...running, name: 'x', goal: '', error: null }),
     ).toBe(null);
+  });
+
+  it('say what the turn left, from the turn it logged', () => {
+    const before = { status: 'running' as const, turn_log: [] };
+    const ended = (turn: Partial<SpaceTurn>) => ({
+      status: 'idle' as const,
+      name: 'fix',
+      goal: '',
+      error: null,
+      turn_log: [{ before: 'a', after: 'a', ...turn } as SpaceTurn],
+    });
+    expect(nativeNotice(before, ended({ after: 'b' }))).toEqual({
+      title: 'fix',
+      body: 'Changes ready',
+    });
+    expect(nativeNotice(before, ended({}))).toEqual({
+      title: 'fix',
+      body: 'Replied',
+    });
+    expect(nativeNotice(before, ended({ plan: 'Do it' }))).toEqual({
+      title: 'fix',
+      body: 'Plan ready',
+    });
+    expect(turnEnded(before, ended({ after: 'b' }))).toEqual({
+      level: 'info',
+      text: 'fix: changes ready',
+    });
+    // Stopped before its checkpoint: no new turn, so nothing to claim.
+    const logged = ended({ after: 'b' });
+    expect(
+      nativeNotice({ status: 'running', turn_log: logged.turn_log }, logged),
+    ).toEqual({ title: 'fix' });
   });
 
   it('badge the spaces with a turn you have not seen', () => {

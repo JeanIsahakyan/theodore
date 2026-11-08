@@ -99,7 +99,7 @@ describe('a turn that ends with the window in the background', () => {
     runInAction(() => spaces.push(space('sp1', 'running')));
     runInAction(() => spaces.splice(0, 1, space('sp1', 'idle')));
     await flush();
-    expect(notify).toHaveBeenCalledWith('sp1', 'sp1: turn finished', undefined);
+    expect(notify).toHaveBeenCalledWith('sp1', 'sp1', undefined);
     return off;
   }
 

@@ -200,7 +200,7 @@ describe('spaces', () => {
     };
     expect(turnEnded({ status: 'running' }, next)).toEqual({
       level: 'info',
-      text: 'Fix it: turn done',
+      text: 'Fix it',
     });
     expect(
       turnEnded(

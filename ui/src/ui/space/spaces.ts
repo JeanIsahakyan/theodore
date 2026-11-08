@@ -133,7 +133,20 @@ export function plainError(error: string): string {
 type EndedFields = Pick<
   Space,
   'status' | 'name' | 'error' | 'goal' | 'title' | 'updating'
->;
+> &
+  Partial<Pick<Space, 'turn_log'>>;
+
+type BeforeEnd = Pick<Space, 'status'> & Partial<Pick<Space, 'turn_log'>>;
+
+/** What the turn that just ended left, from the turn it logged: `null` when
+ *  it logged none (stopped before its checkpoint). */
+function turnOutcome(prev: BeforeEnd, next: EndedFields): string | null {
+  const log = next.turn_log ?? [];
+  if (log.length <= (prev.turn_log?.length ?? 0)) return null;
+  const last = log[log.length - 1]!;
+  if (last.plan) return 'Plan ready';
+  return last.before === last.after ? 'Replied' : 'Changes ready';
+}
 
 /** What a failed end is called: the agent's turn on an Update from base
  *  that left conflicts is the update waiting on you, not a turn failure. */
@@ -144,7 +157,7 @@ function failedWhat(next: Pick<Space, 'updating'>): string {
 /** A turn just ended (running → anything else): what to tell you if you're
  *  not looking at the space. `null` when nothing finished. */
 export function turnEnded(
-  prev: Pick<Space, 'status'> | undefined,
+  prev: BeforeEnd | undefined,
   next: EndedFields,
 ): { level: 'info' | 'error'; text: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
@@ -154,7 +167,13 @@ export function turnEnded(
       text: `${spaceTitle(next)}: ${failedWhat(next)}${next.error ? ` — ${plainError(next.error)}` : ''}`,
     };
   }
-  return { level: 'info', text: `${spaceTitle(next)}: turn done` };
+  const outcome = turnOutcome(prev, next);
+  return {
+    level: 'info',
+    text: outcome
+      ? `${spaceTitle(next)}: ${outcome.toLowerCase()}`
+      : spaceTitle(next),
+  };
 }
 
 /** Days after a space is done before it archives itself; 0 = never. */
@@ -218,7 +237,7 @@ export function spaceTitle(
   const proposed = s.title?.trim();
   const raw = proposed && proposed.length > 0 ? proposed : defaultTitle(s);
   // Short enough for a sidebar row or a notification: no trailing period
-  // (it reads as "formatter.: turn done"), cut at a word near 60 chars.
+  // (a toast would read "formatter."), cut at a word near 60 chars.
   const t = raw.replace(/[.。!]+$/u, '');
   if (t.length <= 60) return t;
   const cut = t.slice(0, 60);
@@ -532,9 +551,9 @@ export function notifyOn(
 }
 
 /** The native notification for a turn that just ended, `null` when none
- *  did: "<space>: turn finished" / "<space>: turn failed". */
+ *  did: "<space>" and what the turn left / "<space>: turn failed". */
 export function nativeNotice(
-  prev: Pick<Space, 'status'> | undefined,
+  prev: BeforeEnd | undefined,
   next: EndedFields,
 ): { title: string; body?: string } | null {
   if (prev?.status !== 'running' || next.status === 'running') return null;
@@ -542,7 +561,8 @@ export function nativeNotice(
     const title = `${spaceTitle(next)}: ${failedWhat(next)}`;
     return next.error ? { title, body: plainError(next.error) } : { title };
   }
-  return { title: `${spaceTitle(next)}: turn finished` };
+  const body = turnOutcome(prev, next);
+  return body ? { title: spaceTitle(next), body } : { title: spaceTitle(next) };
 }
 
 /** The agent just asked you something (`ask_user`): the notice, `null`

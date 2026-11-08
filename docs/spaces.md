@@ -708,7 +708,7 @@ Tracking each item as a `task` assigned to the space's agent is planned.
 
 | Event | Space open | Elsewhere in the app | App in background |
 | --- | --- | --- | --- |
-| turn finished | diff refreshes | toast "fix-login: turn done" [Open] + ● | notification "fix-login: turn finished" |
+| turn finished | diff refreshes | toast "fix-login: changes ready" [Open] + ● | notification "fix-login" + "Changes ready" / "Plan ready" / "Replied" |
 | turn failed | error in chat | error toast [Open] + ✕ | notification "fix-login: turn failed" + the error |
 | agent asks (`ask_user`) | question card in chat | toast "fix-login: question" [Open] | notification "fix-login: question" + the first question |
 | PR checks / reviews | header + tabs | existing inbox | existing |
