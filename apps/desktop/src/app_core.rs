@@ -297,6 +297,9 @@ fn err(e: AppError) -> CommandError {
         AppError::Git(theodore_ports::GitError::Unsupported(_)) => "unsupported",
         // The git remote can't be reached: offline, not a git failure.
         AppError::Git(theodore_ports::GitError::Network(_)) | AppError::Offline => "offline",
+        // A stale last-seen sha: the UI forgets it and compares with
+        // nothing instead of toasting git's words.
+        AppError::Git(theodore_ports::GitError::MissingCommit(_)) => "commit_not_found",
         AppError::Git(_) => "git",
         AppError::Host(theodore_ports::HostError::Auth) => "auth",
         AppError::Host(theodore_ports::HostError::RateLimited { .. }) => "rate_limited",
@@ -1141,6 +1144,14 @@ mod tests {
         assert_eq!(e.code, "host.unsupported");
         let other = err(AppError::Host(HostError::Server("502".into())));
         assert_eq!(other.code, "host");
+    }
+
+    #[test]
+    fn a_missing_commit_has_its_own_code() {
+        let e = err(AppError::Git(theodore_ports::GitError::MissingCommit(
+            "b6cef3e".into(),
+        )));
+        assert_eq!(e.code, "commit_not_found");
     }
 
     #[test]

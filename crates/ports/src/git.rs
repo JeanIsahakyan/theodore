@@ -27,6 +27,11 @@ pub enum GitError {
     Network(String),
     #[error("parse: {0}")]
     Parse(String),
+    /// A commit asked for isn't in the repository (a head force-pushed
+    /// away, a stale last-seen sha): an expected state the caller falls
+    /// back from, not a git failure.
+    #[error("commit {0} not found")]
+    MissingCommit(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("not supported: {0}")]
@@ -85,6 +90,7 @@ impl GitError {
             GitError::Auth(_) => "git.auth",
             GitError::Network(_) => "git.network",
             GitError::Parse(_) => "git.parse",
+            GitError::MissingCommit(_) => "git.commit_not_found",
             GitError::Io(_) => "git.io",
             GitError::Unsupported(_) => "git.unsupported",
             GitError::Refused(_) => "git.refused",

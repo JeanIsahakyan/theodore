@@ -131,6 +131,10 @@ export function newOpId(): string {
  *  not toasted. */
 export const HOST_UNSUPPORTED = 'host.unsupported';
 
+/** A commit asked for isn't in the repo (a stale last-seen sha, a head
+ *  force-pushed away): the caller forgets it, no toast. */
+export const COMMIT_NOT_FOUND = 'commit_not_found';
+
 /** A command rejected; carries the core's error code, not just a message. */
 export class CommandFailure extends Error {
   readonly code: string;
@@ -278,8 +282,14 @@ export const api = {
     call<SkillBody>('get_skill', { id, pr }),
   saveSkill: (req: SaveSkillRequest) => call<SkillInfo>('save_skill', { req }),
   pickFolder: () => call<string | null>('pick_folder'),
+  /** A last-seen sha that's gone (`commit_not_found`) isn't toasted: the
+   *  review forgets it and compares with nothing. */
   interdiff: (req: InterdiffRequest) =>
-    call<InterdiffEntry[]>('interdiff', { req }),
+    call<InterdiffEntry[]>(
+      'interdiff',
+      { req },
+      (f) => f.code === COMMIT_NOT_FOUND,
+    ),
   loginStart: () => call<DeviceLogin>('login_start'),
   loginPoll: () => call<LoginState>('login_poll'),
   rerunCheck: (req: RerunCheckRequest) => call<null>('rerun_check', { req }),

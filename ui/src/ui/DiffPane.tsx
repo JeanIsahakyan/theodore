@@ -51,7 +51,7 @@ import {
   useShikiVersion,
   type Tok,
 } from '../highlight';
-import { api } from '../core/api';
+import { api, COMMIT_NOT_FOUND, CommandFailure } from '../core/api';
 import { countRender } from '../core/perf';
 import type {
   Anchor,
@@ -294,6 +294,9 @@ export const DiffPane = observer(function DiffPane({
   askAi = true,
   /** More items for a file's menu (a space's diff: Revert). */
   fileItems,
+  /** The baseline's commit is gone (force-pushed away, a fresh clone):
+   *  `Review` forgets it, quietly. */
+  onBaselineGone,
 }: {
   pr: PrId;
   rev: Revision;
@@ -310,6 +313,7 @@ export const DiffPane = observer(function DiffPane({
   nextGroup?: boolean;
   askAi?: boolean;
   fileItems?: (file: FileDiff) => ContextMenuItem[];
+  onBaselineGone?: () => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -365,6 +369,8 @@ export const DiffPane = observer(function DiffPane({
     }),
     [setComposer, diffPaths, findHunk, askAi, fileItems],
   );
+  const baselineGone = useRef(onBaselineGone);
+  baselineGone.current = onBaselineGone;
   const [interdiffEntries, setInterdiffEntries] = useState<
     InterdiffEntry[] | null
   >(null);
@@ -380,7 +386,12 @@ export const DiffPane = observer(function DiffPane({
     api
       .interdiff({ pr, base_sha: baselineSha, file: null })
       .then((entries) => live && setInterdiffEntries(entries))
-      .catch(() => live && setInterdiffEntries(null));
+      .catch((e: unknown) => {
+        if (!live) return;
+        setInterdiffEntries(null);
+        if (e instanceof CommandFailure && e.code === COMMIT_NOT_FOUND)
+          baselineGone.current?.();
+      });
     return () => {
       live = false;
     };

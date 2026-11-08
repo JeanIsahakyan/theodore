@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use theodore_domain::{FileFlag, Revision, Sha};
-use theodore_ports::{DiffOptions, GitError, GitResult};
+use theodore_ports::{DiffOptions, GitError, GitPort, GitResult};
 
 use crate::GitCli;
 use crate::generated::GitAttributes;
@@ -34,15 +34,30 @@ impl GitCli {
         numstat_args.push("--numstat");
         numstat_args.push("-z");
         numstat_args.push(&range);
-        let numstat_bytes = GitProc {
+        let numstat_bytes = match (GitProc {
             cwd: repo,
             askpass: &askpass,
             args: &numstat_args,
             token: None,
             stdin: None,
-        }
+        })
         .run()
-        .await?;
+        .await
+        {
+            Ok(bytes) => bytes,
+            Err(e @ GitError::Command { .. }) => {
+                // A stale sha (a last-seen head force-pushed away) is "commit
+                // not found", which callers fall back from; anything else
+                // stays git's own failure.
+                for sha in [base, head] {
+                    if !self.has_commit(repo, sha).await.unwrap_or(true) {
+                        return Err(GitError::MissingCommit(sha.as_str().to_string()));
+                    }
+                }
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
         let numstat = parse::parse_numstat(&numstat_bytes);
 
         let mut full_args = common;

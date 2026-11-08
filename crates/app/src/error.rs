@@ -98,6 +98,7 @@ impl AppError {
                 | AppError::Git(theodore_ports::GitError::Refused(_))
                 | AppError::Git(theodore_ports::GitError::Busy(_))
                 | AppError::Git(theodore_ports::GitError::Unsupported(_))
+                | AppError::Git(theodore_ports::GitError::MissingCommit(_))
         )
     }
 }
