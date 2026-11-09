@@ -39,6 +39,12 @@
   line-height: 0;
 }
 
+/* Under a pixel of arc on the rim reads as nothing: darker on top of wider
+   (strokeTier). Before the dark rules, which win at the same specificity. */
+.pn[data-small] {
+  --pn-spin: color-mix(in oklab, var(--pn-accent) 25%, black);
+}
+
 .dark .pn,
 [data-theme='dark'] .pn {
   --pn-rim: color-mix(in oklab, var(--pn-accent) 55%, white);

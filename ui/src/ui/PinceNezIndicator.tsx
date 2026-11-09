@@ -40,11 +40,13 @@ export interface PinceNezIndicatorProps {
   className?: string;
 }
 
-/** Thicker lines at small sizes, or they vanish. */
+/** Thicker lines at small sizes, or they vanish. The arcs sit on the rim: at
+ *  the smallest they stand out from it by being wider (and darker: CSS). */
 function strokeTier(size: number) {
-  if (size <= 24) return { rim: 36, stripe: 70 };
-  if (size <= 40) return { rim: 26, stripe: 56 };
-  return { rim: 18, stripe: 44 };
+  if (size <= 18) return { rim: 36, stripe: 70, spin: 64, small: true };
+  if (size <= 24) return { rim: 36, stripe: 70, spin: 36, small: false };
+  if (size <= 40) return { rim: 26, stripe: 56, spin: 26, small: false };
+  return { rim: 18, stripe: 44, spin: 18, small: false };
 }
 
 export function PinceNezIndicator({
@@ -59,7 +61,7 @@ export function PinceNezIndicator({
   const glassId = `pn-glass-${uid}`;
   const sweepId = `pn-sweep-${uid}`;
   const clipId = `pn-clip-${uid}`;
-  const { rim, stripe } = strokeTier(size);
+  const { rim, stripe, spin, small } = strokeTier(size);
 
   const a11y = decorative
     ? { 'aria-hidden': true as const }
@@ -70,6 +72,7 @@ export function PinceNezIndicator({
       className={className ? `pn ${className}` : 'pn'}
       data-state={state}
       data-loop={loop ? '' : undefined}
+      data-small={small ? '' : undefined}
       style={{ width: size, height: size }}
       {...a11y}
     >
@@ -153,7 +156,7 @@ export function PinceNezIndicator({
           </g>
 
           {/* loading arcs over the rim */}
-          <g className="pn-spin" strokeWidth={rim}>
+          <g className="pn-spin" strokeWidth={spin}>
             <circle className="pn-spin-l" cx="352" cy="500" r="150" />
             <circle className="pn-spin-r" cx="672" cy="500" r="150" />
           </g>

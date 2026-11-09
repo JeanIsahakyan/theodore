@@ -105,6 +105,28 @@ describe('its CSS', () => {
     expect(css).toMatch(/\[data-theme='dark'\] \.pn/);
   });
 
+  it('the arcs get wider and darker only at the smallest size', async () => {
+    const width = async (size: number) => {
+      m?.unmount();
+      m = await mount(<PinceNezIndicator state="loading" size={size} />);
+      return {
+        spin: m.host.querySelector('.pn-spin')!.getAttribute('stroke-width'),
+        rim: m.host.querySelector('.pn-rim')!.getAttribute('stroke-width'),
+        small: m.host.querySelector('.pn')!.hasAttribute('data-small'),
+      };
+    };
+    expect(await width(16)).toEqual({ spin: '64', rim: '36', small: true });
+    expect(await width(20)).toEqual({ spin: '36', rim: '36', small: false });
+    expect(await width(32)).toEqual({ spin: '26', rim: '26', small: false });
+  });
+
+  it('a dark theme keeps its white arcs at the smallest size', () => {
+    expect(css.indexOf('.pn[data-small]')).toBeGreaterThan(-1);
+    expect(css.indexOf('.pn[data-small]')).toBeLessThan(
+      css.indexOf('.dark .pn'),
+    );
+  });
+
   it('error takes the danger token', () => {
     expect(css).toMatch(/--pn-error: var\(--danger/);
   });
