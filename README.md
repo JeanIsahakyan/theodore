@@ -69,6 +69,7 @@ Agents now write more code than people can read. Review is the bottleneck.
 | --- | --- |
 | ![Inbox](docs/screenshots/01-inbox.webp) **Inbox** — review requests, assignments and mentions in sections. | ![AI panel](docs/screenshots/04-ai-panel.webp) **AI panel** — ask about the change; the agent reads the diff. |
 | ![Task with an agent fix](docs/screenshots/10-tasks-agent-fix.webp) **Tasks** — an agent's fix comes back as a patch to accept or reject. | ![A space](docs/screenshots/12-space.webp) **A space** — the conversation beside the live diff, then Open PR. |
+| ![A command's output](docs/screenshots/19-space-command-output.webp) **Tool rows open** — a command in full, its exit code and output. | ![File hover](docs/screenshots/21-file-hover.webp) **Hover a file** — its diff in that turn. |
 
 All screenshots: [docs/screenshots](docs/screenshots/README.md).
 
@@ -101,6 +102,7 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 - Per-hunk read state, keyboard-driven reading.
 - Groupings are versioned: one from an older algorithm is redone on open; ↻ regroups from scratch.
 - Interdiff: after a push only new or changed hunks are flagged, with a "what changed" view.
+- A file's header stays pinned at the top of the pane while its diff scrolls, with Viewed in reach.
 - Markdown diffs get a rendered Preview; image diffs show side by side, swipe or onion skin.
 - ⌘-click an identifier for definitions and references across the worktree: code intelligence
   for that exact symbol when it is on, else `git grep` plus per-language patterns; the peek says
@@ -131,7 +133,9 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
   and the repo's `.claude/skills`.
 - Run one from the `/` list in the chat input: type to filter, Enter runs it; the list's footer
   has **Manage skills…**.
-- Several configured skill agents run in sequence; their findings merge.
+- A skill runs on the agent the panel's chip shows. Automatic runs (`review.auto_skills`) use the
+  `agents.skills` list, one agent after another, and merge the findings.
+- A question can carry files (📎, paste or drop). Each reply has copy, vote, and **Report this**.
 - A finding becomes a draft comment or a task, or gets a proposed fix attached.
 - Tasks: an agent edits inside the PR worktree.
   Accept commits and pushes (your own or a local PR) or drafts a suggestion (someone else's PR).
@@ -141,6 +145,8 @@ All screenshots: [docs/screenshots](docs/screenshots/README.md).
 - Merge, enqueue, auto-merge, update branch; change reviewers and draft state; re-run a check.
 - Conflicts are computed locally against the base branch tip with `git merge-tree --write-tree`,
   not read from the host's possibly stale mergeability flag.
+- Checks follow GitHub: the head's check runs and statuses are polled with their own ETags, so a
+  check that finishes shows up without a push.
 
 ### Hosts
 | | GitHub | GitLab | Bitbucket Cloud |
@@ -202,7 +208,16 @@ host project:  Open PR (one squashed commit on <login>/<slug>) ─▶ Push more 
 local folder:  Merge locally  ·  Keep as branch
 ```
 
-- Modes per turn: Ask (read only), Edit, Run (edit plus shell commands).
+- Start from a goal, an issue, a branch or a PR, or leave the form empty for a blank space: the
+  first message names it.
+- Agent, model, effort and mode are the space's own, picked in the dialog or above the composer;
+  they never change your settings.
+- Modes: Ask (read only), Plan (ends in a plan you approve), Edit, Run (edit plus shell commands).
+- Every tool row opens in place: a command's output, an edit's diff, a subagent's prompt, its steps
+  and report. Input and output are kept with the space (the newest 64 MB).
+- Hover a file in the chat for its diff in that turn.
+- The agent's status is the glasses mark on the space's sidebar row and tab, in the build's colour.
+- A message can carry files (📎, paste or drop). Each reply has copy, vote, and **Report this**.
 - The project config's `setup` / `run` / `check` / `archive` commands run with the space; logs on
   the space page, **Open app** for the `run` command's port.
 - Undo the last turn: worktree and ref go back to the previous checkpoint.
@@ -246,11 +261,13 @@ local folder:  Merge locally  ·  Keep as branch
 - Two remote sinks, off unless the build or settings configure them *and* you opt in (onboarding's
   "Help improve Theodore", or Settings → About & updates): error reports over OTLP (e.g. New
   Relic) and typed product events to PostHog.
-- Both use a random install id, not your account; repository names are hashed.
+- Identified by your Theodore account's id once you're signed in and have agreed, else an anonymous
+  id; a choice made before those terms is asked again. Repository names are hashed.
 - **Report a problem** (Help menu, Settings, the error screen) opens a public GitHub issue as you —
   your comment plus app info, optionally the newest redacted logs, previewed first — or just zips
-  the logs locally. **My reports** (Settings → About) follows the issues you opened: replies,
-  fixed, and the release with the fix. Events, codes, rules and settings: `docs/telemetry.md`.
+  the logs locally. **Report this** under a chat reply (or `/report`) files about that conversation.
+  **My reports** (Settings → About) follows the issues you opened: replies, fixed, and the release
+  with the fix. Events, codes, rules and settings: `docs/telemetry.md`.
 
 ## How it works
 
@@ -445,9 +462,6 @@ Git hooks (`lefthook install` once per clone):
   ad-hoc signed.
 - Linux and Windows builds — macOS (Apple Silicon) only.
 - GitLab OAuth/PKCE sign-in — personal access token only.
-- Skills on several agents in parallel (they run in sequence; findings still merge).
-- A Theodore server: the account sign-in is client-only; billing, sync and uploading problem
-  reports need one (reports are local zips for now).
-- Spaces: a "Send all to agent" footer and feedback tracked as tasks, a "Drafting" group in My PRs,
-  Threads / Checks tabs on the space page, per-turn diffs, deleting a space, a queue with a
-  parallel limit (`docs/spaces.md` §11).
+- A Theodore server: the account sign-in is client-only; billing and sync need one.
+- Spaces: feedback tracked as tasks, a "Drafting" group in My PRs, a per-turn diff view, deleting a
+  space, a parallel limit (`docs/spaces.md` §11).

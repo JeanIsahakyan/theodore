@@ -153,22 +153,21 @@ webview's own find there; `settings` has no sidebar to search either.
 ### New space
 
 ```
-┌ New space ──────────────────────────────────────┐
-│ Project    migratro                        ▾    │
-│ What should change?                             │
-│ ┌─────────────────────────────────────────────┐ │
-│ │ Retry the export job on 429s with backoff   │ │
-│ └─────────────────────────────────────────────┘ │
-│ Name       retry-export-429   (from the goal)   │
-│ Branch     ada/retry-export-429   from  main ▾  │
-│ Agent      claude ▾   Mode  Edit ▾              │
-│                              [Cancel] [Start ⏎] │
-└─────────────────────────────────────────────────┘
+┌ [migratro ▾] › New space ─────────────────────────────────────────┐
+│ ┌───────────────────────────────────────────────────────────────┐ │
+│ │ Retry the export job on 429s with backoff                     │ │
+│ │                                                               │ │
+│ │ [/] [Model ▾] [Edit ▾] [A new branch ▾] from main [Create ⏎]  │ │
+│ └───────────────────────────────────────────────────────────────┘ │
+│ The agent works in its own worktree.                              │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-"Start" creates the worktree and sends the goal as the first message — the
-first turn starts immediately. Name and branch are derived from the goal and
-editable. Create is enabled on an untouched form: see "A blank space" below.
+"Create" makes the worktree and sends the goal as the first message — the
+first turn starts immediately. The name and branch come from the goal
+(below); the dialog doesn't ask for them. "A new branch" can be swapped for
+an existing issue, branch or PR. Create is enabled on an untouched form: see
+"A blank space" below.
 
 The goal box is a space's composer: `/` lists the skills a space of this
 project would see (yours and the repo's at its default branch,
@@ -312,7 +311,7 @@ A live snapshot is never a checkpoint: no ref, no `turn_log` entry; the
 worktree's index isn't written (`status --no-optional-locks`).
 
 ```
-┌ ◐ fix-login-redirect ── ada/fix-login-redirect ← main ── Drafting ── $0.42 / $5.00 ┐
+┌ ◐ fix-login-redirect ── ada/fix-login-redirect ← main ── Drafting ─────────────────┐
 │ claude                             [Review] [Open PR ▾] [Archive]                │
 ├──────────── chat ──────────────────┬──────────── changes ────────────────────────┤
 │ you  The login page should send    │ 3 files  +42 −7   vs main · after turn 2    │
@@ -1588,7 +1587,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; live diff during a turn; sidebar section with the `⎇ #n` glyph; space page with chat + diff; Review opens the grouped review; crash → failed. Start from a goal, an issue (yours first, or a pasted URL / `#n`), a branch or a PR. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch), filled from the repo's PR template and linking back (`theodore://space/<id>`), and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Edit / Run; Archive button and `spaces.auto_archive_days`; Unarchive; Undo last turn (`turn_log`). In review on the space page: Changes · Threads · Checks tabs, Merge (`merge_space`: host default method, auto-merge, merge queue), Continue after merge (`continue_space`, `rounds`). "Send to agent" on a space PR's / own review's threads, drafts and findings, and the "Send N to agent" footer, both marking what was sent (`sent_feedback`). One agent session per space (Claude Code `--resume`, Codex `exec resume`); sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn. Background notifications and the dock badge (`spaces.notify`). Names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`). `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" for setup and "Fix with agent" on the Checks tab, sending a failing check's log (GitHub Actions) or link as one turn. Update from base (merge, never rebase): "Base moved: N commits behind", conflicts resolved by an agent turn, Complete merge / Abort. The agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer), `read_terminal` over `space_terminal_tail`. Interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit; `@terminal` in the composer attaching a terminal's tail as a text attachment. Mirroring into a local folder's own working tree — on / Sync now / off with Discard, at most one per folder, paused (not auto-written) across a restart (§6 "Mirror into a local folder") |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; live diff during a turn; sidebar section with the `⎇ #n` glyph; space page with chat + diff; Review opens the grouped review; crash → failed. Start from a goal, an issue (yours first, or a pasted URL / `#n`), a branch or a PR. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch), filled from the repo's PR template and linking back (`theodore://space/<id>`), and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Plan / Edit / Run; Archive button and `spaces.auto_archive_days`; Unarchive; Undo last turn (`turn_log`). In review on the space page: Changes · Threads · Checks tabs, Merge (`merge_space`: host default method, auto-merge, merge queue), Continue after merge (`continue_space`, `rounds`). "Send to agent" on a space PR's / own review's threads, drafts and findings, and the "Send N to agent" footer, both marking what was sent (`sent_feedback`). One agent session per space (Claude Code `--resume`, Codex `exec resume`); sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn. Background notifications and the dock badge (`spaces.notify`). Names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`). `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" for setup and "Fix with agent" on the Checks tab, sending a failing check's log (GitHub Actions) or link as one turn. Update from base (merge, never rebase): "Base moved: N commits behind", conflicts resolved by an agent turn, Complete merge / Abort. The agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer), `read_terminal` over `space_terminal_tail`. Interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit; `@terminal` in the composer attaching a terminal's tail as a text attachment. Mirroring into a local folder's own working tree — on / Sync now / off with Discard, at most one per folder, paused (not auto-written) across a restart (§6 "Mirror into a local folder") |
 | **v2** | My PRs "Drafting" group; feedback tracked as tasks; `space_run` rows and per-turn diffs; Delete and ref GC; `max_parallel`; Continue for a space merged locally or kept as a branch |
 | **Later** | OS sandbox for agents; signed shipped commits; spaces started from a failing check; several agents racing one goal, pick the best diff |
 
