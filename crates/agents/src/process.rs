@@ -692,6 +692,10 @@ async fn run_loop(
     }
 }
 
+/// How Claude Code's error result starts when a turn was interrupted before
+/// the model answered (`[ede_diagnostic] result_type=user …`).
+const INTERRUPT_DIAGNOSTIC: &str = "[ede_diagnostic]";
+
 /// Why an agent run ended in an `Error`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Failure {
@@ -701,6 +705,8 @@ enum Failure {
     Offline,
     /// The CLI has no valid credentials (the user's to fix).
     SignedOut,
+    /// The CLI's answer to an interrupt: the user pressed Stop.
+    Interrupted,
 }
 
 /// An `Error` whose message or stderr says the CLI couldn't reach its
@@ -716,6 +722,13 @@ fn classify_failure(ev: AgentEvent, agent: &str, stderr: &str) -> (AgentEvent, F
     else {
         return (ev, Failure::Crash);
     };
+    if message.starts_with(INTERRUPT_DIAGNOSTIC) {
+        let ev = AgentEvent::Error {
+            message,
+            stderr_tail,
+        };
+        return (ev, Failure::Interrupted);
+    }
     let said = |f: fn(&str) -> bool| f(&message) || f(&stderr_tail) || f(stderr);
     if said(is_connection_failure) {
         let ev = AgentEvent::Error {
@@ -768,6 +781,14 @@ fn log_terminal(
                 None => (None, stderr_tail.as_str()),
             };
             let tail = tail_of(tail, LOGGED_STDERR_TAIL);
+            if failure == Failure::Interrupted {
+                tracing::info!(
+                    agent = %log.agent,
+                    duration_ms = log.ms(),
+                    "agent run interrupted"
+                );
+                return;
+            }
             if failure == Failure::Offline {
                 tracing::info!(
                     error.code = AGENT_OFFLINE_CODE,
@@ -944,6 +965,15 @@ mod bounded_io_tests {
         let (line, truncated) = read_line_capped(&mut reader, 10).await.unwrap().unwrap();
         assert_eq!(line, "second");
         assert!(!truncated);
+    }
+
+    #[test]
+    fn an_interrupt_answer_isnt_a_crash() {
+        let ev = AgentEvent::Error {
+            message: "[ede_diagnostic] result_type=user stop_reason=null".into(),
+            stderr_tail: String::new(),
+        };
+        assert_eq!(classify_failure(ev, "claude", "").1, Failure::Interrupted);
     }
 
     #[tokio::test]
