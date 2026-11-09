@@ -196,9 +196,9 @@ describe('a subagent', () => {
     );
   });
 
-  it('with nothing reported is a plain row', async () => {
+  it('with nothing reported still opens, for what it was asked', async () => {
     await render(<TimelineRows steps={[{ ...agent, id: 'ag3', ok: true }]} />);
-    expect(m!.host.querySelector('button.turn-agent-line')).toBeNull();
+    expect(m!.host.querySelector('button.turn-agent-line')).not.toBeNull();
     expect(m!.host.textContent).toContain('Look around');
   });
 

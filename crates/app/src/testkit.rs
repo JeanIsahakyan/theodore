@@ -81,6 +81,8 @@ struct StoreState {
     outbox: Vec<OutboxItem>,
     next_outbox_id: u64,
     kv: HashMap<String, serde_json::Value>,
+    /// `(space, parts)` by `(run, call)`.
+    tool_payloads: HashMap<(String, String), (String, serde_json::Map<String, serde_json::Value>)>,
 }
 
 type ReadHook = Box<dyn FnOnce() + Send>;
@@ -104,6 +106,28 @@ impl FakeStore {
 }
 
 impl Store for FakeStore {
+    fn tool_payload_put(
+        &self,
+        key: &theodore_ports::ToolCallKey,
+        part: &str,
+        value: &serde_json::Value,
+    ) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        s.tool_payloads
+            .entry((key.run.clone(), key.call.clone()))
+            .or_insert_with(|| (key.space.clone(), serde_json::Map::new()))
+            .1
+            .insert(part.to_string(), value.clone());
+        Ok(())
+    }
+
+    fn tool_payload_get(&self, run: &str, call: &str) -> StoreResult<Option<serde_json::Value>> {
+        let s = self.0.lock().unwrap();
+        Ok(s.tool_payloads
+            .get(&(run.to_string(), call.to_string()))
+            .map(|(_, parts)| serde_json::Value::Object(parts.clone())))
+    }
+
     fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {
         let mut s = self.0.lock().unwrap();
         let mut out = Vec::new();

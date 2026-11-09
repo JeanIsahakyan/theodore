@@ -184,6 +184,15 @@ export type BootstrapScope =
 /**  Models of one open PR (lazy load). */
 { scope: "pr"; pr: PrId };
 
+/**
+ *  A stored piece of a tool call's text; `original_bytes` is set when it was
+ *  cut, and says how large it was.
+ */
+export type CappedText = {
+	text: string,
+	original_bytes?: number | null,
+};
+
 export type ChatMessage = {
 	id: string,
 	pr: PrId,
@@ -705,10 +714,7 @@ export type Ephemeral = { type: "agent_delta"; run: string; agent: AgentId; text
 { type: "run_step"; run: string; step: TurnStep } |
 /**  The tool call `id` of `run` ended, or (`ok` none) learned its summary. */
 { type: "run_step_done"; run: string; id: string; ok: boolean | null; summary: string | null;
-/**
- *  The call was a subagent launched in the background: its result
- *  only says it started.
- */
+/**  The call runs in the background: its result only says it started. */
 background?: boolean } |
 /**  The next `AgentDelta` of `run` starts a new text row. */
 { type: "run_text_break"; run: string } |
@@ -2535,6 +2541,51 @@ export type TokenSource = "keychain" | "gh" | "env" | "none" |
 /**  The simulated sandbox host (docs/sandbox.md): no real token at all. */
 "sandbox";
 
+/**  How a call that went to the background ended. */
+export type ToolEnd = {
+	/**  `completed`, `failed` or `stopped`. */
+	status: string,
+	summary?: string | null,
+	/**  Its final output, when the CLI kept it somewhere Theodore can read. */
+	output?: CappedText | null,
+	duration_ms?: number | null,
+};
+
+/**  What a tool call was given, as the agent sent it. */
+export type ToolInput = {
+	value: unknown,
+	original_bytes?: number | null,
+};
+
+/**
+ *  How a tool call's result came back. A call that went to the background has
+ *  its start here and its end in [`ToolEnd`].
+ */
+export type ToolOutcome = {
+	ok: boolean,
+	/**  The result's text, when the stream gave no separate stdout and stderr. */
+	output?: CappedText | null,
+	stdout?: CappedText | null,
+	stderr?: CappedText | null,
+	exit_code?: number | null,
+	duration_ms?: number | null,
+	interrupted?: boolean,
+	background?: boolean,
+};
+
+/**
+ *  All that's stored of one tool call, fetched when its row opens. Not part
+ *  of `TurnStep`: bootstrap and every sync frame stay light. Any part may be
+ *  missing; a call from before these were recorded has none.
+ */
+export type ToolPayload = {
+	input?: ToolInput | null,
+	result?: ToolOutcome | null,
+	/**  A subagent's whole report. */
+	report?: CappedText | null,
+	ended?: ToolEnd | null,
+};
+
 /**  One followed report. */
 export type TrackedReport = {
 	/**  `owner/name`. */
@@ -2625,8 +2676,9 @@ summary?: string | null;
 /**  Lines an edit adds and removes, from its input. */
 added?: number | null; removed?: number | null;
 /**
- *  A subagent launched in the background: its result only says it
- *  started, its report (`summary`) comes later, or never.
+ *  It runs in the background (a command, a monitor, a subagent): its
+ *  result only says it started, its end (`summary`) comes later, or
+ *  never.
  */
 background?: boolean };
 

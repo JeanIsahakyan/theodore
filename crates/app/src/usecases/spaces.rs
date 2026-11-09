@@ -27,6 +27,7 @@ use crate::usecases::live::LiveRun;
 use crate::usecases::projects::stable_hash_u32;
 use crate::usecases::skills::{expand_skill, space_skill_content};
 use crate::usecases::space_queue::TurnEnd;
+use crate::usecases::tool_payloads::ToolPayloads;
 use crate::usecases::turn_steps::TurnSteps;
 
 /// The `chat_message.pr` key a space's transcript is stored under.
@@ -958,6 +959,7 @@ async fn stream_run(
     req: AgentRequest,
     cancel: &CancellationToken,
     run_id: &str,
+    space: &str,
 ) -> Streamed {
     let agent = req.agent;
     let resumed = req.resume.is_some();
@@ -975,6 +977,7 @@ async fn stream_run(
         }
     };
     let mut live = LiveRun::new(run_id, agent);
+    let mut payloads = ToolPayloads::new(run_id, space);
     let _unsteer = Unsteer { core, run: run_id };
     // Stopped: the turn goes on until the process is gone, so its checkpoint
     // has the last writes and nothing starts on top of a dying agent.
@@ -1004,6 +1007,8 @@ async fn stream_run(
                     continue;
                 }
                 let event = with_worktree_paths(event, &cwd);
+                // Before the row hears of it: an open row re-reads on the news.
+                payloads.record(core, &event).await;
                 // Quiet because it waits on your answer, not stuck.
                 if !(event == AgentEvent::Stalled && core.asking(run_id)) {
                     live.show(core, &event);
@@ -1037,12 +1042,14 @@ async fn stream_run(
                     | AgentEvent::Nested { .. }
                     | AgentEvent::ToolCall { .. }
                     | AgentEvent::ToolResult { .. }
+                    | AgentEvent::ToolDetail { .. }
                     | AgentEvent::Stalled
                     | AgentEvent::Usage { .. } => {}
                 }
             }
         }
     }
+    payloads.finish(core).await;
     // Cut off mid-block (Stop): the deltas are all there is of it.
     let partial = std::mem::take(&mut out.partial);
     out.steps.record_cut_off(&partial);
@@ -1186,7 +1193,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     let started = std::time::Instant::now();
     // The diff follows the agent's edits while it works (no checkpoints).
     let live = crate::usecases::space_live_diff::start(core, &space.id, &cwd);
-    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id).await;
+    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id, &space.id).await;
     let session_gone = streamed.session_gone && !cancel.is_cancelled();
     if session_gone && let Some(replay) = replay {
         // The CLI lost it (cleaned up, another machine): once more as a new
@@ -1198,7 +1205,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         );
         req.resume = None;
         req.prompt = replay;
-        streamed = stream_run(core, req, &cancel, &run_id).await;
+        streamed = stream_run(core, req, &cancel, &run_id, &space.id).await;
     }
     let Streamed {
         text,

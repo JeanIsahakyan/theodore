@@ -28,6 +28,7 @@ import { MessageAttachments } from './attachments';
 import { AgentTag, Btn } from './bits';
 import { LiveText } from './RunLive';
 import { ToolCalls } from './ToolCalls';
+import { ToolRunContext } from './toolPayload';
 import {
   LiveTimeline,
   LiveTimer,
@@ -340,12 +341,14 @@ export function ChatMessage({
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={m.author.agent} tagged={tagged} badges={badges} />
         {!!m.activity?.length && (
-          <TurnActivity
-            reply={m.id}
-            steps={m.activity}
-            pinLastText={!!m.text_in_steps || !m.text.trim()}
-            keepText={!!m.failed}
-          />
+          <ToolRunContext.Provider value={m.run ?? null}>
+            <TurnActivity
+              reply={m.id}
+              steps={m.activity}
+              pinLastText={!!m.text_in_steps || !m.text.trim()}
+              keepText={!!m.failed}
+            />
+          </ToolRunContext.Provider>
         )}
         {m.failed && m.text && !m.text_in_steps && (
           <div className="text-sm leading-relaxed">
@@ -472,7 +475,9 @@ export const ChatLive = observer(function ChatLive({
         {!run ? (
           waiting
         ) : timeline ? (
-          <LiveTimeline run={run} fallback={waiting} />
+          <ToolRunContext.Provider value={run}>
+            <LiveTimeline run={run} fallback={waiting} />
+          </ToolRunContext.Provider>
         ) : (
           <LiveText run={run} fallback={waiting} />
         )}

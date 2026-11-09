@@ -22,7 +22,7 @@ use std::path::Path;
 
 use serde_json::Value;
 use theodore_domain::Usage;
-use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
+use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest, TaskEnd, ToolResultDetail};
 
 use crate::config::AgentBinaryConfig;
 use crate::edit_guard;
@@ -517,7 +517,7 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
         Some("system") => match v.get("subtype").and_then(Value::as_str) {
             // `init` opens every run with the session id `--resume` takes.
             Some("init") => session_event(&v).into_iter().collect(),
-            Some("task_notification") => task_report(&v).into_iter().collect(),
+            Some("task_notification") => task_report(&v),
             _ => vec![],
         },
         _ => vec![], // rate_limit_event/etc: not user-visible stream content
@@ -570,19 +570,45 @@ fn text_delta(event: &Value) -> Option<AgentEvent> {
     })
 }
 
-/// A background subagent done (2.1.319): its report, as the result of the
-/// call that started it. That call's own result only said it started.
-fn task_report(v: &Value) -> Option<AgentEvent> {
-    let id = v.get("tool_use_id").and_then(Value::as_str)?;
-    (!id.is_empty()).then(|| AgentEvent::ToolResult {
-        id: id.to_string(),
-        ok: v.get("status").and_then(Value::as_str) == Some("completed"),
-        output: v
-            .get("summary")
+/// A background task done (2.1.319): how it ended, then its report as the
+/// result of the call that started it. That call's own result only said it
+/// started. Only a `summary` line comes here, the output stays in
+/// `output_file`.
+fn task_report(v: &Value) -> Vec<AgentEvent> {
+    let Some(id) = v
+        .get("tool_use_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return vec![];
+    };
+    let text = |key: &str| {
+        v.get(key)
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-    })
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
+    let status = text("status").unwrap_or_default();
+    let summary = text("summary");
+    vec![
+        AgentEvent::ToolDetail {
+            id: id.to_string(),
+            detail: ToolResultDetail {
+                end: Some(TaskEnd {
+                    status: status.clone(),
+                    summary: summary.clone(),
+                    output_file: text("output_file"),
+                    duration_ms: v.pointer("/usage/duration_ms").and_then(Value::as_u64),
+                }),
+                ..ToolResultDetail::default()
+            },
+        },
+        AgentEvent::ToolResult {
+            id: id.to_string(),
+            ok: status == "completed",
+            output: summary.unwrap_or_default(),
+        },
+    ]
 }
 
 /// The CLI has nothing left to do (`session_state_changed`, 2.1.319).
@@ -652,22 +678,94 @@ fn tool_results(v: &Value) -> Vec<AgentEvent> {
     let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
         return vec![];
     };
-    blocks
+    let results: Vec<&Value> = blocks
         .iter()
         .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
-        .map(|b| {
+        .collect();
+    // The line's structured result is its one call's: a subagent's lines
+    // carry none.
+    let structured = (results.len() == 1)
+        .then(|| v.get("tool_use_result"))
+        .flatten();
+    results
+        .into_iter()
+        .flat_map(|b| {
             let is_error = b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
-            AgentEvent::ToolResult {
-                id: b
-                    .get("tool_use_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ok: !is_error,
-                output: stringify_tool_content(b.get("content")),
-            }
+            let id = b
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let output = stringify_tool_content(b.get("content"));
+            let detail = result_detail(structured, is_error, &output);
+            detail
+                .map(|detail| AgentEvent::ToolDetail {
+                    id: id.clone(),
+                    detail,
+                })
+                .into_iter()
+                .chain([AgentEvent::ToolResult {
+                    id,
+                    ok: !is_error,
+                    output,
+                }])
+                .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// What a command's result says beyond its text: `tool_use_result` holds its
+/// stdout and stderr, and a failure opens with `Exit code N`. A result of
+/// neither kind has nothing more to say.
+///
+/// ```text
+/// Bash ok            {stdout, stderr, interrupted}          exit 0
+/// Bash failed        "Error: Exit code 1…" (a string)       exit 1, from the text
+/// Bash in background {…, backgroundTaskId}                  no exit yet
+/// Agent in background {isAsync, status: "async_launched"}   no exit yet
+/// ```
+fn result_detail(
+    structured: Option<&Value>,
+    is_error: bool,
+    output: &str,
+) -> Option<ToolResultDetail> {
+    let object = structured.and_then(Value::as_object);
+    let field = |key: &str| object.and_then(|o| o.get(key));
+    let text = |key: &str| {
+        field(key)
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
+    let streams = object.is_some_and(|o| o.contains_key("stdout") || o.contains_key("stderr"));
+    let background = text("backgroundTaskId").is_some()
+        || field("isAsync").and_then(Value::as_bool) == Some(true);
+    let interrupted = field("interrupted").and_then(Value::as_bool) == Some(true);
+    let failed = is_error.then(|| exit_code_in(output)).flatten();
+    if !streams && !background && failed.is_none() {
+        return None;
+    }
+    Some(ToolResultDetail {
+        stdout: text("stdout"),
+        stderr: text("stderr"),
+        exit_code: failed.or((streams && !background && !interrupted && !is_error).then_some(0)),
+        interrupted,
+        background,
+        end: None,
+    })
+}
+
+/// `Exit code 2` on a failed command's first line.
+fn exit_code_in(output: &str) -> Option<i32> {
+    output
+        .trim_start()
+        .lines()
+        .next()?
+        .trim_start_matches("Error: ")
+        .strip_prefix("Exit code ")?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn stringify_tool_content(content: Option<&Value>) -> String {
@@ -1422,6 +1520,89 @@ mod model_and_effort_tests {
         assert_eq!(results.len(), 2, "{results:?}");
         assert!(results[0].1.starts_with("Async agent launched"));
         assert_eq!(results[1], (true, "pong"));
+    }
+
+    fn detail_of(line: &str) -> Option<ToolResultDetail> {
+        parse_line(line).into_iter().find_map(|e| match e {
+            AgentEvent::ToolDetail { detail, .. } => Some(detail),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_background_subagents_start_and_end_are_told_apart() {
+        let mut parser = ClaudeParser::new();
+        let events = background_run(&mut parser);
+        let details: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolDetail { id, detail } if id == "toolu_agent" => Some(detail),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(details.len(), 2, "{details:?}");
+        assert!(details[0].background && details[0].end.is_none());
+        let end = details[1].end.as_ref().unwrap();
+        assert_eq!(end.status, "completed");
+        assert_eq!(end.summary.as_deref(), Some("pong"));
+        assert_eq!(
+            end.output_file.as_deref(),
+            Some("/tmp/probe-tasks/a1.output")
+        );
+        assert_eq!(end.duration_ms, Some(1178));
+    }
+
+    /// The schema's fields (2.1.319). A `ToolDetail` comes first, so what
+    /// records the result can take both.
+    #[test]
+    fn a_commands_structured_result_gives_its_streams_and_exit_code() {
+        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"out\nerr"}]},"tool_use_result":{"stdout":"out\n","stderr":"err\n","interrupted":false,"isImage":false}}"#;
+        let events = parse_line(line);
+        assert!(matches!(
+            events.as_slice(),
+            [AgentEvent::ToolDetail { .. }, AgentEvent::ToolResult { .. }]
+        ));
+        let detail = detail_of(line).unwrap();
+        assert_eq!(detail.stdout.as_deref(), Some("out\n"));
+        assert_eq!(detail.stderr.as_deref(), Some("err\n"));
+        assert_eq!(detail.exit_code, Some(0));
+    }
+
+    #[test]
+    fn a_failed_commands_exit_code_comes_from_its_text() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 2\nls: nope"}]},"tool_use_result":"Error: Exit code 2\nls: nope"}"#;
+        assert_eq!(detail_of(line).unwrap().exit_code, Some(2));
+    }
+
+    #[test]
+    fn a_command_sent_to_the_background_has_no_exit_code_yet() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background"}]},"tool_use_result":{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"b1"}}"#;
+        let detail = detail_of(line).unwrap();
+        assert!(detail.background);
+        assert_eq!(detail.exit_code, None);
+        assert_eq!(detail.stdout, None);
+    }
+
+    #[test]
+    fn an_interrupted_command_has_no_exit_code() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"partial"}]},"tool_use_result":{"stdout":"partial","stderr":"","interrupted":true}}"#;
+        let detail = detail_of(line).unwrap();
+        assert!(detail.interrupted);
+        assert_eq!(detail.exit_code, None);
+    }
+
+    /// A result with no structured part, or a tool's own shape, adds nothing.
+    #[test]
+    fn other_results_stay_a_plain_result() {
+        for line in [
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"found"}]},"tool_use_result":{"filenames":["a"],"numFiles":1}}"#,
+        ] {
+            assert!(matches!(
+                parse_line(line).as_slice(),
+                [AgentEvent::ToolResult { .. }]
+            ));
+        }
     }
 
     /// The CLI takes the turn up again once the subagent is done: one `Done`,

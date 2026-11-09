@@ -328,6 +328,52 @@ with a tooltip.
 | question | `Waiting for your answer`, then `Asked you` | the question |
 | anything else | what it does | its target |
 
+**Every row opens in place** (click, chevron, Enter or Space; `aria-expanded`),
+with what a closed row can't say. The open state is kept like the others. Nothing
+is fetched or rendered until it opens; a failed call opens too, but stays closed
+by default so opening it fetches and grows nothing in the fold.
+
+```
+Run            command, whole and selectable · description · exit, time · stdout, stderr
+Read, search   arguments · the lines, matches or files
+Edit, Write    − old / + new from the input, or the content written
+MCP, own       arguments and result, JSON pretty-printed
+background     running in the background / how it ended, its final output
+Agent          prompt · type, model · status · its steps · the report, whole
+group          opens to its rows, each opens too
+```
+
+Where those come from:
+
+```
+ToolCall ─────────▶ input ┐
+ToolDetail ───────▶ held  │
+ToolResult ───────▶ result├─▶ tool_payloads (run, call) ─▶ tool_payload(run, call)
+ToolDetail{end} ──▶ ended │   not synced, no bootstrap      only when a row opens
+Handback, result ─▶ report┘
+```
+
+- `tool_payloads` is a table of its own: `TurnStep` keeps its light fields and
+  every sync frame stays small. A payload is written before its row hears of the
+  event, so a row that's open re-reads what just landed.
+- Bounds: 256 KB per text and per input, cut with the start and end kept and the
+  original size said in the row; 64 MB a space, the oldest calls going first
+  (`tool_payloads_prune`, end of each turn). Archive keeps them, like the chat
+  rows; **Delete** (not built) is to call `tool_payloads_delete_space`.
+- A turn from before this has no payload: the row opens with what the step knows
+  and says the full output wasn't recorded.
+- Reports stay one line per call: `report.rs` reads `activity`, never this table.
+
+| Stream | Has | Doesn't have |
+| --- | --- | --- |
+| Claude Code | input, result, stdout and stderr and interrupted (`tool_use_result`), exit code from a failure's text, background start, end (`task_notification`), subagent prompt and report | a subagent's calls carry no `tool_use_result`: only their combined text. A background command's final output needs `output_file`, read at the notification; it runs together stdout and stderr |
+| Codex | command, combined output, exit code, MCP arguments and result | stdout/stderr apart, a file change's row (it has no call event), a web search's results |
+| Gemini | arguments, output, error | stdout/stderr apart, exit code |
+
+A background command the turn outlives never reports back: the stream ends with
+the turn, and a turn isn't held for it the way it is for a background subagent.
+Its row says the turn ended first.
+
 Consecutive calls of one read-only tool, or to one MCP server, are one row once
 the turn is done: `Read 4 files` opens on them. Edits and commands stay a row
 each. Thinking is a muted one-line chip, opening as markdown.
@@ -1270,6 +1316,7 @@ New synced model `space` (core-owned, written only by commands):
 | --- | --- |
 | Transcript | `chat_message` rows with `pr = "space:<id>"` — the chat model, bootstrap and UI already work on it. A message waiting for its turn carries `queued` (§8); a reply carries its turn's `activity`, `duration_ms`, `changed_files` and `model` (§3 "A turn in the chat") |
 | Streaming text, tool and thinking lines | `Ephemeral::AgentDelta` / `RunLog` / `RunStep` / `RunStepDone` / `RunTextBreak` with run id `space:<id>:<msg>`; not persisted (the reply's `activity` is) |
+| A tool call's input and output | `tool_payloads` (run, call), apart from the models: not synced, read when its row opens (§3 "Every row opens in place") |
 | A turn | on the space row: `status`, `turns`, `head_sha`, and an entry in `turn_log` (what undo moves back to). Later: `space_run` rows (agent, mode, usage, session id) for per-turn diffs and native resume |
 | Code | the worktree and `refs/theodore/spaces/<id>` |
 
@@ -1312,7 +1359,8 @@ ship lock and leaves it alone.
 | Update from base (§6) | off: "Base moved" hides and the core refuses; Continue is the way onto the new base |
 | An Update from base still resolving | Continue waits: complete or abort it first |
 
-Not built yet: **Delete** (archive plus deleting the ref and the chat rows);
+Not built yet: **Delete** (archive plus deleting the ref, the chat rows and the
+tool payloads);
 **GC** (archived spaces whose branch was never pushed lose their ref after
 `spaces.gc_days`, 30); removing a project archiving its spaces first.
 

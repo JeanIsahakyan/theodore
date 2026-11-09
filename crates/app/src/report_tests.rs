@@ -137,6 +137,75 @@ fn row<'a>(rows: &'a [(String, String)], k: &str) -> Option<&'a str> {
     rows.iter().find(|(l, _)| l == k).map(|(_, v)| v.as_str())
 }
 
+/// A tool call's stored input and output open in its row, and never reach a
+/// report: that stays one line per call.
+#[tokio::test]
+async fn a_report_stays_one_line_per_call_however_much_a_call_stored() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let marker = "PAYLOAD-MARKER";
+    f.agents.push_script(vec![
+        AgentEvent::ToolCall {
+            id: "t1".into(),
+            name: "Bash".into(),
+            input: json!({"command": format!("cargo test\necho {marker}")}),
+        },
+        AgentEvent::ToolResult {
+            id: "t1".into(),
+            ok: true,
+            output: format!("output {marker}"),
+        },
+        AgentEvent::Done {
+            final_text: "done".into(),
+            usage: Usage::default(),
+        },
+    ]);
+    f.git.push_checkpoint(Sha::new("turn1"));
+    let s = core
+        .create_space(CreateSpaceRequest {
+            project: project.id.clone(),
+            goal: "First".into(),
+            name: None,
+            branch: None,
+            base: None,
+            agent: None,
+            model: None,
+            start_from: None,
+        })
+        .await
+        .unwrap();
+    idle(&f, &s.id).await;
+
+    let chat = transcript(&f, &s.id);
+    let reply = chat.iter().find(|m| m.text == "done").unwrap();
+    let run = reply.run.clone().unwrap();
+    let stored = core
+        .tool_payload(run, "t1".into())
+        .await
+        .unwrap()
+        .expect("the call's payload is stored");
+    assert!(
+        stored.result.unwrap().output.unwrap().text.contains(marker),
+        "the row has it"
+    );
+    assert!(
+        !format!("{:?}", reply.activity).contains(marker),
+        "and the synced steps don't: {:?}",
+        reply.activity
+    );
+
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(reply.id.clone())), None)
+        .await
+        .unwrap();
+    let context = core.report_context(&draft.id).await.unwrap().context;
+    assert_eq!(context.tools.len(), 1, "{:?}", context.tools);
+    assert!(
+        !format!("{context:?}").contains(marker),
+        "the report doesn't: {context:?}"
+    );
+}
+
 #[tokio::test]
 async fn report_this_on_a_reply_brings_its_turn_and_run() {
     let f = fixtures();

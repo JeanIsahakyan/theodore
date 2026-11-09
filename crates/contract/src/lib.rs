@@ -589,8 +589,7 @@ pub enum Ephemeral {
         id: String,
         ok: Option<bool>,
         summary: Option<String>,
-        /// The call was a subagent launched in the background: its result
-        /// only says it started.
+        /// The call runs in the background: its result only says it started.
         #[serde(default)]
         background: bool,
     },
@@ -809,8 +808,9 @@ pub enum TurnStep {
         added: Option<u32>,
         #[serde(default)]
         removed: Option<u32>,
-        /// A subagent launched in the background: its result only says it
-        /// started, its report (`summary`) comes later, or never.
+        /// It runs in the background (a command, a monitor, a subagent): its
+        /// result only says it started, its end (`summary`) comes later, or
+        /// never.
         #[serde(default)]
         background: bool,
     },
@@ -822,6 +822,76 @@ pub struct TurnFile {
     pub path: String,
     pub additions: u32,
     pub deletions: u32,
+}
+
+/// A stored piece of a tool call's text; `original_bytes` is set when it was
+/// cut, and says how large it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CappedText {
+    pub text: String,
+    #[serde(default)]
+    pub original_bytes: Option<u64>,
+}
+
+/// What a tool call was given, as the agent sent it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ToolInput {
+    #[specta(type = specta_typescript::Unknown)]
+    pub value: serde_json::Value,
+    #[serde(default)]
+    pub original_bytes: Option<u64>,
+}
+
+/// How a tool call's result came back. A call that went to the background has
+/// its start here and its end in [`ToolEnd`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ToolOutcome {
+    pub ok: bool,
+    /// The result's text, when the stream gave no separate stdout and stderr.
+    #[serde(default)]
+    pub output: Option<CappedText>,
+    #[serde(default)]
+    pub stdout: Option<CappedText>,
+    #[serde(default)]
+    pub stderr: Option<CappedText>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub interrupted: bool,
+    #[serde(default)]
+    pub background: bool,
+}
+
+/// How a call that went to the background ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ToolEnd {
+    /// `completed`, `failed` or `stopped`.
+    pub status: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// Its final output, when the CLI kept it somewhere Theodore can read.
+    #[serde(default)]
+    pub output: Option<CappedText>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+}
+
+/// All that's stored of one tool call, fetched when its row opens. Not part
+/// of `TurnStep`: bootstrap and every sync frame stay light. Any part may be
+/// missing; a call from before these were recorded has none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Type)]
+pub struct ToolPayload {
+    #[serde(default)]
+    pub input: Option<ToolInput>,
+    #[serde(default)]
+    pub result: Option<ToolOutcome>,
+    /// A subagent's whole report.
+    #[serde(default)]
+    pub report: Option<CappedText>,
+    #[serde(default)]
+    pub ended: Option<ToolEnd>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -913,6 +983,11 @@ pub fn types() -> specta::Types {
         .register::<ChatMessage>()
         .register::<TurnStep>()
         .register::<TurnFile>()
+        .register::<CappedText>()
+        .register::<ToolInput>()
+        .register::<ToolOutcome>()
+        .register::<ToolEnd>()
+        .register::<ToolPayload>()
         .register::<Attachment>()
         .register::<SaveAttachmentRequest>()
         .register::<Setting>()

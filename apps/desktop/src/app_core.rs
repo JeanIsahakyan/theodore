@@ -457,6 +457,13 @@ impl CoreApi for AppCore {
     async fn attachment_data(&self, id: String) -> Result<String, CommandError> {
         self.core.attachment_data(id).await.map_err(err)
     }
+    async fn tool_payload(
+        &self,
+        run: String,
+        call: String,
+    ) -> Result<Option<theodore_contract::ToolPayload>, CommandError> {
+        self.core.tool_payload(run, call).await.map_err(err)
+    }
     async fn cancel_run(&self, run: String) -> Result<(), CommandError> {
         self.core.cancel_run(run).await.map_err(err)
     }

@@ -33,6 +33,16 @@ export function stepFailed(step: ToolStep): boolean {
 const n = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
+/** `<1s`, `42s`, `1m 12s`, `1h 3m`. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return '<1s';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 // ── a row's words ───────────────────────────────────────────────────────────
 
 export interface ToolView {
@@ -79,7 +89,13 @@ export function toolView(step: ToolStep, running = false): ToolView {
   if (kind === 'agent') {
     return { ...view, label: step.detail ?? label, chip: null };
   }
-  if (kind === 'run') return { ...view, label: step.detail ?? label };
+  if (kind === 'run') {
+    return {
+      ...view,
+      label: step.detail ?? label,
+      note: step.background ? 'in background' : null,
+    };
+  }
   if (READS.has(step.name)) {
     return {
       ...view,
@@ -111,7 +127,7 @@ export function toolView(step: ToolStep, running = false): ToolView {
       removed: step.removed ?? null,
     };
   }
-  return view;
+  return step.background ? { ...view, note: 'in background' } : view;
 }
 
 // ── consecutive calls as one row ────────────────────────────────────────────

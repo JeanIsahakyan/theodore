@@ -43,6 +43,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::ask,
             commands::save_attachment,
             commands::attachment_data,
+            commands::tool_payload,
             commands::cancel_run,
             commands::submit_review,
             commands::detect_agents,

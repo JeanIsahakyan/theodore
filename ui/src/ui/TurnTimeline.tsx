@@ -44,9 +44,12 @@ import { Spinner } from './bits';
 import { FileTypeIcon } from './FileTypeIcon';
 import { useKeptOpen, useSteadyChange } from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
+import { AgentDetails, ToolDetails } from './ToolDetails';
+import { toolKey, useToolRun } from './toolPayload';
 import {
   fileChips,
   foldLine,
+  formatDuration,
   groupLabel,
   splitSteps,
   stepFailed,
@@ -70,15 +73,7 @@ const KIND_ICON: Record<ToolKind, ComponentType<{ className?: string }>> = {
 const NO_STEPS: readonly TurnStep[] = [];
 const ROW = 'flex min-w-0 items-center gap-1.5 text-[13px]';
 
-/** `<1s`, `42s`, `1m 12s`, `1h 3m`. */
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return '<1s';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
+export { formatDuration };
 
 function StepIcon({ busy, children }: { busy: boolean; children: ReactNode }) {
   return (
@@ -149,22 +144,47 @@ const ToolRow = memo(function ToolRow({
 }) {
   const view = toolView(step, running);
   const Icon = KIND_ICON[view.kind];
+  const key = toolKey(useToolRun(), step);
+  const [open, setOpen] = useKeptOpen(key && `tool:${key}`);
+  const steady = useSteadyChange();
+  const toggle = () => steady(() => setOpen(!open));
+  // A background task keeps going after its call has answered.
+  const waiting = !!step.background && !step.summary;
   return (
-    <div data-kind={view.kind} className={`turn-tool ${ROW}`}>
-      <StepIcon busy={running && step.ok == null}>
-        <Icon className="size-3.5" />
-      </StepIcon>
-      <span title={view.label} className="turn-tool-label min-w-0 truncate">
-        {view.label}
-      </span>
-      {view.chip && <Chip text={view.chip} file={view.isFile} />}
-      {view.note && (
-        <span className="turn-tool-note shrink-0 text-xs text-muted">
-          {view.note}
+    <div data-kind={view.kind} className="turn-tool min-w-0">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        className={`turn-tool-line cursor-pointer ${ROW}`}
+        onClick={() => {
+          // Selecting the row's text isn't a click on it.
+          if (window.getSelection()?.isCollapsed === false) return;
+          toggle();
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          toggle();
+        }}
+      >
+        <StepIcon busy={running && (step.ok == null || waiting)}>
+          <Icon className="size-3.5" />
+        </StepIcon>
+        <span title={view.label} className="turn-tool-label min-w-0 truncate">
+          {view.label}
         </span>
-      )}
-      <LineCounts added={view.added} removed={view.removed} />
-      {stepFailed(step) && <Failed />}
+        {view.chip && <Chip text={view.chip} file={view.isFile} />}
+        {view.note && (
+          <span className="turn-tool-note shrink-0 text-xs text-muted">
+            {view.note}
+          </span>
+        )}
+        <LineCounts added={view.added} removed={view.removed} />
+        {stepFailed(step) && <Failed />}
+        <Chevron open={open} />
+      </div>
+      {open && <ToolDetails step={step} running={running} />}
     </div>
   );
 });
@@ -299,58 +319,45 @@ const AgentRow = memo(
     const waiting = !!step.background && !step.summary;
     const busy = running && (step.ok == null || waiting);
     const view = toolView(step, running);
-    const hasMore = own.length > 0 || !!step.summary;
     const beside = busy
       ? (latestOf(own) ?? (waiting ? 'running in background' : null))
       : (step.summary ?? (step.background ? 'ran in background' : null));
-    const line = (
-      <>
-        <StepIcon busy={busy}>
-          <Cpu className="size-3.5" />
-        </StepIcon>
-        <span title={view.label} className="min-w-0 shrink-0 truncate">
-          {view.label}
-        </span>
-        {hasMore && <Chevron open={open} />}
-        {beside && !open && (
-          <span
-            title={beside}
-            className="turn-agent-note min-w-0 truncate text-xs text-muted"
-          >
-            {beside}
-          </span>
-        )}
-        {stepFailed(step) && <Failed />}
-      </>
-    );
     return (
       <div data-kind="agent" className="turn-agent min-w-0">
-        {hasMore ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            className={`turn-agent-line w-full text-left ${ROW}`}
-            onClick={() => steady(() => setOpen(!open))}
-          >
-            {line}
-          </button>
-        ) : (
-          <div className={`turn-agent-line ${ROW}`}>{line}</div>
-        )}
+        <button
+          type="button"
+          aria-expanded={open}
+          className={`turn-agent-line w-full text-left ${ROW}`}
+          onClick={() => steady(() => setOpen(!open))}
+        >
+          <StepIcon busy={busy}>
+            <Cpu className="size-3.5" />
+          </StepIcon>
+          <span title={view.label} className="min-w-0 shrink-0 truncate">
+            {view.label}
+          </span>
+          <Chevron open={open} />
+          {beside && !open && (
+            <span
+              title={beside}
+              className="turn-agent-note min-w-0 truncate text-xs text-muted"
+            >
+              {beside}
+            </span>
+          )}
+          {stepFailed(step) && <Failed />}
+        </button>
         {open && (
           <div className="turn-agent-steps mt-2 flex flex-col gap-2 border-l border-separator ps-3">
-            <StepList
-              own={own}
-              under={NOTHING_UNDER}
-              options={busy ? { running: true } : { flat: true }}
-              keptAs={keptAs && `${keptAs}:a`}
-              running={busy}
-            />
-            {!busy && step.summary && (
-              <div className="turn-agent-summary text-xs text-muted">
-                {step.summary}
-              </div>
-            )}
+            <AgentDetails step={step} running={busy}>
+              <StepList
+                own={own}
+                under={NOTHING_UNDER}
+                options={busy ? { running: true } : { flat: true }}
+                keptAs={keptAs && `${keptAs}:a`}
+                running={busy}
+              />
+            </AgentDetails>
           </div>
         )}
       </div>

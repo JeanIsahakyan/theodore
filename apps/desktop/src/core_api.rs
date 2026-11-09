@@ -53,6 +53,12 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Attachment, CommandError>;
     /// A saved attachment as a `data:<mime>;base64,…` URL.
     async fn attachment_data(&self, id: String) -> Result<String, CommandError>;
+    /// What's stored of a tool call, for its row when opened; `None`: nothing.
+    async fn tool_payload(
+        &self,
+        run: String,
+        call: String,
+    ) -> Result<Option<theodore_contract::ToolPayload>, CommandError>;
     async fn cancel_run(&self, run: String) -> Result<(), CommandError>;
     async fn submit_review(&self, req: SubmitReviewRequest) -> Result<(), CommandError>;
     async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError>;
@@ -641,6 +647,13 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn attachment_data(&self, _id: String) -> Result<String, CommandError> {
+        Err(not_ready())
+    }
+    async fn tool_payload(
+        &self,
+        _run: String,
+        _call: String,
+    ) -> Result<Option<theodore_contract::ToolPayload>, CommandError> {
         Err(not_ready())
     }
     async fn cancel_run(&self, _run: String) -> Result<(), CommandError> {

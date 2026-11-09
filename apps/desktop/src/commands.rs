@@ -134,6 +134,18 @@ pub async fn attachment_data(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn tool_payload(
+    op: crate::op::Op,
+    run: String,
+    call: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Option<theodore_contract::ToolPayload>, CommandError> {
+    op.run(async move { core.tool_payload(run, call).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cancel_run(
     op: crate::op::Op,
     run: String,

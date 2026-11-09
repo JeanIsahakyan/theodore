@@ -20,7 +20,7 @@ use std::path::Path;
 
 use theodore_contract::{TurnFile, TurnStep};
 use theodore_domain::Sha;
-use theodore_ports::AgentEvent;
+use theodore_ports::{AgentEvent, TaskEnd};
 
 use crate::core::Core;
 use crate::usecases::agents::{tool_label, tool_target};
@@ -48,6 +48,36 @@ pub(crate) fn launched_in_background(tool: &str, output: &str) -> bool {
     matches!(tool, "Agent" | "Task") && output.trim_start().starts_with(LAUNCHED)
 }
 
+/// Whether `output` is a subagent's own report: neither the pointer to its
+/// handback nor the note that it started in the background.
+pub(crate) fn is_agent_report(tool: &str, output: &str) -> bool {
+    matches!(tool, "Agent" | "Task")
+        && !output.contains("report was delivered")
+        && !launched_in_background(tool, output)
+        && !output.trim().is_empty()
+}
+
+/// Started to run in the background: the input asks for it, or the tool only
+/// ever runs that way.
+fn starts_in_background(name: &str, input: &serde_json::Value) -> bool {
+    name == "Monitor"
+        || input
+            .get("run_in_background")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+}
+
+/// What a background call's row says once it ended: the CLI's summary, or
+/// how it ended.
+pub(crate) fn end_summary(end: &TaskEnd) -> String {
+    let said = end
+        .summary
+        .as_deref()
+        .and_then(|s| s.lines().find(|l| !l.trim().is_empty()))
+        .unwrap_or(&end.status);
+    capped(said.trim(), SUMMARY_MAX)
+}
+
 /// The step a tool call starts as. `name` is what the agent called it.
 pub(crate) fn call_step(
     id: &str,
@@ -66,7 +96,7 @@ pub(crate) fn call_step(
         summary: None,
         added,
         removed,
-        background: false,
+        background: starts_in_background(name, input),
     }
 }
 
@@ -220,7 +250,7 @@ const FRAME_END: &str = "The report follows:";
 /// `report` without the frame the CLI wraps a subagent's report in. Only a
 /// first line that opens with the tag and says where the report starts
 /// counts as the frame; any other text is the report itself.
-fn unframed(report: &str) -> &str {
+pub(crate) fn unframed(report: &str) -> &str {
     let trimmed = report.trim_start();
     if !trimmed.starts_with(FRAME_TAG) {
         return report;
@@ -303,6 +333,14 @@ impl TurnSteps {
                     return;
                 }
                 self.push(call_step(id, parent, name, input));
+            }
+            AgentEvent::ToolDetail { id, detail } if !self.hidden.contains(id) => {
+                if detail.background {
+                    self.set_background(id);
+                }
+                if let Some(end) = &detail.end {
+                    self.set_result(id, None, Some(end_summary(end)));
+                }
             }
             AgentEvent::ToolResult {
                 id,
@@ -489,6 +527,95 @@ mod tests {
             ok,
             output: output.into(),
         }
+    }
+
+    fn background_step(events: &[AgentEvent]) -> (Option<bool>, Option<String>, bool) {
+        let (kept, _) = recorded(events).finish(Some(""));
+        match kept.as_slice() {
+            [
+                TurnStep::Tool {
+                    ok,
+                    summary,
+                    background,
+                    ..
+                },
+            ] => (*ok, summary.clone(), *background),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_command_in_the_background_is_marked_from_its_call_and_ends_with_its_notification() {
+        let call = AgentEvent::ToolCall {
+            id: "b".into(),
+            name: "Bash".into(),
+            input: serde_json::json!({ "command": "sleep 1", "run_in_background": true }),
+        };
+        let started = background_step(&[call.clone(), result("b", true, "running as b1")]);
+        assert_eq!(started, (Some(true), None, true));
+
+        let end = AgentEvent::ToolDetail {
+            id: "b".into(),
+            detail: theodore_ports::ToolResultDetail {
+                end: Some(TaskEnd {
+                    status: "failed".into(),
+                    summary: Some("exited with code 1\nmore".into()),
+                    output_file: None,
+                    duration_ms: None,
+                }),
+                ..Default::default()
+            },
+        };
+        let ended = background_step(&[
+            call,
+            result("b", true, "running as b1"),
+            end,
+            result("b", false, "exited with code 1"),
+        ]);
+        assert_eq!(
+            ended,
+            (Some(false), Some("exited with code 1".to_string()), true)
+        );
+    }
+
+    #[test]
+    fn a_command_the_cli_sent_to_the_background_is_marked_when_it_says_so() {
+        let moved = AgentEvent::ToolDetail {
+            id: "c1".into(),
+            detail: theodore_ports::ToolResultDetail {
+                background: true,
+                ..Default::default()
+            },
+        };
+        let (_, _, background) =
+            background_step(&[call("c1"), moved, result("c1", true, "running")]);
+        assert!(background);
+    }
+
+    #[test]
+    fn a_monitor_runs_in_the_background() {
+        let monitor = AgentEvent::ToolCall {
+            id: "m".into(),
+            name: "Monitor".into(),
+            input: serde_json::json!({ "command": "tail -f x" }),
+        };
+        let (_, _, background) = background_step(&[monitor]);
+        assert!(background);
+    }
+
+    #[test]
+    fn an_agent_report_is_its_own_text_only() {
+        assert!(is_agent_report("Agent", "All fine."));
+        assert!(!is_agent_report("Agent", ""));
+        assert!(!is_agent_report(
+            "Agent",
+            "This agent's report was delivered"
+        ));
+        assert!(!is_agent_report(
+            "Agent",
+            "Async agent launched successfully."
+        ));
+        assert!(!is_agent_report("Bash", "All fine."));
     }
 
     fn nested(parent: &str, event: AgentEvent) -> AgentEvent {

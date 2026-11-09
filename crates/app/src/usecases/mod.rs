@@ -49,5 +49,6 @@ pub mod symbols;
 pub mod tasks;
 pub mod telemetry;
 pub mod threads;
+pub mod tool_payloads;
 pub mod triage;
 pub(crate) mod turn_steps;

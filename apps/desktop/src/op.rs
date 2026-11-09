@@ -27,6 +27,7 @@ const CHATTY: &[&str] = &[
     "get_file",
     "get_blob",
     "attachment_data",
+    "tool_payload",
     "interdiff",
     "find_symbol",
     "space_logs",
