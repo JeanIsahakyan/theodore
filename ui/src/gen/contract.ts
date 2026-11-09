@@ -810,6 +810,35 @@ export type FileFlag = { kind: "binary"; old_size: number | null; new_size: numb
 /**  Over the size limit; hunks omitted. */
 { kind: "oversize"; lines: number };
 
+/**
+ *  What hovering a file shows. Every list in it is capped; `more_lines` says
+ *  how much of what was read didn't fit.
+ */
+export type FilePreview =
+/**  It changed: its diff, at most `PREVIEW_MAX_LINES` lines. */
+{ kind: "diff"; file: FileDiff; more_lines: number } |
+/**
+ *  It only was read, or the diff is too big to show: its first lines.
+ *  `cut`: the file is longer than what was read, `more_lines` counts only
+ *  what was.
+ */
+{ kind: "text"; text: string; bytes: number; more_lines: number; cut: boolean } | { kind: "image"; mime: string; base64: string; bytes: number } | { kind: "unavailable"; reason: PreviewGap; bytes: number | null };
+
+export type FilePreviewAnswer = {
+	preview: FilePreview,
+	/**
+	 *  The file as of its turn or the PR's head, which doesn't change. `false`:
+	 *  the worktree as it is now, which a later hover may see differently.
+	 */
+	pinned: boolean,
+};
+
+export type FilePreviewRequest = {
+	source: PreviewSource,
+	/**  Relative to the repo's root. */
+	path: string,
+};
+
 export type FileRequest = {
 	pr: PrId,
 	rev: Sha,
@@ -1301,6 +1330,19 @@ export type PrSummary = {
 	 */
 	stack?: StackInfo | null,
 };
+
+/**  Why a file shows no preview. */
+export type PreviewGap = "missing" | "binary" | "too_large";
+
+/**  Where a file chip in a chat looks its file up (`file_preview`). */
+export type PreviewSource =
+/**
+ *  A space's chat. `reply`: the agent's reply, whose turn it is; none: the
+ *  turn still running.
+ */
+{ kind: "space"; space: string; reply: string | null } |
+/**  The review's AI panel: the PR's own diff. */
+{ kind: "pr"; pr: PrId };
 
 /**
  *  A problem report built on disk for the user to review: nothing is

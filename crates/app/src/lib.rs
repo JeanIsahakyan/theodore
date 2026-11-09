@@ -40,6 +40,8 @@ mod config_editor_tests;
 #[cfg(test)]
 mod diff_media_integration_tests;
 #[cfg(test)]
+mod file_preview_tests;
+#[cfg(test)]
 mod interdiff_tests;
 #[cfg(test)]
 mod linear_tests;

@@ -9,14 +9,14 @@ use theodore_contract::{
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
     BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
-    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
-    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FilePreviewAnswer, FilePreviewRequest,
+    FileRequest, FindSymbolRequest, GetBlobRequest, HostAuthStatus, InterdiffEntry,
+    InterdiffRequest, LinearIssue, LinearIssuesRequest, LinearStatus, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest,
+    SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_contract::{
     OpenTerminalRequest, ResizeTerminalRequest, SpaceTerminalInfo, TerminalMention,
@@ -119,6 +119,10 @@ pub trait CoreApi: Send + Sync {
     async fn find_symbol(&self, req: FindSymbolRequest) -> Result<Vec<SymbolHit>, CommandError>;
     /// Raw bytes of a changed file at `base`/`head`, base64'd (plan "image diff").
     async fn get_blob(&self, req: GetBlobRequest) -> Result<BlobResponse, CommandError>;
+    async fn file_preview(
+        &self,
+        req: FilePreviewRequest,
+    ) -> Result<FilePreviewAnswer, CommandError>;
     /// Locally-detected conflicting paths (plan "conflicts"); `Unsupported`
     /// on a `git` older than 2.38 — the UI hides the list on that code.
     async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError>;
@@ -792,6 +796,12 @@ impl CoreApi for NotReadyCoreApi {
         Err(not_ready())
     }
     async fn get_blob(&self, _req: GetBlobRequest) -> Result<BlobResponse, CommandError> {
+        Err(not_ready())
+    }
+    async fn file_preview(
+        &self,
+        _req: FilePreviewRequest,
+    ) -> Result<FilePreviewAnswer, CommandError> {
         Err(not_ready())
     }
     async fn conflicts(&self, _pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {

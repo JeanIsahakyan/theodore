@@ -8,14 +8,14 @@ use tauri::{AppHandle, State};
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
     BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
-    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
-    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FilePreviewAnswer, FilePreviewRequest,
+    FileRequest, FindSymbolRequest, GetBlobRequest, HostAuthStatus, InterdiffEntry,
+    InterdiffRequest, LinearIssue, LinearIssuesRequest, LinearStatus, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest,
+    SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 
@@ -631,6 +631,17 @@ pub async fn get_blob(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<BlobResponse, CommandError> {
     op.run(async move { core.get_blob(req).await }).await
+}
+
+/// Hovering a file in a chat: its diff for that turn, or a preview.
+#[tauri::command]
+#[specta::specta]
+pub async fn file_preview(
+    op: crate::op::Op,
+    req: FilePreviewRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<FilePreviewAnswer, CommandError> {
+    op.run(async move { core.file_preview(req).await }).await
 }
 
 #[tauri::command]

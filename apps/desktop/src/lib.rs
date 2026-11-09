@@ -89,6 +89,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::linear_issues,
             commands::find_symbol,
             commands::get_blob,
+            commands::file_preview,
             commands::conflicts,
             commands::sandbox_status,
             commands::sandbox_set_fault,

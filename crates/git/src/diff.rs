@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use theodore_domain::{FileFlag, Revision, Sha};
+use theodore_domain::{FileDiff, FileFlag, Revision, Sha};
 use theodore_ports::{DiffOptions, GitError, GitPort, GitResult};
 
 use crate::GitCli;
@@ -22,6 +22,44 @@ impl GitCli {
     ) -> GitResult<Revision> {
         let askpass = self.ensure_askpass()?;
         let range = format!("{}...{}", base.as_str(), head.as_str());
+        let files = self
+            .diff_files(repo, &askpass, (base, head), &[&range], opts)
+            .await?;
+        Ok(Revision {
+            base: base.clone(),
+            head: head.clone(),
+            files,
+        })
+    }
+
+    pub(crate) async fn diff_file_op(
+        &self,
+        repo: &Path,
+        from: &Sha,
+        to: &Sha,
+        path: &str,
+        opts: &DiffOptions,
+    ) -> GitResult<Option<FileDiff>> {
+        let askpass = self.ensure_askpass()?;
+        // `literal`: a path is a path, `*` and `:` in it are no pattern.
+        let pathspec = format!(":(literal){path}");
+        let revs = [from.as_str(), to.as_str(), "--", pathspec.as_str()];
+        let files = self
+            .diff_files(repo, &askpass, (from, to), &revs, opts)
+            .await?;
+        Ok(files.into_iter().next())
+    }
+
+    /// `git diff <revs>` parsed into files. `base` and `head` are the commits
+    /// `revs` names; `head`'s `.gitattributes` applies.
+    async fn diff_files(
+        &self,
+        repo: &Path,
+        askpass: &Path,
+        (base, head): (&Sha, &Sha),
+        revs: &[&str],
+        opts: &DiffOptions,
+    ) -> GitResult<Vec<FileDiff>> {
         let context_flag = format!("-U{}", opts.context);
 
         let mut common: Vec<&str> = vec!["diff", "--no-color", "--no-ext-diff"];
@@ -33,10 +71,10 @@ impl GitCli {
         let mut numstat_args = common.clone();
         numstat_args.push("--numstat");
         numstat_args.push("-z");
-        numstat_args.push(&range);
+        numstat_args.extend_from_slice(revs);
         let numstat_bytes = match (GitProc {
             cwd: repo,
-            askpass: &askpass,
+            askpass,
             args: &numstat_args,
             token: None,
             stdin: None,
@@ -62,10 +100,10 @@ impl GitCli {
 
         let mut full_args = common;
         full_args.push(&context_flag);
-        full_args.push(&range);
+        full_args.extend_from_slice(revs);
         let full_text = GitProc {
             cwd: repo,
-            askpass: &askpass,
+            askpass,
             args: &full_args,
             token: None,
             stdin: None,
@@ -84,16 +122,12 @@ impl GitCli {
 
         let mut parsed =
             parse::parse_unified_diff(&full_text, &numstat, &attrs, opts.max_file_lines);
-        self.resolve_binary_sizes(repo, &askpass, &mut parsed)
+        self.resolve_binary_sizes(repo, askpass, &mut parsed)
             .await?;
 
         let mut files: Vec<_> = parsed.into_iter().map(|p| p.file).collect();
         theodore_domain::interdiff::dedupe_hunk_ids(&mut files);
-        Ok(Revision {
-            base: base.clone(),
-            head: head.clone(),
-            files,
-        })
+        Ok(files)
     }
 
     pub(crate) async fn numstat_op(
@@ -155,6 +189,46 @@ impl GitCli {
             Err(GitError::Command { stderr, .. }) if looks_missing(&stderr) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    pub(crate) async fn blob_size_op(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+    ) -> GitResult<Option<u64>> {
+        let askpass = self.ensure_askpass()?;
+        let stdin = format!("{}:{path}\n", rev.as_str());
+        let out = GitProc {
+            cwd: repo,
+            askpass: &askpass,
+            args: &["cat-file", "--batch-check"],
+            token: None,
+            stdin: Some(stdin.as_bytes()),
+        }
+        .run_text()
+        .await?;
+        Ok(parse_batch_check(out.lines().next().unwrap_or_default()))
+    }
+
+    pub(crate) async fn blob_head_op(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+        max: usize,
+    ) -> GitResult<Vec<u8>> {
+        let askpass = self.ensure_askpass()?;
+        let spec = format!("{}:{path}", rev.as_str());
+        GitProc {
+            cwd: repo,
+            askpass: &askpass,
+            args: &["cat-file", "blob", &spec],
+            token: None,
+            stdin: None,
+        }
+        .run_head(max)
+        .await
     }
 
     /// Unified-diff text carries no byte sizes for binary files; batch-resolve
@@ -223,6 +297,14 @@ impl GitCli {
         }
         Ok(())
     }
+}
+
+/// `<sha> blob <size>` from `cat-file --batch-check`; `None` for `<name>
+/// missing` and for anything that isn't a file.
+fn parse_batch_check(line: &str) -> Option<u64> {
+    let mut fields = line.rsplit(' ');
+    let size = fields.next()?.parse().ok()?;
+    (fields.next()? == "blob").then_some(size)
 }
 
 fn is_zero_sha(sha: &str) -> bool {

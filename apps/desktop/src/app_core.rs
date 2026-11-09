@@ -10,14 +10,14 @@ use theodore_contract::{
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
     BootstrapScope, CommandError, CommitSuggestionsRequest, ConflictFile, DelegateRequest,
-    DeviceLogin, DraftStateRequest, EditCommentRequest, FileRequest, FindSymbolRequest,
-    GetBlobRequest, HostAuthStatus, InterdiffEntry, InterdiffRequest, LinearIssue,
-    LinearIssuesRequest, LinearStatus, LocalBranch, LoginState, MergeInfo, MergeRequest,
-    OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project, ReactRequest, ReplyRequest,
-    RerunCheckRequest, ResolveRequest, ReviewersRequest, RevisionRequest, RunSkillRequest,
-    SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest, SkillBody, SkillInfo,
-    SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction, TransactionResult,
-    TriageRequest, UpdateInfo,
+    DeviceLogin, DraftStateRequest, EditCommentRequest, FilePreviewAnswer, FilePreviewRequest,
+    FileRequest, FindSymbolRequest, GetBlobRequest, HostAuthStatus, InterdiffEntry,
+    InterdiffRequest, LinearIssue, LinearIssuesRequest, LinearStatus, LocalBranch, LoginState,
+    MergeInfo, MergeRequest, OpenBranchRequest, OpenPrRequest, OpenPrResponse, Project,
+    ReactRequest, ReplyRequest, RerunCheckRequest, ResolveRequest, ReviewersRequest,
+    RevisionRequest, RunSkillRequest, SaveSkillRequest, SetLinearTokenRequest, SetTokenRequest,
+    SkillBody, SkillInfo, SubmitReviewRequest, SymbolHit, SyncFrame, TaskDecision, Transaction,
+    TransactionResult, TriageRequest, UpdateInfo,
 };
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
 use theodore_ports::{HostError, IssueTracker, NewIssue};
@@ -638,6 +638,12 @@ impl CoreApi for AppCore {
     }
     async fn get_blob(&self, req: GetBlobRequest) -> Result<BlobResponse, CommandError> {
         self.core.get_blob(req).await.map_err(err)
+    }
+    async fn file_preview(
+        &self,
+        req: FilePreviewRequest,
+    ) -> Result<FilePreviewAnswer, CommandError> {
+        self.core.file_preview(req).await.map_err(err)
     }
     async fn conflicts(&self, pr: PrId) -> Result<Vec<ConflictFile>, CommandError> {
         self.core.conflicts(pr).await.map_err(err)

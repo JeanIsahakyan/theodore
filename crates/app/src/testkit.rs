@@ -406,6 +406,10 @@ pub struct FakeGit {
     head: Mutex<Sha>,
     revision: Mutex<Revision>,
     files: Mutex<HashMap<(String, String), Vec<u8>>>,
+    /// `diff_file`'s answers, by `(from, to, path)`; anything else: no change.
+    file_diffs: Mutex<HashMap<(String, String, String), theodore_domain::FileDiff>>,
+    /// `(from, to, path)` of every `diff_file`.
+    pub diff_file_calls: Mutex<Vec<(Sha, Sha, String)>>,
     /// Last `(branch, message)` passed to `commit_and_push`, for assertions.
     pub last_push: Mutex<Option<(String, String)>>,
     /// The author of that last `commit_and_push`.
@@ -567,6 +571,8 @@ impl FakeGit {
             head: Mutex::new(head),
             revision: Mutex::new(revision),
             files: Mutex::new(HashMap::new()),
+            file_diffs: Mutex::new(HashMap::new()),
+            diff_file_calls: Mutex::new(Vec::new()),
             last_push: Mutex::new(None),
             last_push_author: Mutex::new(None),
             push_responses: Mutex::new(VecDeque::new()),
@@ -721,6 +727,13 @@ impl FakeGit {
 
     pub fn set_revision(&self, revision: Revision) {
         *self.revision.lock().unwrap() = revision;
+    }
+
+    pub fn put_file_diff(&self, from: &Sha, to: &Sha, file: theodore_domain::FileDiff) {
+        self.file_diffs
+            .lock()
+            .unwrap()
+            .insert((from.0.clone(), to.0.clone(), file.path.clone()), file);
     }
 
     pub fn put_file(&self, rev: &Sha, path: &str, content: &[u8]) {
@@ -921,6 +934,39 @@ impl GitPort for FakeGit {
             .unwrap()
             .get(&(rev.0.clone(), path.to_string()))
             .cloned())
+    }
+    async fn diff_file(
+        &self,
+        _repo: &Path,
+        from: &Sha,
+        to: &Sha,
+        path: &str,
+        _opts: &DiffOptions,
+    ) -> GitResult<Option<theodore_domain::FileDiff>> {
+        self.diff_file_calls
+            .lock()
+            .unwrap()
+            .push((from.clone(), to.clone(), path.to_string()));
+        Ok(self
+            .file_diffs
+            .lock()
+            .unwrap()
+            .get(&(from.0.clone(), to.0.clone(), path.to_string()))
+            .cloned())
+    }
+    async fn blob_size(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<u64>> {
+        Ok(self.show(repo, rev, path).await?.map(|b| b.len() as u64))
+    }
+    async fn blob_head(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        path: &str,
+        max: usize,
+    ) -> GitResult<Vec<u8>> {
+        let mut bytes = self.show(repo, rev, path).await?.unwrap_or_default();
+        bytes.truncate(max);
+        Ok(bytes)
     }
     async fn commit_and_push(
         &self,

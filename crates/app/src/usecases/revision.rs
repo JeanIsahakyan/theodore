@@ -10,7 +10,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use theodore_contract::{
     BlobResponse, DiffSide, FileRequest, GetBlobRequest, RevisionRequest, models,
 };
-use theodore_domain::{HostKind, PrDetail, Revision};
+use theodore_domain::{HostKind, PrDetail, Revision, Sha};
 use theodore_ports::DiffOptions;
 
 use crate::core::{Core, RevisionEntry};
@@ -109,22 +109,42 @@ impl Core {
         Ok(self.0.deps.git.worktree(pr_ref, &at).await?.path)
     }
 
-    pub async fn get_file(&self, req: FileRequest) -> AppResult<Option<String>> {
-        self.ensure_open(&req.pr).await?;
-        let repo_path = {
+    /// Where an open PR's commits are: the repo its revisions came from, else
+    /// its clone.
+    pub(crate) async fn open_pr_repo(
+        &self,
+        pr: &theodore_domain::PrId,
+    ) -> AppResult<std::path::PathBuf> {
+        let known = {
             let revisions = self.0.revisions.read().await;
             revisions
                 .iter()
-                .find(|((pr, _), _)| *pr == req.pr)
+                .find(|((p, _), _)| p == pr)
                 .map(|(_, e)| e.repo_path.clone())
         };
-        let repo_path = match repo_path {
-            Some(p) => p,
+        match known {
+            Some(path) => Ok(path),
             None => {
-                let detail = self.load_pr_detail(&req.pr).await?;
-                self.0.deps.git.ensure_repo(&detail.summary.pr.repo).await?
+                let detail = self.load_pr_detail(pr).await?;
+                Ok(self.0.deps.git.ensure_repo(&detail.summary.pr.repo).await?)
             }
-        };
+        }
+    }
+
+    /// The commit a PR is at now.
+    pub(crate) async fn pr_head(&self, pr: &theodore_domain::PrId, detail: &PrDetail) -> Sha {
+        self.0
+            .current_head
+            .read()
+            .await
+            .get(pr)
+            .cloned()
+            .unwrap_or_else(|| detail.summary.head_sha.clone())
+    }
+
+    pub async fn get_file(&self, req: FileRequest) -> AppResult<Option<String>> {
+        self.ensure_open(&req.pr).await?;
+        let repo_path = self.open_pr_repo(&req.pr).await?;
         let bytes = self
             .0
             .deps
@@ -140,27 +160,10 @@ impl Core {
     pub async fn get_blob(&self, req: GetBlobRequest) -> AppResult<BlobResponse> {
         self.ensure_open(&req.pr).await?;
         let detail = self.load_pr_detail(&req.pr).await?;
-        let repo_path = {
-            let revisions = self.0.revisions.read().await;
-            revisions
-                .iter()
-                .find(|((pr, _), _)| *pr == req.pr)
-                .map(|(_, e)| e.repo_path.clone())
-        };
-        let repo_path = match repo_path {
-            Some(p) => p,
-            None => self.0.deps.git.ensure_repo(&detail.summary.pr.repo).await?,
-        };
+        let repo_path = self.open_pr_repo(&req.pr).await?;
         let sha = match req.side {
             DiffSide::Base => detail.base_sha.clone(),
-            DiffSide::Head => self
-                .0
-                .current_head
-                .read()
-                .await
-                .get(&req.pr)
-                .cloned()
-                .unwrap_or_else(|| detail.summary.head_sha.clone()),
+            DiffSide::Head => self.pr_head(&req.pr, &detail).await,
         };
         let bytes = self
             .0
@@ -196,10 +199,13 @@ impl Core {
     }
 }
 
+/// `mime_for` of anything that isn't a known image.
+pub(crate) const OPAQUE_MIME: &str = "application/octet-stream";
+
 /// Image mime type from a path's extension (plan "image diff"); anything
 /// else is treated as opaque binary — `get_blob` is only ever called for a
 /// path the UI already recognized as an image.
-fn mime_for(path: &str) -> &'static str {
+pub(crate) fn mime_for(path: &str) -> &'static str {
     let ext = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
@@ -212,7 +218,7 @@ fn mime_for(path: &str) -> &'static str {
         "webp" => "image/webp",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
-        _ => "application/octet-stream",
+        _ => OPAQUE_MIME,
     }
 }
 

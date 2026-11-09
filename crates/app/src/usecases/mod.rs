@@ -5,6 +5,7 @@ pub mod agents;
 pub mod attachments;
 pub mod code_intel;
 pub mod config_editor;
+pub mod file_preview;
 pub mod grouping;
 pub mod host;
 pub mod inbox;
