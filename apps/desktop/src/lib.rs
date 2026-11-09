@@ -13,6 +13,8 @@ pub mod gate;
 pub mod menu;
 pub mod notify;
 pub mod op;
+#[cfg(feature = "qa-driver")]
+mod qa_driver;
 pub mod quit;
 pub mod relocate;
 pub mod shell_path;
@@ -273,6 +275,8 @@ pub fn run(
         .setup(move |app| {
             builder.mount_events(app);
             let handle = app.handle().clone();
+            #[cfg(feature = "qa-driver")]
+            qa_driver::start(&handle);
             // `Theodore Dev` and the rest: the title Mission Control and the
             // Window menu show (`tauri.conf.json` has production's).
             if let Some(main) = app.get_webview_window("main") {
