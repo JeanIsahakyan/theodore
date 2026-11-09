@@ -418,16 +418,7 @@ impl Core {
                 .unwrap_or_else(|| a.as_str().to_string());
             row("Agent CLI", cli);
             row("Model", ran_model(f));
-            let effort = self
-                .setting_string(&format!("agents.{}.effort", a.as_str()), "")
-                .await;
-            row(
-                "Effort",
-                match effort.trim() {
-                    "" => "default".into(),
-                    e => e.to_string(),
-                },
-            );
+            row("Effort", ran_effort(f));
         }
         row(
             "Mode",
@@ -535,6 +526,21 @@ fn ran_model(f: &Found) -> String {
         // got; otherwise the run hasn't said yet.
         None => match f.space.as_ref().and_then(|sp| sp.model.clone()) {
             Some(m) => m,
+            None => "unknown (no reply yet)".into(),
+        },
+    }
+}
+
+/// The effort the reported run used, as `ran_model` does the model.
+fn ran_effort(f: &Found) -> String {
+    match &f.reply {
+        Some(r) => match (&r.effort, r.effort_resolved) {
+            (Some(e), _) => e.clone(),
+            (None, true) => "the CLI's default".into(),
+            (None, false) => "unknown (not recorded on this reply)".into(),
+        },
+        None => match f.space.as_ref().and_then(|sp| sp.effort.clone()) {
+            Some(e) => e,
             None => "unknown (no reply yet)".into(),
         },
     }

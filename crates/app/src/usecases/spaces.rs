@@ -391,6 +391,7 @@ impl Core {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
             vote: None,
             effort: None,
@@ -1285,6 +1286,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // reply records what ran, whatever the setting says later.
     let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, model).await;
     let ran_model = model.clone();
+    let effort = crate::agent_defaults::run_effort(&core.0.deps.store, agent, effort).await;
+    let ran_effort = effort.clone();
     let mut req = AgentRequest {
         agent,
         prompt,
@@ -1306,8 +1309,6 @@ async fn drive_turn(core: &Core, turn: Turn) {
         resume,
         stream_text: true,
     };
-    let ran_effort =
-        crate::agent_defaults::run_effort(&core.0.deps.store, agent, req.effort.clone()).await;
     let started = std::time::Instant::now();
     tracing::info!(
         space = %space.id,
@@ -1504,6 +1505,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         run: Some(run_id.clone()),
         vote: None,
         effort: ran_effort,
+        effort_resolved: true,
         mode: Some(mode),
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
@@ -2047,6 +2049,7 @@ mod tests {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
             vote: None,
             effort: None,

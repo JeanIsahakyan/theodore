@@ -975,9 +975,14 @@ pub struct ChatMessage {
     #[serde(default)]
     pub vote: Option<MessageVote>,
     /// The effort the reply's run asked for, the setting's default applied;
-    /// none: the CLI's default.
+    /// none: the CLI's default, on rows with `effort_resolved`.
     #[serde(default)]
     pub effort: Option<String>,
+    /// `effort` was recorded after the setting's default was applied, so
+    /// none means the CLI's default rather than "not recorded". Apart from
+    /// `model_resolved`: replies with that flag predate this field.
+    #[serde(default)]
+    pub effort_resolved: bool,
     /// The mode of the space turn that wrote this reply.
     #[serde(default)]
     pub mode: Option<SpaceMode>,

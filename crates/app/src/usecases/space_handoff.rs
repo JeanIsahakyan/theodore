@@ -123,6 +123,7 @@ mod tests {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
             vote: None,
             effort: None,

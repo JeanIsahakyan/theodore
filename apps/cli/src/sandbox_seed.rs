@@ -37,6 +37,7 @@ pub fn seed_messages(space: &str, turns: usize, now_ms: u64, tag: u64) -> Vec<Ch
         model: None,
         text_in_steps: false,
         model_resolved: false,
+        effort_resolved: false,
         run: None,
         vote: None,
         effort: None,

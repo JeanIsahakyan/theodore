@@ -447,6 +447,11 @@ async fn an_ai_panel_reply_brings_its_question() {
     assert_eq!(row(&c.rows, "Mode"), Some("ask (read-only)"));
     assert_eq!(row(&c.rows, "Took"), Some("3.0 s"));
     assert_eq!(row(&c.rows, "Space status"), None);
+    // A reply from before the effort was recorded: no guess from settings.
+    assert_eq!(
+        row(&c.rows, "Effort"),
+        Some("unknown (not recorded on this reply)")
+    );
     // A reply from before the model was recorded: no guess from settings.
     assert_eq!(
         row(&c.rows, "Model"),
@@ -509,6 +514,61 @@ async fn the_model_row_is_the_one_the_run_used_from_the_setting() {
         .unwrap();
     let r = core.report_context(&draft.id).await.unwrap();
     assert_eq!(row(&r.context.rows, "Model"), Some("claude-haiku-5-5"));
+}
+
+fn set_effort(f: &Fixtures, value: serde_json::Value) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: "user:agents.claude.effort".into(),
+            action: SyncActionCode::I,
+            data: Some(json!({ "key": "agents.claude.effort", "scope": "user", "value": value })),
+        }])
+        .unwrap();
+}
+
+/// The run's request and the reply carry one effort, and the report reads
+/// the reply: a report said `low` while its own log lines said `medium`.
+#[tokio::test]
+async fn the_effort_row_is_the_one_the_run_used_not_the_setting_now() {
+    let f = fixtures();
+    set_effort(&f, json!("medium"));
+    let (core, _recv, s) = two_turns(&f).await;
+    assert_eq!(
+        f.agents.last_request().unwrap().effort.as_deref(),
+        Some("medium"),
+        "the run got the setting's effort"
+    );
+    let chat = transcript(&f, &s.id);
+    let first = chat.iter().find(|m| m.text == "one").unwrap();
+    assert_eq!(first.effort.as_deref(), Some("medium"));
+    assert!(first.effort_resolved);
+
+    set_effort(&f, json!("low"));
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(first.id.clone())), None)
+        .await
+        .unwrap();
+    let r = core.report_context(&draft.id).await.unwrap();
+    assert_eq!(row(&r.context.rows, "Effort"), Some("medium"));
+}
+
+#[tokio::test]
+async fn the_effort_row_says_the_cli_default_only_when_it_was() {
+    let f = fixtures();
+    let (core, _recv, s) = two_turns(&f).await;
+    let chat = transcript(&f, &s.id);
+    let reply = chat.iter().find(|m| m.text == "two").unwrap();
+    assert_eq!(reply.effort, None);
+    assert!(reply.effort_resolved);
+    // Set after the run: not what it used.
+    set_effort(&f, json!("low"));
+    let draft = core
+        .draft_report(about(space_chat_key(&s.id), Some(reply.id.clone())), None)
+        .await
+        .unwrap();
+    let r = core.report_context(&draft.id).await.unwrap();
+    assert_eq!(row(&r.context.rows, "Effort"), Some("the CLI's default"));
 }
 
 #[tokio::test]

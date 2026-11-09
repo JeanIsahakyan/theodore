@@ -252,9 +252,15 @@ export type ChatMessage = {
 	vote?: MessageVote | null,
 	/**
 	 *  The effort the reply's run asked for, the setting's default applied;
-	 *  none: the CLI's default.
+	 *  none: the CLI's default, on rows with `effort_resolved`.
 	 */
 	effort?: string | null,
+	/**
+	 *  `effort` was recorded after the setting's default was applied, so
+	 *  none means the CLI's default rather than "not recorded". Apart from
+	 *  `model_resolved`: replies with that flag predate this field.
+	 */
+	effort_resolved?: boolean,
 	/**  The mode of the space turn that wrote this reply. */
 	mode?: SpaceMode | null,
 };

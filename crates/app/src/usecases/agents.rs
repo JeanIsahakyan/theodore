@@ -129,6 +129,7 @@ impl Core {
             model: None,
             text_in_steps: false,
             model_resolved: false,
+            effort_resolved: false,
             run: None,
             vote: None,
             effort: None,
@@ -570,18 +571,18 @@ pub(crate) async fn persist_failed_message(core: &Core, pr: &PrId, agent: AgentI
     persist_failed_run(core, pr, agent, text, None).await;
 }
 
-/// `persist_failed_message` for the run `run` (a chat question's) and the
-/// model it ran with: a report on it finds that run's logs and model.
+/// `persist_failed_message` for the run `run` (a chat question's) with the
+/// model and effort it ran with: a report on it finds that run's logs and them.
 async fn persist_failed_run(
     core: &Core,
     pr: &PrId,
     agent: AgentId,
     text: &str,
-    run: Option<(String, Option<String>)>,
+    run: Option<(String, Option<String>, Option<String>)>,
 ) {
-    let (run, model, model_resolved) = match run {
-        Some((run, model)) => (Some(run), model, true),
-        None => (None, None, false),
+    let (run, model, effort, resolved) = match run {
+        Some((run, model, effort)) => (Some(run), model, effort, true),
+        None => (None, None, None, false),
     };
     let message_id = uuid::Uuid::new_v4().to_string();
     let message = ChatMessage {
@@ -599,10 +600,11 @@ async fn persist_failed_run(
         changed_files: vec![],
         model,
         text_in_steps: false,
-        model_resolved,
+        model_resolved: resolved,
         run,
         vote: None,
-        effort: None,
+        effort,
+        effort_resolved: resolved,
         mode: None,
     };
     if let Ok(data) = serde_json::to_value(&message) {
@@ -797,7 +799,7 @@ async fn drive_ask(
             None => ASK_SYSTEM.into(),
         }));
     // Resolved here rather than by `AgentDefaults`: the reply records the
-    // model that ran, whatever the setting says later.
+    // model and effort that ran, whatever the settings say later.
     let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, None).await;
     let effort = crate::agent_defaults::run_effort(&core.0.deps.store, agent, None).await;
     let req = AgentRequest {
@@ -808,7 +810,7 @@ async fn drive_ask(
         mode: AgentMode::ReadOnly,
         mcp: mcp.clone(),
         model: model.clone(),
-        effort: None,
+        effort: effort.clone(),
         stall_after_ms: core.stall_after_ms().await,
         env: Vec::new(),
         // Spaces only (issue #16): a chat answer stays on Theodore's tools.
@@ -910,7 +912,7 @@ async fn drive_ask(
     // nothing was ever asked.
     if cancel.is_cancelled() || error.is_some() {
         let text = error.unwrap_or_else(|| "cancelled".into());
-        persist_failed_run(core, &pr, agent, &text, Some((run_id, model))).await;
+        persist_failed_run(core, &pr, agent, &text, Some((run_id, model, effort))).await;
         return;
     }
 
@@ -935,6 +937,7 @@ async fn drive_ask(
         run: Some(run_id),
         vote: None,
         effort,
+        effort_resolved: true,
         mode: None,
     };
     if let Ok(data) = serde_json::to_value(&reply) {

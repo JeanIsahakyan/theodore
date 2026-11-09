@@ -242,6 +242,7 @@ fn chat_message(pr: &str, id: &str, author: Author, at: i64, run: Option<&str>) 
         changed_files: vec![],
         model: Some("acme-private-model".into()),
         model_resolved: true,
+        effort_resolved: true,
         text_in_steps: false,
         run: run.map(str::to_string),
         vote: None,
