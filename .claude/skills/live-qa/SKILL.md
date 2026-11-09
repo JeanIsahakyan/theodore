@@ -21,13 +21,15 @@ stop_app
 
 Prefer the sandbox. Go live only for what it can't show.
 
+Before anything spends, on a run that starts agents: `q "return await setSetting('agents.claude.model', 'haiku')"`. Opening a PR groups it and skills run on the global model. A fresh data dir has no project: `docs/live-qa.md`, "First steps". Runs of one build share tabs, theme and UI state: `clear_ui_state` first if yours reads them.
+
 ## Rules
 
 - **Never fix code while testing.** Report it.
 - A live run needs `THEODORE_QA_REPO=<owner/name>` from whoever asked. None given: don't go live. It is the only repo you may write to.
 - `gh` only as `qa_gh`.
 - `report.github_repo` must be set first; `start_live` does it. Never open Report a problem otherwise.
-- Open Inbox and Pull requests rows only with `openRepoRow(row)`.
+- Open Inbox and Pull requests rows, and PR tabs, only with `await openRepoRow(row)`.
 - Don't read or change `~/.theodore*`, tokens or credentials.
 - Never raise the window, change the frontmost app or move the mouse: someone may be working on the same machine.
 - A local build is not for real use (AGENTS.md).

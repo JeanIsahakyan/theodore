@@ -3,6 +3,8 @@
 # <js> is a function body (`return …`) with the helpers of lib.js in scope.
 # Waits QA_WAIT tenths of a second (default 400, 40 s).
 d="$1"; js="$2"; id="q$$_$RANDOM"
+# Every call, with a timestamp: a `q` that times out keeps running in the page.
+log() { printf '%s %s %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$id" "$1" >>"$d/calls.log"; }
 if [ ! -d "$d/in" ]; then
   echo '{"err":"no driver at '"$d"': is the app running?"}'; exit 1
 fi
@@ -15,10 +17,13 @@ fi
   cat "$(dirname "$0")/lib.js"
   printf '%s\n' "$js"
 } > "$d/in/$id.tmp" && mv "$d/in/$id.tmp" "$d/in/$id.js"
+log "sent: $(printf %s "$js" | tr '\n' ' ' | cut -c1-200)"
 for _ in $(seq 1 "${QA_WAIT:-400}"); do
   if [ -f "$d/out/$id.json" ]; then
+    log "answered"
     cat "$d/out/$id.json"; echo; rm -f "$d/out/$id.json"; exit 0
   fi
   sleep 0.1
 done
+log "timed out: may still be running in the page"
 echo '{"err":"driver timeout"}'; exit 1

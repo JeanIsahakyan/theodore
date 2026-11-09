@@ -10,7 +10,7 @@
 QA=${QA:-/tmp/theodore-qa/run}
 THEODORE_QA_APP=${THEODORE_QA_APP:-/tmp/theodore-qa/app}
 QA_KIT=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
-QA_BIN=$THEODORE_QA_APP/Theodore.app/Contents/MacOS/theodore-app
+QA_BIN="$THEODORE_QA_APP/Theodore QA.app/Contents/MacOS/theodore-app"
 export QA THEODORE_QA_APP
 # The agents' MCP server runs the CLI.
 export THEODORE_CLI=$THEODORE_QA_APP/theodore
@@ -98,11 +98,35 @@ stop_app() {
   rm -f "$QA/driver/window" "$QA/pid"
 }
 
+# Prints whether this Mac's screen is locked: what a failed or blank capture
+# means depends on it.
+screen_locked() {
+  if ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked"=Yes'; then
+    echo locked
+  else
+    echo unlocked
+  fi
+}
+
 # Captures the app's window by number: never raises it, never touches the
-# frontmost app or the mouse. Fails if the Mac is really locked or asleep.
+# frontmost app or the mouse.
 shot() {
-  screencapture -x -o -l"$(cat "$QA/driver/window")" "$QA/$1.png" || return 1
+  if ! screencapture -x -o -l"$(cat "$QA/driver/window")" "$QA/$1.png"; then
+    if [ "$(screen_locked)" = locked ]; then
+      _qa_die "no capture: the screen is locked. Judge layout from the DOM and say so"
+    else
+      _qa_die "capture failed on an unlocked screen: is the app running (window $(cat "$QA/driver/window"))?"
+    fi
+    return 1
+  fi
   echo "$QA/$1.png"
+}
+
+# Forgets this build's tabs, theme and UI state, and reloads. Every run of a
+# QA build shares them (docs/live-qa.md): use it first when a run reads them.
+clear_ui_state() {
+  q 'localStorage.clear(); setTimeout(() => location.reload(), 100); return true' >/dev/null || return 1
+  sleep 4
 }
 
 # `gh`, scoped to THEODORE_QA_REPO: refuses anything it can't scope.
