@@ -21,7 +21,9 @@ stop_app
 
 Prefer the sandbox. Go live only for what it can't show.
 
-Before anything spends, on a run that starts agents: `q "return await setSetting('agents.claude.model', 'haiku')"`. Opening a PR groups it and skills run on the global model. A fresh data dir has no project: `docs/live-qa.md`, "First steps". Runs of one build share tabs, theme and UI state: `clear_ui_state` first if yours reads them.
+Before anything spends, on a run that starts agents: `q "return await setSetting('agents.claude.model', 'haiku')"`. Opening a PR groups it and skills run on the global model. A fresh data dir starts with `clear_ui_state` (or onboarding is skipped and stale tabs appear) and has no project: `docs/live-qa.md`, "First steps". Runs of one build share tabs, theme and UI state: `clear_ui_state` first if yours reads them. Consent dialogs need a local PostHog sink, a non-sandbox run and a faked sign-in: `docs/live-qa.md`, "Consent checks".
+
+`q` runs your JS in its own function scope, so a `const nav` shadows the helper. A syntax error in your JS shows up as a 40 s `driver timeout`; the SyntaxError is only in `$QA/app.log`.
 
 ## Rules
 

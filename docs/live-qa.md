@@ -61,7 +61,7 @@ stop_app
 | --- | --- |
 | `start_sandbox` | simulated host, from `theodore sandbox init` |
 | `start_live` | real GitHub; needs `THEODORE_QA_REPO` |
-| `q '<js>'` | run a function body (`return …`), helpers in scope |
+| `q '<js>'` | run a function body (`return …`) in its own scope, helpers in scope: a `const nav` of yours shadows that helper for that call |
 | `shot <name>` | capture the window to `$QA/<name>.png` |
 | `screen_locked` | `locked` or `unlocked`: what a failed or blank capture means |
 | `clear_ui_state` | forget this build's tabs, theme and UI state, and reload |
@@ -85,17 +85,36 @@ timed out.
 
 ## First steps on a fresh data dir
 
+Start with `clear_ui_state`: the data dir is fresh but the webview storage is
+the build's, so onboarding is skipped and an earlier run's tabs appear.
+
 No project yet means New space's Create stays disabled. Add one, and pick a
 cheap model before anything spends: opening a PR groups it, and skills run on
 the global model.
 
 ```sh
+clear_ui_state
 git init -q "$QA/repo" && git -C "$QA/repo" commit -q --allow-empty -m init
 q "return await inv('add_project', {req: {repo: null, path: '$QA/repo'}})"
 q "return await setSetting('agents.claude.model', 'haiku')"
 ```
 
 `ws()` only knows the sandbox's projects; for any other, click its name.
+
+## Consent checks
+
+The sharing and consent dialogs only show when a sink is configured, and a QA
+build has none compiled in. Point PostHog at a local sink before starting:
+
+```sh
+export THEODORE_POSTHOG_KEY=qa THEODORE_POSTHOG_HOST=http://127.0.0.1:9999
+```
+
+| Needs | Why |
+| --- | --- |
+| those two env vars | `telemetry_status` reports `usage_available: true` |
+| `start_live`, not `start_sandbox` | the sandbox allows no remote sinks and never shows the dialogs |
+| a faked sign-in | the "linked to your account" question needs a user, and a QA build has no sign-in: `account_status` has to answer with one |
 
 ## Sandbox or live
 
@@ -163,5 +182,6 @@ The login is real, so the app can see every repo it can. Sticking to
 | `shot` right after a theme change catches it mid-way | wait about 1 s first |
 | A `q` that times out keeps running in the page | it isn't cancelled: read `$QA/driver/calls.log` before trusting later state |
 | `inv` of an unknown command never answers | `q` gives up after 40 s; check the name in `ui/src/gen/bindings.ts` |
+| A syntax error in your script never answers either | `q` gives up after 40 s with `driver timeout`; the SyntaxError is only in `$QA/app.log` |
 | No real pointer, so no hover | `hover(el)` |
 | A driver-less build starts fine, then `q` times out | `build.sh` checks; `start_*` fail after 40 s with no window file |
