@@ -656,7 +656,7 @@ async fn undo_ends_a_kept_process() {
             .note
             .as_deref()
             .unwrap()
-            .contains("Undo")
+            .contains("worktree")
     );
 }
 
