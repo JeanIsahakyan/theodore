@@ -8,7 +8,8 @@
 //! ToolResult ────────────▶ result (held detail merged in); output the CLI
 //!                          saved to a file read now, while it exists
 //! ToolDetail{end} ───────▶ ended; the output_file read now, while it exists
-//! ToolResult after it ───▶ dropped: it only repeats the end's summary
+//! ToolResult right after ▶ dropped: it only repeats the end's summary
+//! ToolResult any later ──▶ result: a slow foreground call's end comes first
 //! SubagentHandback ──────▶ report, on its Agent call
 //! Agent's own result ────▶ report, when it holds one
 //! ```
@@ -102,8 +103,9 @@ pub(crate) struct ToolPayloads {
     details: HashMap<String, ToolResultDetail>,
     /// Handback calls: their results are nobody's.
     hidden: HashSet<String>,
-    /// Calls whose end came as a `ToolDetail`: its result is a repeat.
-    ended: HashSet<String>,
+    /// Calls whose end just came as a `ToolDetail`: the one result right
+    /// behind it repeats it (`task_report`). Any later result is the call's own.
+    repeats: HashSet<String>,
     /// Subagents whose handback carried the whole report.
     reported: HashSet<String>,
 }
@@ -116,7 +118,7 @@ impl ToolPayloads {
             calls: HashMap::new(),
             details: HashMap::new(),
             hidden: HashSet::new(),
-            ended: HashSet::new(),
+            repeats: HashSet::new(),
             reported: HashSet::new(),
         }
     }
@@ -206,7 +208,7 @@ impl ToolPayloads {
             self.details.insert(id.to_string(), detail.clone());
             return vec![];
         };
-        self.ended.insert(id.to_string());
+        self.repeats.insert(id.to_string());
         let call = self.calls.get(id);
         let is_agent = call.is_some_and(|(label, _)| matches!(label.as_str(), "Agent" | "Task"));
         let ended = ToolEnd {
@@ -234,7 +236,7 @@ impl ToolPayloads {
     }
 
     fn result(&mut self, id: &str, ok: bool, output: &str) -> Vec<Part> {
-        if self.hidden.contains(id) || id.is_empty() || self.ended.contains(id) {
+        if self.hidden.contains(id) || id.is_empty() || self.repeats.remove(id) {
             return vec![];
         }
         let detail = self.details.remove(id).unwrap_or_default();
@@ -764,6 +766,93 @@ mod tests {
         assert_eq!(stored.duration_ms, Some(1200));
         // The repeat of that end doesn't overwrite the start.
         assert!(result(&mut p, "b", true, "done, exit 0").is_empty());
+    }
+
+    fn task_end(summary: &str) -> ToolResultDetail {
+        ToolResultDetail {
+            end: Some(TaskEnd {
+                status: "completed".into(),
+                summary: Some(summary.into()),
+                output_file: None,
+                duration_ms: Some(3000),
+            }),
+            ..ToolResultDetail::default()
+        }
+    }
+
+    fn streams(stdout: &str) -> ToolResultDetail {
+        ToolResultDetail {
+            stdout: Some(stdout.into()),
+            exit_code: Some(0),
+            ..ToolResultDetail::default()
+        }
+    }
+
+    /// A slow foreground command: the task's end arrives, then the command's
+    /// real output. The end's repeat must not take the result's place.
+    #[test]
+    fn a_foreground_result_after_its_end_is_stored() {
+        let mut p = payloads();
+        call(
+            &mut p,
+            "t1",
+            "Bash",
+            json!({"command": "sleep 3; echo slept-3"}),
+        );
+        assert_eq!(detail(&mut p, "t1", task_end("Sleep"))[0].name, "ended");
+        assert!(result(&mut p, "t1", true, "Sleep").is_empty(), "the repeat");
+
+        detail(&mut p, "t1", streams("slept-3"));
+        let parts = result(&mut p, "t1", true, "slept-3");
+        assert_eq!(parts[0].name, "result");
+        let got = outcome(&parts);
+        assert_eq!(got.stdout.unwrap().text, "slept-3");
+        assert_eq!(got.exit_code, Some(0));
+        assert!(!got.background);
+    }
+
+    #[test]
+    fn a_foreground_result_before_its_end_is_stored() {
+        let mut p = payloads();
+        call(
+            &mut p,
+            "t1",
+            "Bash",
+            json!({"command": "sleep 3; echo slept-3"}),
+        );
+        detail(&mut p, "t1", streams("slept-3"));
+        let parts = result(&mut p, "t1", true, "slept-3");
+        assert_eq!(outcome(&parts).stdout.unwrap().text, "slept-3");
+
+        assert_eq!(detail(&mut p, "t1", task_end("Sleep"))[0].name, "ended");
+        assert!(result(&mut p, "t1", true, "Sleep").is_empty(), "the repeat");
+    }
+
+    /// Whichever comes first, the launch stays a launch and the end's repeat
+    /// never stands in for it.
+    #[test]
+    fn a_background_launch_after_its_end_is_still_the_start() {
+        let mut p = payloads();
+        call(
+            &mut p,
+            "b",
+            "Bash",
+            json!({"command": "sleep 1", "run_in_background": true}),
+        );
+        detail(&mut p, "b", task_end("done, exit 0"));
+        assert!(result(&mut p, "b", true, "done, exit 0").is_empty());
+
+        detail(
+            &mut p,
+            "b",
+            ToolResultDetail {
+                background: true,
+                ..ToolResultDetail::default()
+            },
+        );
+        let start = outcome(&result(&mut p, "b", true, "running as b1"));
+        assert!(start.background);
+        assert_eq!(start.exit_code, None);
     }
 
     #[test]

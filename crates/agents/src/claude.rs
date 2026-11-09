@@ -572,10 +572,11 @@ fn text_delta(event: &Value) -> Option<AgentEvent> {
     })
 }
 
-/// A background task done (2.1.319): how it ended, then its report as the
-/// result of the call that started it. That call's own result only said it
-/// started. Only a `summary` line comes here, the output stays in
-/// `output_file`.
+/// A task done (2.1.319): how it ended, then its report as the result of the
+/// call that started it. A background call's own result only said it started.
+/// A slow foreground command gets one too, and its own result may come after
+/// it: that one is the command's real output (`tool_payloads`). Only a
+/// `summary` line comes here, the output stays in `output_file`.
 fn task_report(v: &Value) -> Vec<AgentEvent> {
     let Some(id) = v
         .get("tool_use_id")
