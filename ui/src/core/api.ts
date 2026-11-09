@@ -24,6 +24,8 @@ import type {
   DeviceLogin,
   DraftStateRequest,
   EditCommentRequest,
+  FilePreviewAnswer,
+  FilePreviewRequest,
   FileRequest,
   FindSymbolRequest,
   GetBlobRequest,
@@ -310,6 +312,9 @@ export const api = {
   findSymbol: (req: FindSymbolRequest) =>
     call<SymbolHit[]>('find_symbol', { req }),
   getBlob: (req: GetBlobRequest) => call<BlobResponse>('get_blob', { req }),
+  /** `quiet`: a preview that fails is "No preview", never a toast. */
+  filePreview: (req: FilePreviewRequest, quiet = false) =>
+    call<FilePreviewAnswer>('file_preview', { req }, quiet),
   /** Settings → Sandbox: `null` outside sandbox mode. */
   sandboxStatus: () => call<SandboxStatus | null>('sandbox_status'),
   sandboxSetFault: (req: SandboxFaultRequest) =>

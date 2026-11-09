@@ -95,6 +95,7 @@ import { isAgentEnabled } from './Settings';
 import { SkillsManagerModal } from './Skills';
 import { TaskRow } from './Tasks';
 import { SendToAgent } from './space/SendToAgent';
+import { useFileHover } from './FileHoverPreview';
 import { ToolCalls } from './ToolCalls';
 
 export type SideTab = 'ai' | 'tasks' | 'threads';
@@ -246,6 +247,17 @@ function Ref({
 }) {
   const store = useRootStore();
   const label = refLabel(a);
+  // On the chat's chips: the one being composed isn't about a revision yet.
+  const inChat = pr && !onRemove ? pr : null;
+  const hover = useFileHover<HTMLSpanElement>(
+    inChat ? a.path : null,
+    inChat
+      ? () => ({
+          source: { kind: 'pr', pr: inChat },
+          revision: store.models.prSummaries.get(inChat)?.head_sha ?? null,
+        })
+      : undefined,
+  );
   const body = (
     <>
       <FileCode className="size-3.5 shrink-0" />
@@ -254,32 +266,42 @@ function Ref({
     </>
   );
   return (
-    <span
-      className={`ref inline-flex h-6 max-w-full items-center gap-1 rounded-full border border-separator ps-2.5 font-mono text-xs text-muted ${onRemove ? 'pe-1' : 'pe-2.5'}`}
-      title={`${a.path}:${lineRange(a)}${a.side === 'old' ? ' (old side)' : ''}`}
-    >
-      {pr ? (
-        <button
-          type="button"
-          className="ref-jump inline-flex min-w-0 items-center gap-1.5 hover:text-foreground"
-          onClick={() => jumpToLine(store, pr, a)}
-        >
-          {body}
-        </button>
-      ) : (
-        <span className="inline-flex min-w-0 items-center gap-1.5">{body}</span>
-      )}
-      {onRemove && (
-        <button
-          type="button"
-          aria-label={`Remove ${label}`}
-          className="ref-remove grid size-4 shrink-0 place-items-center rounded-full hover:bg-default hover:text-foreground"
-          onClick={onRemove}
-        >
-          <Xmark className="size-3" />
-        </button>
-      )}
-    </span>
+    <>
+      <span
+        {...hover.triggerProps}
+        className={`ref inline-flex h-6 max-w-full items-center gap-1 rounded-full border border-separator ps-2.5 font-mono text-xs text-muted ${onRemove ? 'pe-1' : 'pe-2.5'}`}
+        title={
+          hover.active
+            ? undefined
+            : `${a.path}:${lineRange(a)}${a.side === 'old' ? ' (old side)' : ''}`
+        }
+      >
+        {pr ? (
+          <button
+            type="button"
+            className="ref-jump inline-flex min-w-0 items-center gap-1.5 hover:text-foreground"
+            onClick={() => jumpToLine(store, pr, a)}
+          >
+            {body}
+          </button>
+        ) : (
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            {body}
+          </span>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove ${label}`}
+            className="ref-remove grid size-4 shrink-0 place-items-center rounded-full hover:bg-default hover:text-foreground"
+            onClick={onRemove}
+          >
+            <Xmark className="size-3" />
+          </button>
+        )}
+      </span>
+      {hover.popover}
+    </>
   );
 }
 

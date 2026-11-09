@@ -41,6 +41,7 @@ import type { AgentId, TurnFile, TurnStep } from '../gen/contract';
 import { useRootStore } from '../stores/context';
 import { Md } from '../highlight';
 import { Spinner } from './bits';
+import { useFileHover } from './FileHoverPreview';
 import { FileTypeIcon } from './FileTypeIcon';
 import { useKeptOpen, useSteadyChange } from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
@@ -101,14 +102,20 @@ function Failed() {
 }
 
 function Chip({ text, file = false }: { text: string; file?: boolean }) {
+  const hover = useFileHover<HTMLSpanElement>(file ? text : null);
   return (
-    <span
-      title={text}
-      className="turn-chip inline-flex min-w-0 items-center gap-1 rounded bg-default px-1.5 py-0.5 font-mono text-[11px] text-muted"
-    >
-      {file && <FileTypeIcon path={text} />}
-      <span className="min-w-0 truncate">{text}</span>
-    </span>
+    <>
+      <span
+        {...hover.triggerProps}
+        title={hover.active ? undefined : text}
+        tabIndex={hover.active ? 0 : undefined}
+        className="turn-chip inline-flex min-w-0 items-center gap-1 rounded bg-default px-1.5 py-0.5 font-mono text-[11px] text-muted"
+      >
+        {file && <FileTypeIcon path={text} />}
+        <span className="min-w-0 truncate">{text}</span>
+      </span>
+      {hover.popover}
+    </>
   );
 }
 
@@ -659,6 +666,35 @@ export function TurnFooter({
 const CHIP =
   'inline-flex h-6 min-w-0 items-center gap-1 rounded-md border border-separator px-1.5 text-xs text-muted';
 
+function TurnFileChip({
+  file,
+  onOpen,
+}: {
+  file: TurnFile;
+  onOpen?: (path: string | null) => void;
+}) {
+  const hover = useFileHover<HTMLButtonElement>(file.path);
+  return (
+    <>
+      <button
+        {...hover.triggerProps}
+        type="button"
+        title={hover.active ? undefined : file.path}
+        data-path={file.path}
+        className={`turn-file ${CHIP}`}
+        onClick={() => onOpen?.(file.path)}
+      >
+        <FileTypeIcon path={file.path} />
+        <span className="min-w-0 max-w-[180px] truncate">
+          {file.path.split('/').pop()}
+        </span>
+        <LineCounts added={file.additions} removed={file.deletions} />
+      </button>
+      {hover.popover}
+    </>
+  );
+}
+
 /** The files a turn changed. A chip opens the Changes pane on its file;
  *  `+N more` opens the pane. */
 export const TurnFiles = memo(function TurnFiles({
@@ -672,20 +708,7 @@ export const TurnFiles = memo(function TurnFiles({
   return (
     <div className="turn-files flex min-w-0 flex-wrap items-center gap-1.5">
       {shown.map((f) => (
-        <button
-          key={f.path}
-          type="button"
-          title={f.path}
-          data-path={f.path}
-          className={`turn-file ${CHIP}`}
-          onClick={() => onOpen?.(f.path)}
-        >
-          <FileTypeIcon path={f.path} />
-          <span className="min-w-0 max-w-[180px] truncate">
-            {f.path.split('/').pop()}
-          </span>
-          <LineCounts added={f.additions} removed={f.deletions} />
-        </button>
+        <TurnFileChip key={f.path} file={f} onOpen={onOpen} />
       ))}
       {rest && (
         <button

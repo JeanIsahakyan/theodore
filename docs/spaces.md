@@ -399,7 +399,11 @@ no nested steps.
 at most 200) when it ends; a failure leaves them empty and never fails the
 turn, and a turn that merged the base shows none. Up to 3 chips, then `+N more`
 with the total of the rest. A chip opens the Changes pane on its file, `+N more`
-the pane. On hover the time shows the model and start → end.
+the pane. On hover the time shows the model and start → end. Hovering a file,
+here or on a tool row, opens a popover after 300 ms with its diff for that turn
+(`file_preview`: between the turn's checkpoints; while a turn runs, the worktree
+against the last checkpoint): a file it only read shows its first lines, Markdown
+rendered, an image as an image, anything else its name and size.
 
 | Run ended with | Reply | Text in the steps |
 | --- | --- | --- |
