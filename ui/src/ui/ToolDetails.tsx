@@ -276,7 +276,7 @@ function BackgroundPart({
         {step.summary ??
           (running
             ? 'Running in the background: its output shows when it ends.'
-            : "Ran in the background: the turn ended before it did, so there's no final output.")}
+            : "Ran in the background: it didn't report how it ended.")}
       </div>
     );
   }

@@ -2,7 +2,7 @@
  * A space's chat above the composer: nothing said yet is a plain page, the
  * rest is one row per turn in a `VirtualChat`.
  */
-import { memo, useCallback, type ReactNode, type Ref } from 'react';
+import { memo, useCallback, useMemo, type ReactNode, type Ref } from 'react';
 import { Pencil } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { ChatMessage, Space } from '../../gen/contract';
@@ -22,6 +22,8 @@ import { splitQueue } from './queue';
 import { sendingMessage } from './send';
 import { SetupNote, SetupStage } from './SpaceCommands';
 import { SpaceMessage } from './SpaceMessage';
+import { BackgroundCallsContext } from '../backgroundCalls';
+import { runningCalls } from './backgroundTaskRows';
 import { QuestionCard } from './SpacePlan';
 import { spaceChatKey } from './spaces';
 import { VirtualChat, type VirtualChatControl } from './VirtualChat';
@@ -89,6 +91,13 @@ export const SpaceLog = observer(function SpaceLog({
   );
 
   const renderRow = useRowRenderer(space.id, onRevise, head, tail, tagged);
+  // A stored row says "running in background" until its task ends. Stable
+  // while nothing changes: every row reads it.
+  const callsKey = [...runningCalls(space)].sort().join('\n');
+  const calls = useMemo(
+    () => new Set(callsKey ? callsKey.split('\n') : []),
+    [callsKey],
+  );
   if (turns.length === 0 && !run && !live) {
     return (
       <ChatLog scope={space.id}>
@@ -110,14 +119,16 @@ export const SpaceLog = observer(function SpaceLog({
     tail: queued.length > 0 || asking,
   });
   return (
-    <VirtualChat
-      scope={space.id}
-      items={rows}
-      estimate={estimateRowHeight}
-      isPinned={isPinned}
-      renderItem={renderRow}
-      control={control}
-    />
+    <BackgroundCallsContext.Provider value={calls}>
+      <VirtualChat
+        scope={space.id}
+        items={rows}
+        estimate={estimateRowHeight}
+        isPinned={isPinned}
+        renderItem={renderRow}
+        control={control}
+      />
+    </BackgroundCallsContext.Provider>
   );
 });
 

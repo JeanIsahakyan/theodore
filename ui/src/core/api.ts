@@ -343,6 +343,8 @@ export const api = {
     call<string>('space_send_now', { req }),
   /** Send / Cancel / Edit on a queued message (docs/spaces.md §8). */
   spaceQueued: (req: SpaceQueuedRequest) => call<null>('space_queued', { req }),
+  spaceStopTask: (space: string, task: string) =>
+    call<null>('space_stop_task', { space, task }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
   spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
   projectSkills: (project: string) =>
