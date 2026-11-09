@@ -127,6 +127,17 @@ impl ToolPayloads {
         }
     }
 
+    /// For one background call that ended after its turn: `kind` says
+    /// whether it was a subagent's (its report comes from the summary).
+    pub(crate) fn for_ended_call(run: &str, space: &str, call: &str, subagent: bool) -> Self {
+        let mut payloads = Self::new(run, space);
+        let label = if subagent { "Agent" } else { "Bash" };
+        payloads
+            .calls
+            .insert(call.to_string(), (label.to_string(), Instant::now()));
+        payloads
+    }
+
     /// Stores what `event` adds. A failure only costs that row its details.
     pub(crate) async fn record(&mut self, core: &Core, event: &AgentEvent) {
         for part in self.parts(None, event) {
@@ -219,6 +230,11 @@ impl ToolPayloads {
             self.details.insert(id.to_string(), detail.clone());
             return vec![];
         };
+        if !self.calls.contains_key(id) {
+            // Another turn's background call ended during this one:
+            // `space_tasks` writes it where that turn's row reads it.
+            return vec![];
+        }
         self.repeats.insert(id.to_string());
         let call = self.calls.get(id);
         let is_agent = call.is_some_and(|(label, _)| matches!(label.as_str(), "Agent" | "Task"));

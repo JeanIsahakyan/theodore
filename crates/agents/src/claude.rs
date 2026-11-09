@@ -17,18 +17,31 @@
 //! its next step, in the same turn, and echoed back (`isReplay`) when taken.
 //! One that lands as the turn ends starts another turn in the same process
 //! and session; the run is done once every message was taken and answered.
+//!
+//! The same stream reports background tasks (recorded from 2.1.319,
+//! `tests/fixtures/claude_background_tasks.jsonl`) and takes control requests
+//! on stdin (`stop_task`, `interrupt`), so a steerable run keeps its process
+//! past a turn's `result` while tasks run; `ClaudeParser` says when to let
+//! it go (docs/spaces.md "Background tasks"):
+//!
+//! ```text
+//! result (tasks running) ──▶ Lingering, Done    process stays
+//! task ends ─▶ running ─▶ init ─▶ … ─▶ result    the CLI's own turn: FollowUp, Done
+//! last task stopped ─▶ idle                      Drained: stdin closes
+//! ```
 
 use std::path::Path;
 
 use serde_json::Value;
 use theodore_domain::Usage;
 use theodore_ports::agent::{
-    AgentEvent, AgentMode, AgentRequest, PersistedOutput, TaskEnd, ToolResultDetail,
+    AgentEvent, AgentMode, AgentRequest, BackgroundTaskInfo, BackgroundTaskKind, ControlRequest,
+    PersistedOutput, TaskEnd, ToolResultDetail,
 };
 
 use crate::config::AgentBinaryConfig;
 use crate::edit_guard;
-use crate::process::LineParser;
+use crate::process::{LineParser, Session};
 
 /// The `--mcp-config` JSON, including the bearer token in its `headers`.
 /// Written to a 0600 temp file instead of argv (see `write_mcp_config`):
@@ -121,6 +134,17 @@ pub fn user_message_line(text: &str) -> String {
         "message": { "role": "user", "content": text },
     })
     .to_string()
+}
+
+/// One control request in `--input-format stream-json`.
+pub fn control_request_line(request: &ControlRequest, id: &str) -> String {
+    let body = match request {
+        ControlRequest::StopTask { task_id } => {
+            serde_json::json!({ "subtype": "stop_task", "task_id": task_id })
+        }
+        ControlRequest::Interrupt => serde_json::json!({ "subtype": "interrupt" }),
+    };
+    serde_json::json!({ "type": "control_request", "request_id": id, "request": body }).to_string()
 }
 
 fn args_with(
@@ -355,11 +379,18 @@ pub struct ClaudeParser {
     usage: Usage,
     /// Turns finished in this run and not reported yet.
     results: u32,
-    /// Subagents working in the background (`task_started`), by task id.
+    /// Without stdin (`new`): subagents working in the background
+    /// (`task_started`), by task id. With stdin: every background task the CLI
+    /// lists as running.
     background: Vec<String>,
-    /// Background subagents done since the last turn began: the CLI takes
-    /// the turn up again for them.
+    /// Background tasks that ended since the last turn began and that the CLI
+    /// will take the turn up again for.
     unanswered: u32,
+    /// With stdin: a turn is open (a message of ours, or one the CLI started).
+    open: bool,
+    /// Task ids the CLI ever listed in the background: foreground ones also
+    /// report their end, and no reply follows those.
+    seen_background: Vec<String>,
 }
 
 impl ClaudeParser {
@@ -368,17 +399,21 @@ impl ClaudeParser {
     }
 
     /// For [`build_steerable_args`]: `Done` only once every written message
-    /// was taken and answered, with every answer in it.
+    /// was taken and answered, with every answer in it, and the process stays
+    /// open past a `result` while background tasks run ([`Session`]).
     pub fn with_stdin_input() -> Self {
         Self {
             stdin_input: true,
+            open: true,
             ..Self::default()
         }
     }
 
     /// A turn's `result` is the run's end only once nothing will take it up
-    /// again: no written message pending, no subagent still working or done
-    /// and not yet answered. A background subagent's run (2.1.319,
+    /// again: no written message pending and, without stdin, no subagent
+    /// still working or done and not yet answered (with stdin each `result`
+    /// is its turn's `Done`, and `Session` says whether the process stays).
+    /// A background subagent's run (2.1.319,
     /// `tests/fixtures/claude_subagent_background.jsonl`):
     ///
     /// ```text
@@ -396,9 +431,19 @@ impl ClaudeParser {
                 self.pending = self.pending.saturating_sub(1);
                 return vec![];
             }
-            self.track_tasks(v);
+            if self.stdin_input {
+                self.track_session(v);
+            } else {
+                self.track_tasks(v);
+            }
         }
         let mut out = Vec::new();
+        if self.stdin_input && !self.open && v.as_ref().is_some_and(is_turn_activity) {
+            // No message of ours: the CLI took the turn up by itself.
+            self.open = true;
+            self.unanswered = 0;
+            out.push(AgentEvent::FollowUp);
+        }
         for ev in parse_line(line) {
             match ev {
                 AgentEvent::Done { final_text, usage } => {
@@ -408,28 +453,52 @@ impl ClaudeParser {
                     self.usage += usage;
                     self.results += 1;
                     if !self.held() {
-                        out.push(self.done());
+                        self.end_turn(&mut out);
                     }
+                }
+                error @ AgentEvent::Error { .. } if self.stdin_input && self.pending == 0 => {
+                    self.lingering(&mut out);
+                    out.push(error);
                 }
                 other => out.push(other),
             }
         }
-        // Idle with no subagent still working: a subagent's report the turn
-        // already took in, or no message of ours to take up.
+        // Idle with no task to wait for: a report the turn already took in,
+        // or no message of ours to take up.
         if v.as_ref().is_some_and(is_idle) {
             self.unanswered = 0;
             if self.results > 0 && !self.held() {
-                out.push(self.done());
+                self.end_turn(&mut out);
             }
         }
         out
     }
 
     fn held(&self) -> bool {
+        if self.stdin_input {
+            return self.pending > 0;
+        }
         self.pending > 0 || !self.background.is_empty() || self.unanswered > 0
     }
 
-    /// Background subagents: started, done, and the turn that answers them.
+    /// A turn's `Done`, marked when the process stays after it.
+    fn end_turn(&mut self, out: &mut Vec<AgentEvent>) {
+        if self.stdin_input {
+            self.lingering(out);
+        }
+        out.push(self.done());
+    }
+
+    /// The turn is over: says so when the process outlives it.
+    fn lingering(&mut self, out: &mut Vec<AgentEvent>) {
+        self.open = false;
+        if self.session() != Session::Drained {
+            out.push(AgentEvent::Lingering);
+        }
+    }
+
+    /// Background subagents: started, done, and the turn that answers them
+    /// (a run without stdin only: `track_session` is that for one with).
     fn track_tasks(&mut self, v: &Value) {
         if v.get("type").and_then(Value::as_str) != Some("system") {
             return;
@@ -450,6 +519,59 @@ impl ClaudeParser {
             Some("task_notification") => {
                 if let Some(at) = self.background.iter().position(|t| *t == task) {
                     self.background.remove(at);
+                    self.unanswered += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// What's running in the background, for a run with stdin: the CLI's
+    /// own set is the truth (`background_tasks_changed`), `task_started` and
+    /// a task's end adjust it in between. `unanswered`: a task that ended by
+    /// itself gets a reply from the CLI (a new turn, unless one takes it in);
+    /// one stopped on request doesn't.
+    fn track_session(&mut self, v: &Value) {
+        if v.get("type").and_then(Value::as_str) != Some("system") {
+            return;
+        }
+        let task = v.get("task_id").and_then(Value::as_str).unwrap_or_default();
+        match v.get("subtype").and_then(Value::as_str) {
+            Some("init") => self.unanswered = 0,
+            Some("session_state_changed")
+                if v.get("state").and_then(Value::as_str) == Some("running") =>
+            {
+                self.unanswered = 0;
+            }
+            Some("background_tasks_changed") => {
+                self.background = v
+                    .get("tasks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| t.get("task_id").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect();
+                for id in &self.background {
+                    if !self.seen_background.contains(id) {
+                        self.seen_background.push(id.clone());
+                    }
+                }
+            }
+            Some("task_started")
+                if v.get("is_backgrounded").and_then(Value::as_bool) == Some(true) =>
+            {
+                if !self.background.iter().any(|t| t == task) {
+                    self.background.push(task.to_string());
+                }
+                if !self.seen_background.iter().any(|t| t == task) {
+                    self.seen_background.push(task.to_string());
+                }
+            }
+            Some("task_notification") => {
+                self.background.retain(|t| t != task);
+                let stopped = v.get("status").and_then(Value::as_str) == Some("stopped");
+                if !stopped && self.seen_background.iter().any(|t| t == task) {
                     self.unanswered += 1;
                 }
             }
@@ -501,6 +623,21 @@ fn is_plan_file(path: &str) -> bool {
     path.contains("/.claude/plans/") && path.ends_with(".md")
 }
 
+/// A line only a turn that's running would write, whoever started it.
+fn is_turn_activity(v: &Value) -> bool {
+    match v.get("type").and_then(Value::as_str) {
+        Some("assistant" | "stream_event" | "result") => true,
+        Some("system") => match v.get("subtype").and_then(Value::as_str) {
+            Some("init") => true,
+            Some("session_state_changed") => {
+                v.get("state").and_then(Value::as_str) == Some("running")
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// Pure: one stream-json line in, zero or more normalized events out.
 pub fn parse_line(line: &str) -> Vec<AgentEvent> {
     let line = line.trim();
@@ -520,8 +657,12 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
             // `init` opens every run with the session id `--resume` takes.
             Some("init") => session_event(&v).into_iter().collect(),
             Some("task_notification") => task_report(&v),
+            Some("background_tasks_changed") => background_tasks(&v).into_iter().collect(),
+            Some("task_started") => task_started(&v).into_iter().collect(),
+            Some("task_updated") => task_updated(&v).into_iter().collect(),
             _ => vec![],
         },
+        Some("control_response") => control_response(&v).into_iter().collect(),
         _ => vec![], // rate_limit_event/etc: not user-visible stream content
     };
     match v.get("parent_tool_use_id").and_then(Value::as_str) {
@@ -572,6 +713,70 @@ fn text_delta(event: &Value) -> Option<AgentEvent> {
     })
 }
 
+/// `local_bash` or `local_agent`; a `Monitor`-like kind counts as a command.
+fn task_kind(v: &Value) -> BackgroundTaskKind {
+    match v.get("task_type").and_then(Value::as_str) {
+        Some("local_agent") => BackgroundTaskKind::Subagent,
+        _ => BackgroundTaskKind::Command,
+    }
+}
+
+fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+    v.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+/// `background_tasks_changed` (2.1.319): the whole running set.
+fn background_tasks(v: &Value) -> Option<AgentEvent> {
+    let tasks = v
+        .get("tasks")?
+        .as_array()?
+        .iter()
+        .filter_map(|t| {
+            Some(BackgroundTaskInfo {
+                id: str_field(t, "task_id")?.to_string(),
+                kind: task_kind(t),
+                description: str_field(t, "description").unwrap_or_default().to_string(),
+            })
+        })
+        .collect();
+    Some(AgentEvent::BackgroundTasks { tasks })
+}
+
+/// `task_started`: which call a task belongs to.
+fn task_started(v: &Value) -> Option<AgentEvent> {
+    Some(AgentEvent::TaskStarted {
+        id: str_field(v, "task_id")?.to_string(),
+        tool_use_id: str_field(v, "tool_use_id").map(str::to_string),
+        description: str_field(v, "description").unwrap_or_default().to_string(),
+        kind: task_kind(v),
+        backgrounded: v.get("is_backgrounded").and_then(Value::as_bool) == Some(true),
+    })
+}
+
+/// `task_updated`: a patch of the task's status, end time, or that it moved
+/// to the background.
+fn task_updated(v: &Value) -> Option<AgentEvent> {
+    let patch = v.get("patch")?;
+    Some(AgentEvent::TaskStatus {
+        id: str_field(v, "task_id")?.to_string(),
+        status: str_field(patch, "status").map(str::to_string),
+        end_time: patch.get("end_time").and_then(Value::as_u64),
+        backgrounded: patch.get("is_backgrounded").and_then(Value::as_bool),
+    })
+}
+
+/// A `control_request`'s answer: `{response: {subtype, request_id, error?}}`.
+fn control_response(v: &Value) -> Option<AgentEvent> {
+    let response = v.get("response")?;
+    let request_id = str_field(response, "request_id")?.to_string();
+    let error = (response.get("subtype").and_then(Value::as_str) != Some("success")).then(|| {
+        str_field(response, "error")
+            .unwrap_or("the agent refused the request")
+            .to_string()
+    });
+    Some(AgentEvent::ControlResponse { request_id, error })
+}
+
 /// A task done (2.1.319): how it ended, then its report as the result of the
 /// call that started it. A background call's own result only said it started.
 /// A slow foreground command gets one too, and its own result may come after
@@ -593,25 +798,34 @@ fn task_report(v: &Value) -> Vec<AgentEvent> {
     };
     let status = text("status").unwrap_or_default();
     let summary = text("summary");
-    vec![
-        AgentEvent::ToolDetail {
-            id: id.to_string(),
-            detail: ToolResultDetail {
-                end: Some(TaskEnd {
-                    status: status.clone(),
-                    summary: summary.clone(),
-                    output_file: text("output_file"),
-                    duration_ms: v.pointer("/usage/duration_ms").and_then(Value::as_u64),
-                }),
-                ..ToolResultDetail::default()
+    let task = text("task_id").map(|task_id| AgentEvent::TaskEnded {
+        id: task_id,
+        tool_use_id: Some(id.to_string()),
+        status: status.clone(),
+        summary: summary.clone(),
+        output_file: text("output_file"),
+    });
+    task.into_iter()
+        .chain([
+            AgentEvent::ToolDetail {
+                id: id.to_string(),
+                detail: ToolResultDetail {
+                    end: Some(TaskEnd {
+                        status: status.clone(),
+                        summary: summary.clone(),
+                        output_file: text("output_file"),
+                        duration_ms: v.pointer("/usage/duration_ms").and_then(Value::as_u64),
+                    }),
+                    ..ToolResultDetail::default()
+                },
             },
-        },
-        AgentEvent::ToolResult {
-            id: id.to_string(),
-            ok: status == "completed",
-            output: summary.unwrap_or_default(),
-        },
-    ]
+            AgentEvent::ToolResult {
+                id: id.to_string(),
+                ok: status == "completed",
+                output: summary.unwrap_or_default(),
+            },
+        ])
+        .collect()
 }
 
 /// The CLI has nothing left to do (`session_state_changed`, 2.1.319).
@@ -885,10 +1099,23 @@ impl LineParser for ClaudeParser {
 
     fn on_input(&mut self) {
         self.pending += 1;
+        self.open = true;
     }
 
     fn awaiting_input(&self) -> bool {
         self.pending > 0 && self.results > 0
+    }
+
+    fn session(&self) -> Session {
+        if !self.stdin_input || self.open {
+            Session::Turn
+        } else if !self.background.is_empty() {
+            Session::Tasks
+        } else if self.unanswered > 0 {
+            Session::Settling
+        } else {
+            Session::Drained
+        }
     }
 
     /// `system` / `api_retry` events: Claude Code retrying its API.
@@ -1683,33 +1910,196 @@ mod model_and_effort_tests {
     /// at the end, with what each part answered, and nothing after it.
     #[test]
     fn a_turn_taken_up_after_a_background_subagent_is_one_run() {
-        for mut parser in [ClaudeParser::new(), ClaudeParser::with_stdin_input()] {
-            if parser.stdin_input {
-                parser.on_input();
-                parser.on_line(r#"{"type":"user","isReplay":true}"#);
-            }
-            let events = background_run(&mut parser);
-            let done: Vec<_> = events
-                .iter()
-                .enumerate()
-                .filter(|(_, e)| matches!(e, AgentEvent::Done { .. }))
-                .collect();
-            assert_eq!(done.len(), 1, "{events:?}");
-            let (at, AgentEvent::Done { final_text, usage }) = done[0] else {
-                unreachable!()
-            };
-            assert_eq!(at, events.len() - 1);
-            assert_eq!(
-                final_text,
-                "I've started a subagent with the instruction to reply \"pong\". \
-                 I'll report back when it finishes.\n\nThe subagent replied: pong\n\nDone."
-            );
-            assert_eq!(usage.output_tokens, 425 + 211);
-            assert!(events.iter().any(|e| matches!(
-                e,
-                AgentEvent::Text { text } if text == "The subagent replied: pong\n\nDone."
-            )));
+        let mut parser = ClaudeParser::new();
+        let events = background_run(&mut parser);
+        let done: Vec<_> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e, AgentEvent::Done { .. }))
+            .collect();
+        assert_eq!(done.len(), 1, "{events:?}");
+        let (at, AgentEvent::Done { final_text, usage }) = done[0] else {
+            unreachable!()
+        };
+        assert_eq!(at, events.len() - 1);
+        assert_eq!(
+            final_text,
+            "I've started a subagent with the instruction to reply \"pong\". \
+             I'll report back when it finishes.\n\nThe subagent replied: pong\n\nDone."
+        );
+        assert_eq!(usage.output_tokens, 425 + 211);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Text { text } if text == "The subagent replied: pong\n\nDone."
+        )));
+    }
+
+    /// With stdin the same run is two turns: the launch reply, then the CLI's
+    /// own turn on the report, on a process kept open in between.
+    #[test]
+    fn with_stdin_a_subagent_report_is_its_own_turn() {
+        let mut p = ClaudeParser::with_stdin_input();
+        p.on_input();
+        p.on_line(r#"{"type":"user","isReplay":true}"#);
+        let events = background_run(&mut p);
+        let dones: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e, AgentEvent::Done { .. }))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(dones.len(), 2, "{events:?}");
+        // The launch reply's `Done` comes after a `Lingering` and before the
+        // CLI's own turn, which opens with `FollowUp`.
+        assert!(matches!(events[dones[0] - 1], AgentEvent::Lingering));
+        let follow = events.iter().position(|e| *e == AgentEvent::FollowUp);
+        assert!(follow.is_some_and(|f| dones[0] < f && f < dones[1]));
+        assert_eq!(p.session(), Session::Drained);
+    }
+
+    fn lines_of(fixture: &str) -> Vec<String> {
+        fixture.lines().map(str::to_string).collect()
+    }
+
+    /// The real background run (2.1.319): the whole recorded stream.
+    #[test]
+    fn the_recorded_background_run_keeps_its_process_for_its_tasks() {
+        let mut p = ClaudeParser::with_stdin_input();
+        let lines = lines_of(include_str!(
+            "../tests/fixtures/claude_background_tasks.jsonl"
+        ));
+        let result = lines
+            .iter()
+            .position(|l| l.contains("\"type\":\"result\""))
+            .unwrap();
+        for l in &lines[..result] {
+            p.on_line(l);
         }
+        assert_eq!(p.session(), Session::Turn);
+        // The launch's result: the reply is done, the process stays.
+        let events = p.on_line(&lines[result]);
+        let done_at = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::Done { .. }))
+            .unwrap();
+        assert_eq!(events[done_at - 1], AgentEvent::Lingering);
+        let AgentEvent::Done { final_text, .. } = &events[done_at] else {
+            unreachable!()
+        };
+        assert_eq!(final_text, "STARTED");
+        assert_eq!(p.session(), Session::Tasks);
+
+        let events: Vec<Vec<AgentEvent>> =
+            lines[result + 1..].iter().map(|l| p.on_line(l)).collect();
+        let all: Vec<AgentEvent> = events.iter().flatten().cloned().collect();
+        // First task ends by itself: its row, and a reply from the CLI.
+        assert!(all.iter().any(|e| matches!(
+            e,
+            AgentEvent::TaskEnded { id, status, output_file, .. }
+                if id == "b22w3q90l"
+                    && status == "completed"
+                    && output_file.as_deref() == Some("/tmp/probe-tasks/b22w3q90l.output")
+        )));
+        assert_eq!(
+            all.iter().filter(|e| **e == AgentEvent::FollowUp).count(),
+            1,
+            "only the CLI's own turn opens with it"
+        );
+        let answer = all.iter().position(|e| {
+            matches!(
+                e,
+                AgentEvent::Done { final_text, .. }
+                    if final_text.starts_with("The first background command finished")
+            )
+        });
+        assert!(answer.is_some_and(|i| all[i - 1] == AgentEvent::Lingering));
+        // The second task, stopped on request: no reply expected.
+        assert!(all.iter().any(|e| matches!(
+            e,
+            AgentEvent::TaskEnded { id, status, .. } if id == "b49e3e5q4" && status == "stopped"
+        )));
+        assert!(all.iter().any(|e| matches!(
+            e,
+            AgentEvent::ControlResponse { request_id, error: None } if request_id == "r-stop-1"
+        )));
+        assert_eq!(p.session(), Session::Drained);
+    }
+
+    #[test]
+    fn a_stop_task_request_is_one_line_of_input() {
+        let line = control_request_line(
+            &ControlRequest::StopTask {
+                task_id: "t1".into(),
+            },
+            "r1",
+        );
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["type"], "control_request");
+        assert_eq!(v["request_id"], "r1");
+        assert_eq!(v["request"]["subtype"], "stop_task");
+        assert_eq!(v["request"]["task_id"], "t1");
+        let line = control_request_line(&ControlRequest::Interrupt, "r2");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["request"]["subtype"], "interrupt");
+    }
+
+    #[test]
+    fn a_refused_control_request_carries_the_reason() {
+        let events = parse_line(
+            r#"{"type":"control_response","response":{"subtype":"error","request_id":"r9","error":"no such task"}}"#,
+        );
+        assert_eq!(
+            events,
+            vec![AgentEvent::ControlResponse {
+                request_id: "r9".into(),
+                error: Some("no such task".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_task_ending_during_a_turn_expects_no_extra_turn_once_answered() {
+        let mut p = ClaudeParser::with_stdin_input();
+        p.on_input();
+        p.on_line(r#"{"type":"user","isReplay":true}"#);
+        p.on_line(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"t1","task_type":"local_bash","description":"x"}]}"#);
+        p.on_line(r#"{"type":"system","subtype":"task_notification","task_id":"t1","tool_use_id":"c","status":"completed","summary":"s"}"#);
+        p.on_line(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#);
+        let events =
+            p.on_line(r#"{"type":"result","subtype":"success","is_error":false,"result":"r"}"#);
+        // The CLI usually takes it up again: a short settle, not a kill.
+        assert!(events.contains(&AgentEvent::Lingering), "{events:?}");
+        assert_eq!(p.session(), Session::Settling);
+        p.on_line(r#"{"type":"system","subtype":"session_state_changed","state":"idle"}"#);
+        assert_eq!(p.session(), Session::Drained);
+    }
+
+    #[test]
+    fn a_foreground_task_is_not_waited_for() {
+        let mut p = ClaudeParser::with_stdin_input();
+        p.on_input();
+        p.on_line(r#"{"type":"user","isReplay":true}"#);
+        p.on_line(r#"{"type":"system","subtype":"task_started","task_id":"fg","tool_use_id":"c","description":"x","is_backgrounded":false,"task_type":"local_bash"}"#);
+        p.on_line(r#"{"type":"system","subtype":"task_notification","task_id":"fg","tool_use_id":"c","status":"completed","summary":"s"}"#);
+        p.on_line(r#"{"type":"result","subtype":"success","is_error":false,"result":"r"}"#);
+        assert_eq!(p.session(), Session::Drained);
+    }
+
+    /// A message written while the process lingers opens a turn of its own:
+    /// no `FollowUp`, its echo counted.
+    #[test]
+    fn a_message_on_a_lingering_process_opens_a_turn() {
+        let mut p = ClaudeParser::with_stdin_input();
+        p.on_input();
+        p.on_line(r#"{"type":"user","isReplay":true}"#);
+        p.on_line(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"t1","task_type":"local_bash","description":"x"}]}"#);
+        p.on_line(r#"{"type":"result","subtype":"success","is_error":false,"result":"r"}"#);
+        assert_eq!(p.session(), Session::Tasks);
+        p.on_input();
+        assert_eq!(p.session(), Session::Turn);
+        let running =
+            p.on_line(r#"{"type":"system","subtype":"session_state_changed","state":"running"}"#);
+        assert!(running.iter().all(|e| *e != AgentEvent::FollowUp));
     }
 
     /// A turn that ends while its subagent still works isn't the run's end.

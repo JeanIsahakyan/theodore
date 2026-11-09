@@ -158,6 +158,42 @@ export type Attachment = {
 
 export type Author = { kind: "me" } | { kind: "agent"; agent: AgentId };
 
+/**  One background task of a space's agent: running, or ended a moment ago. */
+export type BackgroundTask = {
+	/**  The CLI's task id: what Stop names. */
+	id: string,
+	kind: BackgroundTaskKind,
+	description: string,
+	started_at: number,
+	status: BackgroundTaskStatus,
+	ended_at?: number | null,
+	/**  Why, when Theodore ended it or lost track of it. */
+	note?: string | null,
+	/**  The turn it started in. */
+	run?: string | null,
+	/**  The tool call it belongs to: the row it links up with. */
+	call?: string | null,
+};
+
+/**  What a background task is (docs/spaces.md "Background tasks"). */
+export type BackgroundTaskKind =
+/**  A shell command. */
+"command" |
+/**  A subagent. */
+"subagent";
+
+/**  Where a background task stands. */
+export type BackgroundTaskStatus = "running" | "completed" | "failed" |
+/**  Stopped: by you, or Theodore ended it (`note` says why). */
+"stopped" |
+/**  Ran past the cap and was cut (`note` says so). */
+"cut" |
+/**
+ *  Its process is gone (Theodore restarted, or the agent crashed): how it
+ *  ended isn't known.
+ */
+"lost";
+
 /**
  *  A file's raw bytes at one side of a diff (plan "image diff"), for the UI
  *  to render directly — `data:<mime>;base64,<base64>` is already a valid
@@ -211,6 +247,11 @@ export type ChatMessage = {
 	attachments?: Attachment[],
 	/**  A space message waiting for its turn (docs/spaces.md §8). */
 	queued?: QueuedSend | null,
+	/**
+	 *  A space reply the CLI wrote on its own when background tasks ended
+	 *  (docs/spaces.md "Background tasks"): what they were. Empty otherwise.
+	 */
+	from_tasks?: string[],
 	/**
 	 *  A space reply's turn, in order (docs/spaces.md §3); empty elsewhere
 	 *  and on older rows. Never part of a prompt.
@@ -1949,6 +1990,11 @@ export type Space = {
 	 */
 	run?: string | null,
 	error?: string | null,
+	/**
+	 *  The agent's background tasks, running or just ended (docs/spaces.md
+	 *  "Background tasks"); ended ones go when the next turn starts.
+	 */
+	background_tasks?: BackgroundTask[],
 	/**  The last Open PR / Push / Merge locally / Keep as branch. */
 	shipped?: SpaceShipped | null,
 	/**
@@ -2435,7 +2481,10 @@ export type SpaceTrustRequest = {
  *  it moved the space from and to.
  */
 export type SpaceTurn = {
-	/**  The `chat_message` id of your message that started it. */
+	/**
+	 *  The `chat_message` id of your message that started it; the reply's
+	 *  own for a turn the CLI started by itself.
+	 */
 	message: string,
 	/**  The `chat_message` id of the agent's reply. */
 	reply: string,

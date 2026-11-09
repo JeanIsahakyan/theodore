@@ -941,6 +941,10 @@ pub struct ChatMessage {
     /// A space message waiting for its turn (docs/spaces.md §8).
     #[serde(default)]
     pub queued: Option<QueuedSend>,
+    /// A space reply the CLI wrote on its own when background tasks ended
+    /// (docs/spaces.md "Background tasks"): what they were. Empty otherwise.
+    #[serde(default)]
+    pub from_tasks: Vec<String>,
     /// A space reply's turn, in order (docs/spaces.md §3); empty elsewhere
     /// and on older rows. Never part of a prompt.
     #[serde(default)]

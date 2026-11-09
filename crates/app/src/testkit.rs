@@ -2051,6 +2051,8 @@ pub struct FakeAgent {
     /// `run_steerable` gives a steer handle (as Claude Code's runner does).
     hang_after_script: Mutex<bool>,
     steerable: std::sync::atomic::AtomicBool,
+    /// The next `run_steerable` plays this instead and stays open.
+    live_next: Mutex<Option<(Vec<AgentEvent>, Arc<FakeLive>)>>,
     /// Messages steered into runs, in order.
     steered: Arc<Mutex<Vec<String>>>,
     /// The next run waits for this before it plays its script (a dropped
@@ -2122,6 +2124,15 @@ impl FakeAgent {
         *self.paused.lock().unwrap() = Some(rx);
         tx
     }
+    /// The next `run_steerable` (a space turn) is a process kept open past
+    /// `script`, driven by the returned handle: steering stays on for it.
+    pub fn push_live_run(&self, script: Vec<AgentEvent>) -> Arc<FakeLive> {
+        self.take_steering();
+        let live = Arc::new(FakeLive::default());
+        *self.live_next.lock().unwrap() = Some((script, live.clone()));
+        live
+    }
+
     /// Runs take steered messages from now on ("Send now").
     pub fn take_steering(&self) {
         self.steerable
@@ -2226,6 +2237,10 @@ impl AgentPort for FakeAgent {
         &self,
         req: AgentRequest,
     ) -> Result<(AgentRun, Option<theodore_ports::Steer>), AgentError> {
+        if let Some((script, live)) = self.live_next.lock().unwrap().take() {
+            self.requests.lock().unwrap().push(req);
+            return Ok(live.start(script));
+        }
         let run = self.run(req).await?;
         if !self.steerable.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok((run, None));
@@ -2234,11 +2249,125 @@ impl AgentPort for FakeAgent {
         let steered = self.steered.clone();
         tokio::spawn(async move {
             while let Some(m) = messages.recv().await {
-                steered.lock().unwrap().push(m.text);
-                let _ = m.delivered.send(());
+                match m {
+                    theodore_ports::SteerMessage::Text { text, delivered } => {
+                        steered.lock().unwrap().push(text);
+                        let _ = delivered.send(());
+                    }
+                    theodore_ports::SteerMessage::Control { reply, .. } => {
+                        let _ = reply.send(Ok(()));
+                    }
+                }
             }
         });
         Ok((run, Some(steer)))
+    }
+}
+
+/// A fake CLI process that stays open past its script, for a test to drive
+/// (`FakeAgent::push_live_run`): what it was sent, and more events on demand.
+#[derive(Default)]
+pub struct FakeLive {
+    events: Mutex<Option<tokio::sync::mpsc::Sender<AgentEvent>>>,
+    steered: Mutex<Vec<String>>,
+    stopped: Mutex<Vec<String>>,
+    interrupts: std::sync::atomic::AtomicUsize,
+    /// Played when `interrupt` comes in.
+    on_interrupt: Mutex<Vec<AgentEvent>>,
+    /// The answer to the next `stop_task`, when set.
+    refuse_stop: Mutex<Option<String>>,
+    killed: tokio_util::sync::CancellationToken,
+}
+
+impl FakeLive {
+    fn start(
+        self: &Arc<Self>,
+        script: Vec<AgentEvent>,
+    ) -> (AgentRun, Option<theodore_ports::Steer>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(256);
+        for event in script {
+            let _ = tx.try_send(event);
+        }
+        *self.events.lock().unwrap() = Some(tx);
+        let (steer, mut messages) = theodore_ports::Steer::channel();
+        let me = self.clone();
+        tokio::spawn(async move {
+            while let Some(m) = messages.recv().await {
+                match m {
+                    theodore_ports::SteerMessage::Text { text, delivered } => {
+                        me.steered.lock().unwrap().push(text);
+                        let _ = delivered.send(());
+                    }
+                    theodore_ports::SteerMessage::Control { request, reply } => match request {
+                        theodore_ports::ControlRequest::StopTask { task_id } => {
+                            me.stopped.lock().unwrap().push(task_id);
+                            let answer = me.refuse_stop.lock().unwrap().take();
+                            let _ = reply.send(answer.map_or(Ok(()), Err));
+                        }
+                        theodore_ports::ControlRequest::Interrupt => {
+                            me.interrupts
+                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            let _ = reply.send(Ok(()));
+                            let events = std::mem::take(&mut *me.on_interrupt.lock().unwrap());
+                            for e in events {
+                                me.emit(e).await;
+                            }
+                        }
+                    },
+                }
+            }
+        });
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let me = self.clone();
+        let cancelled = cancel.clone();
+        tokio::spawn(async move {
+            cancelled.cancelled().await;
+            me.close();
+            me.killed.cancel();
+        });
+        (AgentRun { events: rx, cancel }, Some(steer))
+    }
+
+    /// One more line of the stream.
+    pub async fn emit(&self, event: AgentEvent) {
+        let tx = self.events.lock().unwrap().clone();
+        if let Some(tx) = tx {
+            let _ = tx.send(event).await;
+        }
+    }
+
+    /// The process exited (its events end).
+    pub fn close(&self) {
+        self.events.lock().unwrap().take();
+    }
+
+    /// Played when the turn is stopped with `interrupt`.
+    pub fn on_interrupt(&self, events: Vec<AgentEvent>) {
+        *self.on_interrupt.lock().unwrap() = events;
+    }
+
+    pub fn refuse_next_stop(&self, why: &str) {
+        *self.refuse_stop.lock().unwrap() = Some(why.to_string());
+    }
+
+    pub fn steered(&self) -> Vec<String> {
+        self.steered.lock().unwrap().clone()
+    }
+
+    pub fn stopped_tasks(&self) -> Vec<String> {
+        self.stopped.lock().unwrap().clone()
+    }
+
+    pub fn interrupts(&self) -> usize {
+        self.interrupts.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn was_killed(&self) -> bool {
+        self.killed.is_cancelled()
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.events.lock().unwrap().is_some()
     }
 }
 
@@ -3028,6 +3157,8 @@ pub struct ToolRegistration {
 pub struct FakeRunTools {
     registered: Mutex<Vec<ToolRegistration>>,
     unregistered: Mutex<Vec<String>>,
+    /// Tokens moved to a later turn, with its run id.
+    rebound: Mutex<Vec<(String, String)>>,
 }
 
 impl FakeRunTools {
@@ -3037,6 +3168,11 @@ impl FakeRunTools {
 
     pub fn registered(&self) -> Vec<ToolRegistration> {
         self.registered.lock().unwrap().clone()
+    }
+
+    /// Tokens moved to another turn's run id so far.
+    pub fn rebound(&self) -> Vec<(String, String)> {
+        self.rebound.lock().unwrap().clone()
     }
 
     /// Tokens revoked so far.
@@ -3088,6 +3224,13 @@ impl crate::deps::RunTools for FakeRunTools {
             space: Some(space.into()),
             code,
         })
+    }
+
+    fn rebind(&self, endpoint: &theodore_ports::McpEndpoint, run_id: &str) {
+        self.rebound
+            .lock()
+            .unwrap()
+            .push((endpoint.token.clone(), run_id.to_string()));
     }
 
     fn unregister(&self, endpoint: &theodore_ports::McpEndpoint) {

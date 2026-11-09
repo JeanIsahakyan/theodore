@@ -180,8 +180,8 @@ pub enum ProductEvent {
         #[serde(flatten)]
         turn: TurnFacts,
     },
-    /// Stepping in on an agent: `stop`, `send_now`, `plan_approved`,
-    /// `plan_revised`, `undo`, `back_to_here`.
+    /// Stepping in on an agent: `stop`, `stop_task`, `send_now`,
+    /// `plan_approved`, `plan_revised`, `undo`, `back_to_here`.
     SpaceAction {
         action: String,
     },

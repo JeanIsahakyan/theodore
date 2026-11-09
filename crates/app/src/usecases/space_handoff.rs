@@ -115,6 +115,7 @@ mod tests {
             refs: vec![],
             at,
             failed: None,
+            from_tasks: vec![],
             attachments: vec![],
             queued: None,
             activity: vec![],

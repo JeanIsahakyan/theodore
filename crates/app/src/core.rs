@@ -123,6 +123,7 @@ pub(crate) struct Inner {
     pub term_rt: std::sync::Mutex<HashMap<String, crate::usecases::space_terminal::TerminalEntry>>,
     /// Spaces' send queues and the turns "Send now" can steer into.
     pub space_queue: crate::usecases::space_queue::QueueState,
+    pub space_tasks: crate::usecases::space_tasks::SpaceTasks,
     /// The app's URL scheme a space's PR links back with
     /// (`Core::set_space_link_scheme`).
     pub space_link_scheme: std::sync::Mutex<Option<String>>,
@@ -188,6 +189,7 @@ impl Core {
             code_intel: Default::default(),
             term_rt: std::sync::Mutex::new(HashMap::new()),
             space_queue: Default::default(),
+            space_tasks: Default::default(),
             space_link_scheme: std::sync::Mutex::new(None),
             questions: std::sync::Mutex::new(HashMap::new()),
             reports: std::sync::Mutex::new(None),

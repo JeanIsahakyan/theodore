@@ -68,6 +68,18 @@ impl RunRegistry {
             .insert(token, ctx);
     }
 
+    /// Points a registered token at another run id.
+    fn rebind(&self, token: &str, run_id: &str) {
+        if let Some(ctx) = self
+            .runs
+            .write()
+            .expect("run registry lock poisoned")
+            .get_mut(token)
+        {
+            ctx.run_id = theodore_domain::RunId(run_id.to_string());
+        }
+    }
+
     fn remove(&self, token: &str) {
         self.runs
             .write()
@@ -631,6 +643,12 @@ impl McpHandle {
             token,
             name,
         }
+    }
+
+    /// Moves a token to another run id: the same CLI process serving a later
+    /// turn (docs/spaces.md "Background tasks").
+    pub fn rebind_run(&self, token: &str, run_id: &str) {
+        self.registry.rebind(token, run_id);
     }
 
     /// Revokes a token; further requests carrying it get 401.

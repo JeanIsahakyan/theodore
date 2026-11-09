@@ -136,7 +136,7 @@ fixed set — never code, paths, titles or comment text. The wire shape is pinne
 | `space_created` | `mode`, `from` (`blank`, `issue`, `branch`, `pr`) | Where does work start? |
 | `space_turn` | `ms`, `mode`, `ok`, turn facts | Which agents and models, how do turns end, how long, how much do they do? |
 | `message_voted` | `vote` (`up`, `down`, `cleared`), `surface` (`space`, `ai_panel`), `mode` (`none` in the AI panel), turn facts | What do people think of a reply, and what made it? |
-| `space_action` | `action` (`stop`, `send_now`, `plan_approved`, `plan_revised`, `undo`, `back_to_here`) | When do people step in or take work back? |
+| `space_action` | `action` (`stop`, `stop_task`, `send_now`, `plan_approved`, `plan_revised`, `undo`, `back_to_here`) | When do people step in or take work back? |
 | `queue_held` | `reason` (`stopped`, `failed`, `checkpoint_skipped`, `start_failed`, `restart`), `messages` | How often does queued work stall, and why? |
 | `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`, `merge_pr`) | Does work leave the space? |
 | `config_saved` | `where` (`global`, `repo`, `local`) | Is config edited, at which layer? |

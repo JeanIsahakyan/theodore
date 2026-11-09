@@ -436,9 +436,9 @@ Handback, result ─▶ report┘
 | Codex | command, combined output, exit code, MCP arguments and result | stdout/stderr apart, a file change's row (it has no call event), a web search's results |
 | Gemini | arguments, output, error | stdout/stderr apart, exit code |
 
-A background command the turn outlives never reports back: the stream ends with
-the turn, and a turn isn't held for it the way it is for a background subagent.
-Its row says the turn ended first.
+A background command the turn outlives stays linked to its row: the row says
+`running in background` while its task runs (§ "Background tasks" below), and
+shows how it ended, with the output read from the CLI's file, when it ends.
 
 Consecutive calls of one read-only tool, or to one MCP server, are one row once
 the turn is done: `Read 4 files` opens on them. Edits and commands stay a row
@@ -453,12 +453,10 @@ never reach the reply. Its `SubagentHandback` call is no row: its message is the
 row's summary. A call that runs in the background gets only the CLI's launch
 note back, which is plumbing for the agent and shows nowhere: the step is marked
 `background` and the row says `running in background` (spinner) until its
-report comes, `ran in background` once its turn is over. The report is the
-CLI's `task_notification`, read as the call's result; the CLI then takes the
-turn up again, and that text is the same turn's, after what came before
-(`claude_subagent_background.jsonl`): the run ends at the last `result` once no
-subagent works and none is left unanswered. A note beside a row is
-one line; the full report shows when the row is opened. Codex and Gemini report
+report comes, `ran in background` if its process is gone first. The report is the
+CLI's `task_notification`, read as the call's result. What the CLI writes when
+it takes the turn up again is its own turn (§ "Background tasks"). A note beside
+a row is one line; the full report shows when the row is opened. Codex and Gemini report
 no nested steps.
 
 **The files** of a turn come from git between its checkpoints (`before`..`after`,
@@ -1036,6 +1034,113 @@ history > 12 messages, can't resume
 
 A short space (≤ 12 messages total) never asks for one.
 
+### Background tasks
+
+Claude Code runs commands (and subagents) in the background, and the turn goes
+on without waiting (`run_in_background`, or `Agent` in the background). A
+background task outlives the turn, so the CLI process that owns it has to too:
+the process stays open, the space keeps it, and the composer shows what's
+running with a Stop per task. Codex and Gemini have no such channel: nothing
+changes there and nothing shows.
+
+Everything below is from a real run (Claude Code 2.1.319,
+`crates/agents/tests/fixtures/claude_background_tasks.jsonl`):
+
+```
+t=8   background_tasks_changed {tasks:[…]}   task_started {tool_use_id}   (a task)
+t=9.6 result ──▶ the turn's reply is done; process and stdin stay
+t=14  task_updated · task_notification {output_file}   the task ended by itself
+t=14.6 session_state_changed running ──▶ init ──▶ …    the CLI's own follow-up turn
+t=17  result {origin:{kind:"task-notification"}}
+stdin: control_request stop_task ──▶ task_updated{killed} · task_notification{stopped}
+       · background_tasks_changed[] · control_response
+```
+
+**The process's life.** A process is owned by exactly one of: the turn
+streaming it, or a parked watcher (`space_tasks.rs`) reading it between turns.
+`ClaudeParser` says where the session stands; `process.rs` sets the clocks.
+
+```
+                Turn ──result, no tasks, no reply expected──▶ Drained ─▶ exit
+                 ▲ │
+ you send, same  │ └──result, tasks running──▶ Tasks (idle for you) ──cap 2 h──▶ Cut
+ CLI (stdin)     │                             │  │
+ or the CLI's    │                             │  └─ last task stopped ──▶ Drained ─▶ exit
+ follow-up       │                             │
+                 └──── a turn starts ◀─────────┴── last task ended ──▶ Settling (5 s)
+                                                                       └─ no turn ─▶ Drained
+```
+
+| State | Means | Space | Clock |
+| --- | --- | --- | --- |
+| Turn | a turn is open: answering, stalls and the runtime cap count | running | 30 min per turn |
+| Tasks | turn over, tasks running: the process stays, silent is normal | idle | `LINGER_MAX_MS` (2 h) since the last turn |
+| Settling | no tasks left, a task just ended on its own: the CLI's reply may still start | idle | 5 s, then Drained |
+| Drained | nothing left | — | stdin closes, the CLI exits |
+
+**Your message while a process is kept** goes down that process's stdin: no
+second CLI on one session. A message that needs a different process (another
+agent, model, mode or effort, or attachments, since `--add-dir` is per process)
+ends the kept one first, tasks and all, and a toast says so; its tasks read
+`stopped: …`.
+
+**The CLI's own follow-up turn.** When a task ends by itself the CLI starts a
+real turn to react to it; Theodore lands it as an agent turn in the chat, marked
+"Started by a finished background task: …", with its checkpoint and turn-log
+entry (its `message` is its own reply: no message of yours opened it).
+
+```
+task ends ─▶ FollowUp ─▶ space free?
+              ├─ yes ─▶ follow-up turn: queue lock, running, drains the queue at its end
+              └─ no (a check still runs) ─▶ waits; the turn ending starts it first
+```
+
+| When | What happens |
+| --- | --- |
+| you send while the follow-up runs | queued, as for any running turn; runs on the same process when it ends |
+| Send now while it runs | steered into it |
+| Stop while it runs | see Stop below; the queue is held |
+| follow-up while the queue is held | it runs; held messages stay held (a follow-up never sends one) |
+| the CLI starts one just as you send | whoever takes the queue lock first wins: yours goes on the same process (the CLI folds them or answers both) or queues behind it |
+| a task ends during your turn | no follow-up: the CLI tells the turn; the row updates |
+
+**Stop.** Per turn: with tasks running, it interrupts the turn only
+(`control_request {subtype: interrupt}`) and the tasks go on; with no tasks
+running, the process ends, as before. An interrupt not answered in 10 s falls
+back to killing the process, tasks included, and the rows say lost.
+Per task (`space_stop_task`): writes `stop_task` and waits for the CLI's
+`control_response` (10 s); a refusal or a timeout is a toast. Stopped tasks get
+no follow-up. The product event is `space_action` `stop_task`.
+
+**What ends a kept process.**
+
+| | |
+| --- | --- |
+| its last task ends (or is stopped) | it exits; stdin closes |
+| the cap (2 h with no turn) | the process is stopped, tasks read `cut off`, a toast says so |
+| Undo, Back to here, archive | it ends first; tasks read `stopped` with the reason |
+| another agent, model, mode, effort, or attachments | it ends first (above) |
+| quit | stopped with the space's other processes |
+| a crash of the CLI, or Theodore restarted | tasks read `lost`: their state can't be known |
+
+Theodore never leaves a kept process unwatched: dropped from any owner it is
+killed, a leftover from an unclean exit is reaped at the next start with the
+other agent processes (pid marker), and a background command the CLI spawned in
+its own process group dies with the CLI (verified: SIGTERM to the CLI ends its
+background command).
+
+**The state.** `Space::background_tasks` (id, kind, description, started_at,
+status, ended_at, note, the turn and call it links to) is synced like the rest of
+the row, so it survives a UI reload; a restart turns running tasks `lost`. Ended
+rows are dropped when the next turn starts, or when more than 20 pile up.
+
+**The UI.** Above the composer: "2 running in background", opening to a list
+with an icon by kind, description, elapsed time, Stop, and a row's outcome for a
+few seconds after it ends (a cut or lost one stays until the next turn). Tool
+rows read `running in background` until their task ends, then the real output.
+The sidebar's agent indicator counts turns only, not background tasks: a space
+waiting on a long build isn't "the agent working".
+
 ### Tools the agent gets
 
 Every turn, in every mode, gets the `space-tools` MCP server: the space's
@@ -1512,6 +1617,7 @@ claude -p --input-format stream-json …   stdin ◀─ goal
 | Claude Code, same agent and mode, no attachments | into the running turn; listed in the turn's `steered`, undone with it |
 | Codex, Gemini (one prompt per process) | queued |
 | another agent / mode, attachments (`--add-dir` is per process) | queued |
+| the turn's process lives on for background tasks | see "Background tasks" |
 | the run just ended, or hasn't started taking input yet | queued |
 
 The runner exposes it as an optional capability (`AgentPort::run_steerable`

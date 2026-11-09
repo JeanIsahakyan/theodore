@@ -232,6 +232,7 @@ impl AgentCli {
             } else {
                 process::DEFAULT_MAX_RUNTIME_MS
             },
+            max_linger_ms: if steerable { process::LINGER_MAX_MS } else { 0 },
             guards,
             pid_dir: self.pid_dir.clone(),
             agent: req.agent.as_str().to_string(),
@@ -250,6 +251,7 @@ impl AgentCli {
             first: claude::user_message_line(&req.prompt),
             messages,
             encode: claude::user_message_line,
+            encode_control: claude::control_request_line,
         };
         process::spawn_with_input(spec, parser, input).map(|run| (run, Some(steer)))
     }
