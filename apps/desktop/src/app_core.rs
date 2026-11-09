@@ -1119,6 +1119,9 @@ impl CoreApi for AppCore {
     async fn space_stop(&self, space: String) -> Result<(), CommandError> {
         self.core.space_stop(&space).await.map_err(err)
     }
+    async fn space_stop_task(&self, space: String, task: String) -> Result<(), CommandError> {
+        self.core.space_stop_task(&space, &task).await.map_err(err)
+    }
     async fn space_skills(&self, space: String) -> Result<Vec<SkillInfo>, CommandError> {
         self.core.space_skills(&space).await.map_err(err)
     }

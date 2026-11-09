@@ -48,6 +48,7 @@ import { useKeptOpen, useSteadyChange } from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
 import { AgentDetails, ToolDetails } from './ToolDetails';
 import { toolKey, useToolRun } from './toolPayload';
+import { useRunningBackgroundCall } from './backgroundCalls';
 import {
   fileChips,
   foldLine,
@@ -159,8 +160,10 @@ const ToolRow = memo(function ToolRow({
     if (!open) countUse('tool_rows');
     steady(() => setOpen(!open));
   };
-  // A background task keeps going after its call has answered.
+  // A background task keeps going after its call has answered, and after
+  // its turn (`space.background_tasks`).
   const waiting = !!step.background && !step.summary;
+  const stillRunning = useRunningBackgroundCall(step.id);
   return (
     <div data-kind={view.kind} className="turn-tool min-w-0">
       <div
@@ -181,7 +184,9 @@ const ToolRow = memo(function ToolRow({
           toggle();
         }}
       >
-        <StepIcon busy={running && (step.ok == null || waiting)}>
+        <StepIcon
+          busy={(running && (step.ok == null || waiting)) || stillRunning}
+        >
           <Icon className="size-3.5" />
         </StepIcon>
         <span title={view.label} className="turn-tool-label min-w-0 truncate">
@@ -197,7 +202,7 @@ const ToolRow = memo(function ToolRow({
         {stepFailed(step) && <Failed />}
         <Chevron open={open} />
       </div>
-      {open && <ToolDetails step={step} running={running} />}
+      {open && <ToolDetails step={step} running={running || stillRunning} />}
     </div>
   );
 });
@@ -330,7 +335,8 @@ const AgentRow = memo(
     const steady = useSteadyChange();
     // A background launch answers at once, its report comes later or never.
     const waiting = !!step.background && !step.summary;
-    const busy = running && (step.ok == null || waiting);
+    const stillRunning = useRunningBackgroundCall(step.id);
+    const busy = stillRunning || (running && (step.ok == null || waiting));
     const view = toolView(step, running);
     const beside = busy
       ? (latestOf(own) ?? (waiting ? 'running in background' : null))

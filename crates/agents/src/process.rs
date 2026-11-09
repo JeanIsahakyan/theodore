@@ -12,23 +12,36 @@
 //!
 //! With an [`Input`] (`spawn_with_input`) stdin stays open: the first
 //! message goes in at once, steered ones as they come, and stdin closes
-//! when the parser's terminal event says the run is over.
+//! when the parser's terminal event says the run is over. A parser that
+//! reports a [`Session`] can also keep the process past a turn's result,
+//! for its background tasks (docs/spaces.md "Background tasks"):
+//!
+//! ```text
+//! Turn ──result, tasks running────────────▶ Tasks ─ a turn starts ─▶ Turn
+//!   │                                         │
+//!   └──result, none, none expected─▶ Drained  ├─ last task gone, no reply expected ─▶ Drained
+//!                                             ├─ last task gone, reply expected ─▶ Settling
+//!                                             └─ LINGER_MAX_MS ─▶ TasksCapped, terminate
+//! Settling ─ a turn starts ─▶ Turn   ·   ─ FOLLOW_UP_GRACE ─▶ Drained
+//! Drained ─▶ stdin closes ─▶ the CLI exits (a control request pending waits for its answer first)
+//! ```
 //!
 //! Stream parsing is CLI-specific (see `claude`, `codex`, `gemini`); this
 //! module only owns the process, the channel, cancellation and stalls.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use theodore_ports::agent::{
-    AGENT_OFFLINE_CODE, AGENT_SIGNED_OUT_CODE, AgentError, AgentEvent, AgentRun, SteerMessage,
-    is_auth_failure, is_connection_failure, offline_message, signed_out_message,
+    AGENT_OFFLINE_CODE, AGENT_SIGNED_OUT_CODE, AgentError, AgentEvent, AgentRun, ControlRequest,
+    SteerMessage, is_auth_failure, is_connection_failure, offline_message, signed_out_message,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 const GRACE_PERIOD: Duration = Duration::from_secs(5);
@@ -49,6 +62,13 @@ pub const MAX_STDOUT_LINE_BYTES: usize = 1024 * 1024;
 /// forever). `0` disables it. `AgentCli` sets this to `DEFAULT_MAX_RUNTIME_MS`
 /// unless a future config wires up something else.
 pub const DEFAULT_MAX_RUNTIME_MS: u64 = 30 * 60 * 1000;
+/// How long a CLI process may stay alive for its background tasks, counted
+/// from when the last turn on it ended: a forgotten `sleep 99999` doesn't
+/// hold a process forever. A turn on it starts the clock over.
+pub const LINGER_MAX_MS: u64 = 2 * 60 * 60 * 1000;
+/// How long a process with no tasks left waits for the reply the CLI usually
+/// starts when a task ends by itself, before closing.
+const FOLLOW_UP_GRACE: Duration = Duration::from_secs(5);
 /// A run whose last result is in but that still waits for a written
 /// message to be taken this long closes stdin anyway: the CLI then finishes
 /// with what it has instead of waiting for input forever.
@@ -77,6 +97,23 @@ pub trait LineParser: Send + 'static {
     fn awaiting_input(&self) -> bool {
         false
     }
+    /// Where the CLI's session stands, [`Input`] runs only.
+    fn session(&self) -> Session {
+        Session::Turn
+    }
+}
+
+/// Where a CLI's session stands, between its lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Session {
+    /// A turn is open: it answers, stalls count, its runtime cap runs.
+    Turn,
+    /// No turn open, background tasks running: the process stays.
+    Tasks,
+    /// No tasks left, a reply to the one that ended may still start.
+    Settling,
+    /// Nothing left to do: stdin closes.
+    Drained,
 }
 
 /// Messages fed to a CLI that reads them from stdin while it runs.
@@ -87,6 +124,8 @@ pub struct Input {
     pub messages: mpsc::Receiver<SteerMessage>,
     /// Plain text → one line of the CLI's input format.
     pub encode: fn(&str) -> String,
+    /// A control request, with its id, → one line of the CLI's input format.
+    pub encode_control: fn(&ControlRequest, &str) -> String,
 }
 
 /// The run's open stdin, while it takes messages.
@@ -94,6 +133,7 @@ struct Feed {
     stdin: Option<ChildStdin>,
     messages: Option<mpsc::Receiver<SteerMessage>>,
     encode: fn(&str) -> String,
+    encode_control: fn(&ControlRequest, &str) -> String,
 }
 
 impl Feed {
@@ -127,8 +167,12 @@ pub struct SpawnSpec {
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
     pub stall_after_ms: u64,
-    /// Hard cap on total run time; `0` disables it. See `DEFAULT_MAX_RUNTIME_MS`.
+    /// Hard cap on each turn's run time; `0` disables it. See
+    /// `DEFAULT_MAX_RUNTIME_MS`.
     pub max_runtime_ms: u64,
+    /// How long the process may linger for background tasks; `0`: no cap.
+    /// See `LINGER_MAX_MS`.
+    pub max_linger_ms: u64,
     /// Dropped only once the run loop ends (e.g. a Gemini temp settings file
     /// that must outlive the child process).
     pub guards: Vec<Box<dyn std::any::Any + Send>>,
@@ -286,6 +330,7 @@ fn spawn(
             stdin: child.stdin.take(),
             messages: Some(i.messages),
             encode: i.encode,
+            encode_control: i.encode_control,
         };
         (feed, i.first)
     });
@@ -307,6 +352,7 @@ fn spawn(
             cancel.clone(),
             stall_after,
             spec.max_runtime_ms,
+            spec.max_linger_ms,
             run_deadline,
             parser,
             guards,
@@ -317,6 +363,33 @@ fn spawn(
     ));
 
     Ok(AgentRun { events: rx, cancel })
+}
+
+/// A run's clocks, which depend on where its session stands: a turn has its
+/// runtime cap, a linger its own.
+struct SessionTimers {
+    session: Session,
+    max_runtime_ms: u64,
+    max_linger_ms: u64,
+    linger_deadline: Option<tokio::time::Instant>,
+    settle_deadline: Option<tokio::time::Instant>,
+}
+
+impl SessionTimers {
+    fn update(&mut self, session: Session, run_deadline: &mut Option<tokio::time::Instant>) {
+        if session == self.session {
+            return;
+        }
+        self.session = session;
+        let now = tokio::time::Instant::now();
+        *run_deadline = (session == Session::Turn && self.max_runtime_ms > 0)
+            .then(|| now + Duration::from_millis(self.max_runtime_ms));
+        self.linger_deadline = (session == Session::Tasks && self.max_linger_ms > 0)
+            .then(|| now + Duration::from_millis(self.max_linger_ms));
+        // Drained waits only for an unanswered control request, and not forever.
+        self.settle_deadline =
+            matches!(session, Session::Settling | Session::Drained).then(|| now + FOLLOW_UP_GRACE);
+    }
 }
 
 /// `deadline`'s `Sleep`, or a future that never resolves if there is none —
@@ -338,7 +411,8 @@ async fn run_loop(
     cancel: CancellationToken,
     stall_after: Duration,
     max_runtime_ms: u64,
-    run_deadline: Option<tokio::time::Instant>,
+    max_linger_ms: u64,
+    mut run_deadline: Option<tokio::time::Instant>,
     mut parser: Box<dyn LineParser>,
     _guards: Vec<Box<dyn std::any::Any + Send>>,
     log: RunLog,
@@ -346,6 +420,16 @@ async fn run_loop(
 ) {
     let mut reader = BufReader::new(stdout);
     let fed = input.is_some();
+    let mut timers = SessionTimers {
+        session: Session::Turn,
+        max_runtime_ms,
+        max_linger_ms,
+        linger_deadline: None,
+        settle_deadline: None,
+    };
+    // Written and not answered yet, by request id.
+    let mut controls: HashMap<String, oneshot::Sender<Result<(), String>>> = HashMap::new();
+    let mut next_control = 0u64;
     let mut feed = match input {
         Some((mut feed, first)) => {
             if feed.write(&first).await {
@@ -357,11 +441,14 @@ async fn run_loop(
             stdin: None,
             messages: None,
             encode: |s| s.to_string(),
+            encode_control: |_, _| String::new(),
         },
     };
     // Set while the parser waits for a written message to be taken.
     let mut input_deadline: Option<tokio::time::Instant> = None;
     let mut terminal_sent = false;
+    // Every task is gone and nothing else will start: stdin closes.
+    let mut drained = false;
     let mut stalled_notified = false;
     let mut exit_success: Option<bool> = None;
     // "It can't connect" signals, in ms since the run started (0 = never):
@@ -395,12 +482,28 @@ async fn run_loop(
         })
     };
 
-    while !terminal_sent {
+    while !terminal_sent && !drained {
         tokio::select! {
             _ = cancel.cancelled() => {
                 exit_success = Some(terminate(&mut child).await);
                 tracing::info!(agent = %log.agent, duration_ms = log.ms(), "agent run cancelled");
                 break;
+            }
+            _ = sleep_until_or_pending(timers.linger_deadline) => {
+                tracing::warn!(
+                    error.code = "agent.linger_capped",
+                    agent = %log.agent,
+                    duration_ms = log.ms(),
+                    max_linger_ms,
+                    "a process kept for background tasks hit its cap and was stopped"
+                );
+                let _ = tx.send(AgentEvent::TasksCapped).await;
+                exit_success = Some(terminate(&mut child).await);
+                break;
+            }
+            _ = sleep_until_or_pending(timers.settle_deadline) => {
+                // No reply came for the task that ended: the CLI is done.
+                drained = true;
             }
             _ = sleep_until_or_pending(run_deadline) => {
                 let _ = terminate(&mut child).await;
@@ -441,39 +544,66 @@ async fn run_loop(
                             output_at = log.ms().max(1);
                         }
                         let events = parser.on_line(&l);
+                        if fed {
+                            timers.update(parser.session(), &mut run_deadline);
+                        }
+                        // The turn ended and the process stays: not the run's end.
+                        let keep = matches!(timers.session, Session::Tasks | Session::Settling);
                         input_deadline = match (parser.awaiting_input(), feed.stdin.is_some()) {
                             (true, true) => input_deadline
                                 .or_else(|| Some(tokio::time::Instant::now() + INPUT_GRACE)),
                             _ => None,
                         };
                         for ev in events {
+                            if let AgentEvent::ControlResponse { request_id, error } = &ev {
+                                if let Some(reply) = controls.remove(request_id) {
+                                    let _ = reply.send(error.clone().map_or(Ok(()), Err));
+                                }
+                                continue;
+                            }
                             let terminal = is_terminal(&ev);
                             if terminal && terminal_sent {
                                 continue;
                             }
-                            terminal_sent |= terminal;
+                            terminal_sent |= terminal && !keep;
                             let (ev, failure) = classify_failure(ev, &log.agent, "");
                             log_terminal(&log, &ev, None, failure);
                             if tx.send(ev).await.is_err() {
                                 return;
                             }
                         }
+                        // Every task gone and none of our requests unanswered.
+                        drained |= timers.session == Session::Drained && controls.is_empty();
                     }
                     Ok(None) => break, // stdout closed; fall through to exit handling
                     Err(_) => break,
                 }
             }
             msg = feed.next() => {
-                if let Some(msg) = msg {
-                    let line = (feed.encode)(&msg.text);
-                    if feed.write(&line).await {
-                        parser.on_input();
-                        let _ = msg.delivered.send(());
+                match msg {
+                    Some(SteerMessage::Text { text, delivered }) => {
+                        let line = (feed.encode)(&text);
+                        if feed.write(&line).await {
+                            parser.on_input();
+                            timers.update(parser.session(), &mut run_deadline);
+                            let _ = delivered.send(());
+                        }
+                        // Not written: dropping `delivered` tells the sender.
                     }
-                    // Not written: dropping `delivered` tells the sender.
-                } else {
-                    // Nobody can steer any more; stdin stays open for the run.
-                    feed.messages = None;
+                    Some(SteerMessage::Control { request, reply }) => {
+                        next_control += 1;
+                        let id = format!("theodore-{next_control}");
+                        let line = (feed.encode_control)(&request, &id);
+                        if feed.write(&line).await {
+                            controls.insert(id, reply);
+                        } else {
+                            let _ = reply.send(Err(theodore_ports::agent::RUN_GONE.to_string()));
+                        }
+                    }
+                    None => {
+                        // Nobody can steer any more; stdin stays open for the run.
+                        feed.messages = None;
+                    }
                 }
             }
             _ = sleep_until_or_pending(input_deadline) => {
@@ -488,7 +618,7 @@ async fn run_loop(
             // Once stalled, this keeps re-checking every `stall_after` (no
             // second `Stalled`): the connection error may come after the
             // first stall.
-            _ = tokio::time::sleep(stall_after) => {
+            _ = tokio::time::sleep(stall_after), if timers.session == Session::Turn => {
                 let offline_at = notice_offline_at.max(stderr_offline_at.load(Ordering::SeqCst));
                 if offline_at > output_at {
                     // Quiet because it keeps failing to connect: retrying
@@ -525,7 +655,7 @@ async fn run_loop(
     if fed {
         // The run is over: EOF lets the CLI save its session and exit.
         feed.close();
-        if exit_success.is_none() && terminal_sent {
+        if exit_success.is_none() && (terminal_sent || drained) {
             let _ = tokio::time::timeout(EXIT_AFTER_INPUT, child.wait()).await;
         }
     }
@@ -537,7 +667,10 @@ async fn run_loop(
         .unwrap_or_default();
     let tail_str = String::from_utf8_lossy(&stderr_tail).into_owned();
 
-    if !terminal_sent {
+    // The turn's over and the process with it (kept for tasks, then exited):
+    // nothing to report. A watcher sees the events end.
+    let turn_open = !fed || timers.session == Session::Turn;
+    if !terminal_sent && turn_open {
         let cancelled = exit_success.is_some();
         let (success, code) = match exit_success {
             Some(s) => (s, None),
@@ -559,6 +692,10 @@ async fn run_loop(
     }
 }
 
+/// How Claude Code's error result starts when a turn was interrupted before
+/// the model answered (`[ede_diagnostic] result_type=user …`).
+const INTERRUPT_DIAGNOSTIC: &str = "[ede_diagnostic]";
+
 /// Why an agent run ended in an `Error`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Failure {
@@ -568,6 +705,8 @@ enum Failure {
     Offline,
     /// The CLI has no valid credentials (the user's to fix).
     SignedOut,
+    /// The CLI's answer to an interrupt: the user pressed Stop.
+    Interrupted,
 }
 
 /// An `Error` whose message or stderr says the CLI couldn't reach its
@@ -583,6 +722,13 @@ fn classify_failure(ev: AgentEvent, agent: &str, stderr: &str) -> (AgentEvent, F
     else {
         return (ev, Failure::Crash);
     };
+    if message.starts_with(INTERRUPT_DIAGNOSTIC) {
+        let ev = AgentEvent::Error {
+            message,
+            stderr_tail,
+        };
+        return (ev, Failure::Interrupted);
+    }
     let said = |f: fn(&str) -> bool| f(&message) || f(&stderr_tail) || f(stderr);
     if said(is_connection_failure) {
         let ev = AgentEvent::Error {
@@ -635,6 +781,14 @@ fn log_terminal(
                 None => (None, stderr_tail.as_str()),
             };
             let tail = tail_of(tail, LOGGED_STDERR_TAIL);
+            if failure == Failure::Interrupted {
+                tracing::info!(
+                    agent = %log.agent,
+                    duration_ms = log.ms(),
+                    "agent run interrupted"
+                );
+                return;
+            }
             if failure == Failure::Offline {
                 tracing::info!(
                     error.code = AGENT_OFFLINE_CODE,
@@ -811,6 +965,15 @@ mod bounded_io_tests {
         let (line, truncated) = read_line_capped(&mut reader, 10).await.unwrap().unwrap();
         assert_eq!(line, "second");
         assert!(!truncated);
+    }
+
+    #[test]
+    fn an_interrupt_answer_isnt_a_crash() {
+        let ev = AgentEvent::Error {
+            message: "[ede_diagnostic] result_type=user stop_reason=null".into(),
+            stderr_tail: String::new(),
+        };
+        assert_eq!(classify_failure(ev, "claude", "").1, Failure::Interrupted);
     }
 
     #[tokio::test]

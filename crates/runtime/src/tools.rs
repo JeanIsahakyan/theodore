@@ -659,6 +659,13 @@ impl RunTools for McpRunTools {
         })
     }
 
+    fn rebind(&self, endpoint: &McpEndpoint, run_id: &str) {
+        let guard = self.handle.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(h) = guard.as_ref() {
+            h.rebind_run(&endpoint.token, run_id);
+        }
+    }
+
     fn unregister(&self, endpoint: &McpEndpoint) {
         let guard = self.handle.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(h) = guard.as_ref() {

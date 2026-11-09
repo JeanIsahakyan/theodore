@@ -212,6 +212,7 @@ mod tests {
             "space_send",
             "space_send_now",
             "space_queued",
+            "space_stop_task",
             "space_skills",
             "space_run",
             // shell-side

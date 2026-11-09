@@ -278,6 +278,15 @@ const STOPPED = 'stopped';
  *  turn's activity, the markdown reply, its chips and files, `after` (a turn's
  *  check), then how long it took, copy / vote and the files it changed. A run
  *  that failed shows why instead, with Retry when `onRetryFailed` is given. */
+/** Above a reply the CLI wrote on its own: what started it. */
+function fromTasksLabel(tasks: readonly string[]): string {
+  if (tasks.length > 1)
+    return `Started by ${tasks.length} finished background tasks`;
+  return tasks[0]
+    ? `Started by a finished background task: ${tasks[0]}`
+    : 'Started by a finished background task';
+}
+
 export function ChatMessage({
   m,
   refs,
@@ -329,6 +338,14 @@ export function ChatMessage({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={m.author.agent} tagged={tagged} badges={badges} />
+        {!!m.from_tasks?.length && (
+          <span
+            className="chat-from-tasks truncate text-xs text-muted"
+            title={m.from_tasks.join('\n')}
+          >
+            {fromTasksLabel(m.from_tasks)}
+          </span>
+        )}
         {!!m.activity?.length && (
           <ToolRunContext.Provider value={m.run ?? null}>
             <TurnActivity

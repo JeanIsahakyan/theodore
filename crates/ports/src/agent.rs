@@ -150,9 +150,81 @@ pub struct TaskEnd {
     pub duration_ms: Option<u64>,
 }
 
+/// What a background task is (Claude Code's `task_type`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundTaskKind {
+    /// `local_bash`
+    Command,
+    /// `local_agent`
+    Subagent,
+}
+
+/// One background task, as the CLI's running set lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundTaskInfo {
+    pub id: String,
+    pub kind: BackgroundTaskKind,
+    pub description: String,
+}
+
+/// A request written to a running CLI's stdin that it answers
+/// ([`AgentEvent::ControlResponse`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlRequest {
+    /// End one background task (`stop_task`).
+    StopTask { task_id: String },
+    /// End the running turn; background tasks go on (`interrupt`).
+    Interrupt,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// The background tasks running now (Claude Code's
+    /// `background_tasks_changed`): the whole set, each time it changes.
+    BackgroundTasks {
+        tasks: Vec<BackgroundTaskInfo>,
+    },
+    /// A task started (`task_started`), foreground or background: `tool_use_id`
+    /// is the call it's the running end of.
+    TaskStarted {
+        id: String,
+        tool_use_id: Option<String>,
+        description: String,
+        kind: BackgroundTaskKind,
+        backgrounded: bool,
+    },
+    /// A task's status changed (`task_updated`): `end_time` once it is over,
+    /// `backgrounded` when a foreground call moved to the background.
+    TaskStatus {
+        id: String,
+        status: Option<String>,
+        end_time: Option<u64>,
+        backgrounded: Option<bool>,
+    },
+    /// A task ended (`task_notification`): how, and the file it wrote.
+    TaskEnded {
+        id: String,
+        tool_use_id: Option<String>,
+        status: String,
+        summary: Option<String>,
+        output_file: Option<String>,
+    },
+    /// Comes just before a `Done`/`Error` that does not end the run: the
+    /// process stays open for its background tasks (docs/spaces.md "Background
+    /// tasks"), and the events go on.
+    Lingering,
+    /// The CLI started a turn by itself (a background task's end): no message
+    /// of ours opens it. Only while no turn is open.
+    FollowUp,
+    /// The process was stopped by its linger cap with tasks still running.
+    TasksCapped,
+    /// The CLI's answer to a [`ControlRequest`]: `error` if it refused.
+    ControlResponse {
+        request_id: String,
+        error: Option<String>,
+    },
     Text {
         text: String,
     },
@@ -363,7 +435,9 @@ impl AgentError {
     }
 }
 
-/// A running agent. Events end with exactly one `Done` or `Error`.
+/// A running agent. Events end with exactly one `Done` or `Error`, except a
+/// run that keeps its process for background tasks, where one `Lingering`
+/// precedes each `Done`/`Error` that isn't the last and the events go on.
 pub struct AgentRun {
     pub events: mpsc::Receiver<AgentEvent>,
     pub cancel: CancellationToken,
@@ -378,9 +452,17 @@ pub struct Steer(mpsc::Sender<SteerMessage>);
 
 /// One message for a running agent, and who to tell once the CLI has it.
 #[derive(Debug)]
-pub struct SteerMessage {
-    pub text: String,
-    pub delivered: tokio::sync::oneshot::Sender<()>,
+pub enum SteerMessage {
+    /// Your words, as a user message.
+    Text {
+        text: String,
+        delivered: tokio::sync::oneshot::Sender<()>,
+    },
+    /// A request the CLI answers; `reply` carries its error if it refused.
+    Control {
+        request: ControlRequest,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
 }
 
 impl Steer {
@@ -394,12 +476,49 @@ impl Steer {
     /// already finished (or is finishing) and can't take it.
     pub async fn send(&self, text: String) -> bool {
         let (delivered, ack) = tokio::sync::oneshot::channel();
-        if self.0.send(SteerMessage { text, delivered }).await.is_err() {
+        if self
+            .0
+            .send(SteerMessage::Text { text, delivered })
+            .await
+            .is_err()
+        {
             return false;
         }
         ack.await.is_ok()
     }
+
+    /// Writes `request` and waits for the CLI's answer: `Ok` when it did it,
+    /// `Err` with its reason when it refused or the run is gone.
+    pub async fn control(&self, request: ControlRequest) -> Result<(), String> {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        if self
+            .0
+            .send(SteerMessage::Control { request, reply })
+            .await
+            .is_err()
+        {
+            return Err(RUN_GONE.to_string());
+        }
+        answer.await.unwrap_or_else(|_| Err(RUN_GONE.to_string()))
+    }
+
+    /// Stops one background task; see [`Steer::control`].
+    pub async fn stop_task(&self, task_id: &str) -> Result<(), String> {
+        self.control(ControlRequest::StopTask {
+            task_id: task_id.to_string(),
+        })
+        .await
+    }
+
+    /// Ends the running turn without ending the process; see
+    /// [`Steer::control`].
+    pub async fn interrupt(&self) -> Result<(), String> {
+        self.control(ControlRequest::Interrupt).await
+    }
 }
+
+/// What a control request fails with when the run has ended.
+pub const RUN_GONE: &str = "the agent's process is gone";
 
 /// One model an agent CLI can run, and the effort levels it takes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

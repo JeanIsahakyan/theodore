@@ -35,6 +35,54 @@ pub enum SpaceMode {
     Plan,
 }
 
+/// What a background task is (docs/spaces.md "Background tasks").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundTaskKind {
+    /// A shell command.
+    Command,
+    /// A subagent.
+    Subagent,
+}
+
+/// Where a background task stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundTaskStatus {
+    Running,
+    Completed,
+    Failed,
+    /// Stopped: by you, or Theodore ended it (`note` says why).
+    Stopped,
+    /// Ran past the cap and was cut (`note` says so).
+    Cut,
+    /// Its process is gone (Theodore restarted, or the agent crashed): how it
+    /// ended isn't known.
+    Lost,
+}
+
+/// One background task of a space's agent: running, or ended a moment ago.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct BackgroundTask {
+    /// The CLI's task id: what Stop names.
+    pub id: String,
+    pub kind: BackgroundTaskKind,
+    pub description: String,
+    pub started_at: Millis,
+    pub status: BackgroundTaskStatus,
+    #[serde(default)]
+    pub ended_at: Option<Millis>,
+    /// Why, when Theodore ended it or lost track of it.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// The turn it started in.
+    #[serde(default)]
+    pub run: Option<String>,
+    /// The tool call it belongs to: the row it links up with.
+    #[serde(default)]
+    pub call: Option<String>,
+}
+
 /// How a space was shipped (docs/spaces.md §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -102,6 +150,10 @@ pub struct Space {
     pub run: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// The agent's background tasks, running or just ended (docs/spaces.md
+    /// "Background tasks"); ended ones go when the next turn starts.
+    #[serde(default)]
+    pub background_tasks: Vec<BackgroundTask>,
     /// The last Open PR / Push / Merge locally / Keep as branch.
     #[serde(default)]
     pub shipped: Option<SpaceShipped>,
@@ -307,7 +359,8 @@ pub struct AgentSession {
 /// it moved the space from and to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SpaceTurn {
-    /// The `chat_message` id of your message that started it.
+    /// The `chat_message` id of your message that started it; the reply's
+    /// own for a turn the CLI started by itself.
     pub message: String,
     /// The `chat_message` id of the agent's reply.
     pub reply: String,

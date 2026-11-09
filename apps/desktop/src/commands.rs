@@ -796,6 +796,18 @@ pub async fn space_stop(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn space_stop_task(
+    op: crate::op::Op,
+    space: String,
+    task: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.space_stop_task(space, task).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn space_skills(
     op: crate::op::Op,
     space: String,

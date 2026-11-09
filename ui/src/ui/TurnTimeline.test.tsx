@@ -9,6 +9,7 @@ import { setTransport } from '../core/transport';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
+import { BackgroundCallsContext } from './backgroundCalls';
 import { ChatLive, ChatMessage } from './ChatTurn';
 import { FileTypeIcon } from './FileTypeIcon';
 import {
@@ -215,6 +216,45 @@ describe('a subagent', () => {
       'running in background',
     );
     expect(row.querySelector('[role="progressbar"], .spinner')).not.toBeNull();
+  });
+
+  it('keeps saying it runs while its task does, after the turn', async () => {
+    const launched: TurnStep = {
+      ...agent,
+      id: 'bg-kept',
+      ok: true,
+      background: true,
+    };
+    await render(
+      <BackgroundCallsContext.Provider value={new Set(['bg-kept'])}>
+        <TimelineRows steps={[launched]} />
+      </BackgroundCallsContext.Provider>,
+    );
+    const row = m!.host.querySelector('.turn-agent')!;
+    expect(row.querySelector('.turn-agent-note')?.textContent).toBe(
+      'running in background',
+    );
+  });
+
+  it('marks a reply the CLI wrote on its own', async () => {
+    await render(
+      <ChatMessage
+        m={
+          {
+            id: 'r',
+            pr: 'space:s',
+            author: { kind: 'agent', agent: 'claude' },
+            text: 'it finished',
+            refs: [],
+            at: 1,
+            from_tasks: ['sleep 300'],
+          } as Message
+        }
+      />,
+    );
+    expect(m!.host.querySelector('.chat-from-tasks')?.textContent).toBe(
+      'Started by a finished background task: sleep 300',
+    );
   });
 
   it('launched in the background and left behind by its turn does not spin', async () => {

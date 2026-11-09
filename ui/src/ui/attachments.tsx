@@ -3,12 +3,33 @@
  * drop adds them to the box; each is saved by the core (`save_attachment`)
  * and goes with the next message, which keeps them (`ChatMessage.
  * attachments`). The agent reads them from disk.
+ *
+ * Each one is a small chip, in the box and on a sent message:
+ *
+ * ```text
+ * image chip ── hover / keyboard focus, 300 ms ──▶ the photo in a card
+ * sent image ── click ──▶ the large view
+ * sent image's data ── fetched at the first of those, then cached
+ * ```
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { FileText, Paperclip, Xmark } from '@gravity-ui/icons';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { Paperclip, Picture, Xmark } from '@gravity-ui/icons';
 import { Button, Spinner, Tooltip } from '@heroui/react';
 import { api } from '../core/api';
 import type { Attachment } from '../gen/contract';
+import {
+  HoverCard,
+  useHoverIntent,
+  type HoverIntent,
+} from './FileHoverPreview';
+import { FileTypeIcon } from './FileTypeIcon';
 
 /** A file on its way into the box. */
 export type Pending = {
@@ -172,44 +193,178 @@ export function AttachButton({
   );
 }
 
-function Tile({
+const isImage = (mime: string) => mime.startsWith('image/');
+
+// The height of the composer's other chips (HeroUI's `sm` button).
+const CHIP =
+  'attachment inline-flex h-9 max-w-48 shrink-0 items-center gap-1.5 rounded-full bg-default text-xs md:h-8';
+
+function ChipLabel({ name, mime }: { name: string; mime: string }) {
+  return (
+    <>
+      {isImage(mime) ? (
+        <Picture
+          data-file-type="image"
+          className="size-3.5 shrink-0 text-muted"
+        />
+      ) : (
+        <FileTypeIcon path={name} />
+      )}
+      <span className="min-w-0 truncate">{name}</span>
+    </>
+  );
+}
+
+/** An image chip's hover: nothing for any other file. `card` goes beside the
+ *  chip; `photo` runs only when it opens. */
+function usePhotoHover<T extends HTMLElement>(
+  image: boolean,
+  name: string,
+  caption: string,
+  photo: () => ReactNode,
+) {
+  const anchor = useRef<T | null>(null);
+  const { open, intent } = useHoverIntent();
+  return {
+    close: intent.close,
+    hoverProps: image
+      ? {
+          ref: anchor,
+          onMouseEnter: intent.enter,
+          onMouseLeave: intent.leave,
+          onMouseDown: intent.press,
+          onMouseUp: intent.release,
+        }
+      : {},
+    focusProps: image ? { onFocus: intent.focus, onBlur: intent.blur } : {},
+    card: open ? (
+      <PhotoCard anchor={anchor} intent={intent} name={name} caption={caption}>
+        {photo()}
+      </PhotoCard>
+    ) : null,
+  };
+}
+
+/** The photo at a bounded size, or why not. A checkerboard behind it, so a
+ *  transparent one shows on either theme. */
+function Photo({
+  src,
   name,
-  image,
-  children,
-  onRemove,
-  title,
+  failed,
 }: {
+  src: string | null;
   name: string;
-  image: string | null;
-  children?: ReactNode;
-  onRemove?: () => void;
-  title?: string;
+  failed?: boolean;
+}) {
+  const [broken, setBroken] = useState(false);
+  if (failed || broken) {
+    return <div className="px-3 py-3 text-xs text-muted">No preview</div>;
+  }
+  if (!src) {
+    return (
+      <div className="grid h-24 place-items-center text-muted">
+        <Spinner size="sm" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={name}
+      className="attachment-photo block max-h-[320px] max-w-[min(420px,calc(100vw-24px))] self-center object-contain"
+      onError={() => setBroken(true)}
+    />
+  );
+}
+
+function StoredPhoto({ a }: { a: Attachment }) {
+  const { url, failed } = useDataUrl(a.id);
+  return <Photo src={url} name={a.name} failed={failed} />;
+}
+
+function PhotoCard<T extends HTMLElement>({
+  anchor,
+  intent,
+  name,
+  caption,
+  children,
+}: {
+  anchor: RefObject<T | null>;
+  intent: HoverIntent;
+  name: string;
+  caption: string;
+  children: ReactNode;
 }) {
   return (
-    <span
-      className="attachment group relative flex h-14 max-w-48 shrink-0 items-center gap-2 overflow-hidden rounded-xl border border-separator bg-surface pe-2"
-      title={title ?? name}
+    <HoverCard
+      anchor={anchor}
+      intent={intent}
+      label={`Preview of ${name}`}
+      className="attachment-hover-card w-max min-w-40 max-w-[calc(100vw-24px)]"
     >
-      {image ? (
-        <img src={image} alt={name} className="h-full w-14 object-cover" />
-      ) : (
-        <span className="grid h-full w-12 place-items-center bg-default">
-          <FileText className="size-5 text-muted" />
-        </span>
-      )}
-      <span className="min-w-0 truncate text-xs">{name}</span>
       {children}
-      {onRemove && (
+      {/* No width of its own: the photo sets the card's. */}
+      <div className="w-0 min-w-full truncate border-t border-separator px-3 py-1.5 text-xs text-muted">
+        {caption}
+      </div>
+    </HoverCard>
+  );
+}
+
+/** One file in the box: icon, name, ×, and how its upload is going. */
+export function PendingChip({
+  p,
+  onRemove,
+  removeDisabled,
+}: {
+  p: Pending;
+  onRemove: () => void;
+  removeDisabled?: boolean;
+}) {
+  const image = isImage(p.mime);
+  const failure = p.error ? `${p.name}: ${p.error}` : null;
+  const hover = usePhotoHover<HTMLSpanElement>(
+    image,
+    p.name,
+    failure ?? p.name,
+    () =>
+      // A file from elsewhere (`addSaved`) has no object URL.
+      p.preview || !p.saved ? (
+        <Photo src={p.preview} name={p.name} failed={!p.preview} />
+      ) : (
+        <StoredPhoto a={p.saved} />
+      ),
+  );
+  return (
+    <>
+      <span
+        className={`${CHIP} pe-1 ps-2.5`}
+        data-kind={image ? 'image' : 'file'}
+        // The card says it for an image; twice is noise.
+        title={failure ?? (image ? undefined : p.name)}
+        {...hover.hoverProps}
+      >
+        <span
+          className="flex min-w-0 items-center gap-1.5 rounded-full"
+          {...(image ? { role: 'img', 'aria-label': p.name, tabIndex: 0 } : {})}
+          {...hover.focusProps}
+        >
+          <ChipLabel name={p.name} mime={p.mime} />
+        </span>
+        {!p.saved && !p.error && <Spinner size="sm" />}
+        {p.error && <span className="shrink-0 text-danger">!</span>}
         <button
           type="button"
-          aria-label={`Remove ${name}`}
-          className="absolute end-1 top-1 hidden size-5 place-items-center rounded-full bg-foreground/70 text-background group-hover:grid"
+          aria-label={`Remove ${p.name}`}
+          className="grid size-6 shrink-0 place-items-center rounded-full text-muted hover:bg-foreground/10 hover:text-foreground disabled:opacity-50"
+          disabled={removeDisabled}
           onClick={onRemove}
         >
           <Xmark className="size-3" />
         </button>
-      )}
-    </span>
+      </span>
+      {hover.card}
+    </>
   );
 }
 
@@ -217,72 +372,129 @@ function Tile({
 export function AttachmentStrip({ at }: { at: Attachments }) {
   if (!at.items.length) return null;
   return (
-    <div className="attachment-strip flex w-full gap-2 overflow-x-auto px-3 pb-1">
+    <div className="attachment-strip flex w-full flex-wrap gap-1.5 px-3 pb-1">
       {at.items.map((p) => (
-        <Tile
-          key={p.key}
-          name={p.name}
-          image={p.preview}
-          title={p.error ? `${p.name}: ${p.error}` : p.name}
-          onRemove={() => at.remove(p.key)}
-        >
-          {!p.saved && !p.error && <Spinner size="sm" />}
-          {p.error && <span className="text-xs text-danger">!</span>}
-        </Tile>
+        <PendingChip key={p.key} p={p} onRemove={() => at.remove(p.key)} />
       ))}
     </div>
   );
 }
 
-const dataUrls = new Map<string, Promise<string>>();
+interface DataUrl {
+  promise: Promise<string>;
+  /** Once it's in: a second look needs no wait, not even a tick's. */
+  url: string | null;
+}
 
-function useDataUrl(a: Attachment): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+const dataUrls = new Map<string, DataUrl>();
+
+function loadDataUrl(id: string): DataUrl {
+  const cached = dataUrls.get(id);
+  if (cached) return cached;
+  const entry: DataUrl = { promise: api.attachmentData(id), url: null };
+  dataUrls.set(id, entry);
+  entry.promise.then(
+    (url) => {
+      entry.url = url;
+    },
+    () => dataUrls.delete(id),
+  );
+  return entry;
+}
+
+/** Fetches on mount, so mount it only once the image is wanted: a long chat
+ *  stays cheap. Its parent is keyed by the attachment. */
+function useDataUrl(id: string): { url: string | null; failed: boolean } {
+  const [url, setUrl] = useState(() => dataUrls.get(id)?.url ?? null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!a.mime.startsWith('image/')) return;
     let live = true;
-    let p = dataUrls.get(a.id);
-    if (!p) {
-      const fetched = api.attachmentData(a.id);
-      fetched.catch(() => dataUrls.delete(a.id));
-      dataUrls.set(a.id, fetched);
-      p = fetched;
-    }
-    void p.then((u) => live && setUrl(u)).catch(() => {});
+    loadDataUrl(id).promise.then(
+      (next) => {
+        if (live) setUrl(next);
+      },
+      () => {
+        if (live) setFailed(true);
+      },
+    );
     return () => {
       live = false;
     };
-  }, [a.id, a.mime]);
-  return url;
+  }, [id]);
+  return { url, failed };
 }
 
-function SentTile({ a }: { a: Attachment }) {
-  const url = useDataUrl(a);
+/** Portalled: a chat row is transformed, so `fixed` alone stays in the row. */
+function LargeView({ a, onClose }: { a: Attachment; onClose: () => void }) {
+  const { url, failed } = useDataUrl(a.id);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  return createPortal(
+    <div
+      role="dialog"
+      aria-label={a.name}
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-8"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClose();
+      }}
+    >
+      {url ? (
+        <img
+          src={url}
+          alt={a.name}
+          className="max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)] rounded-xl object-contain"
+        />
+      ) : failed ? (
+        <span className="text-sm text-white">No preview</span>
+      ) : (
+        <Spinner size="sm" />
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+function SentChip({ a }: { a: Attachment }) {
+  const image = isImage(a.mime);
+  const hover = usePhotoHover<HTMLButtonElement>(image, a.name, a.name, () => (
+    <StoredPhoto a={a} />
+  ));
   const [big, setBig] = useState(false);
+  if (!image) {
+    return (
+      <span className={`${CHIP} px-2.5`} data-kind="file" title={a.name}>
+        <ChipLabel name={a.name} mime={a.mime} />
+      </span>
+    );
+  }
   return (
     <>
       <button
         type="button"
-        className="text-start"
-        onClick={() => url && setBig(true)}
+        className={`${CHIP} px-2.5 text-start hover:bg-default-hover`}
+        data-kind="image"
         aria-label={a.name}
+        onClick={() => {
+          // Enter has no mouse press to close the card first.
+          hover.close();
+          setBig(true);
+        }}
+        {...hover.hoverProps}
+        {...hover.focusProps}
       >
-        <Tile name={a.name} image={url} />
+        <ChipLabel name={a.name} mime={a.mime} />
       </button>
-      {big && url && (
-        <div
-          role="dialog"
-          aria-label={a.name}
-          className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-8"
-          onClick={() => setBig(false)}
-        >
-          <img
-            src={url}
-            alt={a.name}
-            className="max-h-full max-w-full rounded-xl"
-          />
-        </div>
-      )}
+      {hover.card}
+      {big && <LargeView a={a} onClose={() => setBig(false)} />}
     </>
   );
 }
@@ -298,10 +510,10 @@ export function MessageAttachments({
   if (!attachments?.length) return null;
   return (
     <div
-      className={`message-attachments flex flex-wrap gap-2 ${align === 'end' ? 'justify-end' : ''}`}
+      className={`message-attachments flex flex-wrap gap-1.5 ${align === 'end' ? 'justify-end' : ''}`}
     >
       {attachments.map((a) => (
-        <SentTile key={a.id} a={a} />
+        <SentChip key={a.id} a={a} />
       ))}
     </div>
   );

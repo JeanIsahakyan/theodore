@@ -2,14 +2,18 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+// Vite runs this in Node; the UI's types have no Node.
+declare const process: { env: Record<string, string | undefined> };
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
     outDir: 'dist',
   },
-  // Tauri serves the UI itself; a fixed port keeps `tauri dev` config simple.
+  // 1420 matches devUrl in tauri.conf.json. A Theodore space gets its own port
+  // and overrides devUrl to match (.theodore/config.yaml), so spaces don't collide.
   server: {
-    port: 1420,
+    port: Number(process.env.THEODORE_PORT) || 1420,
     strictPort: true,
   },
   test: {

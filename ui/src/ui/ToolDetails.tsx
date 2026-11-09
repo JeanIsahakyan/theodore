@@ -276,7 +276,7 @@ function BackgroundPart({
         {step.summary ??
           (running
             ? 'Running in the background: its output shows when it ends.'
-            : "Ran in the background: the turn ended before it did, so there's no final output.")}
+            : "Ran in the background: it didn't report how it ended.")}
       </div>
     );
   }
@@ -284,7 +284,8 @@ function BackgroundPart({
     <>
       <Status>
         <span className="turn-detail-ended">Ended: {ended.status}</span>
-        {ended.duration_ms != null && (
+        {/* The CLI's duration counts model time: nothing for a command. */}
+        {ended.duration_ms != null && step.name !== 'Bash' && (
           <span>{formatDuration(ended.duration_ms)}</span>
         )}
       </Status>

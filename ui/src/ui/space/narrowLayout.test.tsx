@@ -108,10 +108,10 @@ describe('the container rules', () => {
       expect(css, rule).toContain(rule);
     }
     expect(css).toContain('@container space-header (max-width: 74rem)');
-    // The base chip keeps its words longer than the other labels do.
+    // The base chip shortens right after the other labels go.
     const baseRule = css.indexOf('.space-header .base-moved-lead,');
     const query = css.lastIndexOf('@container space-header', baseRule);
-    expect(css.slice(query, baseRule)).toContain('(max-width: 56rem)');
+    expect(css.slice(query, baseRule)).toContain('(max-width: 72rem)');
     expect(css).toContain('@container composer-suffix (max-width: 32rem)');
   });
 });

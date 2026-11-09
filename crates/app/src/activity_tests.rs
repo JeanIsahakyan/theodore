@@ -235,6 +235,7 @@ fn chat_message(pr: &str, id: &str, author: Author, at: i64, run: Option<&str>) 
         refs: vec![],
         at,
         failed: None,
+        from_tasks: vec![],
         attachments: vec![],
         queued: None,
         activity: vec![],

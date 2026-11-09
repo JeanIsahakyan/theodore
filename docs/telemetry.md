@@ -136,7 +136,7 @@ fixed set — never code, paths, titles or comment text. The wire shape is pinne
 | `space_created` | `mode`, `from` (`blank`, `issue`, `branch`, `pr`) | Where does work start? |
 | `space_turn` | `ms`, `mode`, `ok`, turn facts | Which agents and models, how do turns end, how long, how much do they do? |
 | `message_voted` | `vote` (`up`, `down`, `cleared`), `surface` (`space`, `ai_panel`), `mode` (`none` in the AI panel), turn facts | What do people think of a reply, and what made it? |
-| `space_action` | `action` (`stop`, `send_now`, `plan_approved`, `plan_revised`, `undo`, `back_to_here`) | When do people step in or take work back? |
+| `space_action` | `action` (`stop`, `stop_task`, `send_now`, `plan_approved`, `plan_revised`, `undo`, `back_to_here`) | When do people step in or take work back? |
 | `queue_held` | `reason` (`stopped`, `failed`, `checkpoint_skipped`, `start_failed`, `restart`), `messages` | How often does queued work stall, and why? |
 | `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`, `merge_pr`) | Does work leave the space? |
 | `config_saved` | `where` (`global`, `repo`, `local`) | Is config edited, at which layer? |
@@ -449,7 +449,7 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
 ### Attachments
 
 Screenshots and files go with a report the way they go with a chat message — 📎, paste (⌘V)
-or drop on the comment, saved by `save_attachment`, shown as tiles (images as previews) — but
+or drop on the comment, saved by `save_attachment`, shown as chips (hover an image for the photo) — but
 Theodore never uploads them. GitHub has no API for issue attachments, and the other ways cost
 the reporter more than they give:
 
@@ -461,7 +461,7 @@ the reporter more than they give:
 | **The browser, after the issue opens** | chosen: works for every reporter, no new scope, and the user sees each file in GitHub's own editor before it goes |
 
 ```text
-📎 / ⌘V / drop ─▶ save_attachment ─▶ tiles in the dialog ("Theodore doesn't upload these")
+📎 / ⌘V / drop ─▶ save_attachment ─▶ chips in the dialog ("Theodore doesn't upload these")
 preview ─▶ "Not in the issue: N files (…)"
 Open issue ─▶ the text, as today ─▶ "Add your N files" ─▶ Show files and open the issue
    └─▶ stage_report_files(ids) ─▶ <tmp>/theodore-reports/theodore-files-<id>/ ─▶ Finder

@@ -8,7 +8,7 @@ import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { FakeTransport } from '../../test/fakeTransport';
 import { mount, settle, type Mounted } from '../../test/dom';
-import { BASE_STATUS_POLL_MS, useBaseStatus } from './BaseUpdate';
+import { BASE_STATUS_POLL_MS, BaseMoved, useBaseStatus } from './BaseUpdate';
 
 const space: Space = {
   id: 's1',
@@ -52,6 +52,25 @@ afterEach(() => {
 });
 
 describe('Base moved', () => {
+  it('keeps its words in one flex item, so the gap cannot split them', async () => {
+    transport.onCall('space_base_status', () => ({
+      base_tip: 't',
+      behind: 17,
+    }));
+    m = await mount(
+      <RootStoreProvider store={new RootStore()}>
+        <BaseMoved space={space} />
+      </RootStoreProvider>,
+    );
+    await settle();
+    const button = m.host.querySelector('button')!;
+    const parts = [...button.childNodes];
+    expect(parts.map((n) => n.nodeName)).toEqual(['svg', 'SPAN']);
+    expect(parts[1]!.textContent).toBe(
+      'Base moved: 17 commits behind · Update',
+    );
+  });
+
   it('is asked again when the window comes back', async () => {
     let behind = 0;
     transport.onCall('space_base_status', () => ({ base_tip: 't', behind }));

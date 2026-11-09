@@ -106,6 +106,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::set_message_vote,
             commands::space_queued,
             commands::space_stop,
+            commands::space_stop_task,
             commands::space_skills,
             commands::space_review,
             commands::archive_space,

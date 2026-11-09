@@ -28,6 +28,7 @@ use crate::usecases::live::LiveRun;
 use crate::usecases::projects::stable_hash_u32;
 use crate::usecases::skills::{expand_skill, space_skill_content};
 use crate::usecases::space_queue::TurnEnd;
+use crate::usecases::space_tasks::{CliKey, KillOnDrop, LiveCli, NOTE_ARCHIVE};
 use crate::usecases::tool_payloads::ToolPayloads;
 use crate::usecases::turn_steps::TurnSteps;
 
@@ -204,6 +205,7 @@ impl Core {
             shipped: None,
             done_at: None,
             turn_log: Vec::new(),
+            background_tasks: Vec::new(),
             ports,
             setup,
             process: None,
@@ -383,6 +385,7 @@ impl Core {
             refs: vec![],
             at: self.0.deps.clock.now(),
             failed: None,
+            from_tasks: vec![],
             attachments,
             queued: None,
             activity: vec![],
@@ -453,6 +456,19 @@ impl Core {
             .space_worktree(&repo_path, &space.id, &space.base_sha)
             .await?;
 
+        // A process kept for its background tasks takes this turn, when it
+        // can; otherwise it ends first (one CLI per session).
+        let cli_key = CliKey {
+            agent,
+            model: crate::agent_defaults::run_model(&self.0.deps.store, agent, model.clone()).await,
+            effort: crate::agent_defaults::run_effort(&self.0.deps.store, agent, effort.clone())
+                .await,
+            mode,
+        };
+        let attach = self
+            .attach_parked(&space.id, &cli_key, !attachments.is_empty())
+            .await;
+
         let history = self.space_history(&space).await?;
         let message_id = message.id.clone();
         let now = message.at;
@@ -493,6 +509,8 @@ impl Core {
             },
         ])
         .await?;
+        // Ended rows have been seen; the ones still running stay.
+        self.prune_ended_tasks(&space.id).await;
 
         let cancel = CancellationToken::new();
         self.0.runs.write().await.insert(
@@ -531,6 +549,8 @@ impl Core {
         // be gone mid-run — keeps today's plain replay; it's already
         // failing once, so it doesn't also pay for a summarizer call.
         let (prompt, replay) = match &resume {
+            // A kept process already holds the session: the new turn alone.
+            _ if attach.is_some() => (wrap(ask.clone()), None),
             Some(_) => (wrap(ask.clone()), Some(wrap(turn_prompt(&history, &ask)))),
             None => (
                 wrap(
@@ -555,6 +575,9 @@ impl Core {
             None => CodeTools::Off,
         };
         let turn = Turn {
+            live: attach,
+            follow_up: false,
+            from_tasks: vec![],
             run_id,
             message: message_id.clone(),
             space: space.clone(),
@@ -597,6 +620,80 @@ impl Core {
             span,
         ));
         Ok(message_id)
+    }
+
+    /// A turn the CLI started by itself on a kept process, when a background
+    /// task ended. Its events are what `live` has buffered and whatever comes
+    /// next. Caller holds the space's queue lock; the space isn't running.
+    pub(crate) async fn start_follow_up_turn(&self, space: Space, live: LiveCli) -> AppResult<()> {
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let run_id = format!("space:{}:{message_id}", space.id);
+        let now = self.0.deps.clock.now();
+        // What ended since the last turn: what the reply is about.
+        let mut from_tasks: Vec<String> = space
+            .background_tasks
+            .iter()
+            .filter(|t| t.ended_at.is_some_and(|e| e >= space.updated_at))
+            .map(|t| t.description.clone())
+            .collect();
+        if from_tasks.is_empty() {
+            // It ended during the last turn: still this kind of reply, unnamed.
+            from_tasks.push(String::new());
+        }
+        let patch = serde_json::json!({
+            "status": SpaceStatus::Running,
+            "run": run_id,
+            "error": null,
+            "continue_note": null,
+            "updated_at": now,
+        });
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: space.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(patch),
+        }])
+        .await?;
+        let cancel = CancellationToken::new();
+        self.0.runs.write().await.insert(
+            run_id.clone(),
+            RunHandle {
+                cancel: cancel.clone(),
+            },
+        );
+        let turn = Turn {
+            run_id,
+            message: message_id,
+            space: space.clone(),
+            agent: live.key.agent,
+            model: live.key.model.clone(),
+            effort: live.key.effort.clone(),
+            mode: live.key.mode,
+            prompt: String::new(),
+            resume: space.agent_session.as_ref().map(|s| s.id.clone()),
+            replay: None,
+            system: String::new(),
+            env: Vec::new(),
+            attachments: Vec::new(),
+            cwd: live.cwd.clone(),
+            cancel,
+            code: CodeTools::Off,
+            live: Some(live),
+            follow_up: true,
+            from_tasks,
+        };
+        let core = self.clone();
+        let span = tracing::info_span!(
+            "space_turn",
+            space = %space.id,
+            agent = turn.agent.as_str(),
+            run_id = %turn.run_id
+        );
+        tokio::spawn(tracing::Instrument::instrument(
+            async move { drive_turn(&core, turn).await },
+            span,
+        ));
+        Ok(())
     }
 
     /// Cancels the turn in flight; its edits are still checkpointed.
@@ -675,6 +772,8 @@ impl Core {
         {
             return Err(theodore_ports::GitError::Busy(busy).into());
         }
+        // A kept process writes into the worktree being removed.
+        self.kill_parked(&space.id, NOTE_ARCHIVE).await;
         // docs/config.md: stop `run`, checkpoint, `archive`, then remove.
         self.stop_space_commands(&space.id).await;
         // docs/spaces.md "Terminal": a shell must not keep writing into a
@@ -895,6 +994,7 @@ impl Core {
             });
         }
         let _ = self.apply(actions).await;
+        self.tasks_after_restart(&spaces).await;
         self.hold_queues_after_restart(&spaces).await;
     }
 
@@ -1009,6 +1109,13 @@ impl Core {
 }
 
 struct Turn {
+    /// The kept process this turn runs on, instead of spawning one.
+    live: Option<LiveCli>,
+    /// The CLI started it (`live` holds its first events): no message of
+    /// ours opened it.
+    follow_up: bool,
+    /// With `follow_up`: what the reply says it's about.
+    from_tasks: Vec<String>,
     run_id: String,
     /// Your message that started it.
     message: String,
@@ -1050,6 +1157,8 @@ const SESSION_GONE: [&str; 2] = ["no conversation found", "no rollout found"];
 /// A stopped run's events end once its process is gone (SIGTERM, 5 s, then
 /// SIGKILL); this only bounds a runner that never closes them.
 const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+/// How long `interrupt` gets to end the turn before the process is killed.
+const INTERRUPT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// One agent run of a turn, streamed to the UI.
 #[derive(Default)]
@@ -1068,6 +1177,15 @@ struct Streamed {
     session: Option<String>,
     /// The plan a Plan turn handed in (`AgentEvent::Plan`).
     plan: Option<String>,
+    /// The turn is over and its process stays for its background tasks.
+    live: Option<LiveCli>,
+}
+
+/// What a stream starts from when its process was kept: `live`, and the
+/// message to write it (a follow-up turn writes nothing).
+struct Attach {
+    live: LiveCli,
+    send: Option<String>,
 }
 
 async fn stream_run(
@@ -1076,21 +1194,59 @@ async fn stream_run(
     cancel: &CancellationToken,
     run_id: &str,
     space: &str,
+    attach: Option<Attach>,
 ) -> Streamed {
     let agent = req.agent;
     let resumed = req.resume.is_some();
     let cwd = req.cwd.clone();
     let mut out = Streamed::default();
-    let mut run = match core.0.deps.agents.run_steerable(req).await {
-        Ok((run, steer)) => {
-            // "Send now" writes into this run while it works.
-            core.steer_run(run_id, steer);
-            run
+    // A kept process: the message goes down its stdin. A turn it can't
+    // take (it just exited) falls through to a new process.
+    let attached = match attach {
+        Some(Attach { mut live, send }) => {
+            let taken = match send {
+                Some(text) => live.steer.send(text).await,
+                None => true,
+            };
+            if taken {
+                let events = std::mem::take(&mut live.buffered);
+                Some((live, events))
+            } else {
+                // It just exited: wait for it to go, so the new one isn't a
+                // second CLI on the session.
+                tracing::info!(
+                    space = space,
+                    "kept agent process didn't take the turn; starting anew"
+                );
+                let LiveCli { mut run, .. } = live;
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(6), async {
+                    while run.events.recv().await.is_some() {}
+                })
+                .await;
+                None
+            }
         }
-        Err(e) => {
-            out.error = Some(e.to_string());
-            return out;
+        None => None,
+    };
+    let (mut run, steer, mut kill, mut pre) = match attached {
+        Some((live, events)) => {
+            core.steer_run(run_id, Some(live.steer.clone()));
+            let LiveCli {
+                run, steer, kill, ..
+            } = live;
+            (run, Some(steer), Some(kill), events)
         }
+        None => match core.0.deps.agents.run_steerable(req.clone()).await {
+            Ok((run, steer)) => {
+                // "Send now" writes into this run while it works.
+                core.steer_run(run_id, steer.clone());
+                (run, steer, None, Vec::new())
+            }
+            Err(e) => {
+                out.error = Some(e.to_string());
+                return out;
+            }
+        },
     };
     let mut live = LiveRun::new(run_id, agent);
     let mut payloads = ToolPayloads::new(run_id, space);
@@ -1098,15 +1254,43 @@ async fn stream_run(
     // Stopped: the turn goes on until the process is gone, so its checkpoint
     // has the last writes and nothing starts on top of a dying agent.
     let mut give_up: Option<tokio::time::Instant> = None;
+    // Stopped by `interrupt`, so the turn ends and its tasks don't.
+    let mut interrupting = false;
+    let mut lingering = false;
+    pre.reverse();
     loop {
         tokio::select! {
             _ = cancel.cancelled(), if give_up.is_none() => {
-                run.cancel.cancel();
-                give_up = Some(tokio::time::Instant::now() + STOP_WAIT);
+                let tasks_running = core
+                    .space_row(space)
+                    .await
+                    .map(|s| s.background_tasks.iter().any(|t| {
+                        t.status == theodore_contract::BackgroundTaskStatus::Running
+                    }))
+                    .unwrap_or(false);
+                match (&steer, tasks_running) {
+                    (Some(steer), true) => {
+                        interrupting = true;
+                        let steer = steer.clone();
+                        tokio::spawn(async move { steer.interrupt().await });
+                        give_up = Some(tokio::time::Instant::now() + INTERRUPT_WAIT);
+                    }
+                    _ => {
+                        run.cancel.cancel();
+                        give_up = Some(tokio::time::Instant::now() + STOP_WAIT);
+                    }
+                }
             }
             _ = tokio::time::sleep_until(give_up.unwrap_or_else(tokio::time::Instant::now)),
                 if give_up.is_some() =>
             {
+                if interrupting {
+                    // It didn't take the interrupt: the old way, tasks and all.
+                    interrupting = false;
+                    run.cancel.cancel();
+                    give_up = Some(tokio::time::Instant::now() + STOP_WAIT);
+                    continue;
+                }
                 tracing::warn!(
                     error.code = "space.stop_timed_out",
                     agent = agent.as_str(),
@@ -1114,15 +1298,29 @@ async fn stream_run(
                 );
                 break;
             }
-            event = run.events.recv() => {
+            event = recv_with_buffered(&mut run.events, &mut pre) => {
                 let Some(event) = event else { break };
-                // How its process ended isn't the turn's answer.
+                if matches!(event, AgentEvent::Lingering) {
+                    lingering = true;
+                    continue;
+                }
+                // How its process ended isn't the turn's answer; a turn
+                // stopped by `interrupt` reports normally and stays.
                 if give_up.is_some()
+                    && !interrupting
                     && matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. })
                 {
                     continue;
                 }
                 let event = with_worktree_paths(event, &cwd);
+                if matches!(event, AgentEvent::BackgroundTasks { .. }
+                    | AgentEvent::TaskStarted { .. }
+                    | AgentEvent::TaskStatus { .. }
+                    | AgentEvent::TaskEnded { .. })
+                {
+                    core.note_task_event(space, run_id, Some(run_id), &event).await;
+                    continue;
+                }
                 // Before the row hears of it: an open row re-reads on the news.
                 payloads.record(core, &event).await;
                 // Quiet because it waits on your answer, not stuck.
@@ -1147,6 +1345,8 @@ async fn stream_run(
                         }
                         break;
                     }
+                    // The CLI's answer to our own interrupt: a stop, not a failure.
+                    AgentEvent::Error { .. } if interrupting => break,
                     AgentEvent::Error { message, stderr_tail } => {
                         let said = format!("{message}\n{stderr_tail}").to_lowercase();
                         out.session_gone = resumed && SESSION_GONE.iter().any(|m| said.contains(m));
@@ -1161,9 +1361,43 @@ async fn stream_run(
                     | AgentEvent::ToolDetail { .. }
                     | AgentEvent::Stalled
                     | AgentEvent::Usage { .. } => {}
+                    // Handled above.
+                    AgentEvent::BackgroundTasks { .. }
+                    | AgentEvent::TaskStarted { .. }
+                    | AgentEvent::TaskStatus { .. }
+                    | AgentEvent::TaskEnded { .. }
+                    | AgentEvent::Lingering
+                    | AgentEvent::FollowUp
+                    | AgentEvent::TasksCapped
+                    | AgentEvent::ControlResponse { .. } => {}
                 }
             }
         }
+    }
+    if lingering && let Some(steer) = steer.clone() {
+        out.live = Some(LiveCli {
+            kill: kill
+                .take()
+                .unwrap_or_else(|| KillOnDrop(run.cancel.clone())),
+            run,
+            steer,
+            key: CliKey {
+                agent,
+                model: req.model.clone(),
+                effort: req.effort.clone(),
+                mode: match req.mode {
+                    AgentMode::ReadOnly => SpaceMode::Ask,
+                    AgentMode::Edit => SpaceMode::Edit,
+                    AgentMode::Run => SpaceMode::Run,
+                    AgentMode::Plan => SpaceMode::Plan,
+                },
+            },
+            mcp: req.mcp.clone(),
+            cwd,
+            last_run: run_id.to_string(),
+            // Anything read past this turn's end: reversed back to arrival.
+            buffered: pre.into_iter().rev().collect(),
+        });
     }
     payloads.finish(core).await;
     // Cut off mid-block (Stop): the deltas are all there is of it.
@@ -1171,6 +1405,17 @@ async fn stream_run(
     out.steps.record_cut_off(&partial);
     push_block(&mut out.text, &partial);
     out
+}
+
+/// The next of `buffered` (reversed: oldest last), or of the stream.
+async fn recv_with_buffered(
+    events: &mut tokio::sync::mpsc::Receiver<AgentEvent>,
+    buffered: &mut Vec<AgentEvent>,
+) -> Option<AgentEvent> {
+    match buffered.pop() {
+        Some(e) => Some(e),
+        None => events.recv().await,
+    }
 }
 
 /// Blocks read as paragraphs, not as one run-on line.
@@ -1253,6 +1498,9 @@ async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
 
 async fn drive_turn(core: &Core, turn: Turn) {
     let Turn {
+        live: attach,
+        follow_up,
+        from_tasks,
         run_id,
         message,
         space,
@@ -1271,13 +1519,22 @@ async fn drive_turn(core: &Core, turn: Turn) {
         code,
     } = turn;
     // The space's commands as tools, for this turn only.
-    let mcp = core
-        .0
-        .deps
-        .tools
-        .as_ref()
-        .map(|t| t.register_space(&run_id, &space.id, agent, code));
-    let tools_guard = crate::usecases::agents::ToolsGuard {
+    // A kept process keeps its endpoint: it now serves this turn.
+    let mcp = match &attach {
+        Some(live) => {
+            if let (Some(tools), Some(mcp)) = (&core.0.deps.tools, &live.mcp) {
+                tools.rebind(mcp, &run_id);
+            }
+            live.mcp.clone()
+        }
+        None => core
+            .0
+            .deps
+            .tools
+            .as_ref()
+            .map(|t| t.register_space(&run_id, &space.id, agent, code)),
+    };
+    let mut tools_guard = crate::usecases::agents::ToolsGuard {
         core,
         mcp: mcp.clone(),
     };
@@ -1321,7 +1578,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
     );
     // The diff follows the agent's edits while it works (no checkpoints).
     let live = crate::usecases::space_live_diff::start(core, &space.id, &cwd);
-    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id, &space.id).await;
+    let attach = attach.map(|live| Attach {
+        live,
+        send: (!follow_up).then(|| req.prompt.clone()),
+    });
+    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id, &space.id, attach).await;
     let session_gone = streamed.session_gone && !cancel.is_cancelled();
     if session_gone && let Some(replay) = replay {
         // The CLI lost it (cleaned up, another machine): once more as a new
@@ -1333,7 +1594,12 @@ async fn drive_turn(core: &Core, turn: Turn) {
         );
         req.resume = None;
         req.prompt = replay;
-        streamed = stream_run(core, req, &cancel, &run_id, &space.id).await;
+        streamed = stream_run(core, req, &cancel, &run_id, &space.id, None).await;
+    }
+    let kept = streamed.live.take();
+    // No kept process means its tasks went with it. (A kept one stays.)
+    if kept.is_none() {
+        core.process_gone(&space.id, false).await;
     }
     let Streamed {
         text,
@@ -1369,8 +1635,12 @@ async fn drive_turn(core: &Core, turn: Turn) {
         None if resumed && !session_gone => space.agent_session.clone(),
         None => None,
     };
-    // The agent is done: its token goes before the after-turn check, and
-    // the live diff stops before the real checkpoint replaces it.
+    // The agent is done: its token goes before the after-turn check (a
+    // kept process holds on to it), and the live diff stops before the real
+    // checkpoint replaces it.
+    if kept.is_some() {
+        tools_guard.mcp = None;
+    }
     drop(tools_guard);
     let shown_live = live.stop().await;
     let cancelled = cancel.is_cancelled();
@@ -1494,6 +1764,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         refs: vec![],
         at: core.0.deps.clock.now(),
         failed: error.clone(),
+        from_tasks,
         attachments: vec![],
         queued: None,
         activity,
@@ -1547,7 +1818,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
             .map(|s| s.turn_log)
             .unwrap_or_else(|_| space.turn_log.clone());
         log.push(SpaceTurn {
-            message,
+            // A reply the CLI wrote on its own opens its turn itself.
+            message: if follow_up { reply.id.clone() } else { message },
             reply: reply.id.clone(),
             before: space.head_sha.clone(),
             after: cp.sha.clone(),
@@ -1597,11 +1869,15 @@ async fn drive_turn(core: &Core, turn: Turn) {
     } else {
         TurnEnd::Done
     };
+    let mut kept = kept;
     if checking {
         let _ = core.apply(actions).await;
+        if let Some(live) = kept.take() {
+            core.park_cli(&space.id, live);
+        }
     } else {
         let end = release_run(core, &run_id, end).await;
-        core.end_turn(&space.id, actions, end).await;
+        core.end_turn(&space.id, actions, end, kept.take()).await;
     }
 
     if changed && let Some(after) = &head {
@@ -1659,6 +1935,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
                 })),
             }],
             end,
+            None,
         )
         .await;
     }
@@ -2041,6 +2318,7 @@ mod tests {
             refs: vec![],
             at,
             failed: None,
+            from_tasks: vec![],
             attachments: vec![],
             queued: None,
             activity: vec![],

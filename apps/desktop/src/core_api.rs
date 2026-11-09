@@ -288,6 +288,10 @@ pub trait CoreApi: Send + Sync {
     async fn space_stop(&self, _space: String) -> Result<(), CommandError> {
         Err(not_ready())
     }
+    /// Stop on one background task (docs/spaces.md "Background tasks").
+    async fn space_stop_task(&self, _space: String, _task: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
     /// Skills a space's chat runs with `/<id>`: yours and the worktree's.
     async fn space_skills(&self, _space: String) -> Result<Vec<SkillInfo>, CommandError> {
         Err(not_ready())
