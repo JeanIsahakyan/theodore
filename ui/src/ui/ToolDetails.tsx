@@ -284,7 +284,8 @@ function BackgroundPart({
     <>
       <Status>
         <span className="turn-detail-ended">Ended: {ended.status}</span>
-        {ended.duration_ms != null && (
+        {/* The CLI's duration counts model time: nothing for a command. */}
+        {ended.duration_ms != null && step.name !== 'Bash' && (
           <span>{formatDuration(ended.duration_ms)}</span>
         )}
       </Status>

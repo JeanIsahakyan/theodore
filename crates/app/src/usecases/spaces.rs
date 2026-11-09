@@ -1345,6 +1345,8 @@ async fn stream_run(
                         }
                         break;
                     }
+                    // The CLI's answer to our own interrupt: a stop, not a failure.
+                    AgentEvent::Error { .. } if interrupting => break,
                     AgentEvent::Error { message, stderr_tail } => {
                         let said = format!("{message}\n{stderr_tail}").to_lowercase();
                         out.session_gone = resumed && SESSION_GONE.iter().any(|m| said.contains(m));

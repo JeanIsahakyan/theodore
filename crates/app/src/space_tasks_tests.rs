@@ -376,6 +376,34 @@ async fn stop_during_a_follow_up_interrupts_it_and_leaves_the_tasks() {
 }
 
 #[tokio::test]
+async fn an_interrupted_turns_error_result_reads_as_stopped() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let (s, live) = parked(&f, &core, &project).await;
+    // What the real CLI answers an interrupt with mid-reply.
+    live.on_interrupt(vec![
+        AgentEvent::Lingering,
+        AgentEvent::Error {
+            message: "[ede_diagnostic] result_type=user".into(),
+            stderr_tail: String::new(),
+        },
+    ]);
+
+    live.emit(AgentEvent::FollowUp).await;
+    wait_until(|| space(&f, &s.id).status == SpaceStatus::Running).await;
+    core.space_stop(&s.id).await.unwrap();
+
+    wait_until(|| live.interrupts() == 1).await;
+    wait_until(|| space(&f, &s.id).turns == 2).await;
+    assert_eq!(reply(&f, &s.id, 1).failed.as_deref(), Some("stopped"));
+    assert_eq!(space(&f, &s.id).error, None);
+    assert_eq!(
+        task_status(&f, &s.id, "t1"),
+        Some(BackgroundTaskStatus::Running)
+    );
+}
+
+#[tokio::test]
 async fn stop_during_a_follow_up_with_no_tasks_left_ends_the_process() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;

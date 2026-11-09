@@ -45,7 +45,7 @@ const STOP_TASK_WAIT: Duration = Duration::from_secs(10);
 const ENDED_KEPT: usize = 20;
 
 /// Why a task's row says what it says.
-pub(crate) const NOTE_UNDO: &str = "Stopped: Undo moves the worktree back";
+pub(crate) const NOTE_UNDO: &str = "Stopped: the worktree moved back";
 pub(crate) const NOTE_ARCHIVE: &str = "Stopped: the space was archived";
 pub(crate) const NOTE_NEW_PROCESS: &str = "Stopped: this message needs a new agent process \
      (another agent, model or mode, or an attachment)";
@@ -211,7 +211,10 @@ impl Core {
         {
             self.emit(Ephemeral::Toast {
                 level: ToastLevel::Warn,
-                text: format!("{}: background tasks stopped. {note}.", row.name),
+                text: format!(
+                    "{}: background tasks stopped. {note}.",
+                    row.title.as_deref().unwrap_or(&row.name)
+                ),
             });
         }
         cancel.cancel();
