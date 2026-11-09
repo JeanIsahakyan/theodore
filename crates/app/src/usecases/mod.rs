@@ -42,6 +42,7 @@ pub mod space_questions;
 pub mod space_queue;
 pub mod space_setup_assist;
 pub mod space_start;
+pub mod space_tasks;
 pub mod space_terminal;
 pub mod space_tools;
 pub mod space_update;

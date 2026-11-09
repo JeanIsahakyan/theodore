@@ -29,6 +29,7 @@ pub fn seed_messages(space: &str, turns: usize, now_ms: u64, tag: u64) -> Vec<Ch
         refs: vec![],
         at: at as _,
         failed: None,
+        from_tasks: vec![],
         attachments: vec![],
         queued: None,
         activity: vec![],

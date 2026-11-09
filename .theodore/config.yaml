@@ -1,47 +1,81 @@
-# Theodore config for JeanIsahakyan/theodore (docs/config.md).
-# Layers, later wins key by key (lists replace):
-#   ~/.theodore/config.yaml               global: your defaults
-#   <repo>/.theodore/config.yaml          repo: shared with the team
-#   <repo>/.theodore/config.local.yaml    local: yours, gitignored
-# Commands set here or in config.local.yaml run without asking; commands
-# from a repo's file run only after you allow them.
+# Theodore project config. Every key: docs/config.md.
 
 review:
-  agents:
-    chat: claude
-    fix: claude
-    grouping: claude
-    skills:
-    - claude
-  # instructions: Prefer small functions. Flag any new dependency.
-  # context: [docs/architecture.md, "docs/adr/*.md"]  # read first
-  # hide: ["gen/**"]        # never sent to the agent
-  # skim: ["**/*.snap"]     # flagged as skimmable
-  # checklist:
-  #   "migrations/**": Is there a down migration?
-  # auto_skills: [security-review]
-  # ignore_findings: ["vendor/**"]
+  # AGENTS.md is already fed to every agent; this is the design context
+  # behind it (AGENTS.md "Where things are").
+  context:
+    - docs/plan.md
+    - docs/spaces.md
+    - docs/config.md
+    - docs/code-intel.md
+    - docs/releasing.md
+    - docs/telemetry.md
 
-# spaces:
-#   copy: [.env, .env.local]
-#   ports: 1                # $THEODORE_PORT, $THEODORE_PORT_1, …
-#   env:
-#     APP_URL: "http://localhost:$THEODORE_PORT"
-#   setup: pnpm install
-#   run: pnpm dev --port $THEODORE_PORT
-#   check: pnpm lint && pnpm test
-#   archive: docker compose -p $THEODORE_SPACE down
-#   timeout_s: { setup: 600, check: 600, archive: 120 }
+  # Generated or machine-written: never worth a reviewer's time.
+  hide:
+    - "ui/src/gen/**"                       # export-ts / --export-bindings output
+    - "crates/code-intel-toolchain/manifest/grammars.json"  # build-grammars.sh output
+    - "*.lock"                              # Cargo.lock
+    - "pnpm-lock.yaml"
+    - "apps/desktop/icons/**"
 
-# code_intel:
-#   enabled: true
-#   install: ask            # ask | always | never: download language servers
-#   languages: [typescript, rust]   # empty: detected
-#   servers: { python: pyright }
-#   max_servers: 4          # these four: global file only
-#   idle_minutes: 10
-#   max_file_kb: 1024
-#   cache_mb: 512
-#   lsp:                    # global / local files only, never the repo's
-#     spaces: true
-#     review: false         # true: a PR's code may run during reviews
+  # Bulky data, skim unless the PR is about it.
+  skim:
+    - "apps/cli/fixtures/**"                # recorded PRs for `theodore eval`
+    - "crates/fixtures/data/**"             # sandbox and demo scenarios
+    - "crates/account-workos/testdata/**"
+    - "docs/eval/**"
+
+  checklist:
+    "crates/contract/**": Were ui/src/gen bindings regenerated (cargo run -p theodore-contract --bin export-ts; cargo run -p theodore-desktop -- --export-bindings)?
+    "crates/store/src/migrations/**":
+      - Is the migration append-only (new file, existing ones untouched)?
+      - Is it safe on a store that already has data?
+    "crates/app/src/config/**": Is docs/config.md updated for every key added, renamed or defaulted differently?
+    "crates/app/src/usecases/spaces.rs": Is docs/spaces.md still true?
+    "crates/grouping/**": Was ALGO_VERSION bumped if stored groupings change meaning? Do the evals in docs/grouping-eval.md still hold?
+    "crates/telemetry/**": Is docs/telemetry.md updated (new error codes, events)?
+    ".github/workflows/**": Does docs/releasing.md still describe this pipeline?
+    "scripts/**": Still Bash 3.2 compatible (macOS /bin/bash)?
+    "apps/desktop/tauri*.conf.json": Does the version still match Cargo.toml (CI fails on a mismatch)?
+    "crates/code-intel-toolchain/manifest/languages.yaml": Was the sha256 taken from the published CI artifact, not a local build?
+    "**/*.{ts,tsx}": No hand edits under ui/src/gen?
+
+  ignore_findings:
+    - "ui/src/gen/**"
+    - "*.lock"
+    - "pnpm-lock.yaml"
+
+code_intel:
+  languages: [rust, typescript, tsx]
+
+spaces:
+  # Vite's dev server, on $THEODORE_PORT (ui/vite.config.ts).
+  ports: 1
+
+  # Dependencies: pnpm for ui/ (CI uses --frozen-lockfile), crates for the
+  # Cargo workspace. `cargo tauri dev` also needs tauri-cli installed once
+  # per machine (README "Run it"); that is not per space, so not here.
+  setup: |
+    set -e
+    pnpm -C ui install --frozen-lockfile
+    cargo fetch
+
+  # README "Run it", with devUrl pointed at this space's port. Vite reads the
+  # same variable through beforeDevCommand.
+  run: |
+    cd apps/desktop
+    cargo tauri dev --no-watch --config "{\"build\":{\"devUrl\":\"http://localhost:$THEODORE_PORT\"}}"
+
+  # The CI matrix and the lefthook pre-push gate (README "Checks").
+  check: |
+    set -e
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+    pnpm -C ui typecheck
+    pnpm -C ui lint
+    pnpm -C ui test
+
+  # A cold Rust build of the workspace outruns the 600 s defaults.
+  timeout_s: { setup: 1200, check: 1800 }

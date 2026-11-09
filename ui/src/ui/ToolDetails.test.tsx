@@ -390,7 +390,7 @@ describe('a tool row', () => {
     });
     await render([tool('Bash', 't1', 'x', true, { background: true })]);
     await open();
-    expect(details()!.textContent).toContain('the turn ended before it did');
+    expect(details()!.textContent).toContain("it didn't report how it ended");
   });
 
   it('opens on Enter and on Space, not on other keys', async () => {

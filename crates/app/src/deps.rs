@@ -96,6 +96,9 @@ pub trait RunTools: Send + Sync {
         agent: AgentId,
         code: CodeTools,
     ) -> McpEndpoint;
+    /// The endpoint now serves `run_id`'s turn: the same CLI process kept
+    /// between turns.
+    fn rebind(&self, endpoint: &McpEndpoint, run_id: &str);
     fn unregister(&self, endpoint: &McpEndpoint);
 }
 

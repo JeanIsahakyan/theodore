@@ -94,6 +94,7 @@ impl Core {
             refs: vec![],
             at: self.0.deps.clock.now(),
             failed: None,
+            from_tasks: vec![],
             attachments,
             queued: Some(QueuedSend {
                 seq,
@@ -237,9 +238,16 @@ impl Core {
     }
 
     /// A turn ended: its final space patch, then the queue — the next
-    /// message runs, or the queue is held for you. One step under the
-    /// space's queue lock, so no send slips in between.
-    pub(crate) async fn end_turn(&self, space: &str, mut actions: Vec<NewAction>, end: TurnEnd) {
+    /// message runs, or the queue is held for you. `park`: the turn's CLI,
+    /// kept for its background tasks, parked once its reply is stored. One
+    /// step under the space's queue lock, so no send slips in between.
+    pub(crate) async fn end_turn(
+        &self,
+        space: &str,
+        mut actions: Vec<NewAction>,
+        end: TurnEnd,
+        park: Option<crate::usecases::space_tasks::LiveCli>,
+    ) {
         let _queue = self.space_queue_lock(space).await;
         let now = self.0.deps.clock.now();
         actions.push(NewAction {
@@ -257,12 +265,28 @@ impl Core {
             actions.extend(hold);
         }
         let _ = self.apply(actions).await;
+        if let Some(live) = park {
+            self.park_cli(space, live);
+        }
         if let Some((reason, messages)) = held {
             crate::usecases::telemetry::queue_held(space, reason, messages);
         }
+        // Already written by the CLI: it goes before anything queued.
+        self.start_follow_up_boxed(space).await;
         if end == TurnEnd::Done {
             self.drain_queue(space).await;
         }
+    }
+
+    /// The steer handle of the running turn `run`, if it has one.
+    pub(crate) fn steer_of(&self, run: &str) -> Option<Steer> {
+        self.0
+            .space_queue
+            .steers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(run)
+            .and_then(|s| s.steer.clone())
     }
 
     /// Runs the first waiting message, if the space is free for it.
@@ -406,6 +430,7 @@ impl Core {
             refs: vec![],
             at,
             failed: None,
+            from_tasks: vec![],
             attachments: vec![],
             queued: None,
             activity: vec![],

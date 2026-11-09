@@ -272,6 +272,13 @@ body.cmd .lines .src span:hover {
     25% 25%;
 }
 
+/* An attached photo, hovered: a checkerboard under its transparent parts, so
+   a dark logo or a light one shows on either theme. */
+.attachment-photo {
+  background: repeating-conic-gradient(#d4d4d4 0 25%, #fff 0 50%) 0 0 / 16px
+    16px;
+}
+
 /* A hunk or a line scrolled to its top clears its file's pinned header:
    `--file-h` is that header's measured height, set on its card and on the
    pane (ui/review/headerClearance.ts); 53px is one row of it. */
@@ -382,8 +389,9 @@ body.cmd .lines .src span:hover {
     padding-inline: 0.5rem;
   }
 }
-/* A wide header keeps the whole "Base moved: 2 commits behind". */
-@container space-header (max-width: 56rem) {
+/* Only a wide header keeps the whole "Base moved: 2 commits behind": the long
+ * form is what pushes the actions onto a second line. */
+@container space-header (max-width: 72rem) {
   .space-header .base-moved-lead,
   .space-header .base-moved-long {
     display: none;

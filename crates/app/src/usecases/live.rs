@@ -117,6 +117,14 @@ impl LiveRun {
             | AgentEvent::Usage { .. }
             | AgentEvent::Session { .. }
             | AgentEvent::Plan { .. }
+            | AgentEvent::BackgroundTasks { .. }
+            | AgentEvent::TaskStarted { .. }
+            | AgentEvent::TaskStatus { .. }
+            | AgentEvent::TaskEnded { .. }
+            | AgentEvent::Lingering
+            | AgentEvent::FollowUp
+            | AgentEvent::TasksCapped
+            | AgentEvent::ControlResponse { .. }
             | AgentEvent::Done { .. }
             | AgentEvent::Error { .. } => vec![],
         }

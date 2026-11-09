@@ -616,6 +616,7 @@ impl Core {
         for id in ids {
             self.stop_space_commands(&id).await;
         }
+        self.stop_all_parked().await;
         self.stop_all_space_terminals().await;
     }
 

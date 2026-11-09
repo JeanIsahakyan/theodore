@@ -55,6 +55,10 @@ impl Core {
         let _queue = self.space_queue_lock(space).await;
         let space = self.space_row(space).await?;
         let i = rewindable(&space, from).map_err(AppError::Invalid)?;
+        // Writing in the worktree we're about to reset, and its session
+        // holds what's being undone.
+        self.kill_parked(&space.id, crate::usecases::space_tasks::NOTE_UNDO)
+            .await;
         let turn = space.turn_log[i].clone();
         let to = SpaceCheckpoint {
             sha: turn.before.clone(),
@@ -206,6 +210,7 @@ impl Core {
             refs: vec![],
             at: now,
             failed: None,
+            from_tasks: vec![],
             attachments: vec![],
             queued: None,
             activity: vec![],

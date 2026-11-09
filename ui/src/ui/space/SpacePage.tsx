@@ -90,6 +90,7 @@ import {
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
+import { BackgroundTasks } from './BackgroundTasks';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
@@ -1140,6 +1141,7 @@ const SpaceComposer = observer(function SpaceComposer({
           </span>
         )}
         <SpaceProgress space={space} />
+        <BackgroundTasks space={space} />
         <Composer
           inputRef={input}
           value={text}

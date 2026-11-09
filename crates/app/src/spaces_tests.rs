@@ -560,7 +560,8 @@ async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
         })
         .await
         .unwrap();
-    assert_eq!(f.agents.requests().len(), 1, "queued, not run");
+    // Its turn reaches the agent on its own task; the queue is checked below.
+    wait_until(|| f.agents.requests().len() == 1).await;
 
     core.space_stop(&s.id).await.unwrap();
     let s = idle(&f, &s.id).await;

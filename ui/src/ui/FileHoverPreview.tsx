@@ -149,7 +149,7 @@ let shown: (() => void) | null = null;
 type Timer = ReturnType<typeof setTimeout>;
 
 /** One chip's hover timing. No React: chips are many, hovers are few. */
-class HoverIntent {
+export class HoverIntent {
   private opening: Timer | null = null;
   private closing: Timer | null = null;
   private overCard = false;
@@ -175,7 +175,6 @@ class HoverIntent {
         shown?.();
         shown = this.close;
         this.setOpen(true);
-        countUse('file_hovers');
       },
       shown ? SWITCH_DELAY : OPEN_DELAY,
     );
@@ -243,6 +242,24 @@ class HoverIntent {
   };
 }
 
+/** A chip's own timing, and whether its card is up. `onOpen`: the first
+ *  render's, once per card. */
+export function useHoverIntent(onOpen?: () => void): {
+  open: boolean;
+  intent: HoverIntent;
+} {
+  const [open, setOpen] = useState(false);
+  const [intent] = useState(
+    () =>
+      new HoverIntent((next) => {
+        setOpen(next);
+        if (next) onOpen?.();
+      }),
+  );
+  useEffect(() => intent.dispose, [intent]);
+  return { open, intent };
+}
+
 export interface FileHover<T extends HTMLElement> {
   /** There's something to preview: the chip shouldn't also carry a `title`. */
   active: boolean;
@@ -268,9 +285,7 @@ export function useFileHover<T extends HTMLElement = HTMLElement>(
 ): FileHover<T> {
   const scoped = use(TargetContext);
   const anchor = useRef<T | null>(null);
-  const [open, setOpen] = useState(false);
-  const [intent] = useState(() => new HoverIntent(setOpen));
-  useEffect(() => intent.dispose, [intent]);
+  const { open, intent } = useHoverIntent(() => countUse('file_hovers'));
 
   const active = path != null && (resolve != null || scoped != null);
   const triggerProps = useMemo(
@@ -307,16 +322,20 @@ export function useFileHover<T extends HTMLElement = HTMLElement>(
 /** React events bubble out of a portal, to whatever the chip sits in. */
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-function PreviewPopover<T extends HTMLElement>({
+/** The card a chip's hover opens: portalled, one at a time, Escape shuts it,
+ *  and the pointer can move into it. Takes its width from `className`. */
+export function HoverCard<T extends HTMLElement>({
   anchor,
-  path,
-  target,
   intent,
+  label,
+  className,
+  children,
 }: {
   anchor: RefObject<T | null>;
-  path: string;
-  target: FilePreviewTarget;
   intent: HoverIntent;
+  label: string;
+  className: string;
+  children: ReactNode;
 }) {
   useEffect(() => {
     // Capture: the Escape is this popover's, not the chat's or the composer's.
@@ -340,14 +359,13 @@ function PreviewPopover<T extends HTMLElement>({
         if (!next) intent.close();
       }}
       className={popoverVariants().base({
-        className:
-          // `animate-none`: moving between chips swaps the card, it doesn't pop.
-          'file-hover-card flex w-[560px] max-w-[calc(100vw-24px)] animate-none flex-col overflow-hidden rounded-xl p-0',
+        // `animate-none`: moving between chips swaps the card, it doesn't pop.
+        className: `flex animate-none flex-col overflow-hidden rounded-xl p-0 ${className}`,
       })}
     >
       <div
         role="group"
-        aria-label={`Preview of ${path}`}
+        aria-label={label}
         className="flex min-h-0 flex-col"
         onMouseEnter={intent.enterCard}
         onMouseLeave={intent.leaveCardUnlessSelecting}
@@ -356,9 +374,32 @@ function PreviewPopover<T extends HTMLElement>({
         onPointerDown={stop}
         onKeyDown={stop}
       >
-        <PreviewCard path={path} target={target} />
+        {children}
       </div>
     </Popover>
+  );
+}
+
+function PreviewPopover<T extends HTMLElement>({
+  anchor,
+  path,
+  target,
+  intent,
+}: {
+  anchor: RefObject<T | null>;
+  path: string;
+  target: FilePreviewTarget;
+  intent: HoverIntent;
+}) {
+  return (
+    <HoverCard
+      anchor={anchor}
+      intent={intent}
+      label={`Preview of ${path}`}
+      className="file-hover-card w-[560px] max-w-[calc(100vw-24px)]"
+    >
+      <PreviewCard path={path} target={target} />
+    </HoverCard>
   );
 }
 

@@ -4,8 +4,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use theodore_agents::claude::{ClaudeParser, user_message_line};
 use theodore_agents::process::{LineParser, SpawnSpec, reap_orphans, spawn_and_stream};
-use theodore_ports::agent::AgentEvent;
+use theodore_ports::agent::{AgentEvent, AgentRun};
 
 fn fake_agent() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake_agent.sh")
@@ -54,6 +55,7 @@ fn spec_with_runtime_cap(mode: &str, stall_after_ms: u64, max_runtime_ms: u64) -
         env: vec![],
         stall_after_ms,
         max_runtime_ms,
+        max_linger_ms: 0,
         guards: vec![],
         agent: "fake".into(),
         version: None,
@@ -313,12 +315,12 @@ fn steerable(
     theodore_ports::agent::AgentRun,
     theodore_ports::agent::Steer,
 ) {
-    use theodore_agents::claude::{ClaudeParser, user_message_line};
     let (steer, messages) = theodore_ports::agent::Steer::channel();
     let input = theodore_agents::process::Input {
         first: user_message_line("first"),
         messages,
         encode: user_message_line,
+        encode_control: theodore_agents::claude::control_request_line,
     };
     let spec = SpawnSpec {
         program: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake_claude_stream.sh"),
@@ -362,4 +364,131 @@ async fn an_unsteered_run_ends_after_its_one_turn() {
         .await
         .expect("stdin closes after the result");
     assert_eq!(final_text(&events), "turn 1 took 1");
+}
+
+fn task_run(mode: &str, max_linger_ms: u64) -> (AgentRun, theodore_ports::agent::Steer) {
+    let (steer, messages) = theodore_ports::agent::Steer::channel();
+    let input = theodore_agents::process::Input {
+        first: user_message_line("first"),
+        messages,
+        encode: user_message_line,
+        encode_control: theodore_agents::claude::control_request_line,
+    };
+    let spec = SpawnSpec {
+        program: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake_claude_tasks.sh"),
+        args: vec![mode.to_string()],
+        max_linger_ms,
+        ..spec("normal", 60_000)
+    };
+    let run = theodore_agents::process::spawn_with_input(
+        spec,
+        Box::new(ClaudeParser::with_stdin_input()),
+        input,
+    )
+    .unwrap();
+    (run, steer)
+}
+
+async fn until_done(run: &mut AgentRun) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+    while let Some(e) = tokio::time::timeout(Duration::from_secs(10), run.events.recv())
+        .await
+        .expect("events in time")
+    {
+        let done = matches!(e, AgentEvent::Done { .. });
+        events.push(e);
+        if done {
+            break;
+        }
+    }
+    events
+}
+
+/// The rest of a run's events, once it ends.
+async fn to_the_end(run: &mut AgentRun) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+    while let Some(e) = tokio::time::timeout(Duration::from_secs(10), run.events.recv())
+        .await
+        .expect("the run ends in time")
+    {
+        events.push(e);
+    }
+    events
+}
+
+/// Stop's request and response: the process stays until it's answered, then
+/// with the last task gone stdin closes and the run ends.
+#[tokio::test]
+async fn stopping_the_last_task_answers_then_ends_the_process() {
+    let (mut run, steer) = task_run("stop", 60_000);
+    let turn = until_done(&mut run).await;
+    assert!(turn.contains(&AgentEvent::Lingering), "{turn:?}");
+    steer.stop_task("t1").await.expect("the CLI answered");
+    let rest = to_the_end(&mut run).await;
+    assert!(rest.iter().any(|e| matches!(
+        e,
+        AgentEvent::TaskEnded { status, .. } if status == "stopped"
+    )));
+    // Nothing more can be written to it.
+    assert!(steer.stop_task("t1").await.is_err());
+}
+
+/// A task ending by itself: the CLI's own turn on the same process, with a
+/// `Done` of its own, and the process ends once nothing's left.
+#[tokio::test]
+async fn a_task_ending_by_itself_starts_a_turn_on_the_same_process() {
+    let (mut run, _steer) = task_run("natural", 60_000);
+    until_done(&mut run).await;
+    let follow = until_done(&mut run).await;
+    assert!(follow.contains(&AgentEvent::FollowUp));
+    assert!(matches!(
+        follow.last(),
+        Some(AgentEvent::Done { final_text, .. }) if final_text == "it finished"
+    ));
+    // Nothing left: the process closes (no reply expected from "completed"
+    // after its reply already came, idle) without another `Done`.
+    assert!(
+        !to_the_end(&mut run)
+            .await
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Done { .. }))
+    );
+}
+
+/// A message of yours goes down the same stdin; the first task keeps running.
+#[tokio::test]
+async fn a_message_on_a_lingering_process_is_a_turn_of_the_same_process() {
+    let (mut run, steer) = task_run("message", 60_000);
+    until_done(&mut run).await;
+    assert!(steer.send("second".into()).await);
+    let turn = until_done(&mut run).await;
+    assert!(turn.iter().all(|e| *e != AgentEvent::FollowUp), "{turn:?}");
+    assert!(matches!(
+        turn.last(),
+        Some(AgentEvent::Done { final_text, .. }) if final_text == "second answer"
+    ));
+    run.cancel.cancel();
+    to_the_end(&mut run).await;
+}
+
+/// The linger cap: a task that never ends stops the process, and says so.
+#[tokio::test]
+async fn a_forgotten_task_hits_the_linger_cap() {
+    let (mut run, _steer) = task_run("hang", 300);
+    until_done(&mut run).await;
+    let rest = to_the_end(&mut run).await;
+    assert!(rest.contains(&AgentEvent::TasksCapped), "{rest:?}");
+}
+
+/// The process dies while tasks run: the events end, no error for a turn
+/// that wasn't open.
+#[tokio::test]
+async fn a_crash_while_lingering_ends_the_events_quietly() {
+    let (mut run, _steer) = task_run("crash", 60_000);
+    until_done(&mut run).await;
+    let rest = to_the_end(&mut run).await;
+    assert!(
+        rest.iter().all(|e| !matches!(e, AgentEvent::Error { .. })),
+        "{rest:?}"
+    );
 }

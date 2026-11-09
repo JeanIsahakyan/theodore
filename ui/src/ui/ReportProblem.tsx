@@ -38,7 +38,12 @@ import type {
 import { api, CommandFailure } from '../core/api';
 import { openExternal } from '../core/openExternal';
 import { useUi } from '../stores/context';
-import { fileHandlers, useAttachments, type Attachments } from './attachments';
+import {
+  fileHandlers,
+  PendingChip,
+  useAttachments,
+  type Attachments,
+} from './attachments';
 import { Shell } from './bits';
 
 export function formatBytes(n: number): string {
@@ -282,43 +287,12 @@ function ReportFiles({
         <>
           <ul className="report-attachments flex flex-wrap gap-2">
             {files.items.map((p) => (
-              <li
-                key={p.key}
-                className="report-attachment relative flex h-14 max-w-48 items-center gap-2 overflow-hidden rounded-xl border border-separator pe-6"
-                title={p.error ? `${p.name}: ${p.error}` : p.name}
-              >
-                {p.preview ? (
-                  <img
-                    src={p.preview}
-                    alt={p.name}
-                    className="h-full w-14 object-cover"
-                  />
-                ) : (
-                  <span className="grid h-full w-12 place-items-center bg-default text-lg">
-                    📄
-                  </span>
-                )}
-                <span className="flex min-w-0 flex-col text-xs">
-                  <span className="truncate">{p.name}</span>
-                  <span
-                    className={p.error ? 'text-danger' : 'text-muted'}
-                    data-state={
-                      p.error ? 'failed' : p.saved ? 'ready' : 'saving'
-                    }
-                  >
-                    {p.error ??
-                      (p.saved ? formatBytes(p.saved.size) : 'Adding…')}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  aria-label={`Remove ${p.name}`}
-                  className="absolute end-1 top-1 text-xs text-muted"
-                  disabled={disabled}
-                  onClick={() => files.remove(p.key)}
-                >
-                  ✕
-                </button>
+              <li key={p.key} className="report-attachment">
+                <PendingChip
+                  p={p}
+                  onRemove={() => files.remove(p.key)}
+                  removeDisabled={disabled}
+                />
               </li>
             ))}
           </ul>
