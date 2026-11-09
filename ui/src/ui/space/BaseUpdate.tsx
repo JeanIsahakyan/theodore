@@ -144,7 +144,10 @@ export const BaseMoved = observer(function BaseMoved({
         }}
       >
         <CodeMerge className="size-3.5" />
-        <BaseMovedText behind={status.behind} /> · Update
+        {/* One flex item: the button's gap would split the words otherwise. */}
+        <span className="whitespace-nowrap">
+          <BaseMovedText behind={status.behind} /> · Update
+        </span>
       </Button>
       <Tooltip.Content>
         Merges {space.base} into this space. Conflicts go to the agent; pushed

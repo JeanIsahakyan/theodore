@@ -7,9 +7,10 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
-  // Tauri serves the UI itself; a fixed port keeps `tauri dev` config simple.
+  // 1420 matches devUrl in tauri.conf.json. A Theodore space gets its own port
+  // and overrides devUrl to match (.theodore/config.yaml), so spaces don't collide.
   server: {
-    port: 1420,
+    port: Number(process.env.THEODORE_PORT) || 1420,
     strictPort: true,
   },
   test: {
