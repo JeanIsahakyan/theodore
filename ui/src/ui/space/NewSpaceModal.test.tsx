@@ -1,9 +1,10 @@
 /** New space: Create on an empty form, `/` in the goal box, and what the
  *  dialog sends. Its picks are the new space's alone: nothing here writes a
  *  setting. */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import type { SkillInfo } from '../../gen/contract';
+import { setCommandFailureHandler } from '../../core/api';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
@@ -165,6 +166,72 @@ describe('New space', () => {
     expect(drafted?.args?.req).toMatchObject({
       chat: 'space:s1',
       description: 'the agent ignored me',
+    });
+  });
+
+  describe('from a PR', () => {
+    async function fromPr() {
+      await open();
+      await click(
+        document.querySelector('button[aria-label="Start from"]') as Element,
+      );
+      await settle();
+      const row = [...document.querySelectorAll('[role^="menuitem"]')].find(
+        (el) => /PR/.test(el.textContent ?? ''),
+      );
+      await click(row);
+      await settle();
+    }
+    const field = () =>
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="PR number or URL"]',
+      )!;
+    const alert = () => document.querySelector('[role="alert"]')?.textContent;
+
+    it.each([
+      ['#15', 15],
+      ['15', 15],
+      ['https://github.com/acme/app/pull/15/files', 15],
+    ])('starts from %s', async (typed, number) => {
+      await fromPr();
+      await typeInto(field(), typed);
+      await click(createButton());
+      await settle();
+      expect(created()[0]!.start_from).toEqual({ kind: 'pr', value: number });
+      expect(alert()).toBeUndefined();
+    });
+
+    it('says what is wrong with a ref it can read nothing from', async () => {
+      await fromPr();
+      await typeInto(field(), 'abc');
+      expect(createButton().disabled).toBe(false);
+      await click(createButton());
+      await settle();
+      expect(created()).toHaveLength(0);
+      expect(alert()).toContain('Enter a PR');
+    });
+
+    it('says it too with a goal and an empty field', async () => {
+      await fromPr();
+      await typeInto(box(), 'Fix the login');
+      await click(createButton());
+      await settle();
+      expect(created()).toHaveLength(0);
+      expect(alert()).toContain('Enter a PR');
+    });
+
+    it('shows the host refusing the PR, and stays open', async () => {
+      const toast = vi.fn();
+      setCommandFailureHandler(toast);
+      transport.onCall('create_space', () => {
+        throw { code: 'not_found', message: 'PR #15 not found' };
+      });
+      await fromPr();
+      await typeInto(field(), '#15');
+      await click(createButton());
+      await settle();
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(field()).toBeTruthy();
     });
   });
 

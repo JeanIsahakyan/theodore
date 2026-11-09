@@ -81,7 +81,12 @@ import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
-import { parseIssueRef, startFooter, type StartKind } from './newSpaceStart';
+import {
+  parseIssueRef,
+  parsePrRef,
+  startFooter,
+  type StartKind,
+} from './newSpaceStart';
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
@@ -1303,6 +1308,13 @@ const SpaceChanges = observer(function SpaceChanges({
   );
 });
 
+/** What Create says when the field can't name a start. */
+const START_NEEDS: Record<Exclude<StartKind, 'goal'>, string> = {
+  issue: 'Enter an issue as #123 or its URL.',
+  branch: 'Enter a branch name.',
+  pr: 'Enter a PR as #123 or its URL.',
+};
+
 const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
   { id: 'goal', label: 'A new branch', hint: 'from the goal' },
   { id: 'issue', label: 'An existing issue' },
@@ -1338,6 +1350,8 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   const [startKind, setStartKind] = useState<StartKind>('goal');
   const [issueId, setIssueId] = useState<string | null>(null);
   const [startText, setStartText] = useState('');
+  // Create was pressed on a start that isn't one yet: say so.
+  const [startRefused, setStartRefused] = useState(false);
   const chosen = ready.find((p) => p.id === project);
   const { issues, unsupported: pickerNoIssues } = useProjectIssues(
     startKind === 'issue' ? project : null,
@@ -1360,8 +1374,9 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   useEffect(() => {
     setIssueId(null);
     setStartText('');
+    setStartRefused(false);
   }, [project, startKind]);
-  const prNumber = Number(startText.trim());
+  const prNumber = parsePrRef(startText);
   // A picked issue, else a typed `#n` / URL (docs: it resolves directly).
   const issueNumber = issueId ? Number(issueId) : parseIssueRef(startText);
   const startFrom: SpaceStart | null =
@@ -1369,15 +1384,16 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
       ? { kind: 'issue', value: String(issueNumber) }
       : startKind === 'branch' && startText.trim()
         ? { kind: 'branch', value: startText.trim() }
-        : startKind === 'pr' &&
-            startText.trim() &&
-            Number.isInteger(prNumber) &&
-            prNumber > 0
+        : startKind === 'pr' && prNumber
           ? { kind: 'pr', value: prNumber }
           : null;
   // A plain goal needs the text; an adopted issue/branch/PR needs that
   // picked/typed instead — the goal becomes an optional extra note.
   const canStart = startKind === 'goal' || startFrom !== null;
+  // Text the start can't use still gets a Create, for it to say why.
+  const startTyped = startKind !== 'goal' && startText.trim() !== '';
+  // The issue field's own note already says why Create can't start.
+  const noIssuesShown = startKind === 'issue' && noIssues;
   // `/` in the box: what a space of this project would see.
   useEffect(() => {
     if (!project) return;
@@ -1396,7 +1412,11 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   const effortOf = (a: AgentId) =>
     pickedEffort?.agent === a ? pickedEffort.effort : null;
   const start = async () => {
-    if (!project || !canStart || busy) return;
+    if (!project || busy) return;
+    if (!canStart) {
+      setStartRefused(true);
+      return;
+    }
     setBusy(true);
     // What's shown is what runs.
     const current = boxAgent(store, agent, offered, repo);
@@ -1483,7 +1503,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             quiet
             autoFocus
             disabled={busy || !project}
-            canSubmitEmpty={canStart}
+            canSubmitEmpty={canStart || startTyped}
             submit={busy ? 'Creating…' : 'Create'}
             skills={skills}
             chips={
@@ -1579,26 +1599,27 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
                 value={startText}
                 onChange={setStartText}
                 aria-label={
-                  startKind === 'branch' ? 'Branch name' : 'PR number'
+                  startKind === 'branch' ? 'Branch name' : 'PR number or URL'
                 }
                 autoFocus
               >
-                <InputGroup className="w-56 rounded-xl">
-                  {startKind === 'pr' && (
-                    <InputGroup.Prefix className="text-xs text-muted">
-                      #
-                    </InputGroup.Prefix>
-                  )}
+                <InputGroup className="w-72 rounded-xl">
                   <InputGroup.Input
                     placeholder={
-                      startKind === 'branch' ? 'feature/retry-export' : '123'
+                      startKind === 'branch'
+                        ? 'feature/retry-export'
+                        : '#123 or a PR URL'
                     }
-                    inputMode={startKind === 'pr' ? 'numeric' : 'text'}
                     className="w-full text-sm"
                   />
                 </InputGroup>
               </TextField>
             </div>
+          )}
+          {startRefused && !canStart && !noIssuesShown && (
+            <span role="alert" className="px-2 text-xs text-danger">
+              {START_NEEDS[startKind]}
+            </span>
           )}
           <span className="px-2 text-xs text-muted">
             {startFooter(startKind, chosen?.default_branch ?? undefined)}

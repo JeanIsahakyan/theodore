@@ -1,6 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseIssueRef, startFooter } from './newSpaceStart';
+import { parseIssueRef, parsePrRef, startFooter } from './newSpaceStart';
+
+describe('parsePrRef', () => {
+  it('takes #n, n, and a PR URL from any host, tab or query included', () => {
+    expect(parsePrRef('#15')).toBe(15);
+    expect(parsePrRef(' 15 ')).toBe(15);
+    expect(parsePrRef('https://github.com/acme/app/pull/15')).toBe(15);
+    expect(parsePrRef('https://github.com/acme/app/pull/15/files?w=1')).toBe(
+      15,
+    );
+    expect(parsePrRef('https://gitlab.com/acme/app/-/merge_requests/42')).toBe(
+      42,
+    );
+    expect(
+      parsePrRef('https://bitbucket.org/acme/app/pull-requests/7/overview'),
+    ).toBe(7);
+  });
+
+  it('refuses anything else, an issue URL too', () => {
+    expect(parsePrRef('')).toBeNull();
+    expect(parsePrRef('abc')).toBeNull();
+    expect(parsePrRef('#0')).toBeNull();
+    expect(parsePrRef('https://github.com/acme/app/issues/15')).toBeNull();
+    expect(parsePrRef('https://github.com/acme/app/pulls')).toBeNull();
+  });
+});
 
 describe('parseIssueRef', () => {
   it('takes a pasted URL, #n or a bare number', () => {
