@@ -5,7 +5,8 @@
 //! ```text
 //! ToolCall ──────────────▶ input
 //! ToolDetail ────────────▶ held for the result it comes before
-//! ToolResult ────────────▶ result (held detail merged in)
+//! ToolResult ────────────▶ result (held detail merged in); output the CLI
+//!                          saved to a file read now, while it exists
 //! ToolDetail{end} ───────▶ ended; the output_file read now, while it exists
 //! ToolResult after it ───▶ dropped: it only repeats the end's summary
 //! SubagentHandback ──────▶ report, on its Agent call
@@ -20,8 +21,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use theodore_contract::{CappedText, ToolEnd, ToolInput, ToolOutcome, ToolPayload};
-use theodore_ports::{AgentEvent, TaskEnd, ToolCallKey, ToolResultDetail};
+use theodore_contract::{
+    CappedText, SavedKept, SavedOutput, ToolEnd, ToolInput, ToolOutcome, ToolPayload,
+};
+use theodore_ports::{AgentEvent, PersistedOutput, TaskEnd, ToolCallKey, ToolResultDetail};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
@@ -37,12 +40,20 @@ const CUT: &str = "\n… cut …\n";
 /// The file a background call's output is kept in: only ours to read then.
 const OUTPUT_FILE: &str = ".output";
 
+/// A file whose text goes into a part when it's written, while the file exists.
+#[derive(Debug, PartialEq, Eq)]
+enum PartFile {
+    /// A background call's whole output.
+    Ended(PathBuf),
+    /// A command's output the CLI saved because it outgrew the stream.
+    Saved(PathBuf),
+}
+
 struct Part {
     call: String,
     name: &'static str,
     value: Value,
-    /// Read when written: a background call's whole output.
-    output_file: Option<PathBuf>,
+    file: Option<PartFile>,
 }
 
 impl Part {
@@ -51,7 +62,32 @@ impl Part {
             call: call.to_string(),
             name,
             value,
-            output_file: None,
+            file: None,
+        }
+    }
+
+    /// The text of `file`, read now, into what this part stores. Left as it
+    /// is when it can't be read.
+    fn take_file(value: &mut Value, file: PartFile) {
+        match file {
+            PartFile::Ended(path) => {
+                if let Some((output, _)) = read_tail(&path) {
+                    value["output"] = json!(output);
+                }
+            }
+            PartFile::Saved(path) => {
+                if let Some((mut output, len)) = read_tail(&path) {
+                    let kept = if output.original_bytes.is_some() {
+                        SavedKept::End
+                    } else {
+                        SavedKept::Whole
+                    };
+                    // `saved` says it: one note, not two.
+                    output.original_bytes = None;
+                    value["stdout"] = json!(output);
+                    value["saved"] = json!(SavedOutput { bytes: len, kept });
+                }
+            }
         }
     }
 }
@@ -112,10 +148,10 @@ impl ToolPayloads {
         };
         let name = part.name;
         let mut value = part.value;
-        let file = part.output_file;
+        let file = part.file;
         let written = tokio::task::spawn_blocking(move || {
-            if let Some(output) = file.as_deref().and_then(read_tail) {
-                value["output"] = json!(output);
+            if let Some(file) = file {
+                Part::take_file(&mut value, file);
             }
             store.tool_payload_put(&key, name, &value)
         })
@@ -182,7 +218,9 @@ impl ToolPayloads {
                 .or_else(|| call.map(|(_, at)| at.elapsed().as_millis() as u64)),
         };
         let mut parts = vec![Part {
-            output_file: (!is_agent).then(|| output_file(end)).flatten(),
+            file: (!is_agent)
+                .then(|| output_file(end).map(PartFile::Ended))
+                .flatten(),
             ..Part::new(id, "ended", json!(ended))
         }];
         // A handback said it whole; the notification only sums it up.
@@ -215,8 +253,25 @@ impl ToolPayloads {
                 .flatten(),
             interrupted: detail.interrupted,
             background: detail.background || launched_in_background(label, output),
+            // What the stream carried, until the file says otherwise.
+            saved: detail
+                .persisted_output
+                .as_ref()
+                .and_then(|p| p.bytes)
+                .map(|bytes| SavedOutput {
+                    bytes,
+                    kept: SavedKept::Preview,
+                }),
+            resolved_model: detail.resolved_model.clone(),
         };
-        let mut parts = vec![Part::new(id, "result", json!(outcome))];
+        let mut parts = vec![Part {
+            file: detail
+                .persisted_output
+                .as_ref()
+                .and_then(saved_output_file)
+                .map(PartFile::Saved),
+            ..Part::new(id, "result", json!(outcome))
+        }];
         if is_agent_report(label, output) {
             parts.push(Part::new(
                 id,
@@ -236,9 +291,20 @@ fn output_file(end: &TaskEnd) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// At most `TEXT_MAX` from the end of `path`: what it ended on matters most.
-fn read_tail(path: &Path) -> Option<CappedText> {
+/// The file the CLI said holds a command's whole output: an absolute path, the
+/// only form the CLI gives.
+fn saved_output_file(saved: &PersistedOutput) -> Option<PathBuf> {
+    let path = PathBuf::from(&saved.path);
+    path.is_absolute().then_some(path)
+}
+
+/// At most `TEXT_MAX` from the end of `path`, a regular file (never a link or
+/// a pipe), with its whole length: what it ended on matters most.
+fn read_tail(path: &Path) -> Option<(CappedText, u64)> {
     use std::io::{Read, Seek, SeekFrom};
+    if !std::fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
     let mut file = std::fs::File::open(path).ok()?;
     let meta = file.metadata().ok()?;
     if !meta.is_file() {
@@ -249,10 +315,11 @@ fn read_tail(path: &Path) -> Option<CappedText> {
     file.seek(SeekFrom::Start(len - take)).ok()?;
     let mut bytes = Vec::new();
     file.take(take).read_to_end(&mut bytes).ok()?;
-    Some(CappedText {
+    let text = CappedText {
         text: String::from_utf8_lossy(&bytes).into_owned(),
         original_bytes: (len > take).then_some(len),
-    })
+    };
+    Some((text, len))
 }
 
 /// The start and the end of a long text, the cut marked in it.
@@ -388,8 +455,29 @@ mod tests {
         assert!(got.duration_ms.is_some());
     }
 
+    /// Real shape (2.1.319): both streams, joined, in `stdout`.
     #[test]
-    fn separate_streams_replace_the_text_that_joins_them() {
+    fn one_combined_stream_is_kept_as_stdout() {
+        let mut p = payloads();
+        call(&mut p, "t1", "Bash", json!({"command": "x"}));
+        detail(
+            &mut p,
+            "t1",
+            ToolResultDetail {
+                stdout: Some("to-stdout\nto-stderr".into()),
+                exit_code: Some(0),
+                ..ToolResultDetail::default()
+            },
+        );
+        let got = outcome(&result(&mut p, "t1", true, "to-stdout\nto-stderr"));
+        assert_eq!(got.output, None);
+        assert_eq!(got.stdout.unwrap().text, "to-stdout\nto-stderr");
+        assert_eq!(got.stderr, None);
+        assert_eq!(got.exit_code, Some(0));
+    }
+
+    #[test]
+    fn two_real_streams_replace_the_text_that_joins_them() {
         let mut p = payloads();
         call(&mut p, "t1", "Bash", json!({"command": "x"}));
         detail(
@@ -406,25 +494,146 @@ mod tests {
         assert_eq!(got.output, None);
         assert_eq!(got.stdout.unwrap().text, "out");
         assert_eq!(got.stderr.unwrap().text, "err");
-        assert_eq!(got.exit_code, Some(0));
     }
 
+    /// Real shape (2.1.319): a failure has no streams, only its text.
     #[test]
-    fn a_failure_keeps_its_text_with_its_streams() {
+    fn a_failures_text_is_its_output_and_its_exit_code_is_read_from_it() {
         let mut p = payloads();
         call(&mut p, "t1", "Bash", json!({"command": "x"}));
         detail(
             &mut p,
             "t1",
             ToolResultDetail {
-                stderr: Some("boom".into()),
-                exit_code: Some(2),
+                exit_code: Some(1),
                 ..ToolResultDetail::default()
             },
         );
-        let got = outcome(&result(&mut p, "t1", false, "Exit code 2\nboom"));
-        assert_eq!(got.output.unwrap().text, "Exit code 2\nboom");
-        assert_eq!(got.exit_code, Some(2));
+        let text = "Exit code 1\nout\nerr\nls: nope: No such file or directory";
+        let got = outcome(&result(&mut p, "t1", false, text));
+        assert_eq!(got.output.unwrap().text, text);
+        assert_eq!(got.exit_code, Some(1));
+        assert!(!got.ok);
+    }
+
+    fn bash_with_saved_output(path: &str, bytes: Option<u64>) -> Vec<Part> {
+        let mut p = payloads();
+        call(&mut p, "t1", "Bash", json!({"command": "seq 1 200000"}));
+        detail(
+            &mut p,
+            "t1",
+            ToolResultDetail {
+                stdout: Some("preview".into()),
+                exit_code: Some(0),
+                persisted_output: Some(PersistedOutput {
+                    path: path.into(),
+                    bytes,
+                }),
+                ..ToolResultDetail::default()
+            },
+        );
+        result(&mut p, "t1", true, "preview")
+    }
+
+    /// Real shape (2.1.319), `seq 1 200000`: 30000 chars in the stream, the
+    /// whole 1.3 MB in a file.
+    #[test]
+    fn saved_output_over_the_bound_keeps_its_end_and_says_how_long_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("t1.txt");
+        let text = format!("first\n{}last", "x".repeat(TEXT_MAX));
+        std::fs::write(&file, &text).unwrap();
+        let mut parts = bash_with_saved_output(file.to_str().unwrap(), Some(text.len() as u64));
+        let saved = parts[0].file.take().unwrap();
+        assert_eq!(saved, PartFile::Saved(file.clone()));
+        Part::take_file(&mut parts[0].value, saved);
+        let got = outcome(&parts);
+        let stdout = got.stdout.unwrap();
+        assert!(stdout.text.ends_with("last"));
+        assert!(!stdout.text.contains("first"));
+        assert_eq!(stdout.original_bytes, None, "said once, by `saved`");
+        assert_eq!(
+            got.saved,
+            Some(SavedOutput {
+                bytes: text.len() as u64,
+                kept: SavedKept::End,
+            })
+        );
+    }
+
+    #[test]
+    fn saved_output_that_fits_is_read_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("t1.txt");
+        std::fs::write(&file, "whole output").unwrap();
+        let mut parts = bash_with_saved_output(file.to_str().unwrap(), Some(12));
+        let saved = parts[0].file.take().unwrap();
+        Part::take_file(&mut parts[0].value, saved);
+        let got = outcome(&parts);
+        assert_eq!(got.stdout.unwrap().text, "whole output");
+        assert_eq!(
+            got.saved,
+            Some(SavedOutput {
+                bytes: 12,
+                kept: SavedKept::Whole,
+            })
+        );
+    }
+
+    #[test]
+    fn saved_output_that_cant_be_read_keeps_the_preview_and_the_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.txt");
+        let mut parts = bash_with_saved_output(gone.to_str().unwrap(), Some(1_288_895));
+        let saved = parts[0].file.take().unwrap();
+        Part::take_file(&mut parts[0].value, saved);
+        let got = outcome(&parts);
+        assert_eq!(got.stdout.unwrap().text, "preview");
+        assert_eq!(
+            got.saved,
+            Some(SavedOutput {
+                bytes: 1_288_895,
+                kept: SavedKept::Preview,
+            })
+        );
+    }
+
+    #[test]
+    fn only_an_absolute_path_the_cli_named_is_read_as_saved_output() {
+        assert!(
+            bash_with_saved_output("relative/t1.txt", Some(1))[0]
+                .file
+                .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn neither_a_link_nor_a_pipe_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.txt");
+        std::fs::write(&target, "secret").unwrap();
+        let link = dir.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(read_tail(&link), None);
+        assert_eq!(read_tail(dir.path()), None);
+        assert_eq!(read_tail(&target).unwrap().0.text, "secret");
+    }
+
+    #[test]
+    fn a_subagents_model_is_kept_from_its_result() {
+        let mut p = payloads();
+        call(&mut p, "a", "Agent", json!({"prompt": "do it"}));
+        detail(
+            &mut p,
+            "a",
+            ToolResultDetail {
+                resolved_model: Some("claude-haiku-5-5".into()),
+                ..ToolResultDetail::default()
+            },
+        );
+        let got = outcome(&result(&mut p, "a", true, "All done."));
+        assert_eq!(got.resolved_model.as_deref(), Some("claude-haiku-5-5"));
     }
 
     #[test]
@@ -547,8 +756,8 @@ mod tests {
         assert_eq!(end.len(), 1);
         assert_eq!(end[0].name, "ended");
         assert_eq!(
-            end[0].output_file.as_deref(),
-            Some(Path::new("/tmp/tasks/b1.output"))
+            end[0].file,
+            Some(PartFile::Ended("/tmp/tasks/b1.output".into()))
         );
         let stored: ToolEnd = serde_json::from_value(end[0].value.clone()).unwrap();
         assert_eq!(stored.status, "completed");
@@ -574,7 +783,7 @@ mod tests {
                 ..ToolResultDetail::default()
             },
         );
-        assert_eq!(end[0].output_file, None);
+        assert_eq!(end[0].file, None);
         assert_eq!(end[1].name, "report");
         assert_eq!(end[1].value["text"], "pong");
     }
@@ -597,7 +806,8 @@ mod tests {
         let path = dir.path().join("b1.output");
         let text = format!("first\n{}last", "x".repeat(TEXT_MAX));
         std::fs::write(&path, &text).unwrap();
-        let got = read_tail(&path).unwrap();
+        let (got, len) = read_tail(&path).unwrap();
+        assert_eq!(len, text.len() as u64);
         assert_eq!(got.original_bytes, Some(text.len() as u64));
         assert!(got.text.ends_with("last"));
         assert!(!got.text.contains("first"));

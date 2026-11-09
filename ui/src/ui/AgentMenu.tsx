@@ -4,8 +4,9 @@
  * one this box talks to. "Models" holds every model each CLI offers (older
  * versions one level down), "Effort" the levels the current model takes,
  * and ⌘⇧/ cycles the effort from the box the chip sits in. Model and effort
- * are the agent's settings, shared everywhere. The same chip sits in a
- * space's box and in the AI panel's.
+ * are the agent's settings, shared everywhere, except in a box that has a
+ * model of its own (a space's: `modelOf`, `onPickModel`). The same chip sits
+ * in a space's box and in the AI panel's.
  */
 import { useEffect, useMemo, useRef } from 'react';
 import { Check, ChevronDown, Gear } from '@gravity-ui/icons';
@@ -46,16 +47,17 @@ function rawEffort(store: RootStore, agent: AgentId): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
-/** The concrete model and effort `agent` runs with, given its catalog: the
- *  setting (as typed when the catalog lacks it), else the catalog's first
- *  current model; the effort set when that model takes it, else the
- *  model's own default. */
+/** The concrete model and effort `agent` runs with, given its catalog:
+ *  `boxModel` when this box has one, else the setting (as typed when the
+ *  catalog lacks it), else the catalog's first current model; the effort set
+ *  when that model takes it, else the model's own default. */
 export function running(
   store: RootStore,
   agent: AgentId,
   catalog: AgentModel[] | undefined,
+  boxModel?: string | null,
 ): Running {
-  const id = agentModel(store, agent);
+  const id = boxModel ?? agentModel(store, agent);
   const list = catalog ?? [];
   const typed: AgentModel | null = id
     ? {
@@ -126,6 +128,8 @@ export const AgentMenu = observer(function AgentMenu({
   onSelect,
   isDisabled,
   ultracode,
+  modelOf,
+  onPickModel,
 }: {
   /** Offered: installed and enabled. */
   agents: AgentId[];
@@ -135,6 +139,10 @@ export const AgentMenu = observer(function AgentMenu({
   isDisabled?: boolean;
   /** A space's box: Claude also offers Ultracode, past Max. */
   ultracode?: boolean;
+  /** This box's own model for an agent; `null` is that agent's setting. */
+  modelOf?: (agent: AgentId) => string | null;
+  /** A pick goes here instead of into the agent's setting. */
+  onPickModel?: (agent: AgentId, model: string) => void;
 }) {
   const store = useRootStore();
   const ui = useUi();
@@ -142,7 +150,7 @@ export const AgentMenu = observer(function AgentMenu({
   const catalog = useAgentModels(agents);
   const primary = selected ?? agents[0] ?? null;
   const now: Partial<Record<AgentId, Running>> = {};
-  for (const a of agents) now[a] = running(store, a, catalog[a]);
+  for (const a of agents) now[a] = running(store, a, catalog[a], modelOf?.(a));
   const cur = primary ? now[primary] : undefined;
   const levels = useMemo(
     () =>
@@ -153,11 +161,11 @@ export const AgentMenu = observer(function AgentMenu({
   );
 
   // What's shown is what runs: once its catalog is in, an agent with no
-  // model or effort set gets the one shown.
+  // model or effort set gets the one shown. The setting's own, not a box's.
   const fill = agents
     .map((a) => {
-      const r = now[a];
-      return r?.listed && r.model ? `${a}|${r.model.id}|${r.effort ?? ''}` : '';
+      const r = running(store, a, catalog[a]);
+      return r.listed && r.model ? `${a}|${r.model.id}|${r.effort ?? ''}` : '';
     })
     .join(',');
   useEffect(() => {
@@ -198,9 +206,14 @@ export const AgentMenu = observer(function AgentMenu({
   const pick = (key: string) => {
     const [agent, id] = key.split('|') as [AgentId, string];
     if (!agent || !id) return;
-    setAgentModel(store, agent, id);
+    if (onPickModel) onPickModel(agent, id);
+    else setAgentModel(store, agent, id);
     // A level the new model doesn't take: its own default instead.
-    setAgentEffort(store, agent, running(store, agent, catalog[agent]).effort);
+    setAgentEffort(
+      store,
+      agent,
+      running(store, agent, catalog[agent], id).effort,
+    );
     switchTo(agent);
   };
 

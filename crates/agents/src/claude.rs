@@ -22,7 +22,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use theodore_domain::Usage;
-use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest, TaskEnd, ToolResultDetail};
+use theodore_ports::agent::{
+    AgentEvent, AgentMode, AgentRequest, PersistedOutput, TaskEnd, ToolResultDetail,
+};
 
 use crate::config::AgentBinaryConfig;
 use crate::edit_guard;
@@ -722,8 +724,13 @@ fn tool_results(v: &Value) -> Vec<AgentEvent> {
 /// Bash ok            {stdout, stderr, interrupted}          exit 0
 /// Bash failed        "Error: Exit code 1…" (a string)       exit 1, from the text
 /// Bash in background {…, backgroundTaskId}                  no exit yet
+/// Bash too long      {stdout (30000 chars), persistedOutputPath, persistedOutputSize}
+/// Agent              {resolvedModel, …}                     the model it ran on
 /// Agent in background {isAsync, status: "async_launched"}   no exit yet
 /// ```
+///
+/// Real runs (2.1.319) give one combined `stdout` and an empty `stderr`, even
+/// for a command that wrote to both; only both non-empty really are two.
 fn result_detail(
     structured: Option<&Value>,
     is_error: bool,
@@ -741,10 +748,18 @@ fn result_detail(
     let background = text("backgroundTaskId").is_some()
         || field("isAsync").and_then(Value::as_bool) == Some(true);
     let interrupted = field("interrupted").and_then(Value::as_bool) == Some(true);
-    let failed = is_error.then(|| exit_code_in(output)).flatten();
-    if !streams && !background && failed.is_none() {
+    // The structured form carries the same line when the text doesn't.
+    let failed = is_error
+        .then(|| exit_code_in(output).or_else(|| structured?.as_str().and_then(exit_code_in)))
+        .flatten();
+    let resolved_model = text("resolvedModel");
+    if !streams && !background && failed.is_none() && resolved_model.is_none() {
         return None;
     }
+    let persisted_output = text("persistedOutputPath").map(|path| PersistedOutput {
+        path,
+        bytes: field("persistedOutputSize").and_then(Value::as_u64),
+    });
     Some(ToolResultDetail {
         stdout: text("stdout"),
         stderr: text("stderr"),
@@ -752,6 +767,8 @@ fn result_detail(
         interrupted,
         background,
         end: None,
+        persisted_output,
+        resolved_model,
     })
 }
 
@@ -1552,26 +1569,82 @@ mod model_and_effort_tests {
         assert_eq!(end.duration_ms, Some(1178));
     }
 
-    /// The schema's fields (2.1.319). A `ToolDetail` comes first, so what
+    /// Real shape (2.1.319): a command writing to both gives one combined
+    /// `stdout` and an empty `stderr`. A `ToolDetail` comes first, so what
     /// records the result can take both.
     #[test]
     fn a_commands_structured_result_gives_its_streams_and_exit_code() {
-        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"out\nerr"}]},"tool_use_result":{"stdout":"out\n","stderr":"err\n","interrupted":false,"isImage":false}}"#;
+        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"to-stdout\nto-stderr"}]},"tool_use_result":{"stdout":"to-stdout\nto-stderr","stderr":"","interrupted":false,"isImage":false}}"#;
         let events = parse_line(line);
         assert!(matches!(
             events.as_slice(),
             [AgentEvent::ToolDetail { .. }, AgentEvent::ToolResult { .. }]
         ));
         let detail = detail_of(line).unwrap();
-        assert_eq!(detail.stdout.as_deref(), Some("out\n"));
-        assert_eq!(detail.stderr.as_deref(), Some("err\n"));
+        assert_eq!(detail.stdout.as_deref(), Some("to-stdout\nto-stderr"));
+        assert_eq!(detail.stderr, None);
         assert_eq!(detail.exit_code, Some(0));
     }
 
     #[test]
+    fn two_streams_stay_two_when_both_really_hold_something() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"out\nerr"}]},"tool_use_result":{"stdout":"out","stderr":"err"}}"#;
+        let detail = detail_of(line).unwrap();
+        assert_eq!(detail.stdout.as_deref(), Some("out"));
+        assert_eq!(detail.stderr.as_deref(), Some("err"));
+    }
+
+    /// Real shape (2.1.319): a failure's `tool_use_result` is a string.
+    #[test]
     fn a_failed_commands_exit_code_comes_from_its_text() {
-        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 2\nls: nope"}]},"tool_use_result":"Error: Exit code 2\nls: nope"}"#;
-        assert_eq!(detail_of(line).unwrap().exit_code, Some(2));
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 1\nout\nerr\nls: nope: No such file or directory"}]},"tool_use_result":"Error: Exit code 1\nout\nerr\nls: nope: No such file or directory"}"#;
+        let detail = detail_of(line).unwrap();
+        assert_eq!(detail.exit_code, Some(1));
+        assert_eq!(detail.stdout, None);
+        assert_eq!(detail.stderr, None);
+    }
+
+    #[test]
+    fn a_failures_exit_code_also_comes_from_the_structured_string() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"out\nerr"}]},"tool_use_result":"Error: Exit code 3\nout\nerr"}"#;
+        assert_eq!(detail_of(line).unwrap().exit_code, Some(3));
+    }
+
+    /// Real shape (2.1.319), `seq 1 200000`: the stream stops at 30000 chars.
+    #[test]
+    fn output_too_long_for_the_stream_names_its_file_and_size() {
+        let stdout = "1\n".repeat(15_000);
+        let line = serde_json::json!({
+            "type": "user",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": stdout}]},
+            "tool_use_result": {
+                "stdout": stdout,
+                "stderr": "",
+                "persistedOutputPath": "/tmp/claude/tool-results/t1.txt",
+                "persistedOutputSize": 1288895,
+            },
+        })
+        .to_string();
+        let detail = detail_of(&line).unwrap();
+        assert_eq!(detail.stdout.as_deref(), Some(stdout.as_str()));
+        assert_eq!(detail.exit_code, Some(0));
+        assert_eq!(
+            detail.persisted_output,
+            Some(PersistedOutput {
+                path: "/tmp/claude/tool-results/t1.txt".into(),
+                bytes: Some(1288895),
+            })
+        );
+    }
+
+    /// Real shape (2.1.319): a subagent's result names the model it ran on.
+    #[test]
+    fn a_subagents_result_names_the_model_it_ran_on() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"All done."}]},"tool_use_result":{"status":"completed","resolvedModel":"claude-haiku-5-5","agentId":"a1"}}"#;
+        let detail = detail_of(line).unwrap();
+        assert_eq!(detail.resolved_model.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(detail.exit_code, None);
+        assert_eq!(detail.stdout, None);
     }
 
     #[test]

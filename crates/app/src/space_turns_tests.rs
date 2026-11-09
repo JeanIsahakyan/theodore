@@ -1144,6 +1144,37 @@ async fn a_final_text_joining_results_leaves_none_of_them_in_the_steps() {
     );
 }
 
+/// A stop always logs a turn: `stopped` is how the end is told apart from a
+/// finished one, which announces what it left.
+#[tokio::test]
+async fn a_stopped_turn_is_logged_as_stopped() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("done"));
+    f.git.push_checkpoint(Sha::new("turn1"));
+    let s = core.create_space(request(&project, "One")).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert!(!s.turn_log.last().unwrap().stopped);
+
+    f.agents.hang_next_run();
+    f.git.push_checkpoint(Sha::new("turn2"));
+    core.space_send(SpaceSendRequest {
+        space: s.id.clone(),
+        text: "long".into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    core.space_stop(&s.id).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    let last = s.turn_log.last().unwrap();
+    assert!(last.stopped);
+    assert_ne!(s.turn_log.len(), 1, "the stopped turn is in the log");
+}
+
 /// No final text: the reply holds every block, and the steps keep them where
 /// they came, the block cut off last.
 #[tokio::test]

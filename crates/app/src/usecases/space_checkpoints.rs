@@ -228,6 +228,7 @@ impl Core {
             after_head: Some(cp.head.clone()),
             reverted: paths,
             plan: None,
+            stopped: false,
         });
         self.apply(vec![
             NewAction {

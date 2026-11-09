@@ -139,11 +139,12 @@ type EndedFields = Pick<
 type BeforeEnd = Pick<Space, 'status'> & Partial<Pick<Space, 'turn_log'>>;
 
 /** What the turn that just ended left, from the turn it logged: `null` when
- *  it logged none (stopped before its checkpoint). */
+ *  it logged none (stopped before its checkpoint) or was stopped. */
 function turnOutcome(prev: BeforeEnd, next: EndedFields): string | null {
   const log = next.turn_log ?? [];
   if (log.length <= (prev.turn_log?.length ?? 0)) return null;
   const last = log[log.length - 1]!;
+  if (last.stopped) return null;
   if (last.plan) return 'Plan ready';
   return last.before === last.after ? 'Replied' : 'Changes ready';
 }
@@ -174,6 +175,34 @@ export function turnEnded(
       ? `${spaceTitle(next)}: ${outcome.toLowerCase()}`
       : spaceTitle(next),
   };
+}
+
+/** A model picked in a space's box, for the agent it was picked for. */
+export type ModelPick = { agent: AgentId; model: string };
+
+/** The model a space's box has of its own for `agent`: the pick, else the
+ *  space's own while `agent` is the space's. `null`: none, the agent's setting
+ *  applies. An unlisted name stays as it is (the chip shows it as typed). */
+export function spaceOwnModel(
+  space: Pick<Space, 'agent' | 'model'>,
+  agent: AgentId,
+  picked: ModelPick | null,
+): string | null {
+  if (picked?.agent === agent) return picked.model;
+  return agent === space.agent ? (space.model ?? null) : null;
+}
+
+/** The model a send from a space's box names: the pick, or for another agent
+ *  the one shown for it; `null` keeps the space's. A send names nothing else,
+ *  so it never changes the space's model unasked. */
+export function sendModel(
+  space: Pick<Space, 'agent'>,
+  agent: AgentId,
+  picked: ModelPick | null,
+  setting: string | null,
+): string | null {
+  if (picked?.agent === agent) return picked.model;
+  return agent === space.agent ? null : setting;
 }
 
 /** Days after a space is done before it archives itself; 0 = never. */

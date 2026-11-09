@@ -114,6 +114,90 @@ async fn idle(f: &Fixtures, id: &str) -> Space {
     space(f, id)
 }
 
+fn send(id: &str, agent: Option<AgentId>, model: Option<&str>) -> SpaceSendRequest {
+    SpaceSendRequest {
+        space: id.into(),
+        text: "next".into(),
+        agent,
+        model: model.map(str::to_string),
+        mode: None,
+        attachments: None,
+    }
+}
+
+/// `agents.<id>.model` at the moment of creating is what the space keeps: a
+/// later change to it, from any box, doesn't reach it (docs/spaces.md §7).
+#[tokio::test]
+async fn a_space_keeps_the_model_it_started_on() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("haiku"));
+    f.agents.push_script(done("one", 0.0));
+    let created = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+    assert_eq!(s.model.as_deref(), Some("haiku"));
+    assert_eq!(
+        f.agents.last_request().unwrap().model.as_deref(),
+        Some("haiku")
+    );
+
+    put_setting(&f, "agents.claude.model", json!("opus"));
+    f.agents.push_script(done("two", 0.0));
+    core.space_send(send(&s.id, None, None)).await.unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.model.as_deref(), Some("haiku"), "a send names no model");
+    assert_eq!(
+        f.agents.last_request().unwrap().model.as_deref(),
+        Some("haiku")
+    );
+}
+
+/// A pick is a pick: the send that names a model changes the space's.
+#[tokio::test]
+async fn a_send_naming_a_model_changes_the_spaces_model() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("haiku"));
+    f.agents.push_script(done("one", 0.0));
+    let created = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+
+    f.agents.push_script(done("two", 0.0));
+    core.space_send(send(&s.id, None, Some("opus")))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.model.as_deref(), Some("opus"));
+}
+
+/// A send to another agent without a model doesn't hand it the first agent's.
+#[tokio::test]
+async fn a_spaces_model_doesnt_go_to_another_agent() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    put_setting(&f, "agents.claude.model", json!("haiku"));
+    f.agents.push_script(done("one", 0.0));
+    let created = core
+        .create_space(request(&project, "Fix it"))
+        .await
+        .unwrap();
+    let s = idle(&f, &created.id).await;
+
+    f.agents.push_script(done("two", 0.0));
+    core.space_send(send(&s.id, Some(AgentId::Codex), None))
+        .await
+        .unwrap();
+    let s = idle(&f, &s.id).await;
+    assert_eq!(s.agent, AgentId::Codex);
+    assert_eq!(s.model, None, "no model named, none of Claude's kept");
+}
+
 #[tokio::test]
 async fn the_goal_runs_as_an_edit_turn_and_ends_in_a_checkpoint() {
     let f = fixtures();

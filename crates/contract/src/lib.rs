@@ -862,6 +862,33 @@ pub struct ToolOutcome {
     pub interrupted: bool,
     #[serde(default)]
     pub background: bool,
+    /// Output too long for the CLI's stream, which kept the whole of it in a
+    /// file: how much of it `stdout` holds.
+    #[serde(default)]
+    pub saved: Option<SavedOutput>,
+    /// The concrete model a subagent ran on.
+    #[serde(default)]
+    pub resolved_model: Option<String>,
+}
+
+/// A command's output that outgrew the CLI's stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SavedOutput {
+    /// Its whole size.
+    pub bytes: u64,
+    pub kept: SavedKept,
+}
+
+/// What `stdout` holds of output the CLI saved to a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedKept {
+    /// All of it: the file fit the bound.
+    Whole,
+    /// The end of the file, as much as the bound allows.
+    End,
+    /// Only what the stream carried: the file couldn't be read.
+    Preview,
 }
 
 /// How a call that went to the background ended.

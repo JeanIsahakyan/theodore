@@ -5,21 +5,28 @@
  * report. Only rendered while open (`toolPayload.ts`).
  *
  * ```text
- * Bash, shell      command · description · exit, time · stdout / stderr
+ * Bash, shell      command · description · exit, time · output (stdout and
+ *                  stderr apart only when both really hold something)
  * Read, Grep, …    arguments · the lines, matches or files
  * Edit, Write      file · − old / + new, or the written content
  * MCP, own tools   arguments and result as JSON
  * background       + while running / how it ended, and its final output
- * Agent            prompt · type, model · status · its steps · the report
+ * Agent            prompt · type, model · status · its steps · the report once
  * ```
  */
 import { useState, type ReactNode } from 'react';
 import { Check, Copy } from '@gravity-ui/icons';
-import type { CappedText, ToolOutcome, ToolPayload } from '../gen/contract';
+import type {
+  CappedText,
+  SavedOutput,
+  ToolOutcome,
+  ToolPayload,
+  TurnStep,
+} from '../gen/contract';
 import { Spinner } from './bits';
 import { useToolPayload, type ToolPayloadState } from './toolPayload';
 import { toolRow } from './toolSummary';
-import { formatDuration, type ToolStep } from './turnRows';
+import { formatDuration, withoutReportStep, type ToolStep } from './turnRows';
 
 const BLOCK =
   'turn-detail-text max-h-72 select-text overflow-auto whitespace-pre-wrap rounded-md bg-default/50 p-2 font-mono text-[11px] leading-relaxed [overflow-wrap:anywhere]';
@@ -41,14 +48,19 @@ export function formatBytes(bytes: number): string {
   return mb < 10 ? `${mb.toFixed(1)} MB` : `${Math.round(mb)} MB`;
 }
 
+/** A text's lines: a final newline ends the last one, it doesn't start
+ *  another; nothing at all is no line. */
+const linesOf = (text: string): string[] =>
+  text === '' ? [] : text.replace(/\n$/, '').split('\n');
+
 /** The change between two texts as whole lines: what they share at either
  *  end stays, the rest is removed and added, as the row's counts say. */
 export function diffLines(
   before: string,
   after: string,
 ): { kind: ' ' | '-' | '+'; line: string }[] {
-  const old = before.split('\n');
-  const next = after.split('\n');
+  const old = linesOf(before);
+  const next = linesOf(after);
   let start = 0;
   while (start < old.length && old[start] === next[start]) start += 1;
   let end = 0;
@@ -135,14 +147,29 @@ function CutNote({ bytes }: { bytes: number | null | undefined }) {
   );
 }
 
+/** What a stream's block holds of output the CLI saved to a file. */
+export function savedNote(saved: SavedOutput): string {
+  const size = formatBytes(saved.bytes);
+  switch (saved.kept) {
+    case 'whole':
+      return `The whole output: ${size}.`;
+    case 'end':
+      return `Only the end of this was kept: it was ${size}.`;
+    case 'preview':
+      return `Only part of this came through: it was ${size}, and its file couldn't be read.`;
+  }
+}
+
 function OutputBlock({
   title,
   value,
   danger = false,
+  note,
 }: {
   title: string;
   value: CappedText;
   danger?: boolean;
+  note?: string;
 }) {
   return (
     <Section title={title} copy={value.text}>
@@ -150,6 +177,7 @@ function OutputBlock({
         {value.text}
       </pre>
       <CutNote bytes={value.original_bytes} />
+      {note && <div className={`turn-detail-cut ${NOTE}`}>{note}</div>}
     </Section>
   );
 }
@@ -179,9 +207,17 @@ function Output({ result, ok }: { result: ToolOutcome; ok: boolean | null }) {
   if (!hasOutput(result)) {
     return <div className={NOTE}>No output.</div>;
   }
+  // One combined stream when stderr is empty: nothing to tell apart.
+  const apart = !!result.stdout?.text && !!result.stderr?.text;
   return (
     <>
-      {result.stdout && <OutputBlock title="Stdout" value={result.stdout} />}
+      {result.stdout && (
+        <OutputBlock
+          title={apart ? 'Stdout' : 'Output'}
+          value={result.stdout}
+          note={result.saved ? savedNote(result.saved) : undefined}
+        />
+      )}
       {result.stderr && (
         <OutputBlock title="Stderr" value={result.stderr} danger={failed} />
       )}
@@ -217,6 +253,11 @@ function ResultPart({
   }
   return step.summary ? <div className={NOTE}>{step.summary}</div> : null;
 }
+
+/** It ended in the background: the result only says it started, and is
+ *  stale beside what it ended with. */
+const endedInBackground = (step: ToolStep, payload: ToolPayload | null) =>
+  !!step.background && !!payload?.ended;
 
 /** A background call: how it's doing, and what it ended with. */
 function BackgroundPart({
@@ -315,7 +356,9 @@ function CommandView({
       {step.background && (
         <BackgroundPart step={step} running={running} payload={payload} />
       )}
-      <ResultPart step={step} running={running} payload={payload} />
+      {!endedInBackground(step, payload) && (
+        <ResultPart step={step} running={running} payload={payload} />
+      )}
     </>
   );
 }
@@ -426,7 +469,7 @@ function EditView({
       ))}
       {written != null && (
         <Section title="Written" copy={written}>
-          <pre className={BLOCK}>{written}</pre>
+          <pre className={BLOCK}>{written.replace(/\n$/, '')}</pre>
         </Section>
       )}
       {!known && input && <Arguments input={input} />}
@@ -466,7 +509,7 @@ function GenericView({
       {step.background && (
         <BackgroundPart step={step} running={running} payload={payload} />
       )}
-      {result && output ? (
+      {endedInBackground(step, payload) ? null : result && output ? (
         <Section
           title={step.ok === false ? 'Error' : 'Result'}
           copy={output.text}
@@ -540,24 +583,30 @@ export function ToolDetails({
 }
 
 /** What opens under a subagent's row: its prompt and what it is, then its
- *  own steps (`children`, as they nest), then its report in full. */
+ *  own steps (`children`, as they nest) without the text its report repeats,
+ *  then its report in full. */
 export function AgentDetails({
   step,
   running,
+  steps,
   children,
 }: {
   step: ToolStep;
   running: boolean;
-  children: ReactNode;
+  /** The subagent's own steps. */
+  steps: readonly TurnStep[];
+  children: (shown: readonly TurnStep[]) => ReactNode;
 }) {
   const state = useToolPayload(step);
   const input = inputOf(state.payload);
   const prompt = text(input, 'prompt');
   const type = text(input, 'subagent_type');
-  const model = text(input, 'model');
+  // The model it really ran on; what it was asked to run on otherwise.
+  const model = state.payload?.result?.resolved_model ?? text(input, 'model');
   const description = text(input, 'description') ?? step.detail;
   const status = agentStatus(step, running, state.payload);
   const report = state.payload?.report;
+  const shown = report ? withoutReportStep(steps, report.text) : steps;
   return (
     <div className="turn-agent-details flex min-w-0 flex-col gap-2">
       {state.loading && <Spinner />}
@@ -575,7 +624,7 @@ export function AgentDetails({
           <CutNote bytes={state.payload?.input?.original_bytes} />
         </Section>
       )}
-      {children}
+      {children(shown)}
       {report ? (
         <Section title="Report" copy={report.text}>
           <pre className={`turn-agent-summary ${BLOCK}`}>{report.text}</pre>

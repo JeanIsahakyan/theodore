@@ -333,6 +333,9 @@ pub struct SpaceTurn {
     /// `reply` is its own `message`, and the next turn's prompt says so.
     #[serde(default)]
     pub reverted: Vec<String>,
+    /// Ended by Stop: what it left isn't an outcome to announce.
+    #[serde(default)]
+    pub stopped: bool,
 }
 
 /// Where a new space's work starts (docs/spaces.md §3 "New space"), instead

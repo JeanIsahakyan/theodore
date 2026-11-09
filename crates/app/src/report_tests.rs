@@ -478,15 +478,15 @@ fn set_model(f: &Fixtures, value: serde_json::Value) {
         .unwrap();
 }
 
-/// New space with a model picked in the menu: the space asks for none, the
-/// `agents.claude.model` setting decides — the reply records the model the
-/// run was sent, and a later change to the setting doesn't rewrite it.
+/// New space with a model picked in the menu: the `agents.claude.model`
+/// setting is what the space pins when it's created — the reply records the
+/// model the run was sent, and a later change to the setting doesn't rewrite it.
 #[tokio::test]
 async fn the_model_row_is_the_one_the_run_used_from_the_setting() {
     let f = fixtures();
     set_model(&f, json!("claude-haiku-5-5"));
     let (core, _recv, s) = two_turns(&f).await;
-    assert_eq!(s.model, None, "the space pins no model");
+    assert_eq!(s.model.as_deref(), Some("claude-haiku-5-5"));
     assert_eq!(
         f.agents.last_request().unwrap().model.as_deref(),
         Some("claude-haiku-5-5"),

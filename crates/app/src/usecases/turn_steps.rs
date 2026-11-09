@@ -171,16 +171,17 @@ pub(crate) fn result_summary(tool: &str, output: &str) -> Option<String> {
     let files = |n: usize| format!("{n} file{}", if n == 1 { "" } else { "s" });
     let matches = |n: usize| format!("{n} match{}", if n == 1 { "" } else { "es" });
     match tool {
-        // `1\tfirst line`: a number, a tab, the line; the end of the file is a
-        // number alone.
+        // `1\tfirst line`: a number, a tab, the line. A blank line of the
+        // file is a number and nothing; the last such row is the end of the
+        // file, not a line of it.
         "Read" => {
-            let n = output
+            let rows: Vec<&str> = output
                 .lines()
                 .filter_map(|l| l.trim_start().split_once(['\t', '→']))
-                .filter(|(n, line)| {
-                    !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && !line.is_empty()
-                })
-                .count();
+                .filter(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                .map(|(_, line)| line)
+                .collect();
+            let n = rows.len() - usize::from(rows.last().is_some_and(|l| l.is_empty()));
             (n > 0).then(|| format!("{n} line{}", if n == 1 { "" } else { "s" }))
         }
         "Grep" => {
@@ -988,6 +989,15 @@ mod tests {
             Some("2 lines")
         );
         assert_eq!(of("Read", "1\tonly").as_deref(), Some("1 line"));
+        // A blank line counts; only the end-of-file row after the last one doesn't.
+        assert_eq!(
+            of("Read", "1\t# Title\n2\t\n3\tbody\n4\t\n5\tmore\n6\t").as_deref(),
+            Some("5 lines")
+        );
+        assert_eq!(
+            of("Read", "     1→a\n     2→\n     3→b\n     4→").as_deref(),
+            Some("3 lines")
+        );
         assert_eq!(of("Read", "no such file"), None);
         assert_eq!(
             of("Grep", "Found 3 files\na.txt\nb.txt\nc.txt").as_deref(),

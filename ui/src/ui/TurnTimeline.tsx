@@ -358,14 +358,16 @@ const AgentRow = memo(
         </button>
         {open && (
           <div className="turn-agent-steps mt-2 flex flex-col gap-2 border-l border-separator ps-3">
-            <AgentDetails step={step} running={busy}>
-              <StepList
-                own={own}
-                under={NOTHING_UNDER}
-                options={busy ? { running: true } : { flat: true }}
-                keptAs={keptAs && `${keptAs}:a`}
-                running={busy}
-              />
+            <AgentDetails step={step} running={busy} steps={own}>
+              {(shown) => (
+                <StepList
+                  own={shown}
+                  under={NOTHING_UNDER}
+                  options={busy ? { running: true } : { flat: true }}
+                  keptAs={keptAs && `${keptAs}:a`}
+                  running={busy}
+                />
+              )}
             </AgentDetails>
           </div>
         )}

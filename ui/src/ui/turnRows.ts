@@ -232,6 +232,23 @@ export function splitSteps(steps: readonly TurnStep[]): {
   return { own, under };
 }
 
+/** A subagent's steps without the text its report repeats: its last message,
+ *  when that is the report (a stored text may be cut with `…`). */
+export function withoutReportStep(
+  steps: readonly TurnStep[],
+  report: string,
+): TurnStep[] {
+  const at = steps.map((s) => s.kind).lastIndexOf('text');
+  const last = at >= 0 ? steps[at] : undefined;
+  if (last?.kind !== 'text') return [...steps];
+  const said = last.text.trim();
+  const whole = report.trim();
+  const same =
+    said === whole ||
+    (said.endsWith('…') && whole.startsWith(said.slice(0, -1)));
+  return same ? steps.filter((_, i) => i !== at) : [...steps];
+}
+
 /** The items a list of steps shows, in the order they happened. */
 export function turnItems(
   steps: readonly TurnStep[],

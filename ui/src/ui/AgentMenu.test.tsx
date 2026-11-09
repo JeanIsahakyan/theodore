@@ -210,6 +210,59 @@ describe('AgentMenu', () => {
     expect(agentEffort(store, 'claude')).toBe('high');
   });
 
+  describe("in a space's box, with a model of its own", () => {
+    let pickedModel: { agent: AgentId; model: string } | null = null;
+
+    async function renderOwn(store: RootStore, own: string | null) {
+      pickedModel = null;
+      m = await mount(
+        <RootStoreProvider store={store}>
+          <AgentMenu
+            agents={['claude', 'codex']}
+            selected="claude"
+            onSelect={(next) => (picked = next)}
+            modelOf={(a) => (a === 'claude' ? own : null)}
+            onPickModel={(agent, model) => (pickedModel = { agent, model })}
+          />
+        </RootStoreProvider>,
+      );
+      await settle();
+      await settle();
+      return m.host.querySelector('button[aria-label="Model"]')!;
+    }
+
+    it("shows the space's model, not the agent's setting", async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      const chip = await renderOwn(store, 'claude-fable-5-1');
+      expect(chip.textContent).toContain('Fable 5.1');
+      expect(chip.textContent).not.toContain('Opus 5.5');
+    });
+
+    it('fails safe on a name it has never heard of: as typed', async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      const chip = await renderOwn(store, 'claude-haiku-5-5');
+      expect(chip.textContent).toContain('claude-haiku-5-5');
+    });
+
+    it("leaves the agent's setting alone, and a pick stays this box's", async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      const chip = await renderOwn(store, 'claude-fable-5-1');
+      expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
+      await click(chip);
+      await settle();
+      await click(item('Models')!);
+      await settle();
+      await click(item('GPT-6-Luna')!);
+      await settle();
+      expect(pickedModel).toEqual({ agent: 'codex', model: 'gpt-6-luna' });
+      expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
+      expect(picked).toBe('codex');
+    });
+  });
+
   it("picking another CLI's model switches to that agent", async () => {
     const store = new RootStore();
     const chip = await render(store, 'claude');

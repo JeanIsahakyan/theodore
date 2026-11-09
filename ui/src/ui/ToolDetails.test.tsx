@@ -19,13 +19,13 @@ import {
   layoutRows,
   uninstallChatLayout,
 } from '../test/chatLayout';
-import type { ToolPayload, TurnStep } from '../gen/contract';
+import type { SavedKept, ToolPayload, TurnStep } from '../gen/contract';
 import { setTransport } from '../core/transport';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
 import { VirtualChat } from './space/VirtualChat';
-import { diffLines, formatBytes } from './ToolDetails';
+import { diffLines, formatBytes, savedNote } from './ToolDetails';
 import { TimelineRows } from './TurnTimeline';
 import { ToolRunContext, forgetToolPayloads } from './toolPayload';
 
@@ -158,13 +158,33 @@ describe('a tool row', () => {
     expect(m!.host.querySelectorAll('.turn-detail-copy').length).toBe(3);
   });
 
+  // Real shape (2.1.319): both streams joined in `stdout`, `stderr` empty.
+  it('one combined stream is Output, not Stdout', async () => {
+    answer('t1', {
+      input: { value: { command: 'x' }, original_bytes: null },
+      result: outcome({
+        stdout: output('to-stdout\nto-stderr'),
+        exit_code: 0,
+      }),
+      report: null,
+      ended: null,
+    });
+    await render([tool('Bash', 't1', 'x', true)]);
+    await open();
+    const text = details()!.textContent!;
+    expect(text).toContain('Output');
+    expect(text).not.toContain('Stdout');
+    expect(text).toContain('to-stdout');
+  });
+
+  // Real shape (2.1.319): a failure's text, its exit code read from it.
   it('a failed command: exit code and error text, in red', async () => {
     answer('t1', {
       input: { value: { command: 'ls nope' }, original_bytes: null },
       result: outcome({
         ok: false,
-        output: output('Exit code 2\nls: nope'),
-        exit_code: 2,
+        output: output('Exit code 1\nout\nerr\nls: nope'),
+        exit_code: 1,
       }),
       report: null,
       ended: null,
@@ -172,11 +192,38 @@ describe('a tool row', () => {
     await render([tool('Bash', 't1', 'ls nope', false)]);
     await open();
     expect(m!.host.querySelector('.turn-detail-exit')!.textContent).toBe(
-      'exit 2',
+      'exit 1',
     );
     expect(m!.host.querySelector('pre.text-danger')?.textContent).toContain(
       'ls: nope',
     );
+    expect(details()!.textContent).toContain('Error');
+    expect(details()!.textContent).not.toContain('Stdout');
+  });
+
+  it('says how much of output saved to a file it shows', async () => {
+    const saved = (kept: SavedKept) => savedNote({ bytes: 1_288_895, kept });
+    expect(saved('end')).toContain('Only the end');
+    expect(saved('end')).toContain('1.2 MB');
+    expect(saved('whole')).toContain('The whole output');
+    expect(saved('preview')).toContain("couldn't be read");
+
+    answer('t1', {
+      input: { value: { command: 'seq 1 200000' }, original_bytes: null },
+      result: outcome({
+        stdout: output('199999\n200000\n'),
+        saved: { bytes: 1_288_895, kept: 'end' },
+        exit_code: 0,
+      }),
+      report: null,
+      ended: null,
+    });
+    await render([tool('Bash', 't1', 'seq 1 200000', true)]);
+    await open();
+    expect(m!.host.querySelector('.turn-detail-cut')!.textContent).toContain(
+      '1.2 MB',
+    );
+    expect(details()!.textContent).toContain('Only the end');
   });
 
   it('says when an output was cut, and how large it was', async () => {
@@ -329,6 +376,9 @@ describe('a tool row', () => {
     await settle();
     expect(details()!.textContent).toContain('Ended: completed');
     expect(details()!.textContent).toContain('bg-finished');
+    // The launch note went stale once its end came: one Output block.
+    expect(details()!.textContent).not.toContain('running as b1');
+    expect(m!.host.querySelectorAll('.turn-detail-copy').length).toBe(2);
   });
 
   it('a background call with no end says the turn ended first', async () => {
@@ -452,6 +502,55 @@ describe('a subagent row', () => {
     );
   });
 
+  // Real shape (2.1.319): `tool_use_result.resolvedModel` over the input's.
+  it('names the model it really ran on', async () => {
+    answer(agentId(), {
+      input: {
+        value: { prompt: 'Go', model: 'sonnet' },
+        original_bytes: null,
+      },
+      result: outcome({
+        output: output('pointer'),
+        resolved_model: 'claude-haiku-5-5',
+      }),
+      report: output('Done.'),
+      ended: null,
+    });
+    await render([agent({ summary: 'Done.' })]);
+    await click(agentLine());
+    await settle();
+    expect(m!.host.querySelector('.turn-detail-model')?.textContent).toBe(
+      'claude-haiku-5-5',
+    );
+  });
+
+  it('shows its report once: not its last message again', async () => {
+    const report = 'The answer is 42.\nHere is why.';
+    answer(agentId(), {
+      input: { value: { prompt: 'Find it' }, original_bytes: null },
+      result: outcome({ output: output('pointer') }),
+      report: output(report),
+      ended: null,
+    });
+    await render([
+      agent({ summary: 'The answer is 42.' }),
+      {
+        kind: 'tool',
+        name: 'Read',
+        id: 'n1',
+        target: 'a.md',
+        ok: true,
+        parent: agentId(),
+      },
+      { kind: 'text', text: report, parent: agentId() },
+    ]);
+    await click(agentLine());
+    await settle();
+    const steps = m!.host.querySelector('.turn-agent-steps')!.textContent!;
+    expect(steps.split('The answer is 42.').length - 1).toBe(1);
+    expect(steps).toContain('a.md');
+  });
+
   it('with nothing stored, what it knows and a quiet note', async () => {
     answer(agentId(), null);
     await render([agent({ summary: 'It was fine' })]);
@@ -482,9 +581,18 @@ describe('helpers', () => {
       { kind: '+', line: 'y' },
       { kind: ' ', line: 'c' },
     ]);
-    expect(diffLines('', 'new')).toEqual([
-      { kind: '-', line: '' },
-      { kind: '+', line: 'new' },
+    expect(diffLines('', 'new')).toEqual([{ kind: '+', line: 'new' }]);
+  });
+
+  it('a diff has no empty line from a final newline', () => {
+    expect(diffLines('a\nb\n', 'a\nc\n')).toEqual([
+      { kind: ' ', line: 'a' },
+      { kind: '-', line: 'b' },
+      { kind: '+', line: 'c' },
+    ]);
+    expect(diffLines('', 'one\ntwo\n')).toEqual([
+      { kind: '+', line: 'one' },
+      { kind: '+', line: 'two' },
     ]);
   });
 

@@ -1688,6 +1688,22 @@ export type SaveSkillRequest = {
 	body: string,
 };
 
+/**  What `stdout` holds of output the CLI saved to a file. */
+export type SavedKept =
+/**  All of it: the file fit the bound. */
+"whole" |
+/**  The end of the file, as much as the bound allows. */
+"end" |
+/**  Only what the stream carried: the file couldn't be read. */
+"preview";
+
+/**  A command's output that outgrew the CLI's stream. */
+export type SavedOutput = {
+	/**  Its whole size. */
+	bytes: number,
+	kept: SavedKept,
+};
+
 /**
  *  One item a "Send to agent" sent, and the turn it went as — `Space::turns`
  *  once that turn finishes (`space_send_feedback`, docs/spaces.md §3).
@@ -2331,6 +2347,8 @@ export type SpaceTurn = {
 	 *  `reply` is its own `message`, and the next turn's prompt says so.
 	 */
 	reverted?: string[],
+	/**  Ended by Stop: what it left isn't an outcome to announce. */
+	stopped?: boolean,
 };
 
 /**
@@ -2502,6 +2520,13 @@ export type ToolOutcome = {
 	duration_ms?: number | null,
 	interrupted?: boolean,
 	background?: boolean,
+	/**
+	 *  Output too long for the CLI's stream, which kept the whole of it in a
+	 *  file: how much of it `stdout` holds.
+	 */
+	saved?: SavedOutput | null,
+	/**  The concrete model a subagent ran on. */
+	resolved_model?: string | null,
 };
 
 /**

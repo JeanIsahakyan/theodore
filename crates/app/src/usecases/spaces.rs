@@ -173,7 +173,10 @@ impl Core {
             worktree: wt.path.display().to_string(),
             status: SpaceStatus::Idle,
             agent,
-            model: req.model.clone(),
+            // Pinned now: a later change to the setting doesn't change a
+            // space that started on this model.
+            model: crate::agent_defaults::run_model(&self.0.deps.store, agent, req.model.clone())
+                .await,
             mode: SpaceMode::Edit,
             review_pr: None,
             pr: adopted_pr.as_ref().map(|(r, _)| r.id()),
@@ -386,7 +389,13 @@ impl Core {
         let (text, attachments) = (message.text.clone(), message.attachments.clone());
 
         let agent = req.agent.unwrap_or(space.agent);
-        let model = req.model.clone().or_else(|| space.model.clone());
+        // A send naming no model keeps the space's, which is another agent's
+        // to keep when this one takes over.
+        let model = req.model.clone().or_else(|| {
+            (agent == space.agent)
+                .then(|| space.model.clone())
+                .flatten()
+        });
         let mode = req.mode.unwrap_or(space.mode);
 
         // A worktree removed by hand comes back from the checkpoint ref.
@@ -1409,6 +1418,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),
             reverted: vec![],
+            stopped: cancel.is_cancelled(),
         });
         patch["turn_log"] = serde_json::json!(log);
     }

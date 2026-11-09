@@ -24,6 +24,8 @@ import {
   spaceGlyph,
   waitingSpaces,
   spacesIn,
+  sendModel,
+  spaceOwnModel,
   spaceTitle,
   nextMode,
   spaceKeyAction,
@@ -230,6 +232,23 @@ describe('spaces', () => {
     expect(
       turnEnded({ status: 'running' }, { ...next, status: 'running' }),
     ).toBeNull();
+  });
+
+  it('a space keeps its own model; only a pick or another agent names one', () => {
+    const space = { agent: 'claude' as const, model: 'haiku' };
+    const pick = { agent: 'claude' as const, model: 'opus' };
+    // The chip: the pick, else the space's own, else the agent's setting (null).
+    expect(spaceOwnModel(space, 'claude', null)).toBe('haiku');
+    expect(spaceOwnModel(space, 'claude', pick)).toBe('opus');
+    expect(spaceOwnModel(space, 'codex', null)).toBeNull();
+    expect(
+      spaceOwnModel({ agent: 'claude', model: null }, 'claude', null),
+    ).toBe(null);
+    // A send: never the setting silently; another agent's model when switching.
+    expect(sendModel(space, 'claude', null, 'opus')).toBeNull();
+    expect(sendModel(space, 'claude', pick, 'sonnet')).toBe('opus');
+    expect(sendModel(space, 'codex', null, 'gpt-6-sol')).toBe('gpt-6-sol');
+    expect(sendModel(space, 'codex', pick, 'gpt-6-sol')).toBe('gpt-6-sol');
   });
 
   it('sums a diff stat', () => {

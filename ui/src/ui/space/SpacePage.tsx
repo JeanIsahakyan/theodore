@@ -112,7 +112,10 @@ import {
   spaceTitle,
   plainError,
   toggleDrawer,
+  sendModel,
+  spaceOwnModel,
   type Drawer,
+  type ModelPick,
 } from './spaces';
 
 /** What the agent may do in a turn (docs/spaces.md §5). */
@@ -998,6 +1001,15 @@ const SpaceComposer = observer(function SpaceComposer({
   // The agent for the next turn, with its model and effort (the chip).
   const [agent, setAgent] = useState<AgentId>(space.agent);
   useEffect(() => setAgent(space.agent), [space.agent]);
+  // A model picked here is this space's; the space's own otherwise. Done
+  // once the space holds it.
+  const [picked, setPicked] = useState<ModelPick | null>(null);
+  useEffect(() => setPicked(null), [space.id]);
+  useEffect(() => {
+    if (picked?.agent === space.agent && picked.model === space.model) {
+      setPicked(null);
+    }
+  }, [picked, space.agent, space.model]);
   handle.current = {
     focus: () => input.current?.focus(),
     cycleMode: () => !locked && setMode((m) => nextMode(m)),
@@ -1031,9 +1043,11 @@ const SpaceComposer = observer(function SpaceComposer({
         space: space.id,
         text: t,
         agent: agent === space.agent ? null : agent,
-        // The chip's model, so a change there reaches the next turn; "Send
-        // now" keeps the running turn's.
-        model: now ? null : agentModel(store, agent),
+        // A pick reaches the next turn; otherwise the space keeps its model
+        // (and "Send now" the running turn's).
+        model: now
+          ? null
+          : sendModel(space, agent, picked, agentModel(store, agent)),
         mode: mode === space.mode ? null : mode,
         attachments: attached.length ? attached.map((a) => a.id) : null,
       },
@@ -1106,6 +1120,8 @@ const SpaceComposer = observer(function SpaceComposer({
                 value={agent}
                 onChange={setAgent}
                 isDisabled={locked}
+                modelOf={(a) => spaceOwnModel(space, a, picked)}
+                onPickModel={(a, model) => setPicked({ agent: a, model })}
               />
               <ChipMenu
                 ariaLabel="Mode"
@@ -1311,7 +1327,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
         branch: null,
         base: null,
         agent,
-        // The agent's model setting applies at each turn.
+        // The core pins the agent's model setting to the space.
         model: null,
         start_from: startFrom,
       });

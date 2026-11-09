@@ -125,6 +125,18 @@ pub struct ToolResultDetail {
     pub background: bool,
     /// A call that went to the background has ended.
     pub end: Option<TaskEnd>,
+    /// Output too long for the stream: where the CLI kept all of it.
+    pub persisted_output: Option<PersistedOutput>,
+    /// The concrete model a subagent ran on.
+    pub resolved_model: Option<String>,
+}
+
+/// A command's output the CLI kept in a file (`persistedOutputPath`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedOutput {
+    pub path: String,
+    /// Its whole size, when the CLI says.
+    pub bytes: Option<u64>,
 }
 
 /// How a background call ended (Claude Code's `task_notification`).

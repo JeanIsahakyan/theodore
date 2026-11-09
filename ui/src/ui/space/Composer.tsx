@@ -406,10 +406,16 @@ export const AgentChip = observer(function AgentChip({
   value,
   onChange,
   isDisabled,
+  modelOf,
+  onPickModel,
 }: {
   value: AgentId | null;
   onChange: (a: AgentId) => void;
   isDisabled?: boolean;
+  /** A space's box: its own model for an agent, instead of the setting. */
+  modelOf?: (agent: AgentId) => string | null;
+  /** A space's box: a pick is this space's, not the agent's setting. */
+  onPickModel?: (agent: AgentId, model: string) => void;
 }) {
   const agents = useEnabledAgents();
   if (!agents.length) return null;
@@ -421,6 +427,8 @@ export const AgentChip = observer(function AgentChip({
       onSelect={onChange}
       isDisabled={isDisabled}
       ultracode
+      modelOf={modelOf}
+      onPickModel={onPickModel}
     />
   );
 });

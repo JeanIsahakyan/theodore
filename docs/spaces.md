@@ -334,12 +334,14 @@ is fetched or rendered until it opens; a failed call opens too, but stays closed
 by default so opening it fetches and grows nothing in the fold.
 
 ```
-Run            command, whole and selectable · description · exit, time · stdout, stderr
+Run            command, whole and selectable · description · exit, time · output
+                 (Stdout and Stderr apart only when both really hold something)
 Read, search   arguments · the lines, matches or files
 Edit, Write    − old / + new from the input, or the content written
 MCP, own       arguments and result, JSON pretty-printed
 background     running in the background / how it ended, its final output
-Agent          prompt · type, model · status · its steps · the report, whole
+Agent          prompt · type, the model it ran on · status · its steps · the report,
+                 whole and once
 group          opens to its rows, each opens too
 ```
 
@@ -360,13 +362,19 @@ Handback, result ─▶ report┘
   original size said in the row; 64 MB a space, the oldest calls going first
   (`tool_payloads_prune`, end of each turn). Archive keeps them, like the chat
   rows; **Delete** (not built) is to call `tool_payloads_delete_space`.
+- Output too long for the stream: Claude Code stops `stdout` at 30,000
+  characters and keeps the rest in a file (`persistedOutputPath`,
+  `persistedOutputSize`). It's read as the result is stored, while it exists,
+  only if it's a regular file at an absolute path: the last 256 KB (what a
+  command ended on matters most), and the row states the whole size. If it
+  can't be read, the row keeps the 30,000 and still states the size.
 - A turn from before this has no payload: the row opens with what the step knows
   and says the full output wasn't recorded.
 - Reports stay one line per call: `report.rs` reads `activity`, never this table.
 
 | Stream | Has | Doesn't have |
 | --- | --- | --- |
-| Claude Code | input, result, stdout and stderr and interrupted (`tool_use_result`), exit code from a failure's text, background start, end (`task_notification`), subagent prompt and report | a subagent's calls carry no `tool_use_result`: only their combined text. A background command's final output needs `output_file`, read at the notification; it runs together stdout and stderr |
+| Claude Code | input, result, stdout and interrupted (`tool_use_result`), exit code from a failure's text, background start, end (`task_notification`), subagent prompt, report and model (`resolvedModel`) | stdout and stderr apart: 2.1.319 joins them in `stdout` with `stderr` empty, and a failure is one text (shown as the error, its exit code read from it). A subagent's calls carry no `tool_use_result`: only their combined text. A background command's final output needs `output_file`, read at the notification; it runs together stdout and stderr |
 | Codex | command, combined output, exit code, MCP arguments and result | stdout/stderr apart, a file change's row (it has no call event), a web search's results |
 | Gemini | arguments, output, error | stdout/stderr apart, exit code |
 
@@ -709,6 +717,7 @@ Tracking each item as a `task` assigned to the space's agent is planned.
 | Event | Space open | Elsewhere in the app | App in background |
 | --- | --- | --- | --- |
 | turn finished | diff refreshes | toast "fix-login: changes ready" [Open] + ● | notification "fix-login" + "Changes ready" / "Plan ready" / "Replied" |
+| turn stopped | "(stopped)" in chat | toast "fix-login" [Open] | notification "fix-login", nothing more: Stop isn't an outcome |
 | turn failed | error in chat | error toast [Open] + ✕ | notification "fix-login: turn failed" + the error |
 | agent asks (`ask_user`) | question card in chat | toast "fix-login: question" [Open] | notification "fix-login: question" + the first question |
 | PR checks / reviews | header + tabs | existing inbox | existing |
@@ -831,7 +840,9 @@ remaining prompts and limits.
   each turn continues it (below), so the agent still has the files it read,
   the commands it ran and its todo list; a different agent picks up from the
   replayed transcript.
-- **Switch agent or model** per message (picker in the header).
+- **Switch agent or model** per message (picker in the header). The picker
+  shows and sends the space's own model; a pick there is the space's, not the
+  agent's setting, and a send without one leaves the space's model alone.
 - **Context**: `@path` mentions (stored as refs), `@terminal` attaches an
   open terminal's tail as a text attachment (§3 "Terminal"), paste a PR
   link to attach its description and diff stats, `/skill` runs a skill as
@@ -1299,7 +1310,7 @@ New synced model `space` (core-owned, written only by commands):
 | `branch`, `base`, `base_sha`, `head_sha` | `branch` (`<login>/<slug>`, `space/<slug>` without a login) is pushed on Open PR; `head_sha` = last checkpoint |
 | `worktree` | absolute path |
 | `status` | `idle · running · failed · archived` |
-| `agent`, `model`, `mode` | sticky per space |
+| `agent`, `model`, `mode` | sticky per space; `model` starts as the agent's `agents.<id>.model` setting at creation |
 | `review_pr` | the branch review the diff and Review use |
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |

@@ -283,6 +283,14 @@ describe('notifications', () => {
     expect(
       nativeNotice({ status: 'running', turn_log: logged.turn_log }, logged),
     ).toEqual({ title: 'fix' });
+    // Stopped after it: logged, but Stop is no outcome, whatever it left.
+    for (const turn of [{ stopped: true }, { after: 'b', stopped: true }]) {
+      expect(nativeNotice(before, ended(turn))).toEqual({ title: 'fix' });
+      expect(turnEnded(before, ended(turn))).toEqual({
+        level: 'info',
+        text: 'fix',
+      });
+    }
   });
 
   it('badge the spaces with a turn you have not seen', () => {
