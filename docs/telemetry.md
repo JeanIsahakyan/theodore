@@ -449,7 +449,7 @@ dialog ─▶ preview_issue / submit_issue { context: <draft id> } ─▶ the co
 ### Attachments
 
 Screenshots and files go with a report the way they go with a chat message — 📎, paste (⌘V)
-or drop on the comment, saved by `save_attachment`, shown as tiles (images as previews) — but
+or drop on the comment, saved by `save_attachment`, shown as chips (hover an image for the photo) — but
 Theodore never uploads them. GitHub has no API for issue attachments, and the other ways cost
 the reporter more than they give:
 
@@ -461,7 +461,7 @@ the reporter more than they give:
 | **The browser, after the issue opens** | chosen: works for every reporter, no new scope, and the user sees each file in GitHub's own editor before it goes |
 
 ```text
-📎 / ⌘V / drop ─▶ save_attachment ─▶ tiles in the dialog ("Theodore doesn't upload these")
+📎 / ⌘V / drop ─▶ save_attachment ─▶ chips in the dialog ("Theodore doesn't upload these")
 preview ─▶ "Not in the issue: N files (…)"
 Open issue ─▶ the text, as today ─▶ "Add your N files" ─▶ Show files and open the issue
    └─▶ stage_report_files(ids) ─▶ <tmp>/theodore-reports/theodore-files-<id>/ ─▶ Finder

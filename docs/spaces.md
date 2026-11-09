@@ -541,7 +541,10 @@ runs. An unknown `/word` is sent as is.
 `<data dir>/attachments/<id>/<name>` and returns its id; `space_send` (and
 the AI panel's `ask`) take the ids. Your message keeps them
 (`ChatMessage.attachments`, its text as typed); `attachment_data` gives an
-image back as a `data:` URL for the transcript.
+image back as a `data:` URL for the transcript. In the box and on a sent
+message each file is a small chip: hovering or focusing an image's chip shows
+the photo, clicking a sent one opens it large, and its data is fetched only
+then.
 
 ```
 save_attachment ──▶ id ──▶ space_send { attachments: [id] }
