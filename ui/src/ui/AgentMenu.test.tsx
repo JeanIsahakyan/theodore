@@ -397,6 +397,37 @@ describe('AgentMenu', () => {
     expect(picked).toBe('codex');
   });
 
+  it('a pick for one agent writes nothing about another', async () => {
+    const store = new RootStore();
+    // An alias stays an alias: it's only read through the catalog.
+    setAgentModel(store, 'claude', 'small');
+    setAgentEffort(store, 'claude', 'low');
+    const transport = new FakeTransport();
+    setTransport(transport);
+    const ops: string[] = [];
+    transport.onCall('transact', (a) => {
+      const tx = a?.tx as { ops: { id: string }[] };
+      ops.push(...tx.ops.map((o) => o.id));
+      return { status: 'ok', last_sync_id: 1 };
+    });
+    transport.onCall('agent_models', (a) => CATALOG[String(a?.agent)] ?? []);
+    const chip = await render(store, 'claude');
+    expect(agentModel(store, 'claude')).toBe('small');
+
+    await click(chip);
+    await settle();
+    await click(item('Models')!);
+    await settle();
+    await click(item('GPT-6-Luna')!);
+    await settle();
+    await settle();
+
+    expect(agentModel(store, 'codex')).toBe('gpt-6-luna');
+    expect(agentModel(store, 'claude')).toBe('small');
+    expect(agentEffort(store, 'claude')).toBe('low');
+    expect(ops.filter((id) => id.includes('agents.claude'))).toEqual([]);
+  });
+
   it("Effort offers the current model's own levels", async () => {
     const store = new RootStore();
     setAgentModel(store, 'codex', 'gpt-6-sol');

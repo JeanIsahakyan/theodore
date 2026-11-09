@@ -172,8 +172,11 @@ export const AgentMenu = observer(function AgentMenu({
   );
 
   // What's shown is what runs: once its catalog is in, an agent with no
-  // model or effort set gets the one shown. The setting's own, not a box's:
-  // a box with its own effort (a space's, New space's) writes no setting.
+  // model or effort set gets the one shown. A model that's set stays as
+  // written, alias or not: `running` only reads it through the catalog, and
+  // a pick for one agent reruns this for them all. The setting's own, not a
+  // box's: a box with its own effort (a space's, New space's) writes no
+  // setting.
   const fill = onPickEffort
     ? ''
     : agents
@@ -188,7 +191,7 @@ export const AgentMenu = observer(function AgentMenu({
     for (const part of fill.split(',')) {
       const [a, id, effort] = part.split('|') as [AgentId, string, string];
       if (!a || !id) continue;
-      if (agentModel(store, a) !== id) setAgentModel(store, a, id);
+      if (agentModel(store, a) === null) setAgentModel(store, a, id);
       if (effort && rawEffort(store, a) !== effort) {
         setAgentEffort(store, a, effort);
       }
