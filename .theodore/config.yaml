@@ -1,10 +1,57 @@
 # Theodore project config. Every key: docs/config.md.
+
+review:
+  # AGENTS.md is already fed to every agent; this is the design context
+  # behind it (AGENTS.md "Where things are").
+  context:
+    - docs/plan.md
+    - docs/spaces.md
+    - docs/config.md
+    - docs/code-intel.md
+    - docs/releasing.md
+    - docs/telemetry.md
+
+  # Generated or machine-written: never worth a reviewer's time.
+  hide:
+    - "ui/src/gen/**"                       # export-ts / --export-bindings output
+    - "crates/code-intel-toolchain/manifest/grammars.json"  # build-grammars.sh output
+    - "*.lock"                              # Cargo.lock
+    - "pnpm-lock.yaml"
+    - "apps/desktop/icons/**"
+
+  # Bulky data, skim unless the PR is about it.
+  skim:
+    - "apps/cli/fixtures/**"                # recorded PRs for `theodore eval`
+    - "crates/fixtures/data/**"             # sandbox and demo scenarios
+    - "crates/account-workos/testdata/**"
+    - "docs/eval/**"
+
+  checklist:
+    "crates/contract/**": Were ui/src/gen bindings regenerated (cargo run -p theodore-contract --bin export-ts; cargo run -p theodore-desktop -- --export-bindings)?
+    "crates/store/src/migrations/**":
+      - Is the migration append-only (new file, existing ones untouched)?
+      - Is it safe on a store that already has data?
+    "crates/app/src/config/**": Is docs/config.md updated for every key added, renamed or defaulted differently?
+    "crates/app/src/usecases/spaces.rs": Is docs/spaces.md still true?
+    "crates/grouping/**": Was ALGO_VERSION bumped if stored groupings change meaning? Do the evals in docs/grouping-eval.md still hold?
+    "crates/telemetry/**": Is docs/telemetry.md updated (new error codes, events)?
+    ".github/workflows/**": Does docs/releasing.md still describe this pipeline?
+    "scripts/**": Still Bash 3.2 compatible (macOS /bin/bash)?
+    "apps/desktop/tauri*.conf.json": Does the version still match Cargo.toml (CI fails on a mismatch)?
+    "crates/code-intel-toolchain/manifest/languages.yaml": Was the sha256 taken from the published CI artifact, not a local build?
+    "**/*.{ts,tsx}": No hand edits under ui/src/gen?
+
+  ignore_findings:
+    - "ui/src/gen/**"
+    - "*.lock"
+    - "pnpm-lock.yaml"
+
+code_intel:
+  languages: [rust, typescript, tsx]
+
 spaces:
-  # Tauri desktop app: `run` opens its own window, nothing listens on
-  # $THEODORE_PORT. Vite is pinned to 1420 (ui/vite.config.ts, strictPort)
-  # because apps/desktop/tauri.conf.json hard-codes devUrl, so only one
-  # space can `run` at a time.
-  ports: 0
+  # Vite's dev server, on $THEODORE_PORT (ui/vite.config.ts).
+  ports: 1
 
   # Dependencies: pnpm for ui/ (CI uses --frozen-lockfile), crates for the
   # Cargo workspace. `cargo tauri dev` also needs tauri-cli installed once
@@ -14,8 +61,11 @@ spaces:
     pnpm -C ui install --frozen-lockfile
     cargo fetch
 
-  # README "Run it".
-  run: cd apps/desktop && cargo tauri dev --no-watch
+  # README "Run it", with devUrl pointed at this space's port. Vite reads the
+  # same variable through beforeDevCommand.
+  run: |
+    cd apps/desktop
+    cargo tauri dev --no-watch --config "{\"build\":{\"devUrl\":\"http://localhost:$THEODORE_PORT\"}}"
 
   # The CI matrix and the lefthook pre-push gate (README "Checks").
   check: |

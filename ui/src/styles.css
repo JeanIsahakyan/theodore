@@ -379,8 +379,9 @@ body.cmd .lines .src span:hover {
     padding-inline: 0.5rem;
   }
 }
-/* A wide header keeps the whole "Base moved: 2 commits behind". */
-@container space-header (max-width: 56rem) {
+/* Only a wide header keeps the whole "Base moved: 2 commits behind": the long
+ * form is what pushes the actions onto a second line. */
+@container space-header (max-width: 72rem) {
   .space-header .base-moved-lead,
   .space-header .base-moved-long {
     display: none;
