@@ -124,6 +124,9 @@ mod tests {
             text_in_steps: false,
             model_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         }
     }
 

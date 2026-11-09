@@ -130,6 +130,9 @@ impl Core {
             text_in_steps: false,
             model_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -513,17 +516,25 @@ async fn drive_skill_run(
             "skill run failed"
         );
     }
-    if !cancelled && error.is_none() {
-        let findings = count_findings(core, &pr, &skill)
+    let outcome = match (cancelled, &error) {
+        (true, _) => "stopped",
+        (false, Some(_)) => "failed",
+        (false, None) => "ok",
+    };
+    let findings = if outcome == "ok" {
+        count_findings(core, &pr, &skill)
             .await
-            .saturating_sub(findings_before);
-        theodore_telemetry::product(theodore_telemetry::ProductEvent::SkillRun {
-            skill: skill_label(&skill),
-            agents: agent_count,
-            findings,
-            ms,
-        });
-    }
+            .saturating_sub(findings_before)
+    } else {
+        0
+    };
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::SkillRun {
+        skill: skill_label(&skill),
+        agents: agent_count,
+        findings,
+        ms,
+        outcome: outcome.to_string(),
+    });
     core.0.runs.write().await.remove(&run_id);
 }
 
@@ -590,6 +601,9 @@ async fn persist_failed_run(
         text_in_steps: false,
         model_resolved,
         run,
+        vote: None,
+        effort: None,
+        mode: None,
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -785,6 +799,7 @@ async fn drive_ask(
     // Resolved here rather than by `AgentDefaults`: the reply records the
     // model that ran, whatever the setting says later.
     let model = crate::agent_defaults::run_model(&core.0.deps.store, agent, None).await;
+    let effort = crate::agent_defaults::run_effort(&core.0.deps.store, agent, None).await;
     let req = AgentRequest {
         agent,
         prompt: question.prompt,
@@ -806,6 +821,14 @@ async fn drive_ask(
     let mut live = LiveRun::new(run_id.as_str(), agent);
     let mut text = String::new();
     let mut error = None;
+    let mut tools = 0u32;
+    let started = std::time::Instant::now();
+    tracing::info!(
+        agent = agent.as_str(),
+        model = model.as_deref().unwrap_or("default"),
+        effort = effort.as_deref().unwrap_or("default"),
+        "chat question started"
+    );
     match core.0.deps.agents.run(req).await {
         Ok(mut run) => loop {
             tokio::select! {
@@ -823,6 +846,7 @@ async fn drive_ask(
                             error = Some(message);
                             break;
                         }
+                        AgentEvent::ToolCall { .. } => tools += 1,
                         _ => {}
                     }
                 }
@@ -831,6 +855,54 @@ async fn drive_ask(
         Err(e) => error = Some(e.to_string()),
     }
     core.0.runs.write().await.remove(&run_id);
+
+    let ms = started.elapsed().as_millis() as u64;
+    let outcome = match (cancel.is_cancelled(), &error) {
+        (true, _) => "stopped",
+        (false, Some(_)) => "failed",
+        (false, None) => "ok",
+    };
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::ChatAnswered {
+        turn: theodore_telemetry::product::TurnFacts::new(
+            agent.as_str(),
+            (model.as_deref(), true),
+            effort.as_deref(),
+            outcome,
+            Some(ms),
+            (tools, 0),
+        ),
+    });
+    tracing::info!(
+        agent = agent.as_str(),
+        outcome,
+        duration_ms = ms,
+        tools,
+        "chat question finished"
+    );
+    if let (Some(e), false) = (&error, cancel.is_cancelled()) {
+        let expected = if theodore_ports::offline_message_in(e).is_some() {
+            Some(theodore_ports::AGENT_OFFLINE_CODE)
+        } else if theodore_ports::signed_out_message_in(e).is_some() {
+            Some(theodore_ports::AGENT_SIGNED_OUT_CODE)
+        } else {
+            None
+        };
+        match expected {
+            Some(code) => tracing::info!(
+                error.code = code,
+                agent = agent.as_str(),
+                duration_ms = ms,
+                "chat question couldn't reach the agent"
+            ),
+            None => tracing::warn!(
+                error.code = "chat.failed",
+                agent = agent.as_str(),
+                duration_ms = ms,
+                error = %e,
+                "chat question failed"
+            ),
+        }
+    }
 
     // A crash, the runtime cap, or a cancel all leave a durable, retryable
     // record instead of silently dropping the exchange (plan "failed agent
@@ -861,6 +933,9 @@ async fn drive_ask(
         text_in_steps: false,
         model_resolved: true,
         run: Some(run_id),
+        vote: None,
+        effort,
+        mode: None,
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

@@ -264,6 +264,13 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<String, CommandError> {
         Err(not_ready())
     }
+    /// Your thumbs on an agent's reply.
+    async fn set_message_vote(
+        &self,
+        _req: theodore_contract::SetMessageVoteRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
     /// "Send now": into the running turn, or queued like `space_send`.
     async fn space_send_now(
         &self,

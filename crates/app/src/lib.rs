@@ -28,6 +28,8 @@ mod account_gate_tests;
 #[cfg(test)]
 mod account_tests;
 #[cfg(test)]
+mod activity_tests;
+#[cfg(test)]
 mod attachments_tests;
 #[cfg(test)]
 mod code_intel_tests;

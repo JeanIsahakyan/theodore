@@ -10,7 +10,7 @@ panics (panic hook) ─────┘    (fields,                ├─▶ stde
                                op_id, kind)           ├─▶ OTLP   warn + error, panics, traces
                                                       │          only with "Send error reports"
                                                       └─▶ PostHog product events only
-                                                                 only with "Share anonymous usage data"
+                                                                 only with "Share usage data"
 ```
 
 ## What leaves the machine
@@ -21,7 +21,7 @@ panics (panic hook) ─────┘    (fields,                ├─▶ stde
 | Kinds | all | logs, panics, UI errors, traces | `kind="product"` only |
 | Repository names, paths, logins | kept | hashed | never present |
 | Debug / trace | if enabled | never | never |
-| Identifier | — | install id | install id |
+| Identifier | — | install id, plus the account id signed in | account id signed in, else an anonymous id |
 | On by default | yes | no | no |
 
 Remote sinks need two things: an endpoint (env, setting or compiled in) **and** the user's
@@ -29,18 +29,48 @@ recorded choice. Until onboarding (or Settings) records a choice, nothing is sen
 queued — records are dropped. Sandbox and fixture runs never have remote sinks; tests and the
 CLI never start telemetry at all.
 
-**Anonymous, precisely:** both remote sinks identify the app by a random install id (a UUID in
-`<data dir>/telemetry/install_id`), never by the Theodore account. No account id, email, name or
-host login goes into any property. Repository names and paths are hashed with a key unique to the
-install. PostHog events set `$process_person_profile: false` and `$geoip_disable: true`; PostHog
-still sees the request's IP address — turn on "Discard client IP data" in the project settings.
-What the UI promises: *not linked to your account, email or code; repository names are hashed;
-you can turn this off any time in Settings.*
+### Who a record is from
+
+So a problem can be traced to who has it and which version they run, a signed-in record carries
+the Theodore account's opaque id: the account provider's user id (`user_…`), which only someone
+with access to the provider's dashboard can resolve to a person. One id per person, across
+installs and versions.
+
+```text
+never signed in ─▶ PostHog distinct_id = anon id (= the install id), no person profile
+sign-in         ─▶ PostHog distinct_id = user_…   $identify { $anon_distinct_id, $set: version… }
+                   New Relic logs and spans: enduser.id = user_…
+app start, or sharing turned on, signed in ─▶ $identify again: a new version reaches the person
+sign-out        ─▶ a NEW anon id: later events aren't linked to that person
+                   New Relic: no enduser.id
+```
+
+| | PostHog | New Relic |
+|---|---|---|
+| Signed in | `distinct_id` is `user_…`, with a person profile | `enduser.id` on every log and span |
+| Signed out | a random anonymous id, `$process_person_profile: false` | none; `service.instance.id` only |
+| What runs | `app_version`, `channel`, `os`, `arch`, `commit`, `build_env` on every event and in `$set` | `service.version`, `theodore.update_channel`, `os.type`, `host.arch`, `vcs.ref.head.revision`, `deployment.environment.name` |
+
+- **Never** the email, name, host login or token. `set_account` refuses anything not shaped like a
+  provider id, so one passed by mistake is treated as signed out.
+- **Consent**: the id is attached by the sinks, so with a sink off nothing carries it. Each choice
+  covers its own sink: "Send error reports" alone never reaches PostHog.
+- **Only the remote sinks** add it, after redaction. The local log doesn't have it, so a problem
+  report (its logs come from there) doesn't either. Other fields naming an account or user stay
+  hashed.
+- **Anon id**: `<data dir>/telemetry/anon_id`, absent (so the install id) until the first sign-out.
+  The install id itself (`<data dir>/telemetry/install_id`) never changes: repository names and
+  paths are hashed with a key unique to it, and it stays `service.instance.id`.
+
+PostHog events set `$geoip_disable: true`; PostHog still sees the request's IP address — turn on
+"Discard client IP data" in the project settings. What the UI promises: *linked to your Theodore
+account's id when you're signed in, never to your email, name or code; repository names are
+hashed; you can turn this off any time in Settings.*
 
 ## The choice
 
 - **Onboarding**, right after sign-in: "Help improve Theodore" with two checkboxes, both checked —
-  "Share anonymous usage data" and "Send error reports" — and a "What's collected" link (the event
+  "Share usage data" and "Send error reports" — and a "What's collected" link (the event
   list and what's never sent, from the core's own catalog). The step only appears when the build
   has at least one remote sink; the choice is saved before Next advances.
 - **Once, after sign-in**, for an install that onboarded before its build could send anything
@@ -57,32 +87,55 @@ Typed (`ProductEvent`), fixed field names, emitted as `tracing` records on targe
 fixed set — never code, paths, titles or comment text. The wire shape is pinned by
 `crates/telemetry/tests/product_events.json`.
 
-| Event | Fields |
-|---|---|
-| `app_started` | `version`, `channel` |
-| `signed_in` | — |
-| `onboarding_step` | `step` (`account`, `telemetry`, `github`, `agents`, `projects`, `done`) |
-| `pr_opened` | `host` (`github`, `gitlab`, `bitbucket`, `local`) |
-| `grouping_done` | `ms`, `valid_first_try`, `groups`, `hunks`, `agent`, `chunks` |
-| `grouping_failed` | `code` (an error code below) |
-| `skill_run` | `skill` (a built-in id, else `custom`), `agents`, `findings`, `ms` |
-| `chat_asked` | `scope` (`pr`, `group`, `hunk`) |
-| `task_delegated` | `agent` |
-| `task_decided` | `accepted` |
-| `review_submitted` | `comments`, `review_event` (`approve`, `request_changes`, `comment`) |
-| `merge` | `method` |
-| `space_created` | `mode` |
-| `space_turn` | `ms`, `mode`, `ok` |
-| `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`) |
-| `config_saved` | `where` (`global`, `repo`, `local`) |
-| `problem_reported` | `mode` (`issue`, `issue_with_logs`, `logs_only`) |
-| `update_installed` | `version` (the update now on disk; the running one is `app_version`) |
-| `update_failed` | `reason` (`read_only`, `network`, `signature`, `other`) |
-| `move_to_applications` | `choice` (`moved`, `declined`, `failed`), `from` (`volume`, `translocated`, `folder`) |
+| Event | Fields | Answers |
+|---|---|---|
+| `app_started` | `version`, `channel` | Is the product used, on what version? |
+| `signed_in` | — | Do people get past sign-in? |
+| `onboarding_step` | `step` (`account`, `telemetry`, `github`, `agents`, `projects`, `done`) | Where does onboarding lose people? |
+| `pr_opened` | `host` (`github`, `gitlab`, `bitbucket`, `local`) | Is review used, on which hosts? |
+| `grouping_done` | `ms`, `valid_first_try`, `groups`, `hunks`, `agent`, `chunks` | Is grouping good and fast? |
+| `grouping_failed` | `code` (an error code below) | Why does grouping fail? |
+| `skill_run` | `skill` (a built-in id, else `custom`), `agents`, `findings`, `ms`, `outcome` | Which skills run, and do they finish? |
+| `chat_asked` | `scope` (`pr`, `group`, `hunk`; `hunk` is a hunk's Ask agent) | Is the AI panel used, from where? |
+| `chat_answered` | turn facts (below) | Do AI panel questions get an answer? |
+| `task_delegated` | `agent` | Is delegating used? |
+| `task_decided` | `accepted` | Is delegated work any good? |
+| `review_submitted` | `comments`, `review_event` (`approve`, `request_changes`, `comment`) | Do reviews finish here? |
+| `merge` | `method` | Do merges happen here? |
+| `space_created` | `mode`, `from` (`blank`, `issue`, `branch`, `pr`) | Where does work start? |
+| `space_turn` | `ms`, `mode`, `ok`, turn facts | Which agents and models, how do turns end, how long, how much do they do? |
+| `message_voted` | `vote` (`up`, `down`, `cleared`), `surface` (`space`, `ai_panel`), `mode` (`none` in the AI panel), turn facts | What do people think of a reply, and what made it? |
+| `space_action` | `action` (`stop`, `send_now`, `plan_approved`, `plan_revised`, `undo`, `back_to_here`) | When do people step in or take work back? |
+| `queue_held` | `reason` (`stopped`, `failed`, `checkpoint_skipped`, `start_failed`, `restart`), `messages` | How often does queued work stall, and why? |
+| `space_shipped` | `how` (`open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`, `merge_pr`) | Does work leave the space? |
+| `config_saved` | `where` (`global`, `repo`, `local`) | Is config edited, at which layer? |
+| `report_opened` | `from` (`app`, `chat`, `agent`) | With `problem_reported`: who starts a report and gives up? |
+| `problem_reported` | `mode` (`issue`, `issue_with_logs`, `logs_only`) | How do reports get sent? |
+| `ui_counts` | `tool_rows`, `file_hovers` (uses since the last flush) | Are tool details and file previews looked at? |
+| `update_installed` | `version` (the update now on disk; the running one is `app_version`) | Do updates arrive? |
+| `update_failed` | `reason` (`read_only`, `network`, `signature`, `other`) | Why don't they? |
+| `move_to_applications` | `choice` (`moved`, `declined`, `failed`), `from` (`volume`, `translocated`, `folder`) | Does the first-launch move work? |
 
-Every PostHog event also carries `app_version`, `os`, `channel` (the update channel), `commit`
-and `build_env` (`production`, `staging`, `nightly`, `dev`; docs/releasing.md "Build stamp").
-The UI can report only `onboarding_step` (`track_ui`), and the core drops values it doesn't know.
+**Turn facts**, the same fields wherever a run is described (`TurnFacts`):
+
+| Field | Values |
+|---|---|
+| `agent` | the agent's id |
+| `model` | the name, if in a known family (`claude…`, `gpt…`, `gemini…`, …); `custom` otherwise, so a private deployment's name stays home; `default` when the CLI picked; `unknown` on a reply from before the model was recorded |
+| `effort` | `minimal` … `max`, `default`, `custom` |
+| `outcome` | `ok`, `failed`, `stopped` |
+| `duration` | `under_10s`, `10s_1m`, `1m_5m`, `5m_15m`, `over_15m`, `unknown` |
+| `tools`, `files` | tool calls and changed files; a vote in the AI panel has neither stored, so 0 |
+
+Votes live on the reply (`ChatMessage.vote`) and sync like the rest of it; setting the vote it
+already has sends nothing. `merge_pr` in `space_shipped` comes with the `merge` event of the same
+merge. `ui_counts` is sent 5 minutes after the first use, or when the window hides, never per use.
+
+Every PostHog event also carries `app_version`, `os`, `arch`, `channel` (the update channel),
+`commit` and `build_env` (`production`, `staging`, `nightly`, `dev`; docs/releasing.md "Build
+stamp"). The UI can report only `onboarding_step`, `plan_revised` (as `space_action`),
+`report_opened` and `ui_counts` (`track_ui`, `api.trackUi`, `core/useCounts.ts`), and the core
+drops values it doesn't know.
 
 ## Error codes
 
@@ -99,6 +152,7 @@ Failures are logged with a stable dotted `error.code`, plus context: `agent` and
 | Outbox | `outbox.gave_up` |
 | Spaces | `space.command_failed`, `space.command_timed_out`, `space.turn_failed`, `space.worktree_moved_aside` (a space dir that wasn't its worktree, moved to `spaces/.moved-aside/`) |
 | Account | `account.refresh_rejected`, `account.rejected`, `account.network`, `account.invalid_token`, `account.config`, `account.protocol`, `account.required` |
+| Chat | `chat.failed` (an AI panel question whose run failed) |
 | Other | `skill.failed`, `app.not_found`, `app.invalid`, `app.internal`, `app.start_failed`, `app.offline_not_cached`, `app.offline` (offline and the project was never cloned), `panic` |
 | UI | `ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash` |
 
@@ -108,6 +162,22 @@ span. Without streaming (Codex, Gemini) it equals `duration_ms`.
 
 `AppError::code()` maps every app error; command failures are logged once, at the command
 boundary, inside the command's span.
+
+## What a flow logs
+
+Info for each state change (the local file), warn with `error.code` for each failure (also remote).
+Nothing per streamed chunk.
+
+| Flow | Lines |
+|---|---|
+| Space turn | `space turn started` (`agent`, `model`, `effort`, `mode`, `resumed`), `space turn finished` (`outcome`, `duration_ms`, `tools`, `files`), `space turn failed` |
+| AI panel | `chat question started`, `chat question finished` (`outcome`, `duration_ms`, `tools`), `chat question failed` |
+| Agent CLI | `agent run failed` (`agent.crashed`, `exit_code`, `stderr_tail`), and the timeout and spawn codes above |
+| Queue | `queue held` (`reason`, `messages`), `the queued message didn't start` |
+| Tool payloads | `couldn't store a tool payload` (once per run), `couldn't prune tool payloads` |
+| File preview | the command's `command failed` line (`cmd=file_preview`, `error.code`), like any command |
+| Reconcile | `PR row removed` (`why`: `host_not_found`, `project_removed`) |
+| Votes, account | `reply voted`, `signed in to…`, `signed out of the Theodore account` |
 
 ## Operation ids
 
@@ -151,7 +221,7 @@ the file included.
 
 | Setting | Env | Meaning |
 |---|---|---|
-| `telemetry.usage` | — | "Share anonymous usage data" (bool; absent = not chosen) |
+| `telemetry.usage` | — | "Share usage data" (bool; absent = not chosen) |
 | `telemetry.errors` | — | "Send error reports" (bool; absent = not chosen) |
 | `telemetry.otlp.endpoint` | `THEODORE_OTLP_ENDPOINT` | OTLP/HTTP base URL; `/v1/logs` and `/v1/traces` are appended |
 | `telemetry.otlp.headers` | `THEODORE_OTLP_HEADERS` | `k=v,k2=v2`, e.g. `api-key=…` |
@@ -177,8 +247,9 @@ cargo run -p theodore-desktop
 
 EU accounts use `https://otlp.eu01.nr-data.net`. Logs arrive with `service.name=theodore`,
 `service.instance.id=<install id>`, `service.version`, `vcs.ref.head.revision` (the commit),
-`deployment.environment.name` (the build environment), `theodore.update_channel` and `os.type`,
-and correlate with traces by trace id.
+`deployment.environment.name` (the build environment), `theodore.update_channel`, `os.type` and
+`host.arch`, signed in also `enduser.id` ("Who a record is from"), and correlate with traces by
+trace id.
 
 ### PostHog
 

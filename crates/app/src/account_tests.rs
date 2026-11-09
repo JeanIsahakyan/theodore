@@ -855,3 +855,42 @@ async fn signed_out_has_no_access_token() {
     let (core, _recv) = configured(&f).await;
     assert_eq!(core.account_access_token().await.unwrap(), None);
 }
+
+fn identity(log: &crate::testkit::ProductLog) -> Vec<serde_json::Value> {
+    log.named("identity")
+        .into_iter()
+        .map(|p| p["signed_in"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn telemetry_hears_a_restored_session_and_its_sign_out() {
+    let f = fixtures();
+    store_session(&f, &fresh(&f, "rt"));
+    let (log, _guard) = crate::testkit::capture_product();
+    let (core, _recv) = configured(&f).await;
+    core.account_status().await.unwrap();
+    assert_eq!(identity(&log), [serde_json::json!(true)]);
+
+    core.account_sign_out().await.unwrap();
+    assert_eq!(
+        identity(&log),
+        [serde_json::json!(true), serde_json::json!(false)]
+    );
+}
+
+#[tokio::test]
+async fn telemetry_hears_a_new_sign_in() {
+    let f = fixtures();
+    let (log, _guard) = crate::testkit::capture_product();
+    let (core, _recv) = configured(&f).await;
+    f.account.push_exchange(Ok(fresh(&f, "rt_1")));
+    core.account_sign_in_start(browser(None)).await.unwrap();
+    let page = f
+        .account
+        .callback(params(Some("code_1"), Some(FAKE_ACCOUNT_STATE)))
+        .await;
+    page.await.unwrap();
+    poll_until_done(&core).await;
+    assert_eq!(identity(&log).last(), Some(&serde_json::json!(true)));
+}

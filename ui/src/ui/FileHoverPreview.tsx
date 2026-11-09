@@ -24,6 +24,7 @@ import {
 import { Popover } from 'react-aria-components';
 import { popoverVariants } from '@heroui/styles';
 import { api } from '../core/api';
+import { countUse } from '../core/useCounts';
 import type {
   FileDiff,
   FilePreview,
@@ -174,6 +175,7 @@ class HoverIntent {
         shown?.();
         shown = this.close;
         this.setOpen(true);
+        countUse('file_hovers');
       },
       shown ? SWITCH_DELAY : OPEN_DELAY,
     );

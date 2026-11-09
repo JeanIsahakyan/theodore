@@ -48,8 +48,9 @@ struct Steered {
 pub(crate) enum TurnEnd {
     /// Finished on its own: the next queued message runs.
     Done,
-    /// Stopped or failed: the queue is held for you.
-    Interrupted,
+    /// Stopped or failed: the queue is held for you, for this reason
+    /// (`ProductEvent::QueueHeld`).
+    Interrupted(&'static str),
 }
 
 impl Core {
@@ -108,6 +109,9 @@ impl Core {
             text_in_steps: false,
             model_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -242,10 +246,16 @@ impl Core {
         });
         // Held in the same write that ends the turn: the space never reads
         // as stopped with its queue still set to go.
-        if end == TurnEnd::Interrupted {
-            actions.extend(self.hold_actions(space).await);
+        let mut held = None;
+        if let TurnEnd::Interrupted(reason) = end {
+            let hold = self.hold_actions(space).await;
+            held = Some((reason, hold.len()));
+            actions.extend(hold);
         }
         let _ = self.apply(actions).await;
+        if let Some((reason, messages)) = held {
+            crate::usecases::telemetry::queue_held(space, reason, messages);
+        }
         if end == TurnEnd::Done {
             self.drain_queue(space).await;
         }
@@ -271,7 +281,13 @@ impl Core {
         let name = space.name.clone();
         if let Err(e) = self.start_queued_boxed(space, next).await {
             // It can't start (agent gone, worktree trouble): you decide.
-            self.hold_queue(space_id).await;
+            tracing::warn!(
+                space = space_id,
+                error.code = e.code(),
+                error = %e,
+                "the queued message didn't start"
+            );
+            self.hold_queue(space_id, "start_failed").await;
             self.emit(Ephemeral::Toast {
                 level: ToastLevel::Warn,
                 text: format!("{name}: the queued message didn't start: {e}"),
@@ -280,10 +296,12 @@ impl Core {
     }
 
     /// Every queued message of the space waits for your "Send".
-    pub(crate) async fn hold_queue(&self, space: &str) {
+    pub(crate) async fn hold_queue(&self, space: &str, reason: &str) {
         let actions = self.hold_actions(space).await;
         if !actions.is_empty() {
+            let messages = actions.len();
             let _ = self.apply(actions).await;
+            crate::usecases::telemetry::queue_held(space, reason, messages);
         }
     }
 
@@ -313,7 +331,7 @@ impl Core {
     /// nothing is sent on its own; each waits for your "Send".
     pub(crate) async fn hold_queues_after_restart(&self, spaces: &[Space]) {
         for s in spaces {
-            self.hold_queue(&s.id).await;
+            self.hold_queue(&s.id, "restart").await;
         }
     }
 
@@ -371,6 +389,7 @@ impl Core {
         {
             s.messages.push(id.clone());
         }
+        crate::usecases::telemetry::space_action("send_now");
         let message = ChatMessage {
             id: id.clone(),
             pr: space_chat_key(&space.id),
@@ -388,6 +407,9 @@ impl Core {
             text_in_steps: false,
             model_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),

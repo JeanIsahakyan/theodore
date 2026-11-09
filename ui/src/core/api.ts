@@ -84,6 +84,7 @@ import type {
   SpaceIssue,
   SpaceReviewRequest,
   SpaceQueuedRequest,
+  SetMessageVoteRequest,
   SpaceSendRequest,
   SpaceConfigView,
   SpaceLogLine,
@@ -334,6 +335,9 @@ export const api = {
     call<Space[]>('list_spaces', { project }),
   spaceSend: (req: SpaceSendRequest) => call<string>('space_send', { req }),
   /** "Send now": into the running turn when it can take it, else queued. */
+  /** A reply's thumbs up or down; `vote: null` takes it back. */
+  setMessageVote: (req: SetMessageVoteRequest) =>
+    call<null>('set_message_vote', { req }),
   spaceSendNow: (req: SpaceSendRequest) =>
     call<string>('space_send_now', { req }),
   /** Send / Cancel / Edit on a queued message (docs/spaces.md §8). */
@@ -486,7 +490,7 @@ export const api = {
    *  log line must not turn into another error. */
   logClient: (entry: ClientLog): Promise<null> =>
     quietCall('log_client', { entry }),
-  /** A product event (onboarding steps). Never throws, never toasts. */
+  /** A product event the UI alone can see. Never throws, never toasts. */
   trackUi: (event: UiEvent): Promise<null> => quietCall('track_ui', { event }),
   telemetryStatus: () => call<TelemetryStatus>('telemetry_status'),
   /** Records both sharing choices; the core applies them at once. */

@@ -31,13 +31,13 @@ export const SHARE_ROWS: {
 }[] = [
   {
     kind: 'usage',
-    label: 'Share anonymous usage data',
-    hint: 'Which features are used, counts and timings. No code, paths, titles or comment text.',
+    label: 'Share usage data',
+    hint: "Which features are used, counts and timings, with your Theodore account's id when you're signed in. No code, paths, titles, comment text, email or name.",
   },
   {
     kind: 'errors',
     label: 'Send error reports',
-    hint: 'Warnings, errors and crash reports. Tokens and emails are removed; repository names and paths are hashed.',
+    hint: "Warnings, errors and crash reports, with your Theodore account's id when you're signed in. Tokens and emails are removed; repository names and paths are hashed.",
   },
 ];
 

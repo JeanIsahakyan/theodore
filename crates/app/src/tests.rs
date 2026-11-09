@@ -6210,3 +6210,63 @@ async fn a_stale_runs_grouping_never_replaces_the_current_heads() {
         .expect("write");
     assert_eq!(stored_grouping_of(&f, &pr).rev, new_head);
 }
+
+#[tokio::test]
+async fn an_ai_panel_answer_reports_how_it_ended_once() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let (log, _guard) = crate::testkit::capture_product();
+    f.agents.push_script(vec![AgentEvent::Done {
+        final_text: "Because.".into(),
+        usage: Usage::default(),
+    }]);
+    core.ask(theodore_contract::AskRequest {
+        pr: pr.clone(),
+        question: "why?".into(),
+        about: None,
+        group: None,
+        agent: Some(AgentId::Claude),
+        attachments: None,
+    })
+    .await
+    .unwrap();
+    for _ in 0..400 {
+        if !log.named("chat_answered").is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let answered = log.named("chat_answered");
+    assert_eq!(answered.len(), 1);
+    assert_eq!(answered[0]["outcome"], "ok");
+    assert_eq!(answered[0]["agent"], "claude");
+    assert!(!answered[0].to_string().contains("Because"));
+}
+
+#[tokio::test]
+async fn a_failed_skill_run_is_reported_with_its_outcome() {
+    let f = fixtures();
+    let (core, _recv, pr, _head) = open_fixture_pr(&f).await;
+    let (log, _guard) = crate::testkit::capture_product();
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: "boom".into(),
+        stderr_tail: String::new(),
+    }]);
+    core.run_skill(RunSkillRequest {
+        pr: pr.clone(),
+        skill: "security".into(),
+        agents: vec![AgentId::Claude],
+    })
+    .await
+    .expect("run_skill");
+    for _ in 0..400 {
+        if !log.named("skill_run").is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let runs = log.named("skill_run");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["outcome"], "failed");
+    assert_eq!(runs[0]["findings"], 0);
+}

@@ -24,6 +24,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from 'react';
+import { countUse } from '../core/useCounts';
 import {
   Bulb,
   ChevronRight,
@@ -154,7 +155,10 @@ const ToolRow = memo(function ToolRow({
   const key = toolKey(useToolRun(), step);
   const [open, setOpen] = useKeptOpen(key && `tool:${key}`);
   const steady = useSteadyChange();
-  const toggle = () => steady(() => setOpen(!open));
+  const toggle = () => {
+    if (!open) countUse('tool_rows');
+    steady(() => setOpen(!open));
+  };
   // A background task keeps going after its call has answered.
   const waiting = !!step.background && !step.summary;
   return (

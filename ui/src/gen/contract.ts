@@ -245,6 +245,18 @@ export type ChatMessage = {
 	 *  `run_id` (a chat report's logs). None on yours and older rows.
 	 */
 	run?: string | null,
+	/**
+	 *  Your thumbs on an agent's reply; none until you vote, or after you
+	 *  take it back.
+	 */
+	vote?: MessageVote | null,
+	/**
+	 *  The effort the reply's run asked for, the setting's default applied;
+	 *  none: the CLI's default.
+	 */
+	effort?: string | null,
+	/**  The mode of the space turn that wrote this reply. */
+	mode?: SpaceMode | null,
 };
 
 export type Check = {
@@ -1210,6 +1222,9 @@ export type MergeSpaceResult = {
 
 export type MergeState = "clean" | "blocked" | "behind" | "dirty" | "unstable" | "unknown";
 
+/**  A thumbs up or down on an agent's reply. */
+export type MessageVote = "up" | "down";
+
 /**
  *  Mirroring into a local folder project ("Try in my folder" — some
  *  projects can't run from a separate worktree: fixed ports, one local
@@ -1758,6 +1773,12 @@ export type SetLinearTokenRequest = {
 	 *  Linear's `viewer` query before being stored.
 	 */
 	token: string | null,
+};
+
+/**  Sets the vote on a reply; `vote: None` takes it back. */
+export type SetMessageVoteRequest = {
+	message: string,
+	vote: MessageVote | null,
 };
 
 /**
@@ -2558,7 +2579,7 @@ export type TelemetryStatus = {
 	usage_available: boolean,
 	/**  An error-report sink (warnings, errors, traces) is configured. */
 	errors_available: boolean,
-	/**  "Share anonymous usage data". */
+	/**  "Share usage data". */
 	usage: boolean | null,
 	/**  "Send error reports". */
 	errors: boolean | null,
@@ -2758,7 +2779,13 @@ export type UiEvent =
  *  An onboarding step was shown: `account`, `telemetry`, `github`,
  *  `agents`, `projects`, `done`.
  */
-{ event: "onboarding_step"; step: string };
+{ event: "onboarding_step"; step: string } |
+/**  Revise on a plan card. The revision itself is an ordinary send. */
+{ event: "plan_revised" } |
+/**  The report window opened: `app`, `chat`, `agent`. */
+{ event: "report_opened"; from: string } |
+/**  Uses counted since the last flush, never one event per use. */
+{ event: "ui_counts"; tool_rows: number; file_hovers: number };
 
 export type UnmirrorSpaceRequest = {
 	space: string,

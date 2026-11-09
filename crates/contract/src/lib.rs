@@ -970,6 +970,32 @@ pub struct ChatMessage {
     /// `run_id` (a chat report's logs). None on yours and older rows.
     #[serde(default)]
     pub run: Option<String>,
+    /// Your thumbs on an agent's reply; none until you vote, or after you
+    /// take it back.
+    #[serde(default)]
+    pub vote: Option<MessageVote>,
+    /// The effort the reply's run asked for, the setting's default applied;
+    /// none: the CLI's default.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The mode of the space turn that wrote this reply.
+    #[serde(default)]
+    pub mode: Option<SpaceMode>,
+}
+
+/// A thumbs up or down on an agent's reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageVote {
+    Up,
+    Down,
+}
+
+/// Sets the vote on a reply; `vote: None` takes it back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SetMessageVoteRequest {
+    pub message: String,
+    pub vote: Option<MessageVote>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -1008,6 +1034,8 @@ pub fn types() -> specta::Types {
         .register::<CheckTick>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
+        .register::<MessageVote>()
+        .register::<SetMessageVoteRequest>()
         .register::<TurnStep>()
         .register::<TurnFile>()
         .register::<CappedText>()

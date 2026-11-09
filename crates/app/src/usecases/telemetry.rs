@@ -51,6 +51,46 @@ pub(crate) fn wire_str<T: serde::Serialize>(v: &T) -> String {
         .unwrap_or_default()
 }
 
+/// What a space was started from, for `space_created`. The value it was
+/// started from (an issue, a branch's name) stays out of it.
+pub(crate) fn start_label(start: Option<&theodore_contract::SpaceStart>) -> &'static str {
+    use theodore_contract::SpaceStart;
+    match start {
+        None => "blank",
+        Some(SpaceStart::Issue(_)) => "issue",
+        Some(SpaceStart::Branch(_)) => "branch",
+        Some(SpaceStart::Pr(_)) => "pr",
+    }
+}
+
+/// Tool calls among a turn's steps.
+pub(crate) fn tool_calls(steps: &[theodore_contract::TurnStep]) -> u32 {
+    steps
+        .iter()
+        .filter(|s| matches!(s, theodore_contract::TurnStep::Tool { .. }))
+        .count() as u32
+}
+
+/// You stepped in on an agent; the list is on `ProductEvent::SpaceAction`.
+pub(crate) fn space_action(action: &str) {
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceAction {
+        action: action.to_string(),
+    });
+}
+
+/// `messages` queued messages of `space` now wait for you, because of
+/// `reason`. Nothing happened if there were none.
+pub(crate) fn queue_held(space: &str, reason: &str, messages: usize) {
+    if messages == 0 {
+        return;
+    }
+    tracing::info!(space, reason, messages, "queue held");
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::QueueHeld {
+        reason: reason.to_string(),
+        messages: messages as u32,
+    });
+}
+
 impl Core {
     async fn tel_setting(&self, key: &str) -> Option<serde_json::Value> {
         let store = self.0.deps.store.clone();

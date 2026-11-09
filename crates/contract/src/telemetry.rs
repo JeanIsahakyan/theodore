@@ -46,6 +46,12 @@ pub enum UiEvent {
     /// An onboarding step was shown: `account`, `telemetry`, `github`,
     /// `agents`, `projects`, `done`.
     OnboardingStep { step: String },
+    /// Revise on a plan card. The revision itself is an ordinary send.
+    PlanRevised,
+    /// The report window opened: `app`, `chat`, `agent`.
+    ReportOpened { from: String },
+    /// Uses counted since the last flush, never one event per use.
+    UiCounts { tool_rows: u32, file_hovers: u32 },
 }
 
 /// One product event the app may send, with its field names (for "What's
@@ -64,7 +70,7 @@ pub struct TelemetryStatus {
     pub usage_available: bool,
     /// An error-report sink (warnings, errors, traces) is configured.
     pub errors_available: bool,
-    /// "Share anonymous usage data".
+    /// "Share usage data".
     pub usage: Option<bool>,
     /// "Send error reports".
     pub errors: Option<bool>,

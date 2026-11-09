@@ -7,6 +7,93 @@ use serde::Serialize;
 
 pub const TARGET: &str = "theodore::product";
 
+/// What a voted-on or finished agent run was, for `message_voted`,
+/// `space_turn` and `chat_answered`. Made through [`TurnFacts::new`], which
+/// reduces free text to labels.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct TurnFacts {
+    pub agent: String,
+    /// [`model_label`].
+    pub model: String,
+    /// [`effort_label`].
+    pub effort: String,
+    /// `ok`, `failed`, `stopped`.
+    pub outcome: String,
+    /// [`duration_bucket`].
+    pub duration: String,
+    pub tools: u32,
+    pub files: u32,
+}
+
+impl TurnFacts {
+    pub fn new(
+        agent: &str,
+        (model, resolved): (Option<&str>, bool),
+        effort: Option<&str>,
+        outcome: &str,
+        ms: Option<u64>,
+        (tools, files): (u32, u32),
+    ) -> Self {
+        Self {
+            agent: agent.to_string(),
+            model: model_label(model, resolved),
+            effort: effort_label(effort),
+            outcome: outcome.to_string(),
+            duration: duration_bucket(ms).to_string(),
+            tools,
+            files,
+        }
+    }
+}
+
+/// The families of model names the agent CLIs take. A name outside them is
+/// someone's own deployment, and can say what it is for.
+const MODEL_FAMILIES: &[&str] = &[
+    "claude", "sonnet", "opus", "haiku", "fable", "gpt", "codex", "gemini", "o1", "o3", "o4",
+];
+
+/// A model name fit to send: one of the known families, else `custom`.
+/// `default`: no model was asked for, so the CLI picked; `unknown`: a reply
+/// from before the model was recorded.
+pub fn model_label(model: Option<&str>, resolved: bool) -> String {
+    let Some(name) = model.map(str::trim).filter(|m| !m.is_empty()) else {
+        return if resolved { "default" } else { "unknown" }.to_string();
+    };
+    let shape = name.len() <= 48
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._[]".contains(c));
+    let lower = name.to_ascii_lowercase();
+    if shape && MODEL_FAMILIES.iter().any(|f| lower.starts_with(f)) {
+        lower
+    } else {
+        "custom".to_string()
+    }
+}
+
+const EFFORTS: &[&str] = &["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// An effort level, `default` when none was set, `custom` if unrecognized.
+pub fn effort_label(effort: Option<&str>) -> String {
+    match effort.map(str::trim).filter(|e| !e.is_empty()) {
+        None => "default".to_string(),
+        Some(e) if EFFORTS.contains(&e) => e.to_string(),
+        Some(_) => "custom".to_string(),
+    }
+}
+
+/// How long a run took, in the buckets a breakdown wants.
+pub fn duration_bucket(ms: Option<u64>) -> &'static str {
+    match ms {
+        None => "unknown",
+        Some(ms) if ms < 10_000 => "under_10s",
+        Some(ms) if ms < 60_000 => "10s_1m",
+        Some(ms) if ms < 300_000 => "1m_5m",
+        Some(ms) if ms < 900_000 => "5m_15m",
+        Some(_) => "over_15m",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ProductEvent {
@@ -43,6 +130,8 @@ pub enum ProductEvent {
         agents: u32,
         findings: u32,
         ms: u64,
+        /// `ok`, `failed`, `stopped`.
+        outcome: String,
     },
     /// `pr`, `group`, `hunk`.
     ChatAsked {
@@ -66,11 +155,50 @@ pub enum ProductEvent {
     },
     SpaceCreated {
         mode: String,
+        /// `blank`, `issue`, `branch`, `pr`.
+        from: String,
     },
     SpaceTurn {
         ms: u64,
         mode: String,
         ok: bool,
+        #[serde(flatten)]
+        turn: TurnFacts,
+    },
+    /// An AI panel question got its answer, or didn't.
+    ChatAnswered {
+        #[serde(flatten)]
+        turn: TurnFacts,
+    },
+    /// A reply's thumbs: `up`, `down`, `cleared`.
+    MessageVoted {
+        vote: String,
+        /// `space`, `ai_panel`.
+        surface: String,
+        /// The space turn's mode; `none` in the AI panel.
+        mode: String,
+        #[serde(flatten)]
+        turn: TurnFacts,
+    },
+    /// Stepping in on an agent: `stop`, `send_now`, `plan_approved`,
+    /// `plan_revised`, `undo`, `back_to_here`.
+    SpaceAction {
+        action: String,
+    },
+    /// Queued messages now wait for you: `stopped`, `failed`,
+    /// `checkpoint_skipped`, `start_failed`, `restart`.
+    QueueHeld {
+        reason: String,
+        messages: u32,
+    },
+    /// The report window opened: `app`, `chat`, `agent`.
+    ReportOpened {
+        from: String,
+    },
+    /// Counted in the UI and sent every few minutes, not per use.
+    UiCounts {
+        tool_rows: u32,
+        file_hovers: u32,
     },
     /// `open_pr`, `open_draft_pr`, `push`, `merge_locally`, `keep_branch`.
     SpaceShipped {
@@ -121,6 +249,12 @@ impl ProductEvent {
             ProductEvent::Merge { .. } => "merge",
             ProductEvent::SpaceCreated { .. } => "space_created",
             ProductEvent::SpaceTurn { .. } => "space_turn",
+            ProductEvent::ChatAnswered { .. } => "chat_answered",
+            ProductEvent::MessageVoted { .. } => "message_voted",
+            ProductEvent::SpaceAction { .. } => "space_action",
+            ProductEvent::QueueHeld { .. } => "queue_held",
+            ProductEvent::ReportOpened { .. } => "report_opened",
+            ProductEvent::UiCounts { .. } => "ui_counts",
             ProductEvent::SpaceShipped { .. } => "space_shipped",
             ProductEvent::ConfigSaved { .. } => "config_saved",
             ProductEvent::ProblemReported { .. } => "problem_reported",
@@ -178,6 +312,7 @@ impl ProductEvent {
                 agents: 0,
                 findings: 0,
                 ms: 0,
+                outcome: s(),
             },
             ProductEvent::ChatAsked { scope: s() },
             ProductEvent::TaskDelegated { agent: s() },
@@ -187,11 +322,34 @@ impl ProductEvent {
                 review_event: s(),
             },
             ProductEvent::Merge { method: s() },
-            ProductEvent::SpaceCreated { mode: s() },
+            ProductEvent::SpaceCreated {
+                mode: s(),
+                from: s(),
+            },
             ProductEvent::SpaceTurn {
                 ms: 0,
                 mode: s(),
                 ok: false,
+                turn: TurnFacts::default(),
+            },
+            ProductEvent::ChatAnswered {
+                turn: TurnFacts::default(),
+            },
+            ProductEvent::MessageVoted {
+                vote: s(),
+                surface: s(),
+                mode: s(),
+                turn: TurnFacts::default(),
+            },
+            ProductEvent::SpaceAction { action: s() },
+            ProductEvent::QueueHeld {
+                reason: s(),
+                messages: 0,
+            },
+            ProductEvent::ReportOpened { from: s() },
+            ProductEvent::UiCounts {
+                tool_rows: 0,
+                file_hovers: 0,
             },
             ProductEvent::SpaceShipped { how: s() },
             ProductEvent::ConfigSaved { r#where: s() },
@@ -231,7 +389,7 @@ pub fn never_sent() -> Vec<String> {
     [
         "Code, diffs, file contents or file paths",
         "Pull request titles, descriptions, comments or chat text",
-        "Your account id, email, name or host login",
+        "Your email, name or host login (signed in, only the account's opaque id)",
         "Repository names (hashed with a key unique to this install)",
         "Tokens, passwords or other credentials",
         "Debug logs (they stay in the local log file)",
@@ -250,12 +408,34 @@ const ONBOARDING_STEPS: &[&str] = &[
     "done",
 ];
 
+const REPORT_FROM: &[&str] = &["app", "chat", "agent"];
+
+/// More than this in one flush is a bug, not a person.
+const MAX_UI_COUNT: u32 = 100_000;
+
 /// A UI-reported event, if its values are known; anything else is dropped.
 pub fn from_ui(event: &theodore_contract::UiEvent) -> Option<ProductEvent> {
+    use theodore_contract::UiEvent;
     match event {
-        theodore_contract::UiEvent::OnboardingStep { step } => ONBOARDING_STEPS
+        UiEvent::OnboardingStep { step } => ONBOARDING_STEPS
             .contains(&step.as_str())
             .then(|| ProductEvent::OnboardingStep { step: step.clone() }),
+        UiEvent::PlanRevised => Some(ProductEvent::SpaceAction {
+            action: "plan_revised".into(),
+        }),
+        UiEvent::ReportOpened { from } => REPORT_FROM
+            .contains(&from.as_str())
+            .then(|| ProductEvent::ReportOpened { from: from.clone() }),
+        UiEvent::UiCounts {
+            tool_rows,
+            file_hovers,
+        } => ((*tool_rows > 0 || *file_hovers > 0)
+            && *tool_rows <= MAX_UI_COUNT
+            && *file_hovers <= MAX_UI_COUNT)
+            .then_some(ProductEvent::UiCounts {
+                tool_rows: *tool_rows,
+                file_hovers: *file_hovers,
+            }),
     }
 }
 
@@ -319,5 +499,94 @@ mod tests {
             })
         );
         assert_eq!(from_ui(&step("acme/secret-repo")), None);
+    }
+
+    #[test]
+    fn ui_events_drop_unknown_values_and_empty_counts() {
+        use theodore_contract::UiEvent;
+        let report = |f: &str| UiEvent::ReportOpened { from: f.into() };
+        assert_eq!(
+            from_ui(&report("chat")),
+            Some(ProductEvent::ReportOpened {
+                from: "chat".into()
+            })
+        );
+        assert_eq!(from_ui(&report("acme/secret-repo")), None);
+        let counts = |tool_rows, file_hovers| UiEvent::UiCounts {
+            tool_rows,
+            file_hovers,
+        };
+        assert_eq!(from_ui(&counts(0, 0)), None);
+        assert_eq!(from_ui(&counts(MAX_UI_COUNT + 1, 0)), None);
+        assert!(from_ui(&counts(3, 0)).is_some());
+    }
+
+    #[test]
+    fn model_names_outside_the_known_families_stay_home() {
+        assert_eq!(
+            model_label(Some("claude-opus-5-5[1m]"), true),
+            "claude-opus-5-5[1m]"
+        );
+        assert_eq!(model_label(Some("Sonnet"), true), "sonnet");
+        assert_eq!(model_label(Some("gpt-5.1-codex"), true), "gpt-5.1-codex");
+        assert_eq!(model_label(Some("o3-mini"), true), "o3-mini");
+        assert_eq!(model_label(None, true), "default");
+        assert_eq!(model_label(None, false), "unknown");
+        for private in [
+            "acme/secret-repo",
+            "acme-internal-finetune",
+            "claude acme secret",
+            "/Users/me/model.bin",
+            &format!("claude-{}", "x".repeat(60)),
+        ] {
+            assert_eq!(model_label(Some(private), true), "custom", "{private}");
+        }
+    }
+
+    #[test]
+    fn efforts_and_durations_are_labels() {
+        assert_eq!(effort_label(Some("high")), "high");
+        assert_eq!(effort_label(None), "default");
+        assert_eq!(effort_label(Some("acme")), "custom");
+        assert_eq!(duration_bucket(None), "unknown");
+        assert_eq!(duration_bucket(Some(9_999)), "under_10s");
+        assert_eq!(duration_bucket(Some(10_000)), "10s_1m");
+        assert_eq!(duration_bucket(Some(299_999)), "1m_5m");
+        assert_eq!(duration_bucket(Some(899_999)), "5m_15m");
+        assert_eq!(duration_bucket(Some(900_000)), "over_15m");
+    }
+
+    /// The whole property set, so a new field has to be looked at here: no
+    /// prompt, reply, path or name, and a private model name stays home.
+    #[test]
+    fn a_vote_carries_labels_and_counts_only() {
+        let event = ProductEvent::MessageVoted {
+            vote: "down".into(),
+            surface: "space".into(),
+            mode: "edit".into(),
+            turn: TurnFacts::new(
+                "claude",
+                (Some("acme/secret-repo"), true),
+                Some("high"),
+                "ok",
+                Some(42_000),
+                (7, 3),
+            ),
+        };
+        assert_eq!(
+            serde_json::Value::Object(event.props()),
+            serde_json::json!({
+                "vote": "down",
+                "surface": "space",
+                "mode": "edit",
+                "agent": "claude",
+                "model": "custom",
+                "effort": "high",
+                "outcome": "ok",
+                "duration": "10s_1m",
+                "tools": 7,
+                "files": 3,
+            })
+        );
     }
 }

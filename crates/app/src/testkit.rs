@@ -3602,3 +3602,80 @@ pub fn sample_anchor(path: &str, line: u32) -> Anchor {
         start_side: None,
     }
 }
+
+/// The product events emitted on this thread while the guard lives, in
+/// order, as (event, properties), and the account changes telemetry was
+/// told of as `identity`. `#[tokio::test]` runs the core there.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct ProductLog(Arc<Mutex<Vec<(String, serde_json::Value)>>>);
+
+#[cfg(test)]
+impl ProductLog {
+    /// The properties of every `event` so far.
+    pub fn named(&self, event: &str) -> Vec<serde_json::Value> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, _)| name == event)
+            .map(|(_, props)| props.clone())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ProductLog {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let target = event.metadata().target();
+        #[derive(Default)]
+        struct Fields {
+            event: String,
+            props: String,
+            signed_in: Option<bool>,
+        }
+        impl tracing::field::Visit for Fields {
+            fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+                if field.name() == "signed_in" {
+                    self.signed_in = Some(value);
+                }
+            }
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "event" {
+                    self.event = value.to_string();
+                }
+            }
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "props" {
+                    self.props = format!("{value:?}");
+                }
+            }
+        }
+        let mut fields = Fields::default();
+        if target == theodore_telemetry::IDENTITY_TARGET {
+            event.record(&mut fields);
+            let props = serde_json::json!({ "signed_in": fields.signed_in });
+            self.0.lock().unwrap().push(("identity".into(), props));
+            return;
+        }
+        if target != theodore_telemetry::product::TARGET {
+            return;
+        }
+        event.record(&mut fields);
+        let props = serde_json::from_str(&fields.props).expect("props are json");
+        self.0.lock().unwrap().push((fields.event, props));
+    }
+}
+
+/// Records product events until the guard drops.
+#[cfg(test)]
+pub fn capture_product() -> (ProductLog, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let log = ProductLog::default();
+    let subscriber = tracing_subscriber::registry().with(log.clone());
+    (log, tracing::subscriber::set_default(subscriber))
+}

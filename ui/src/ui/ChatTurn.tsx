@@ -20,7 +20,9 @@ import type {
   AgentId,
   Attachment,
   ChatMessage as Message,
+  MessageVote,
 } from '../gen/contract';
+import { api } from '../core/api';
 import { useRootStore, useRootStoreOrNull } from '../stores/context';
 import { reportChat } from './reportChat';
 import { Md, rich } from '../highlight';
@@ -122,18 +124,22 @@ export function StalledHint() {
   );
 }
 
-/** Under an agent's reply: copy, a vote, (`onRetry`) ask again and
- *  (`onReport`) report a problem with it. */
+/** Under an agent's reply: copy, its vote (kept on the reply; pressed again,
+ *  taken back), (`onRetry`) ask again and (`onReport`) report a problem with
+ *  it. */
 export function MessageActions({
   text,
+  vote,
+  onVote,
   onRetry,
   onReport,
 }: {
   text: string;
+  vote: MessageVote | null;
+  onVote: (vote: MessageVote | null) => void;
   onRetry?: () => void;
   onReport?: () => void;
 }) {
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
   const [copied, setCopied] = useState(false);
   const act = (
     label: string,
@@ -169,13 +175,13 @@ export function MessageActions({
       {act(
         'Helpful',
         <ThumbsUp className="size-3.5" />,
-        () => setVote(vote === 'up' ? null : 'up'),
+        () => onVote(vote === 'up' ? null : 'up'),
         vote === 'up',
       )}
       {act(
         'Not helpful',
         <ThumbsDown className="size-3.5" />,
-        () => setVote(vote === 'down' ? null : 'down'),
+        () => onVote(vote === 'down' ? null : 'down'),
         vote === 'down',
       )}
       {onReport && act('Report this', <Flag className="size-3.5" />, onReport)}
@@ -399,6 +405,12 @@ export function ChatMessage({
             {!m.failed && (
               <MessageActions
                 text={m.text}
+                vote={m.vote ?? null}
+                onVote={(vote) =>
+                  void api
+                    .setMessageVote({ message: m.id, vote })
+                    .catch(() => {})
+                }
                 onRetry={onAskAgain}
                 onReport={onReport}
               />

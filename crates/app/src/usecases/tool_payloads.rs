@@ -19,6 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -108,6 +109,8 @@ pub(crate) struct ToolPayloads {
     repeats: HashSet<String>,
     /// Subagents whose handback carried the whole report.
     reported: HashSet<String>,
+    /// A failed write was logged: one line per run, whatever it costs.
+    write_failed: AtomicBool,
 }
 
 impl ToolPayloads {
@@ -120,6 +123,7 @@ impl ToolPayloads {
             hidden: HashSet::new(),
             repeats: HashSet::new(),
             reported: HashSet::new(),
+            write_failed: AtomicBool::new(false),
         }
     }
 
@@ -137,7 +141,7 @@ impl ToolPayloads {
         let pruned =
             tokio::task::spawn_blocking(move || store.tool_payloads_prune(&space, SPACE_MAX)).await;
         if let Ok(Err(e)) = pruned {
-            tracing::debug!(error = %e, "couldn't prune tool payloads");
+            tracing::warn!(error.code = "store.db", error = %e, "couldn't prune tool payloads");
         }
     }
 
@@ -158,8 +162,15 @@ impl ToolPayloads {
             store.tool_payload_put(&key, name, &value)
         })
         .await;
-        if let Ok(Err(e)) = written {
-            tracing::debug!(error = %e, "couldn't store a tool payload");
+        if let Ok(Err(e)) = written
+            && !self.write_failed.swap(true, Ordering::Relaxed)
+        {
+            tracing::warn!(
+                error.code = "store.db",
+                run = %self.run,
+                error = %e,
+                "couldn't store a tool payload; later failures of this run aren't logged"
+            );
         }
     }
 

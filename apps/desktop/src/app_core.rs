@@ -1104,6 +1104,12 @@ impl CoreApi for AppCore {
     ) -> Result<String, CommandError> {
         self.core.space_send_now(req).await.map_err(err)
     }
+    async fn set_message_vote(
+        &self,
+        req: theodore_contract::SetMessageVoteRequest,
+    ) -> Result<(), CommandError> {
+        self.core.set_message_vote(req).await.map_err(err)
+    }
     async fn space_queued(
         &self,
         req: theodore_contract::SpaceQueuedRequest,

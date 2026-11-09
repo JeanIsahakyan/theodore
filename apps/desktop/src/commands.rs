@@ -751,6 +751,18 @@ pub async fn space_send(
 }
 
 /// "Send now": into the running turn when it takes messages, else queued.
+/// A reply's thumbs up or down; `vote: null` takes it back.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_message_vote(
+    op: crate::op::Op,
+    req: theodore_contract::SetMessageVoteRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.set_message_vote(req).await })
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn space_send_now(

@@ -18,6 +18,7 @@ use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 
+use crate::identity::Identity;
 use crate::otlp::{OtelSpan, OtlpSink};
 use crate::posthog::PosthogSink;
 use crate::record::{Kind, Record, TraceRef, now_ms};
@@ -34,6 +35,7 @@ pub struct Shared {
     pub local: Vec<Arc<dyn Sink>>,
     pub otlp: RwLock<Option<Arc<OtlpSink>>>,
     pub posthog: RwLock<Option<Arc<PosthogSink>>>,
+    pub identity: Arc<Identity>,
 }
 
 impl Shared {
@@ -43,6 +45,7 @@ impl Shared {
             local,
             otlp: RwLock::new(None),
             posthog: RwLock::new(None),
+            identity: Arc::default(),
         }
     }
 

@@ -111,8 +111,12 @@ export const commands = {
 	projectIssues: (req: ProjectIssuesRequest) => typedError<SpaceIssue[], CommandError>(__TAURI_INVOKE("project_issues", { req })),
 	listSpaces: (project: string | null) => typedError<Space[], CommandError>(__TAURI_INVOKE("list_spaces", { project })),
 	spaceSend: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send", { req })),
-	/**  "Send now": into the running turn when it takes messages, else queued. */
 	spaceSendNow: (req: SpaceSendRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send_now", { req })),
+	/**
+	 *  "Send now": into the running turn when it takes messages, else queued.
+	 *  A reply's thumbs up or down; `vote: null` takes it back.
+	 */
+	setMessageVote: (req: SetMessageVoteRequest) => typedError<null, CommandError>(__TAURI_INVOKE("set_message_vote", { req })),
 	/**  Send / Cancel / Edit on a queued message. */
 	spaceQueued: (req: SpaceQueuedRequest) => typedError<null, CommandError>(__TAURI_INVOKE("space_queued", { req })),
 	spaceStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("space_stop", { space })),
@@ -1306,6 +1310,9 @@ export type MergeSpaceResult = {
 
 export type MergeState = "clean" | "blocked" | "behind" | "dirty" | "unstable" | "unknown";
 
+/**  A thumbs up or down on an agent's reply. */
+export type MessageVote = "up" | "down";
+
 /**
  *  Mirroring into a local folder project ("Try in my folder" — some
  *  projects can't run from a separate worktree: fixed ports, one local
@@ -1719,6 +1726,12 @@ export type SetLinearTokenRequest = {
 	 *  Linear's `viewer` query before being stored.
 	 */
 	token: string | null,
+};
+
+/**  Sets the vote on a reply; `vote: None` takes it back. */
+export type SetMessageVoteRequest = {
+	message: string,
+	vote: MessageVote | null,
 };
 
 /**
@@ -2455,7 +2468,7 @@ export type TelemetryStatus = {
 	usage_available: boolean,
 	/**  An error-report sink (warnings, errors, traces) is configured. */
 	errors_available: boolean,
-	/**  "Share anonymous usage data". */
+	/**  "Share usage data". */
 	usage: boolean | null,
 	/**  "Send error reports". */
 	errors: boolean | null,
@@ -2612,7 +2625,13 @@ export type UiEvent =
  *  An onboarding step was shown: `account`, `telemetry`, `github`,
  *  `agents`, `projects`, `done`.
  */
-{ event: "onboarding_step"; step: string };
+{ event: "onboarding_step"; step: string } |
+/**  Revise on a plan card. The revision itself is an ordinary send. */
+{ event: "plan_revised" } |
+/**  The report window opened: `app`, `chat`, `agent`. */
+{ event: "report_opened"; from: string } |
+/**  Uses counted since the last flush, never one event per use. */
+{ event: "ui_counts"; tool_rows: number; file_hovers: number };
 
 export type UnmirrorSpaceRequest = {
 	space: string,

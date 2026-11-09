@@ -74,6 +74,18 @@ pub(crate) async fn run_model(
     }
 }
 
+/// The effort a run asking for `asked` gets; see [`run_model`].
+pub(crate) async fn run_effort(
+    store: &Arc<dyn Store>,
+    agent: AgentId,
+    asked: Option<String>,
+) -> Option<String> {
+    match asked {
+        Some(e) => Some(e),
+        None => setting_text(store, effort_key(agent)).await,
+    }
+}
+
 #[async_trait]
 impl AgentPort for AgentDefaults {
     async fn detect(&self) -> Vec<AgentInfo> {

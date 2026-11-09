@@ -40,7 +40,14 @@ export function PlanActions({
       >
         Approve
       </Button>
-      <Button size="sm" variant="tertiary" onPress={onRevise}>
+      <Button
+        size="sm"
+        variant="tertiary"
+        onPress={() => {
+          void api.trackUi({ event: 'plan_revised' });
+          onRevise();
+        }}
+      >
         Revise
       </Button>
       <span className="text-xs text-muted">

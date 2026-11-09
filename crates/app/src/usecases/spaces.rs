@@ -50,6 +50,7 @@ impl Core {
         // From a host issue (rewrites `req.goal`), an existing branch, or an
         // existing PR (docs/spaces.md §3 "New space") — `None` for the
         // common case, a fresh branch off the project's default.
+        let from = crate::usecases::telemetry::start_label(req.start_from.as_ref());
         let start = self.resolve_space_start(&project, &mut req).await?;
         let base = req
             .base
@@ -222,6 +223,7 @@ impl Core {
         self.spawn_space_code(&space, &project);
         theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceCreated {
             mode: crate::usecases::telemetry::wire_str(&space.mode),
+            from: from.to_string(),
         });
         // An adopted PR (`start_from: Pr`, or a `Branch` that already has
         // one): store what's known now, fetch the rest, so the space opens
@@ -356,6 +358,9 @@ impl Core {
             text_in_steps: false,
             model_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -550,13 +555,16 @@ impl Core {
     /// Cancels the turn in flight; its edits are still checkpointed.
     pub async fn space_stop(&self, space: &str) -> AppResult<()> {
         if self.cancel_space_run(space).await? {
+            crate::usecases::telemetry::space_action("stop");
             return Ok(());
         }
         // No run to cancel: a turn may be handing over to the next queued
         // message, or starting. Once that's done (the queue lock), whatever
         // runs now is what Stop was pressed on.
         let _queue = self.space_queue_lock(space).await;
-        self.cancel_space_run(space).await?;
+        if self.cancel_space_run(space).await? {
+            crate::usecases::telemetry::space_action("stop");
+        }
         Ok(())
     }
 
@@ -674,7 +682,9 @@ impl Core {
     /// Undo last turn (docs/spaces.md §3): `rewind_space` to just before
     /// the last turn not undone yet.
     pub async fn undo_space_turn(&self, space: &str) -> AppResult<Space> {
-        self.rewind_space_from(space, None).await
+        let rewound = self.rewind_space_from(space, None).await?;
+        crate::usecases::telemetry::space_action("undo");
+        Ok(rewound)
     }
 
     /// Brings an archived space back: its worktree is recreated from the
@@ -1140,7 +1150,7 @@ impl Drop for Unsteer<'_> {
 async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
     match core.0.runs.write().await.remove(run_id) {
         Some(_) => end,
-        None => TurnEnd::Interrupted,
+        None => TurnEnd::Interrupted("stopped"),
     }
 }
 
@@ -1199,7 +1209,18 @@ async fn drive_turn(core: &Core, turn: Turn) {
         resume,
         stream_text: true,
     };
+    let ran_effort =
+        crate::agent_defaults::run_effort(&core.0.deps.store, agent, req.effort.clone()).await;
     let started = std::time::Instant::now();
+    tracing::info!(
+        space = %space.id,
+        agent = agent.as_str(),
+        model = ran_model.as_deref().unwrap_or("default"),
+        effort = ran_effort.as_deref().unwrap_or("default"),
+        mode = crate::usecases::telemetry::wire_str(&mode),
+        resumed,
+        "space turn started"
+    );
     // The diff follows the agent's edits while it works (no checkpoints).
     let live = crate::usecases::space_live_diff::start(core, &space.id, &cwd);
     let mut streamed = stream_run(core, req.clone(), &cancel, &run_id, &space.id).await;
@@ -1288,11 +1309,6 @@ async fn drive_turn(core: &Core, turn: Turn) {
             "space turn failed"
         );
     }
-    theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceTurn {
-        ms,
-        mode: crate::usecases::telemetry::wire_str(&mode),
-        ok: error.is_none() && !cancelled,
-    });
     if cancelled && error.is_none() {
         error = Some("stopped".into());
     }
@@ -1340,6 +1356,36 @@ async fn drive_turn(core: &Core, turn: Turn) {
         }
         _ => Vec::new(),
     };
+    // After the checkpoint: one that failed fails the turn.
+    let outcome = match (cancelled, &error) {
+        (true, _) => "stopped",
+        (false, Some(_)) => "failed",
+        (false, None) => "ok",
+    };
+    let tools = crate::usecases::telemetry::tool_calls(&activity);
+    theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceTurn {
+        ms,
+        mode: crate::usecases::telemetry::wire_str(&mode),
+        ok: outcome == "ok",
+        turn: theodore_telemetry::product::TurnFacts::new(
+            agent.as_str(),
+            (ran_model.as_deref(), true),
+            ran_effort.as_deref(),
+            outcome,
+            Some(ms),
+            (tools, changed_files.len() as u32),
+        ),
+    });
+    tracing::info!(
+        space = %space.id,
+        agent = agent.as_str(),
+        model = ran_model.as_deref().unwrap_or("default"),
+        outcome,
+        duration_ms = ms,
+        tools,
+        files = changed_files.len(),
+        "space turn finished"
+    );
     let key = space_chat_key(&space.id);
     let reply = ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1359,6 +1405,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
         model_resolved: true,
         text_in_steps,
         run: Some(run_id.clone()),
+        vote: None,
+        effort: ran_effort,
+        mode: Some(mode),
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1440,8 +1489,12 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // Stopped (the checkpoint took a while: maybe just now), failed, or its
     // checkpoint skipped: whatever is queued waits for you, and the next turn
     // doesn't clear what the space says about it.
-    let end = if cancel.is_cancelled() || error.is_some() || skipped.is_some() {
-        TurnEnd::Interrupted
+    let end = if cancel.is_cancelled() {
+        TurnEnd::Interrupted("stopped")
+    } else if error.is_some() {
+        TurnEnd::Interrupted("failed")
+    } else if skipped.is_some() {
+        TurnEnd::Interrupted("checkpoint_skipped")
     } else {
         TurnEnd::Done
     };
@@ -1480,7 +1533,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         // A failing check isn't a failed turn: the next one hears it. Stop
         // during the check is a stop.
         let end = if cancel.is_cancelled() {
-            TurnEnd::Interrupted
+            TurnEnd::Interrupted("stopped")
         } else {
             end
         };
@@ -1896,6 +1949,9 @@ mod tests {
             text_in_steps: false,
             model_resolved: false,
             run: None,
+            vote: None,
+            effort: None,
+            mode: None,
         }
     }
 
