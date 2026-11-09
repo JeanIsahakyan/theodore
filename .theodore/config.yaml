@@ -1,0 +1,47 @@
+# Theodore config for JeanIsahakyan/theodore (docs/config.md).
+# Layers, later wins key by key (lists replace):
+#   ~/.theodore/config.yaml               global: your defaults
+#   <repo>/.theodore/config.yaml          repo: shared with the team
+#   <repo>/.theodore/config.local.yaml    local: yours, gitignored
+# Commands set here or in config.local.yaml run without asking; commands
+# from a repo's file run only after you allow them.
+
+review:
+  agents:
+    chat: claude
+    fix: claude
+    grouping: claude
+    skills:
+    - claude
+  # instructions: Prefer small functions. Flag any new dependency.
+  # context: [docs/architecture.md, "docs/adr/*.md"]  # read first
+  # hide: ["gen/**"]        # never sent to the agent
+  # skim: ["**/*.snap"]     # flagged as skimmable
+  # checklist:
+  #   "migrations/**": Is there a down migration?
+  # auto_skills: [security-review]
+  # ignore_findings: ["vendor/**"]
+
+# spaces:
+#   copy: [.env, .env.local]
+#   ports: 1                # $THEODORE_PORT, $THEODORE_PORT_1, …
+#   env:
+#     APP_URL: "http://localhost:$THEODORE_PORT"
+#   setup: pnpm install
+#   run: pnpm dev --port $THEODORE_PORT
+#   check: pnpm lint && pnpm test
+#   archive: docker compose -p $THEODORE_SPACE down
+#   timeout_s: { setup: 600, check: 600, archive: 120 }
+
+# code_intel:
+#   enabled: true
+#   install: ask            # ask | always | never: download language servers
+#   languages: [typescript, rust]   # empty: detected
+#   servers: { python: pyright }
+#   max_servers: 4          # these four: global file only
+#   idle_minutes: 10
+#   max_file_kb: 1024
+#   cache_mb: 512
+#   lsp:                    # global / local files only, never the repo's
+#     spaces: true
+#     review: false         # true: a PR's code may run during reviews
