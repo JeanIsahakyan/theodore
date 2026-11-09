@@ -22,6 +22,7 @@ import {
 } from 'react';
 import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
+import { PrMark, SpaceMark } from './AgentMark';
 import { K } from './bits';
 import { isBranchReview } from './project/sections';
 import { projectLabel } from './Projects';
@@ -63,16 +64,29 @@ function useLabel(r: Route): {
       return { icon: <Link />, title: 'New tab' };
     case 'space': {
       const s = store.models.spaces.get(r.id);
-      return { icon: <Pencil />, title: s ? spaceTitle(s) : 'Space' };
+      return {
+        icon: <SpaceMark spaceId={r.id} fallback={<Pencil />} />,
+        title: s ? spaceTitle(s) : 'Space',
+      };
     }
     case 'review': {
       const p = store.models.prSummaries.get(r.pr);
       const drafts = store.models.drafts.byPr(r.pr).length;
       return {
-        icon: p ? (
-          <PrStatusIcon summary={p} progress={readProgress(store, r.pr)} />
-        ) : (
-          <PRIcon status="open" />
+        icon: (
+          <PrMark
+            pr={r.pr}
+            fallback={
+              p ? (
+                <PrStatusIcon
+                  summary={p}
+                  progress={readProgress(store, r.pr)}
+                />
+              ) : (
+                <PRIcon status="open" />
+              )
+            }
+          />
         ),
         title: reviewTabTitle(
           r.pr,

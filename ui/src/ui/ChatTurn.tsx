@@ -25,6 +25,7 @@ import { useRootStore, useRootStoreOrNull } from '../stores/context';
 import { reportChat } from './reportChat';
 import { Md, rich } from '../highlight';
 import { MessageAttachments } from './attachments';
+import { RunIndicator, TurnEndMark } from './AgentMark';
 import { AgentTag, Btn } from './bits';
 import { LiveText } from './RunLive';
 import { ToolCalls } from './ToolCalls';
@@ -103,24 +104,6 @@ export function ChatEmpty({
       </div>
       {children}
     </div>
-  );
-}
-
-/** Typing indicator: three dots, like a messenger. */
-export function Dots() {
-  return (
-    <span
-      className="inline-flex h-5 items-center gap-1"
-      aria-label="Agent is thinking"
-    >
-      {[0, 150, 300].map((d) => (
-        <span
-          key={d}
-          className="size-1.5 animate-bounce rounded-full bg-muted"
-          style={{ animationDelay: `${d}ms` }}
-        />
-      ))}
-    </span>
   );
 }
 
@@ -386,6 +369,7 @@ export function ChatMessage({
                       Report this
                     </Button>
                   )}
+                  <TurnEndMark run={m.run} end="error" />
                 </div>
               )}
             </Alert.Content>
@@ -422,6 +406,7 @@ export function ChatMessage({
             {!!m.changed_files?.length && (
               <TurnFiles files={m.changed_files} onOpen={onOpenFile} />
             )}
+            {!m.failed && <TurnEndMark run={m.run} end="done" />}
           </div>
         )}
       </div>
@@ -430,8 +415,8 @@ export function ChatMessage({
 }
 
 /** The reply still being written: the agent's tag, then its text as it
- *  streams (dots until there is some) and its steps, or with `timeline` both
- *  as one list in the order they came, the time so far under them. Stalled: a
+ *  streams and its steps, or with `timeline` both as one list in the order
+ *  they came; under them the agent's indicator and the time so far. Stalled: a
  *  note under them, with Retry when `onRetry` is given. No Stop here — the
  *  composer has it. */
 export const ChatLive = observer(function ChatLive({
@@ -463,7 +448,6 @@ export const ChatLive = observer(function ChatLive({
   const store = useRootStore();
   const stalled = run != null && store.ephemeral.stalled.has(run);
   const tools = (!timeline && run && store.ephemeral.runLog.get(run)) || [];
-  const waiting = stalled ? null : <Dots />;
   return (
     <div
       data-variant="agent"
@@ -472,21 +456,23 @@ export const ChatLive = observer(function ChatLive({
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
         <AgentHeader agent={agent} tagged={tagged} badges={badges} />
-        {!run ? (
-          waiting
-        ) : timeline ? (
-          <ToolRunContext.Provider value={run}>
-            <LiveTimeline run={run} fallback={waiting} />
-          </ToolRunContext.Provider>
-        ) : (
-          <LiveText run={run} fallback={waiting} />
-        )}
+        {run &&
+          (timeline ? (
+            <ToolRunContext.Provider value={run}>
+              <LiveTimeline run={run} />
+            </ToolRunContext.Provider>
+          ) : (
+            <LiveText run={run} />
+          ))}
         {run && tools.length > 0 && (
           <ToolCalls tools={tools} running turn={run} />
         )}
-        {timeline && (run != null || since != null) && (
-          <LiveTimer run={run} since={since} />
-        )}
+        <div className="chat-status flex h-5 items-center gap-1.5">
+          <RunIndicator run={run} />
+          {timeline && (run != null || since != null) && (
+            <LiveTimer run={run} since={since} />
+          )}
+        </div>
         {stalled && <StalledHint />}
         {stalled && onRetry && (
           <Button

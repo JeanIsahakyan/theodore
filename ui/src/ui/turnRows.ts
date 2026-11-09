@@ -29,6 +29,11 @@ export function stepFailed(step: ToolStep): boolean {
   return step.ok === false && !REFUSED_IN_PRINT.has(step.name);
 }
 
+/** A call that waits for you: a question, a plan to approve. */
+export function stepWaitsForYou(step: ToolStep): boolean {
+  return step.name === ASK || REFUSED_IN_PRINT.has(step.name);
+}
+
 /** How many of the same, with its plural. */
 const n = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;

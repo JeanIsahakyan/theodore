@@ -107,13 +107,13 @@ a separate feature island.
 
 | Glyph | Meaning | Source |
 | --- | --- | --- |
-| ◐ | agent running | `space.status = running` |
+| ◐ | agent running: the glasses indicator (`AgentMark.tsx`), its state from the running turn's latest step, `done` / `error` once as the turn ends; also on the tab, and `turn` (a soft pulse) while a question or plan waits on you | `space.status = running`, `space.question` |
 | ● | a turn ended or a question came since you last looked; a plan is ready when its turn ends | `space.attention_at` > last seen (UI-local); other writes that bump `updated_at` (PR opened, Update from base, undo, archive) don't light it |
 | ○ | idle | `idle` |
 | ✕ | last turn failed or was interrupted | `failed` |
 | ⎇ #n | has a PR; tinted by its checks (green · red · amber), the merge icon once merged | `space.pr` + its `pr` row (`checks`, `state`) |
 
-◐, ✕ and ● win over ⎇; the label keeps `#n` either way.
+◐, ✕ and ● win over ⎇; the label keeps `#n` either way. The indicator's state comes from `indicatorState` (`agentIndicator.ts`), with a short hold so a burst of tool calls doesn't flicker.
 
 **Pin / mark as unread** (finding a space again, GitHub #77): right-click
 a row, or type "pin"/"unread" in ⌘K.
@@ -289,7 +289,7 @@ running    every row flat and growing, a spinner on each call still going
               RunTextBreak ────▶ the next delta starts a new text row
               RunStep ─────────▶ a tool, thinking or subagent row
               RunStepDone id ──▶ marks that call, whichever is newest
-              12s under the rows: ticks through its node, no render
+              the agent's indicator + 12s under the rows: no render per tick
               │ the reply lands (its stored steps take over)
               ▼
 finished   ▸ 3 tool calls, 5 messages, 2 agents  >_ ▤   opens in place
@@ -449,7 +449,7 @@ or opened for the first time, it opens at the bottom.
 **What you do shows before the core answers**, in the row it belongs to:
 
 ```
-send ──▶ your message + working dots, at once       (starting a turn can take a while)
+send ──▶ your message + working indicator, at once       (starting a turn can take a while)
            ├─ its row arrives ─▶ takes over in the same chat row, nothing remounts
            └─ refused ─────────▶ gone, the text and files back in the box
 send while it runs ──▶ in the queue at once, marked sending, its Edit and Cancel once stored
