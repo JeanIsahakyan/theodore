@@ -102,6 +102,8 @@ async fn two_turns(f: &Fixtures) -> (Core, Receivers, Space) {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -115,6 +117,7 @@ async fn two_turns(f: &Fixtures) -> (Core, Receivers, Space) {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -171,6 +174,8 @@ async fn a_report_stays_one_line_per_call_however_much_a_call_stored() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

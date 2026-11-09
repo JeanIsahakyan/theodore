@@ -168,7 +168,66 @@ webview's own find there; `settings` has no sidebar to search either.
 
 "Start" creates the worktree and sends the goal as the first message — the
 first turn starts immediately. Name and branch are derived from the goal and
-editable.
+editable. Create is enabled on an untouched form: see "A blank space" below.
+
+The goal box is a space's composer: `/` lists the skills a space of this
+project would see (yours and the repo's at its default branch,
+`project_skills`), and a picked skill becomes the first message.
+
+**What the chips pick is this space's alone.** Agent, model, effort and mode
+start from your settings (`agents.chat`, `agents.<id>.model`,
+`agents.<id>.effort`, Edit) and write none of them; nothing remembers the
+last pick, so the next dialog starts from your settings again.
+
+| | Writes | Where |
+| --- | --- | --- |
+| a pick in New space | the new `space` row | that space only |
+| a pick in a space, idle | `set_space_settings`, at once | that space only |
+| a pick in a space, a turn running | waits, goes with the next send, a queued message keeps it (§8) | that space only |
+| the AI panel, Settings | `agents.<id>.*` | everywhere, as before |
+
+A space's effort is pinned at creation like its model (`agents.<id>.effort`
+unless the dialog picked one); a space from before this has none and follows
+that setting until changed. Another agent starts from its own settings. The
+chip and ⌘⇧/ in a space use the space's effort; a model without effort levels
+hides the chip, and the run needs nothing special.
+
+#### A blank space
+
+```
+Create, empty form ─▶ worktree, setup as usual ─▶ goal "", title "New space",
+                                                  name new-space-<id>,
+                                                  branch <login>/new-space-<id>,
+                                                  composer focused
+first message ─ words ──────▶ goal = the text, title cleared ─▶ naming (below)
+              └ files only ─▶ title = the first file's name, still blank:
+                              the first words still name it
+```
+
+- Created by an untouched form: no goal, no start, no name or branch typed.
+  Several at once are fine: the slug comes from the id, so even two created
+  in the same moment can't collide, and all read "New space".
+- The first message is yours (`space_send`), not Theodore's: "Set up with
+  agent", Fix CI, feedback or an update's conflicts (`system_send`) start a
+  turn and leave it blank.
+- A slash command or a `/report` start the same way as from the composer;
+  `/report` files a report and leaves the space blank.
+- Abandoned ones stay listed and archivable like any other.
+
+**The branch and the worktree.** A space has no local branch to rename:
+its worktree is detached at `~/.theodore/spaces/<id>` (§6) and `branch` is a
+name on its row, pushed on Open PR. So the rename is only that field, the
+same rule as `create_space`'s, kept to while nothing is pushed:
+
+| When the name arrives | `branch` |
+| --- | --- |
+| nothing pushed, no PR | renamed, as creation would have named it |
+| shipped, or a PR exists | kept: it is the host's name now |
+
+| Across the rename | |
+| --- | --- |
+| worktree path, mirror, `spaces.check` | unaffected: keyed by the space's id, or read fresh |
+| `$THEODORE_BRANCH` | new for commands started after it; a terminal already open and the setup that ran keep the neutral one |
 
 | Goal | Name |
 | --- | --- |
@@ -1310,7 +1369,8 @@ New synced model `space` (core-owned, written only by commands):
 | `branch`, `base`, `base_sha`, `head_sha` | `branch` (`<login>/<slug>`, `space/<slug>` without a login) is pushed on Open PR; `head_sha` = last checkpoint |
 | `worktree` | absolute path |
 | `status` | `idle · running · failed · archived` |
-| `agent`, `model`, `mode` | sticky per space; `model` starts as the agent's `agents.<id>.model` setting at creation |
+| `agent`, `model`, `effort`, `mode` | the space's own (§3 "New space"); `model` and `effort` start as the agent's settings at creation; a space with no `effort` follows `agents.<id>.effort` until changed |
+| `blank` | created with nothing to start from; cleared by the first message with words in it (§3 "A blank space") |
 | `review_pr` | the branch review the diff and Review use |
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
@@ -1473,7 +1533,9 @@ downloaded to this Mac yet".
 
 | Command | Does |
 | --- | --- |
-| `create_space` | worktree + ref at the base, `space` row; sends `goal` as turn 1 when given |
+| `create_space` | worktree + ref at the base, `space` row; sends `goal` as turn 1 when given, else a blank space (§3) |
+| `set_space_settings` | a space's agent, model, effort or mode, that space only; refused during a turn |
+| `project_skills` | what a new space of the project would see, for New space's `/` |
 | `list_spaces` | rows of one project or all (the UI reads the synced rows) |
 | `space_send` | chat row, then a turn in the worktree; checkpoint; refresh the diff. While a turn runs: a queued chat row (§8) |
 | `space_send_now` | into the running Claude turn when it can take it (§8 "Send now"), else as `space_send` |

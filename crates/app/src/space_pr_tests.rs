@@ -106,6 +106,8 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project, goal: &str) -> S
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -124,6 +126,7 @@ async fn send(f: &Fixtures, core: &Core, s: &Space, text: &str, head: Option<&st
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -237,6 +240,8 @@ async fn open_pr_fills_the_repos_template_and_links_back_to_the_space() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -543,6 +548,7 @@ async fn send_reply(
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -942,6 +948,7 @@ async fn back_to_here_stops_at_continue() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     };
     f.agents.push_script(done("done"));
     f.git.push_checkpoint(Sha::new("turn222"));
@@ -993,6 +1000,8 @@ async fn open_pr_interrupted_during_the_fill_can_be_retried() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

@@ -935,6 +935,21 @@ impl GitPort for FakeGit {
             .get(&(rev.0.clone(), path.to_string()))
             .cloned())
     }
+    async fn list_dir(&self, _repo: &Path, rev: &Sha, dir: &str) -> GitResult<Vec<String>> {
+        let prefix = format!("{}/", dir.trim_end_matches('/'));
+        let mut names: Vec<String> = self
+            .files
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|(r, _)| r == &rev.0)
+            .filter_map(|(_, p)| p.strip_prefix(prefix.as_str()))
+            .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
     async fn diff_file(
         &self,
         _repo: &Path,

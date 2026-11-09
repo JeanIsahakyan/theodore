@@ -184,6 +184,76 @@ describe('AgentMenu', () => {
     expect(agentEffort(store, 'codex')).toBe('medium');
   });
 
+  describe('a box with its own effort (a space, New space)', () => {
+    async function renderBox(
+      store: RootStore,
+      efforts: { value: string | null; picks: string[] },
+    ) {
+      m = await mount(
+        <RootStoreProvider store={store}>
+          <div>
+            <textarea aria-label="box" />
+            <AgentMenu
+              agents={['claude']}
+              selected="claude"
+              onSelect={() => {}}
+              ultracode
+              modelOf={() => 'claude-fable-5-1'}
+              onPickModel={() => {}}
+              effortOf={() => efforts.value}
+              onPickEffort={(_a, e) => efforts.picks.push(e)}
+            />
+          </div>
+        </RootStoreProvider>,
+      );
+      await settle();
+      await settle();
+      return m.host.querySelector('button[aria-label="Model"]')!;
+    }
+
+    it('shows its own effort over the setting, and writes none', async () => {
+      const store = new RootStore();
+      setAgentEffort(store, 'claude', 'low');
+      const efforts = { value: 'high', picks: [] as string[] };
+      const chip = await renderBox(store, efforts);
+      expect(chip.textContent).toBe('Fable 5.1 High');
+      expect(agentEffort(store, 'claude')).toBe('low');
+    });
+
+    it('fills in no setting, unlike the AI panel', async () => {
+      const store = new RootStore();
+      await renderBox(store, { value: 'high', picks: [] });
+      expect(agentModel(store, 'claude')).toBeNull();
+      expect(agentEffort(store, 'claude')).toBeNull();
+    });
+
+    it('⌘⇧/ cycles the box, not the setting', async () => {
+      const store = new RootStore();
+      setAgentEffort(store, 'claude', 'low');
+      const efforts = { value: 'high', picks: [] as string[] };
+      await renderBox(store, efforts);
+      m!.host.querySelector('textarea')!.focus();
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            code: 'Slash',
+            metaKey: true,
+            shiftKey: true,
+          }),
+        );
+      });
+      expect(efforts.picks).toEqual(['xhigh']);
+      expect(agentEffort(store, 'claude')).toBe('low');
+    });
+
+    it('with no effort of its own follows the setting', async () => {
+      const store = new RootStore();
+      setAgentEffort(store, 'claude', 'max');
+      const chip = await renderBox(store, { value: null, picks: [] });
+      expect(chip.textContent).toBe('Fable 5.1 Max');
+    });
+  });
+
   it('a row per agent with what it runs; a row switches to that agent', async () => {
     const store = new RootStore();
     const chip = await render(store, 'claude');

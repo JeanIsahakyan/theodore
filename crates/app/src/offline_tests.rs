@@ -414,6 +414,7 @@ fn send(space: &str, text: &str) -> SpaceSendRequest {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     }
 }
 
@@ -443,6 +444,8 @@ async fn a_space_starts_and_takes_messages_offline() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .expect("create_space offline");

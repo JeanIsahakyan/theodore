@@ -203,6 +203,16 @@ pub struct Space {
     /// (a new space, or a checkpoint from before snapshots).
     #[serde(default)]
     pub worktree_head: Option<Sha>,
+    /// The effort this space's turns run at (`agents.<id>.effort`'s values).
+    /// `None` follows that setting: spaces from before efforts were per
+    /// space, until changed here.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Created with nothing to start from: no goal, no first turn, called
+    /// "New space" (docs/spaces.md §3 "New space"). The first message with
+    /// words in it ends this: it becomes the goal and names the space.
+    #[serde(default)]
+    pub blank: bool,
 }
 
 /// A merge of the base into the space, left in progress on conflicts
@@ -379,6 +389,12 @@ pub struct CreateSpaceRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub start_from: Option<SpaceStart>,
+    /// Defaults to the `agents.<id>.effort` setting.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Defaults to Edit.
+    #[serde(default)]
+    pub mode: Option<SpaceMode>,
 }
 
 /// New space's "From an issue" picker: the project's open issues, the
@@ -411,6 +427,9 @@ pub struct SpaceSendRequest {
     /// `save_attachment` ids sent with the message.
     #[serde(default)]
     pub attachments: Option<Vec<String>>,
+    /// From this turn on; `None` keeps the space's.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -506,6 +525,23 @@ pub struct MergeSpaceResult {
 pub struct SetSpacePinnedRequest {
     pub space: String,
     pub pinned: bool,
+}
+
+/// Changes what a space's next turn runs with, right away and for that
+/// space only (docs/spaces.md §3 "New space"). `None` leaves a field as it
+/// is; another `agent` starts from that agent's settings unless it comes
+/// with its own `model` / `effort`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SetSpaceSettingsRequest {
+    pub space: String,
+    #[serde(default)]
+    pub agent: Option<AgentId>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub mode: Option<SpaceMode>,
 }
 
 /// Mirroring into a local folder project ("Try in my folder" — some

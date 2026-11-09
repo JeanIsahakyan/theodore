@@ -914,6 +914,28 @@ pub async fn unarchive_space(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_space_settings(
+    op: crate::op::Op,
+    req: theodore_contract::SetSpaceSettingsRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::Space, CommandError> {
+    op.run(async move { core.set_space_settings(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_skills(
+    op: crate::op::Op,
+    project: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<SkillInfo>, CommandError> {
+    op.run(async move { core.project_skills(project).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_space_pinned(
     op: crate::op::Op,
     req: theodore_contract::SetSpacePinnedRequest,

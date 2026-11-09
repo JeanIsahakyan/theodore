@@ -100,6 +100,7 @@ impl Core {
                 agent: req.agent,
                 model: req.model.clone(),
                 mode: req.mode,
+                effort: req.effort.clone(),
                 held: false,
             }),
             activity: vec![],
@@ -205,6 +206,7 @@ impl Core {
             model: queued.as_ref().and_then(|q| q.model.clone()),
             mode: queued.as_ref().and_then(|q| q.mode),
             attachments: None,
+            effort: queued.as_ref().and_then(|q| q.effort.clone()),
         };
         let message = ChatMessage {
             // Sent now: it sorts after the turn it waited for.
@@ -349,7 +351,11 @@ impl Core {
                 .model
                 .as_ref()
                 .is_none_or(|m| Some(m) == space.model.as_ref())
-            && req.mode.is_none_or(|m| m == space.mode);
+            && req.mode.is_none_or(|m| m == space.mode)
+            && req
+                .effort
+                .as_ref()
+                .is_none_or(|e| Some(e) == space.effort.as_ref());
         let steer = match (&space.run, space.status) {
             (Some(run), SpaceStatus::Running) if plain && !text.is_empty() => self
                 .0

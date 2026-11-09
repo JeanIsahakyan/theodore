@@ -83,6 +83,7 @@ fn send(id: &str, text: &str) -> SpaceSendRequest {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     }
 }
 
@@ -112,6 +113,8 @@ async fn empty_space(f: &Fixtures, core: &Core, project: &Project) -> Space {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

@@ -61,6 +61,8 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project) -> (Space, Strin
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -76,6 +78,7 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project) -> (Space, Strin
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();

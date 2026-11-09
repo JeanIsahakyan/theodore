@@ -115,6 +115,8 @@ impl Env {
                 agent: None,
                 model: None,
                 start_from: None,
+                effort: None,
+                mode: None,
             })
             .await
             .expect("create_space")
@@ -323,6 +325,7 @@ async fn sending_is_refused_while_setting_up() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap_err();
@@ -508,6 +511,7 @@ async fn check_runs_after_a_turn_that_changed_files() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -1323,6 +1327,8 @@ async fn retry_in_a_host_project_reads_the_worktree_too() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();

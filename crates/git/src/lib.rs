@@ -377,6 +377,10 @@ impl GitPort for GitCli {
         self.show_op(repo, rev, path).await
     }
 
+    async fn list_dir(&self, repo: &Path, rev: &Sha, dir: &str) -> GitResult<Vec<String>> {
+        self.list_dir_op(repo, rev, dir).await
+    }
+
     async fn diff_file(
         &self,
         repo: &Path,

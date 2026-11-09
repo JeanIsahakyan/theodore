@@ -433,6 +433,7 @@ async fn progress_is_replaced_cleared_and_gone_after_the_turn() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
         .await
         .unwrap();

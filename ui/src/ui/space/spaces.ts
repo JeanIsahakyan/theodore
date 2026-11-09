@@ -205,6 +205,30 @@ export function sendModel(
   return agent === space.agent ? null : setting;
 }
 
+/** An effort picked in a space's box, for the agent it was picked for. */
+export type EffortPick = { agent: AgentId; effort: string };
+
+/** The effort a space's box has of its own for `agent`: the pick, else the
+ *  space's own while `agent` is the space's. `null`: the agent's setting
+ *  applies (a space from before efforts were per space, or another agent). */
+export function spaceOwnEffort(
+  space: Pick<Space, 'agent' | 'effort'>,
+  agent: AgentId,
+  picked: EffortPick | null,
+): string | null {
+  if (picked?.agent === agent) return picked.effort;
+  return agent === space.agent ? (space.effort ?? null) : null;
+}
+
+/** The effort a send from a space's box names: the pick; `null` keeps the
+ *  space's, or for another agent its own setting. */
+export function sendEffort(
+  agent: AgentId,
+  picked: EffortPick | null,
+): string | null {
+  return picked?.agent === agent ? picked.effort : null;
+}
+
 /** Days after a space is done before it archives itself; 0 = never. */
 export const AUTO_ARCHIVE_KEY = 'spaces.auto_archive_days';
 export const DEFAULT_AUTO_ARCHIVE_DAYS = 7;

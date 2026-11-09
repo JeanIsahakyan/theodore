@@ -1122,6 +1122,15 @@ impl CoreApi for AppCore {
     async fn space_skills(&self, space: String) -> Result<Vec<SkillInfo>, CommandError> {
         self.core.space_skills(&space).await.map_err(err)
     }
+    async fn project_skills(&self, project: String) -> Result<Vec<SkillInfo>, CommandError> {
+        self.core.project_skills(&project).await.map_err(err)
+    }
+    async fn set_space_settings(
+        &self,
+        req: theodore_contract::SetSpaceSettingsRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        self.core.set_space_settings(req).await.map_err(err)
+    }
     async fn space_review(
         &self,
         req: theodore_contract::SpaceReviewRequest,

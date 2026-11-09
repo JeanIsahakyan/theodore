@@ -627,6 +627,10 @@ export type CreateSpaceRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	start_from?: SpaceStart | null,
+	/**  Defaults to the `agents.<id>.effort` setting. */
+	effort?: string | null,
+	/**  Defaults to Edit. */
+	mode?: SpaceMode | null,
 };
 
 export type DelegateRequest = {
@@ -1454,6 +1458,7 @@ export type QueuedSend = {
 	agent?: AgentId | null,
 	model?: string | null,
 	mode?: SpaceMode | null,
+	effort?: string | null,
 	/**
 	 *  Waits for your "Send": Stop was pressed on the turn before it (even
 	 *  as that turn finished on its own), that turn failed, its own turn
@@ -1790,6 +1795,20 @@ export type SetSpacePinnedRequest = {
 	pinned: boolean,
 };
 
+/**
+ *  Changes what a space's next turn runs with, right away and for that
+ *  space only (docs/spaces.md §3 "New space"). `None` leaves a field as it
+ *  is; another `agent` starts from that agent's settings unless it comes
+ *  with its own `model` / `effort`.
+ */
+export type SetSpaceSettingsRequest = {
+	space: string,
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
+	mode?: SpaceMode | null,
+};
+
 export type SetTokenRequest = {
 	host: HostKind,
 	/**  `None` removes the stored token. */
@@ -2040,6 +2059,18 @@ export type Space = {
 	 *  (a new space, or a checkpoint from before snapshots).
 	 */
 	worktree_head?: Sha | null,
+	/**
+	 *  The effort this space's turns run at (`agents.<id>.effort`'s values).
+	 *  `None` follows that setting: spaces from before efforts were per
+	 *  space, until changed here.
+	 */
+	effort?: string | null,
+	/**
+	 *  Created with nothing to start from: no goal, no first turn, called
+	 *  "New space" (docs/spaces.md §3 "New space"). The first message with
+	 *  words in it ends this: it becomes the goal and names the space.
+	 */
+	blank?: boolean,
 };
 
 export type SpaceAnswerItem = {
@@ -2279,6 +2310,8 @@ export type SpaceSendRequest = {
 	mode?: SpaceMode | null,
 	/**  `save_attachment` ids sent with the message. */
 	attachments?: string[] | null,
+	/**  From this turn on; `None` keeps the space's. */
+	effort?: string | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

@@ -74,7 +74,7 @@ pub(crate) async fn run_model(
     }
 }
 
-/// The effort a run asking for `asked` gets; see [`run_model`].
+/// `run_model` for the effort: a space pins it the same way.
 pub(crate) async fn run_effort(
     store: &Arc<dyn Store>,
     agent: AgentId,

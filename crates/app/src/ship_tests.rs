@@ -142,6 +142,8 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project, goal: &str) -> S
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -158,6 +160,7 @@ async fn turn(f: &Fixtures, core: &Core, s: &Space, text: &str, head: &str) -> S
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -412,6 +415,8 @@ async fn nothing_to_ship_without_changes() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -488,6 +493,7 @@ async fn a_push_commit_says_what_changed_not_what_was_said() {
             model: None,
             mode: None,
             attachments: None,
+            effort: None,
         })
     };
     say(
@@ -764,6 +770,7 @@ async fn run_mode_reaches_the_agent() {
         model: None,
         mode: Some(SpaceMode::Run),
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();

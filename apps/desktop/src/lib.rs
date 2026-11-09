@@ -118,6 +118,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::revert_space_file,
             commands::unarchive_space,
             commands::set_space_pinned,
+            commands::set_space_settings,
+            commands::project_skills,
             commands::space_send_feedback,
             commands::space_base_status,
             commands::update_space_from_base,

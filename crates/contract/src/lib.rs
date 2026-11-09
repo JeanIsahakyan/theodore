@@ -1152,6 +1152,7 @@ pub fn types() -> specta::Types {
         .register::<SpaceBaseStatus>()
         .register::<SpaceFixCiRequest>()
         .register::<SetSpacePinnedRequest>()
+        .register::<SetSpaceSettingsRequest>()
         .register::<SpaceQuestion>()
         .register::<SpaceQuestionItem>()
         .register::<SpaceAnswerRequest>()

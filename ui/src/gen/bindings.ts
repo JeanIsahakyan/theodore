@@ -135,6 +135,8 @@ export const commands = {
 	revertSpaceFile: (req: RevertSpaceFileRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("revert_space_file", { req })),
 	unarchiveSpace: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("unarchive_space", { space })),
 	setSpacePinned: (req: SetSpacePinnedRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("set_space_pinned", { req })),
+	setSpaceSettings: (req: SetSpaceSettingsRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("set_space_settings", { req })),
+	projectSkills: (project: string) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("project_skills", { project })),
 	spaceSendFeedback: (req: SpaceFeedbackRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send_feedback", { req })),
 	spaceBaseStatus: (space: string) => typedError<SpaceBaseStatus, CommandError>(__TAURI_INVOKE("space_base_status", { space })),
 	updateSpaceFromBase: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("update_space_from_base", { space })),
@@ -817,6 +819,10 @@ export type CreateSpaceRequest = {
 	agent?: AgentId | null,
 	model?: string | null,
 	start_from?: SpaceStart | null,
+	/**  Defaults to the `agents.<id>.effort` setting. */
+	effort?: string | null,
+	/**  Defaults to Edit. */
+	mode?: SpaceMode | null,
 };
 
 export type DelegateRequest = {
@@ -1743,6 +1749,20 @@ export type SetSpacePinnedRequest = {
 	pinned: boolean,
 };
 
+/**
+ *  Changes what a space's next turn runs with, right away and for that
+ *  space only (docs/spaces.md §3 "New space"). `None` leaves a field as it
+ *  is; another `agent` starts from that agent's settings unless it comes
+ *  with its own `model` / `effort`.
+ */
+export type SetSpaceSettingsRequest = {
+	space: string,
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
+	mode?: SpaceMode | null,
+};
+
 export type SetTokenRequest = {
 	host: HostKind,
 	/**  `None` removes the stored token. */
@@ -1964,6 +1984,18 @@ export type Space = {
 	 *  (a new space, or a checkpoint from before snapshots).
 	 */
 	worktree_head?: Sha | null,
+	/**
+	 *  The effort this space's turns run at (`agents.<id>.effort`'s values).
+	 *  `None` follows that setting: spaces from before efforts were per
+	 *  space, until changed here.
+	 */
+	effort?: string | null,
+	/**
+	 *  Created with nothing to start from: no goal, no first turn, called
+	 *  "New space" (docs/spaces.md §3 "New space"). The first message with
+	 *  words in it ends this: it becomes the goal and names the space.
+	 */
+	blank?: boolean,
 };
 
 export type SpaceAnswerItem = {
@@ -2203,6 +2235,8 @@ export type SpaceSendRequest = {
 	mode?: SpaceMode | null,
 	/**  `save_attachment` ids sent with the message. */
 	attachments?: string[] | null,
+	/**  From this turn on; `None` keeps the space's. */
+	effort?: string | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

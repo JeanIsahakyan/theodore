@@ -206,6 +206,10 @@ pub trait GitPort: Send + Sync {
     ) -> GitResult<Revision>;
     /// File contents at `rev`, `None` if absent.
     async fn show(&self, repo: &Path, rev: &Sha, path: &str) -> GitResult<Option<Vec<u8>>>;
+    /// The names directly under `dir` at `rev`; empty when it has none.
+    async fn list_dir(&self, _repo: &Path, _rev: &Sha, _dir: &str) -> GitResult<Vec<String>> {
+        Ok(Vec::new())
+    }
     /// One file's change between two commits (not their merge base), `None`
     /// when it didn't change. A rename shows as an add: only `path` is looked at.
     async fn diff_file(

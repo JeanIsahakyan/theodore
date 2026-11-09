@@ -364,6 +364,17 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// What a space's next turn runs with, for that space only.
+    async fn set_space_settings(
+        &self,
+        _req: theodore_contract::SetSpaceSettingsRequest,
+    ) -> Result<theodore_contract::Space, CommandError> {
+        Err(not_ready())
+    }
+    /// The skills a new space of this project would see (New space's `/`).
+    async fn project_skills(&self, _project: String) -> Result<Vec<SkillInfo>, CommandError> {
+        Err(not_ready())
+    }
     /// "Send to agent": review threads / drafts / findings as the next turn.
     async fn space_send_feedback(
         &self,

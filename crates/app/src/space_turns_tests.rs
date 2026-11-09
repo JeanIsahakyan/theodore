@@ -75,6 +75,8 @@ fn request(project: &Project, goal: &str) -> CreateSpaceRequest {
         agent: None,
         model: None,
         start_from: None,
+        effort: None,
+        mode: None,
     }
 }
 
@@ -101,6 +103,7 @@ async fn turn(f: &Fixtures, core: &Core, id: &str, text: &str, reply: &str, head
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -232,6 +235,7 @@ async fn undo_is_refused_while_running_and_when_archived() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -579,14 +583,6 @@ async fn feedback_from_another_pr_is_refused() {
 async fn a_cyrillic_goal_names_the_space_and_repeats_get_a_number() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
-    let a = core.create_space(request(&project, "")).await.unwrap();
-    assert_eq!(a.name, "space");
-    let mut req = request(&project, "");
-    req.goal = String::new();
-    let b = core.create_space(req).await.unwrap();
-    assert_eq!(b.name, "space-2");
-    assert_eq!(b.branch, "space/space-2");
-
     f.agents.push_script(done("ok"));
     let c = core
         .create_space(request(&project, "исправить логин"))
@@ -620,6 +616,7 @@ async fn send(f: &Fixtures, core: &Core, id: &str, text: &str, agent: Option<Age
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -1165,6 +1162,7 @@ async fn a_stopped_turn_is_logged_as_stopped() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -1255,6 +1253,7 @@ async fn a_reply_stores_what_its_turn_changed() {
         model: Some("opus".into()),
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -1477,6 +1476,7 @@ async fn a_handed_in_plan_leaves_the_written_text_in_the_steps() {
         model: None,
         mode: Some(SpaceMode::Plan),
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -1503,6 +1503,7 @@ async fn a_plan_in_its_text_blocks_stays_the_reply() {
         model: None,
         mode: Some(SpaceMode::Plan),
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -1599,6 +1600,7 @@ async fn only_a_turn_ending_stamps_attention() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();

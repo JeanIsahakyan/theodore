@@ -90,6 +90,7 @@ import type {
   SpaceLogLine,
   SpaceRunRequest,
   SetSpacePinnedRequest,
+  SetSpaceSettingsRequest,
   SpaceSetupRequest,
   SpaceTerminalInfo,
   SpaceTrustRequest,
@@ -344,6 +345,10 @@ export const api = {
   spaceQueued: (req: SpaceQueuedRequest) => call<null>('space_queued', { req }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
   spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
+  projectSkills: (project: string) =>
+    call<SkillInfo[]>('project_skills', { project }),
+  setSpaceSettings: (req: SetSpaceSettingsRequest) =>
+    call<Space>('set_space_settings', { req }),
   spaceReview: (req: SpaceReviewRequest) =>
     call<OpenPrResponse>('space_review', { req }),
   archiveSpace: (space: string) => call<null>('archive_space', { space }),

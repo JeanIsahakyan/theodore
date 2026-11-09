@@ -101,6 +101,8 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project) -> Space {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -202,6 +204,8 @@ async fn an_update_completed_or_aborted_reindexes_the_files_it_moved() {
             agent: None,
             model: None,
             start_from: None,
+            effort: None,
+            mode: None,
         })
         .await
         .unwrap();
@@ -510,6 +514,7 @@ async fn back_to_here_over_an_update_restores_the_base_and_waits_for_it() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -545,6 +550,7 @@ async fn next_turn(f: &Fixtures, core: &Core, s: &Space, head: &str) -> Space {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();
@@ -614,6 +620,7 @@ async fn conflicts_left_after_a_turn_hold_the_queue() {
         model: None,
         mode: None,
         attachments: None,
+        effort: None,
     })
     .await
     .unwrap();

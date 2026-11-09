@@ -40,6 +40,7 @@ import type {
   AgentId,
   FileDiff,
   HunkId,
+  SetSpaceSettingsRequest,
   ShipAction,
   SkillInfo,
   Space,
@@ -66,7 +67,15 @@ import type { VirtualChatControl } from './VirtualChat';
 import { canSendNow } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
 import { latinKey, useViewKeys } from '../keys';
-import { AgentChip, ChipMenu, Composer } from './Composer';
+import {
+  AgentChip,
+  boxAgent,
+  ChipMenu,
+  Composer,
+  useEnabledAgents,
+} from './Composer';
+import { running } from '../AgentMenu';
+import { useAgentModels } from '../useAgentModels';
 import { agentModel } from '../agentModel';
 import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
@@ -113,8 +122,11 @@ import {
   plainError,
   toggleDrawer,
   sendModel,
+  sendEffort,
+  spaceOwnEffort,
   spaceOwnModel,
   type Drawer,
+  type EffortPick,
   type ModelPick,
 } from './spaces';
 
@@ -980,6 +992,16 @@ const SpaceComposer = observer(function SpaceComposer({
     if (planHere == null) setRevising(false);
   }, [planHere]);
 
+  // A space owns what it runs with: a pick is written to it at once, so
+  // it's still there after you leave the page, and changes nothing else.
+  // During a turn a pick waits and goes with the next send instead.
+  const own = (settings: Omit<SetSpaceSettingsRequest, 'space'>) => {
+    if (!run && space.status !== 'archived') {
+      void api
+        .setSpaceSettings({ space: space.id, ...settings })
+        .catch(() => {});
+    }
+  };
   // Sticky per space: the next turn starts in the space's last mode.
   const [mode, setMode] = useState<SpaceMode>(space.mode);
   useEffect(() => setMode(space.mode), [space.mode]);
@@ -1001,6 +1023,17 @@ const SpaceComposer = observer(function SpaceComposer({
   // The agent for the next turn, with its model and effort (the chip).
   const [agent, setAgent] = useState<AgentId>(space.agent);
   useEffect(() => setAgent(space.agent), [space.agent]);
+  // The effort picked here, until the space holds it, as for the model.
+  const [pickedEffort, setPickedEffort] = useState<EffortPick | null>(null);
+  useEffect(() => setPickedEffort(null), [space.id]);
+  useEffect(() => {
+    if (
+      pickedEffort?.agent === space.agent &&
+      pickedEffort.effort === space.effort
+    ) {
+      setPickedEffort(null);
+    }
+  }, [pickedEffort, space.agent, space.effort]);
   // A model picked here is this space's; the space's own otherwise. Done
   // once the space holds it.
   const [picked, setPicked] = useState<ModelPick | null>(null);
@@ -1010,10 +1043,20 @@ const SpaceComposer = observer(function SpaceComposer({
       setPicked(null);
     }
   }, [picked, space.agent, space.model]);
+  const pickMode = (m: SpaceMode) => {
+    setMode(m);
+    own({ mode: m });
+  };
   handle.current = {
     focus: () => input.current?.focus(),
-    cycleMode: () => !locked && setMode((m) => nextMode(m)),
+    cycleMode: () => !locked && pickMode(nextMode(mode)),
   };
+  // A blank space is waiting for you: focus lands in the box the moment it
+  // can be typed in (setup done).
+  const waitingForYou = !!space.blank && !settingUp(space) && !locked;
+  useEffect(() => {
+    if (waitingForYou) input.current?.focus();
+  }, [waitingForYou]);
   revise.current = () => {
     setMode('plan');
     setRevising(true);
@@ -1048,6 +1091,7 @@ const SpaceComposer = observer(function SpaceComposer({
         model: now
           ? null
           : sendModel(space, agent, picked, agentModel(store, agent)),
+        effort: now ? null : sendEffort(agent, pickedEffort),
         mode: mode === space.mode ? null : mode,
         attachments: attached.length ? attached.map((a) => a.id) : null,
       },
@@ -1118,17 +1162,28 @@ const SpaceComposer = observer(function SpaceComposer({
             <>
               <AgentChip
                 value={agent}
-                onChange={setAgent}
+                onChange={(a) => {
+                  setAgent(a);
+                  own({ agent: a });
+                }}
                 isDisabled={locked}
                 modelOf={(a) => spaceOwnModel(space, a, picked)}
-                onPickModel={(a, model) => setPicked({ agent: a, model })}
+                onPickModel={(a, model) => {
+                  setPicked({ agent: a, model });
+                  own({ agent: a, model });
+                }}
+                effortOf={(a) => spaceOwnEffort(space, a, pickedEffort)}
+                onPickEffort={(a, effort) => {
+                  setPickedEffort({ agent: a, effort });
+                  own({ agent: a, effort });
+                }}
               />
               <ChipMenu
                 ariaLabel="Mode"
                 label={MODES.find((m) => m.id === mode)?.label ?? mode}
                 items={MODES}
                 selected={mode}
-                onSelect={setMode}
+                onSelect={pickMode}
                 isDisabled={locked}
                 keep
               />
@@ -1256,10 +1311,12 @@ const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
 ];
 
 /** New space: a composer, not a form — say what you want; the project,
- *  agent and base sit as chips around it. ⏎ creates and sends it as the
- *  first turn; the space opens on that turn. Picking "An existing issue /
- *  branch / PR" adopts it instead: the worktree starts on its tip, and
- *  shipping pushes back to it rather than a fresh `<login>/<slug>`. */
+ *  agent and base sit as chips around it. ⏎ creates it and sends what you
+ *  typed as the first turn; nothing typed, a blank space opens instead,
+ *  waiting for its first message. Picking "An existing issue / branch / PR"
+ *  adopts it instead: the worktree starts on its tip, and shipping pushes
+ *  back to it rather than a fresh `<login>/<slug>`. What the chips pick is
+ *  this space's alone; they start from your settings and write none. */
 export const NewSpaceModal = observer(function NewSpaceModal() {
   const store = useRootStore();
   const ui = useUi();
@@ -1271,6 +1328,12 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   );
   const [goal, setGoal] = useState('');
   const [agent, setAgent] = useState<AgentId | null>(null);
+  const [pickedModel, setPickedModel] = useState<ModelPick | null>(null);
+  const [pickedEffort, setPickedEffort] = useState<EffortPick | null>(null);
+  const [mode, setMode] = useState<SpaceMode>('edit');
+  const offered = useEnabledAgents();
+  const catalog = useAgentModels(offered);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [startKind, setStartKind] = useState<StartKind>('goal');
   const [issueId, setIssueId] = useState<string | null>(null);
@@ -1314,25 +1377,59 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
           : null;
   // A plain goal needs the text; an adopted issue/branch/PR needs that
   // picked/typed instead — the goal becomes an optional extra note.
-  const canStart =
-    startKind === 'goal' ? goal.trim() !== '' : startFrom !== null;
+  const canStart = startKind === 'goal' || startFrom !== null;
+  // `/` in the box: what a space of this project would see.
+  useEffect(() => {
+    if (!project) return;
+    let live = true;
+    void api
+      .projectSkills(project)
+      .then((list) => live && setSkills(list))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [project]);
+  const repo = chosen ? `${chosen.repo.owner}/${chosen.repo.name}` : undefined;
+  const modelOf = (a: AgentId) =>
+    pickedModel?.agent === a ? pickedModel.model : null;
+  const effortOf = (a: AgentId) =>
+    pickedEffort?.agent === a ? pickedEffort.effort : null;
   const start = async () => {
     if (!project || !canStart || busy) return;
     setBusy(true);
+    // What's shown is what runs.
+    const current = boxAgent(store, agent, offered, repo);
+    const shown = current
+      ? running(
+          store,
+          current,
+          catalog[current],
+          modelOf(current),
+          effortOf(current),
+        )
+      : null;
+    const typed = goal.trim();
+    // `/report …`: as in a space's box, a report about this chat, not a turn.
+    const report = reportCommand(typed, skills);
     try {
       const s = await api.createSpace({
         project,
-        goal: goal.trim(),
+        goal: report == null ? typed : '',
         name: null,
         branch: null,
         base: null,
-        agent,
-        // The core pins the agent's model setting to the space.
-        model: null,
+        agent: current,
+        model: shown?.model?.id ?? null,
+        effort: shown?.effort ?? null,
+        mode,
         start_from: startFrom,
       });
       ui.closeModal();
       ui.go({ name: 'space', id: s.id });
+      if (report != null) {
+        void reportChat(store, spaceChatKey(s.id), null, report);
+      }
     } catch (e) {
       // Anything else is toasted by api.ts.
       if (e instanceof CommandFailure && e.code === HOST_UNSUPPORTED)
@@ -1386,11 +1483,32 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             quiet
             autoFocus
             disabled={busy || !project}
-            canSubmitEmpty={startKind !== 'goal' && startFrom !== null}
+            canSubmitEmpty={canStart}
             submit={busy ? 'Creating…' : 'Create'}
+            skills={skills}
             chips={
               <>
-                <AgentChip value={agent} onChange={setAgent} />
+                <AgentChip
+                  value={agent}
+                  onChange={setAgent}
+                  repo={repo}
+                  modelOf={modelOf}
+                  onPickModel={(a, model) =>
+                    setPickedModel({ agent: a, model })
+                  }
+                  effortOf={effortOf}
+                  onPickEffort={(a, effort) =>
+                    setPickedEffort({ agent: a, effort })
+                  }
+                />
+                <ChipMenu
+                  ariaLabel="Mode"
+                  label={MODES.find((m) => m.id === mode)?.label ?? mode}
+                  items={MODES}
+                  selected={mode}
+                  onSelect={setMode}
+                  keep
+                />
                 <ChipMenu
                   ariaLabel="Start from"
                   label={

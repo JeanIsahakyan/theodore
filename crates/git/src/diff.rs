@@ -191,6 +191,33 @@ impl GitCli {
         }
     }
 
+    /// `ls-tree --name-only` of one directory, names relative to it.
+    pub(crate) async fn list_dir_op(
+        &self,
+        repo: &Path,
+        rev: &Sha,
+        dir: &str,
+    ) -> GitResult<Vec<String>> {
+        let askpass = self.ensure_askpass()?;
+        let dir = format!("{}/", dir.trim_end_matches('/'));
+        let args = ["ls-tree", "--name-only", rev.as_str(), "--", dir.as_str()];
+        let out = GitProc {
+            cwd: repo,
+            askpass: &askpass,
+            args: &args,
+            token: None,
+            stdin: None,
+        }
+        .run()
+        .await?;
+        let out = String::from_utf8_lossy(&out);
+        Ok(out
+            .lines()
+            .filter_map(|l| l.strip_prefix(dir.as_str()))
+            .map(str::to_string)
+            .collect())
+    }
+
     pub(crate) async fn blob_size_op(
         &self,
         repo: &Path,

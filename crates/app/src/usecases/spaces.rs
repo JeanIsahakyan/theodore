@@ -9,8 +9,9 @@
 use std::path::{Path, PathBuf};
 
 use theodore_contract::{
-    ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, Space, SpaceMode,
-    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel, models,
+    ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, SetSpaceSettingsRequest,
+    Space, SpaceMode, SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel,
+    models,
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
@@ -59,6 +60,7 @@ impl Core {
             .ok_or_else(|| {
                 AppError::Invalid(format!("project {} has no default branch yet", project.id))
             })?;
+        let id = new_space_id();
         // Whether the dialog's own name/branch wins over the agent's later
         // proposal (`space_naming::apply`, docs/spaces.md §3 "New space").
         let user_named = req
@@ -70,8 +72,18 @@ impl Core {
         // either — it's not this space's to rename, and `fork_sha` tracks
         // it by this exact name.
         let user_branched = req.branch.is_some() || start.adopt.is_some();
+        // Nothing to start from at all: `space_blank`.
+        let blank = req.goal.trim().is_empty()
+            && start.adopt.is_none()
+            && start.title.is_none()
+            && start.issue.is_none()
+            && !user_named
+            && !user_branched;
         let name = match req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(n) => n.to_string(),
+            // No siblings to dedupe against: the id can't collide, not even
+            // with a blank space created at the same moment.
+            None if blank => crate::usecases::space_blank::blank_name(&id),
             // Named after the goal; a second "fix login" in the project
             // becomes `fix-login-2`, and so does its branch.
             None => {
@@ -117,7 +129,6 @@ impl Core {
             }
         };
 
-        let id = new_space_id();
         let wt = self
             .0
             .deps
@@ -175,10 +186,16 @@ impl Core {
             status: SpaceStatus::Idle,
             agent,
             // Pinned now: a later change to the setting doesn't change a
-            // space that started on this model.
+            // space that started on this model, or at this effort.
             model: crate::agent_defaults::run_model(&self.0.deps.store, agent, req.model.clone())
                 .await,
-            mode: SpaceMode::Edit,
+            effort: crate::agent_defaults::run_effort(
+                &self.0.deps.store,
+                agent,
+                req.effort.clone(),
+            )
+            .await,
+            mode: req.mode.unwrap_or(SpaceMode::Edit),
             review_pr: None,
             pr: adopted_pr.as_ref().map(|(r, _)| r.id()),
             turns: 0,
@@ -198,7 +215,14 @@ impl Core {
             attention_at: None,
             // An adopted branch or PR with no note has no goal to title it
             // by: it is called by its branch, or by "#<n> <title>".
-            title: if has_goal { None } else { start.title.clone() },
+            title: if blank {
+                Some(crate::usecases::space_blank::BLANK_TITLE.to_string())
+            } else if has_goal {
+                None
+            } else {
+                start.title.clone()
+            },
+            blank,
             handoff_summary: None,
             progress: None,
             updating: None,
@@ -257,32 +281,22 @@ impl Core {
                 model: None,
                 mode: None,
                 attachments: None,
+                effort: None,
             })
             .await?;
         }
         // A better name and a chat title, from the chat agent (never turn
         // 1's own, which the dialog may have overridden): backgrounded, so
         // it never delays turn 1 (`space_naming`).
-        if crate::usecases::space_naming::has_something_to_name(&space.goal) {
-            let configured = self
-                .setting_agent_scoped("agents.chat", Some(&project.repo.slug()), AgentId::Claude)
-                .await;
-            let chat_agent = self.effective_agent(configured).await;
-            let core = self.clone();
-            let (id2, goal, cwd) = (id.clone(), space.goal.clone(), wt.path.clone());
-            tokio::spawn(async move {
-                crate::usecases::space_naming::apply(
-                    &core,
-                    id2,
-                    chat_agent,
-                    goal,
-                    cwd,
-                    user_named,
-                    user_branched,
-                )
-                .await;
-            });
-        }
+        self.spawn_naming(
+            &project,
+            &id,
+            space.goal.clone(),
+            wt.path.clone(),
+            user_named,
+            user_branched,
+        )
+        .await;
         self.space_row(&id).await
     }
 
@@ -306,6 +320,26 @@ impl Core {
     /// (docs/spaces.md §8). Returns the message id; the reply arrives as a
     /// `chat_message` row.
     pub async fn space_send(&self, req: SpaceSendRequest) -> AppResult<String> {
+        let queue = self.space_queue_lock(&req.space).await;
+        // Yours, so a blank space's first one: that's what starts it.
+        let start = self.begin_blank(&req).await?;
+        let sent = self.space_send_as(req, None).await;
+        match (&sent, start) {
+            (Err(_), Some(start)) => self.undo_begin_blank(start).await,
+            (Ok(_), Some(start)) => {
+                // Finding the chat agent isn't the queue's business.
+                drop(queue);
+                self.name_started_blank(start).await;
+            }
+            (_, None) => {}
+        }
+        sent
+    }
+
+    /// `space_send`, for a turn Theodore starts itself ("Set up with
+    /// agent", Fix CI, a review's feedback, an update's merge conflicts):
+    /// never a blank space's first message, so it names nothing.
+    pub(crate) async fn system_send(&self, req: SpaceSendRequest) -> AppResult<String> {
         let _queue = self.space_queue_lock(&req.space).await;
         self.space_send_as(req, None).await
     }
@@ -402,6 +436,12 @@ impl Core {
                 .flatten()
         });
         let mode = req.mode.unwrap_or(space.mode);
+        // Like the model: another agent starts from its own setting.
+        let effort = req.effort.clone().or_else(|| {
+            (agent == space.agent)
+                .then(|| space.effort.clone())
+                .flatten()
+        });
 
         // A worktree removed by hand comes back from the checkpoint ref.
         let repo_path = self.ensure_project_cache(&project).await?;
@@ -421,6 +461,7 @@ impl Core {
             "run": run_id,
             "agent": agent,
             "model": model,
+            "effort": effort,
             "mode": mode,
             "error": null,
             // Said once, in this turn's prompt.
@@ -468,8 +509,12 @@ impl Core {
                 .unwrap_or_else(|| text.clone())
         });
         let ask = with_attachments(ask, &attachments);
+        // The space's own, else the setting it follows.
         let ultracode = agent == AgentId::Claude
-            && self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE;
+            && match &effort {
+                Some(e) => e.trim() == ULTRACODE,
+                None => self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE,
+            };
         let wrap = |prompt: String| {
             let prompt = crate::usecases::space_pr::with_continue_note(&space, prompt);
             let prompt = crate::usecases::space_checkpoints::with_reverts(&space, prompt);
@@ -514,6 +559,7 @@ impl Core {
             space: space.clone(),
             agent,
             model,
+            effort,
             mode,
             prompt,
             resume,
@@ -761,6 +807,54 @@ impl Core {
     /// Pin/unpin a space (docs/spaces.md §3): pinned spaces sort first in
     /// the sidebar and ⌘K. Works on an archived space too; it keeps no
     /// worktree state.
+    /// What the space's next turn runs with; that space only, never a
+    /// setting. Refused during a turn: what a send carries then is what
+    /// the queue keeps.
+    pub async fn set_space_settings(&self, req: SetSpaceSettingsRequest) -> AppResult<Space> {
+        let _queue = self.space_queue_lock(&req.space).await;
+        let row = self.space_row(&req.space).await?;
+        match row.status {
+            SpaceStatus::Archived => {
+                return Err(AppError::Invalid("this space is archived".into()));
+            }
+            SpaceStatus::Running => {
+                return Err(AppError::Invalid(
+                    "the agent is still working in this space".into(),
+                ));
+            }
+            SpaceStatus::Idle | SpaceStatus::Failed => {}
+        }
+        let mut patch = serde_json::Map::new();
+        if let Some(agent) = req.agent {
+            patch.insert("agent".into(), serde_json::json!(agent));
+            if agent != row.agent {
+                // The old agent's: this one starts from its own settings.
+                patch.insert("model".into(), serde_json::Value::Null);
+                patch.insert("effort".into(), serde_json::Value::Null);
+            }
+        }
+        if let Some(model) = req.model {
+            patch.insert("model".into(), serde_json::json!(model));
+        }
+        if let Some(effort) = req.effort {
+            patch.insert("effort".into(), serde_json::json!(effort));
+        }
+        if let Some(mode) = req.mode {
+            patch.insert("mode".into(), serde_json::json!(mode));
+        }
+        if patch.is_empty() {
+            return Ok(row);
+        }
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: row.id,
+            action: SyncActionCode::C,
+            data: Some(serde_json::Value::Object(patch)),
+        }])
+        .await?;
+        self.space_row(&req.space).await
+    }
+
     pub async fn set_space_pinned(&self, space: &str, pinned: bool) -> AppResult<Space> {
         let row = self.space_row(space).await?;
         if row.pinned == pinned {
@@ -920,6 +1014,8 @@ struct Turn {
     space: Space,
     agent: AgentId,
     model: Option<String>,
+    /// `None` follows the setting (`AgentDefaults`).
+    effort: Option<String>,
     mode: SpaceMode,
     prompt: String,
     /// The agent session this turn continues; `prompt` is then only the
@@ -1161,6 +1257,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         space,
         agent,
         model,
+        effort,
         mode,
         prompt,
         resume,
@@ -1201,7 +1298,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         },
         mcp,
         model,
-        effort: None,
+        effort,
         stall_after_ms: core.stall_after_ms().await,
         env,
         user_mcp: core.user_mcp_allowed().await,
@@ -1786,7 +1883,9 @@ fn base_system_prompt(space: &Space) -> String {
          user to Ship in the space's header. Theodore commits your edits after every turn, \
          so you don't need to. End each turn with a short summary of what you \
          changed and anything left to do.",
-        goal = if space.goal.is_empty() {
+        goal = if space.blank {
+            "not stated yet; the user's messages say what this space is for"
+        } else if space.goal.is_empty() {
             &space.name
         } else {
             &space.goal

@@ -27,6 +27,7 @@ pub mod ship;
 pub(crate) mod ship_title;
 pub mod skills;
 pub mod space_agent_tools;
+pub mod space_blank;
 pub mod space_checkpoints;
 pub mod space_commands;
 pub mod space_feedback;

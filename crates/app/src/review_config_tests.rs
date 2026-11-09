@@ -426,6 +426,8 @@ async fn space_turns_carry_the_repo_instructions() {
         agent: None,
         model: None,
         start_from: None,
+        effort: None,
+        mode: None,
     })
     .await
     .expect("create_space");
