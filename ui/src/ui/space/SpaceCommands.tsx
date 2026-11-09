@@ -104,6 +104,24 @@ export function useSpaceLogsSeed(space: string): void {
   }, [store, space]);
 }
 
+/** How long the trust card's answers wait after it appears (or shows other
+ *  commands): a click aimed at what was there before can't answer it. */
+export const TRUST_ARM_MS = 400;
+
+/** True once `key` has stayed the same for `TRUST_ARM_MS`; false for `null`. */
+function useArmedFor(key: string | null): boolean {
+  const [armedFor, setArmedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (key === null) return;
+    const timer = window.setTimeout(() => setArmedFor(key), TRUST_ARM_MS);
+    return () => {
+      window.clearTimeout(timer);
+      setArmedFor(null);
+    };
+  }, [key]);
+  return key !== null && armedFor === key;
+}
+
 /** "Run commands from this repo?" — prominent until answered; after
  *  "Not now" a small note that opens it again. */
 export const TrustPrompt = observer(function TrustPrompt({
@@ -119,6 +137,12 @@ export const TrustPrompt = observer(function TrustPrompt({
   const [busy, setBusy] = useState<'allow' | 'deny' | null>(null);
   const state = trustState(config);
   const repo = config?.repo_commands;
+  const onScreen =
+    !!state &&
+    !!repo &&
+    space.status !== 'archived' &&
+    (state !== 'denied' || reviewing);
+  const armed = useArmedFor(onScreen ? repo.hash : null);
   if (!state || !repo || space.status === 'archived') return null;
 
   if (state === 'denied' && !reviewing) {
@@ -186,7 +210,7 @@ export const TrustPrompt = observer(function TrustPrompt({
             size="sm"
             variant="ghost"
             className="space-trust-deny"
-            isDisabled={busy != null}
+            isDisabled={busy != null || !armed}
             isPending={busy === 'deny'}
             onPress={() => void answer(false)}
           >
@@ -196,7 +220,7 @@ export const TrustPrompt = observer(function TrustPrompt({
         <Button
           size="sm"
           className="space-trust-allow"
-          isDisabled={busy != null}
+          isDisabled={busy != null || !armed}
           isPending={busy === 'allow'}
           onPress={() => void answer(true)}
         >

@@ -380,6 +380,12 @@ impl Core {
     /// "Run commands from this repo?": Allow (stored for the project
     /// against `hash`) or Not now (skipped in this space).
     pub async fn space_trust(&self, req: SpaceTrustRequest) -> AppResult<Space> {
+        tracing::info!(
+            space = %req.space,
+            allow = req.allow,
+            hash = req.hash.get(..8).unwrap_or(&req.hash),
+            "repo commands answered"
+        );
         let space = self.space_row(&req.space).await?;
         let project = self.space_project(&space).await?;
         let cfg = self.prompt_config_of(&space, &project).await;

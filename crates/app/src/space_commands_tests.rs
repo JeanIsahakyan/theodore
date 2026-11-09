@@ -382,6 +382,7 @@ async fn repo_commands_wait_for_approval_and_a_change_asks_again() {
     assert!(stale.is_err(), "a hash the user didn't see is refused");
 
     e.f.agents.push_script(done("ok"));
+    let (log, guard) = crate::testkit::capture_lines();
     e.core
         .space_trust(SpaceTrustRequest {
             space: s.id.clone(),
@@ -390,6 +391,13 @@ async fn repo_commands_wait_for_approval_and_a_change_asks_again() {
         })
         .await
         .unwrap();
+    drop(guard);
+    let answered = log.matching("repo commands answered");
+    assert_eq!(answered.len(), 1, "{answered:?}");
+    assert!(answered[0].contains("allow=true"), "{}", answered[0]);
+    assert!(answered[0].contains(&s.id), "{}", answered[0]);
+    assert!(answered[0].contains(&repo.hash[..8]), "{}", answered[0]);
+    assert!(!answered[0].contains(&repo.hash), "only a prefix is logged");
     e.until(&s.id, |s| {
         setup_status(s) == Some(SetupStatus::Done) && s.turns == 1
     })

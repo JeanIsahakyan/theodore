@@ -3686,17 +3686,70 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ProductLog {
     }
 }
 
-/// Records product events until the guard drops.
+/// `tracing` caches whether anyone wants an event at its call site, and
+/// parallel tests' short-lived subscribers race on that cache: a capture
+/// could lose an event. One subscriber that always lives keeps it "yes".
 #[cfg(test)]
-pub fn capture_product() -> (ProductLog, tracing::subscriber::DefaultGuard) {
-    use tracing_subscriber::layer::SubscriberExt as _;
-    // `tracing` caches whether anyone wants an event at its call site, and
-    // parallel tests' short-lived subscribers race on that cache: a capture
-    // could lose an event. One subscriber that always lives keeps it "yes".
+fn keep_call_sites_interested() {
     static ALWAYS_INTERESTED: std::sync::Once = std::sync::Once::new();
     ALWAYS_INTERESTED.call_once(|| {
         let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
     });
+}
+
+/// Every log line while capturing: `message field=value …`.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct LineLog(Arc<Mutex<Vec<String>>>);
+
+#[cfg(test)]
+impl LineLog {
+    /// The lines containing `needle`.
+    pub fn matching(&self, needle: &str) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains(needle))
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LineLog {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        struct Line(String);
+        impl tracing::field::Visit for Line {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0 += &format!(" {}={value:?}", field.name());
+            }
+        }
+        let mut line = Line(String::new());
+        event.record(&mut line);
+        self.0.lock().unwrap().push(line.0);
+    }
+}
+
+/// Records log lines until the guard drops.
+#[cfg(test)]
+pub fn capture_lines() -> (LineLog, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    keep_call_sites_interested();
+    let log = LineLog::default();
+    let subscriber = tracing_subscriber::registry().with(log.clone());
+    (log, tracing::subscriber::set_default(subscriber))
+}
+
+/// Records product events until the guard drops.
+#[cfg(test)]
+pub fn capture_product() -> (ProductLog, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    keep_call_sites_interested();
     let log = ProductLog::default();
     let subscriber = tracing_subscriber::registry().with(log.clone());
     (log, tracing::subscriber::set_default(subscriber))
