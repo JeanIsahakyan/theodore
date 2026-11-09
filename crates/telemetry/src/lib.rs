@@ -223,9 +223,10 @@ impl Telemetry {
     }
 
     /// Who is signed in: the account provider's user id, `None` signed out.
-    /// Remote sinks send it from here on, each only if its sharing choice is
-    /// on; PostHog hears the anonymous id it replaces (`$identify`). Anything
-    /// not shaped like such an id is treated as signed out.
+    /// Remote sinks send it from here on, each only if its sharing choice
+    /// allows it (`Choice::links_usage`); PostHog hears the anonymous id it
+    /// replaces (`$identify`). Anything not shaped like such an id is treated
+    /// as signed out.
     pub fn set_account(&self, id: Option<&str>) {
         let valid = id.filter(|i| identity::is_account_id(i));
         if id.is_some() && valid.is_none() {
@@ -237,6 +238,12 @@ impl Telemetry {
         {
             p.identify();
         }
+    }
+
+    /// A new anonymous id, for the moment linking starts; see
+    /// [`identity::Identity::renew_anon`].
+    pub fn renew_anon(&self) {
+        self.shared.identity.renew_anon();
     }
 
     /// The `log.level` setting; ignored when `THEODORE_LOG` is set.
@@ -267,6 +274,11 @@ impl Telemetry {
         let errors_on = |c: &RemoteConfig, ch: &Choice| c.otlp.is_some() && ch.errors == Some(true);
         let (old_cfg, old_choice, old_meta) = (&state.0, &state.1, &state.2);
         let meta_changed = *old_meta != meta;
+        let newly_linked = !old_choice.links_usage() && choice.links_usage();
+        // Before the sinks below start: starting one identifies at once.
+        self.shared
+            .identity
+            .set_links(choice.links_usage(), choice.links_errors());
 
         let posthog_changed = usage_on(old_cfg, old_choice) != usage_on(&config, &choice)
             || old_cfg.posthog != config.posthog
@@ -302,6 +314,9 @@ impl Telemetry {
                     Err(e) => tracing::warn!(error = %e, "usage data sink didn't start"),
                 }
             }
+        } else if newly_linked && let Some(p) = self.shared.posthog() {
+            // Agreed while already sending: the running sink links it now.
+            p.identify();
         }
 
         let otlp_changed = errors_on(old_cfg, old_choice) != errors_on(&config, &choice)
@@ -385,6 +400,13 @@ pub fn set_account(id: Option<&str>) {
     tracing::debug!(target: IDENTITY_TARGET, signed_in = id.is_some(), "telemetry identity");
     if let Some(t) = global() {
         t.set_account(id);
+    }
+}
+
+/// See [`Telemetry::renew_anon`].
+pub fn renew_anon() {
+    if let Some(t) = global() {
+        t.renew_anon();
     }
 }
 

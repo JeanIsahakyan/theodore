@@ -503,6 +503,9 @@ export const Onboarding = observer(function Onboarding() {
                   .setTelemetry({
                     usage: telemetry.usage_available && share.usage,
                     errors: telemetry.errors_available && share.errors,
+                    // Chosen reading the current words.
+                    usage_consent: true,
+                    errors_consent: true,
                   })
                   .then(() => setStep(step + 1))
                   .catch(() => {

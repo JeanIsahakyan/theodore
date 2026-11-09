@@ -21,7 +21,7 @@ panics (panic hook) ─────┘    (fields,                ├─▶ stde
 | Kinds | all | logs, panics, UI errors, traces | `kind="product"` only |
 | Repository names, paths, logins | kept | hashed | never present |
 | Debug / trace | if enabled | never | never |
-| Identifier | — | install id, plus the account id signed in | account id signed in, else an anonymous id |
+| Identifier | — | install id, plus the account id signed in and agreed ("The choice") | account id signed in and agreed, else an anonymous id |
 | On by default | yes | no | no |
 
 Remote sinks need two things: an endpoint (env, setting or compiled in) **and** the user's
@@ -34,7 +34,7 @@ CLI never start telemetry at all.
 So a problem can be traced to who has it and which version they run, a signed-in record carries
 the Theodore account's opaque id: the account provider's user id (`user_…`), which only someone
 with access to the provider's dashboard can resolve to a person. One id per person, across
-installs and versions.
+installs and versions. Only for a choice agreed under the terms that say so; see "The choice".
 
 ```text
 never signed in ─▶ PostHog distinct_id = anon id (= the install id), no person profile
@@ -53,17 +53,20 @@ sign-out        ─▶ a NEW anon id: later events aren't linked to that person
 
 - **Never** the email, name, host login or token. `set_account` refuses anything not shaped like a
   provider id, so one passed by mistake is treated as signed out.
-- **Consent**: the id is attached by the sinks, so with a sink off nothing carries it. Each choice
-  covers its own sink: "Send error reports" alone never reaches PostHog.
+- **Consent**: the sinks can only read the id through `Identity::usage_account` /
+  `Identity::errors_account`, which are `None` unless that choice is on at consent version 2
+  (`telemetry.*_consent`), so a sink off or a choice from before the terms changed carries nothing.
+  Each choice covers its own sink: "Send error reports" alone never reaches PostHog.
 - **Only the remote sinks** add it, after redaction. The local log doesn't have it, so a problem
   report (its logs come from there) doesn't either. Other fields naming an account or user stay
   hashed.
-- **Anon id**: `<data dir>/telemetry/anon_id`, absent (so the install id) until the first sign-out.
-  The install id itself (`<data dir>/telemetry/install_id`) never changes: repository names and
+- **Anon id**: `<data dir>/telemetry/anon_id`, absent (so the install id) until the first sign-out
+  or the moment linking starts: what the old one sent stays unlinked, so `$identify` names a new
+  one. The install id itself (`<data dir>/telemetry/install_id`) never changes: repository names and
   paths are hashed with a key unique to it, and it stays `service.instance.id`.
 
 PostHog events set `$geoip_disable: true`; PostHog still sees the request's IP address — turn on
-"Discard client IP data" in the project settings. What the UI promises: *linked to your Theodore
+"Discard client IP data" in the project settings. What the UI promises (to whoever agreed to the current terms): *linked to your Theodore
 account's id when you're signed in, never to your email, name or code; repository names are
 hashed; you can turn this off any time in Settings.*
 
@@ -79,6 +82,34 @@ hashed; you can turn this off any time in Settings.*
 - **Settings → About & updates → Privacy**: the same two switches, each independent.
 - Stored as settings `telemetry.usage` and `telemetry.errors` (absent = no choice yet). Turning one
   off stops its sink at once and drops what it had queued.
+
+### Asking again when the terms change
+
+The first terms said "not linked to your account", over both switches. Whoever agreed to that keeps
+it until they agree to something else, so linking is opt-in per switch:
+
+```text
+telemetry.usage absent ─▶ the first-run choice, current words; a yes is consent 2
+yes, consent older than 2 ─▶ keeps sending on the anonymous id, never user_…
+                             └─ one prompt, once signed in (the app needs that first in any build
+                                with an account) and when no other dialog is open:
+                                  Keep sharing, linked to my account ─▶ consent 2, identity on
+                                  Stop sharing ──────────────────────▶ that switch off
+                                  closed, Esc ───────────────────────▶ stays anonymous; asked again
+                                                                       on a later launch, not now
+no ─▶ never asked, nothing sent
+```
+
+- `telemetry.usage_consent`, `telemetry.errors_consent`: the version each switch was agreed under
+  (absent = old terms). `Choice::links_usage` / `links_errors` read them.
+- Consent is per switch. The prompt only names, and only changes, switches at the old terms.
+- Turning a switch on anywhere is consent 2; leaving one on is not, so flipping "Send error
+  reports" in Settings doesn't agree to anything for "Share usage data". Turning one off clears its
+  version.
+- The first-run choice, onboarding and the "Once, after sign-in" dialog show the current words, so
+  whatever they leave on is consent 2.
+- Linking starts from a new anonymous id. `service.instance.id` (the install id) doesn't move, so
+  New Relic can still tie old and new records from one install together.
 
 ## Product events
 
@@ -223,6 +254,7 @@ the file included.
 |---|---|---|
 | `telemetry.usage` | — | "Share usage data" (bool; absent = not chosen) |
 | `telemetry.errors` | — | "Send error reports" (bool; absent = not chosen) |
+| `telemetry.usage_consent`, `telemetry.errors_consent` | — | The terms each was agreed under: `2` = may carry the account id; absent = the old terms, anonymous ("Asking again") |
 | `telemetry.otlp.endpoint` | `THEODORE_OTLP_ENDPOINT` | OTLP/HTTP base URL; `/v1/logs` and `/v1/traces` are appended |
 | `telemetry.otlp.headers` | `THEODORE_OTLP_HEADERS` | `k=v,k2=v2`, e.g. `api-key=…` |
 | `telemetry.posthog.host` | `THEODORE_POSTHOG_HOST` | default `https://us.i.posthog.com` |

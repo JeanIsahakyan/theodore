@@ -679,11 +679,14 @@ impl CoreApi for AppCore {
             .unwrap_or_default();
         // The stored choice is the truth; the sinks follow it.
         let s = self.core.telemetry_settings().await;
+        let choice = s.choice();
         Ok(theodore_contract::TelemetryStatus {
             usage_available,
             errors_available,
             usage: s.usage,
             errors: s.errors,
+            usage_needs_consent: choice.usage_needs_consent(),
+            errors_needs_consent: choice.errors_needs_consent(),
             events: theodore_telemetry::ProductEvent::catalog(),
             never_sent: theodore_telemetry::product::never_sent(),
         })
@@ -692,10 +695,7 @@ impl CoreApi for AppCore {
         &self,
         req: theodore_contract::TelemetryChoice,
     ) -> Result<theodore_contract::TelemetryStatus, CommandError> {
-        self.core
-            .set_telemetry_choice(req.usage, req.errors)
-            .await
-            .map_err(err)?;
+        self.core.set_telemetry_choice(&req).await.map_err(err)?;
         self.apply_telemetry().await;
         self.telemetry_status().await
     }

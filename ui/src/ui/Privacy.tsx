@@ -1,6 +1,7 @@
 /** Settings → About & updates → Privacy: the two sharing switches. Each
  *  gates its own sink; a choice still unmade shows as off, and changing
- *  either records both. */
+ *  either records both. Turning one on agrees to the words beside it (the
+ *  core records that); leaving one on doesn't. */
 import { useEffect, useState } from 'react';
 import { Card, Switch } from '@heroui/react';
 import type { TelemetryChoice, TelemetryStatus } from '../gen/contract';
@@ -118,6 +119,15 @@ export function PrivacyCard() {
                       Not configured in this build
                     </span>
                   )}
+                  {available &&
+                    (kind === 'usage'
+                      ? status.usage_needs_consent
+                      : status.errors_needs_consent) && (
+                      <span className="text-xs text-muted italic">
+                        Anonymous for now: you'll be asked about linking it to
+                        your account.
+                      </span>
+                    )}
                 </div>
               </div>
             );

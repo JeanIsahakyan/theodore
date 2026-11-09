@@ -8,8 +8,9 @@
 //! ```
 //!
 //! `distinct_id` is the signed-in account's id (a person, across installs
-//! and versions), else an anonymous id with no person profile
-//! (`$process_person_profile: false`). `$identify` links the two.
+//! and versions) when the sharing choice allows it, else an anonymous id
+//! with no person profile (`$process_person_profile: false`). `$identify`
+//! links the two. `Identity::usage_account` is what decides.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -140,7 +141,7 @@ impl PosthogSink {
     }
 
     /// Links the anonymous id to the signed-in account and says what it
-    /// runs. Nothing when signed out.
+    /// runs. Nothing when signed out, or when the choice doesn't allow it.
     pub fn identify(&self) {
         if let Some(event) = self.identify_event() {
             self.queue(event);
@@ -149,7 +150,7 @@ impl PosthogSink {
 
     /// PostHog's `$identify`. Never the email, name or login.
     pub fn identify_event(&self) -> Option<Value> {
-        let account = self.identity.account()?;
+        let account = self.identity.usage_account()?;
         let now = Record::new(tracing::Level::INFO, crate::product::TARGET, "$identify");
         Some(json!({
             "event": "$identify",
@@ -186,7 +187,7 @@ impl PosthogSink {
         props.insert("commit".into(), json!(self.meta.commit));
         props.insert("build_env".into(), json!(self.meta.build_env));
         props.insert("$lib".into(), json!("theodore"));
-        let account = self.identity.account();
+        let account = self.identity.usage_account();
         props.insert("$process_person_profile".into(), json!(account.is_some()));
         props.insert("$geoip_disable".into(), json!(true));
         Some(json!({
@@ -338,6 +339,7 @@ mod tests {
     fn signed_as(cfg: PosthogConfig, account: Option<&str>) -> PosthogSink {
         let identity = Arc::new(Identity::new("install-uuid"));
         identity.set(account);
+        identity.set_links(true, true);
         PosthogSink::start(cfg, meta(), Redactor::new(None, "salt"), identity).unwrap()
     }
 
@@ -402,6 +404,19 @@ mod tests {
         assert_eq!(p["$set"]["channel"], "nightly");
         assert_eq!(p["$set"]["os"], "macos");
         assert_eq!(p["$set"]["arch"], "aarch64");
+        s.shutdown(false);
+    }
+
+    #[test]
+    fn signed_in_under_the_old_terms_is_still_the_anon_id() {
+        let identity = Arc::new(Identity::new("install-uuid"));
+        identity.set(Some("user_01ABC"));
+        let s =
+            PosthogSink::start(offline(), meta(), Redactor::new(None, "salt"), identity).unwrap();
+        let ev = s.event(&pr_opened()).unwrap();
+        assert_eq!(ev["distinct_id"], "install-uuid");
+        assert_eq!(ev["properties"]["$process_person_profile"], false);
+        assert_eq!(s.identify_event(), None);
         s.shutdown(false);
     }
 

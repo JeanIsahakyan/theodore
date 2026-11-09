@@ -74,6 +74,11 @@ pub struct TelemetryStatus {
     pub usage: Option<bool>,
     /// "Send error reports".
     pub errors: Option<bool>,
+    /// "Share usage data" is on under the old terms ("not linked to your
+    /// account"): it stays anonymous until the user answers the prompt.
+    pub usage_needs_consent: bool,
+    /// The same for "Send error reports".
+    pub errors_needs_consent: bool,
     /// Every product event and its fields.
     pub events: Vec<TelemetryEventInfo>,
     /// What is never sent, one line each.
@@ -84,6 +89,14 @@ pub struct TelemetryStatus {
 pub struct TelemetryChoice {
     pub usage: bool,
     pub errors: bool,
+    /// This choice was made reading the current terms (the account id is
+    /// attached), so a switch left on counts as agreeing to them. Turning a
+    /// switch on always does; leaving one on otherwise doesn't.
+    #[serde(default)]
+    pub usage_consent: bool,
+    /// The same for `errors`.
+    #[serde(default)]
+    pub errors_consent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

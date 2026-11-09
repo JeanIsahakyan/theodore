@@ -171,7 +171,7 @@ impl OtlpSink {
         parent: Option<&SpanContext>,
     ) -> OtelSpan {
         let mut attributes = self.attributes(fields);
-        if let Some(id) = self.identity.account() {
+        if let Some(id) = self.identity.errors_account() {
             attributes.push(KeyValue::new(USER_ATTRIBUTE, id));
         }
         let parent_cx = match parent {
@@ -261,7 +261,7 @@ impl Sink for OtlpSink {
         }
         // Past the redaction, which would hash it: this one is meant to be
         // looked up.
-        if let Some(id) = self.identity.account() {
+        if let Some(id) = self.identity.errors_account() {
             lr.add_attribute(USER_ATTRIBUTE, id);
         }
         if let Some(t) = r.trace {

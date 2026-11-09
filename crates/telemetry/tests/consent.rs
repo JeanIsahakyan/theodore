@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use theodore_telemetry::config::CONSENT_LINKED;
 use theodore_telemetry::layer::{Shared, TelemetryLayer};
 use theodore_telemetry::otlp::OtlpConfig;
 use theodore_telemetry::posthog::PosthogConfig;
@@ -167,11 +168,7 @@ async fn nothing_is_sent_or_queued_before_a_choice() {
     rig.emit_and_flush().await;
     assert_eq!(rig.paths().await, Vec::<String>::new());
     // Choosing later doesn't send what happened before.
-    rig.apply(Choice {
-        usage: Some(true),
-        errors: Some(true),
-    })
-    .await;
+    rig.apply(agreed(true, true)).await;
     let t = rig.t.clone();
     tokio::task::spawn_blocking(move || t.flush(Duration::from_secs(60)))
         .await
@@ -183,11 +180,7 @@ async fn nothing_is_sent_or_queued_before_a_choice() {
 #[tokio::test(flavor = "multi_thread")]
 async fn usage_data_gates_only_posthog() {
     let rig = rig().await;
-    rig.apply(Choice {
-        usage: Some(true),
-        errors: Some(false),
-    })
-    .await;
+    rig.apply(agreed(true, false)).await;
     rig.emit_and_flush().await;
     let paths = rig.paths().await;
     assert!(paths.iter().any(|p| p == "/batch/"), "{paths:?}");
@@ -198,11 +191,7 @@ async fn usage_data_gates_only_posthog() {
 #[tokio::test(flavor = "multi_thread")]
 async fn error_reports_gate_only_otlp() {
     let rig = rig().await;
-    rig.apply(Choice {
-        usage: Some(false),
-        errors: Some(true),
-    })
-    .await;
+    rig.apply(agreed(false, true)).await;
     rig.emit_and_flush().await;
     let paths = rig.paths().await;
     assert!(paths.iter().any(|p| p == "/v1/logs"), "{paths:?}");
@@ -213,11 +202,7 @@ async fn error_reports_gate_only_otlp() {
 #[tokio::test(flavor = "multi_thread")]
 async fn payloads_use_the_install_id_and_never_the_account() {
     let rig = rig().await;
-    rig.apply(Choice {
-        usage: Some(true),
-        errors: Some(true),
-    })
-    .await;
+    rig.apply(agreed(true, true)).await;
     rig.emit_and_flush().await;
     let reqs = rig.server.received_requests().await.unwrap();
     assert!(reqs.len() >= 2, "{reqs:?}");
@@ -250,31 +235,37 @@ async fn payloads_use_the_install_id_and_never_the_account() {
 #[tokio::test(flavor = "multi_thread")]
 async fn turning_a_choice_off_stops_its_sink() {
     let rig = rig().await;
-    rig.apply(Choice {
-        usage: Some(true),
-        errors: Some(false),
-    })
-    .await;
+    rig.apply(agreed(true, false)).await;
     assert!(rig.shared.posthog().is_some());
-    rig.apply(Choice {
-        usage: Some(false),
-        errors: Some(false),
-    })
-    .await;
+    rig.apply(agreed(false, false)).await;
     assert!(rig.shared.posthog().is_none());
     rig.emit_and_flush().await;
     assert_eq!(rig.paths().await, Vec::<String>::new());
     rig.shutdown().await;
 }
 
-const USAGE_ONLY: Choice = Choice {
-    usage: Some(true),
-    errors: Some(false),
-};
-const ERRORS_ONLY: Choice = Choice {
-    usage: Some(false),
-    errors: Some(true),
-};
+/// Both switches, agreed under terms that allow the account id.
+const fn agreed(usage: bool, errors: bool) -> Choice {
+    Choice {
+        usage: Some(usage),
+        errors: Some(errors),
+        usage_consent: CONSENT_LINKED,
+        errors_consent: CONSENT_LINKED,
+    }
+}
+
+/// On, agreed when the words were "not linked to your account".
+const fn old_terms(usage: bool, errors: bool) -> Choice {
+    Choice {
+        usage: Some(usage),
+        errors: Some(errors),
+        usage_consent: 0,
+        errors_consent: 0,
+    }
+}
+
+const USAGE_ONLY: Choice = agreed(true, false);
+const ERRORS_ONLY: Choice = agreed(false, true);
 
 fn named<'a>(events: &'a [serde_json::Value], name: &str) -> Vec<&'a serde_json::Value> {
     events.iter().filter(|e| e["event"] == name).collect()
@@ -339,11 +330,7 @@ async fn signing_out_starts_a_new_anonymous_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn with_sharing_off_the_account_id_goes_nowhere() {
     let rig = rig().await;
-    rig.apply(Choice {
-        usage: Some(false),
-        errors: Some(false),
-    })
-    .await;
+    rig.apply(agreed(false, false)).await;
     rig.t.set_account(Some(SIGNED_IN));
     rig.emit_and_flush().await;
     assert_eq!(rig.paths().await, Vec::<String>::new());
@@ -395,17 +382,116 @@ async fn an_email_is_never_taken_for_the_account_id() {
     rig.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn at_the_old_terms_usage_data_stays_anonymous_even_signed_in() {
+    let rig = rig().await;
+    rig.apply(old_terms(true, false)).await;
+    rig.t.set_account(Some(SIGNED_IN));
+    rig.emit_and_flush().await;
+    let events = rig.posthog_events().await;
+    assert_eq!(named(&events, "$identify").len(), 0, "{events:?}");
+    let opened = named(&events, "pr_opened");
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0]["distinct_id"], INSTALL_ID);
+    assert_eq!(opened[0]["properties"]["$process_person_profile"], false);
+    let bodies: String = rig
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert!(!bodies.contains(SIGNED_IN), "{bodies}");
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn at_the_old_terms_error_reports_stay_anonymous_even_signed_in() {
+    let rig = rig().await;
+    rig.apply(old_terms(false, true)).await;
+    rig.t.set_account(Some(SIGNED_IN));
+    rig.emit_and_flush().await;
+    let bodies = rig.otlp_bodies().await;
+    assert!(!bodies.is_empty(), "the report still goes");
+    assert!(!bodies.contains(SIGNED_IN), "{bodies}");
+    assert!(!bodies.contains("enduser.id"), "{bodies}");
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agreeing_while_already_sending_links_from_then_on() {
+    let rig = rig().await;
+    rig.apply(old_terms(true, true)).await;
+    rig.t.set_account(Some(SIGNED_IN));
+    rig.emit_and_flush().await;
+    assert_eq!(named(&rig.posthog_events().await, "$identify").len(), 0);
+
+    rig.apply(agreed(true, true)).await;
+    rig.emit_and_flush().await;
+    let events = rig.posthog_events().await;
+    assert_eq!(named(&events, "$identify").len(), 1, "{events:?}");
+    let opened = named(&events, "pr_opened");
+    assert_eq!(opened[0]["distinct_id"], INSTALL_ID, "before agreeing");
+    assert_eq!(opened[1]["distinct_id"], SIGNED_IN, "after agreeing");
+    assert!(rig.otlp_bodies().await.contains("enduser.id"));
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linking_starts_from_a_new_anonymous_id_not_the_one_that_sent_anonymously() {
+    let rig = rig().await;
+    rig.apply(old_terms(true, false)).await;
+    rig.t.set_account(Some(SIGNED_IN));
+    rig.t.renew_anon();
+    rig.apply(agreed(true, false)).await;
+    rig.emit_and_flush().await;
+    let events = rig.posthog_events().await;
+    let identify = named(&events, "$identify");
+    assert_eq!(identify.len(), 1, "{events:?}");
+    let anon = identify[0]["properties"]["$anon_distinct_id"]
+        .as_str()
+        .unwrap();
+    assert_ne!(anon, INSTALL_ID, "what it sent stays unlinked");
+    assert!(uuid::Uuid::parse_str(anon).is_ok());
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_choice_links_on_its_own_terms() {
+    let rig = rig().await;
+    rig.apply(Choice {
+        usage: Some(true),
+        errors: Some(true),
+        usage_consent: CONSENT_LINKED,
+        errors_consent: 0,
+    })
+    .await;
+    rig.t.set_account(Some(SIGNED_IN));
+    rig.emit_and_flush().await;
+    let events = rig.posthog_events().await;
+    assert_eq!(named(&events, "pr_opened")[0]["distinct_id"], SIGNED_IN);
+    assert!(!rig.otlp_bodies().await.contains(SIGNED_IN));
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn declining_sends_nothing_even_with_the_new_terms_recorded() {
+    let rig = rig().await;
+    rig.apply(agreed(false, false)).await;
+    rig.t.set_account(Some(SIGNED_IN));
+    rig.emit_and_flush().await;
+    assert_eq!(rig.paths().await, Vec::<String>::new());
+    rig.shutdown().await;
+}
+
 /// A problem report is built from the local log: what isn't there can't
 /// reach one.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_local_log_never_gets_the_account_id() {
     let log = Arc::new(LocalLog::default());
     let rig = rig_with(vec![log.clone()]).await;
-    rig.apply(Choice {
-        usage: Some(true),
-        errors: Some(true),
-    })
-    .await;
+    rig.apply(agreed(true, true)).await;
     rig.t.set_account(Some(SIGNED_IN));
     rig.emit_and_flush().await;
     let lines = log.0.lock().unwrap().clone();

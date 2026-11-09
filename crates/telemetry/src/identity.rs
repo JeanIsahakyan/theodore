@@ -10,6 +10,11 @@
 //! Only the remote sinks read this: the local log, and so a problem report,
 //! never gets the account id. The install id isn't rotated with the anon id:
 //! it stays the key repository names are hashed with.
+//!
+//! The consent guard is here, not in each sink: a sink can only ask for
+//! [`Identity::usage_account`] or [`Identity::errors_account`], and those are
+//! `None` until that choice was agreed under terms that link it to the
+//! account (`Choice::links_usage`).
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -19,6 +24,26 @@ struct State {
     account: Option<String>,
     anon: String,
     dir: Option<PathBuf>,
+    /// The choice behind each sink allows the account id. Off by default:
+    /// not knowing means anonymous.
+    link_usage: bool,
+    link_errors: bool,
+}
+
+impl State {
+    fn replace_anon(&mut self) {
+        let anon = uuid::Uuid::new_v4().to_string();
+        if let Some(dir) = &self.dir {
+            let path = anon_path(dir);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&path, &anon) {
+                tracing::warn!(error = %e, "couldn't keep the new anonymous id");
+            }
+        }
+        self.anon = anon;
+    }
 }
 
 #[derive(Debug, Default)]
@@ -72,8 +97,38 @@ impl Identity {
         }
     }
 
-    pub fn account(&self) -> Option<String> {
+    #[cfg(test)]
+    fn account(&self) -> Option<String> {
         self.read(|s| s.account.clone())
+    }
+
+    /// Who usage data is from: the account, if "Share usage data" was agreed
+    /// under terms that link it to one.
+    pub fn usage_account(&self) -> Option<String> {
+        self.read(|s| s.account.clone().filter(|_| s.link_usage))
+    }
+
+    /// Who error reports are from, by the same rule for "Send error reports".
+    pub fn errors_account(&self) -> Option<String> {
+        self.read(|s| s.account.clone().filter(|_| s.link_errors))
+    }
+
+    /// Which sinks may carry the account id. `Telemetry::apply` sets this
+    /// from the recorded choice, before any sink starts.
+    pub fn set_links(&self, usage: bool, errors: bool) {
+        let mut s = self.state.write().unwrap_or_else(|p| p.into_inner());
+        s.link_usage = usage;
+        s.link_errors = errors;
+    }
+
+    /// Replaces the anon id with one that has sent nothing. For the moment
+    /// linking starts: what the old id sent was promised to stay unlinked, so
+    /// `$identify` mustn't name it.
+    pub fn renew_anon(&self) {
+        self.state
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .replace_anon();
     }
 
     pub fn anon(&self) -> String {
@@ -93,17 +148,7 @@ impl Identity {
             return false;
         }
         if s.account.is_some() {
-            let anon = uuid::Uuid::new_v4().to_string();
-            if let Some(dir) = &s.dir {
-                let path = anon_path(dir);
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if let Err(e) = std::fs::write(&path, &anon) {
-                    tracing::warn!(error = %e, "couldn't keep the new anonymous id");
-                }
-            }
-            s.anon = anon;
+            s.replace_anon();
         }
         s.account = account.map(str::to_string);
         true
@@ -152,6 +197,36 @@ mod tests {
         assert!(id.set(Some("user_a")));
         assert!(id.set(Some("user_b")));
         assert_ne!(id.anon(), fresh, "another account: not the same person");
+    }
+
+    #[test]
+    fn the_account_is_only_handed_out_under_a_choice_that_links_it() {
+        let id = Identity::new("install");
+        id.set(Some("user_a"));
+        assert_eq!(id.usage_account(), None, "unknown terms are the old ones");
+        assert_eq!(id.errors_account(), None);
+
+        id.set_links(true, false);
+        assert_eq!(id.usage_account().as_deref(), Some("user_a"));
+        assert_eq!(id.errors_account(), None, "each choice is its own");
+
+        id.set_links(false, true);
+        assert_eq!(id.usage_account(), None);
+        assert_eq!(id.errors_account().as_deref(), Some("user_a"));
+
+        id.set(None);
+        assert_eq!(id.errors_account(), None, "signed out: nobody to name");
+    }
+
+    #[test]
+    fn renewing_the_anon_id_leaves_the_install_id_behind_for_good() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = Identity::new("install");
+        id.seed("ignored", Some(dir.path().to_path_buf()));
+        id.renew_anon();
+        let fresh = id.anon();
+        assert_ne!(fresh, "install");
+        assert_eq!(stored_anon_id(dir.path(), "install"), fresh);
     }
 
     #[test]

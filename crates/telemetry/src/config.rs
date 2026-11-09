@@ -6,6 +6,8 @@
 //!               first one set wins; none ─▶ that sink isn't available
 //! may send:     the user's choice (telemetry.usage / telemetry.errors);
 //!               no choice yet ─▶ nothing is sent, nothing is queued
+//! may link:     that choice's consent version (telemetry.*_consent) is
+//!               CONSENT_LINKED; older or absent ─▶ the anonymous id only
 //! ```
 
 use crate::otlp::{OtlpConfig, parse_headers};
@@ -22,6 +24,11 @@ pub const ENV_LOG_STDERR: &str = "THEODORE_LOG_STDERR";
 
 pub const SETTING_USAGE: &str = "telemetry.usage";
 pub const SETTING_ERRORS: &str = "telemetry.errors";
+/// The terms `telemetry.usage` was agreed under; absent: the old ones, which
+/// said it wasn't linked to the account.
+pub const SETTING_USAGE_CONSENT: &str = "telemetry.usage_consent";
+/// The same for `telemetry.errors`.
+pub const SETTING_ERRORS_CONSENT: &str = "telemetry.errors_consent";
 pub const SETTING_OTLP_ENDPOINT: &str = "telemetry.otlp.endpoint";
 pub const SETTING_OTLP_HEADERS: &str = "telemetry.otlp.headers";
 pub const SETTING_POSTHOG_HOST: &str = "telemetry.posthog.host";
@@ -31,6 +38,9 @@ pub const SETTING_LOG_LEVEL: &str = "log.level";
 pub const SETTING_REPORT_REPO: &str = "report.github_repo";
 
 pub const DEFAULT_POSTHOG_HOST: &str = "https://us.i.posthog.com";
+
+/// The first terms under which a choice may carry the account id.
+pub const CONSENT_LINKED: u32 = 2;
 
 /// Compiled in when the build ran with these set (nightly and release
 /// builds); the lowest-priority source. None are committed.
@@ -57,11 +67,37 @@ pub struct RemoteConfig {
     pub posthog: Option<PosthogConfig>,
 }
 
-/// The user's sharing choices; `None` until they chose.
+/// The user's sharing choices; `None` until they chose. `*_consent`: the
+/// terms each was agreed under, 0 for the old ones.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Choice {
     pub usage: Option<bool>,
     pub errors: Option<bool>,
+    pub usage_consent: u32,
+    pub errors_consent: u32,
+}
+
+impl Choice {
+    /// Usage data may carry the account id.
+    pub fn links_usage(&self) -> bool {
+        self.usage == Some(true) && self.usage_consent >= CONSENT_LINKED
+    }
+
+    /// Error reports may carry the account id.
+    pub fn links_errors(&self) -> bool {
+        self.errors == Some(true) && self.errors_consent >= CONSENT_LINKED
+    }
+
+    /// "Share usage data" is on under the old terms: it stays anonymous, and
+    /// the user is asked about the new ones.
+    pub fn usage_needs_consent(&self) -> bool {
+        self.usage == Some(true) && !self.links_usage()
+    }
+
+    /// The same for "Send error reports".
+    pub fn errors_needs_consent(&self) -> bool {
+        self.errors == Some(true) && !self.links_errors()
+    }
 }
 
 fn set(v: Option<&str>) -> Option<&str> {
@@ -124,6 +160,41 @@ mod tests {
         let p = c.posthog.unwrap();
         assert_eq!(p.key, "phc_setting");
         assert_eq!(p.host.as_str(), "https://us.i.posthog.com/");
+    }
+
+    #[test]
+    fn only_a_choice_agreed_under_the_new_terms_links_the_account() {
+        let c = |on, consent| Choice {
+            usage: on,
+            errors: on,
+            usage_consent: consent,
+            errors_consent: consent,
+        };
+        assert!(!c(Some(true), 0).links_usage(), "absent: the old terms");
+        assert!(!c(Some(true), 1).links_errors());
+        assert!(c(Some(true), CONSENT_LINKED).links_usage());
+        assert!(c(Some(true), CONSENT_LINKED).links_errors());
+        assert!(!c(Some(false), CONSENT_LINKED).links_usage(), "off is off");
+        assert!(!c(None, CONSENT_LINKED).links_usage(), "no choice is no");
+    }
+
+    #[test]
+    fn only_a_switch_on_under_the_old_terms_needs_consent() {
+        let on = Choice {
+            usage: Some(true),
+            errors: Some(true),
+            usage_consent: 0,
+            errors_consent: CONSENT_LINKED,
+        };
+        assert!(on.usage_needs_consent());
+        assert!(!on.errors_needs_consent(), "already agreed");
+        let off = Choice {
+            usage: Some(false),
+            errors: None,
+            ..Choice::default()
+        };
+        assert!(!off.usage_needs_consent(), "a no is never asked again");
+        assert!(!off.errors_needs_consent());
     }
 
     #[test]

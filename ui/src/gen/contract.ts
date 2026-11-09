@@ -2592,6 +2592,14 @@ export type TaskStatus = "todo" | "progress" |
 export type TelemetryChoice = {
 	usage: boolean,
 	errors: boolean,
+	/**
+	 *  This choice was made reading the current terms (the account id is
+	 *  attached), so a switch left on counts as agreeing to them. Turning a
+	 *  switch on always does; leaving one on otherwise doesn't.
+	 */
+	usage_consent?: boolean,
+	/**  The same for `errors`. */
+	errors_consent?: boolean,
 };
 
 /**
@@ -2616,6 +2624,13 @@ export type TelemetryStatus = {
 	usage: boolean | null,
 	/**  "Send error reports". */
 	errors: boolean | null,
+	/**
+	 *  "Share usage data" is on under the old terms ("not linked to your
+	 *  account"): it stays anonymous until the user answers the prompt.
+	 */
+	usage_needs_consent: boolean,
+	/**  The same for "Send error reports". */
+	errors_needs_consent: boolean,
 	/**  Every product event and its fields. */
 	events: TelemetryEventInfo[],
 	/**  What is never sent, one line each. */
