@@ -206,14 +206,19 @@ export const AgentMenu = observer(function AgentMenu({
   const pick = (key: string) => {
     const [agent, id] = key.split('|') as [AgentId, string];
     if (!agent || !id) return;
-    if (onPickModel) onPickModel(agent, id);
-    else setAgentModel(store, agent, id);
-    // A level the new model doesn't take: its own default instead.
-    setAgentEffort(
-      store,
-      agent,
-      running(store, agent, catalog[agent], id).effort,
-    );
+    if (onPickModel) {
+      // This box's model only: the agent's settings stay as they are, and the
+      // chip shows the model's own default for a level it doesn't take.
+      onPickModel(agent, id);
+    } else {
+      setAgentModel(store, agent, id);
+      // A level the new model doesn't take: its own default instead.
+      setAgentEffort(
+        store,
+        agent,
+        running(store, agent, catalog[agent], id).effort,
+      );
+    }
     switchTo(agent);
   };
 

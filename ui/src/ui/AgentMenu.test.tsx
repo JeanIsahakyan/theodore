@@ -96,6 +96,8 @@ const CATALOG: Record<string, unknown[]> = {
   claude: [
     model('claude-opus-5-5', 'Opus 5.5', CLAUDE, 'medium'),
     model('claude-fable-5-1', 'Fable 5.1', CLAUDE, 'high'),
+    model('claude-small-2', 'Small 2', ['low', 'medium'], 'medium'),
+    model('claude-small-1', 'Small 1', [], null),
     model('claude-opus-4-6', 'Opus 4.6', ['low', 'high'], 'high', true),
   ],
   codex: [
@@ -149,6 +151,16 @@ describe('AgentMenu', () => {
     [...document.querySelectorAll('[role^="menuitem"]')].find((el) =>
       el.textContent?.trim().startsWith(name),
     ) as HTMLElement | undefined;
+
+  /** Opens a submenu until `name` shows in it: on a loaded machine the first
+   *  synthetic click can come before react-aria is ready for it. */
+  async function openForItem(trigger: string, name: string) {
+    for (let i = 0; i < 20 && !item(name); i++) {
+      await click(item(trigger)!);
+      await settle();
+    }
+    expect(item(name)).toBeTruthy();
+  }
 
   it('names the model and effort the agent runs', async () => {
     const store = new RootStore();
@@ -244,6 +256,45 @@ describe('AgentMenu', () => {
       setAgentModel(store, 'claude', 'claude-opus-5-5');
       const chip = await renderOwn(store, 'claude-haiku-5-5');
       expect(chip.textContent).toContain('claude-haiku-5-5');
+    });
+
+    // Whatever the model takes, a pick here leaves `agents.<id>.*` as it was.
+    it.each([
+      ['Small 1', ''],
+      ['Small 2', 'Medium'],
+    ])('picking %s writes no global setting', async (label, effortShown) => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      setAgentEffort(store, 'claude', 'xhigh');
+      const chip = await renderOwn(store, 'claude-opus-5-5');
+      await click(chip);
+      await settle();
+      await openForItem('Models', label);
+      await click(item(label)!);
+      await settle();
+      expect(pickedModel?.model).toContain('small');
+      expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
+      expect(agentEffort(store, 'claude')).toBe('xhigh');
+      const pick = pickedModel!.model;
+      m!.unmount();
+      // What the box shows for that model comes from the model, not a write.
+      const shown = await renderOwn(store, pick);
+      expect(shown.textContent?.trim()).toBe(`${label} ${effortShown}`.trim());
+      expect(agentEffort(store, 'claude')).toBe('xhigh');
+    });
+
+    it("an effort picked here is still the agent's, everywhere", async () => {
+      const store = new RootStore();
+      setAgentModel(store, 'claude', 'claude-opus-5-5');
+      setAgentEffort(store, 'claude', 'medium');
+      const chip = await renderOwn(store, 'claude-fable-5-1');
+      await click(chip);
+      await settle();
+      await click(item('Effort')!);
+      await settle();
+      await click(item('Max')!);
+      await settle();
+      expect(agentEffort(store, 'claude')).toBe('max');
     });
 
     it("leaves the agent's setting alone, and a pick stays this box's", async () => {
