@@ -4,10 +4,18 @@
  *  idle ─start─▶ starting ─started─▶ browser ──poll done──▶ done
  *                   │                device  ──poll done──▶ done
  *                   └─failed─▶ error          ├─ denied / expired
- *                                              └─ failed ─▶ error
+ *                                              ├─ failed ─▶ error
+ *                                              └─ choose_organization
+ *                                                       │
+ *  choose_organization ─choose─▶ (list disabled, `choosing`)
+ *       │                            ├─ poll done ───▶ done
+ *       │                            ├─ poll failed ─▶ error
+ *       │                            └─ failed ──────▶ error
+ *       └─ (no poll runs while the list is up)
  *  any ─cancel─▶ idle
  */
 import type {
+  AccountOrganizationChoice,
   AccountSignInMethod,
   AccountSignInStart,
   AccountSignInState,
@@ -20,6 +28,7 @@ export type AccountFlowPhase =
   | 'starting'
   | 'browser'
   | 'device'
+  | 'choose_organization'
   | 'done'
   | 'denied'
   | 'expired'
@@ -42,6 +51,10 @@ export interface AccountFlow {
    *  the core's in-memory outcome every second). */
   interval: number;
   error: string | null;
+  /** The organizations the sign-in can finish in (`choose_organization`). */
+  organizations: AccountOrganizationChoice[];
+  /** One was picked and the core is finishing the sign-in: the list waits. */
+  choosing: boolean;
   status: AccountStatus | null;
   /** Bumped on every start, so a late reply to an abandoned attempt is
    *  recognised and dropped. */
@@ -54,13 +67,11 @@ export type AccountFlowEvent =
   | { type: 'start'; method: AccountSignInMethod }
   | { type: 'started'; attempt: number; start: AccountSignInStart }
   | { type: 'poll'; attempt: number; state: AccountSignInState }
+  | { type: 'choose'; attempt: number }
   | { type: 'failed'; attempt: number; error: string }
   | { type: 'cancel' };
 
 export const BROWSER_POLL_MS = 1000;
-
-export const CHOOSE_ORG_UNSUPPORTED =
-  "Your account is in several organizations, and this version of Theodore can't choose one yet.";
 
 export const initialFlow: AccountFlow = {
   phase: 'idle',
@@ -69,6 +80,8 @@ export const initialFlow: AccountFlow = {
   device: null,
   interval: 5,
   error: null,
+  organizations: [],
+  choosing: false,
   status: null,
   attempt: 0,
   polls: 0,
@@ -115,31 +128,53 @@ export function reduceFlow(
     }
     case 'failed':
       if (event.attempt !== flow.attempt || flow.phase === 'idle') return flow;
-      return { ...flow, phase: 'error', error: event.error };
+      return { ...flow, phase: 'error', error: event.error, choosing: false };
+    case 'choose':
+      if (
+        event.attempt !== flow.attempt ||
+        flow.phase !== 'choose_organization' ||
+        flow.choosing
+      ) {
+        return flow;
+      }
+      return { ...flow, choosing: true };
     case 'poll': {
-      if (event.attempt !== flow.attempt || !isWaiting(flow)) return flow;
+      const choosing = flow.phase === 'choose_organization';
+      if (event.attempt !== flow.attempt || !(isWaiting(flow) || choosing)) {
+        return flow;
+      }
       const s = event.state;
       switch (s.state) {
+        // From the picker nothing polls: a reply that isn't final puts the
+        // list back, so the pick can be made again.
         case 'pending':
-          return { ...flow, polls: flow.polls + 1 };
+          return choosing
+            ? { ...flow, choosing: false }
+            : { ...flow, polls: flow.polls + 1 };
         case 'slow_down':
-          return {
-            ...flow,
-            polls: flow.polls + 1,
-            interval: Math.max(flow.interval, s.interval),
-          };
+          return choosing
+            ? { ...flow, choosing: false }
+            : {
+                ...flow,
+                polls: flow.polls + 1,
+                interval: Math.max(flow.interval, s.interval),
+              };
         case 'expired':
           return { ...flow, phase: 'expired' };
         case 'denied':
           return { ...flow, phase: 'denied' };
         case 'failed':
-          return { ...flow, phase: 'error', error: s.message };
+          return { ...flow, phase: 'error', error: s.message, choosing: false };
         case 'done':
-          return { ...flow, phase: 'done', status: s.status };
-        // The organization picker is the next UI step; until it lands, a
-        // sign-in that needs one ends here (and stops polling).
+          return { ...flow, phase: 'done', status: s.status, choosing: false };
+        // The core waits for a pick: stop polling and show the list.
         case 'choose_organization':
-          return { ...flow, phase: 'error', error: CHOOSE_ORG_UNSUPPORTED };
+          return {
+            ...flow,
+            phase: 'choose_organization',
+            organizations: s.organizations,
+            choosing: false,
+          };
       }
     }
   }

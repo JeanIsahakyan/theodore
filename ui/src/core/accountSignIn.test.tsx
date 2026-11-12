@@ -172,6 +172,65 @@ describe('useAccountSignIn', () => {
     expect(polls()).toBe(1);
   });
 
+  it('stops polling at the organization list, and a pick finishes it', async () => {
+    transport.queueResult('account_sign_in_start', {
+      method: 'browser',
+      url: 'u',
+    });
+    transport.queueResult('account_sign_in_poll', {
+      state: 'choose_organization',
+      organizations: [
+        { id: 'org_a', name: 'Acme' },
+        { id: 'org_b', name: 'Ada' },
+      ],
+    });
+    transport.queueResult('account_sign_in_choose_organization', {
+      state: 'done',
+      status: signedIn,
+    });
+
+    act(() => latest.start('browser'));
+    await flush();
+    await advance(1000);
+    expect(latest.flow.phase).toBe('choose_organization');
+    await advance(5000);
+    expect(polls()).toBe(1);
+
+    act(() => latest.chooseOrganization('org_b'));
+    expect(latest.flow.choosing).toBe(true);
+    await flush();
+    expect(
+      transport.calls.find(
+        (c) => c.cmd === 'account_sign_in_choose_organization',
+      )?.args,
+    ).toEqual({ organizationId: 'org_b' });
+    expect(latest.flow.phase).toBe('done');
+    expect(done).toEqual([signedIn]);
+  });
+
+  it('a pick the core turns down ends in the error screen', async () => {
+    transport.queueResult('account_sign_in_start', {
+      method: 'browser',
+      url: 'u',
+    });
+    transport.queueResult('account_sign_in_poll', {
+      state: 'choose_organization',
+      organizations: [{ id: 'org_a', name: 'Acme' }],
+    });
+    transport.queueResult('account_sign_in_choose_organization', {
+      state: 'failed',
+      message: 'not a member',
+    });
+    act(() => latest.start('browser'));
+    await flush();
+    await advance(1000);
+    act(() => latest.chooseOrganization('org_a'));
+    await flush();
+    expect(latest.flow.phase).toBe('error');
+    expect(latest.flow.error).toBe('not a member');
+    expect(done).toEqual([]);
+  });
+
   it('a failed start shows the error', async () => {
     transport.queueResult(
       'account_sign_in_start',
