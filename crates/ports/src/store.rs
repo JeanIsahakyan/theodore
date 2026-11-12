@@ -73,6 +73,22 @@ pub struct ToolCallKey {
     pub space: String,
 }
 
+/// A space this device hosts for the fleet (docs/fleet.md "App side"): the
+/// remote id ↔ local space mapping, who asked for it, and where it sits in
+/// the tree. `data` is the core's own bookkeeping (mode, project, what was
+/// last reported). Not a model: never synced.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FleetHostedRow {
+    /// The fleet id (`rs_…`).
+    pub space: String,
+    pub local_space: String,
+    pub origin_device: String,
+    pub parent: Option<String>,
+    pub depth: u32,
+    pub created_at: i64,
+    pub data: serde_json::Value,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("sqlite: {0}")]
@@ -163,6 +179,38 @@ pub trait Store: Send + Sync {
     /// Drops everything stored for `space`. How many calls went.
     fn tool_payloads_delete_space(&self, _space: &str) -> StoreResult<u64> {
         Ok(0)
+    }
+
+    /// Inserts or replaces a hosted fleet space. Default: dropped, for
+    /// stores that keep none (fakes wrapping another store).
+    fn fleet_hosted_put(&self, _row: &FleetHostedRow) -> StoreResult<()> {
+        Ok(())
+    }
+
+    fn fleet_hosted_all(&self) -> StoreResult<Vec<FleetHostedRow>> {
+        Ok(Vec::new())
+    }
+
+    /// Journals event `seq` of hosted space `space`, then keeps only its
+    /// last `keep` events.
+    fn fleet_journal_append(
+        &self,
+        _space: &str,
+        _seq: u64,
+        _event: &serde_json::Value,
+        _keep: usize,
+    ) -> StoreResult<()> {
+        Ok(())
+    }
+
+    /// Up to `limit` journaled events of `space` after `since`, oldest first.
+    fn fleet_journal_since(
+        &self,
+        _space: &str,
+        _since: u64,
+        _limit: usize,
+    ) -> StoreResult<Vec<(u64, serde_json::Value)>> {
+        Ok(Vec::new())
     }
 
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>>;
