@@ -83,6 +83,9 @@ struct StoreState {
     kv: HashMap<String, serde_json::Value>,
     /// `(space, parts)` by `(run, call)`.
     tool_payloads: HashMap<(String, String), (String, serde_json::Map<String, serde_json::Value>)>,
+    fleet_hosted: Vec<theodore_ports::FleetHostedRow>,
+    /// By space: `(seq, event)`, oldest first.
+    fleet_journal: HashMap<String, Vec<(u64, serde_json::Value)>>,
 }
 
 type ReadHook = Box<dyn FnOnce() + Send>;
@@ -106,6 +109,56 @@ impl FakeStore {
 }
 
 impl Store for FakeStore {
+    fn fleet_hosted_put(&self, row: &theodore_ports::FleetHostedRow) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        s.fleet_hosted.retain(|r| r.space != row.space);
+        s.fleet_hosted.push(row.clone());
+        Ok(())
+    }
+
+    fn fleet_hosted_all(&self) -> StoreResult<Vec<theodore_ports::FleetHostedRow>> {
+        Ok(self.0.lock().unwrap().fleet_hosted.clone())
+    }
+
+    fn fleet_journal_append(
+        &self,
+        space: &str,
+        seq: u64,
+        event: &serde_json::Value,
+        keep: usize,
+    ) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        let j = s.fleet_journal.entry(space.to_string()).or_default();
+        j.retain(|(n, _)| *n != seq);
+        j.push((seq, event.clone()));
+        j.sort_by_key(|(n, _)| *n);
+        let drop = j.len().saturating_sub(keep);
+        j.drain(..drop);
+        Ok(())
+    }
+
+    fn fleet_journal_since(
+        &self,
+        space: &str,
+        since: u64,
+        limit: usize,
+    ) -> StoreResult<Vec<(u64, serde_json::Value)>> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .fleet_journal
+            .get(space)
+            .map(|j| {
+                j.iter()
+                    .filter(|(n, _)| *n > since)
+                    .take(limit)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     fn tool_payload_put(
         &self,
         key: &theodore_ports::ToolCallKey,
@@ -3594,6 +3647,120 @@ impl theodore_ports::CodeIntelPort for FakeCodeIntel {
     }
 }
 
+// ── fleet ─────────────────────────────────────────────────────────────────
+
+/// A command the core sent a [`FakeFleet`] link, as recorded.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FakeFleetCommand {
+    Send(theodore_fleet_protocol::ClientMessage),
+    Reauth(String),
+    Update {
+        info: theodore_fleet_protocol::DeviceInfo,
+        spaces: Vec<theodore_fleet_protocol::SpaceCursor>,
+    },
+    Close,
+}
+
+/// What one `FleetPort::start` was given.
+#[derive(Debug, Clone)]
+pub struct FakeFleetConnect {
+    pub cloud_url: String,
+    pub access_token: String,
+    pub device_id: Option<String>,
+    pub public_key: String,
+    pub info: theodore_fleet_protocol::DeviceInfo,
+    pub spaces: Vec<theodore_fleet_protocol::SpaceCursor>,
+}
+
+struct FakeFleetLink {
+    connect: FakeFleetConnect,
+    commands: tokio::sync::mpsc::UnboundedReceiver<theodore_ports::FleetCommand>,
+    recorded: Vec<FakeFleetCommand>,
+    inbound: tokio::sync::mpsc::UnboundedSender<theodore_ports::FleetInbound>,
+}
+
+/// A scriptable fleet adapter: records every link and the commands sent on
+/// it; tests push inbound events into the latest link.
+#[derive(Default)]
+pub struct FakeFleet {
+    links: Mutex<Vec<FakeFleetLink>>,
+}
+
+impl FakeFleet {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Links started so far.
+    pub fn starts(&self) -> usize {
+        self.links.lock().unwrap().len()
+    }
+
+    pub fn connect(&self, link: usize) -> FakeFleetConnect {
+        self.links.lock().unwrap()[link].connect.clone()
+    }
+
+    /// Every command sent on link `link` so far.
+    pub fn commands(&self, link: usize) -> Vec<FakeFleetCommand> {
+        let mut links = self.links.lock().unwrap();
+        let l = &mut links[link];
+        while let Ok(c) = l.commands.try_recv() {
+            l.recorded.push(match c {
+                theodore_ports::FleetCommand::Send(m) => FakeFleetCommand::Send(m),
+                theodore_ports::FleetCommand::Reauth(t) => FakeFleetCommand::Reauth(t),
+                theodore_ports::FleetCommand::Update { info, spaces } => {
+                    FakeFleetCommand::Update { info, spaces }
+                }
+                theodore_ports::FleetCommand::Close => FakeFleetCommand::Close,
+            });
+        }
+        l.recorded.clone()
+    }
+
+    /// The messages sent on the latest link.
+    pub fn sent(&self) -> Vec<theodore_fleet_protocol::ClientMessage> {
+        let n = self.starts();
+        if n == 0 {
+            return Vec::new();
+        }
+        self.commands(n - 1)
+            .into_iter()
+            .filter_map(|c| match c {
+                FakeFleetCommand::Send(m) => Some(m),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Pushes `ev` into the latest link.
+    pub fn push(&self, ev: theodore_ports::FleetInbound) {
+        let links = self.links.lock().unwrap();
+        let l = links.last().expect("a fleet link");
+        let _ = l.inbound.send(ev);
+    }
+}
+
+impl theodore_ports::FleetPort for FakeFleet {
+    fn start(&self, cfg: theodore_ports::FleetConnect) -> theodore_ports::FleetLink {
+        let (commands, commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (inbound_tx, inbound) = tokio::sync::mpsc::unbounded_channel();
+        self.links.lock().unwrap().push(FakeFleetLink {
+            connect: FakeFleetConnect {
+                cloud_url: cfg.cloud_url,
+                access_token: cfg.access_token,
+                device_id: cfg.device_id,
+                public_key: cfg.key.public_key(),
+                info: cfg.info,
+                spaces: cfg.spaces,
+            },
+            commands: commands_rx,
+            recorded: Vec::new(),
+            inbound: inbound_tx,
+        });
+        theodore_ports::FleetLink { commands, inbound }
+    }
+}
+
 // ── fixtures ──────────────────────────────────────────────────────────────
 
 pub struct Fixtures {
@@ -3621,6 +3788,8 @@ pub struct Fixtures {
     /// Wired only by [`Fixtures::deps_with_code`]; `deps` has code
     /// intelligence off.
     pub code_intel: Arc<FakeCodeIntel>,
+    /// Wired only by [`Fixtures::deps_with_fleet`]; `deps` has `NoFleet`.
+    pub fleet: Arc<FakeFleet>,
 }
 
 impl Fixtures {
@@ -3637,6 +3806,14 @@ impl Fixtures {
         Deps {
             code_intel: Some(self.code_intel.clone()),
             ..self.deps_with_tools()
+        }
+    }
+
+    /// `deps` with the [`FakeFleet`] wired in.
+    pub fn deps_with_fleet(&self) -> Deps {
+        Deps {
+            fleet: self.fleet.clone(),
+            ..self.deps()
         }
     }
 
@@ -3661,6 +3838,7 @@ impl Fixtures {
             terminals: self.terminals.clone(),
             data_dir: self.data_dir.path().to_path_buf(),
             code_intel: None,
+            fleet: Arc::new(theodore_ports::NoFleet),
         }
     }
 }
@@ -3693,6 +3871,7 @@ pub fn fixtures() -> Fixtures {
         data_dir: Arc::new(tempfile::tempdir().expect("tempdir")),
         tools: FakeRunTools::new(),
         code_intel: FakeCodeIntel::new(),
+        fleet: FakeFleet::new(),
     }
 }
 

@@ -1,0 +1,1077 @@
+//! Fleet, this device as the target (docs/fleet.md "App side"): the trust
+//! gate in front of every request, the spaces it hosts for other devices,
+//! and the journal of their events.
+//!
+//! ```text
+//! request ─▶ peek: for this device? ─▶ accept_remote ─▶ origin pinned?
+//!   ─▶ open(pinned key) ─▶ fresh + not replayed ─▶ op fits (mode, project,
+//!   depth, space, answers) ─▶ claim ─▶ claim_result{claimed} ─▶ run ─▶ reply
+//!   any refusal ─▶ reply{err:{code}}            not claimed ─▶ nothing runs
+//!
+//! observer (one task): sync frames + run steps of hosted spaces
+//!   ─▶ diff the space row against what was last reported
+//!   ─▶ RemoteSpaceEvent, seq+1 ─▶ journal (last 2000) ─▶ space_event
+//!   question set / cleared ─▶ also ask / ask_resolved
+//! welcome{resume} ─▶ replay the journal after the cloud's seq, re-ask
+//! ```
+//!
+//! The observer only reads: it never takes a space's locks and the space
+//! flow never waits on it.
+
+use std::collections::{BTreeMap, HashMap};
+
+use serde::{Deserialize, Serialize};
+use theodore_contract::{
+    ChatMessage, CreateSpaceRequest, Ephemeral, FleetQuestion, FleetQuestionItem, FleetRemoteSpace,
+    FleetSpaceStatus, FleetTrustNeeded, Space, SpaceAnswerItem, SpaceAnswerRequest,
+    SpaceQuestionItem, SpaceSendRequest, SpaceStatus, SyncFrame, TurnStep, models,
+};
+use theodore_domain::{AgentId, Author};
+use theodore_fleet_protocol::{
+    ClientMessage, DEVICE_JOURNAL, FleetMode, MAX_CHILDREN, MAX_DEPTH, REPLAY_MEMORY_MS, RemoteAsk,
+    RemoteOp, RemoteQuestion, RemoteRequest, RemoteSpaceEvent, RemoteSpaceStatus, ReplyOutcome,
+    SignedEnvelope, StartedSpace, TurnOutcome, codes, fingerprint, fresh,
+};
+use theodore_ports::FleetHostedRow;
+use tokio::sync::{broadcast, mpsc};
+
+use crate::core::Core;
+use crate::error::AppError;
+use crate::usecases::fleet::{Hosted, Seen, fleet_mode, mode_str, space_mode};
+use crate::usecases::fleet_origin::{line_of, truncate};
+use crate::usecases::spaces::space_chat_key;
+
+/// A refusal: code and words for the origin.
+pub(crate) type Refusal = (&'static str, String);
+
+fn refuse(code: &'static str, message: impl Into<String>) -> Refusal {
+    (code, message.into())
+}
+
+/// What the observer has told the fleet about a hosted space.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Track {
+    /// Last journaled event.
+    pub seq: u64,
+    pub started: bool,
+    /// Turns reported so far.
+    pub turn: u32,
+    /// The run whose `turn_started` went out and whose end didn't yet.
+    pub current: Option<String>,
+    /// Runs whose end went out (the last ones; older replies are skipped by
+    /// `reply_at`).
+    pub ended: Vec<String>,
+    /// `at` of the last reply reported.
+    pub reply_at: i64,
+    /// `Space::turns` at the last look.
+    pub turns: u32,
+    pub question: Option<String>,
+    pub status: Option<RemoteSpaceStatus>,
+    pub last_reply: Option<String>,
+}
+
+/// `FleetHostedRow::data`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct HostedData {
+    pub mode: FleetMode,
+    pub project_id: String,
+    pub project_name: String,
+    pub name: String,
+    pub branch: String,
+    #[serde(default)]
+    pub track: Track,
+}
+
+pub(crate) enum ObserverCmd {
+    /// A new hosted space: `started`, then whatever already happened.
+    Hosted(String),
+    /// Connected: replay what the cloud lacks (space → its last seq).
+    Replay(BTreeMap<String, u64>),
+    /// Look at every hosted space again.
+    PassAll,
+}
+
+const ENDED_KEPT: usize = 64;
+
+pub(crate) fn remote_status(s: &Space) -> RemoteSpaceStatus {
+    match s.status {
+        SpaceStatus::Archived => RemoteSpaceStatus::Stopped,
+        SpaceStatus::Failed => RemoteSpaceStatus::Failed,
+        SpaceStatus::Running if s.question.is_some() => RemoteSpaceStatus::Waiting,
+        SpaceStatus::Running => RemoteSpaceStatus::Running,
+        SpaceStatus::Idle => RemoteSpaceStatus::Idle,
+    }
+}
+
+pub(crate) fn ui_status(s: RemoteSpaceStatus) -> FleetSpaceStatus {
+    match s {
+        RemoteSpaceStatus::Running => FleetSpaceStatus::Running,
+        RemoteSpaceStatus::Idle => FleetSpaceStatus::Idle,
+        RemoteSpaceStatus::Waiting => FleetSpaceStatus::Waiting,
+        RemoteSpaceStatus::Stopped => FleetSpaceStatus::Stopped,
+        RemoteSpaceStatus::Failed => FleetSpaceStatus::Failed,
+    }
+}
+
+pub(crate) fn remote_questions(items: &[SpaceQuestionItem]) -> Vec<RemoteQuestion> {
+    items
+        .iter()
+        .map(|q| RemoteQuestion {
+            question: q.question.clone(),
+            options: q.options.clone(),
+            multi: q.multi,
+        })
+        .collect()
+}
+
+pub(crate) fn ui_questions(items: &[RemoteQuestion]) -> Vec<FleetQuestionItem> {
+    items
+        .iter()
+        .map(|q| FleetQuestionItem {
+            question: q.question.clone(),
+            options: q.options.clone(),
+            multi: q.multi,
+        })
+        .collect()
+}
+
+/// The fleet's answers (per question: the options picked, or one free
+/// text for "Other") as the question card's.
+pub(crate) fn answer_items(
+    questions: &[SpaceQuestionItem],
+    answers: &[Vec<String>],
+) -> Vec<SpaceAnswerItem> {
+    answers
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let other =
+                a.len() == 1 && questions.get(i).is_some_and(|q| !q.options.contains(&a[0]));
+            if other {
+                SpaceAnswerItem {
+                    selected: vec![],
+                    other: Some(a[0].clone()),
+                }
+            } else {
+                SpaceAnswerItem {
+                    selected: a.clone(),
+                    other: None,
+                }
+            }
+        })
+        .collect()
+}
+
+fn app_refusal(e: AppError) -> Refusal {
+    match e {
+        AppError::NotFound(m) => refuse(codes::UNKNOWN_SPACE, m),
+        AppError::Invalid(m) => refuse(codes::INVALID, m),
+        other => refuse(codes::INTERNAL, other.to_string()),
+    }
+}
+
+impl Core {
+    fn fleet_refuse(&self, req_id: &str, (code, message): Refusal) {
+        tracing::info!(req_id, code, reason = %message, "refused a fleet request");
+        self.fleet_send_msg(ClientMessage::Reply {
+            req_id: req_id.to_string(),
+            outcome: ReplyOutcome::Err {
+                code: code.to_string(),
+                message,
+            },
+        });
+    }
+
+    fn fleet_hosted_local(&self, remote: &str) -> Option<String> {
+        self.fleet()
+            .hosted
+            .get(remote)
+            .map(|h| h.row.local_space.clone())
+    }
+
+    /// A request from the cloud: through the gate, then claimed.
+    pub(crate) async fn fleet_on_request(&self, envelope: SignedEnvelope) {
+        let peeked = match envelope.peek() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error.code = "fleet.malformed", error = %e, "dropped an unreadable fleet request");
+                return;
+            }
+        };
+        match self.fleet_gate(&envelope, &peeked).await {
+            Ok(req) => {
+                let req_id = req.req_id.clone();
+                let generation = {
+                    let mut mem = self.fleet();
+                    mem.claims.insert(req_id.clone(), req);
+                    mem.generation
+                };
+                self.fleet_send_msg(ClientMessage::Claim { req_id, generation });
+            }
+            Err(refusal) => self.fleet_refuse(&peeked.req_id, refusal),
+        }
+    }
+
+    /// docs/fleet.md "Trust", in order. `Ok`: verified, fresh, fits; still
+    /// to be claimed before anything runs.
+    async fn fleet_gate(
+        &self,
+        envelope: &SignedEnvelope,
+        peeked: &RemoteRequest,
+    ) -> Result<RemoteRequest, Refusal> {
+        let me = self.fleet().device_id.clone();
+        if me.as_deref() != Some(peeked.target_device.as_str()) {
+            return Err(refuse(
+                codes::NOT_YOURS,
+                "this request is for another device",
+            ));
+        }
+        let s = self.fleet_settings().await;
+        if !s.accept_remote {
+            return Err(refuse(
+                codes::REMOTE_OFF,
+                "this device doesn't take remote requests",
+            ));
+        }
+        let Some(pinned) = s
+            .trusted_devices
+            .iter()
+            .find(|t| t.device_id == envelope.device_id)
+        else {
+            let listed = self
+                .fleet()
+                .devices
+                .iter()
+                .find(|d| d.device_id == envelope.device_id)
+                .cloned();
+            let name = listed
+                .as_ref()
+                .map_or_else(|| envelope.device_id.clone(), |d| d.info.name.clone());
+            self.emit(Ephemeral::FleetTrustNeeded {
+                request: FleetTrustNeeded {
+                    device_id: envelope.device_id.clone(),
+                    device_name: name.clone(),
+                    fingerprint: listed
+                        .as_ref()
+                        .map(|d| fingerprint(&d.public_key))
+                        .unwrap_or_default(),
+                },
+            });
+            return Err(refuse(
+                codes::UNTRUSTED_DEVICE,
+                format!("{name} isn't trusted on this device"),
+            ));
+        };
+        let req = envelope.open(&pinned.public_key).map_err(|_| {
+            refuse(
+                codes::BAD_SIGNATURE,
+                "the request's signature doesn't check out",
+            )
+        })?;
+        let now = self.0.deps.clock.now().max(0) as u64;
+        if !fresh(req.issued_at_ms, now) {
+            return Err(refuse(
+                codes::STALE_REQUEST,
+                "the request is too old, or this device's clock is off",
+            ));
+        }
+        {
+            let mut mem = self.fleet();
+            mem.seen
+                .retain(|_, (at, _)| now.saturating_sub(*at as u64) <= REPLAY_MEMORY_MS);
+            if let Some((_, Seen::Done)) = mem.seen.get(&req.req_id) {
+                return Err(refuse(
+                    codes::STALE_REQUEST,
+                    "this request was seen already",
+                ));
+            }
+            mem.seen
+                .insert(req.req_id.clone(), (now as i64, Seen::Claiming));
+        }
+        if let Err(refusal) = self.fleet_check_op(&req, &s).await {
+            self.fleet()
+                .seen
+                .insert(req.req_id.clone(), (now as i64, Seen::Done));
+            return Err(refusal);
+        }
+        Ok(req)
+    }
+
+    /// What the op itself must fit, checked before the claim.
+    async fn fleet_check_op(
+        &self,
+        req: &RemoteRequest,
+        s: &crate::usecases::fleet::FleetSettings,
+    ) -> Result<(), Refusal> {
+        let above = |m: FleetMode| {
+            refuse(
+                codes::MODE_NOT_ALLOWED,
+                format!(
+                    "{} is above what this device allows ({})",
+                    mode_str(m),
+                    mode_str(s.max_mode)
+                ),
+            )
+        };
+        let unknown = || refuse(codes::UNKNOWN_SPACE, "no such space on this device");
+        match &req.op {
+            RemoteOp::StartSpace {
+                space,
+                project_id,
+                goal,
+                mode,
+                parent,
+                depth,
+                ..
+            } => {
+                if *mode > s.max_mode {
+                    return Err(above(*mode));
+                }
+                if !self
+                    .fleet_projects()
+                    .await
+                    .iter()
+                    .any(|p| &p.id == project_id)
+                {
+                    return Err(refuse(
+                        codes::UNKNOWN_PROJECT,
+                        format!("no project {project_id} on this device"),
+                    ));
+                }
+                if *depth > MAX_DEPTH {
+                    return Err(refuse(
+                        codes::DEPTH,
+                        format!("spaces nest at most {MAX_DEPTH} deep"),
+                    ));
+                }
+                let mem = self.fleet();
+                if let Some(p) = parent {
+                    let children = mem
+                        .hosted
+                        .values()
+                        .filter(|h| h.row.parent.as_ref() == Some(p))
+                        .count();
+                    if children >= MAX_CHILDREN as usize {
+                        return Err(refuse(
+                            codes::DEPTH,
+                            format!("a space starts at most {MAX_CHILDREN} others"),
+                        ));
+                    }
+                }
+                if mem.hosted.contains_key(space) {
+                    return Err(refuse(codes::INVALID, "this space was started already"));
+                }
+                if goal.trim().is_empty() {
+                    return Err(refuse(codes::INVALID, "a remote space needs a goal"));
+                }
+                Ok(())
+            }
+            RemoteOp::Send { space, text, mode } => {
+                let local = self.fleet_hosted_local(space).ok_or_else(unknown)?;
+                if text.trim().is_empty() {
+                    return Err(refuse(codes::INVALID, "empty message"));
+                }
+                let m = match mode {
+                    Some(m) => *m,
+                    None => fleet_mode(self.space_row(&local).await.map_err(app_refusal)?.mode),
+                };
+                if m > s.max_mode {
+                    return Err(above(m));
+                }
+                Ok(())
+            }
+            RemoteOp::Stop { space } => self
+                .fleet_hosted_local(space)
+                .map(|_| ())
+                .ok_or_else(unknown),
+            RemoteOp::Answer {
+                space,
+                ask_id,
+                answers,
+            } => {
+                let local = self.fleet_hosted_local(space).ok_or_else(unknown)?;
+                let questions = self.pending_questions(&local, ask_id).ok_or_else(|| {
+                    refuse(codes::UNKNOWN_SPACE, "this question is no longer waiting")
+                })?;
+                let items = answer_items(&questions, answers);
+                match crate::usecases::space_questions::invalid_answers(&questions, &items) {
+                    Some(why) => Err(refuse(codes::INVALID, why)),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+
+    /// The cloud's word on a claim: only `claimed` runs anything.
+    pub(crate) fn fleet_on_claim(&self, req_id: &str, claimed: bool, rejection: Option<String>) {
+        let req = {
+            let mut mem = self.fleet();
+            if let Some((_, seen)) = mem.seen.get_mut(req_id) {
+                *seen = Seen::Done;
+            }
+            mem.claims.remove(req_id)
+        };
+        let Some(req) = req else {
+            return;
+        };
+        if !claimed {
+            tracing::info!(
+                req_id,
+                rejection = rejection.as_deref().unwrap_or(""),
+                "a fleet claim was rejected; nothing runs"
+            );
+            return;
+        }
+        let core = self.clone();
+        tokio::spawn(async move { core.fleet_run(req).await });
+    }
+
+    /// Runs a claimed request and replies.
+    async fn fleet_run(&self, req: RemoteRequest) {
+        let outcome = match req.op.clone() {
+            RemoteOp::StartSpace { .. } => self.fleet_host_start(&req).await,
+            RemoteOp::Send { space, text, mode } => match self.fleet_hosted_local(&space) {
+                Some(local) => self
+                    .space_send(SpaceSendRequest {
+                        space: local,
+                        text,
+                        agent: None,
+                        model: None,
+                        mode: mode.map(space_mode),
+                        attachments: None,
+                        effort: None,
+                    })
+                    .await
+                    .map(|id| serde_json::json!({ "message": id }))
+                    .map_err(app_refusal),
+                None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
+            },
+            RemoteOp::Stop { space } => match self.fleet_hosted_local(&space) {
+                Some(local) => self
+                    .space_stop(&local)
+                    .await
+                    .map(|()| serde_json::json!({}))
+                    .map_err(app_refusal),
+                None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
+            },
+            RemoteOp::Answer {
+                space,
+                ask_id,
+                answers,
+            } => match self.fleet_hosted_local(&space) {
+                Some(local) => {
+                    let questions = self.pending_questions(&local, &ask_id).unwrap_or_default();
+                    // First answer wins: answered here meanwhile, it's gone.
+                    self.answer_space_question(SpaceAnswerRequest {
+                        space: local,
+                        question: ask_id,
+                        answers: answer_items(&questions, &answers),
+                    })
+                    .await
+                    .map(|()| serde_json::json!({}))
+                    .map_err(app_refusal)
+                }
+                None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
+            },
+        };
+        let outcome = match outcome {
+            Ok(value) => ReplyOutcome::Ok { value },
+            Err((code, message)) => {
+                tracing::info!(req_id = %req.req_id, code, reason = %message, "a fleet request failed");
+                ReplyOutcome::Err {
+                    code: code.to_string(),
+                    message,
+                }
+            }
+        };
+        self.fleet_send_msg(ClientMessage::Reply {
+            req_id: req.req_id,
+            outcome,
+        });
+    }
+
+    /// `start_space`: the space is made the usual way, then mapped.
+    async fn fleet_host_start(&self, req: &RemoteRequest) -> Result<serde_json::Value, Refusal> {
+        let RemoteOp::StartSpace {
+            space: remote,
+            project_id,
+            goal,
+            mode,
+            agent,
+            model,
+            parent,
+            depth,
+        } = req.op.clone()
+        else {
+            return Err(refuse(codes::INTERNAL, "not a start"));
+        };
+        let agent = agent.and_then(|a| AgentId::ALL.into_iter().find(|x| x.as_str() == a));
+        let space = self
+            .create_space(CreateSpaceRequest {
+                project: project_id.clone(),
+                goal,
+                name: None,
+                branch: None,
+                base: None,
+                agent,
+                model,
+                start_from: None,
+                effort: None,
+                mode: Some(space_mode(mode)),
+            })
+            .await
+            .map_err(|e| refuse(codes::INTERNAL, e.to_string()))?;
+        let project_name = self
+            .fleet_projects()
+            .await
+            .into_iter()
+            .find(|p| p.id == project_id)
+            .map_or_else(|| project_id.clone(), |p| p.name);
+        let data = HostedData {
+            mode,
+            project_id,
+            project_name,
+            name: space.name.clone(),
+            branch: space.branch.clone(),
+            track: Track::default(),
+        };
+        let row = FleetHostedRow {
+            space: remote.clone(),
+            local_space: space.id.clone(),
+            origin_device: req.origin_device.clone(),
+            parent,
+            depth,
+            created_at: self.0.deps.clock.now(),
+            data: serde_json::to_value(&data).unwrap_or_default(),
+        };
+        self.fleet_put_hosted(&row).await;
+        let name = self.fleet_name(&self.fleet_settings().await).await;
+        {
+            let mut mem = self.fleet();
+            let me = mem.device_id.clone().unwrap_or_default();
+            let view = hosted_view(&row, &data, &me, &name);
+            mem.hosted
+                .insert(remote.clone(), Hosted { row, data, view });
+        }
+        tracing::info!(space = %space.id, remote = %remote, origin = %req.origin_device, "started a space for another device");
+        self.fleet_observe(ObserverCmd::Hosted(remote.clone()));
+        self.fleet_announce().await;
+        Ok(serde_json::to_value(StartedSpace {
+            space: remote,
+            name: space.name,
+            branch: space.branch,
+        })
+        .unwrap_or_default())
+    }
+
+    async fn fleet_put_hosted(&self, row: &FleetHostedRow) {
+        let store = self.0.deps.store.clone();
+        let row = row.clone();
+        let stored = tokio::task::spawn_blocking(move || store.fleet_hosted_put(&row)).await;
+        if let Ok(Err(e)) = stored {
+            tracing::warn!(error.code = e.code(), error = %e, "couldn't store a hosted fleet space");
+        }
+    }
+
+    /// Reads the hosted spaces once per process.
+    pub(crate) async fn fleet_load_hosted(&self) {
+        self.0
+            .fleet
+            .hosted_loaded
+            .get_or_init(|| async {
+                let store = self.0.deps.store.clone();
+                let rows = tokio::task::spawn_blocking(move || store.fleet_hosted_all())
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+                if rows.is_empty() {
+                    return;
+                }
+                let name = self.fleet_name(&self.fleet_settings().await).await;
+                let mut loaded = Vec::new();
+                for row in rows {
+                    let Ok(mut data) = serde_json::from_value::<HostedData>(row.data.clone())
+                    else {
+                        continue;
+                    };
+                    // A crash between a journal write and the row's: the
+                    // journal knows the last seq.
+                    let store = self.0.deps.store.clone();
+                    let (space, since) = (row.space.clone(), data.track.seq);
+                    let last = tokio::task::spawn_blocking(move || {
+                        store.fleet_journal_since(&space, since, DEVICE_JOURNAL)
+                    })
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .and_then(|evs| evs.last().map(|(s, _)| *s));
+                    if let Some(last) = last {
+                        data.track.seq = data.track.seq.max(last);
+                    }
+                    loaded.push((row, data));
+                }
+                {
+                    let mut mem = self.fleet();
+                    let me = mem.device_id.clone().unwrap_or_default();
+                    for (row, data) in loaded {
+                        let view = hosted_view(&row, &data, &me, &name);
+                        mem.hosted
+                            .insert(row.space.clone(), Hosted { row, data, view });
+                    }
+                }
+                // What happened while closed (a restart clears questions).
+                self.fleet_observe(ObserverCmd::PassAll);
+            })
+            .await;
+    }
+
+    // ── the observer ────────────────────────────────────────────────────
+
+    /// Hands `cmd` to the observer, starting it on first use.
+    pub(crate) fn fleet_observe(&self, cmd: ObserverCmd) {
+        let tx = self.0.fleet.observer.get_or_init(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let sync = self.0.sync_tx.subscribe();
+            let eph = self.0.ephemeral_tx.subscribe();
+            let core = self.clone();
+            tokio::spawn(async move { core.fleet_observer(rx, sync, eph).await });
+            tx
+        });
+        let _ = tx.send(cmd);
+    }
+
+    async fn fleet_observer(
+        &self,
+        mut cmds: mpsc::UnboundedReceiver<ObserverCmd>,
+        mut sync: broadcast::Receiver<SyncFrame>,
+        mut eph: broadcast::Receiver<Ephemeral>,
+    ) {
+        use broadcast::error::RecvError;
+        loop {
+            // Frames first: a turn's start is published before its steps.
+            tokio::select! {
+                biased;
+                _ = self.0.shutdown.cancelled() => return,
+                frame = sync.recv() => match frame {
+                    Ok(f) => self.fleet_observe_frame(&f).await,
+                    Err(RecvError::Lagged(_)) => self.fleet_pass_all().await,
+                    Err(RecvError::Closed) => return,
+                },
+                cmd = cmds.recv() => match cmd {
+                    Some(ObserverCmd::Hosted(remote)) => self.fleet_pass(&remote, true).await,
+                    Some(ObserverCmd::Replay(resume)) => self.fleet_replay(resume).await,
+                    Some(ObserverCmd::PassAll) => self.fleet_pass_all().await,
+                    None => return,
+                },
+                ev = eph.recv() => match ev {
+                    Ok(Ephemeral::RunStep { run, step }) => self.fleet_observe_step(&run, &step).await,
+                    Ok(_) | Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return,
+                },
+            }
+        }
+    }
+
+    fn fleet_by_local(&self) -> HashMap<String, String> {
+        self.fleet()
+            .hosted
+            .values()
+            .map(|h| (h.row.local_space.clone(), h.row.space.clone()))
+            .collect()
+    }
+
+    async fn fleet_pass_all(&self) {
+        let remotes: Vec<String> = self.fleet().hosted.keys().cloned().collect();
+        for r in remotes {
+            self.fleet_pass(&r, true).await;
+        }
+    }
+
+    async fn fleet_observe_frame(&self, frame: &SyncFrame) {
+        let by_local = self.fleet_by_local();
+        if by_local.is_empty() {
+            return;
+        }
+        let mut dirty: BTreeMap<String, bool> = BTreeMap::new();
+        for a in &frame.actions {
+            if a.model == models::SPACE {
+                if let Some(r) = by_local.get(&a.model_id) {
+                    dirty.entry(r.clone()).or_insert(false);
+                }
+            } else if a.model == models::CHAT_MESSAGE
+                && let Some(local) = a
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.get("pr"))
+                    .and_then(|p| p.as_str())
+                    .and_then(|p| p.strip_prefix("space:"))
+                && let Some(r) = by_local.get(local)
+            {
+                dirty.insert(r.clone(), true);
+            }
+        }
+        for (remote, chat) in dirty {
+            self.fleet_pass(&remote, chat).await;
+        }
+    }
+
+    async fn fleet_observe_step(&self, run: &str, step: &TurnStep) {
+        let TurnStep::Tool {
+            name,
+            target,
+            detail,
+            parent: None,
+            ..
+        } = step
+        else {
+            return;
+        };
+        let Some(local) = run.strip_prefix("space:").and_then(|r| r.split(':').next()) else {
+            return;
+        };
+        let Some(remote) = self.fleet_by_local().get(local).cloned() else {
+            return;
+        };
+        // The turn's start first, if its frame hasn't been looked at yet.
+        let current = self
+            .fleet()
+            .hosted
+            .get(&remote)
+            .and_then(|h| h.data.track.current.clone());
+        if current.as_deref() != Some(run) {
+            self.fleet_pass(&remote, false).await;
+        }
+        let Some(mut track) = self
+            .fleet()
+            .hosted
+            .get(&remote)
+            .map(|h| h.data.track.clone())
+        else {
+            return;
+        };
+        let summary = target
+            .as_deref()
+            .or(detail.as_deref())
+            .unwrap_or_default()
+            .lines()
+            .next()
+            .unwrap_or_default();
+        let event = RemoteSpaceEvent::Tool {
+            turn: track.turn,
+            name: truncate(name, 80),
+            summary: truncate(summary, 200),
+        };
+        self.fleet_journal(&remote, &mut track, event).await;
+        if let Some(h) = self.fleet().hosted.get_mut(&remote) {
+            h.data.track.seq = track.seq;
+        }
+    }
+
+    /// The text that started `run`'s turn.
+    async fn fleet_turn_text(&self, run: &str) -> String {
+        let Some(message) = run.rsplit(':').next() else {
+            return String::new();
+        };
+        let store = self.0.deps.store.clone();
+        let id = message.to_string();
+        tokio::task::spawn_blocking(move || store.get(models::CHAT_MESSAGE, &id))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+            .and_then(|r| serde_json::from_value::<ChatMessage>(r.data).ok())
+            .map(|m| truncate(&m.text, 2000))
+            .unwrap_or_default()
+    }
+
+    /// Agent replies of `local` not reported yet, oldest first.
+    async fn fleet_new_replies(&self, local: &str, track: &Track) -> Vec<ChatMessage> {
+        let store = self.0.deps.store.clone();
+        let key = space_chat_key(local).0;
+        let rows =
+            tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
+        let mut out: Vec<ChatMessage> = rows
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<ChatMessage>(r.data).ok())
+            .filter(|m| matches!(m.author, Author::Agent(_)) && m.queued.is_none())
+            .filter(|m| {
+                m.at >= track.reply_at && m.run.as_ref().is_some_and(|r| !track.ended.contains(r))
+            })
+            .collect();
+        out.sort_by_key(|m| m.at);
+        out
+    }
+
+    /// Compares hosted space `remote` with what was last reported, and
+    /// reports the difference.
+    async fn fleet_pass(&self, remote: &str, chat: bool) {
+        let Some((row_meta, data)) = self
+            .fleet()
+            .hosted
+            .get(remote)
+            .map(|h| (h.row.clone(), h.data.clone()))
+        else {
+            return;
+        };
+        let local = row_meta.local_space.clone();
+        let Ok(space) = self.space_row(&local).await else {
+            return;
+        };
+        let mut track = data.track.clone();
+        let mut events = Vec::new();
+        let me = self.fleet().device_id.clone().unwrap_or_default();
+        let device_name = self.fleet_name(&self.fleet_settings().await).await;
+        if !track.started {
+            track.started = true;
+            events.push(RemoteSpaceEvent::Started {
+                host_device: me.clone(),
+                origin_device: row_meta.origin_device.clone(),
+                project_id: data.project_id.clone(),
+                project_name: data.project_name.clone(),
+                name: space.name.clone(),
+                branch: space.branch.clone(),
+                mode: data.mode,
+                parent: row_meta.parent.clone(),
+                depth: row_meta.depth,
+            });
+        }
+        if space.status == SpaceStatus::Running
+            && let Some(run) = &space.run
+            && track.current.as_ref() != Some(run)
+            && !track.ended.contains(run)
+        {
+            track.turn += 1;
+            track.current = Some(run.clone());
+            events.push(RemoteSpaceEvent::TurnStarted {
+                turn: track.turn,
+                text: self.fleet_turn_text(run).await,
+            });
+        }
+        let look = chat
+            || space.turns != track.turns
+            || (track.current.is_some() && space.run != track.current);
+        if look {
+            for m in self.fleet_new_replies(&local, &track).await {
+                let Some(run) = m.run.clone() else { continue };
+                if track.current.as_ref() != Some(&run) {
+                    track.turn += 1;
+                    events.push(RemoteSpaceEvent::TurnStarted {
+                        turn: track.turn,
+                        text: self.fleet_turn_text(&run).await,
+                    });
+                }
+                if !m.text.trim().is_empty() {
+                    let text = truncate(&m.text, 8000);
+                    track.last_reply = Some(text.clone());
+                    events.push(RemoteSpaceEvent::Reply {
+                        turn: track.turn,
+                        text,
+                    });
+                }
+                let (outcome, message) = match m.failed.as_deref() {
+                    None => (TurnOutcome::Done, None),
+                    Some("stopped") => (TurnOutcome::Stopped, None),
+                    Some(e) => (TurnOutcome::Failed, Some(truncate(e, 500))),
+                };
+                events.push(RemoteSpaceEvent::TurnEnded {
+                    turn: track.turn,
+                    outcome,
+                    message,
+                });
+                track.ended.push(run);
+                if track.ended.len() > ENDED_KEPT {
+                    track.ended.remove(0);
+                }
+                track.reply_at = track.reply_at.max(m.at);
+                track.current = None;
+            }
+            track.turns = space.turns;
+        }
+        let mut asks = Vec::new();
+        let qid = space.question.as_ref().map(|q| q.id.clone());
+        if qid != track.question {
+            if let Some(old) = track.question.take() {
+                events.push(RemoteSpaceEvent::QuestionCleared {
+                    ask_id: old.clone(),
+                });
+                asks.push(ClientMessage::AskResolved { ask_id: old });
+            }
+            if let Some(q) = &space.question {
+                let questions = remote_questions(&q.questions);
+                events.push(RemoteSpaceEvent::Question {
+                    ask_id: q.id.clone(),
+                    questions: questions.clone(),
+                });
+                asks.push(ClientMessage::Ask {
+                    ask: RemoteAsk {
+                        ask_id: q.id.clone(),
+                        space: remote.to_string(),
+                        host_device: me.clone(),
+                        from: format!("{device_name} · {}", space.name),
+                        questions,
+                    },
+                });
+            }
+            track.question = qid;
+        }
+        let status = remote_status(&space);
+        if track.status != Some(status) {
+            track.status = Some(status);
+            events.push(RemoteSpaceEvent::Status { status });
+        }
+        let renamed = space.name != data.name || space.branch != data.branch;
+        let changed = !events.is_empty() || renamed;
+        if !changed && track == data.track {
+            return;
+        }
+        for event in events {
+            self.fleet_journal(remote, &mut track, event).await;
+        }
+        for msg in asks {
+            self.fleet_send_msg(msg);
+        }
+        let (row, view) = {
+            let mut mem = self.fleet();
+            let Some(h) = mem.hosted.get_mut(remote) else {
+                return;
+            };
+            h.data.track = track;
+            h.data.name = space.name.clone();
+            h.data.branch = space.branch.clone();
+            h.row.data = serde_json::to_value(&h.data).unwrap_or_default();
+            let mut view = hosted_view(&h.row, &h.data, &me, &device_name);
+            view.question = space.question.as_ref().map(|q| FleetQuestion {
+                ask_id: q.id.clone(),
+                space: remote.to_string(),
+                from: format!("{device_name} · {}", space.name),
+                questions: ui_questions(&remote_questions(&q.questions)),
+                via: None,
+            });
+            h.view = view.clone();
+            (h.row.clone(), view)
+        };
+        self.fleet_put_hosted(&row).await;
+        if changed {
+            self.emit(Ephemeral::FleetSpace { space: view });
+            self.0.fleet.changed.notify_waiters();
+        }
+    }
+
+    /// Journals `event` as `remote`'s next and sends it.
+    async fn fleet_journal(&self, remote: &str, track: &mut Track, event: RemoteSpaceEvent) {
+        track.seq += 1;
+        let seq = track.seq;
+        if let Ok(value) = serde_json::to_value(&event) {
+            let store = self.0.deps.store.clone();
+            let space = remote.to_string();
+            let kept = tokio::task::spawn_blocking(move || {
+                store.fleet_journal_append(&space, seq, &value, DEVICE_JOURNAL)
+            })
+            .await;
+            if let Ok(Err(e)) = kept {
+                tracing::warn!(error.code = e.code(), error = %e, "couldn't journal a fleet event");
+            }
+        }
+        self.emit(Ephemeral::FleetSpaceLine {
+            space: remote.to_string(),
+            line: line_of(seq, &event),
+        });
+        self.fleet_send_msg(ClientMessage::SpaceEvent {
+            space: remote.to_string(),
+            seq,
+            event,
+        });
+    }
+
+    /// After a welcome: what the cloud lacks of each hosted space, then the
+    /// questions still waiting (an `ask` sent while offline was dropped).
+    async fn fleet_replay(&self, resume: BTreeMap<String, u64>) {
+        self.fleet_pass_all().await;
+        let hosted: Vec<(String, String, u64)> = self
+            .fleet()
+            .hosted
+            .values()
+            .map(|h| {
+                (
+                    h.row.space.clone(),
+                    h.row.local_space.clone(),
+                    h.data.track.seq,
+                )
+            })
+            .collect();
+        let me = self.fleet().device_id.clone().unwrap_or_default();
+        let device_name = self.fleet_name(&self.fleet_settings().await).await;
+        for (remote, local, seq) in hosted {
+            let since = resume.get(&remote).copied().unwrap_or(0);
+            if since < seq {
+                let store = self.0.deps.store.clone();
+                let space = remote.clone();
+                let events = tokio::task::spawn_blocking(move || {
+                    store.fleet_journal_since(&space, since, DEVICE_JOURNAL)
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
+                for (seq, value) in events {
+                    let Ok(event) = serde_json::from_value::<RemoteSpaceEvent>(value) else {
+                        continue;
+                    };
+                    self.fleet_send_msg(ClientMessage::SpaceEvent {
+                        space: remote.clone(),
+                        seq,
+                        event,
+                    });
+                }
+            }
+            if let Ok(space) = self.space_row(&local).await
+                && let Some(q) = &space.question
+            {
+                self.fleet_send_msg(ClientMessage::Ask {
+                    ask: RemoteAsk {
+                        ask_id: q.id.clone(),
+                        space: remote.clone(),
+                        host_device: me.clone(),
+                        from: format!("{device_name} · {}", space.name),
+                        questions: remote_questions(&q.questions),
+                    },
+                });
+            }
+        }
+    }
+}
+
+/// A hosted space as the UI lists it.
+pub(crate) fn hosted_view(
+    row: &FleetHostedRow,
+    data: &HostedData,
+    me: &str,
+    device_name: &str,
+) -> FleetRemoteSpace {
+    FleetRemoteSpace {
+        space: row.space.clone(),
+        host_device: me.to_string(),
+        host_name: device_name.to_string(),
+        origin_device: row.origin_device.clone(),
+        project_name: data.project_name.clone(),
+        name: data.name.clone(),
+        branch: data.branch.clone(),
+        status: data
+            .track
+            .status
+            .map_or(FleetSpaceStatus::Running, ui_status),
+        mode: space_mode(data.mode),
+        depth: row.depth,
+        parent: row.parent.clone(),
+        last_reply: data.track.last_reply.clone(),
+        question: None,
+        hosted_here: true,
+        local_space: Some(row.local_space.clone()),
+        error: None,
+    }
+}

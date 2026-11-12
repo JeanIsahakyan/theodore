@@ -35,6 +35,8 @@ mod activity_tests;
 mod attachments_tests;
 #[cfg(test)]
 mod code_intel_tests;
+#[cfg(test)]
+mod fleet_tests;
 
 #[cfg(test)]
 mod git_integration_tests;

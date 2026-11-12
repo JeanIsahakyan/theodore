@@ -282,6 +282,9 @@ pub mod codes {
     pub const UNKNOWN_PROJECT: &str = "fleet.unknown_project";
     pub const UNKNOWN_SPACE: &str = "fleet.unknown_space";
     pub const DEPTH: &str = "fleet.depth";
+    /// The request doesn't fit what it acts on (answers that don't answer
+    /// the question set, an empty message).
+    pub const INVALID: &str = "fleet.invalid";
     pub const OFFLINE: &str = "fleet.offline";
     pub const BUSY: &str = "fleet.busy";
     pub const INTERNAL: &str = "fleet.internal";

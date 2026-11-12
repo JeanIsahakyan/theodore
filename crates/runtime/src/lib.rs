@@ -315,6 +315,9 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
             worktree_locks.clone(),
         )),
         code_intel: code_intel(cfg).await,
+        // The socket adapter is wired in once it lands; until then the
+        // fleet is hidden.
+        fleet: Arc::new(theodore_ports::NoFleet),
     };
     let (core, receivers) = Core::start(deps);
     if let Some(sb) = &sandbox {

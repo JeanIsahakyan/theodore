@@ -592,11 +592,14 @@ impl Core {
                 .space_review_rules(&space, &project, &wt.path)
                 .await
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
-                    system_prompt(
-                        &space,
-                        self.0.deps.tools.is_some(),
-                        code,
-                        self.user_mcp_allowed().await,
+                    with_fleet_tools(
+                        system_prompt(
+                            &space,
+                            self.0.deps.tools.is_some(),
+                            code,
+                            self.user_mcp_allowed().await,
+                        ),
+                        self.0.deps.tools.is_some() && self.fleet_tools_available(),
                     ),
                     mode,
                 )))
@@ -2133,6 +2136,16 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
 const USER_MCP_PROMPT: &str = "The user's own MCP servers (Linear, GitHub, docs and \
      the like, as connected in their agent CLI) are available too: use them when the \
      task points at an issue, a thread or a document there.";
+
+/// The fleet tools' line (docs/fleet.md "Agents use it too"), when the
+/// turn has them.
+fn with_fleet_tools(mut prompt: String, fleet: bool) -> String {
+    if fleet {
+        prompt.push('\n');
+        prompt.push_str(crate::usecases::fleet_tools::FLEET_TOOLS_PROMPT);
+    }
+    prompt
+}
 
 fn system_prompt(space: &Space, tools: bool, code: CodeTools, user_mcp: bool) -> String {
     let mut prompt = base_system_prompt(space);

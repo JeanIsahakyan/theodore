@@ -10,7 +10,7 @@ use theodore_contract::TokenSource;
 use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{
-    AccountPort, AgentPort, Clock, CodeIntelPort, CommandPort, DeviceLoginPort, GitPort,
+    AccountPort, AgentPort, Clock, CodeIntelPort, CommandPort, DeviceLoginPort, FleetPort, GitPort,
     HostAdapter, McpEndpoint, Secrets, Store, TerminalPort, WorktreeLease,
 };
 
@@ -163,4 +163,8 @@ pub struct Deps {
     /// (docs/code-intel.md). `None` (tests, the CLI): the feature is off,
     /// runs get no code tools and `find_symbol` greps.
     pub code_intel: Option<Arc<dyn CodeIntelPort>>,
+    /// The fleet's socket to the Theodore cloud (docs/fleet.md). `NoFleet`
+    /// where there is none (fixtures, sandbox, the CLI, most tests): the
+    /// feature is then hidden.
+    pub fleet: Arc<dyn FleetPort>,
 }

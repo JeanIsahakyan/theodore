@@ -5719,6 +5719,7 @@ dependencies = [
  "theodore-agents",
  "theodore-contract",
  "theodore-domain",
+ "theodore-fleet-protocol",
  "theodore-git",
  "theodore-linear",
  "theodore-ports",

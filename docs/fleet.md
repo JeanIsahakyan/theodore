@@ -81,6 +81,7 @@ Refusals come back as `reply{err:{code, message}}`:
 | `fleet.mode_not_allowed` | mode above `fleet.max_mode` |
 | `fleet.unknown_project` / `fleet.unknown_space` | not on the target |
 | `fleet.depth` | deeper than 2 or more than 5 children |
+| `fleet.invalid` | the op doesn't fit what it acts on (answers that don't answer the set, an empty message) |
 | `fleet.offline` | target not connected within 10 s grace |
 
 ## Events and history
@@ -108,6 +109,18 @@ depth ≤ 2, ≤ 5 children per space, checked by the origin core and the cloud.
 An agent acts with its device's authority: it reaches only devices that trust
 this one, within their `max_mode`.
 
+| Tool | Does |
+| --- | --- |
+| `fleet_devices` | other devices online that take remote spaces: projects, `max_mode` |
+| `fleet_start_space` | a space on `device` in `project` with a `goal` and `mode`; returns its `rs_` id |
+| `fleet_send` / `fleet_stop` | a message as its next turn / stop its turn |
+| `fleet_wait` | until each space is idle, waiting, stopped or failed (≤ 10 min) |
+| `fleet_read` | status, last reply, question, history after `since` |
+
+Listed only while the fleet is on and connected; the system prompt names
+them then. A space hosted here for the fleet starts children at its own
+depth + 1 with itself as parent; any other space starts them at depth 1.
+
 ## Settings (per device)
 
 | Key | Default | |
@@ -116,6 +129,89 @@ this one, within their `max_mode`.
 | `fleet.accept_remote` | `false` | let trusted devices start and steer spaces here |
 | `fleet.max_mode` | `edit` | highest mode a remote request may use (`ask`, `plan`, `edit`, `run`) |
 | `fleet.trusted_devices` | `[]` | `[{device_id, public_key, name}]`, changed only on this device |
+| `fleet.name` | the Mac's computer name | how other devices list this one |
+
+Kept in the local store (kv `fleet.settings`), not as synced `setting`
+rows: only `fleet_set_settings` and `fleet_trust_device` change them, never
+a UI transaction. Trusting pins the key the cloud lists for that device at
+that moment; a later key change shows the device untrusted again.
+
+## App side
+
+Core: `crates/app/src/usecases/fleet*.rs`. The socket is the adapter's
+(`FleetPort`); everything the messages mean is the core's.
+
+```
+enabled + signed in + cloud URL + org_id ─▶ FleetPort::start ─▶ link
+  token refresh ─▶ Reauth          org switch ─▶ Close + new link
+  sign-out / off ─▶ Close          Fatal ─▶ status error, no redial until
+                                     sign-in, org or settings change
+```
+
+The cloud-assigned device id is kept per organization (kv
+`fleet.device_id:<org>`); the key is the keychain's `fleet.device_key`.
+
+### This device as the target
+
+```
+request ─▶ for this device ─▶ accept_remote ─▶ origin pinned (else TrustNeeded)
+  ─▶ open(pinned key) ─▶ fresh + req_id unseen ─▶ op fits ─▶ claim
+claim_result{claimed: true} ─▶ run ─▶ reply        not claimed ─▶ nothing runs
+```
+
+- "Op fits": start — mode ≤ `max_mode`, project here, depth ≤ 2, < 5
+  children of its parent hosted here; send — space hosted, mode ≤ cap
+  (the space's own when none given); answer — the question set waits and
+  the answers fit it (`fleet.invalid` otherwise).
+- A request re-delivered while its claim is open is claimed again; once
+  run, refused or rejected it's a replay (`fleet.stale_request`).
+- `start_space` runs the usual `create_space` (goal, mode, agent, model) and
+  stores the mapping in `fleet_spaces` (remote id, local space, origin,
+  parent, depth, bookkeeping as JSON).
+
+### Hosted spaces: events and journal
+
+One observer task reads the core's sync frames and run steps; it never
+takes a space's lock, and a space turn never waits on it.
+
+```
+space row / agent reply / run step of a hosted space
+  ─▶ diff with what was last reported ─▶ RemoteSpaceEvent, seq + 1
+  ─▶ fleet_events (last 2000 per space) ─▶ space_event
+welcome{resume} ─▶ journal after the cloud's seq ─▶ open questions asked again
+```
+
+| Space | Event |
+| --- | --- |
+| hosting starts | `started` |
+| a run starts | `turn_started` (the message, ≤ 2000 chars) |
+| a top-level tool call | `tool` (one line, ≤ 200) |
+| the agent's reply lands | `reply` (≤ 8000), `turn_ended` (done · stopped · failed) |
+| `question` set / cleared | `question` + `ask` / `question_cleared` + `ask_resolved` |
+| status | `status`: running · waiting (a question) · idle · failed · stopped (archived) |
+
+### Questions
+
+`ask_user` in a hosted space keeps its card here and also sends
+`ask{ask_id = the question set's id, from "<device> · <space>"}`. Answered
+here, stopped, timed out or cleared by a restart: `ask_resolved`. A
+verified `answer` request feeds the same pending set; first answer wins.
+Per question, the options picked, or one text that isn't an option for
+"Other". An `ask` routed here ─▶ `FleetAsk`; `dismiss` ─▶ `FleetAskDismissed`.
+
+### This device as the origin
+
+```
+fleet_start_space ─▶ rs_<uuid> ─▶ seal(device key) ─▶ request ─▶ `starting`
+  + subscribe{since 0}   reply ok ─▶ name, branch   reply err ─▶ failed + why
+space_event ─▶ status, last reply, question ─▶ FleetSpace + FleetSpaceLine
+reconnect ─▶ subscribe{since: last seq seen}
+```
+
+Spaces started from here and their lines (last 500) live in memory only: a
+restart forgets them. `fleet_send`/`fleet_stop`/`fleet_answer` wait up to
+15 s for the host's reply and return its refusal; not connected, they fail
+here without sending.
 
 ## Cloud
 
