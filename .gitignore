@@ -5,3 +5,6 @@ dist/
 .DS_Store
 *.log
 /ui/src/gen/*.tmp
+# Worker local secrets and wrangler state (docs/cloud.md)
+.dev.vars
+.wrangler/

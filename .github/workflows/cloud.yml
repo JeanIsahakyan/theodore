@@ -1,0 +1,85 @@
+name: Cloud
+
+# Deploys the Cloudflare Worker in cloud/ (docs/cloud.md), one Worker per
+# channel, alongside the branch flow (docs/releasing.md):
+#
+#   push staging, cloud/** changed ──▶ checks ──▶ theodore-cloud-staging
+#   push main,    cloud/** changed ──▶ checks ──▶ theodore-cloud
+#
+# A push that touches nothing under cloud/ deploys nothing. The Worker is
+# not part of the app build: no version bump, no tag, no release.
+#
+# Secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (Settings →
+# Secrets and variables → Actions), used only by the deploy step. The WorkOS
+# API key is NOT here: it is a Worker secret the owner sets once per
+# environment with `wrangler secret put WORKOS_API_KEY --env <env>`, and a
+# deploy keeps it. Manual run: pick the environment; production deploys
+# only from main.
+
+on:
+  push:
+    branches: [main, staging]
+    paths: ['cloud/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which Worker to deploy
+        type: choice
+        options: [staging, production]
+        default: staging
+
+# One deploy per environment at a time, never cancelled mid-deploy: a push
+# that lands during one waits, then deploys the newest.
+concurrency:
+  group: cloud-${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+    steps:
+      - name: production deploys only from main
+        if: env.TARGET == 'production' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::production deploys only from main (this run is on ${GITHUB_REF_NAME})"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: cloud/pnpm-lock.yaml
+
+      - name: install
+        run: pnpm -C cloud install --frozen-lockfile
+
+      # The same checks as ci.yml's cloud job: a deploy never ships what
+      # CI would have refused.
+      - name: typecheck
+        run: pnpm -C cloud typecheck
+
+      - name: lint
+        run: pnpm -C cloud lint
+
+      - name: format
+        run: pnpm -C cloud format:check
+
+      - name: test
+        run: pnpm -C cloud test
+
+      - name: deploy ${{ env.TARGET }}
+        run: pnpm -C cloud deploy:${{ env.TARGET }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
