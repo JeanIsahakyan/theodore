@@ -28,7 +28,7 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// How long a target remembers `req_id`s to refuse replays.
@@ -205,41 +205,133 @@ pub enum EnvelopeError {
     BadSignature,
     #[error("malformed body: {0}")]
     Malformed(String),
-    #[error("envelope device {envelope} doesn't match the body's origin {body}")]
+    #[error("envelope device {envelope} doesn't match the body's signer {body}")]
     OriginMismatch { envelope: String, body: String },
 }
 
+/// What a signature is for. Each kind signs `"theodore-fleet-<kind>-v2\0" ‖
+/// bytes`, so a signature made for one purpose never verifies as another
+/// (a hello nonce can't be turned into a request).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Domain {
+    /// The cloud's challenge nonce, in `hello`.
+    Hello,
+    /// A [`RemoteRequest`].
+    Request,
+    /// A [`SpaceEventBody`] from the space's host.
+    Event,
+    /// A [`RemoteAsk`] from the space's host.
+    Ask,
+}
+
+impl Domain {
+    pub fn tag(self) -> &'static [u8] {
+        match self {
+            Domain::Hello => b"theodore-fleet-hello-v2\0",
+            Domain::Request => b"theodore-fleet-request-v2\0",
+            Domain::Event => b"theodore-fleet-event-v2\0",
+            Domain::Ask => b"theodore-fleet-ask-v2\0",
+        }
+    }
+
+    /// The exact bytes signed for `msg` in this domain.
+    pub fn message(self, msg: &[u8]) -> Vec<u8> {
+        let mut m = Vec::with_capacity(self.tag().len() + msg.len());
+        m.extend_from_slice(self.tag());
+        m.extend_from_slice(msg);
+        m
+    }
+}
+
+/// Length of the cloud's challenge nonce; a hello signs nothing else.
+pub const NONCE_BYTES: usize = 32;
+
+/// Signs a challenge nonce for `hello`: `None` unless it is exactly
+/// [`NONCE_BYTES`] of base64, so the cloud can't get anything else signed.
+pub fn sign_hello(key: &DeviceKey, nonce_b64: &str) -> Option<String> {
+    let nonce = unb64(nonce_b64)?;
+    (nonce.len() == NONCE_BYTES).then(|| key.sign(&Domain::Hello.message(&nonce)))
+}
+
+pub fn verify_hello(public_key: &str, nonce: &[u8], signature: &str) -> bool {
+    nonce.len() == NONCE_BYTES && verify(public_key, &Domain::Hello.message(nonce), signature)
+}
+
+/// A body type that names the device that signed it.
+pub trait Signer {
+    fn signer(&self) -> &str;
+}
+
+impl Signer for RemoteRequest {
+    fn signer(&self) -> &str {
+        &self.origin_device
+    }
+}
+
+impl Signer for SpaceEventBody {
+    fn signer(&self) -> &str {
+        &self.host_device
+    }
+}
+
+impl Signer for RemoteAsk {
+    fn signer(&self) -> &str {
+        &self.host_device
+    }
+}
+
 impl SignedEnvelope {
-    /// Serializes and signs `req` with the origin's key.
-    pub fn seal(req: &RemoteRequest, key: &DeviceKey) -> Self {
-        let body = serde_json::to_string(req).expect("RemoteRequest serializes");
-        let signature = key.sign(body.as_bytes());
+    /// Serializes `body` and signs it for `domain` with its signer's key.
+    pub fn seal_as<T: Serialize + Signer>(body: &T, key: &DeviceKey, domain: Domain) -> Self {
+        let text = serde_json::to_string(body).expect("fleet bodies serialize");
+        let signature = key.sign(&domain.message(text.as_bytes()));
         SignedEnvelope {
-            device_id: req.origin_device.clone(),
-            body,
+            device_id: body.signer().to_string(),
+            body: text,
             signature,
         }
     }
 
     /// Reads the body without checking the signature: for routing only.
-    pub fn peek(&self) -> Result<RemoteRequest, EnvelopeError> {
+    pub fn peek_as<T: for<'de> Deserialize<'de>>(&self) -> Result<T, EnvelopeError> {
         serde_json::from_str(&self.body).map_err(|e| EnvelopeError::Malformed(e.to_string()))
     }
 
-    /// Checks the signature against `public_key` (the origin's, as pinned by
-    /// the verifier) and that the body names the same origin.
-    pub fn open(&self, public_key: &str) -> Result<RemoteRequest, EnvelopeError> {
-        if !verify(public_key, self.body.as_bytes(), &self.signature) {
+    /// Checks the signature for `domain` against `public_key` (the signer's,
+    /// as pinned by the verifier) and that the body names the same signer.
+    pub fn open_as<T: for<'de> Deserialize<'de> + Signer>(
+        &self,
+        public_key: &str,
+        domain: Domain,
+    ) -> Result<T, EnvelopeError> {
+        if !verify(
+            public_key,
+            &domain.message(self.body.as_bytes()),
+            &self.signature,
+        ) {
             return Err(EnvelopeError::BadSignature);
         }
-        let req = self.peek()?;
-        if req.origin_device != self.device_id {
+        let body: T = self.peek_as()?;
+        if body.signer() != self.device_id {
             return Err(EnvelopeError::OriginMismatch {
                 envelope: self.device_id.clone(),
-                body: req.origin_device,
+                body: body.signer().to_string(),
             });
         }
-        Ok(req)
+        Ok(body)
+    }
+
+    /// A request, signed by its origin.
+    pub fn seal(req: &RemoteRequest, key: &DeviceKey) -> Self {
+        Self::seal_as(req, key, Domain::Request)
+    }
+
+    pub fn peek(&self) -> Result<RemoteRequest, EnvelopeError> {
+        self.peek_as()
+    }
+
+    pub fn open(&self, public_key: &str) -> Result<RemoteRequest, EnvelopeError> {
+        self.open_as(public_key, Domain::Request)
     }
 }
 
@@ -382,11 +474,15 @@ pub enum RemoteSpaceEvent {
     QuestionCleared {
         ask_id: String,
     },
-    /// The cloud lost events `from..=to` (never sent by a device).
-    Gap {
-        from: u64,
-        to: u64,
-    },
+}
+
+/// One event of a hosted space, as its host signs it ([`Domain::Event`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceEventBody {
+    pub space: RemoteSpaceId,
+    pub seq: u64,
+    pub host_device: DeviceId,
+    pub event: RemoteSpaceEvent,
 }
 
 // ── questions routed to the user ────────────────────────────────────────────
@@ -465,13 +561,13 @@ pub enum ClientMessage {
         req_id: String,
         outcome: ReplyOutcome,
     },
+    /// A [`SpaceEventBody`] signed by this device as the space's host.
     SpaceEvent {
-        space: RemoteSpaceId,
-        seq: u64,
-        event: RemoteSpaceEvent,
+        envelope: SignedEnvelope,
     },
+    /// A [`RemoteAsk`] signed by this device as the space's host.
     Ask {
-        ask: RemoteAsk,
+        envelope: SignedEnvelope,
     },
     /// The question was answered on the host or the turn moved on.
     AskResolved {
@@ -483,6 +579,12 @@ pub enum ClientMessage {
     },
     Unsubscribe {
         space: RemoteSpaceId,
+    },
+    /// Forget one of this user's other devices (lost, replaced). The cloud
+    /// drops its row and closes its socket; it can register again only as
+    /// a new device.
+    RemoveDevice {
+        device_id: DeviceId,
     },
 }
 
@@ -522,13 +624,20 @@ pub enum ServerMessage {
         req_id: String,
         outcome: ReplyOutcome,
     },
+    /// A host's signed [`SpaceEventBody`], forwarded unchanged.
     SpaceEvent {
-        space: RemoteSpaceId,
-        seq: u64,
-        event: RemoteSpaceEvent,
+        envelope: SignedEnvelope,
     },
+    /// The cloud no longer has events `from..=to` of `space` (unsigned,
+    /// informational: never trusted for content).
+    SpaceGap {
+        space: RemoteSpaceId,
+        from: u64,
+        to: u64,
+    },
+    /// A host's signed [`RemoteAsk`], forwarded unchanged.
     Ask {
-        ask: RemoteAsk,
+        envelope: SignedEnvelope,
         via: AskVia,
     },
     Dismiss {
@@ -547,6 +656,8 @@ pub fn types() -> specta::Types {
         .register::<ClientMessage>()
         .register::<ServerMessage>()
         .register::<RemoteRequest>()
+        .register::<SpaceEventBody>()
+        .register::<RemoteAsk>()
         .register::<StartedSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below
     // 2^53 (same call as the contract crate).

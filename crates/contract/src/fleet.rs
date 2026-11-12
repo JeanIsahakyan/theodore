@@ -42,8 +42,12 @@ pub struct FleetDevice {
     pub projects: Vec<FleetProject>,
     pub accepts_remote: bool,
     pub max_mode: SpaceMode,
-    /// "a1b2 c3d4 e5f6 0718": compare with what that device shows for itself.
+    /// 8 groups of 4 hex ("a1b2 c3d4 … 0718"): compare with what that device
+    /// shows for itself.
     pub fingerprint: String,
+    /// The key the fingerprint is of; trusting sends it back so exactly this
+    /// key is pinned, whatever the cloud lists by then.
+    pub public_key: String,
     /// This device trusts it (its key is pinned here).
     pub trusted: bool,
     pub this_device: bool,
@@ -90,6 +94,11 @@ pub struct FleetSettingsRequest {
 pub struct FleetTrustRequest {
     pub device_id: String,
     pub trusted: bool,
+    /// Required to trust: the key the user compared (`FleetDevice::public_key`
+    /// or `FleetTrustNeeded::public_key`). Refused if the cloud now lists
+    /// another key for the device.
+    #[serde(default)]
+    pub public_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -204,4 +213,5 @@ pub struct FleetTrustNeeded {
     pub device_id: String,
     pub device_name: String,
     pub fingerprint: String,
+    pub public_key: String,
 }

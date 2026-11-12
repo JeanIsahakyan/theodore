@@ -1048,8 +1048,16 @@ export type FleetDevice = {
 	projects: FleetProject[],
 	accepts_remote: boolean,
 	max_mode: SpaceMode,
-	/**  "a1b2 c3d4 e5f6 0718": compare with what that device shows for itself. */
+	/**
+	 *  8 groups of 4 hex ("a1b2 c3d4 … 0718"): compare with what that device
+	 *  shows for itself.
+	 */
 	fingerprint: string,
+	/**
+	 *  The key the fingerprint is of; trusting sends it back so exactly this
+	 *  key is pinned, whatever the cloud lists by then.
+	 */
+	public_key: string,
 	/**  This device trusts it (its key is pinned here). */
 	trusted: boolean,
 	this_device: boolean,
@@ -1169,6 +1177,7 @@ export type FleetTrustNeeded = {
 	device_id: string,
 	device_name: string,
 	fingerprint: string,
+	public_key: string,
 };
 
 /**
@@ -1178,6 +1187,12 @@ export type FleetTrustNeeded = {
 export type FleetTrustRequest = {
 	device_id: string,
 	trusted: boolean,
+	/**
+	 *  Required to trust: the key the user compared (`FleetDevice::public_key`
+	 *  or `FleetTrustNeeded::public_key`). Refused if the cloud now lists
+	 *  another key for the device.
+	 */
+	public_key?: string | null,
 };
 
 export type GetBlobRequest = {

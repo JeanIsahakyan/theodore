@@ -6160,6 +6160,7 @@ dependencies = [
  "theodore-contract",
  "theodore-domain",
  "theodore-fixtures",
+ "theodore-fleet",
  "theodore-git",
  "theodore-grouping",
  "theodore-host-bitbucket",

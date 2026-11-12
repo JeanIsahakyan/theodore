@@ -23,9 +23,19 @@ spaces: SpaceCursor[] } |
 /**  Ms since the last input in this app. */
 idle_ms: number } |
 /**  The device's info changed (projects, settings). */
-{ type: "announce"; info: DeviceInfo } | { type: "request"; envelope: SignedEnvelope } | { type: "claim"; req_id: string; generation: number } | { type: "reply"; req_id: string; outcome: ReplyOutcome } | { type: "space_event"; space: string; seq: number; event: RemoteSpaceEvent } | { type: "ask"; ask: RemoteAsk } |
+{ type: "announce"; info: DeviceInfo } | { type: "request"; envelope: SignedEnvelope } | { type: "claim"; req_id: string; generation: number } | { type: "reply"; req_id: string; outcome: ReplyOutcome } |
+/**  A [`SpaceEventBody`] signed by this device as the space's host. */
+{ type: "space_event"; envelope: SignedEnvelope } |
+/**  A [`RemoteAsk`] signed by this device as the space's host. */
+{ type: "ask"; envelope: SignedEnvelope } |
 /**  The question was answered on the host or the turn moved on. */
-{ type: "ask_resolved"; ask_id: string } | { type: "subscribe"; space: string; since: number } | { type: "unsubscribe"; space: string };
+{ type: "ask_resolved"; ask_id: string } | { type: "subscribe"; space: string; since: number } | { type: "unsubscribe"; space: string } |
+/**
+ *  Forget one of this user's other devices (lost, replaced). The cloud
+ *  drops its row and closes its socket; it can register again only as
+ *  a new device.
+ */
+{ type: "remove_device"; device_id: string };
 
 /**  What a device says about itself (in `hello` and `announce`). */
 export type DeviceInfo = {
@@ -131,9 +141,7 @@ text: string } | { kind: "tool"; turn: number; name: string;
 /**  One line, ≤ 200 chars. */
 summary: string } | { kind: "reply"; turn: number;
 /**  The agent's reply for the turn, truncated to 8000 chars. */
-text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string } |
-/**  The cloud lost events `from..=to` (never sent by a device). */
-{ kind: "gap"; from: number; to: number };
+text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string };
 
 export type RemoteSpaceStatus = "running" |
 /**  Settled, waiting for the next message. */
@@ -159,7 +167,16 @@ resume: { [key in string]: number } } |
 /**  A request for this device to verify, claim and run. */
 { type: "request"; envelope: SignedEnvelope; generation: number } | { type: "claim_result"; req_id: string; claimed: boolean; rejection?: string | null } |
 /**  The answer to a request this device sent. */
-{ type: "reply"; req_id: string; outcome: ReplyOutcome } | { type: "space_event"; space: string; seq: number; event: RemoteSpaceEvent } | { type: "ask"; ask: RemoteAsk; via: AskVia } | { type: "dismiss"; ask_id: string; reason: DismissReason } | { type: "error"; code: string; message: string };
+{ type: "reply"; req_id: string; outcome: ReplyOutcome } |
+/**  A host's signed [`SpaceEventBody`], forwarded unchanged. */
+{ type: "space_event"; envelope: SignedEnvelope } |
+/**
+ *  The cloud no longer has events `from..=to` of `space` (unsigned,
+ *  informational: never trusted for content).
+ */
+{ type: "space_gap"; space: string; from: number; to: number } |
+/**  A host's signed [`RemoteAsk`], forwarded unchanged. */
+{ type: "ask"; envelope: SignedEnvelope; via: AskVia } | { type: "dismiss"; ask_id: string; reason: DismissReason } | { type: "error"; code: string; message: string };
 
 /**
  *  A request body signed by its origin device. `body` is the JSON text of a
@@ -177,6 +194,14 @@ export type SignedEnvelope = {
 export type SpaceCursor = {
 	space: string,
 	seq: number,
+};
+
+/**  One event of a hosted space, as its host signs it ([`Domain::Event`]). */
+export type SpaceEventBody = {
+	space: string,
+	seq: number,
+	host_device: string,
+	event: RemoteSpaceEvent,
 };
 
 /**  `reply.value` for a `start_space`. */

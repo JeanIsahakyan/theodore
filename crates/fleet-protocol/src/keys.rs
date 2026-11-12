@@ -77,9 +77,9 @@ pub fn verify(public_key: &str, msg: &[u8], signature: &str) -> bool {
         .is_ok()
 }
 
-/// A short, human-comparable fingerprint of a public key: 4 groups of 4 hex
-/// characters of its SHA-256 ("a1b2 c3d4 e5f6 0718"), shown on both devices
-/// when trust is given.
+/// A human-comparable fingerprint of a public key: the first 128 bits of
+/// its SHA-256 as 8 groups of 4 hex characters ("a1b2 c3d4 … 0718"), shown
+/// on both devices when trust is given.
 pub fn fingerprint(public_key: &str) -> String {
     short_hash(public_key)
 }
@@ -90,7 +90,10 @@ mod sha2_free {
 
     pub fn short_hash(s: &str) -> String {
         let d = digest(&SHA256, s.as_bytes());
-        let hex: String = d.as_ref()[..8].iter().map(|b| format!("{b:02x}")).collect();
+        let hex: String = d.as_ref()[..16]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         hex.as_bytes()
             .chunks(4)
             .map(|c| std::str::from_utf8(c).unwrap_or_default())
