@@ -33,8 +33,14 @@ const ORIGIN: &str = "dev_o";
 const TARGET: &str = "dev_t";
 const GENERATION: u64 = 7;
 
+/// How long a test waits for something the core does in the background.
+/// Generous: a loaded CI runner can take seconds to schedule a task, and a
+/// passing test returns as soon as the condition holds.
+const WAIT: Duration = Duration::from_secs(20);
+
 async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
-    for _ in 0..600 {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while tokio::time::Instant::now() < deadline {
         if cond() {
             return;
         }
@@ -48,7 +54,8 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    for _ in 0..600 {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while tokio::time::Instant::now() < deadline {
         if cond().await {
             return;
         }
@@ -2060,6 +2067,26 @@ async fn the_origin_takes_events_and_asks_only_as_a_pinned_host_signed_them() {
 
 /// A request that came back after it ran is a replay even after a
 /// restart; one whose claim was still open is claimed again.
+#[tokio::test]
+async fn an_enabled_fleet_connects_at_start_on_its_own() {
+    // Flaked on CI: at start the fleet could look before the stored
+    // session was loaded, find nobody signed in, and stay down until the
+    // next refresh. Several restarts make the race likely to show.
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    core.fleet_set_settings(settings(false)).await.unwrap();
+    wait_until("the first link", || f.fleet.starts() == 1).await;
+    drop(core);
+    for n in 2..=6 {
+        let (core, _recv) = start(&f);
+        wait_until("a link at start, no settings change", || {
+            f.fleet.starts() == n
+        })
+        .await;
+        drop(core);
+    }
+}
+
 #[tokio::test]
 async fn seen_requests_survive_a_restart() {
     let f = fixtures();

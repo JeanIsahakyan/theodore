@@ -624,6 +624,9 @@ impl Core {
             return;
         }
         self.account_load().await;
+        // The fleet may have looked before the stored session was loaded
+        // and found nobody signed in: look again now that it is.
+        self.fleet_account_changed();
         if self.account_session().is_some() {
             self.account_schedule_refresh();
             let since = self.0.account.generation.load(Ordering::SeqCst);
