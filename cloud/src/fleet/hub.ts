@@ -4,12 +4,16 @@
  * Workers runtime; `org-hub.ts` is the Durable Object around it.
  *
  * ```text
- * open ─▶ challenge ─▶ hello (ed25519 over the nonce) ─▶ welcome, devices
+ * open (≤ 10 per user) ─▶ one challenge ─▶ hello (ed25519 over
+ *   "theodore-fleet-hello-v2\0" ‖ 32-byte nonce) ─▶ welcome, devices
  *   ─▶ request ─▶ target: request{generation} ─▶ claim ─▶ claim_result
  *              ─▶ reply ─▶ origin            (offline: 10 s grace, 2 min ttl)
- *   ─▶ space_event (host only) ─▶ ring 500 ─▶ subscribers
- *   ─▶ ask (host only) ─▶ active │ origin │ everyone; 20 s ─▶ everyone
+ *   ─▶ space_event (host-signed) ─▶ ring 500 ─▶ subscribers (origin, host)
+ *   ─▶ ask (host-signed) ─▶ active if origin/host │ origin; 20 s ─▶ origin
  * ```
+ *
+ * The cloud reads signed bodies only to route and checks event and ask
+ * signatures against the sender's pinned key (devices check them again).
  *
  * State lives in SQLite and in each socket's attachment, so a hibernated
  * hub wakes with nothing to rebuild. Messages run one at a time, in order.
@@ -22,9 +26,10 @@ import type {
   DeviceSummary,
   DismissReason,
   RemoteAsk,
-  RemoteSpaceEvent,
   ReplyOutcome,
   ServerMessage,
+  SignedEnvelope,
+  SpaceEventBody,
 } from '../gen/fleet';
 import {
   ACTIVE_IDLE_MS,
@@ -34,11 +39,17 @@ import {
   ESCALATE_MS,
   GRACE_MS,
   HELLO_TIMEOUT_MS,
+  HOST_OFFLINE_PRUNE_MS,
+  MAX_ASKS_PER_SPACE,
+  MAX_ASKS_PER_USER,
   MAX_CHILDREN,
+  MAX_CONNS_PER_USER,
   MAX_DEPTH,
   MAX_DEVICES_PER_USER,
   MAX_FRAME_BYTES,
   MAX_PENDING_PER_USER,
+  MAX_SPACES_PER_USER,
+  NONCE_BYTES,
   PENDING_TTL_MS,
   RATE_BURST,
   RATE_PER_SECOND,
@@ -52,14 +63,18 @@ import {
   type Sql,
 } from './store';
 import {
+  type Domain,
   type Routing,
   b64,
   BadMessage,
   byteLength,
   parseClient,
+  peekAsk,
+  peekEvent,
   peekRequest,
   unb64,
-  verifyEd25519,
+  verifyEnvelope,
+  verifyHello,
 } from './wire';
 
 /** Who opened the socket, as the Worker verified it. */
@@ -139,7 +154,12 @@ export class Hub {
 
   open(conn: Conn, caller: FleetCaller): Promise<void> {
     return this.run(() => {
-      const nonce = new Uint8Array(32);
+      // One challenge per connection: a device signs one nonce per socket.
+      if (stateOf(conn)) return;
+      const others = this.env
+        .conns(caller.userId)
+        .filter((c) => c !== conn && c.open && stateOf(c)?.phase !== 'closed');
+      const nonce = new Uint8Array(NONCE_BYTES);
       crypto.getRandomValues(nonce);
       const state: ConnState = {
         id: crypto.randomUUID(),
@@ -149,6 +169,14 @@ export class Hub {
         phase: 'challenged',
         nonce: b64(nonce),
       };
+      if (others.length >= MAX_CONNS_PER_USER) {
+        conn.save({ ...state, nonce: undefined });
+        return this.fail(
+          conn,
+          codes.TOO_MANY_CONNECTIONS,
+          `at most ${MAX_CONNS_PER_USER} connections per user`,
+        );
+      }
       conn.save(state);
       this.store.setDeadline(
         state.id,
@@ -207,7 +235,7 @@ export class Hub {
         case 'reply':
           return this.reply(r, msg);
         case 'space_event':
-          return this.spaceEvent(r, msg);
+          return this.spaceEvent(r, msg.envelope);
         case 'subscribe':
           return this.subscribe(r, msg);
         case 'unsubscribe':
@@ -218,9 +246,11 @@ export class Hub {
           );
           return;
         case 'ask':
-          return this.ask(r, msg.ask);
+          return this.ask(r, msg.envelope);
         case 'ask_resolved':
           return this.askResolved(r, msg.ask_id);
+        case 'remove_device':
+          return this.removeDevice(r, msg.device_id);
       }
     });
   }
@@ -299,19 +329,18 @@ export class Hub {
       )) {
         this.escalate(a);
       }
+      this.pruneStale(now);
     });
   }
 
   // ── connect ────────────────────────────────────────────────────────────
 
   private async hello(conn: Conn, s: ConnState, msg: Of<'hello'>) {
+    // Spent on the first hello, good or bad: the nonce is never reused.
     const nonce = unb64(s.nonce ?? '');
     s.nonce = undefined;
     conn.save(s);
-    if (
-      !nonce ||
-      !(await verifyEd25519(msg.public_key, nonce, msg.signature))
-    ) {
+    if (!nonce || !(await verifyHello(msg.public_key, nonce, msg.signature))) {
       return this.fail(conn, codes.BAD_SIGNATURE, 'challenge not signed');
     }
     if (!conn.open) return;
@@ -367,6 +396,10 @@ export class Hub {
         now,
       );
     }
+
+    // After its own last_seen moved: a host back from a long absence keeps
+    // its spaces.
+    this.pruneStale(now);
 
     // One connection per device: the newer wins.
     for (const old of this.ready(s.user)) {
@@ -427,7 +460,7 @@ export class Hub {
       });
     }
     this.store.run('DELETE FROM replies WHERE origin_device = ?', deviceId);
-    // Open questions it was showing, or that went to everyone.
+    // Open questions it was showing, or escalated ones of spaces it started.
     for (const a of this.store.rows<AskRow>(
       'SELECT * FROM asks WHERE user_id = ? ORDER BY created_ms',
       s.user,
@@ -436,7 +469,7 @@ export class Hub {
       const shown = shownOn(a);
       if (shown.includes(deviceId)) {
         this.showAsk(conn, a, (a.via ?? 'escalated') as AskVia);
-      } else if (a.escalated) {
+      } else if (a.escalated && a.origin_device === deviceId) {
         this.showAsk(conn, a, 'escalated');
         this.setShown(a.ask_id, [...shown, deviceId]);
       }
@@ -461,6 +494,12 @@ export class Hub {
     s.expMs = (t.expiresAt ?? 0) * 1000;
     r.conn.save(s);
     this.store.setDeadline(s.id, s.user, s.expMs + REAUTH_LEEWAY_MS);
+    // A long-lived connection stays fresh for the 30-day prune.
+    this.store.run(
+      'UPDATE devices SET last_seen_ms = ? WHERE device_id = ?',
+      this.env.now(),
+      r.state.device,
+    );
   }
 
   private announce(r: Ready, info: DeviceInfo) {
@@ -497,6 +536,9 @@ export class Hub {
     ) {
       return refuse(codes.NOT_YOURS, 'a request must come from its origin');
     }
+    if (route.target_device === route.origin_device) {
+      return refuse(codes.INVALID, 'a device can’t send a request to itself');
+    }
     const target = this.store.device(route.target_device);
     if (!target || target.user_id !== user) {
       return refuse(codes.NOT_YOURS, 'no such device');
@@ -524,32 +566,24 @@ export class Hub {
       }
       const why = this.depthRefusal(user, route.parent, route.depth);
       if (why) return refuse(codes.DEPTH, why);
-    }
-    if (route.op === 'answer' && route.ask_id) {
-      const a = this.store.ask(route.ask_id);
-      if (a && a.user_id === user && a.space === route.space) {
-        this.dismiss(
-          a,
-          shownOn(a).filter((d) => d !== r.state.device),
-          'answered_elsewhere',
+      if (!space && !this.roomForSpace(user)) {
+        return refuse(
+          codes.TOO_MANY_SPACES,
+          `at most ${MAX_SPACES_PER_USER} spaces per user`,
         );
-        this.store.run('DELETE FROM asks WHERE ask_id = ?', a.ask_id);
       }
     }
+    // An answer dismisses the question elsewhere only once the host took it
+    // (its `ok` reply): a refused answer leaves it open everywhere.
 
     const now = this.env.now();
     const to = this.readyDevice(user, target.device_id);
-    // Forwarded as received: the three fields, the body's bytes untouched.
-    const forward = {
-      device_id: envelope.device_id,
-      body: envelope.body,
-      signature: envelope.signature,
-    };
+    const forward = forwardOf(envelope);
     this.store.run(
       `INSERT INTO pending (req_id, user_id, origin_device, target_device,
          generation, claimed, created_ms, grace_until, envelope, op, space,
-         parent, depth)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         parent, depth, ask_id)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       route.req_id,
       user,
       route.origin_device,
@@ -562,6 +596,7 @@ export class Hub {
       route.space,
       route.parent,
       route.depth,
+      route.ask_id,
     );
     if (to) {
       this.send(to.conn, {
@@ -597,6 +632,33 @@ export class Hub {
       ) ?? 0);
     if (children >= MAX_CHILDREN) return `more than ${MAX_CHILDREN} children`;
     return null;
+  }
+
+  /**
+   * Whether the user may have one more space (pending starts count): at the
+   * cap, the oldest finished (stopped or failed) one is forgotten for it.
+   */
+  private roomForSpace(user: string): boolean {
+    const n =
+      (this.store.num(
+        'SELECT COUNT(*) AS n FROM spaces WHERE user_id = ?',
+        user,
+      ) ?? 0) +
+      (this.store.num(
+        `SELECT COUNT(*) AS n FROM pending
+         WHERE op = 'start_space' AND user_id = ?`,
+        user,
+      ) ?? 0);
+    if (n < MAX_SPACES_PER_USER) return true;
+    const oldest = this.store.one<{ space: string }>(
+      `SELECT space FROM spaces
+       WHERE user_id = ? AND status IN ('stopped', 'failed')
+       ORDER BY last_ms LIMIT 1`,
+      user,
+    );
+    if (!oldest) return false;
+    this.forgetSpaces([oldest.space]);
+    return n - 1 < MAX_SPACES_PER_USER;
   }
 
   private claim(r: Ready, msg: Of<'claim'>) {
@@ -641,15 +703,32 @@ export class Hub {
     if (p.op === 'start_space' && msg.outcome.outcome === 'ok') {
       this.store.run(
         `INSERT INTO spaces
-         (space, user_id, host_device, origin_device, parent, depth)
-         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (space) DO NOTHING`,
+         (space, user_id, host_device, origin_device, parent, depth, last_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (space) DO NOTHING`,
         p.space,
         p.user_id,
         p.target_device,
         p.origin_device,
         p.parent,
         p.depth,
+        this.env.now(),
       );
+    }
+    if (p.op === 'answer' && p.ask_id && msg.outcome.outcome === 'ok') {
+      const a = this.store.ask(p.ask_id);
+      if (
+        a &&
+        a.user_id === p.user_id &&
+        a.space === p.space &&
+        a.host_device === p.target_device
+      ) {
+        this.dismiss(
+          a,
+          shownOn(a).filter((d) => d !== p.origin_device),
+          'answered_elsewhere',
+        );
+        this.store.run('DELETE FROM asks WHERE ask_id = ?', a.ask_id);
+      }
     }
     this.deliverReply(p.user_id, p.origin_device, p.req_id, msg.outcome);
   }
@@ -677,9 +756,18 @@ export class Hub {
 
   // ── events ─────────────────────────────────────────────────────────────
 
-  private spaceEvent(r: Ready, msg: Of<'space_event'>) {
-    const sp = this.store.space(msg.space);
+  private async spaceEvent(r: Ready, envelope: SignedEnvelope) {
+    let body: SpaceEventBody;
+    try {
+      body = peekEvent(envelope.body);
+    } catch (e) {
+      if (!(e instanceof BadMessage)) throw e;
+      return this.error(r.conn, e.code, e.message);
+    }
+    const sp = this.store.space(body.space);
     if (
+      envelope.device_id !== r.state.device ||
+      body.host_device !== r.state.device ||
       !sp ||
       sp.user_id !== r.state.user ||
       sp.host_device !== r.state.device
@@ -690,38 +778,44 @@ export class Hub {
         'not a space this device hosts',
       );
     }
-    if (msg.seq <= sp.last_seq) return;
-    if (msg.seq > sp.last_seq + 1) {
-      const gap: RemoteSpaceEvent = {
-        kind: 'gap',
-        from: sp.last_seq + 1,
-        to: msg.seq - 1,
-      };
-      this.store.addEvent(sp.space, gap.from, gap);
-      this.fanOut(sp.user_id, sp.space, gap.from, gap);
-    }
-    this.store.addEvent(sp.space, msg.seq, msg.event);
-    if (msg.event.kind === 'started') {
-      this.store.run(
-        'UPDATE spaces SET started = ?, started_seq = ? WHERE space = ?',
-        JSON.stringify(msg.event),
-        msg.seq,
-        sp.space,
+    if (body.seq <= sp.last_seq) return; // a replay: already have it
+    if (!(await this.signedBySender(r, envelope, 'event'))) {
+      return this.error(
+        r.conn,
+        codes.BAD_SIGNATURE,
+        'event not signed by its host',
       );
     }
+    if (!r.conn.open) return;
+    const forward = forwardOf(envelope);
+    const text = JSON.stringify(forward);
+    const gap =
+      body.seq > sp.last_seq + 1
+        ? { from: sp.last_seq + 1, to: body.seq - 1 }
+        : null;
+    const ev = body.event;
+    this.store.addEvent(sp.space, body.seq, text);
     this.store.run(
-      'UPDATE spaces SET last_seq = ? WHERE space = ?',
-      msg.seq,
+      `UPDATE spaces SET last_seq = ?, last_ms = ?,
+         status = COALESCE(?, status),
+         started = COALESCE(?, started),
+         started_seq = COALESCE(?, started_seq)
+       WHERE space = ?`,
+      body.seq,
+      this.env.now(),
+      ev.kind === 'status' ? ev.status : null,
+      ev.kind === 'started' ? text : null,
+      ev.kind === 'started' ? body.seq : null,
       sp.space,
     );
-    this.fanOut(sp.user_id, sp.space, msg.seq, msg.event);
+    this.fanOut(sp.user_id, sp.space, gap, forward);
   }
 
   private fanOut(
     user: string,
     space: string,
-    seq: number,
-    event: RemoteSpaceEvent,
+    gap: { from: number; to: number } | null,
+    envelope: SignedEnvelope,
   ) {
     const subs = new Set(
       this.store
@@ -733,55 +827,77 @@ export class Hub {
     );
     if (subs.size === 0) return;
     for (const c of this.ready(user)) {
-      if (subs.has(c.state.device)) {
-        this.send(c.conn, { type: 'space_event', space, seq, event });
-      }
+      if (!subs.has(c.state.device)) continue;
+      if (gap) this.send(c.conn, { type: 'space_gap', space, ...gap });
+      this.send(c.conn, { type: 'space_event', envelope });
     }
   }
 
+  /** History then live, for the space's origin and its host only. */
   private subscribe(r: Ready, msg: Of<'subscribe'>) {
     const sp = this.store.space(msg.space);
-    if (!sp || sp.user_id !== r.state.user) {
+    const d = r.state.device;
+    if (
+      !sp ||
+      sp.user_id !== r.state.user ||
+      (d !== sp.origin_device && d !== sp.host_device)
+    ) {
       return this.error(r.conn, codes.NOT_YOURS, 'no such space');
     }
     this.store.run(
       'INSERT OR IGNORE INTO subs (device_id, space) VALUES (?, ?)',
-      r.state.device,
+      d,
       sp.space,
     );
-    const ev = (seq: number, event: RemoteSpaceEvent) =>
-      this.send(r.conn, { type: 'space_event', space: sp.space, seq, event });
     if (msg.since >= sp.last_seq) return;
+    const gap = (from: number, to: number) =>
+      this.send(r.conn, { type: 'space_gap', space: sp.space, from, to });
+    const ev = (text: string) =>
+      this.send(r.conn, {
+        type: 'space_event',
+        envelope: JSON.parse(text) as SignedEnvelope,
+      });
+    // `next`: the first seq not sent yet; a jump past it is a gap.
+    let next = msg.since + 1;
     const first =
       this.store.num('SELECT MIN(seq) FROM events WHERE space = ?', sp.space) ??
       sp.last_seq + 1;
-    let from = msg.since + 1;
-    if (from < first) {
-      // Older than the ring: the started event (kept apart), then a gap.
-      const s = sp.started_seq;
-      if (sp.started && s !== null && s >= from && s < first) {
-        ev(s, JSON.parse(sp.started));
-        from = s + 1;
-      }
-      if (from <= first - 1) ev(from, { kind: 'gap', from, to: first - 1 });
+    const s = sp.started_seq;
+    // Older than the ring: the started event (kept apart) still goes.
+    if (sp.started && s !== null && s >= next && s < first) {
+      if (s > next) gap(next, s - 1);
+      ev(sp.started);
+      next = s + 1;
     }
-    for (const e of this.store.rows<{ seq: number; event: string }>(
-      'SELECT seq, event FROM events WHERE space = ? AND seq > ? ORDER BY seq',
+    for (const e of this.store.rows<{ seq: number; envelope: string }>(
+      'SELECT seq, envelope FROM events WHERE space = ? AND seq > ? ORDER BY seq',
       sp.space,
       msg.since,
     )) {
-      ev(e.seq, JSON.parse(e.event));
+      if (e.seq > next) gap(next, e.seq - 1);
+      ev(e.envelope);
+      next = e.seq + 1;
     }
+    if (next <= sp.last_seq) gap(next, sp.last_seq);
   }
 
   // ── questions ──────────────────────────────────────────────────────────
 
-  private ask(r: Ready, ask: RemoteAsk) {
+  private async ask(r: Ready, envelope: SignedEnvelope) {
+    let ask: RemoteAsk;
+    try {
+      ask = peekAsk(envelope.body);
+    } catch (e) {
+      if (!(e instanceof BadMessage)) throw e;
+      return this.error(r.conn, e.code, e.message);
+    }
+    const user = r.state.user;
     const sp = this.store.space(ask.space);
     if (
+      envelope.device_id !== r.state.device ||
       ask.host_device !== r.state.device ||
       !sp ||
-      sp.user_id !== r.state.user ||
+      sp.user_id !== user ||
       sp.host_device !== r.state.device
     ) {
       return this.error(
@@ -792,21 +908,37 @@ export class Hub {
     }
     const existing = this.store.ask(ask.ask_id);
     if (existing) {
-      if (existing.user_id !== r.state.user) {
+      if (existing.user_id !== user || existing.space !== ask.space) {
         return this.error(r.conn, codes.NOT_YOURS, 'ask_id taken');
       }
       return; // already open
     }
+    const inSpace =
+      this.store.num('SELECT COUNT(*) FROM asks WHERE space = ?', sp.space) ??
+      0;
+    const ofUser =
+      this.store.num('SELECT COUNT(*) FROM asks WHERE user_id = ?', user) ?? 0;
+    if (inSpace >= MAX_ASKS_PER_SPACE || ofUser >= MAX_ASKS_PER_USER) {
+      return this.error(r.conn, codes.BUSY, 'too many open questions');
+    }
+    if (!(await this.signedBySender(r, envelope, 'ask'))) {
+      return this.error(
+        r.conn,
+        codes.BAD_SIGNATURE,
+        'question not signed by its host',
+      );
+    }
+    if (!r.conn.open) return;
     this.store.run(
       `INSERT INTO asks (ask_id, user_id, space, host_device, origin_device,
-         ask, shown_on, via, escalated, created_ms)
+         envelope, shown_on, via, escalated, created_ms)
        VALUES (?, ?, ?, ?, ?, ?, '[]', NULL, 0, ?)`,
       ask.ask_id,
-      r.state.user,
+      user,
       ask.space,
       r.state.device,
       sp.origin_device,
-      JSON.stringify(ask),
+      JSON.stringify(forwardOf(envelope)),
       this.env.now(),
     );
     const row = this.store.ask(ask.ask_id)!;
@@ -819,22 +951,26 @@ export class Hub {
   }
 
   /**
-   * Your active device (focused, unlocked, input < 60 s, the freshest),
-   * else the space's origin if online, else nobody (escalate).
+   * Only the space's host and origin see its questions: the host when it is
+   * your active device (it shows its own card), else the origin if online
+   * (`active` when you're at it), else nobody yet (escalate). Another
+   * device being active doesn't pull a question to it.
    */
   private whereToAsk(
     a: AskRow,
   ): 'host' | { device: string; via: AskVia } | null {
     const active = this.activeDevice(a.user_id);
     if (active === a.host_device) return 'host';
-    if (active) return { device: active, via: 'active' };
     if (
-      a.origin_device !== a.host_device &&
-      this.readyDevice(a.user_id, a.origin_device)
+      a.origin_device === a.host_device ||
+      !this.readyDevice(a.user_id, a.origin_device)
     ) {
-      return { device: a.origin_device, via: 'origin' };
+      return null;
     }
-    return null;
+    return {
+      device: a.origin_device,
+      via: active === a.origin_device ? 'active' : 'origin',
+    };
   }
 
   private activeDevice(user: string): string | null {
@@ -860,13 +996,15 @@ export class Hub {
     };
     r.conn.save(s);
     r.state.presence = s.presence;
-    // Open, not yet escalated questions follow you to where you are now.
+    // Open, not yet escalated questions follow you between their space's
+    // host and origin; any other device you're at doesn't take them.
     const active = this.activeDevice(r.state.user);
     if (!active) return;
     for (const a of this.store.rows<AskRow>(
       'SELECT * FROM asks WHERE user_id = ? AND escalated = 0',
       r.state.user,
     )) {
+      if (active !== a.host_device && active !== a.origin_device) continue;
       const shown = shownOn(a);
       if (active === a.host_device) {
         if (shown.length === 0) continue;
@@ -882,13 +1020,16 @@ export class Hub {
     }
   }
 
+  /** Unanswered for 20 s, or nowhere to show: the origin too, not everyone. */
   private escalate(a: AskRow) {
     const shown = shownOn(a);
-    for (const c of this.ready(a.user_id)) {
-      const d = c.state.device;
-      if (d === a.host_device || shown.includes(d)) continue;
-      this.showAsk(c.conn, a, 'escalated');
-      shown.push(d);
+    const o = a.origin_device;
+    if (o !== a.host_device && !shown.includes(o)) {
+      const to = this.readyDevice(a.user_id, o);
+      if (to) {
+        this.showAsk(to.conn, a, 'escalated');
+        shown.push(o);
+      }
     }
     this.store.run(
       `UPDATE asks SET escalated = 1, via = 'escalated', shown_on = ?
@@ -909,7 +1050,11 @@ export class Hub {
   }
 
   private showAsk(conn: Conn, a: AskRow, via: AskVia) {
-    this.send(conn, { type: 'ask', ask: JSON.parse(a.ask), via });
+    this.send(conn, {
+      type: 'ask',
+      envelope: JSON.parse(a.envelope) as SignedEnvelope,
+      via,
+    });
   }
 
   private setShown(askId: string, devices: string[], via?: string | null) {
@@ -928,6 +1073,91 @@ export class Hub {
         this.send(c.conn, { type: 'dismiss', ask_id: a.ask_id, reason });
       }
     }
+  }
+
+  // ── devices and storage ────────────────────────────────────────────────
+
+  /**
+   * Forget one of the user's other devices: its row, the spaces it hosts
+   * (events, questions), requests waiting for it; its socket closes 4003.
+   * A key that connects again registers as a new device.
+   */
+  private removeDevice(r: Ready, deviceId: string) {
+    const user = r.state.user;
+    const dev = this.store.device(deviceId);
+    if (!dev || dev.user_id !== user) {
+      return this.error(r.conn, codes.NOT_YOURS, 'no such device');
+    }
+    if (deviceId === r.state.device) {
+      return this.error(r.conn, codes.INVALID, 'a device can’t remove itself');
+    }
+    this.store.run('DELETE FROM devices WHERE device_id = ?', deviceId);
+    for (const c of this.ready(user)) {
+      if (c.state.device === deviceId) {
+        this.fail(c.conn, codes.REMOVED, 'removed by another of your devices');
+      }
+    }
+    this.forgetSpaces(
+      this.store
+        .rows<{
+          space: string;
+        }>('SELECT space FROM spaces WHERE host_device = ?', deviceId)
+        .map((x) => x.space),
+    );
+    for (const p of this.store.rows<PendingRow>(
+      'SELECT * FROM pending WHERE target_device = ?',
+      deviceId,
+    )) {
+      this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
+      this.deliverReply(p.user_id, p.origin_device, p.req_id, {
+        outcome: 'err',
+        code: codes.OFFLINE,
+        message: 'the device was removed',
+      });
+    }
+    this.store.run('DELETE FROM replies WHERE origin_device = ?', deviceId);
+    this.store.run('DELETE FROM subs WHERE device_id = ?', deviceId);
+    this.pushDevices(user);
+  }
+
+  /** Spaces gone for good: their questions are dismissed, then dropped. */
+  private forgetSpaces(spaces: string[]) {
+    for (const sp of spaces) {
+      for (const a of this.store.rows<AskRow>(
+        'SELECT * FROM asks WHERE space = ?',
+        sp,
+      )) {
+        this.dismiss(a, shownOn(a), 'resolved');
+      }
+      this.store.run('DELETE FROM asks WHERE space = ?', sp);
+    }
+    this.store.dropSpaces(spaces);
+  }
+
+  /** Spaces whose host is gone or has been offline for 30 days. */
+  private pruneStale(now: number) {
+    const online = new Set(this.ready().map((c) => c.state.device));
+    this.forgetSpaces(
+      this.store
+        .rows<{ space: string; host_device: string }>(
+          `SELECT s.space, s.host_device FROM spaces s
+           LEFT JOIN devices d ON d.device_id = s.host_device
+           WHERE d.device_id IS NULL OR d.last_seen_ms < ?`,
+          now - HOST_OFFLINE_PRUNE_MS,
+        )
+        .filter((x) => !online.has(x.host_device))
+        .map((x) => x.space),
+    );
+  }
+
+  /** Whether `env` is signed for `domain` by the sending device's pinned key. */
+  private async signedBySender(
+    r: Ready,
+    env: SignedEnvelope,
+    domain: Domain,
+  ): Promise<boolean> {
+    const dev = this.store.device(r.state.device);
+    return !!dev && (await verifyEnvelope(dev.public_key, env, domain));
   }
 
   // ── plumbing ───────────────────────────────────────────────────────────
@@ -1001,12 +1231,13 @@ export class Hub {
     return { conn, state: s as Ready['state'] };
   }
 
-  private ready(user: string, except?: string): Ready[] {
+  /** Connections past hello: one user's, or all with no user. */
+  private ready(user?: string, except?: string): Ready[] {
     const out: Ready[] = [];
     for (const conn of this.env.conns(user)) {
       if (!conn.open) continue;
-      const state = conn.state();
-      if (state.phase !== 'ready' || state.id === except) continue;
+      const state = stateOf(conn);
+      if (state?.phase !== 'ready' || state.id === except) continue;
       out.push({ conn, state: state as Ready['state'] });
     }
     return out;
@@ -1061,6 +1292,20 @@ export class Hub {
     }
     if (wasReady) this.gone(s);
   }
+}
+
+/** A socket's state; none before `open` saved it (a fresh DO socket). */
+function stateOf(conn: Conn): ConnState | null {
+  return (conn.state() as ConnState | null | undefined) ?? null;
+}
+
+/** An envelope as received: its three fields, the body's bytes untouched. */
+function forwardOf(env: SignedEnvelope): SignedEnvelope {
+  return {
+    device_id: env.device_id,
+    body: env.body,
+    signature: env.signature,
+  };
 }
 
 function shownOn(a: AskRow): string[] {

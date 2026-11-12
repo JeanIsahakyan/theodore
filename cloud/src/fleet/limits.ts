@@ -4,7 +4,9 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
+/** The challenge nonce; a hello signs exactly this many bytes. */
+export const NONCE_BYTES = 32;
 export const MAX_DEPTH = 2;
 export const MAX_CHILDREN = 5;
 export const CLOUD_RING = 500;
@@ -24,6 +26,14 @@ export const REAUTH_LEEWAY_MS = 60_000;
 export const HELLO_TIMEOUT_MS = 10_000;
 export const MAX_DEVICES_PER_USER = 20;
 export const MAX_PENDING_PER_USER = 100;
+/** Spaces the cloud keeps per user; over it the oldest finished one goes. */
+export const MAX_SPACES_PER_USER = 200;
+export const MAX_ASKS_PER_SPACE = 20;
+export const MAX_ASKS_PER_USER = 100;
+/** Open sockets per user, said hello or not. */
+export const MAX_CONNS_PER_USER = 10;
+/** A space whose host has been offline this long is forgotten. */
+export const HOST_OFFLINE_PRUNE_MS = 30 * 24 * 3_600_000;
 /**
  * Token bucket per connection. The burst is above the spec's example (200)
  * so a device replaying its journal after a reconnect isn't cut off.
@@ -49,9 +59,14 @@ export const codes = {
   TOO_LARGE: 'fleet.too_large',
   RATE_LIMITED: 'fleet.rate_limited',
   NOT_YOURS: 'fleet.not_yours',
+  INVALID: 'fleet.invalid',
   // the cloud's own, not in the Rust list
   BAD_MESSAGE: 'fleet.bad_message',
   TOO_MANY_DEVICES: 'fleet.too_many_devices',
+  TOO_MANY_SPACES: 'fleet.too_many_spaces',
+  TOO_MANY_CONNECTIONS: 'fleet.too_many_connections',
+  /** This device was removed by another of the user's devices. */
+  REMOVED: 'fleet.removed',
 } as const;
 
 /**
@@ -66,7 +81,7 @@ export const close = {
   REPLACED: 4000,
   /** Auth: unauthorized, no_org, expired token. */
   AUTH: 4001,
-  /** Forbidden: key_mismatch, version, too_many_devices. */
+  /** Forbidden: key_mismatch, version, too_many_devices, removed. */
   FORBIDDEN: 4003,
 } as const;
 
@@ -80,6 +95,7 @@ export function closeCodeFor(code: string): number {
     case codes.VERSION:
     // Redialing can't help until a device is removed.
     case codes.TOO_MANY_DEVICES:
+    case codes.REMOVED:
       return close.FORBIDDEN;
     case codes.TOO_LARGE:
       return close.TOO_BIG;

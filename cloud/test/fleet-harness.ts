@@ -4,9 +4,12 @@ import { DatabaseSync } from 'node:sqlite';
 import type {
   ClientMessage,
   DeviceInfo,
+  RemoteAsk,
   RemoteRequest,
+  RemoteSpaceEvent,
   ServerMessage,
   SignedEnvelope,
+  SpaceEventBody,
 } from '../src/gen/fleet';
 import {
   Hub,
@@ -14,7 +17,8 @@ import {
   type ConnState,
   type VerifiedToken,
 } from '../src/fleet/hub';
-import { b64, unb64 } from '../src/fleet/wire';
+import { PROTOCOL_VERSION } from '../src/fleet/limits';
+import { b64, signedBytes, unb64, type Domain } from '../src/fleet/wire';
 
 export const T0 = 1_800_000_000_000;
 
@@ -24,13 +28,17 @@ export class FakeConn implements Conn {
   closedWith?: { code: number; reason: string };
   private st?: ConnState;
 
+  /** The DO tags a socket with its user on accept, before `open` runs. */
+  constructor(readonly tag?: string) {}
+
   /** Its user, as a getWebSockets(tag) filter would see it. */
   get user(): string | undefined {
-    return this.st?.user;
+    return this.tag ?? this.st?.user;
   }
   state(): ConnState {
-    // Attachments come back as copies, like deserializeAttachment.
-    return structuredClone(this.st!);
+    // Attachments come back as copies (null before the first save), like
+    // deserializeAttachment.
+    return (this.st ? structuredClone(this.st) : null) as ConnState;
   }
   save(s: ConnState) {
     this.st = structuredClone(s);
@@ -91,11 +99,42 @@ export class Device {
     return b64(new Uint8Array(sig));
   }
 
+  /** A hello's signature over a challenge nonce (base64). */
+  signHello(nonce: string): Promise<string> {
+    return this.signB64(signedBytes('hello', unb64(nonce)!));
+  }
+
+  /** `body` as JSON, signed by this device for `domain`. */
+  async seal(
+    domain: Domain,
+    body: unknown,
+    as = this.id!,
+  ): Promise<SignedEnvelope> {
+    const text = JSON.stringify(body);
+    const bytes = signedBytes(domain, new TextEncoder().encode(text));
+    return { device_id: as, body: text, signature: await this.signB64(bytes) };
+  }
+
+  /** One event of a space this device hosts, signed as its host. */
+  async emit(space: string, seq: number, event: RemoteSpaceEvent) {
+    const body: SpaceEventBody = { space, seq, host_device: this.id!, event };
+    const envelope = await this.seal('event', body);
+    await this.send({ type: 'space_event', envelope });
+    return envelope;
+  }
+
+  /** A question set of a space this device hosts, signed as its host. */
+  async raise(ask: RemoteAsk) {
+    const envelope = await this.seal('ask', ask);
+    await this.send({ type: 'ask', envelope });
+    return envelope;
+  }
+
   /** Opens a socket and returns it with its challenge nonce, no hello yet. */
   async open(
     o: { org?: string; expMs?: number } = {},
   ): Promise<{ conn: FakeConn; nonce: string }> {
-    const conn = new FakeConn();
+    const conn = new FakeConn(this.user);
     this.h.conns.push(conn);
     await this.h.hub.open(conn, {
       userId: this.user,
@@ -119,10 +158,10 @@ export class Device {
     const { nonce } = await this.open({ expMs: o.expMs });
     await this.send({
       type: 'hello',
-      protocol: 1,
+      protocol: PROTOCOL_VERSION,
       device_id: o.deviceId === undefined ? (this.id ?? null) : o.deviceId,
       public_key: this.publicKey,
-      signature: await this.signB64(unb64(nonce)!),
+      signature: await this.signHello(nonce),
       info: info(this.name),
       spaces: o.spaces ?? [],
     });
@@ -161,6 +200,21 @@ export class Device {
     this.conn.sent = [];
   }
 
+  /** Received space events and gaps, in order: seq, or `gap<from>-<to>`. */
+  stream(): (number | string)[] {
+    const out: (number | string)[] = [];
+    const rest: ServerMessage[] = [];
+    for (const m of this.conn.sent) {
+      if (m.type === 'space_event') {
+        out.push((JSON.parse(m.envelope.body) as SpaceEventBody).seq);
+      } else if (m.type === 'space_gap') {
+        out.push(`gap${m.from}-${m.to}`);
+      } else rest.push(m);
+    }
+    this.conn.sent = rest;
+    return out;
+  }
+
   async envelope(
     target: string,
     op: RemoteRequest['op'],
@@ -173,12 +227,7 @@ export class Device {
       issued_at_ms: this.h.now,
       op,
     };
-    const body = JSON.stringify(req);
-    return {
-      device_id: this.id!,
-      body,
-      signature: await this.signB64(new TextEncoder().encode(body)),
-    };
+    return this.seal('request', req);
   }
 
   async request(target: string, op: RemoteRequest['op'], reqId?: string) {
@@ -195,8 +244,10 @@ export class Harness {
   hub: Hub;
   scheduled: (number | null)[] = [];
 
-  constructor() {
-    const db = new DatabaseSync(':memory:');
+  readonly db: DatabaseSync;
+
+  constructor(db = new DatabaseSync(':memory:')) {
+    this.db = db;
     this.hub = new Hub({
       sql: { exec: (q, ...b) => db.prepare(q).all(...b) },
       now: () => this.now,

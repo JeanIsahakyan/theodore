@@ -4,13 +4,16 @@
  *
  * ```text
  * devices  device_id ─ user, pinned public key, info, generation, last seen
- * spaces   space ─ user, host, origin, parent, depth, last seq, started event
- * events   (space, seq) ─ the last CLOUD_RING per space, gaps included
+ * spaces   space ─ user, host, origin, parent, depth, last seq, status,
+ *          last activity, the started event's envelope
+ * events   (space, seq) ─ the host's signed envelope, last CLOUD_RING per space
  * pending  req_id ─ a routed request until its reply (or 2 min)
  * replies  req_id ─ a reply held for an origin that's offline (2 min)
- * asks     ask_id ─ an open question: where it shows, escalated or not
+ * asks     ask_id ─ an open question (the host's envelope): where it shows
  * subs     (device, space) ─ who gets a space's live events
  * conns    conn_id ─ a deadline: hello due, or access token expiry + 60 s
+ * meta     schema ─ SCHEMA_VERSION; on any other, every table but devices
+ *          and conns is dropped (v1 rows don't fit v2: unsigned events)
  * ```
  */
 import { CLOUD_RING } from './limits';
@@ -21,6 +24,11 @@ export type SqlValue = string | number | null;
 export interface Sql {
   exec(query: string, ...binds: SqlValue[]): Record<string, unknown>[];
 }
+
+export const SCHEMA_VERSION = 2;
+
+/** Relay state that a schema change throws away; devices stay pinned. */
+const RESET = ['spaces', 'events', 'pending', 'replies', 'asks', 'subs'];
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS devices (
@@ -39,14 +47,17 @@ const SCHEMA = [
     parent TEXT,
     depth INTEGER NOT NULL,
     last_seq INTEGER NOT NULL DEFAULT 0,
+    status TEXT,
+    last_ms INTEGER NOT NULL,
     started TEXT,
     started_seq INTEGER)`,
   `CREATE INDEX IF NOT EXISTS spaces_host ON spaces (host_device)`,
+  `CREATE INDEX IF NOT EXISTS spaces_user ON spaces (user_id, last_ms)`,
   `CREATE INDEX IF NOT EXISTS spaces_parent ON spaces (parent)`,
   `CREATE TABLE IF NOT EXISTS events (
     space TEXT NOT NULL,
     seq INTEGER NOT NULL,
-    event TEXT NOT NULL,
+    envelope TEXT NOT NULL,
     PRIMARY KEY (space, seq))`,
   `CREATE TABLE IF NOT EXISTS pending (
     req_id TEXT PRIMARY KEY,
@@ -61,7 +72,8 @@ const SCHEMA = [
     op TEXT NOT NULL,
     space TEXT NOT NULL,
     parent TEXT,
-    depth INTEGER NOT NULL)`,
+    depth INTEGER NOT NULL,
+    ask_id TEXT)`,
   `CREATE INDEX IF NOT EXISTS pending_target ON pending (target_device)`,
   `CREATE TABLE IF NOT EXISTS replies (
     req_id TEXT PRIMARY KEY,
@@ -74,12 +86,13 @@ const SCHEMA = [
     space TEXT NOT NULL,
     host_device TEXT NOT NULL,
     origin_device TEXT NOT NULL,
-    ask TEXT NOT NULL,
+    envelope TEXT NOT NULL,
     shown_on TEXT NOT NULL,
     via TEXT,
     escalated INTEGER NOT NULL DEFAULT 0,
     created_ms INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS asks_user ON asks (user_id)`,
+  `CREATE INDEX IF NOT EXISTS asks_space ON asks (space)`,
   `CREATE TABLE IF NOT EXISTS subs (
     device_id TEXT NOT NULL,
     space TEXT NOT NULL,
@@ -108,6 +121,9 @@ export interface SpaceRow {
   parent: string | null;
   depth: number;
   last_seq: number;
+  status: string | null;
+  last_ms: number;
+  /** The `started` event's envelope JSON, kept past the ring. */
   started: string | null;
   started_seq: number | null;
 }
@@ -126,6 +142,7 @@ export interface PendingRow {
   space: string;
   parent: string | null;
   depth: number;
+  ask_id: string | null;
 }
 
 export interface AskRow {
@@ -134,7 +151,8 @@ export interface AskRow {
   space: string;
   host_device: string;
   origin_device: string;
-  ask: string;
+  /** The host's signed RemoteAsk, as JSON of the envelope. */
+  envelope: string;
   shown_on: string;
   via: string | null;
   escalated: number;
@@ -144,7 +162,19 @@ export interface AskRow {
 /** Typed queries over [`Sql`]. */
 export class Store {
   constructor(readonly sql: Sql) {
+    sql.exec(
+      'CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)',
+    );
+    const v = this.num("SELECT v FROM meta WHERE k = 'schema'");
+    if (v !== SCHEMA_VERSION) {
+      for (const t of RESET) sql.exec(`DROP TABLE IF EXISTS ${t}`);
+    }
     for (const s of SCHEMA) sql.exec(s);
+    sql.exec(
+      `INSERT INTO meta (k, v) VALUES ('schema', ?)
+       ON CONFLICT (k) DO UPDATE SET v = excluded.v`,
+      SCHEMA_VERSION,
+    );
   }
 
   rows<T>(q: string, ...b: SqlValue[]): T[] {
@@ -183,14 +213,15 @@ export class Store {
     return this.one<AskRow>('SELECT * FROM asks WHERE ask_id = ?', id);
   }
 
-  addEvent(space: string, seq: number, event: unknown): void {
+  /** Stores an event's envelope JSON; keeps the newest CLOUD_RING. */
+  addEvent(space: string, seq: number, envelope: string): void {
     this.run(
-      'INSERT OR IGNORE INTO events (space, seq, event) VALUES (?, ?, ?)',
+      'INSERT OR IGNORE INTO events (space, seq, envelope) VALUES (?, ?, ?)',
       space,
       seq,
-      JSON.stringify(event),
+      envelope,
     );
-    // Keep the newest CLOUD_RING; with fewer, the subquery is NULL.
+    // With fewer than CLOUD_RING, the subquery is NULL.
     this.run(
       `DELETE FROM events WHERE space = ? AND seq < (
          SELECT seq FROM events WHERE space = ?
@@ -199,6 +230,15 @@ export class Store {
       space,
       CLOUD_RING - 1,
     );
+  }
+
+  /** Forgets spaces: their events, subscriptions and the spaces rows. */
+  dropSpaces(spaces: string[]): void {
+    for (const sp of spaces) {
+      this.run('DELETE FROM events WHERE space = ?', sp);
+      this.run('DELETE FROM subs WHERE space = ?', sp);
+      this.run('DELETE FROM spaces WHERE space = ?', sp);
+    }
   }
 
   setDeadline(connId: string, userId: string, at: number): void {

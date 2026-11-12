@@ -1,7 +1,9 @@
 /**
  * Reading what a device sends: every frame is untrusted, so each message is
  * checked field by field into the generated types (src/gen/fleet.ts) before
- * the hub looks at it. A signed request's body is read only for routing.
+ * the hub looks at it. A signed request's body is read only for routing;
+ * event and ask bodies are read, checked against their host's signature, and
+ * forwarded as the bytes received.
  */
 import type {
   ClientMessage,
@@ -12,12 +14,14 @@ import type {
   ReplyOutcome,
   SignedEnvelope,
   SpaceCursor,
+  SpaceEventBody,
 } from '../gen/fleet';
 import {
   codes,
   MAX_EVENT_BYTES,
   MAX_FRAME_BYTES,
   MAX_INFO_BYTES,
+  NONCE_BYTES,
   PROTOCOL_VERSION,
 } from './limits';
 
@@ -142,12 +146,13 @@ const EVENT_KINDS = [
   'question_cleared',
 ] as const;
 
-/** Kept as sent (the host's, for its own subscribers); `gap` is the cloud's. */
+/** Only the kind is read; the event travels as the host signed it. */
 function spaceEvent(v: unknown): RemoteSpaceEvent {
   const o = obj(v, 'event');
-  oneOf(o, 'kind', EVENT_KINDS);
-  if (JSON.stringify(o).length > MAX_EVENT_BYTES) {
-    throw new BadMessage(codes.TOO_LARGE, 'space event too large');
+  const kind = oneOf(o, 'kind', EVENT_KINDS);
+  // The cloud keeps a space's status (finished spaces go first at the cap).
+  if (kind === 'status') {
+    oneOf(o, 'status', ['running', 'idle', 'waiting', 'stopped', 'failed']);
   }
   return o as RemoteSpaceEvent;
 }
@@ -229,14 +234,9 @@ export function parseClient(raw: string): ClientMessage {
         outcome: outcome(o.outcome),
       };
     case 'space_event':
-      return {
-        type: 'space_event',
-        space: str(o, 'space'),
-        seq: uint(o, 'seq'),
-        event: spaceEvent(o.event),
-      };
+      return { type: 'space_event', envelope: envelope(o.envelope) };
     case 'ask':
-      return { type: 'ask', ask: remoteAsk(o.ask) };
+      return { type: 'ask', envelope: envelope(o.envelope) };
     case 'ask_resolved':
       return { type: 'ask_resolved', ask_id: str(o, 'ask_id') };
     case 'subscribe':
@@ -247,6 +247,8 @@ export function parseClient(raw: string): ClientMessage {
       };
     case 'unsubscribe':
       return { type: 'unsubscribe', space: str(o, 'space') };
+    case 'remove_device':
+      return { type: 'remove_device', device_id: str(o, 'device_id', 64) };
     default:
       throw bad('unknown message type');
   }
@@ -266,14 +268,18 @@ export interface Routing {
   ask_id: string | null;
 }
 
-export function peekRequest(body: string): Routing {
+function parseBody(body: string, what: string): Obj {
   let v: unknown;
   try {
     v = JSON.parse(body);
   } catch {
-    throw bad('request body is not JSON');
+    throw bad(`${what} is not JSON`);
   }
-  const o = obj(v, 'request body');
+  return obj(v, what);
+}
+
+export function peekRequest(body: string): Routing {
+  const o = parseBody(body, 'request body');
   const op = obj(o.op, 'op');
   const kind = oneOf(op, 'op', ['start_space', 'send', 'stop', 'answer']);
   return {
@@ -286,6 +292,60 @@ export function peekRequest(body: string): Routing {
     depth: kind === 'start_space' ? uint(op, 'depth') : 0,
     ask_id: kind === 'answer' ? str(op, 'ask_id') : null,
   };
+}
+
+/** A host's space event body: what the cloud stores and orders by. */
+export function peekEvent(body: string): SpaceEventBody {
+  if (new TextEncoder().encode(body).byteLength > MAX_EVENT_BYTES) {
+    throw new BadMessage(codes.TOO_LARGE, 'space event too large');
+  }
+  const o = parseBody(body, 'event body');
+  return {
+    space: str(o, 'space'),
+    seq: uint(o, 'seq'),
+    host_device: str(o, 'host_device', 64),
+    event: spaceEvent(o.event),
+  };
+}
+
+/** A host's question set. */
+export function peekAsk(body: string): RemoteAsk {
+  return remoteAsk(parseBody(body, 'ask body'));
+}
+
+/**
+ * What a signature is for (`fleet_protocol::Domain`): each kind signs
+ * `"theodore-fleet-<kind>-v2\0" ‖ bytes`, so one never verifies as another.
+ */
+export type Domain = 'hello' | 'request' | 'event' | 'ask';
+
+/** The exact bytes signed for `msg` in `domain`. */
+export function signedBytes(domain: Domain, msg: Uint8Array): Uint8Array {
+  const tag = new TextEncoder().encode(`theodore-fleet-${domain}-v2\0`);
+  const out = new Uint8Array(tag.length + msg.length);
+  out.set(tag);
+  out.set(msg, tag.length);
+  return out;
+}
+
+/** A hello's signature over the challenge nonce (exactly NONCE_BYTES). */
+export function verifyHello(
+  publicKey: string,
+  nonce: Uint8Array,
+  signature: string,
+): Promise<boolean> {
+  if (nonce.length !== NONCE_BYTES) return Promise.resolve(false);
+  return verifyEd25519(publicKey, signedBytes('hello', nonce), signature);
+}
+
+/** An envelope's signature for `domain`, by the holder of `publicKey`. */
+export function verifyEnvelope(
+  publicKey: string,
+  env: SignedEnvelope,
+  domain: Domain,
+): Promise<boolean> {
+  const body = new TextEncoder().encode(env.body);
+  return verifyEd25519(publicKey, signedBytes(domain, body), env.signature);
 }
 
 /** UTF-8 size without encoding when the length alone settles it. */

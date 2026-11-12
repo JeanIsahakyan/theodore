@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_DEVICES_PER_USER } from '../src/fleet/limits';
-import { unb64 } from '../src/fleet/wire';
-import { Harness, info } from './fleet-harness';
+import {
+  MAX_CONNS_PER_USER,
+  MAX_DEVICES_PER_USER,
+  PROTOCOL_VERSION,
+} from '../src/fleet/limits';
+import { signedBytes, unb64 } from '../src/fleet/wire';
+import { FakeConn, Harness, info, startSpace } from './fleet-harness';
 
 describe('fleet connect', () => {
   it('challenges, then welcomes a new device and lists it', async () => {
@@ -11,9 +15,9 @@ describe('fleet connect', () => {
     expect(unb64(nonce)?.length).toBe(32);
     await mac.send({
       type: 'hello',
-      protocol: 1,
+      protocol: PROTOCOL_VERSION,
       public_key: mac.publicKey,
-      signature: await mac.signB64(unb64(nonce)!),
+      signature: await mac.signHello(nonce),
       info: info('mac1'),
       spaces: [],
     });
@@ -67,7 +71,7 @@ describe('fleet connect', () => {
     await mac.open();
     await mac.send({
       type: 'hello',
-      protocol: 1,
+      protocol: PROTOCOL_VERSION,
       public_key: mac.publicKey,
       signature: await mac.signB64(new Uint8Array(32)),
       info: info(),
@@ -77,6 +81,90 @@ describe('fleet connect', () => {
       expect.objectContaining({ type: 'error', code: 'fleet.bad_signature' }),
     ]);
     expect(mac.conn.closedWith?.code).toBe(1008);
+  });
+
+  // Each of these signs the right nonce, but not as a v2 hello.
+  it.each([
+    ['the raw nonce (v1)', (n: Uint8Array) => n],
+    ['the nonce as a request', (n: Uint8Array) => signedBytes('request', n)],
+    ['the nonce as an event', (n: Uint8Array) => signedBytes('event', n)],
+    [
+      'the tag without its NUL',
+      (n: Uint8Array) => {
+        const tag = new TextEncoder().encode('theodore-fleet-hello-v2');
+        return new Uint8Array([...tag, ...n]);
+      },
+    ],
+  ])('refuses a hello that signed %s', async (_, bytes) => {
+    const h = new Harness();
+    const mac = await h.device();
+    const { nonce } = await mac.open();
+    await mac.send({
+      type: 'hello',
+      protocol: PROTOCOL_VERSION,
+      public_key: mac.publicKey,
+      signature: await mac.signB64(bytes(unb64(nonce)!)),
+      info: info(),
+      spaces: [],
+    });
+    expect(mac.take('error')[0]?.code).toBe('fleet.bad_signature');
+    expect(mac.take('welcome')).toEqual([]);
+  });
+
+  it('sends one challenge per connection; its nonce is spent', async () => {
+    const h = new Harness();
+    const mac = await h.device();
+    const { conn, nonce } = await mac.open();
+    await h.hub.open(conn, {
+      userId: 'user_1',
+      orgId: 'org_1',
+      expMs: h.now + 3_600_000,
+    });
+    expect(conn.sent).toEqual([]);
+    // A hello signed for this socket's nonce doesn't open another socket.
+    const signature = await mac.signHello(nonce);
+    const other = await h.device();
+    Object.assign(other, { keys: Reflect.get(mac, 'keys') });
+    other.publicKey = mac.publicKey;
+    await other.open();
+    await other.send({
+      type: 'hello',
+      protocol: PROTOCOL_VERSION,
+      public_key: mac.publicKey,
+      signature,
+      info: info(),
+      spaces: [],
+    });
+    expect(other.take('error')[0]?.code).toBe('fleet.bad_signature');
+  });
+
+  it(`takes at most ${MAX_CONNS_PER_USER} connections per user`, async () => {
+    const h = new Harness();
+    const mac = await h.device();
+    await mac.connect();
+    // Sockets that never say hello count too.
+    for (let i = 1; i < MAX_CONNS_PER_USER; i++) {
+      await (await h.device()).open();
+    }
+    const extra = new FakeConn('user_1');
+    h.conns.push(extra);
+    await h.hub.open(extra, {
+      userId: 'user_1',
+      orgId: 'org_1',
+      expMs: h.now + 3_600_000,
+    });
+    expect(extra.sent).toEqual([
+      expect.objectContaining({ code: 'fleet.too_many_connections' }),
+    ]);
+    // Not fatal: redial once one closes.
+    expect(extra.closedWith).toEqual({
+      code: 1008,
+      reason: 'fleet.too_many_connections',
+    });
+    // Another user isn't affected; a closed socket frees a slot.
+    await (await h.device('user_2')).connect();
+    await mac.disconnect();
+    await (await h.device()).connect();
   });
 
   it('refuses a known device id with another key', async () => {
@@ -110,7 +198,7 @@ describe('fleet connect', () => {
     const h = new Harness();
     const mac = await h.device();
     await mac.open();
-    await mac.send(JSON.stringify({ type: 'hello', protocol: 2 }));
+    await mac.send(JSON.stringify({ type: 'hello', protocol: 1 }));
     expect(mac.sent[0]).toMatchObject({ type: 'error', code: 'fleet.version' });
     expect(mac.conn.closedWith).toEqual({
       code: 4003,
@@ -141,8 +229,11 @@ describe('fleet connect', () => {
 
   it(`registers at most ${MAX_DEVICES_PER_USER} devices per user`, async () => {
     const h = new Harness();
+    // Registered, then offline: the 10-connection cap is a separate one.
     for (let i = 0; i < MAX_DEVICES_PER_USER; i++) {
-      await (await h.device()).connect();
+      const d = await h.device();
+      await d.connect();
+      await d.disconnect();
     }
     const extra = await h.device();
     await expect(extra.connect()).rejects.toThrow(/fleet.too_many_devices/);
@@ -184,15 +275,9 @@ describe('fleet connect', () => {
     const mac2 = await h.device();
     await mac1.connect();
     await mac2.connect();
-    const { startSpace } = await import('./fleet-harness');
     await startSpace(mac1, mac2, 'rs_a');
     for (const seq of [1, 2, 3]) {
-      await mac2.send({
-        type: 'space_event',
-        space: 'rs_a',
-        seq,
-        event: { kind: 'status', status: 'running' },
-      });
+      await mac2.emit('rs_a', seq, { kind: 'status', status: 'running' });
     }
     await mac2.disconnect();
     expect((await mac2.connect()).resume).toEqual({ rs_a: 3 });

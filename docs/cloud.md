@@ -187,6 +187,8 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
+Protocol 2 only (`fleet.version`, close 4003, for anything else).
+
 - **Hibernation API**: an idle socket bills nothing. Per-socket state is its
   attachment (user, org, token expiry, device, generation, presence); the
   rest is SQLite, so a woken hub rebuilds nothing.
@@ -198,18 +200,59 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   sender's user: another user's devices, spaces and requests read as
   `fleet.not_yours` / `not_pending`, never as "exists".
 
+Signatures (each over `"theodore-fleet-<kind>-v2\0" ‖ bytes`, so one kind
+never verifies as another):
+
+| Signed | By | The cloud |
+| --- | --- | --- |
+| hello: `hello` tag ‖ the 32 nonce bytes | the connecting device | verifies; one challenge per socket, its nonce spent on the first hello |
+| request: `request` tag ‖ body | origin | doesn't verify (the target does); checks `device_id` = body origin = sender; forwards unchanged |
+| space event: `event` tag ‖ `SpaceEventBody` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender = the space's host; stores and forwards unchanged |
+| ask: `ask` tag ‖ `RemoteAsk` | host | same as an event |
+
+A failed event or ask check is `error{fleet.bad_signature}`, nothing stored.
+A gap the cloud can't fill is its own unsigned `space_gap{space, from, to}`:
+informational, never content.
+
+Same-user devices aren't trusted by each other just for being the same user
+(trust is pinned per device), so the cloud keeps a space to the two devices
+it belongs to:
+
+| What | Who |
+| --- | --- |
+| `subscribe{space}` (history and live events) | the space's origin and host only; anyone else `fleet.not_yours` |
+| a question, while you're at the host | the host only (its own card) |
+| a question, otherwise | the origin if online (`active` if you're at it, else `origin`); a third device being active doesn't pull it |
+| after 20 s unanswered (or nowhere to show) | escalated to the origin, if not already there, and on its reconnect; never to every device |
+| moving between origin and host | follows you (`moved`); presence elsewhere changes nothing |
+| `answer` request | routed like any request; the question is dismissed elsewhere (`answered_elsewhere`) only after the host's `reply ok` for it, a refusal leaves it open |
+| a request whose target is its origin | `reply err fleet.invalid` |
+
+`remove_device{device_id}` forgets one of the caller's other devices:
+
+```
+same user? no ─▶ fleet.not_yours      the caller itself? ─▶ fleet.invalid
+─▶ delete its row, the spaces it hosts (events, subs; their questions dismissed `resolved`)
+─▶ requests waiting for it ─▶ origin: reply err fleet.offline;  replies held for it dropped
+─▶ its socket: error + close 4003 fleet.removed ─▶ devices pushed to the rest
+```
+
+Its key can connect again, as a new device (new id, no spaces): the cloud
+pins keys, devices decide trust.
+
 Storage (DO SQLite):
 
 | Table | Holds |
 | --- | --- |
 | `devices` | device_id, user, pinned public key, info, generation, last seen |
-| `spaces` | space, user, host, origin, parent, depth, last seq, its `started` event |
-| `events` | the last 500 events per space (gaps included) |
-| `pending` | a routed request until its reply: target, generation, claimed, envelope |
+| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope |
+| `events` | the host's signed envelope, last 500 per space (gaps are what's missing) |
+| `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
 | `replies` | a reply held for an origin that's offline (2 min) |
-| `asks` | an open question: where it shows, via, escalated |
+| `asks` | an open question (the host's envelope): where it shows, via, escalated |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
+| `meta` | `schema` = 2; on any other value every table but `devices` and `conns` is dropped (v1 rows: unsigned events) |
 
 Limits:
 
@@ -218,7 +261,11 @@ Limits:
 | frame | 256 KiB (UTF-8 bytes) | `fleet.too_large`, close 1009 |
 | rate per connection | 50 msgs/s, burst 500 | frame dropped, `fleet.rate_limited` (once a second) |
 | devices per user | 20 | `fleet.too_many_devices`, close 4003 |
+| open sockets per user (said hello or not) | 10 | `fleet.too_many_connections`, close 1008 (redial) |
 | requests in flight per user | 100 | `reply err fleet.busy` |
+| spaces per user (pending starts count) | 200 | the oldest finished (stopped/failed) one is forgotten; none: `reply err fleet.too_many_spaces` |
+| open questions | 20 per space, 100 per user | `error{fleet.busy}` (the host's own card stays) |
+| a space whose host is offline | 30 days | forgotten with its events and questions (checked on any hello and alarm) |
 | device info | 8 KiB | `fleet.too_large` |
 | one space event | 64 KiB | `fleet.too_large` |
 | hello after connect | 10 s | `fleet.bad_message`, close 1008 |
@@ -234,9 +281,9 @@ with the code as the reason:
 | Close | Codes | Device adapter |
 | --- | --- | --- |
 | 4001 | `fleet.unauthorized`, `fleet.no_org` (incl. expired token) | fatal, no redial |
-| 4003 | `fleet.key_mismatch`, `fleet.version`, `fleet.too_many_devices` | fatal, no redial |
+| 4003 | `fleet.key_mismatch`, `fleet.version`, `fleet.too_many_devices`, `fleet.removed` | fatal, no redial |
 | 4000 | a newer connection of the same device took over | — |
-| 1008 / 1009 | `fleet.bad_signature`, `fleet.bad_message` before hello, `fleet.too_large` | redial |
+| 1008 / 1009 | `fleet.bad_signature`, `fleet.bad_message` before hello, `fleet.too_many_connections`, `fleet.too_large` | redial |
 
 HTTP on the upgrade: 401/403 fatal, 5xx redial, 426 `fleet.upgrade_required`
 without `Upgrade: websocket`.

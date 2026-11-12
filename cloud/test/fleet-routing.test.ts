@@ -46,12 +46,7 @@ describe('fleet routing', () => {
       { type: 'reply', req_id: reqId, outcome },
     ]);
     // Recorded: mac2 may now send its events.
-    await mac2.send({
-      type: 'space_event',
-      space: 'rs_1',
-      seq: 1,
-      event: { kind: 'status', status: 'running' },
-    });
+    await mac2.emit('rs_1', 1, { kind: 'status', status: 'running' });
     expect(mac2.take('error')).toEqual([]);
   });
 
@@ -238,6 +233,13 @@ describe('fleet routing', () => {
     });
     await mac1.connect();
     expect(errCode(mac1)).toEqual(['ok']);
+  });
+
+  it('refuses a request to the sending device itself', async () => {
+    const { mac1 } = await pair();
+    await mac1.request(mac1.id!, startOp('rs_1'));
+    expect(errCode(mac1)).toEqual(['fleet.invalid']);
+    expect(mac1.take('request')).toEqual([]);
   });
 
   it('refuses a duplicate req_id', async () => {

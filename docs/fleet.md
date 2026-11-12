@@ -220,18 +220,25 @@ pins down what this doc leaves open:
 
 - A fatal refusal closes the socket with 4001 (`fleet.unauthorized`,
   `fleet.no_org`) or 4003 (`fleet.key_mismatch`, `fleet.version`,
-  `fleet.too_many_devices`), the code as the reason; the device doesn't
-  redial.
-- A `gap{from, to}` arrives as `space_event` with `seq = from`. A space's
-  `started` event outlives the ring: a late subscriber gets it, then the gap.
+  `fleet.too_many_devices`, `fleet.removed`), the code as the reason; the
+  device doesn't redial.
+- Events the cloud lost arrive as an unsigned `space_gap{space, from, to}`,
+  never as a `space_event`. A space's `started` event outlives the ring: a
+  late subscriber gets it, then the gap.
+- A space's events and questions reach only its origin and its host. A
+  question goes to the origin (or stays on the host while you're there); it
+  escalates after 20 s to the origin, not to every device, and another
+  device's presence doesn't pull it. An answer dismisses it elsewhere only
+  after the host's `ok`.
 - An unclaimed request is re-sent on the target's reconnect; a claimed one
   waits for its reply (the target's outbox) until the 2 min expiry.
 - A reply to an origin that's offline is held 2 min and sent after its
   welcome.
-- A question shows on the host itself and nowhere else while the host is
-  your active device; it still escalates after 20 s.
 - Cloud-only codes: `fleet.bad_message` (malformed or out-of-order frame),
-  `fleet.too_many_devices` (20 per user), `fleet.upgrade_required` (HTTP 426).
+  `fleet.too_many_devices` (20 per user), `fleet.too_many_connections` (10
+  sockets per user), `fleet.too_many_spaces` (200 per user),
+  `fleet.removed` (another of your devices removed this one),
+  `fleet.upgrade_required` (HTTP 426).
 
 ## Not yet
 
