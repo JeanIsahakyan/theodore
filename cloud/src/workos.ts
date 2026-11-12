@@ -23,6 +23,7 @@ export interface Membership {
   organization_id: string;
   status: string; // "active" | "inactive" | "pending"
   role?: { slug: string };
+  organization_name?: string;
 }
 
 /** WorkOS's answer to a successful `authenticate`: a new session. */
@@ -43,8 +44,9 @@ export interface Workos {
   user(userId: string): Promise<User>;
   memberships(o: {
     userId: string;
-    organizationId: string;
+    organizationId?: string;
   }): Promise<Membership[]>;
+  organization(id: string): Promise<Organization>;
   createMembership(o: {
     userId: string;
     organizationId: string;
@@ -161,18 +163,19 @@ export class WorkosClient implements Workos {
 
   async memberships(o: {
     userId: string;
-    organizationId: string;
+    organizationId?: string;
   }): Promise<Membership[]> {
-    const q = new URLSearchParams({
-      user_id: o.userId,
-      organization_id: o.organizationId,
-      limit: '10',
-    });
+    const q = new URLSearchParams({ user_id: o.userId, limit: '100' });
+    if (o.organizationId) q.set('organization_id', o.organizationId);
     const page = await this.call<{ data: Membership[] }>(
       'GET',
       `/user_management/organization_memberships?${q}`,
     );
     return page.data;
+  }
+
+  organization(id: string): Promise<Organization> {
+    return this.call('GET', `/organizations/${encodeURIComponent(id)}`);
   }
 
   createMembership(o: {

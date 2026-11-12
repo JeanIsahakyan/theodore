@@ -8,6 +8,7 @@
  * | Route | Does |
  * | --- | --- |
  * | GET  /v1/health | liveness, no auth |
+ * | GET  /v1/orgs | the caller's organizations (switcher), personal first |
  * | POST /v1/orgs/personal | the caller's personal organization, created once (src/orgs.ts) |
  * | POST /v1/auth/select-organization | finishes a sign-in that needs an org picked (needs the secret) |
  *
@@ -21,7 +22,7 @@
 import { bearer, remoteKeys, verifyAccessToken, type Caller } from './auth';
 import { field, readJson } from './body';
 import { CloudError, errorResponse, json } from './errors';
-import { ensurePersonalOrganization } from './orgs';
+import { ensurePersonalOrganization, listOrganizations } from './orgs';
 import { upstream, WorkosClient, WorkosError, type Workos } from './workos';
 
 export interface Env {
@@ -61,6 +62,14 @@ type Route = (request: Request, deps: Deps) => Promise<Response>;
 
 const routes: Record<string, Partial<Record<string, Route>>> = {
   '/v1/health': { GET: async () => json({ ok: true }) },
+  '/v1/orgs': {
+    GET: async (request, deps) => {
+      const caller = await deps.verify(bearer(request));
+      return json({
+        organizations: await listOrganizations(caller.userId, deps.workos),
+      });
+    },
+  },
   '/v1/orgs/personal': {
     POST: async (request, deps) => {
       const caller = await deps.verify(bearer(request));

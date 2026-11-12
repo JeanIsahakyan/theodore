@@ -82,3 +82,41 @@ export async function ensurePersonalOrganization(
   }
   return { organization_id: org.id, created };
 }
+
+export interface OrganizationEntry {
+  id: string;
+  name: string;
+  role: string | null;
+  personal: boolean;
+}
+
+/**
+ * The caller's organizations for the app's switcher: active memberships only,
+ * the personal one first, then by name. At most 100 (one page); nobody is in
+ * more.
+ */
+export async function listOrganizations(
+  userId: string,
+  workos: Workos,
+): Promise<OrganizationEntry[]> {
+  const [memberships, personal] = await Promise.all([
+    workos.memberships({ userId }),
+    workos.organizationByExternalId(personalExternalId(userId)),
+  ]);
+  const active = memberships.filter((m) => m.status === 'active');
+  const entries = await Promise.all(
+    active.map(async (m) => ({
+      id: m.organization_id,
+      // Older API answers carry no organization_name: ask for the org.
+      name:
+        m.organization_name ??
+        (await workos.organization(m.organization_id)).name,
+      role: m.role?.slug ?? null,
+      personal: m.organization_id === personal?.id,
+    })),
+  );
+  return entries.sort(
+    (a, b) =>
+      Number(b.personal) - Number(a.personal) || a.name.localeCompare(b.name),
+  );
+}

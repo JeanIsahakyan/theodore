@@ -46,12 +46,23 @@ export class FakeWorkos implements Workos {
     return { id: userId, email: `${userId}@example.test` };
   }
 
-  async memberships(o: { userId: string; organizationId: string }) {
+  async memberships(o: { userId: string; organizationId?: string }) {
     this.calls.push('listMemberships');
     this.check();
     return this.memberships_.filter(
-      (m) => m.user_id === o.userId && m.organization_id === o.organizationId,
+      (m) =>
+        m.user_id === o.userId &&
+        (o.organizationId === undefined ||
+          m.organization_id === o.organizationId),
     );
+  }
+
+  async organization(id: string) {
+    this.calls.push(`getOrgById ${id}`);
+    this.check();
+    const org = this.orgs.find((o) => o.id === id);
+    if (!org) throw new WorkosError(404, 'entity_not_found', 'no org');
+    return org;
   }
 
   async createMembership(o: {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { CloudError } from '../src/errors';
-import { ensurePersonalOrganization, personalExternalId } from '../src/orgs';
+import {
+  ensurePersonalOrganization,
+  listOrganizations,
+  personalExternalId,
+} from '../src/orgs';
 import { WorkosError } from '../src/workos';
 import { FakeWorkos } from './fake-workos';
 
@@ -80,5 +84,40 @@ describe('ensurePersonalOrganization', () => {
     await expect(ensurePersonalOrganization('user_1', w)).rejects.toBe(
       w.failWith,
     );
+  });
+});
+
+describe('listOrganizations', () => {
+  it('lists active memberships, personal first, then by name', async () => {
+    const w = new FakeWorkos();
+    const { organization_id: personal } = await ensurePersonalOrganization(
+      'user_1',
+      w,
+    );
+    w.orgs.push(
+      { id: 'org_b', name: 'Beta' },
+      { id: 'org_a', name: 'Acme' },
+      { id: 'org_x', name: 'Gone' },
+    );
+    w.addMembership('user_1', 'org_b', 'member');
+    const named = w.addMembership('user_1', 'org_a', 'member');
+    named.organization_name = 'Acme';
+    w.addMembership('user_1', 'org_x', 'member', 'inactive');
+    w.addMembership('user_2', 'org_b', 'admin');
+    expect(await listOrganizations('user_1', w)).toEqual([
+      {
+        id: personal,
+        name: 'Personal (user_1@example.test)',
+        role: 'admin',
+        personal: true,
+      },
+      { id: 'org_a', name: 'Acme', role: 'member', personal: false },
+      { id: 'org_b', name: 'Beta', role: 'member', personal: false },
+    ]);
+    expect(w.calls).not.toContain('getOrgById org_a');
+  });
+
+  it('is empty for a user with no organization yet', async () => {
+    expect(await listOrganizations('user_9', new FakeWorkos())).toEqual([]);
   });
 });

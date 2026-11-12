@@ -58,6 +58,24 @@ describe('handle', async () => {
     ).toBe('personal:user_9');
   });
 
+  it('lists the caller’s orgs', async () => {
+    const t = await sign({ sub: 'user_9' });
+    const r = await call('/v1/orgs', {
+      headers: { authorization: `Bearer ${t}` },
+    });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as {
+      organizations: Array<{ personal: boolean; role: string }>;
+    };
+    expect(body.organizations).toEqual([
+      expect.objectContaining({ personal: true, role: 'admin' }),
+    ]);
+  });
+
+  it('refuses /v1/orgs without a token', async () => {
+    expect((await call('/v1/orgs')).status).toBe(401);
+  });
+
   it('maps a WorkOS failure to 502 cloud.workos', async () => {
     workos.failWith = new WorkosError(500, undefined, 'WorkOS down');
     const t = await sign({ sub: 'user_10' });
