@@ -42,12 +42,19 @@ cloud ─▶ challenge{nonce}
 core  ─▶ hello{device_id?, public_key, signature(nonce), info, spaces:[{space, seq}]}
 cloud: device_id known ─▶ its pinned public key must match, same user; new ─▶ register
 cloud ─▶ welcome{device_id, generation, resume:{space → last seq the cloud has}}
-core  ─▶ replays its journal after `resume`, then its outbox
+core  ─▶ adapter flushes its outbox (replies, ask_resolved), core replays its journal after `resume`
 every access-token refresh ─▶ reauth{access_token}; none by exp + 60 s ─▶ cloud closes
 ```
 
-Reconnect: backoff 0.5 s doubling to 30 s, jitter ±25 %. Heartbeat: cloud
-pings every 15 s; no traffic for 45 s on either side ─▶ drop and redial.
+Reconnect: backoff 0.5 s doubling to 30 s, jitter ±25 %. Heartbeat: both
+sides ping every 15 s; no traffic for 45 s ─▶ drop and redial.
+
+| Refusal | Cloud sends | Device |
+| --- | --- | --- |
+| bad or expired token, no `org_id` | `error{fleet.unauthorized \| fleet.no_org}`, close 4001, reason = the code | stops; a new link after the next sign-in |
+| key mismatch, protocol version | `error{fleet.key_mismatch \| fleet.version}`, close 4003 | stops |
+| HTTP 401/403 on the upgrade | — | stops |
+| anything else (5xx, drop) | — | redials |
 
 ## Start a space on another device
 
