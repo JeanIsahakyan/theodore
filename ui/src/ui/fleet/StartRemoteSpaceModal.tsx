@@ -1,5 +1,5 @@
-/** "Run on another device" (docs/fleet.md): pick a device that is online
- *  and takes remote spaces, one of the projects it offers, say what to do
+/** "Run on another device" (docs/fleet.md): pick a device you trust that is
+ *  online and takes remote spaces, one of the projects it offers, say what to do
  *  and in which mode (never above what that device allows). */
 import { useState, type ReactNode } from 'react';
 import { Button, TextArea, ToggleButton } from '@heroui/react';
@@ -88,8 +88,8 @@ export const StartRemoteSpaceModal = observer(function StartRemoteSpaceModal() {
     >
       {devices.length === 0 ? (
         <span className="fleet-none text-sm text-muted">
-          No device can take a space right now: it has to be online and let
-          trusted devices run spaces.
+          No device can take a space right now: it has to be one you trust,
+          online, and let trusted devices run spaces.
         </span>
       ) : (
         <>

@@ -728,14 +728,24 @@ export function rich(text: string): ReactNode[] {
  *  through GitHub's own allowlist (`<details>`, `<summary>`, `<kbd>`,
  *  `<sub>`, `<br>`…); scripts, styles and event handlers never render, and
  *  neither do HTML comments (e.g. Theodore's idempotency markers): the
- *  sanitizer drops them after parsing, so code keeps its literal text. */
-export const Md = memo(function Md({ text }: { text: string }) {
+ *  sanitizer drops them after parsing, so code keeps its literal text.
+ *
+ *  `untrusted` is for text from somewhere else (another device of the
+ *  fleet): nothing in it loads or navigates. An image shows as its alt
+ *  text, a link as its text, and no element keeps a URL. */
+export const Md = memo(function Md({
+  text,
+  untrusted = false,
+}: {
+  text: string;
+  untrusted?: boolean;
+}) {
   return (
     <div className="rich md">
       <Markdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, defaultSchema]]}
-        components={mdComponents}
+        {...(untrusted ? INERT : { components: mdComponents })}
       >
         {text}
       </Markdown>
@@ -786,4 +796,18 @@ const mdComponents: Components = {
       {children}
     </a>
   ),
+};
+
+/** `Md` for untrusted text: a link is its text, an image its alt text, every
+ *  URL attribute is cleared, and `<source srcset>` (not a URL attribute to
+ *  react-markdown) is dropped whole. */
+const INERT = {
+  components: {
+    ...mdComponents,
+    a: ({ children }) => <span className="md-link-inert">{children}</span>,
+    img: ({ alt }) =>
+      alt ? <span className="md-img-inert text-muted">{alt}</span> : null,
+  } satisfies Components,
+  urlTransform: () => null,
+  disallowedElements: ['source'],
 };

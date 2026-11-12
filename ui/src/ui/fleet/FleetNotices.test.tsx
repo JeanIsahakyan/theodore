@@ -5,7 +5,13 @@ import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { click, mount, settle, typeInto, type Mounted } from '../../test/dom';
-import { device, question, status, thisDevice } from '../../test/fleet';
+import {
+  device,
+  question,
+  status,
+  thisDevice,
+  trustNeeded,
+} from '../../test/fleet';
 import { FakeTransport } from '../../test/fakeTransport';
 import { FleetNotices } from './FleetNotices';
 
@@ -107,21 +113,19 @@ describe('a routed question', () => {
 });
 
 describe('a device that wants to run spaces here', () => {
-  const request = {
-    device_id: 'd2',
-    device_name: 'Studio Mac',
-    fingerprint: 'a1b2 c3d4 e5f6 0718',
-  };
+  const request = trustNeeded();
 
   it('is named, with its fingerprint', async () => {
     store.fleet.handle({ type: 'fleet_trust_needed', request });
     await render();
     const text = q('.fleet-trust-needed')!.textContent!;
     expect(text).toContain('Studio Mac wants to run spaces here');
-    expect(text).toContain('fingerprint a1b2 c3d4 e5f6 0718');
+    expect(text).toContain(
+      'fingerprint a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+    );
   });
 
-  it('Trust pins it and the notice goes', async () => {
+  it('Trust asks to compare the fingerprint first, then pins the key it showed', async () => {
     store.fleet.handle({ type: 'fleet_trust_needed', request });
     transport.onCall('fleet_trust_device', () =>
       status({ devices: [thisDevice(), device({ trusted: true })] }),
@@ -129,10 +133,37 @@ describe('a device that wants to run spaces here', () => {
     await render();
     await click(q('.fleet-trust-accept'));
     await settle();
+    expect(calls('fleet_trust_device')).toEqual([]);
+    const confirm = q('.fleet-trust-needed .fleet-confirm')!;
+    expect(confirm.textContent).toContain(
+      'Make sure Studio Mac shows the same fingerprint',
+    );
+    expect(confirm.querySelector('.fingerprint')!.textContent).toBe(
+      'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+    );
+
+    await click(q('.fleet-confirm-trust'));
+    await settle();
     expect(calls('fleet_trust_device')).toEqual([
-      { req: { device_id: 'd2', trusted: true } },
+      {
+        req: {
+          device_id: 'd2',
+          trusted: true,
+          public_key: 'pk-studio-mac-asked',
+        },
+      },
     ]);
     expect(q('.fleet-trust-needed')).toBeNull();
+  });
+
+  it('cancelling the check trusts nothing and keeps the notice', async () => {
+    store.fleet.handle({ type: 'fleet_trust_needed', request });
+    await render();
+    await click(q('.fleet-trust-accept'));
+    await click(q('.fleet-confirm-cancel'));
+    expect(q('.fleet-confirm')).toBeNull();
+    expect(q('.fleet-trust-needed')).not.toBeNull();
+    expect(calls('fleet_trust_device')).toEqual([]);
   });
 
   it('Dismiss removes it and trusts nothing', async () => {

@@ -229,12 +229,36 @@ export class FleetStore {
     this.setStatus(await api.fleetSetSettings(req));
   }
 
-  /** Pins (or unpins) a device's key here. */
-  async trust(deviceId: string, trusted: boolean): Promise<void> {
+  /** Pins `publicKey` — the key of the fingerprint the user compared — as
+   *  the device's here. The core refuses it if the cloud now lists another
+   *  key for the device (toasted by api.ts, like any command error). */
+  async trust(deviceId: string, publicKey: string): Promise<void> {
     this.setStatus(
-      await api.fleetTrustDevice({ device_id: deviceId, trusted }),
+      await api.fleetTrustDevice({
+        device_id: deviceId,
+        trusted: true,
+        public_key: publicKey,
+      }),
     );
-    if (trusted) this.dismissTrustNeeded(deviceId);
+    this.dismissTrustNeeded(deviceId);
+  }
+
+  /** Unpins a device's key here. */
+  async untrust(deviceId: string): Promise<void> {
+    this.setStatus(
+      await api.fleetTrustDevice({
+        device_id: deviceId,
+        trusted: false,
+        public_key: null,
+      }),
+    );
+  }
+
+  /** Signs another device out of the fleet; it has to join again as a new
+   *  device. Answered with the new status. */
+  async remove(deviceId: string): Promise<void> {
+    this.setStatus(await api.fleetRemoveDevice(deviceId));
+    this.dismissTrustNeeded(deviceId);
   }
 
   /** Starts a space on another device; it is listed at once. */

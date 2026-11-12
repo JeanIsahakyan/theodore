@@ -36,7 +36,7 @@ export function FleetLine({ line }: { line: FleetSpaceLine }) {
     case 'reply':
       return (
         <div {...common} className="fleet-line text-sm">
-          <Md text={line.text} />
+          <Md text={line.text} untrusted />
         </div>
       );
     case 'tool':

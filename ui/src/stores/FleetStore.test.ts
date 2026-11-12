@@ -8,6 +8,7 @@ import {
   remoteSpace,
   status,
   thisDevice,
+  trustNeeded,
 } from '../test/fleet';
 import { FleetStore, LINE_LIMIT, mergeLines } from './FleetStore';
 import { RootStore } from './RootStore';
@@ -112,11 +113,7 @@ describe('ephemerals', () => {
   });
 
   it('fleet_trust_needed adds a notice, one per device', () => {
-    const request = {
-      device_id: 'd2',
-      device_name: 'Studio Mac',
-      fingerprint: 'a1b2',
-    };
+    const request = trustNeeded();
     fleet.handle({ type: 'fleet_trust_needed', request });
     fleet.handle({ type: 'fleet_trust_needed', request });
     expect(fleet.trustNeededList).toEqual([request]);
@@ -125,7 +122,7 @@ describe('ephemerals', () => {
   it('a status that lists the device as trusted clears its notice', () => {
     fleet.handle({
       type: 'fleet_trust_needed',
-      request: { device_id: 'd2', device_name: 'x', fingerprint: 'f' },
+      request: trustNeeded(),
     });
     fleet.handle({
       type: 'fleet_status',
@@ -191,17 +188,51 @@ describe('commands', () => {
   it('trusting takes the new status and drops the notice', async () => {
     fleet.handle({
       type: 'fleet_trust_needed',
-      request: { device_id: 'd2', device_name: 'x', fingerprint: 'f' },
+      request: trustNeeded(),
     });
     transport.onCall('fleet_trust_device', () =>
       status({ devices: [thisDevice(), device({ trusted: true })] }),
     );
-    await fleet.trust('d2', true);
+    await fleet.trust('d2', 'pk-compared');
     expect(transport.calls[0]!.args).toEqual({
-      req: { device_id: 'd2', trusted: true },
+      req: { device_id: 'd2', trusted: true, public_key: 'pk-compared' },
     });
     expect(fleet.trustNeededList).toEqual([]);
     expect(fleet.device('d2')?.trusted).toBe(true);
+  });
+
+  it('a trust the core refuses (the key changed) throws and changes nothing', async () => {
+    fleet.setStatus(status());
+    fleet.handle({ type: 'fleet_trust_needed', request: trustNeeded() });
+    transport.queueResult(
+      'fleet_trust_device',
+      new Error('the key of Studio Mac changed'),
+    );
+    await expect(fleet.trust('d2', 'pk-old')).rejects.toThrow('key');
+    expect(fleet.device('d2')?.trusted).toBe(false);
+    expect(fleet.trustNeededList).toHaveLength(1);
+  });
+
+  it('untrusting sends no key', async () => {
+    transport.onCall('fleet_trust_device', () => status());
+    await fleet.untrust('d2');
+    expect(transport.calls[0]!.args).toEqual({
+      req: { device_id: 'd2', trusted: false, public_key: null },
+    });
+  });
+
+  it('removing a device takes the new status and drops its notice', async () => {
+    fleet.setStatus(status());
+    fleet.handle({ type: 'fleet_trust_needed', request: trustNeeded() });
+    transport.onCall('fleet_remove_device', () =>
+      status({ devices: [thisDevice()] }),
+    );
+    await fleet.remove('d2');
+    expect(transport.calls).toEqual([
+      { cmd: 'fleet_remove_device', args: { deviceId: 'd2' } },
+    ]);
+    expect(fleet.device('d2')).toBeUndefined();
+    expect(fleet.trustNeededList).toEqual([]);
   });
 
   it('starting lists the new space at once', async () => {

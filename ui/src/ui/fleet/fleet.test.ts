@@ -27,13 +27,18 @@ describe('modes', () => {
 });
 
 describe('startableDevices', () => {
-  it('keeps the online ones that take remote spaces, never this one', () => {
+  it('keeps the trusted online ones that take remote spaces, never this one', () => {
     const list = [
-      thisDevice({ accepts_remote: true, projects: [{ id: 'p', name: 'x' }] }),
-      device({ device_id: 'ok' }),
-      device({ device_id: 'off', online: false }),
-      device({ device_id: 'no', accepts_remote: false }),
-      device({ device_id: 'empty', projects: [] }),
+      thisDevice({
+        trusted: true,
+        accepts_remote: true,
+        projects: [{ id: 'p', name: 'x' }],
+      }),
+      device({ device_id: 'ok', trusted: true }),
+      device({ device_id: 'untrusted', trusted: false }),
+      device({ device_id: 'off', trusted: true, online: false }),
+      device({ device_id: 'no', trusted: true, accepts_remote: false }),
+      device({ device_id: 'empty', trusted: true, projects: [] }),
     ];
     expect(startableDevices(list).map((d) => d.device_id)).toEqual(['ok']);
   });

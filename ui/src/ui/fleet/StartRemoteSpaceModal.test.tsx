@@ -5,7 +5,12 @@ import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { click, mount, settle, typeInto, type Mounted } from '../../test/dom';
-import { device, remoteSpace, status, thisDevice } from '../../test/fleet';
+import {
+  device as anyDevice,
+  remoteSpace,
+  status,
+  thisDevice,
+} from '../../test/fleet';
 import { FakeTransport } from '../../test/fakeTransport';
 import { StartRemoteSpaceModal } from './StartRemoteSpaceModal';
 
@@ -13,6 +18,10 @@ import { StartRemoteSpaceModal } from './StartRemoteSpaceModal';
 (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS ??= {};
 globalThis.CSS.escape ??= (s: string) =>
   s.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+
+/** A device trusted here: only those are start targets. */
+const device: typeof anyDevice = (over = {}) =>
+  anyDevice({ trusted: true, ...over });
 
 let transport: FakeTransport;
 let store: RootStore;
@@ -62,6 +71,18 @@ describe('Run on another device', () => {
       device({ device_id: 'no', name: 'Closed Mac', accepts_remote: false }),
     ]);
     expect(texts('.fleet-pick-device')).toEqual(['Studio Mac']);
+  });
+
+  it('never lists a device that is not trusted here', async () => {
+    await open([
+      thisDevice(),
+      anyDevice({ device_id: 'u', name: 'Unknown Mac', trusted: false }),
+    ]);
+    expect(texts('.fleet-pick-device')).toEqual([]);
+    expect(document.querySelector('.fleet-none')!.textContent).toContain(
+      'one you trust',
+    );
+    expect(startButton().disabled).toBe(true);
   });
 
   it('says so when no device can take a space', async () => {

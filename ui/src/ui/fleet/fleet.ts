@@ -36,14 +36,19 @@ export function capMode(mode: SpaceMode, max: SpaceMode): SpaceMode {
   return modesUpTo(max).includes(mode) ? mode : max;
 }
 
-/** Devices a space can be started on from here: another device that is
- *  online, takes remote spaces and has a project to offer. */
+/** Devices a space can be started on from here: another device you trust
+ *  (its key is pinned here, so what it sends back is checked), online,
+ *  taking remote spaces and with a project to offer. */
 export function startableDevices(
   devices: readonly FleetDevice[],
 ): FleetDevice[] {
   return devices.filter(
     (d) =>
-      !d.this_device && d.online && d.accepts_remote && d.projects.length > 0,
+      !d.this_device &&
+      d.trusted &&
+      d.online &&
+      d.accepts_remote &&
+      d.projects.length > 0,
   );
 }
 

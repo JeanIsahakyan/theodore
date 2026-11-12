@@ -8,25 +8,18 @@ import { observer } from 'mobx-react-lite';
 import type { FleetTrustNeeded } from '../../gen/contract';
 import { useRootStore, useUi } from '../../stores/context';
 import { FleetQuestionCard } from './FleetQuestionCard';
-import { Fingerprint } from './DevicesPage';
+import { Fingerprint, TrustConfirm } from './TrustConfirm';
 
-/** "<device> wants to run spaces here": Trust pins its key here. */
+/** "<device> wants to run spaces here": Trust opens the same fingerprint
+ *  check as Settings → Devices, and only its button pins the key — the one
+ *  this notice's fingerprint is of. */
 export const TrustNeededCard = observer(function TrustNeededCard({
   request,
 }: {
   request: FleetTrustNeeded;
 }) {
   const fleet = useRootStore().fleet;
-  const [busy, setBusy] = useState(false);
-  const trust = () => {
-    setBusy(true);
-    void fleet
-      .trust(request.device_id, true)
-      .catch(() => {
-        // toasted by api.ts; the notice stays
-      })
-      .finally(() => setBusy(false));
-  };
+  const [confirming, setConfirming] = useState(false);
   return (
     <Card
       role="status"
@@ -41,30 +34,41 @@ export const TrustNeededCard = observer(function TrustNeededCard({
             run spaces here — fingerprint{' '}
             <Fingerprint value={request.fingerprint} />
           </span>
-          <span className="text-xs text-muted">
-            Make sure {request.device_name} shows the same fingerprint before
-            you trust it.
-          </span>
+          {!confirming && (
+            <span className="text-xs text-muted">
+              Compare it with what {request.device_name} shows before you trust
+              it.
+            </span>
+          )}
         </div>
       </div>
-      <div className="flex justify-end gap-2">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="fleet-trust-dismiss"
-          onPress={() => fleet.dismissTrustNeeded(request.device_id)}
-        >
-          Dismiss
-        </Button>
-        <Button
-          size="sm"
-          className="fleet-trust-accept"
-          isPending={busy}
-          onPress={trust}
-        >
-          Trust
-        </Button>
-      </div>
+      {confirming ? (
+        <TrustConfirm
+          deviceId={request.device_id}
+          name={request.device_name}
+          fingerprint={request.fingerprint}
+          publicKey={request.public_key}
+          onCancel={() => setConfirming(false)}
+        />
+      ) : (
+        <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="fleet-trust-dismiss"
+            onPress={() => fleet.dismissTrustNeeded(request.device_id)}
+          >
+            Dismiss
+          </Button>
+          <Button
+            size="sm"
+            className="fleet-trust-accept"
+            onPress={() => setConfirming(true)}
+          >
+            Trust
+          </Button>
+        </div>
+      )}
     </Card>
   );
 });

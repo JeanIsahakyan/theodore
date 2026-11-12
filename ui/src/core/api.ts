@@ -491,6 +491,10 @@ export const api = {
     call<FleetStatus>('fleet_set_settings', { req }),
   fleetTrustDevice: (req: FleetTrustRequest) =>
     call<FleetStatus>('fleet_trust_device', { req }),
+  /** Signs a device of this account out of the fleet: it has to join again
+   *  as a new device. */
+  fleetRemoveDevice: (deviceId: string) =>
+    call<FleetStatus>('fleet_remove_device', { deviceId }),
   fleetStartSpace: (req: FleetStartRequest) =>
     call<FleetRemoteSpace>('fleet_start_space', { req }),
   fleetSend: (req: FleetSendRequest) => call<null>('fleet_send', { req }),

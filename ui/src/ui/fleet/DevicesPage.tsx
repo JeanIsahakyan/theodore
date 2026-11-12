@@ -24,6 +24,7 @@ import {
   lastSeenLabel,
   startableDevices,
 } from './fleet';
+import { Fingerprint, TrustConfirm } from './TrustConfirm';
 
 const swallow = () => {
   // toasted by api.ts
@@ -65,15 +66,6 @@ function ToggleRow({
       </div>
       {children}
     </div>
-  );
-}
-
-/** "a1b2 c3d4 …" in a box to read aloud and compare. */
-export function Fingerprint({ value }: { value: string }) {
-  return (
-    <code className="fingerprint rounded-md bg-default px-2 py-0.5 font-mono text-xs">
-      {value || '—'}
-    </code>
   );
 }
 
@@ -197,13 +189,12 @@ const DeviceRow = observer(function DeviceRow({
   now: number;
 }) {
   const fleet = useRootStore().fleet;
-  const [confirming, setConfirming] = useState(false);
+  const [confirm, setConfirm] = useState<'trust' | 'remove' | null>(null);
   const [busy, setBusy] = useState(false);
-  const trust = (trusted: boolean) => {
+  const run = (op: () => Promise<void>) => {
     setBusy(true);
-    void fleet
-      .trust(device.device_id, trusted)
-      .then(() => setConfirming(false))
+    void op()
+      .then(() => setConfirm(null))
       .catch(swallow)
       .finally(() => setBusy(false));
   };
@@ -237,60 +228,78 @@ const DeviceRow = observer(function DeviceRow({
             <Fingerprint value={device.fingerprint} />
           </span>
         </div>
-        {!device.this_device &&
-          (device.trusted ? (
+        {!device.this_device && (
+          <div className="flex shrink-0 gap-1">
+            {device.trusted ? (
+              <Button
+                size="sm"
+                variant="tertiary"
+                className="fleet-untrust"
+                isPending={busy && confirm === null}
+                onPress={() => run(() => fleet.untrust(device.device_id))}
+              >
+                Untrust
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="tertiary"
+                className="fleet-trust"
+                isDisabled={confirm !== null}
+                onPress={() => setConfirm('trust')}
+              >
+                Trust
+              </Button>
+            )}
             <Button
               size="sm"
-              variant="tertiary"
-              className="fleet-untrust"
-              isPending={busy}
-              onPress={() => trust(false)}
+              variant="ghost"
+              className="fleet-remove"
+              isDisabled={confirm !== null}
+              onPress={() => setConfirm('remove')}
             >
-              Untrust
+              Remove
             </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="tertiary"
-              className="fleet-trust"
-              isDisabled={confirming}
-              onPress={() => setConfirming(true)}
-            >
-              Trust
-            </Button>
-          ))}
+          </div>
+        )}
       </div>
-      {confirming && (
+      {confirm === 'trust' && (
+        <TrustConfirm
+          deviceId={device.device_id}
+          name={device.name}
+          fingerprint={device.fingerprint}
+          publicKey={device.public_key}
+          onCancel={() => setConfirm(null)}
+          onTrusted={() => setConfirm(null)}
+        />
+      )}
+      {confirm === 'remove' && (
         <div
           role="alertdialog"
-          aria-label={`Trust ${device.name}`}
-          className="fleet-confirm flex flex-col gap-2 rounded-lg border border-warning/40 p-3"
+          aria-label={`Remove ${device.name}`}
+          className="fleet-remove-confirm flex flex-col gap-2 rounded-lg border border-danger/40 p-3"
         >
           <span className="text-sm">
-            Make sure <span className="font-medium">{device.name}</span> shows
-            the same fingerprint:
-          </span>
-          <Fingerprint value={device.fingerprint} />
-          <span className="text-xs text-muted">
-            A trusted device can start and steer spaces here, within the highest
-            mode above.
+            Remove <span className="font-medium">{device.name}</span>? It's
+            signed out of the fleet and has to join again as a new device.
           </span>
           <div className="flex justify-end gap-2">
             <Button
               size="sm"
               variant="ghost"
-              className="fleet-confirm-cancel"
-              onPress={() => setConfirming(false)}
+              className="fleet-remove-cancel"
+              onPress={() => setConfirm(null)}
             >
               Cancel
             </Button>
             <Button
               size="sm"
-              className="fleet-confirm-trust"
+              variant="danger"
+              className="fleet-remove-confirm-button"
               isPending={busy}
-              onPress={() => trust(true)}
+              onPress={() => run(() => fleet.remove(device.device_id))}
             >
-              Trust {device.name}
+              Remove {device.name}
             </Button>
           </div>
         </div>
@@ -341,8 +350,8 @@ export const DevicesPage = observer(function DevicesPage() {
         </Card>
         {!canStart && fleet.devices.length > 0 && (
           <span className="text-xs text-muted">
-            A space can start on a device that is online and lets trusted
-            devices run spaces.
+            A space can start on a device you trust that is online and lets
+            trusted devices run spaces.
           </span>
         )}
       </section>

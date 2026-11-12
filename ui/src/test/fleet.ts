@@ -4,6 +4,7 @@ import type {
   FleetQuestion,
   FleetRemoteSpace,
   FleetStatus,
+  FleetTrustNeeded,
 } from '../gen/contract';
 
 export const device = (over: Partial<FleetDevice> = {}): FleetDevice => ({
@@ -19,7 +20,8 @@ export const device = (over: Partial<FleetDevice> = {}): FleetDevice => ({
   ],
   accepts_remote: true,
   max_mode: 'edit',
-  fingerprint: 'a1b2 c3d4 e5f6 0718',
+  fingerprint: 'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+  public_key: 'pk-studio-mac',
   trusted: false,
   this_device: false,
   ...over,
@@ -29,7 +31,8 @@ export const thisDevice = (over: Partial<FleetDevice> = {}): FleetDevice =>
   device({
     device_id: 'd1',
     name: 'Laptop',
-    fingerprint: '1111 2222 3333 4444',
+    fingerprint: '1111 2222 3333 4444 5555 6666 7777 8888',
+    public_key: 'pk-laptop',
     this_device: true,
     projects: [],
     accepts_remote: false,
@@ -42,7 +45,7 @@ export const status = (over: Partial<FleetStatus> = {}): FleetStatus => ({
   connected: true,
   device_id: 'd1',
   name: 'Laptop',
-  fingerprint: '1111 2222 3333 4444',
+  fingerprint: '1111 2222 3333 4444 5555 6666 7777 8888',
   accept_remote: false,
   max_mode: 'edit',
   devices: [thisDevice(), device()],
@@ -84,5 +87,16 @@ export const remoteSpace = (
   hosted_here: false,
   local_space: null,
   error: null,
+  ...over,
+});
+
+/** "Studio Mac wants to run spaces here": the key it asked with. */
+export const trustNeeded = (
+  over: Partial<FleetTrustNeeded> = {},
+): FleetTrustNeeded => ({
+  device_id: 'd2',
+  device_name: 'Studio Mac',
+  fingerprint: 'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+  public_key: 'pk-studio-mac-asked',
   ...over,
 });

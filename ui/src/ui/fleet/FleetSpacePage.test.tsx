@@ -100,6 +100,34 @@ describe('lines', () => {
     await settle();
     expect(all('.fleet-line').at(-1)!.textContent).toContain('one more thing');
   });
+
+  it('a reply from the other device loads no image and has no link to follow', async () => {
+    transport.onCall('fleet_space_lines', () => [
+      {
+        seq: 1,
+        kind: 'reply',
+        text: [
+          '![x](https://evil.example/p.png)',
+          '[link](https://evil.example)',
+          'https://evil.example/bare',
+          '<img src="https://evil.example/raw.png" alt="raw">',
+          '<a href="https://evil.example/raw">raw link</a>',
+          '<picture><source srcset="https://evil.example/s.png"><img alt="pic"></picture>',
+        ].join('\n\n'),
+      },
+    ]);
+    await render();
+    const reply = q('.fleet-line[data-kind="reply"]')!;
+    expect(reply.querySelector('img')).toBeNull();
+    expect(reply.querySelector('a')).toBeNull();
+    expect(reply.querySelector('source')).toBeNull();
+    expect(reply.querySelector('[href], [src], [srcset]')).toBeNull();
+    expect(reply.innerHTML).not.toContain('evil.example/p.png');
+    // What it said still reads: alt text and link text.
+    expect(reply.textContent).toContain('x');
+    expect(reply.textContent).toContain('link');
+    expect(reply.textContent).toContain('raw link');
+  });
 });
 
 describe('header', () => {

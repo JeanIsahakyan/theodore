@@ -42,6 +42,13 @@ beforeEach(() => {
       ),
     })),
   );
+  transport.onCall('fleet_remove_device', (args) => {
+    current = {
+      ...current,
+      devices: current.devices.filter((d) => d.device_id !== args?.deviceId),
+    };
+    return current;
+  });
   setTransport(transport);
   store = new RootStore();
 });
@@ -109,7 +116,9 @@ describe('this device', () => {
     expect(
       q<HTMLInputElement>('input[aria-label="This device\'s name"]')!.value,
     ).toBe('Laptop');
-    expect(q('.fleet-this')!.textContent).toContain('1111 2222 3333 4444');
+    expect(q('.fleet-this')!.textContent).toContain(
+      '1111 2222 3333 4444 5555 6666 7777 8888',
+    );
     expect(q('.fleet-state')!.textContent).toBe('Connected');
   });
 
@@ -195,7 +204,9 @@ describe('the device list', () => {
     expect(rows[1]!.textContent).toContain('macOS');
     expect(rows[1]!.textContent).toContain('online');
     expect(rows[1]!.textContent).toContain('runs spaces up to Plan');
-    expect(rows[1]!.textContent).toContain('a1b2 c3d4 e5f6 0718');
+    expect(rows[1]!.textContent).toContain(
+      'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+    );
     expect(rows[1]!.querySelector('[aria-label="Online"]')).not.toBeNull();
     expect(rows[2]!.textContent).toContain('Linux');
     expect(rows[2]!.textContent).toContain('never seen');
@@ -210,16 +221,73 @@ describe('the device list', () => {
     expect(confirm.textContent).toContain(
       'Make sure Studio Mac shows the same fingerprint',
     );
-    expect(confirm.textContent).toContain('a1b2 c3d4 e5f6 0718');
+    expect(confirm.textContent).toContain(
+      'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+    );
     expect(req('fleet_trust_device')).toEqual([]);
 
     await click(q('.fleet-confirm-trust'));
     await settle();
     expect(req('fleet_trust_device')).toEqual([
-      { device_id: 'd2', trusted: true },
+      { device_id: 'd2', trusted: true, public_key: 'pk-studio-mac' },
     ]);
     expect(q('.fleet-confirm')).toBeNull();
     expect(q('.fleet-untrust')).not.toBeNull();
+  });
+
+  it('trust sends the key of the row whose fingerprint was compared', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device(),
+          device({
+            device_id: 'd3',
+            name: 'Build box',
+            fingerprint: 'ffff eeee dddd cccc bbbb aaaa 9999 8888',
+            public_key: 'pk-build-box',
+          }),
+        ],
+      }),
+    );
+    const row = q('[data-device="d3"]')!;
+    await click(row.querySelector('.fleet-trust'));
+    expect(row.querySelector('.fleet-confirm')!.textContent).toContain(
+      'ffff eeee dddd cccc bbbb aaaa 9999 8888',
+    );
+    await click(row.querySelector('.fleet-confirm-trust'));
+    await settle();
+    expect(req('fleet_trust_device')).toEqual([
+      { device_id: 'd3', trusted: true, public_key: 'pk-build-box' },
+    ]);
+  });
+
+  it('a refused trust leaves the device untrusted and the check open', async () => {
+    await render();
+    transport.queueResult(
+      'fleet_trust_device',
+      new Error('the key of Studio Mac changed'),
+    );
+    await click(q('.fleet-trust'));
+    await click(q('.fleet-confirm-trust'));
+    await settle();
+    expect(store.fleet.device('d2')?.trusted).toBe(false);
+    expect(q('.fleet-confirm')).not.toBeNull();
+  });
+
+  it('shows every fingerprint in full, all 8 groups', async () => {
+    await render();
+    const prints = [...m!.host.querySelectorAll('.fingerprint')].map(
+      (e) => e.textContent,
+    );
+    expect(prints).toEqual([
+      '1111 2222 3333 4444 5555 6666 7777 8888',
+      '1111 2222 3333 4444 5555 6666 7777 8888',
+      'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+    ]);
+    for (const p of m!.host.querySelectorAll('.fingerprint')) {
+      expect(p.className).not.toMatch(/truncate|text-ellipsis|nowrap/);
+    }
   });
 
   it('cancelling the confirmation trusts nothing', async () => {
@@ -237,13 +305,44 @@ describe('the device list', () => {
     await click(q('.fleet-untrust'));
     await settle();
     expect(req('fleet_trust_device')).toEqual([
-      { device_id: 'd2', trusted: false },
+      { device_id: 'd2', trusted: false, public_key: null },
     ]);
     expect(q('.fleet-trust')).not.toBeNull();
   });
 
+  it('Remove asks first, then signs the device out', async () => {
+    await render();
+    expect(q('[data-device="d1"] .fleet-remove')).toBeNull();
+    await click(q('[data-device="d2"] .fleet-remove'));
+    expect(q('.fleet-remove-confirm')!.textContent).toContain(
+      "Remove Studio Mac? It's signed out of the fleet and has to join again as a new device.",
+    );
+    expect(
+      transport.calls.filter((c) => c.cmd === 'fleet_remove_device'),
+    ).toEqual([]);
+
+    await click(q('.fleet-remove-confirm-button'));
+    await settle();
+    expect(
+      transport.calls.filter((c) => c.cmd === 'fleet_remove_device'),
+    ).toEqual([{ cmd: 'fleet_remove_device', args: { deviceId: 'd2' } }]);
+    expect(q('[data-device="d2"]')).toBeNull();
+  });
+
+  it('cancelling Remove removes nothing', async () => {
+    await render();
+    await click(q('[data-device="d2"] .fleet-remove'));
+    await click(q('.fleet-remove-cancel'));
+    expect(q('.fleet-remove-confirm')).toBeNull();
+    expect(
+      transport.calls.filter((c) => c.cmd === 'fleet_remove_device'),
+    ).toEqual([]);
+  });
+
   it('Run on another device opens the start dialog, only if one can take it', async () => {
-    await render(status({ devices: [thisDevice(), device()] }));
+    await render(
+      status({ devices: [thisDevice(), device({ trusted: true })] }),
+    );
     expect(button('Run on another device…')!.disabled).toBe(false);
     await click(button('Run on another device…'));
     expect(store.ui.modal).toBe('fleet-start');
@@ -251,7 +350,19 @@ describe('the device list', () => {
 
   it('Run on another device is off when none can take a space', async () => {
     await render(
-      status({ devices: [thisDevice(), device({ accepts_remote: false })] }),
+      status({
+        devices: [
+          thisDevice(),
+          device({ trusted: true, accepts_remote: false }),
+        ],
+      }),
+    );
+    expect(button('Run on another device…')!.disabled).toBe(true);
+  });
+
+  it('Run on another device is off when the only one is not trusted', async () => {
+    await render(
+      status({ devices: [thisDevice(), device({ trusted: false })] }),
     );
     expect(button('Run on another device…')!.disabled).toBe(true);
   });
