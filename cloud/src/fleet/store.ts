@@ -5,18 +5,20 @@
  * ```text
  * devices  device_id ─ user, pinned public key, info, generation, last seen
  * spaces   space ─ user, host, origin, parent, depth, last seq, status,
- *          last activity, the started event's envelope
- * events   (space, seq) ─ the host's signed envelope, last CLOUD_RING per space
+ *          last activity, the started event's envelope, stored event bytes
+ * events   (space, seq) ─ the host's signed envelope and its body's bytes;
+ *          the newest CLOUD_RING / MAX_SPACE_EVENT_BYTES per space
  * pending  req_id ─ a routed request until its reply (or 2 min)
- * replies  req_id ─ a reply held for an origin that's offline (2 min)
+ * replies  req_id ─ a reply or refusal held for an origin that's offline
+ *          (2 min), as the frame to send
  * asks     ask_id ─ an open question (the host's envelope): where it shows
  * subs     (device, space) ─ who gets a space's live events
  * conns    conn_id ─ a deadline: hello due, or access token expiry + 60 s
  * meta     schema ─ SCHEMA_VERSION; on any other, every table but devices
- *          and conns is dropped (v1 rows don't fit v2: unsigned events)
+ *          and conns is dropped (older rows carry older signatures)
  * ```
  */
-import { CLOUD_RING } from './limits';
+import { CLOUD_RING, MAX_SPACE_EVENT_BYTES } from './limits';
 
 export type SqlValue = string | number | null;
 
@@ -25,7 +27,7 @@ export interface Sql {
   exec(query: string, ...binds: SqlValue[]): Record<string, unknown>[];
 }
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Relay state that a schema change throws away; devices stay pinned. */
 const RESET = ['spaces', 'events', 'pending', 'replies', 'asks', 'subs'];
@@ -50,7 +52,9 @@ const SCHEMA = [
     status TEXT,
     last_ms INTEGER NOT NULL,
     started TEXT,
-    started_seq INTEGER)`,
+    started_seq INTEGER,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    started_bytes INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS spaces_host ON spaces (host_device)`,
   `CREATE INDEX IF NOT EXISTS spaces_user ON spaces (user_id, last_ms)`,
   `CREATE INDEX IF NOT EXISTS spaces_parent ON spaces (parent)`,
@@ -58,6 +62,7 @@ const SCHEMA = [
     space TEXT NOT NULL,
     seq INTEGER NOT NULL,
     envelope TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
     PRIMARY KEY (space, seq))`,
   `CREATE TABLE IF NOT EXISTS pending (
     req_id TEXT PRIMARY KEY,
@@ -78,7 +83,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS replies (
     req_id TEXT PRIMARY KEY,
     origin_device TEXT NOT NULL,
-    outcome TEXT NOT NULL,
+    message TEXT NOT NULL,
     created_ms INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS asks (
     ask_id TEXT PRIMARY KEY,
@@ -126,6 +131,10 @@ export interface SpaceRow {
   /** The `started` event's envelope JSON, kept past the ring. */
   started: string | null;
   started_seq: number | null;
+  /** Body bytes of its events in the ring. */
+  bytes: number;
+  /** Body bytes of `started`. */
+  started_bytes: number;
 }
 
 export interface PendingRow {
@@ -213,22 +222,119 @@ export class Store {
     return this.one<AskRow>('SELECT * FROM asks WHERE ask_id = ?', id);
   }
 
-  /** Stores an event's envelope JSON; keeps the newest CLOUD_RING. */
-  addEvent(space: string, seq: number, envelope: string): void {
+  /** Event bytes a user's spaces hold (rings and `started` copies). */
+  userBytes(user: string): number {
+    return (
+      this.num(
+        `SELECT COALESCE(SUM(bytes + started_bytes), 0) FROM spaces
+         WHERE user_id = ?`,
+        user,
+      ) ?? 0
+    );
+  }
+
+  /**
+   * What one more event of `bytes` would push out of `space`'s ring (count
+   * and bytes): the last seq to drop (null: none) and the bytes freed.
+   */
+  ringTrim(
+    space: string,
+    bytes: number,
+  ): { upTo: number | null; freed: number } {
+    const row = this.one<{ n: number; total: number }>(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS total
+       FROM events WHERE space = ?`,
+      space,
+    );
+    let n = (row?.n ?? 0) + 1;
+    let total = (row?.total ?? 0) + bytes;
+    let upTo: number | null = null;
+    let freed = 0;
+    while (n > CLOUD_RING || total > MAX_SPACE_EVENT_BYTES) {
+      const after: number = upTo ?? -1;
+      const batch = this.rows<{ seq: number; bytes: number }>(
+        'SELECT seq, bytes FROM events WHERE space = ? AND seq > ? ORDER BY seq LIMIT 32',
+        space,
+        after,
+      );
+      if (batch.length === 0) break;
+      for (const e of batch) {
+        if (n <= CLOUD_RING && total <= MAX_SPACE_EVENT_BYTES) break;
+        n -= 1;
+        total -= e.bytes;
+        freed += e.bytes;
+        upTo = e.seq;
+      }
+    }
+    return { upTo, freed };
+  }
+
+  /**
+   * Drops the oldest events of the user's finished (stopped, failed) spaces
+   * but `except`, oldest space first, until `want` bytes are freed or none
+   * are left. Returns the bytes freed.
+   */
+  dropFinished(user: string, except: string, want: number): number {
+    let freed = 0;
+    const touched = new Set<string>();
+    while (freed < want) {
+      const batch = this.rows<{ space: string; seq: number; bytes: number }>(
+        `SELECT e.space, e.seq, e.bytes FROM events e
+         JOIN spaces s ON s.space = e.space
+         WHERE s.user_id = ? AND s.space != ? AND s.status IN ('stopped', 'failed')
+         ORDER BY s.last_ms, s.space, e.seq LIMIT 64`,
+        user,
+        except,
+      );
+      if (batch.length === 0) break;
+      for (const e of batch) {
+        if (freed >= want) break;
+        this.run(
+          'DELETE FROM events WHERE space = ? AND seq = ?',
+          e.space,
+          e.seq,
+        );
+        freed += e.bytes;
+        touched.add(e.space);
+      }
+    }
+    for (const sp of touched) this.resum(sp);
+    return freed;
+  }
+
+  /**
+   * Stores an event's envelope JSON (`bytes`: its body's), after dropping
+   * the space's events up to `upTo` (from [`ringTrim`]).
+   */
+  addEvent(
+    space: string,
+    seq: number,
+    envelope: string,
+    bytes: number,
+    upTo: number | null,
+  ): void {
+    if (upTo !== null) {
+      this.run('DELETE FROM events WHERE space = ? AND seq <= ?', space, upTo);
+    }
     this.run(
-      'INSERT OR IGNORE INTO events (space, seq, envelope) VALUES (?, ?, ?)',
+      `INSERT OR IGNORE INTO events (space, seq, envelope, bytes)
+       VALUES (?, ?, ?, ?)`,
       space,
       seq,
       envelope,
+      bytes,
     );
-    // With fewer than CLOUD_RING, the subquery is NULL.
+    this.resum(space);
+  }
+
+  /** `spaces.bytes` from the ring itself, so it never drifts. */
+  private resum(space: string): void {
     this.run(
-      `DELETE FROM events WHERE space = ? AND seq < (
-         SELECT seq FROM events WHERE space = ?
-         ORDER BY seq DESC LIMIT 1 OFFSET ?)`,
+      `UPDATE spaces SET bytes =
+         (SELECT COALESCE(SUM(bytes), 0) FROM events WHERE space = ?)
+       WHERE space = ?`,
       space,
       space,
-      CLOUD_RING - 1,
     );
   }
 

@@ -187,7 +187,7 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
-Protocol 2 only (`fleet.version`, close 4003, for anything else).
+Protocol 3 only (`fleet.version`, close 4003, for anything else).
 
 - **Hibernation API**: an idle socket bills nothing. Per-socket state is its
   attachment (user, org, token expiry, device, generation, presence); the
@@ -200,17 +200,19 @@ Protocol 2 only (`fleet.version`, close 4003, for anything else).
   sender's user: another user's devices, spaces and requests read as
   `fleet.not_yours` / `not_pending`, never as "exists".
 
-Signatures (each over `"theodore-fleet-<kind>-v2\0" ‖ bytes`, so one kind
+Signatures (each over `"theodore-fleet-<kind>-v3\0" ‖ bytes`, so one kind
 never verifies as another):
 
 | Signed | By | The cloud |
 | --- | --- | --- |
 | hello: `hello` tag ‖ the 32 nonce bytes | the connecting device | verifies; one challenge per socket, its nonce spent on the first hello |
-| request: `request` tag ‖ body | origin | doesn't verify (the target does); checks `device_id` = body origin = sender; forwards unchanged |
+| request: `request` tag ‖ body | origin | doesn't verify (the target does); checks `device_id` = body origin = sender, and `target_key` = the target's pinned key (else `refused{fleet.not_yours}`); forwards unchanged |
+| reply: `reply` tag ‖ `ReplyBody` | target | verifies against the sender's pinned key; `device_id` = `target_device` = sender = the pending request's target, `origin_device` = its origin; forwards unchanged |
 | space event: `event` tag ‖ `SpaceEventBody` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender = the space's host; stores and forwards unchanged |
 | ask: `ask` tag ‖ `RemoteAsk` | host | same as an event |
 
-A failed event or ask check is `error{fleet.bad_signature}`, nothing stored.
+A failed event, ask or reply check is `error{fleet.bad_signature}`, nothing
+stored or forwarded (a refused reply leaves its request pending).
 A gap the cloud can't fill is its own unsigned `space_gap{space, from, to}`:
 informational, never content.
 
@@ -225,34 +227,37 @@ it belongs to:
 | a question, otherwise | the origin if online (`active` if you're at it, else `origin`); a third device being active doesn't pull it |
 | after 20 s unanswered (or nowhere to show) | escalated to the origin, if not already there, and on its reconnect; never to every device |
 | moving between origin and host | follows you (`moved`); presence elsewhere changes nothing |
-| `answer` request | routed like any request; the question is dismissed elsewhere (`answered_elsewhere`) only after the host's `reply ok` for it, a refusal leaves it open |
-| a request whose target is its origin | `reply err fleet.invalid` |
+| `answer` request | routed like any request; the question is dismissed elsewhere (`answered_elsewhere`) only after the host's signed `reply` with `ok` for it, a refusal leaves it open |
+| a request whose target is its origin | `refused{fleet.invalid}` |
 
-`remove_device{device_id}` forgets one of the caller's other devices:
+`remove_device{device_id}` forgets one of the caller's other devices, only
+while that device is offline:
 
 ```
 same user? no ─▶ fleet.not_yours      the caller itself? ─▶ fleet.invalid
+connected now? ─▶ fleet.invalid (nothing changes)
 ─▶ delete its row, the spaces it hosts (events, subs; their questions dismissed `resolved`)
-─▶ requests waiting for it ─▶ origin: reply err fleet.offline;  replies held for it dropped
-─▶ its socket: error + close 4003 fleet.removed ─▶ devices pushed to the rest
+─▶ requests waiting for it ─▶ origin: refused{fleet.offline};  replies held for it dropped
+─▶ devices pushed to the rest
 ```
 
-Its key can connect again, as a new device (new id, no spaces): the cloud
-pins keys, devices decide trust.
+Online devices can't be removed, so one device (a compromised one, say)
+can't knock the others out. Its key can connect again, as a new device
+(new id, no spaces): the cloud pins keys, devices decide trust.
 
 Storage (DO SQLite):
 
 | Table | Holds |
 | --- | --- |
 | `devices` | device_id, user, pinned public key, info, generation, last seen |
-| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope |
-| `events` | the host's signed envelope, last 500 per space (gaps are what's missing) |
+| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event bytes |
+| `events` | the host's signed envelope and its body's bytes, the newest 500 / 4 MiB per space (gaps are what's missing) |
 | `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
-| `replies` | a reply held for an origin that's offline (2 min) |
+| `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
 | `asks` | an open question (the host's envelope): where it shows, via, escalated |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
-| `meta` | `schema` = 2; on any other value every table but `devices` and `conns` is dropped (v1 rows: unsigned events) |
+| `meta` | `schema` = 3; on any other value every table but `devices` and `conns` is dropped (older rows carry older signatures) |
 
 Limits:
 
@@ -262,26 +267,32 @@ Limits:
 | rate per connection | 50 msgs/s, burst 500 | frame dropped, `fleet.rate_limited` (once a second) |
 | devices per user | 20 | `fleet.too_many_devices`, close 4003 |
 | open sockets per user (said hello or not) | 10 | `fleet.too_many_connections`, close 1008 (redial) |
-| requests in flight per user | 100 | `reply err fleet.busy` |
-| spaces per user (pending starts count) | 200 | the oldest finished (stopped/failed) one is forgotten; none: `reply err fleet.too_many_spaces` |
+| requests in flight per user | 100 | `refused{fleet.busy}` |
+| spaces per user (pending starts count) | 200 | the oldest finished (stopped/failed) one is forgotten; none: `refused{fleet.too_many_spaces}` |
 | open questions | 20 per space, 100 per user | `error{fleet.busy}` (the host's own card stays) |
 | a space whose host is offline | 30 days | forgotten with its events and questions (checked on any hello and alarm) |
 | device info | 8 KiB | `fleet.too_large` |
 | one space event | 64 KiB | `fleet.too_large` |
+| stored event bytes per space (body length) | 4 MiB, and 500 events | its oldest events go |
+| stored event bytes per user (body length; a `started` body twice: ring and kept copy) | 64 MiB | the oldest events of finished (stopped/failed) spaces go, oldest space first; none left: `error{fleet.busy}`, the event not stored (the host keeps it in its journal and resumes from `last_seq`) |
 | hello after connect | 10 s | `fleet.bad_message`, close 1008 |
 | token | exp + 60 s without `reauth` | `fleet.unauthorized`, close 4001 |
 
 The burst is above the 200 first planned so a journal replay after a
 reconnect isn't cut off.
 
-Errors on the socket are `error{code, message}`; a refused request is a
-`reply{req_id, err}` to its origin. Closing ones also close the socket
-with the code as the reason:
+Errors on the socket are `error{code, message}`. A request the cloud
+itself turns down (offline, not yours, depth, busy, too many spaces,
+invalid, expired) is `refused{req_id, code, message}` to its origin,
+unsigned; a `reply` is only ever the target's signed one, forwarded. A
+duplicate `req_id` or a body that isn't a request is an `error`, not a
+`refused`: it isn't the pending request's answer. Closing ones also close
+the socket with the code as the reason:
 
 | Close | Codes | Device adapter |
 | --- | --- | --- |
 | 4001 | `fleet.unauthorized`, `fleet.no_org` (incl. expired token) | fatal, no redial |
-| 4003 | `fleet.key_mismatch`, `fleet.version`, `fleet.too_many_devices`, `fleet.removed` | fatal, no redial |
+| 4003 | `fleet.key_mismatch`, `fleet.version`, `fleet.too_many_devices` | fatal, no redial |
 | 4000 | a newer connection of the same device took over | — |
 | 1008 / 1009 | `fleet.bad_signature`, `fleet.bad_message` before hello, `fleet.too_many_connections`, `fleet.too_large` | redial |
 

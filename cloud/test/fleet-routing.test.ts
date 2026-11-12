@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Harness, startOp, startSpace, type Device } from './fleet-harness';
+import {
+  Harness,
+  refusals,
+  replies,
+  startOp,
+  startSpace,
+} from './fleet-harness';
 
 async function pair(h = new Harness()) {
   const mac1 = await h.device('user_1', 'mac1');
@@ -10,11 +16,6 @@ async function pair(h = new Harness()) {
   mac2.clear();
   return { h, mac1, mac2 };
 }
-
-const errCode = (d: Device) =>
-  d
-    .take('reply')
-    .map((r) => (r.outcome.outcome === 'err' ? r.outcome.code : 'ok'));
 
 describe('fleet routing', () => {
   it('forwards the envelope unchanged with the target’s generation', async () => {
@@ -37,14 +38,12 @@ describe('fleet routing', () => {
     expect(mac2.take('claim_result')).toEqual([
       { type: 'claim_result', req_id: reqId, claimed: true, rejection: null },
     ]);
-    const outcome = {
-      outcome: 'ok' as const,
+    const envelope = await mac2.reply(reqId, {
+      outcome: 'ok',
       value: { space: 'rs_1', name: 'S', branch: 'b' },
-    };
-    await mac2.send({ type: 'reply', req_id: reqId, outcome });
-    expect(mac1.take('reply')).toEqual([
-      { type: 'reply', req_id: reqId, outcome },
-    ]);
+    });
+    // The target's signed envelope, unchanged.
+    expect(mac1.take('reply')).toEqual([{ type: 'reply', envelope }]);
     // Recorded: mac2 may now send its events.
     await mac2.emit('rs_1', 1, { kind: 'status', status: 'running' });
     expect(mac2.take('error')).toEqual([]);
@@ -55,7 +54,7 @@ describe('fleet routing', () => {
     const envelope = await mac1.envelope(mac2.id!, startOp('rs_1'));
     // mac2 replays mac1's signed request as its own.
     await mac2.send({ type: 'request', envelope });
-    expect(errCode(mac2)).toEqual(['fleet.not_yours']);
+    expect(refusals(mac2)).toEqual(['fleet.not_yours']);
     expect(mac1.take('request')).toEqual([]);
   });
 
@@ -66,18 +65,50 @@ describe('fleet routing', () => {
     theirs.clear();
     await mac1.request(theirs.id!, startOp('rs_1'));
     await mac1.request('dev_nope', startOp('rs_2'));
-    expect(errCode(mac1)).toEqual(['fleet.not_yours', 'fleet.not_yours']);
+    expect(refusals(mac1)).toEqual(['fleet.not_yours', 'fleet.not_yours']);
     expect(theirs.take('request')).toEqual([]);
   });
 
-  it('answers fleet.offline after the 10 s grace', async () => {
+  it('refuses with fleet.offline after the 10 s grace, never as a reply', async () => {
+    const { h, mac1, mac2 } = await pair();
+    await mac2.disconnect();
+    const { reqId } = await mac1.request(mac2.id!, startOp('rs_1'));
+    await h.tick(9_000);
+    expect(refusals(mac1)).toEqual([]);
+    await h.tick(1_500);
+    expect(mac1.take('refused')).toEqual([
+      {
+        type: 'refused',
+        req_id: reqId,
+        code: 'fleet.offline',
+        message: 'the device did not answer in time',
+      },
+    ]);
+    expect(mac1.take('reply')).toEqual([]);
+  });
+
+  it('holds a refusal for an origin that went away', async () => {
     const { h, mac1, mac2 } = await pair();
     await mac2.disconnect();
     await mac1.request(mac2.id!, startOp('rs_1'));
-    await h.tick(9_000);
-    expect(errCode(mac1)).toEqual([]);
-    await h.tick(1_500);
-    expect(errCode(mac1)).toEqual(['fleet.offline']);
+    await mac1.disconnect();
+    await h.tick(11_000);
+    await mac1.connect();
+    expect(refusals(mac1)).toEqual(['fleet.offline']);
+    expect(replies(mac1)).toEqual([]);
+  });
+
+  it('refuses a request bound to another key than the target’s', async () => {
+    const { h, mac1, mac2 } = await pair();
+    const mac3 = await h.device('user_1', 'mac3');
+    await mac3.connect();
+    // Signed for mac3's key, addressed to mac2's id.
+    await mac1.request(mac2.id!, startOp('rs_1'), undefined, mac3.publicKey);
+    expect(refusals(mac1)).toEqual(['fleet.not_yours']);
+    expect(mac2.take('request')).toEqual([]);
+    expect(mac3.take('request')).toEqual([]);
+    await mac1.request(mac2.id!, startOp('rs_1'));
+    expect(mac2.take('request')).toHaveLength(1);
   });
 
   it('delivers to a target that comes back within the grace', async () => {
@@ -90,7 +121,7 @@ describe('fleet routing', () => {
       { type: 'request', envelope, generation: mac2.generation },
     ]);
     await h.tick(10_000);
-    expect(errCode(mac1)).toEqual([]);
+    expect(refusals(mac1)).toEqual([]);
   });
 
   it('re-sends an unclaimed request on reconnect, fencing the old generation', async () => {
@@ -161,21 +192,102 @@ describe('fleet routing', () => {
     await mac3.connect();
     const ok = { outcome: 'ok' as const, value: null };
     const { reqId } = await mac1.request(mac2.id!, startOp('rs_1'));
-    await mac2.send({ type: 'reply', req_id: reqId, outcome: ok });
+    await mac2.reply(reqId, ok);
     expect(mac2.take('error')[0]?.code).toBe('fleet.bad_message');
-    await mac3.send({ type: 'reply', req_id: reqId, outcome: ok });
-    expect(mac3.take('error')[0]?.code).toBe('fleet.not_yours');
-    expect(errCode(mac1)).toEqual([]);
+    // A non-target, signing as itself or naming the target.
+    await mac3.reply(reqId, ok, { origin_device: mac1.id! });
+    await mac3.reply(reqId, ok, {
+      origin_device: mac1.id!,
+      target_device: mac2.id!,
+    });
+    await mac3.reply(reqId, ok, {
+      origin_device: mac1.id!,
+      target_device: mac2.id!,
+      as: mac2.id!,
+    });
+    expect(mac3.take('error').map((e) => e.code)).toEqual([
+      'fleet.not_yours',
+      'fleet.not_yours',
+      'fleet.not_yours',
+    ]);
+    expect(replies(mac1)).toEqual([]);
+    await mac2.reply(reqId, {
+      outcome: 'err',
+      code: 'fleet.untrusted_device',
+      message: 'trust?',
+    });
+    expect(replies(mac1)).toEqual(['fleet.untrusted_device']);
+  });
+
+  it('refuses a forged or unsigned reply, keeping the request', async () => {
+    const { h, mac1, mac2 } = await pair();
+    const mac3 = await h.device('user_1', 'mac3');
+    await mac3.connect();
+    const { reqId } = await mac1.request(mac2.id!, startOp('rs_1'));
+    await mac2.send({
+      type: 'claim',
+      req_id: reqId,
+      generation: mac2.generation,
+    });
+    const ok = {
+      outcome: 'ok' as const,
+      value: { space: 'rs_1', name: 'S', branch: 'b' },
+    };
+    const body = {
+      req_id: reqId,
+      origin_device: mac1.id!,
+      target_device: mac2.id!,
+      outcome: ok,
+    };
+    // Signed by mac3's key in mac2's name, then sent over mac2's socket.
+    const forged = await mac3.seal('reply', body, mac2.id!);
+    await mac2.send({ type: 'reply', envelope: forged });
+    // A zero signature, and ones made for another purpose.
     await mac2.send({
       type: 'reply',
-      req_id: reqId,
-      outcome: {
-        outcome: 'err',
-        code: 'fleet.untrusted_device',
-        message: 'trust?',
+      envelope: {
+        device_id: mac2.id!,
+        body: JSON.stringify(body),
+        signature: `${'A'.repeat(86)}==`,
       },
     });
-    expect(errCode(mac1)).toEqual(['fleet.untrusted_device']);
+    await mac2.reply(reqId, ok, { domain: 'request' });
+    await mac2.reply(reqId, ok, { domain: 'event' });
+    expect(mac2.take('error').map((e) => e.code)).toEqual([
+      'fleet.bad_signature',
+      'fleet.bad_signature',
+      'fleet.bad_signature',
+      'fleet.bad_signature',
+    ]);
+    expect(replies(mac1)).toEqual([]);
+    // Nothing recorded: the space isn't mac2's to report on yet.
+    await mac2.emit('rs_1', 1, { kind: 'status', status: 'running' });
+    expect(mac2.take('error')[0]?.code).toBe('fleet.not_yours');
+    // The real one still goes through.
+    await mac2.reply(reqId, ok);
+    expect(replies(mac1)).toEqual(['ok']);
+  });
+
+  it('refuses a reply naming another origin', async () => {
+    const { h, mac1, mac2 } = await pair();
+    const mac3 = await h.device('user_1', 'mac3');
+    await mac3.connect();
+    const { reqId } = await mac1.request(mac2.id!, startOp('rs_1'));
+    const err = { outcome: 'err' as const, code: 'x.y', message: 'no' };
+    await mac2.reply(reqId, err, { origin_device: mac3.id! });
+    expect(mac2.take('error')[0]?.code).toBe('fleet.not_yours');
+    expect(replies(mac1)).toEqual([]);
+    expect(replies(mac3)).toEqual([]);
+  });
+
+  it('refuses a reply body that isn’t one', async () => {
+    const { mac1, mac2 } = await pair();
+    await mac1.request(mac2.id!, startOp('rs_1'));
+    await mac2.send({
+      type: 'reply',
+      envelope: { device_id: mac2.id!, body: '{"req_id":1}', signature: 'x' },
+    });
+    expect(mac2.take('error')[0]?.code).toBe('fleet.bad_message');
   });
 
   it('accepts a claimed request’s reply right after a reconnect (outbox)', async () => {
@@ -190,15 +302,11 @@ describe('fleet routing', () => {
     await mac2.connect();
     // Claimed already: not re-sent.
     expect(mac2.take('request')).toEqual([]);
-    await mac2.send({
-      type: 'reply',
-      req_id: reqId,
-      outcome: {
-        outcome: 'ok',
-        value: { space: 'rs_1', name: 'S', branch: 'b' },
-      },
+    await mac2.reply(reqId, {
+      outcome: 'ok',
+      value: { space: 'rs_1', name: 'S', branch: 'b' },
     });
-    expect(errCode(mac1)).toEqual(['ok']);
+    expect(replies(mac1)).toEqual(['ok']);
   });
 
   it('expires a pending request after 2 min', async () => {
@@ -210,9 +318,9 @@ describe('fleet routing', () => {
       generation: mac2.generation,
     });
     await h.tick(119_000);
-    expect(errCode(mac1)).toEqual([]);
+    expect(refusals(mac1)).toEqual([]);
     await h.tick(2_000);
-    expect(errCode(mac1)).toEqual(['fleet.offline']);
+    expect(refusals(mac1)).toEqual(['fleet.offline']);
     // Only the access-token deadlines are left to wake for.
     expect(h.scheduled.at(-1)).toBeGreaterThan(h.now + 60_000);
   });
@@ -226,19 +334,15 @@ describe('fleet routing', () => {
       generation: mac2.generation,
     });
     await mac1.disconnect();
-    await mac2.send({
-      type: 'reply',
-      req_id: reqId,
-      outcome: { outcome: 'ok', value: null },
-    });
+    const envelope = await mac2.reply(reqId, { outcome: 'ok', value: null });
     await mac1.connect();
-    expect(errCode(mac1)).toEqual(['ok']);
+    expect(mac1.take('reply')).toEqual([{ type: 'reply', envelope }]);
   });
 
   it('refuses a request to the sending device itself', async () => {
     const { mac1 } = await pair();
     await mac1.request(mac1.id!, startOp('rs_1'));
-    expect(errCode(mac1)).toEqual(['fleet.invalid']);
+    expect(refusals(mac1)).toEqual(['fleet.invalid']);
     expect(mac1.take('request')).toEqual([]);
   });
 
@@ -265,7 +369,7 @@ describe('fleet depth and children', () => {
   it('refuses deeper than MAX_DEPTH', async () => {
     const { mac1, mac2 } = await pair();
     await mac1.request(mac2.id!, startOp('rs_x', { depth: 3 }));
-    expect(errCode(mac1)).toEqual(['fleet.depth']);
+    expect(refusals(mac1)).toEqual(['fleet.depth']);
     expect(mac2.take('request')).toEqual([]);
   });
 
@@ -276,12 +380,12 @@ describe('fleet depth and children', () => {
       mac1.id!,
       startOp('rs_c', { parent: 'rs_root', depth: 2 }),
     );
-    expect(errCode(mac2)).toEqual(['fleet.depth']);
+    expect(refusals(mac2)).toEqual(['fleet.depth']);
     await mac2.request(
       mac1.id!,
       startOp('rs_c', { parent: 'rs_root', depth: 1 }),
     );
-    expect(errCode(mac2)).toEqual([]);
+    expect(refusals(mac2)).toEqual([]);
     expect(mac1.take('request')).toHaveLength(1);
   });
 
@@ -297,12 +401,12 @@ describe('fleet depth and children', () => {
         startOp(`rs_c${i}`, { parent: 'rs_root', depth: 1 }),
       );
     }
-    expect(errCode(mac2)).toEqual([]);
+    expect(refusals(mac2)).toEqual([]);
     await mac2.request(
       mac1.id!,
       startOp('rs_c5', { parent: 'rs_root', depth: 1 }),
     );
-    expect(errCode(mac2)).toEqual(['fleet.depth']);
+    expect(refusals(mac2)).toEqual(['fleet.depth']);
   });
 
   it('refuses another user’s space as parent or target space', async () => {
@@ -315,6 +419,6 @@ describe('fleet depth and children', () => {
     a.clear();
     await a.request(b.id!, startOp('rs_c', { parent: 'rs_mine', depth: 1 }));
     await a.request(b.id!, { op: 'stop', space: 'rs_mine' });
-    expect(errCode(a)).toEqual(['fleet.not_yours', 'fleet.not_yours']);
+    expect(refusals(a)).toEqual(['fleet.not_yours', 'fleet.not_yours']);
   });
 });

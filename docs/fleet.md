@@ -265,8 +265,12 @@ pins down what this doc leaves open:
 
 - A fatal refusal closes the socket with 4001 (`fleet.unauthorized`,
   `fleet.no_org`) or 4003 (`fleet.key_mismatch`, `fleet.version`,
-  `fleet.too_many_devices`, `fleet.removed`), the code as the reason; the
-  device doesn't redial.
+  `fleet.too_many_devices`), the code as the reason; the device doesn't
+  redial. The cloud doesn't send `fleet.removed`: `remove_device` takes
+  only a device that's offline (an online one: `fleet.invalid`).
+- The cloud's own refusals of a request arrive as `refused{req_id, code,
+  message}`; a `reply` is the target's, signed, checked by the cloud and
+  forwarded unchanged.
 - Events the cloud lost arrive as an unsigned `space_gap{space, from, to}`,
   never as a `space_event`. A space's `started` event outlives the ring: a
   late subscriber gets it, then the gap.
@@ -277,12 +281,14 @@ pins down what this doc leaves open:
   after the host's `ok`.
 - An unclaimed request is re-sent on the target's reconnect; a claimed one
   waits for its reply (the target's outbox) until the 2 min expiry.
-- A reply to an origin that's offline is held 2 min and sent after its
-  welcome.
+- A reply or refusal to an origin that's offline is held 2 min and sent
+  after its welcome.
+- Stored events are capped by bytes: 4 MB per space (oldest out), 64 MB
+  per user (finished spaces' oldest out first, else `error{fleet.busy}`
+  and the host keeps the event in its journal).
 - Cloud-only codes: `fleet.bad_message` (malformed or out-of-order frame),
   `fleet.too_many_devices` (20 per user), `fleet.too_many_connections` (10
   sockets per user), `fleet.too_many_spaces` (200 per user),
-  `fleet.removed` (another of your devices removed this one),
   `fleet.upgrade_required` (HTTP 426).
 
 ## Not yet

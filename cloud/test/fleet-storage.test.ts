@@ -9,6 +9,7 @@ import { SCHEMA_VERSION } from '../src/fleet/store';
 import {
   FakeConn,
   Harness,
+  refusals,
   startOp,
   startSpace,
   type Device,
@@ -27,11 +28,6 @@ const count = (h: Harness, table: string) =>
   (h.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).all()[0] as { n: number })
     .n;
 
-const replyCodes = (d: Device) =>
-  d
-    .take('reply')
-    .map((r) => (r.outcome.outcome === 'err' ? r.outcome.code : 'ok'));
-
 /** `n` spaces mac1 started on mac2, paced under the rate limit. */
 async function fill(h: Harness, mac1: Device, mac2: Device, n: number) {
   for (let i = 0; i < n; i++) {
@@ -48,7 +44,7 @@ describe('fleet space cap', () => {
     await mac1.request(mac2.id!, startOp('rs_pending'));
     expect(mac2.take('request')).toHaveLength(1);
     await mac1.request(mac2.id!, startOp('rs_over'));
-    expect(replyCodes(mac1)).toEqual(['fleet.too_many_spaces']);
+    expect(refusals(mac1)).toEqual(['fleet.too_many_spaces']);
     expect(mac2.take('request')).toEqual([]);
     // Another user isn't affected.
     const a = await h.device('user_2', 'a');
@@ -83,7 +79,7 @@ describe('fleet space cap', () => {
     expect(mac1.take('error')[0]?.code).toBe('fleet.not_yours');
     // Nothing finished left: refused.
     await mac1.request(mac2.id!, startOp('rs_new3'));
-    expect(replyCodes(mac1)).toEqual(['fleet.too_many_spaces']);
+    expect(refusals(mac1)).toEqual(['fleet.too_many_spaces']);
   });
 });
 
@@ -126,38 +122,53 @@ describe('fleet pruning', () => {
 });
 
 describe('fleet remove_device', () => {
-  it('forgets the device, its spaces, and closes its socket', async () => {
+  it('forgets an offline device and its spaces', async () => {
     const { h, mac1, mac2, mac3 } = await trio();
     await startSpace(mac1, mac2, 'rs_1');
     await mac2.emit('rs_1', 1, { kind: 'status', status: 'running' });
     await mac2.raise(ask(mac2.id!));
     expect(mac1.take('ask')).toHaveLength(1);
     await mac2.disconnect();
-    await mac2.connect();
     await mac3.request(mac2.id!, startOp('rs_2')); // waiting for mac2
-    for (const d of [mac1, mac2, mac3]) d.clear();
-    const conn = mac2.conn;
+    for (const d of [mac1, mac3]) d.clear();
 
     await mac1.send({ type: 'remove_device', device_id: mac2.id! });
 
-    expect(mac2.take('error')[0]?.code).toBe('fleet.removed');
-    expect(conn.closedWith).toEqual({ code: 4003, reason: 'fleet.removed' });
+    expect(mac1.take('error')).toEqual([]);
     const [list] = mac3.take('devices');
     expect(list!.devices.map((d) => d.device_id).sort()).toEqual(
       [mac1.id!, mac3.id!].sort(),
     );
     expect(mac1.take('dismiss').map((d) => d.reason)).toEqual(['resolved']);
-    expect(replyCodes(mac3)).toEqual(['fleet.offline']);
+    expect(refusals(mac3)).toEqual(['fleet.offline']);
     expect(count(h, 'spaces')).toBe(0);
     expect(count(h, 'events')).toBe(0);
     expect(count(h, 'asks')).toBe(0);
     expect(count(h, 'pending')).toBe(0);
-    await h.hub.closed(conn); // its close event: nothing left to clean
     // The same key comes back only as a new device.
     const old = mac2.id;
     const welcome = await mac2.connect();
     expect(welcome.device_id).not.toBe(old);
     expect(welcome.resume).toEqual({});
+  });
+
+  it('refuses to remove a device that is online', async () => {
+    const { h, mac1, mac2, mac3 } = await trio();
+    await startSpace(mac1, mac2, 'rs_1');
+    for (const d of [mac1, mac2, mac3]) d.clear();
+    // mac1 may be compromised: it can't knock mac2 off.
+    await mac1.send({ type: 'remove_device', device_id: mac2.id! });
+    expect(mac1.take('error').map((e) => e.code)).toEqual(['fleet.invalid']);
+    expect(mac2.conn.open).toBe(true);
+    expect(mac2.sent).toEqual([]);
+    expect(mac3.take('devices')).toEqual([]);
+    expect(count(h, 'devices')).toBe(3);
+    expect(count(h, 'spaces')).toBe(1);
+    // Once it's offline, it can go.
+    await mac2.disconnect();
+    await mac1.send({ type: 'remove_device', device_id: mac2.id! });
+    expect(mac1.take('error')).toEqual([]);
+    expect(count(h, 'devices')).toBe(2);
   });
 
   it('refuses the calling device itself, another user’s, an unknown one', async () => {

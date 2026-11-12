@@ -7,6 +7,8 @@ import type {
   RemoteAsk,
   RemoteRequest,
   RemoteSpaceEvent,
+  ReplyBody,
+  ReplyOutcome,
   ServerMessage,
   SignedEnvelope,
   SpaceEventBody,
@@ -215,25 +217,58 @@ export class Device {
     return out;
   }
 
+  /**
+   * A request for `target`, bound to its key as the cloud pins it (what the
+   * origin would have pinned), unless `targetKey` says otherwise.
+   */
   async envelope(
     target: string,
     op: RemoteRequest['op'],
     reqId = `req_${crypto.randomUUID()}`,
+    targetKey = this.h.keyOf(target),
   ): Promise<SignedEnvelope> {
     const req: RemoteRequest = {
       req_id: reqId,
       origin_device: this.id!,
       target_device: target,
+      target_key: targetKey,
       issued_at_ms: this.h.now,
       op,
     };
     return this.seal('request', req);
   }
 
-  async request(target: string, op: RemoteRequest['op'], reqId?: string) {
-    const envelope = await this.envelope(target, op, reqId);
+  async request(
+    target: string,
+    op: RemoteRequest['op'],
+    reqId?: string,
+    targetKey?: string,
+  ) {
+    const envelope = await this.envelope(target, op, reqId, targetKey);
     await this.send({ type: 'request', envelope });
     return { envelope, reqId: JSON.parse(envelope.body).req_id as string };
+  }
+
+  /**
+   * This device's signed reply to `reqId` as its target; the origin is the
+   * pending request's unless `over` says otherwise.
+   */
+  async reply(
+    reqId: string,
+    outcome: ReplyOutcome,
+    over: Partial<ReplyBody> & { domain?: Domain; as?: string } = {},
+  ): Promise<SignedEnvelope> {
+    const { domain = 'reply', as, ...fields } = over;
+    const body: ReplyBody = {
+      req_id: reqId,
+      origin_device: this.h.originOf(reqId),
+      target_device: this.id!,
+      outcome,
+      ...fields,
+    };
+    const envelope = await this.seal(domain, body, as);
+    await this.send({ type: 'reply', envelope });
+    return envelope;
   }
 }
 
@@ -270,6 +305,22 @@ export class Harness {
     return new Device(this, user, name).init();
   }
 
+  /** A device's pinned key, or a placeholder for one the cloud doesn't know. */
+  keyOf(device: string): string {
+    const row = this.db
+      .prepare('SELECT public_key FROM devices WHERE device_id = ?')
+      .all(device)[0] as { public_key: string } | undefined;
+    return row?.public_key ?? 'AAAA';
+  }
+
+  /** A pending request's origin ('' once it's settled). */
+  originOf(reqId: string): string {
+    const row = this.db
+      .prepare('SELECT origin_device FROM pending WHERE req_id = ?')
+      .all(reqId)[0] as { origin_device: string } | undefined;
+    return row?.origin_device ?? '';
+  }
+
   /** Moves the clock and lets the alarm run. */
   async tick(ms: number) {
     this.now += ms;
@@ -301,12 +352,21 @@ export async function startSpace(
   const req = host.take('request')[0];
   if (!req) throw new Error(`not routed: ${JSON.stringify(origin.sent)}`);
   await host.send({ type: 'claim', req_id: reqId, generation: req.generation });
-  await host.send({
-    type: 'reply',
-    req_id: reqId,
-    outcome: { outcome: 'ok', value: { space, name: 'Space', branch: 'b' } },
+  await host.reply(reqId, {
+    outcome: 'ok',
+    value: { space, name: 'Space', branch: 'b' },
   });
   host.take('claim_result');
   origin.take('reply');
   return reqId;
 }
+
+/** Signed replies received so far: 'ok' or the target's err code. */
+export const replies = (d: Device) =>
+  d.take('reply').map((r) => {
+    const body = JSON.parse(r.envelope.body) as ReplyBody;
+    return body.outcome.outcome === 'ok' ? 'ok' : body.outcome.code;
+  });
+
+/** The cloud's own refusals received so far, by code. */
+export const refusals = (d: Device) => d.take('refused').map((r) => r.code);

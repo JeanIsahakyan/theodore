@@ -83,15 +83,23 @@ describe('fleet connect', () => {
     expect(mac.conn.closedWith?.code).toBe(1008);
   });
 
-  // Each of these signs the right nonce, but not as a v2 hello.
+  // Each of these signs the right nonce, but not as a v3 hello.
   it.each([
     ['the raw nonce (v1)', (n: Uint8Array) => n],
     ['the nonce as a request', (n: Uint8Array) => signedBytes('request', n)],
     ['the nonce as an event', (n: Uint8Array) => signedBytes('event', n)],
+    ['the nonce as a reply', (n: Uint8Array) => signedBytes('reply', n)],
+    [
+      'the v2 tag',
+      (n: Uint8Array) => {
+        const tag = new TextEncoder().encode('theodore-fleet-hello-v2\0');
+        return new Uint8Array([...tag, ...n]);
+      },
+    ],
     [
       'the tag without its NUL',
       (n: Uint8Array) => {
-        const tag = new TextEncoder().encode('theodore-fleet-hello-v2');
+        const tag = new TextEncoder().encode('theodore-fleet-hello-v3');
         return new Uint8Array([...tag, ...n]);
       },
     ],

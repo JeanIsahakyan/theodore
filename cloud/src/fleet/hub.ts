@@ -5,15 +5,17 @@
  *
  * ```text
  * open (≤ 10 per user) ─▶ one challenge ─▶ hello (ed25519 over
- *   "theodore-fleet-hello-v2\0" ‖ 32-byte nonce) ─▶ welcome, devices
+ *   "theodore-fleet-hello-v3\0" ‖ 32-byte nonce) ─▶ welcome, devices
  *   ─▶ request ─▶ target: request{generation} ─▶ claim ─▶ claim_result
- *              ─▶ reply ─▶ origin            (offline: 10 s grace, 2 min ttl)
- *   ─▶ space_event (host-signed) ─▶ ring 500 ─▶ subscribers (origin, host)
+ *              ─▶ reply (target-signed) ─▶ origin
+ *              └─ refused{code} ─▶ origin   (offline: 10 s grace, 2 min ttl)
+ *   ─▶ space_event (host-signed) ─▶ ring 500 / 4 MB ─▶ subscribers
  *   ─▶ ask (host-signed) ─▶ active if origin/host │ origin; 20 s ─▶ origin
  * ```
  *
- * The cloud reads signed bodies only to route and checks event and ask
- * signatures against the sender's pinned key (devices check them again).
+ * The cloud reads signed bodies only to route and checks event, ask and
+ * reply signatures against the sender's pinned key (devices check them
+ * again). Its own refusals are `refused`, never a `reply`.
  *
  * State lives in SQLite and in each socket's attachment, so a hibernated
  * hub wakes with nothing to rebuild. Messages run one at a time, in order.
@@ -26,7 +28,6 @@ import type {
   DeviceSummary,
   DismissReason,
   RemoteAsk,
-  ReplyOutcome,
   ServerMessage,
   SignedEnvelope,
   SpaceEventBody,
@@ -49,6 +50,7 @@ import {
   MAX_FRAME_BYTES,
   MAX_PENDING_PER_USER,
   MAX_SPACES_PER_USER,
+  MAX_USER_EVENT_BYTES,
   NONCE_BYTES,
   PENDING_TTL_MS,
   RATE_BURST,
@@ -64,6 +66,7 @@ import {
 } from './store';
 import {
   type Domain,
+  type ReplyRouting,
   type Routing,
   b64,
   BadMessage,
@@ -71,6 +74,7 @@ import {
   parseClient,
   peekAsk,
   peekEvent,
+  peekReply,
   peekRequest,
   unb64,
   verifyEnvelope,
@@ -313,8 +317,9 @@ export class Hub {
         now - PENDING_TTL_MS,
       )) {
         this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
-        this.deliverReply(p.user_id, p.origin_device, p.req_id, {
-          outcome: 'err',
+        this.deliver(p.user_id, p.origin_device, p.req_id, {
+          type: 'refused',
+          req_id: p.req_id,
           code: codes.OFFLINE,
           message: 'the device did not answer in time',
         });
@@ -448,16 +453,12 @@ export class Hub {
         generation,
       });
     }
-    // Replies that came while it was away.
-    for (const r of this.store.rows<{ req_id: string; outcome: string }>(
-      'SELECT req_id, outcome FROM replies WHERE origin_device = ? ORDER BY created_ms',
+    // Replies and refusals that came while it was away.
+    for (const r of this.store.rows<{ message: string }>(
+      'SELECT message FROM replies WHERE origin_device = ? ORDER BY created_ms',
       deviceId,
     )) {
-      this.send(conn, {
-        type: 'reply',
-        req_id: r.req_id,
-        outcome: JSON.parse(r.outcome),
-      });
+      this.send(conn, JSON.parse(r.message) as ServerMessage);
     }
     this.store.run('DELETE FROM replies WHERE origin_device = ?', deviceId);
     // Open questions it was showing, or escalated ones of spaces it started.
@@ -526,9 +527,10 @@ export class Hub {
     const user = r.state.user;
     const refuse = (code: string, message: string) =>
       this.send(r.conn, {
-        type: 'reply',
+        type: 'refused',
         req_id: route.req_id,
-        outcome: { outcome: 'err', code, message },
+        code,
+        message,
       });
     if (
       envelope.device_id !== r.state.device ||
@@ -542,6 +544,11 @@ export class Hub {
     const target = this.store.device(route.target_device);
     if (!target || target.user_id !== user) {
       return refuse(codes.NOT_YOURS, 'no such device');
+    }
+    // The target checks this too: a key the cloud doesn't pin for that id
+    // was signed for another machine.
+    if (route.target_key !== target.public_key) {
+      return refuse(codes.NOT_YOURS, 'not that device’s key');
     }
     const existing = this.store.pending(route.req_id);
     if (existing) {
@@ -687,20 +694,47 @@ export class Hub {
     });
   }
 
-  private reply(r: Ready, msg: Of<'reply'>) {
-    const p = this.store.pending(msg.req_id);
+  /**
+   * A target's signed reply: checked against its pinned key and the pending
+   * request, then forwarded unchanged. Its outcome (read from the body the
+   * signature covers) settles the cloud's own bookkeeping.
+   */
+  private async reply(r: Ready, msg: Of<'reply'>) {
+    const { envelope } = msg;
+    let body: ReplyRouting;
+    try {
+      body = peekReply(envelope.body);
+    } catch (e) {
+      if (!(e instanceof BadMessage)) throw e;
+      return this.error(r.conn, e.code, e.message);
+    }
+    const p = this.store.pending(body.req_id);
     if (
       !p ||
       p.user_id !== r.state.user ||
-      p.target_device !== r.state.device
+      p.target_device !== r.state.device ||
+      envelope.device_id !== r.state.device ||
+      body.target_device !== r.state.device
     ) {
       return this.error(r.conn, codes.NOT_YOURS, 'no such request here');
     }
-    if (!p.claimed && msg.outcome.outcome === 'ok') {
+    if (body.origin_device !== p.origin_device) {
+      return this.error(r.conn, codes.NOT_YOURS, 'not that request’s origin');
+    }
+    const ok = body.outcome === 'ok';
+    if (!p.claimed && ok) {
       return this.error(r.conn, codes.BAD_MESSAGE, 'claim before replying');
     }
+    if (!(await this.signedBySender(r, envelope, 'reply'))) {
+      return this.error(
+        r.conn,
+        codes.BAD_SIGNATURE,
+        'reply not signed by its target',
+      );
+    }
+    if (!r.conn.open) return;
     this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
-    if (p.op === 'start_space' && msg.outcome.outcome === 'ok') {
+    if (p.op === 'start_space' && ok) {
       this.store.run(
         `INSERT INTO spaces
          (space, user_id, host_device, origin_device, parent, depth, last_ms)
@@ -714,7 +748,7 @@ export class Hub {
         this.env.now(),
       );
     }
-    if (p.op === 'answer' && p.ask_id && msg.outcome.outcome === 'ok') {
+    if (p.op === 'answer' && p.ask_id && ok) {
       const a = this.store.ask(p.ask_id);
       if (
         a &&
@@ -730,26 +764,30 @@ export class Hub {
         this.store.run('DELETE FROM asks WHERE ask_id = ?', a.ask_id);
       }
     }
-    this.deliverReply(p.user_id, p.origin_device, p.req_id, msg.outcome);
+    this.deliver(p.user_id, p.origin_device, p.req_id, {
+      type: 'reply',
+      envelope: forwardOf(envelope),
+    });
   }
 
-  private deliverReply(
+  /** A reply or refusal to the origin, or held 2 min while it's away. */
+  private deliver(
     user: string,
     origin: string,
     reqId: string,
-    outcome: ReplyOutcome,
+    msg: Extract<ServerMessage, { type: 'reply' | 'refused' }>,
   ) {
     const to = this.readyDevice(user, origin);
     if (to) {
-      this.send(to.conn, { type: 'reply', req_id: reqId, outcome });
+      this.send(to.conn, msg);
       return;
     }
     this.store.run(
-      `INSERT OR REPLACE INTO replies (req_id, origin_device, outcome, created_ms)
+      `INSERT OR REPLACE INTO replies (req_id, origin_device, message, created_ms)
        VALUES (?, ?, ?, ?)`,
       reqId,
       origin,
-      JSON.stringify(outcome),
+      JSON.stringify(msg),
       this.env.now(),
     );
   }
@@ -794,18 +832,32 @@ export class Hub {
         ? { from: sp.last_seq + 1, to: body.seq - 1 }
         : null;
     const ev = body.event;
-    this.store.addEvent(sp.space, body.seq, text);
+    const bytes = new TextEncoder().encode(envelope.body).byteLength;
+    const started = ev.kind === 'started';
+    // The space's ring makes room by itself; the user's budget by the
+    // oldest events of finished spaces, else the event stays in the host's
+    // journal (it resumes from `last_seq`).
+    const ring = this.store.ringTrim(sp.space, bytes);
+    const need = bytes - ring.freed + (started ? bytes - sp.started_bytes : 0);
+    let over = this.store.userBytes(sp.user_id) + need - MAX_USER_EVENT_BYTES;
+    if (over > 0) over -= this.store.dropFinished(sp.user_id, sp.space, over);
+    if (over > 0) {
+      return this.error(r.conn, codes.BUSY, 'event storage full');
+    }
+    this.store.addEvent(sp.space, body.seq, text, bytes, ring.upTo);
     this.store.run(
       `UPDATE spaces SET last_seq = ?, last_ms = ?,
          status = COALESCE(?, status),
          started = COALESCE(?, started),
-         started_seq = COALESCE(?, started_seq)
+         started_seq = COALESCE(?, started_seq),
+         started_bytes = COALESCE(?, started_bytes)
        WHERE space = ?`,
       body.seq,
       this.env.now(),
       ev.kind === 'status' ? ev.status : null,
-      ev.kind === 'started' ? text : null,
-      ev.kind === 'started' ? body.seq : null,
+      started ? text : null,
+      started ? body.seq : null,
+      started ? bytes : null,
       sp.space,
     );
     this.fanOut(sp.user_id, sp.space, gap, forward);
@@ -1079,8 +1131,9 @@ export class Hub {
 
   /**
    * Forget one of the user's other devices: its row, the spaces it hosts
-   * (events, questions), requests waiting for it; its socket closes 4003.
-   * A key that connects again registers as a new device.
+   * (events, questions), requests waiting for it. Only an offline one, so
+   * one device (say a compromised one) can't knock the others out. A key
+   * that connects again registers as a new device.
    */
   private removeDevice(r: Ready, deviceId: string) {
     const user = r.state.user;
@@ -1091,12 +1144,14 @@ export class Hub {
     if (deviceId === r.state.device) {
       return this.error(r.conn, codes.INVALID, 'a device can’t remove itself');
     }
-    this.store.run('DELETE FROM devices WHERE device_id = ?', deviceId);
-    for (const c of this.ready(user)) {
-      if (c.state.device === deviceId) {
-        this.fail(c.conn, codes.REMOVED, 'removed by another of your devices');
-      }
+    if (this.readyDevice(user, deviceId)) {
+      return this.error(
+        r.conn,
+        codes.INVALID,
+        'only an offline device can be removed',
+      );
     }
+    this.store.run('DELETE FROM devices WHERE device_id = ?', deviceId);
     this.forgetSpaces(
       this.store
         .rows<{
@@ -1109,8 +1164,9 @@ export class Hub {
       deviceId,
     )) {
       this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
-      this.deliverReply(p.user_id, p.origin_device, p.req_id, {
-        outcome: 'err',
+      this.deliver(p.user_id, p.origin_device, p.req_id, {
+        type: 'refused',
+        req_id: p.req_id,
         code: codes.OFFLINE,
         message: 'the device was removed',
       });

@@ -146,14 +146,10 @@ describe('fleet questions', () => {
     expect(via(mac1)).toEqual(['origin']);
     await h.tick(21_000);
     const { reqId } = await answer();
-    await mac2.send({
-      type: 'reply',
-      req_id: reqId,
-      outcome: {
-        outcome: 'err',
-        code: 'fleet.untrusted_device',
-        message: 'trust?',
-      },
+    await mac2.reply(reqId, {
+      outcome: 'err',
+      code: 'fleet.untrusted_device',
+      message: 'trust?',
     });
     expect(dismissed(mac1)).toEqual([]);
     await mac1.disconnect();
@@ -179,11 +175,7 @@ describe('fleet questions', () => {
       req_id: reqId,
       generation: mac2.generation,
     });
-    await mac2.send({
-      type: 'reply',
-      req_id: reqId,
-      outcome: { outcome: 'ok', value: null },
-    });
+    await mac2.reply(reqId, { outcome: 'ok', value: null });
     expect(dismissed(mac1)).toEqual(['answered_elsewhere']);
   });
 

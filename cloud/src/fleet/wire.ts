@@ -2,8 +2,8 @@
  * Reading what a device sends: every frame is untrusted, so each message is
  * checked field by field into the generated types (src/gen/fleet.ts) before
  * the hub looks at it. A signed request's body is read only for routing;
- * event and ask bodies are read, checked against their host's signature, and
- * forwarded as the bytes received.
+ * event, ask and reply bodies are read, checked against their signer's
+ * pinned key, and forwarded as the bytes received.
  */
 import type {
   ClientMessage,
@@ -11,7 +11,7 @@ import type {
   RemoteAsk,
   RemoteQuestion,
   RemoteSpaceEvent,
-  ReplyOutcome,
+  ReplyBody,
   SignedEnvelope,
   SpaceCursor,
   SpaceEventBody,
@@ -122,19 +122,6 @@ function envelope(v: unknown): SignedEnvelope {
   };
 }
 
-function outcome(v: unknown): ReplyOutcome {
-  const o = obj(v, 'outcome');
-  if (o.outcome === 'ok') return { outcome: 'ok', value: o.value ?? null };
-  if (o.outcome === 'err') {
-    return {
-      outcome: 'err',
-      code: str(o, 'code', 64),
-      message: str(o, 'message', 2000, true),
-    };
-  }
-  throw bad('outcome must be ok or err');
-}
-
 const EVENT_KINDS = [
   'started',
   'status',
@@ -228,11 +215,7 @@ export function parseClient(raw: string): ClientMessage {
         generation: uint(o, 'generation'),
       };
     case 'reply':
-      return {
-        type: 'reply',
-        req_id: str(o, 'req_id'),
-        outcome: outcome(o.outcome),
-      };
+      return { type: 'reply', envelope: envelope(o.envelope) };
     case 'space_event':
       return { type: 'space_event', envelope: envelope(o.envelope) };
     case 'ask':
@@ -259,6 +242,8 @@ export interface Routing {
   req_id: string;
   origin_device: string;
   target_device: string;
+  /** The target's key as the origin pinned it. */
+  target_key: string;
   op: 'start_space' | 'send' | 'stop' | 'answer';
   space: string;
   /** start_space */
@@ -286,6 +271,7 @@ export function peekRequest(body: string): Routing {
     req_id: str(o, 'req_id'),
     origin_device: str(o, 'origin_device', 64),
     target_device: str(o, 'target_device', 64),
+    target_key: str(o, 'target_key', 64),
     op: kind,
     space: str(op, 'space'),
     parent: kind === 'start_space' ? optStr(op, 'parent') : null,
@@ -308,6 +294,25 @@ export function peekEvent(body: string): SpaceEventBody {
   };
 }
 
+/** What the cloud reads from a target's signed reply. */
+export interface ReplyRouting {
+  req_id: ReplyBody['req_id'];
+  origin_device: ReplyBody['origin_device'];
+  target_device: ReplyBody['target_device'];
+  /** Only its kind: the outcome travels as the target signed it. */
+  outcome: ReplyBody['outcome']['outcome'];
+}
+
+export function peekReply(body: string): ReplyRouting {
+  const o = parseBody(body, 'reply body');
+  return {
+    req_id: str(o, 'req_id'),
+    origin_device: str(o, 'origin_device', 64),
+    target_device: str(o, 'target_device', 64),
+    outcome: oneOf(obj(o.outcome, 'outcome'), 'outcome', ['ok', 'err']),
+  };
+}
+
 /** A host's question set. */
 export function peekAsk(body: string): RemoteAsk {
   return remoteAsk(parseBody(body, 'ask body'));
@@ -315,13 +320,13 @@ export function peekAsk(body: string): RemoteAsk {
 
 /**
  * What a signature is for (`fleet_protocol::Domain`): each kind signs
- * `"theodore-fleet-<kind>-v2\0" ‖ bytes`, so one never verifies as another.
+ * `"theodore-fleet-<kind>-v3\0" ‖ bytes`, so one never verifies as another.
  */
-export type Domain = 'hello' | 'request' | 'event' | 'ask';
+export type Domain = 'hello' | 'request' | 'event' | 'ask' | 'reply';
 
 /** The exact bytes signed for `msg` in `domain`. */
 export function signedBytes(domain: Domain, msg: Uint8Array): Uint8Array {
-  const tag = new TextEncoder().encode(`theodore-fleet-${domain}-v2\0`);
+  const tag = new TextEncoder().encode(`theodore-fleet-${domain}-v3\0`);
   const out = new Uint8Array(tag.length + msg.length);
   out.set(tag);
   out.set(msg, tag.length);
