@@ -293,6 +293,12 @@ pub mod codes {
     pub const TOO_LARGE: &str = "fleet.too_large";
     pub const RATE_LIMITED: &str = "fleet.rate_limited";
     pub const NOT_YOURS: &str = "fleet.not_yours";
+    pub const BAD_MESSAGE: &str = "fleet.bad_message";
+    pub const TOO_MANY_DEVICES: &str = "fleet.too_many_devices";
+    pub const UPGRADE_REQUIRED: &str = "fleet.upgrade_required";
+    // the device adapter's own
+    pub const BAD_URL: &str = "fleet.bad_url";
+    pub const TLS: &str = "fleet.tls";
 }
 
 // ── space events ────────────────────────────────────────────────────────────

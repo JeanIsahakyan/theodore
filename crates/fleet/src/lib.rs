@@ -28,15 +28,16 @@ use std::net::IpAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use theodore_fleet_protocol::codes;
 use theodore_ports::fleet::{FleetConnect, FleetInbound, FleetLink, FleetPort};
 use tokio::sync::mpsc;
 use url::{Host, Url};
 
 /// The `Fatal` code for a cloud URL the link can't dial (not https, or http
 /// off loopback).
-pub const BAD_URL: &str = "fleet.bad_url";
+pub const BAD_URL: &str = codes::BAD_URL;
 /// The `Fatal` code when no TLS client could be built.
-pub const NO_TLS: &str = "fleet.tls";
+pub const NO_TLS: &str = codes::TLS;
 /// Replies and resolved asks kept while offline; the oldest goes first.
 pub const OUTBOX_LIMIT: usize = 1000;
 
