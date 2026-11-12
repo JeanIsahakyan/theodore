@@ -7,6 +7,7 @@ import {
   CircleInfo,
   Cpu,
   Cubes3,
+  Display,
   Flask,
   Gear,
   Keyboard,
@@ -59,6 +60,7 @@ import {
   takesEffort,
 } from './agentModel';
 import { AccountCard } from './AccountCard';
+import { DevicesPage } from './fleet/DevicesPage';
 import { buildLabel, buildReport, builtAtIso } from './buildStamp';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
 import { IntegrationsPage } from './linear/IntegrationsPage';
@@ -89,6 +91,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'account', title: 'Account', icon: <Person /> },
   { id: 'appearance', title: 'Appearance', icon: <Palette /> },
   { id: 'agents', title: 'Agents', icon: <Cpu /> },
+  { id: 'devices', title: 'Devices', icon: <Display /> },
   { id: 'integrations', title: 'Integrations', icon: <PlugConnection /> },
   { id: 'about', title: 'About & updates', icon: <CircleInfo /> },
   { id: 'sandbox', title: 'Sandbox', icon: <Cubes3 /> },
@@ -101,6 +104,8 @@ const SUB: Record<Page, string> = {
     'Your Theodore account and code host sign-ins. Tokens live in the system keychain.',
   appearance: 'How Theodore looks. System follows macOS.',
   agents: 'Agent CLIs on this computer, and which one handles each task.',
+  devices:
+    'Your computers running Theodore: start, steer and answer spaces across them.',
   integrations: 'Other tools Theodore can link PRs to.',
   updates: 'Version, release channel and updates.',
   about: 'Version, release channel and updates.',
@@ -139,8 +144,13 @@ export const SettingsNav = observer(function SettingsNav({
   const labs = isLabsVisible(store);
   // Integrations holds only Linear: it goes with the Linear lab.
   const linear = isLinearOn(store);
+  // Devices exist only where a cloud and an account are configured.
+  const fleet = store.fleet.available;
   const pages = visibleSettingsPages(PAGES, store.ephemeral.sandbox).filter(
-    (p) => (p.id !== 'labs' || labs) && (p.id !== 'integrations' || linear),
+    (p) =>
+      (p.id !== 'labs' || labs) &&
+      (p.id !== 'integrations' || linear) &&
+      (p.id !== 'devices' || fleet),
   );
   return (
     <aside className="sidebar settings-nav flex w-64 shrink-0 flex-col overflow-hidden border-r border-separator bg-background">
@@ -1047,6 +1057,8 @@ export const SettingsPage = observer(function SettingsPage({
           </section>
         ) : page === 'agents' ? (
           <AgentsPage />
+        ) : page === 'devices' ? (
+          <DevicesPage />
         ) : page === 'integrations' ? (
           isLinearOn(store) ? (
             <IntegrationsPage />

@@ -1,6 +1,7 @@
 import {
   BranchesRight,
   CodePullRequest,
+  Display,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -28,6 +29,7 @@ import { isBranchReview } from './project/sections';
 import { projectLabel } from './Projects';
 import { reviewTitle } from './space/mode';
 import { spaceTitle } from './space/spaces';
+import { spaceTitle as fleetSpaceTitle } from './fleet/fleet';
 import { reviewTabTitle } from './tabTitle';
 import { PRIcon, PrStatusIcon } from './StatusIcon';
 import { readProgress } from './review/progress';
@@ -67,6 +69,13 @@ function useLabel(r: Route): {
       return {
         icon: <SpaceMark spaceId={r.id} fallback={<Pencil />} />,
         title: s ? spaceTitle(s) : 'Space',
+      };
+    }
+    case 'fleet-space': {
+      const s = store.fleet.spaces.get(r.id);
+      return {
+        icon: <Display />,
+        title: s ? fleetSpaceTitle(s) : 'Fleet space',
       };
     }
     case 'review': {

@@ -29,6 +29,15 @@ import type {
   FilePreviewRequest,
   FileRequest,
   FindSymbolRequest,
+  FleetAnswerRequest,
+  FleetPresenceRequest,
+  FleetRemoteSpace,
+  FleetSendRequest,
+  FleetSettingsRequest,
+  FleetSpaceLine,
+  FleetStartRequest,
+  FleetStatus,
+  FleetTrustRequest,
   GetBlobRequest,
   HostAuthStatus,
   HostKind,
@@ -475,6 +484,24 @@ export const api = {
    *  `null` when there is none. Never toasted: hovering is incidental. */
   codeIntelHover: (req: CodeHoverRequest) =>
     call<CodeHover | null>('code_intel_hover', { req }, true),
+  /** Fleet (docs/fleet.md): spaces across your devices. The status and
+   *  list reads are quiet: with no fleet they just leave it hidden. */
+  fleetStatus: () => call<FleetStatus>('fleet_status', undefined, true),
+  fleetSetSettings: (req: FleetSettingsRequest) =>
+    call<FleetStatus>('fleet_set_settings', { req }),
+  fleetTrustDevice: (req: FleetTrustRequest) =>
+    call<FleetStatus>('fleet_trust_device', { req }),
+  fleetStartSpace: (req: FleetStartRequest) =>
+    call<FleetRemoteSpace>('fleet_start_space', { req }),
+  fleetSend: (req: FleetSendRequest) => call<null>('fleet_send', { req }),
+  fleetStop: (space: string) => call<null>('fleet_stop', { space }),
+  fleetAnswer: (req: FleetAnswerRequest) => call<null>('fleet_answer', { req }),
+  fleetSpaces: () => call<FleetRemoteSpace[]>('fleet_spaces', undefined, true),
+  fleetSpaceLines: (space: string, since: number) =>
+    call<FleetSpaceLine[]>('fleet_space_lines', { space, since }, true),
+  /** Where you are, for routing questions: never toasted. */
+  fleetPresence: (req: FleetPresenceRequest): Promise<null> =>
+    quietCall('fleet_presence', { req }),
   globalConfig: () => call<GlobalConfigInfo>('global_config'),
   /** Creates the global config from a template when missing, then opens
    *  it in the default editor. */

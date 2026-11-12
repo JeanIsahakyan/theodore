@@ -183,6 +183,7 @@ const ROUTE_NAMES = new Set([
   'review',
   'new',
   'space',
+  'fleet-space',
 ]);
 
 /** The sections of a project's settings, in menu order. */
@@ -246,7 +247,10 @@ export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
     };
   }
   if (r.name === 'review' && typeof r.pr !== 'string') return null;
-  if ((r.name === 'new' || r.name === 'space') && typeof r.id !== 'string')
+  if (
+    (r.name === 'new' || r.name === 'space' || r.name === 'fleet-space') &&
+    typeof r.id !== 'string'
+  )
     return null;
   return fitRoute(raw as Route, ws, kind);
 }
