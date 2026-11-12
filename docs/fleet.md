@@ -46,14 +46,17 @@ core  ─▶ adapter flushes its outbox (replies, ask_resolved), core replays it
 every access-token refresh ─▶ reauth{access_token}; none by exp + 60 s ─▶ cloud closes
 ```
 
-Reconnect: backoff 0.5 s doubling to 30 s, jitter ±25 %. Heartbeat: both
-sides ping every 15 s; no traffic for 45 s ─▶ drop and redial.
+Reconnect: backoff 0.5 s doubling to 30 s, jitter ±25 %. Heartbeat: the
+device pings every 15 s (WebSocket ping frames; the cloud runtime answers
+them without waking the hub); no traffic, pongs included, for 45 s ─▶ drop
+and redial.
 
 | Refusal | Cloud sends | Device |
 | --- | --- | --- |
 | bad or expired token, no `org_id` | `error{fleet.unauthorized \| fleet.no_org}`, close 4001, reason = the code | stops; a new link after the next sign-in |
-| key mismatch, protocol version | `error{fleet.key_mismatch \| fleet.version}`, close 4003 | stops |
+| key mismatch, protocol version, too many devices | `error{fleet.key_mismatch \| fleet.version \| fleet.too_many_devices}`, close 4003 | stops |
 | HTTP 401/403 on the upgrade | — | stops |
+| no hello in 10 s, a frame before hello, bad signature | close 1008 `fleet.bad_message` / `fleet.bad_signature` | redials |
 | anything else (5xx, drop) | — | redials |
 
 ## Start a space on another device
@@ -113,6 +116,26 @@ this one, within their `max_mode`.
 | `fleet.accept_remote` | `false` | let trusted devices start and steer spaces here |
 | `fleet.max_mode` | `edit` | highest mode a remote request may use (`ask`, `plan`, `edit`, `run`) |
 | `fleet.trusted_devices` | `[]` | `[{device_id, public_key, name}]`, changed only on this device |
+
+## Cloud
+
+`OrgHub` details, storage and limits: `docs/cloud.md` "Fleet". Where it
+pins down what this doc leaves open:
+
+- A fatal refusal closes the socket with 4001 (`fleet.unauthorized`,
+  `fleet.no_org`) or 4003 (`fleet.key_mismatch`, `fleet.version`,
+  `fleet.too_many_devices`), the code as the reason; the device doesn't
+  redial.
+- A `gap{from, to}` arrives as `space_event` with `seq = from`. A space's
+  `started` event outlives the ring: a late subscriber gets it, then the gap.
+- An unclaimed request is re-sent on the target's reconnect; a claimed one
+  waits for its reply (the target's outbox) until the 2 min expiry.
+- A reply to an origin that's offline is held 2 min and sent after its
+  welcome.
+- A question shows on the host itself and nowhere else while the host is
+  your active device; it still escalates after 20 s.
+- Cloud-only codes: `fleet.bad_message` (malformed or out-of-order frame),
+  `fleet.too_many_devices` (20 per user), `fleet.upgrade_required` (HTTP 426).
 
 ## Not yet
 

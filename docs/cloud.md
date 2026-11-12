@@ -8,7 +8,7 @@ Why it exists:
 
 - The app is a **public client**: it can't hold the WorkOS API key or client
   secret. Anything that needs them runs here.
-- The fleet will key its state by `org_id`. Every user gets an organization
+- The fleet keys its state by `org_id`. Every user gets an organization
   (alone, a personal one), so solo and team use run the same path.
 
 ## Routes
@@ -19,6 +19,7 @@ Why it exists:
 | `GET /v1/orgs` | bearer access JWT | the caller's active organizations, personal first: `{ organizations: [{ id, name, role, personal }] }` |
 | `POST /v1/orgs/personal` | bearer access JWT | the caller's personal org, created once: `{ organization_id, created }` |
 | `POST /v1/auth/select-organization` | none (the pending token is the credential) | finishes a sign-in that needs an org picked: `{ user, organization_id, access_token, refresh_token }` |
+| `GET /v1/fleet/ws` | bearer access JWT with `org_id` | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
 
 Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`.
 
@@ -170,6 +171,77 @@ Needed before the first deploy works; none of it is done yet.
 4. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
    then the Workers answer on `workers.dev`.
 
-## Next
+## Fleet
 
-The fleet: one Durable Object per `org_id`, in this Worker.
+The relay between one org's devices (`docs/fleet.md`): the Durable Object
+`OrgHub`, one per `org_id`, in this Worker. Code: `cloud/src/fleet/`
+(`hub.ts` the logic, `org-hub.ts` the DO shell, `wire.ts` frame checks,
+`store.ts` the tables). Wire types come from `src/gen/fleet.ts`, generated
+from `crates/fleet-protocol`.
+
+```
+device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
+  ─▶ verify JWT ─▶ no org_id: 403 fleet.no_org   bad token: 401 fleet.unauthorized
+  ─▶ OrgHub(idFromName(org_id)) + x-theodore-fleet-caller {userId, orgId, sessionId, expMs}
+     (incoming header replaced, Authorization dropped)
+  ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
+```
+
+- **Hibernation API**: an idle socket bills nothing. Per-socket state is its
+  attachment (user, org, token expiry, device, generation, presence); the
+  rest is SQLite, so a woken hub rebuilds nothing.
+- **One alarm** for every deadline (hello due, token expiry + 60 s, 10 s
+  grace, 2 min pending, 20 s escalation), set only when it moves earlier.
+- **Heartbeat**: the device pings (WebSocket ping frames); the runtime
+  answers without waking the hub. The hub doesn't ping.
+- Messages run one at a time, in arrival order. Everything is scoped to the
+  sender's user: another user's devices, spaces and requests read as
+  `fleet.not_yours` / `not_pending`, never as "exists".
+
+Storage (DO SQLite):
+
+| Table | Holds |
+| --- | --- |
+| `devices` | device_id, user, pinned public key, info, generation, last seen |
+| `spaces` | space, user, host, origin, parent, depth, last seq, its `started` event |
+| `events` | the last 500 events per space (gaps included) |
+| `pending` | a routed request until its reply: target, generation, claimed, envelope |
+| `replies` | a reply held for an origin that's offline (2 min) |
+| `asks` | an open question: where it shows, via, escalated |
+| `subs` | (device, space) live subscriptions, dropped with the connection |
+| `conns` | per-connection deadline (hello, token expiry) |
+
+Limits:
+
+| Limit | Value | Over it |
+| --- | --- | --- |
+| frame | 256 KiB (UTF-8 bytes) | `fleet.too_large`, close 1009 |
+| rate per connection | 50 msgs/s, burst 500 | frame dropped, `fleet.rate_limited` (once a second) |
+| devices per user | 20 | `fleet.too_many_devices`, close 4003 |
+| requests in flight per user | 100 | `reply err fleet.busy` |
+| device info | 8 KiB | `fleet.too_large` |
+| one space event | 64 KiB | `fleet.too_large` |
+| hello after connect | 10 s | `fleet.bad_message`, close 1008 |
+| token | exp + 60 s without `reauth` | `fleet.unauthorized`, close 4001 |
+
+The burst is above the 200 first planned so a journal replay after a
+reconnect isn't cut off.
+
+Errors on the socket are `error{code, message}`; a refused request is a
+`reply{req_id, err}` to its origin. Closing ones also close the socket
+with the code as the reason:
+
+| Close | Codes | Device adapter |
+| --- | --- | --- |
+| 4001 | `fleet.unauthorized`, `fleet.no_org` (incl. expired token) | fatal, no redial |
+| 4003 | `fleet.key_mismatch`, `fleet.version`, `fleet.too_many_devices` | fatal, no redial |
+| 4000 | a newer connection of the same device took over | — |
+| 1008 / 1009 | `fleet.bad_signature`, `fleet.bad_message` before hello, `fleet.too_large` | redial |
+
+HTTP on the upgrade: 401/403 fatal, 5xx redial, 426 `fleet.upgrade_required`
+without `Upgrade: websocket`.
+
+Logs name the error kind only: never a token, a nonce or an envelope body.
+
+Tests (`test/fleet-*.test.ts`) drive `Hub` with node:sqlite, fake sockets
+and a fake clock; the DO shell (`org-hub.ts`) itself runs only in Workers.

@@ -11,6 +11,7 @@
  * | GET  /v1/orgs | the caller's organizations (switcher), personal first |
  * | POST /v1/orgs/personal | the caller's personal organization, created once (src/orgs.ts) |
  * | POST /v1/auth/select-organization | finishes a sign-in that needs an org picked (needs the secret) |
+ * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
  *
  * ```text
  * app sign-in ─▶ 403 organization_selection_required {pending_authentication_token, organizations}
@@ -19,9 +20,10 @@
  *      (the app validates the access token itself, as after a code exchange)
  * ```
  */
-import { bearer, remoteKeys, verifyAccessToken, type Caller } from './auth';
+import { bearer, verifierFor, type Caller } from './auth';
 import { field, readJson } from './body';
 import { CloudError, errorResponse, json } from './errors';
+import { fleetConnect, type HubFor } from './fleet/route';
 import { ensurePersonalOrganization, listOrganizations } from './orgs';
 import { upstream, WorkosClient, WorkosError, type Workos } from './workos';
 
@@ -29,12 +31,17 @@ export interface Env {
   WORKOS_API_KEY: string;
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
+  ORG_HUB?: DurableObjectNamespace;
 }
+
+export { OrgHub } from './fleet/org-hub';
 
 export interface Deps {
   workos: Workos;
   clientId: string;
   verify: (token: string) => Promise<Caller>;
+  /** The org's fleet hub; absent: the fleet route answers cloud.config. */
+  hub?: HubFor;
 }
 
 /** A declared body over this is refused unread; `readJson` caps the rest. */
@@ -45,16 +52,12 @@ export function depsFor(env: Env): Deps {
     throw new CloudError(500, 'cloud.config', 'cloud is not configured');
   }
   const apiBase = env.WORKOS_API_BASE ?? 'https://api.workos.com';
-  const keys = remoteKeys(apiBase, env.WORKOS_CLIENT_ID);
+  const ns = env.ORG_HUB;
   return {
     workos: new WorkosClient(env.WORKOS_API_KEY, apiBase),
     clientId: env.WORKOS_CLIENT_ID,
-    verify: (token) =>
-      verifyAccessToken(token, {
-        apiBase,
-        clientId: env.WORKOS_CLIENT_ID,
-        keys,
-      }),
+    verify: verifierFor(apiBase, env.WORKOS_CLIENT_ID),
+    hub: ns ? (orgId) => ns.get(ns.idFromName(orgId)) : undefined,
   };
 }
 
@@ -75,6 +78,9 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
       const caller = await deps.verify(bearer(request));
       return json(await ensurePersonalOrganization(caller.userId, deps.workos));
     },
+  },
+  '/v1/fleet/ws': {
+    GET: (request, deps) => fleetConnect(request, deps.verify, deps.hub),
   },
   // No bearer: the user has no session yet. The pending token is the
   // credential (single use, short-lived, issued by WorkOS to this user).

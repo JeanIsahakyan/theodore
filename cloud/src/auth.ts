@@ -25,6 +25,8 @@ export interface Caller {
   organizationId?: string;
   role?: string;
   permissions: string[];
+  /** The token's `exp`, unix seconds. */
+  expiresAt?: number;
 }
 
 export interface VerifyOptions {
@@ -139,5 +141,15 @@ export async function verifyAccessToken(
     permissions: Array.isArray(permissions)
       ? permissions.filter((p): p is string => typeof p === 'string')
       : [],
+    expiresAt: payload.exp,
   };
+}
+
+/** `verifyAccessToken` against WorkOS's live key set. */
+export function verifierFor(
+  apiBase: string,
+  clientId: string,
+): (token: string) => Promise<Caller> {
+  const keys = remoteKeys(apiBase, clientId);
+  return (token) => verifyAccessToken(token, { apiBase, clientId, keys });
 }
