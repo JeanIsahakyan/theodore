@@ -19,6 +19,7 @@ all = { level = "warn", priority = -1 }
 theodore-domain = { path = "crates/domain" }
 theodore-ports = { path = "crates/ports" }
 theodore-contract = { path = "crates/contract" }
+theodore-fleet-protocol = { path = "crates/fleet-protocol" }
 theodore-app = { path = "crates/app" }
 theodore-host-http = { path = "crates/host-http" }
 theodore-host-github = { path = "crates/host-github" }

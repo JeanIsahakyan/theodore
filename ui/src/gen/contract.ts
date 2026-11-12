@@ -836,6 +836,18 @@ background?: boolean } |
 server_trouble?: boolean } |
 /**  The Theodore account signed in, signed out, or its session ended. */
 { type: "account_status"; status: AccountStatus } |
+/**  Fleet connection, settings or the device list changed (docs/fleet.md). */
+{ type: "fleet_status"; status: FleetStatus } |
+/**  A fleet space appeared or changed (status, last reply, question). */
+{ type: "fleet_space"; space: FleetRemoteSpace } |
+/**  One new line of a fleet space's history. */
+{ type: "fleet_space_line"; space: string; line: FleetSpaceLine } |
+/**  A question from a space elsewhere, routed to this device. */
+{ type: "fleet_ask"; question: FleetQuestion } |
+/**  Answered elsewhere, moved, or resolved: drop it. */
+{ type: "fleet_ask_dismissed"; ask_id: string } |
+/**  A device that isn't trusted here asked for something. */
+{ type: "fleet_trust_needed"; request: FleetTrustNeeded } |
 /**
  *  One line of a space command's output (docs/config.md); the last
  *  lines are kept per space and returned by `space_logs`.
@@ -1012,6 +1024,161 @@ export type Fix = {
 };
 
 export type FixStatus = "generating" | "ready" | "applied" | "suggested" | "rejected";
+
+export type FleetAnswerRequest = {
+	space: string,
+	ask_id: string,
+	/**  One entry per question: the chosen options, or one free text. */
+	answers: string[][],
+};
+
+export type FleetDevice = {
+	device_id: string,
+	name: string,
+	os: FleetOs,
+	/**  `desktop` or `daemon`. */
+	kind: string,
+	online: boolean,
+	/**  Unix ms; 0 if never. */
+	last_seen_ms: number,
+	/**
+	 *  Projects it lets trusted devices start spaces in (empty unless it
+	 *  accepts remote requests).
+	 */
+	projects: FleetProject[],
+	accepts_remote: boolean,
+	max_mode: SpaceMode,
+	/**  "a1b2 c3d4 e5f6 0718": compare with what that device shows for itself. */
+	fingerprint: string,
+	/**  This device trusts it (its key is pinned here). */
+	trusted: boolean,
+	this_device: boolean,
+};
+
+export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
+
+export type FleetOs = "macos" | "linux";
+
+export type FleetPresenceRequest = {
+	focused: boolean,
+	/**  Ms since the last input in the app. */
+	idle_ms: number,
+};
+
+export type FleetProject = {
+	id: string,
+	name: string,
+};
+
+export type FleetQuestion = {
+	ask_id: string,
+	space: string,
+	/**  "<device> · <space name>". */
+	from: string,
+	questions: FleetQuestionItem[],
+	/**  `active`, `origin`, `escalated`, `moved`; `None` on the host itself. */
+	via: string | null,
+};
+
+export type FleetQuestionItem = {
+	question: string,
+	options: string[],
+	multi: boolean,
+};
+
+/**
+ *  A space in the fleet: hosted on another device and started from here,
+ *  or hosted here for another device.
+ */
+export type FleetRemoteSpace = {
+	/**  The fleet id (`rs_…`). */
+	space: string,
+	host_device: string,
+	host_name: string,
+	origin_device: string,
+	project_name: string,
+	name: string,
+	branch: string,
+	status: FleetSpaceStatus,
+	mode: SpaceMode,
+	depth: number,
+	parent: string | null,
+	last_reply: string | null,
+	question: FleetQuestion | null,
+	/**  Hosted on this device (then `local_space` is its local id). */
+	hosted_here: boolean,
+	local_space: string | null,
+	/**  Why it failed to start, if it did. */
+	error: string | null,
+};
+
+export type FleetSendRequest = {
+	space: string,
+	text: string,
+	mode?: SpaceMode | null,
+};
+
+export type FleetSettingsRequest = {
+	enabled?: boolean | null,
+	accept_remote?: boolean | null,
+	max_mode?: SpaceMode | null,
+	name?: string | null,
+};
+
+export type FleetSpaceLine = {
+	seq: number,
+	kind: FleetLineKind,
+	text: string,
+};
+
+export type FleetSpaceStatus =
+/**  Asked for, no reply from the host yet. */
+"starting" | "running" | "idle" | "waiting" | "stopped" | "failed";
+
+export type FleetStartRequest = {
+	device_id: string,
+	project_id: string,
+	goal: string,
+	mode: SpaceMode,
+};
+
+export type FleetStatus = {
+	/**  A cloud and an account are configured; `false` hides the feature. */
+	available: boolean,
+	/**  `fleet.enabled`: connect at all. */
+	enabled: boolean,
+	connected: boolean,
+	/**  Set once the cloud has registered this device. */
+	device_id: string | null,
+	/**  This device's name as others see it. */
+	name: string,
+	/**  This device's key fingerprint. */
+	fingerprint: string,
+	/**  `fleet.accept_remote`. */
+	accept_remote: boolean,
+	/**  `fleet.max_mode`. */
+	max_mode: SpaceMode,
+	/**  The user's devices in the current organization, this one included. */
+	devices: FleetDevice[],
+	/**  Why it isn't connected, when enabled and not connected. */
+	error: string | null,
+};
+
+/**  A request from `device_id` was refused because it isn't trusted here. */
+export type FleetTrustNeeded = {
+	device_id: string,
+	device_name: string,
+	fingerprint: string,
+};
+
+/**
+ *  Trust or distrust a device: its current public key (as the cloud lists
+ *  it) is pinned here, or unpinned.
+ */
+export type FleetTrustRequest = {
+	device_id: string,
+	trusted: boolean,
+};
 
 export type GetBlobRequest = {
 	pr: PrId,
