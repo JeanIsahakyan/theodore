@@ -4,15 +4,19 @@
 //! fleet is on and connected.
 //!
 //! ```text
-//! calling space hosted here for the fleet ─▶ parent = its rs_ id, depth + 1
-//! calling space of this device's own      ─▶ no parent, depth 1
-//! depth > MAX_DEPTH or > MAX_CHILDREN started by it ─▶ refused here first
+//! caller hosted here for the fleet ─▶ fleet_devices / read / wait only:
+//!                                     no trust passes through it
+//! caller of this device's own, turn in Edit or Run
+//!   ─▶ fleet_start_space on a device pinned here, mode ≤ the turn's,
+//!      parent = the caller's stable fleet id, depth 1, ≤ MAX_CHILDREN
+//!   ─▶ fleet_send (mode ≤ the turn's) / fleet_stop / fleet_read /
+//!      fleet_wait on spaces it (or its children) started, nothing else
 //! ```
 
 use std::time::Duration;
 
 use theodore_contract::{FleetRemoteSpace, FleetSendRequest, FleetSpaceStatus, SpaceMode};
-use theodore_fleet_protocol::{MAX_CHILDREN, MAX_DEPTH};
+use theodore_fleet_protocol::{DeviceSummary, MAX_CHILDREN, MAX_DEPTH};
 use theodore_ports::{
     FLEET_WAIT_MAX_MS, FleetToolDevice, FleetToolLine, FleetToolProject, FleetToolRead,
     FleetToolSpace, FleetToolWait, SpaceToolError,
@@ -20,7 +24,7 @@ use theodore_ports::{
 
 use crate::core::Core;
 use crate::error::AppError;
-use crate::usecases::fleet::mode_str;
+use crate::usecases::fleet::{FleetMem, FleetSettings, mode_str};
 use crate::usecases::fleet_origin::settled;
 
 /// How long `fleet_start_space` waits for the other device to say yes.
@@ -28,15 +32,19 @@ const START_WAIT: Duration = Duration::from_secs(20);
 
 /// Told to the agent when its turn has the fleet tools.
 pub(crate) const FLEET_TOOLS_PROMPT: &str = "The user's other devices are reachable \
-     through the fleet tools: fleet_devices lists the ones that take remote spaces (their \
-     projects and highest mode); fleet_start_space starts a space with a goal in one of \
-     their projects; fleet_send sends it a message, fleet_wait waits until spaces settle, \
+     through the fleet tools: fleet_devices lists the trusted ones that take remote spaces \
+     (their projects and highest mode); fleet_start_space starts a space with a goal in one \
+     of their projects; fleet_send sends it a message, fleet_wait waits until spaces settle, \
      fleet_read reads a space's replies and history, fleet_stop stops its turn. Use them \
      only when the user asks for work on another device, or to split work they asked for \
      across devices.";
 
 fn unavailable(e: AppError) -> SpaceToolError {
     SpaceToolError::Unavailable(e.to_string())
+}
+
+fn refused(why: impl Into<String>) -> SpaceToolError {
+    SpaceToolError::Unavailable(why.into())
 }
 
 fn status_word(s: FleetSpaceStatus) -> &'static str {
@@ -75,10 +83,50 @@ fn parse_mode(mode: &str) -> Result<SpaceMode, SpaceToolError> {
         "plan" => Ok(SpaceMode::Plan),
         "edit" | "" => Ok(SpaceMode::Edit),
         "run" => Ok(SpaceMode::Run),
-        other => Err(SpaceToolError::Unavailable(format!(
+        other => Err(refused(format!(
             "unknown mode {other:?}: ask, plan, edit or run"
         ))),
     }
+}
+
+fn rank(m: SpaceMode) -> u8 {
+    match m {
+        SpaceMode::Ask => 0,
+        SpaceMode::Plan => 1,
+        SpaceMode::Edit => 2,
+        SpaceMode::Run => 3,
+    }
+}
+
+fn mode_word(m: SpaceMode) -> &'static str {
+    mode_str(crate::usecases::fleet::fleet_mode(m))
+}
+
+/// Pinned here with the key the cloud lists now.
+fn trusted(d: &DeviceSummary, s: &FleetSettings) -> bool {
+    s.trusted_devices
+        .iter()
+        .any(|t| t.device_id == d.device_id && t.public_key == d.public_key)
+}
+
+/// Whether `space` (followed here) was started by `caller`'s agent, or by
+/// a space that was.
+fn started_by(mem: &FleetMem, space: &str, caller: &str) -> bool {
+    let mut at = space.to_string();
+    // A chain is at most MAX_DEPTH long; a few more steps end any loop.
+    for _ in 0..=(MAX_DEPTH + 2) {
+        let Some(o) = mem.outbound.get(&at) else {
+            return false;
+        };
+        if o.started_by.as_deref() == Some(caller) {
+            return true;
+        }
+        match &o.view.parent {
+            Some(p) => at = p.clone(),
+            None => return false,
+        }
+    }
+    false
 }
 
 impl Core {
@@ -94,20 +142,41 @@ impl Core {
         if self.fleet_tools_available() {
             Ok(())
         } else {
-            Err(SpaceToolError::Unavailable(
-                "the fleet isn't connected".into(),
-            ))
+            Err(refused("the fleet isn't connected"))
         }
     }
 
+    /// Start, send and stop: never from a space hosted here for another
+    /// device (that device's trust doesn't reach this one's), and only
+    /// from a turn that may change things.
+    async fn fleet_tools_steer(&self, caller: &str, turn: SpaceMode) -> Result<(), SpaceToolError> {
+        if self.fleet_hosts_local(caller).await {
+            return Err(refused(
+                "this space runs here for another device: it can't start or steer spaces \
+                 on other devices",
+            ));
+        }
+        if rank(turn) < rank(SpaceMode::Edit) {
+            return Err(refused(format!(
+                "this turn is in {} mode: starting or steering spaces on other devices needs \
+                 Edit or Run",
+                mode_word(turn)
+            )));
+        }
+        Ok(())
+    }
+
+    /// Other devices that are online, take remote spaces and are trusted
+    /// here.
     pub async fn fleet_tool_devices(&self) -> Result<Vec<FleetToolDevice>, SpaceToolError> {
         self.fleet_tools_check()?;
+        let s = self.fleet_settings().await;
         let mem = self.fleet();
         let me = mem.device_id.clone();
         Ok(mem
             .devices
             .iter()
-            .filter(|d| d.online && d.info.accepts_remote)
+            .filter(|d| d.online && d.info.accepts_remote && trusted(d, &s))
             .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
             .map(|d| FleetToolDevice {
                 device_id: d.device_id.clone(),
@@ -126,77 +195,101 @@ impl Core {
             .collect())
     }
 
-    /// `fleet_start_space` from the agent of `caller` (a local space id).
+    /// `fleet_start_space` from the agent of `caller` (a local space id),
+    /// whose turn runs in `turn`.
     pub async fn fleet_tool_start(
         &self,
         caller: &str,
+        turn: SpaceMode,
         device: &str,
         project: &str,
         goal: &str,
         mode: &str,
     ) -> Result<FleetToolSpace, SpaceToolError> {
         self.fleet_tools_check()?;
+        self.fleet_tools_steer(caller, turn).await?;
         let mode = parse_mode(mode)?;
-        let (device_id, project_id, parent, depth, children) = {
+        if rank(mode) > rank(turn) {
+            return Err(refused(format!(
+                "{} is above this turn's mode ({}): a space starts others at most in its own",
+                mode_word(mode),
+                mode_word(turn)
+            )));
+        }
+        let s = self.fleet_settings().await;
+        let (device_id, project_id, children) = {
             let mem = self.fleet();
-            let d = mem
+            let me = mem.device_id.clone();
+            let candidates: Vec<&DeviceSummary> = mem
                 .devices
                 .iter()
-                .find(|d| d.device_id == device || d.info.name.eq_ignore_ascii_case(device))
-                .ok_or_else(|| {
-                    SpaceToolError::Unavailable(format!(
-                        "no device {device:?} in the fleet; fleet_devices lists them"
-                    ))
-                })?;
+                .filter(|d| me.as_deref() != Some(d.device_id.as_str()) && trusted(d, &s))
+                .collect();
+            // By id; else by a name no other trusted device has.
+            let d = match candidates.iter().find(|d| d.device_id == device) {
+                Some(d) => *d,
+                None => {
+                    let named: Vec<&&DeviceSummary> = candidates
+                        .iter()
+                        .filter(|d| d.info.name.eq_ignore_ascii_case(device))
+                        .collect();
+                    match named.as_slice() {
+                        [d] => **d,
+                        [] => {
+                            return Err(refused(format!(
+                                "no trusted device {device:?} in the fleet; fleet_devices lists them"
+                            )));
+                        }
+                        _ => {
+                            return Err(refused(format!(
+                                "several trusted devices are named {device:?}: use its device_id \
+                                 from fleet_devices"
+                            )));
+                        }
+                    }
+                }
+            };
             let p = d
                 .info
                 .projects
                 .iter()
                 .find(|p| p.id == project || p.name.eq_ignore_ascii_case(project))
                 .ok_or_else(|| {
-                    SpaceToolError::Unavailable(format!(
+                    refused(format!(
                         "{} has no project {project:?}; fleet_devices lists them",
                         d.info.name
                     ))
                 })?;
-            let (parent, depth) = match mem.hosted.values().find(|h| h.row.local_space == caller) {
-                Some(h) => (Some(h.row.space.clone()), h.row.depth + 1),
-                None => (None, 1),
-            };
             let children = mem
                 .outbound
                 .values()
                 .filter(|o| o.started_by.as_deref() == Some(caller))
                 .count();
-            (d.device_id.clone(), p.id.clone(), parent, depth, children)
+            (d.device_id.clone(), p.id.clone(), children)
         };
-        if depth > MAX_DEPTH {
-            return Err(SpaceToolError::Unavailable(format!(
-                "spaces nest at most {MAX_DEPTH} deep: this space can't start another"
-            )));
-        }
         if children >= MAX_CHILDREN as usize {
-            return Err(SpaceToolError::Unavailable(format!(
+            return Err(refused(format!(
                 "a space starts at most {MAX_CHILDREN} others"
             )));
         }
+        // A stable parent id, so the cloud counts this space's children
+        // across restarts.
+        let parent = self.fleet_parent_id(caller).await;
         let (view, rx) = self
             .fleet_start_remote(
                 &device_id,
                 &project_id,
                 goal,
                 mode,
-                parent,
-                depth,
+                Some(parent),
+                1,
                 Some(caller.to_string()),
             )
             .await
             .map_err(unavailable)?;
         // A refusal is the agent's to hear; no word in time, it's starting.
         if let Err(AppError::Refused(why)) = Self::fleet_await(rx, START_WAIT).await {
-            return Err(SpaceToolError::Unavailable(format!(
-                "the other device refused: {why}"
-            )));
+            return Err(refused(format!("the other device refused: {why}")));
         }
         Ok(self
             .fleet_tool_view(&view.space)
@@ -210,51 +303,81 @@ impl Core {
             .map(|o| tool_space(&o.view))
     }
 
-    fn fleet_tool_known(&self, space: &str) -> Result<FleetToolSpace, SpaceToolError> {
-        self.fleet_tool_view(space).ok_or_else(|| {
-            SpaceToolError::Unavailable(format!("no fleet space {space} started from this device"))
-        })
+    /// `space` as `caller`'s agent may see it: only one it started (or
+    /// one of those did). Spaces the user started aren't the agent's.
+    fn fleet_tool_known(
+        &self,
+        caller: &str,
+        space: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let mem = self.fleet();
+        match mem.outbound.get(space) {
+            Some(o) if started_by(&mem, space, caller) => Ok(tool_space(&o.view)),
+            _ => Err(refused(format!(
+                "no fleet space {space} started by this space"
+            ))),
+        }
     }
 
     pub async fn fleet_tool_send(
         &self,
+        caller: &str,
+        turn: SpaceMode,
         space: &str,
         text: &str,
     ) -> Result<FleetToolSpace, SpaceToolError> {
         self.fleet_tools_check()?;
-        self.fleet_tool_known(space)?;
+        self.fleet_tools_steer(caller, turn).await?;
+        self.fleet_tool_known(caller, space)?;
+        // At most the turn's mode, and never above the space's own.
+        let own = self
+            .fleet()
+            .outbound
+            .get(space)
+            .map_or(turn, |o| o.view.mode);
+        let mode = if rank(own) <= rank(turn) { own } else { turn };
         self.fleet_send(FleetSendRequest {
             space: space.to_string(),
             text: text.to_string(),
-            mode: None,
+            mode: Some(mode),
         })
         .await
         .map_err(unavailable)?;
-        self.fleet_tool_known(space)
+        self.fleet_tool_known(caller, space)
     }
 
-    pub async fn fleet_tool_stop(&self, space: &str) -> Result<FleetToolSpace, SpaceToolError> {
+    pub async fn fleet_tool_stop(
+        &self,
+        caller: &str,
+        space: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
         self.fleet_tools_check()?;
-        self.fleet_tool_known(space)?;
+        // Stopping changes nothing but the other space's turn; still not
+        // from a space hosted here for another device.
+        if self.fleet_hosts_local(caller).await {
+            return Err(refused(
+                "this space runs here for another device: it can't steer spaces on other devices",
+            ));
+        }
+        self.fleet_tool_known(caller, space)?;
         self.fleet_stop(space).await.map_err(unavailable)?;
-        self.fleet_tool_known(space)
+        self.fleet_tool_known(caller, space)
     }
 
     /// Until every one of `spaces` is idle, waiting, stopped or failed, or
     /// `timeout_ms` (at most `FLEET_WAIT_MAX_MS`).
     pub async fn fleet_tool_wait(
         &self,
+        caller: &str,
         spaces: &[String],
         timeout_ms: u64,
     ) -> Result<FleetToolWait, SpaceToolError> {
         self.fleet_tools_check()?;
         if spaces.is_empty() {
-            return Err(SpaceToolError::Unavailable(
-                "name at least one space".into(),
-            ));
+            return Err(refused("name at least one space"));
         }
         for s in spaces {
-            self.fleet_tool_known(s)?;
+            self.fleet_tool_known(caller, s)?;
         }
         let deadline =
             tokio::time::Instant::now() + Duration::from_millis(timeout_ms.min(FLEET_WAIT_MAX_MS));
@@ -279,7 +402,7 @@ impl Core {
                 _ = changed => {}
                 _ = tokio::time::sleep_until(deadline) => {}
                 _ = self.0.shutdown.cancelled() => {
-                    return Err(SpaceToolError::Unavailable("Theodore is closing".into()));
+                    return Err(refused("Theodore is closing"));
                 }
             }
         }
@@ -287,11 +410,12 @@ impl Core {
 
     pub async fn fleet_tool_read(
         &self,
+        caller: &str,
         space: &str,
         since: u64,
     ) -> Result<FleetToolRead, SpaceToolError> {
         self.fleet_tools_check()?;
-        let view = self.fleet_tool_known(space)?;
+        let view = self.fleet_tool_known(caller, space)?;
         let lines = self
             .fleet_space_lines(space, since)
             .await

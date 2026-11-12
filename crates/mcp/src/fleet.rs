@@ -13,7 +13,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use theodore_ports::FLEET_WAIT_MAX_MS;
 
+use crate::backend::TurnMode;
 use crate::server::{ReviewToolsServer, run_space, space_result};
+
+/// The calling turn's mode; a run without one never gets here
+/// (`RunContext::fleet_steers`).
+fn turn_mode(run: &crate::RunContext) -> Result<TurnMode, ErrorData> {
+    run.mode
+        .ok_or_else(|| ErrorData::invalid_params("this run has no mode", None))
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -103,36 +111,42 @@ impl ReviewToolsServer {
     }
 
     #[tool(
-        description = "Start a space on another of the user's devices, in one of its projects, with a goal; this space becomes its parent. Returns the new space's fleet id (rs_…) and status. Spaces nest at most 2 deep and a space starts at most 5. The device may refuse (not trusted, mode above its limit); the error says why."
+        description = "Start a space on another of the user's devices that this one trusts, in one of its projects, with a goal; this space becomes its parent. Returns the new space's fleet id (rs_…) and status. Its mode is at most this turn's and the device's limit; a space starts at most 5. The device may refuse; the error says why."
     )]
     async fn fleet_start_space(
         &self,
         Extension(parts): Extension<http::request::Parts>,
         Parameters(p): Parameters<FleetStartParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let (_, space) = run_space(&parts)?;
+        let (run, space) = run_space(&parts)?;
+        let turn = turn_mode(&run)?;
         let mode = p.mode.unwrap_or(FleetModeParam::Edit).as_str();
         space_result(
             self.spaces
-                .fleet_start_space(&space, &p.device, &p.project, &p.goal, mode)
+                .fleet_start_space(&space, turn, &p.device, &p.project, &p.goal, mode)
                 .await,
         )
     }
 
     #[tool(
-        description = "Send a message to a space on another device (it runs as that space's next turn). Returns its status."
+        description = "Send a message to a space this one started on another device (it runs as that space's next turn, at most in this turn's mode). Returns its status."
     )]
     async fn fleet_send(
         &self,
         Extension(parts): Extension<http::request::Parts>,
         Parameters(p): Parameters<FleetSendParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let (_, space) = run_space(&parts)?;
-        space_result(self.spaces.fleet_send(&space, &p.space, &p.text).await)
+        let (run, space) = run_space(&parts)?;
+        let turn = turn_mode(&run)?;
+        space_result(
+            self.spaces
+                .fleet_send(&space, turn, &p.space, &p.text)
+                .await,
+        )
     }
 
     #[tool(
-        description = "Wait until each of the spaces is idle, waiting for the user, stopped or failed, or the timeout (at most 10 minutes). Returns whether all settled and each one's status and last reply."
+        description = "Wait until each of the spaces (started by this one) is idle, waiting for the user, stopped or failed, or the timeout (at most 10 minutes). Returns whether all settled and each one's status and last reply."
     )]
     async fn fleet_wait(
         &self,
@@ -148,7 +162,7 @@ impl ReviewToolsServer {
     }
 
     #[tool(
-        description = "A space on another device: its status, last reply, a waiting question, and its history (turns, tools, replies) after `since`."
+        description = "A space this one started on another device: its status, last reply, a waiting question, and its history (turns, tools, replies) after `since`."
     )]
     async fn fleet_read(
         &self,
@@ -163,7 +177,7 @@ impl ReviewToolsServer {
         )
     }
 
-    #[tool(description = "Stop the turn running in a space on another device.")]
+    #[tool(description = "Stop the turn running in a space this one started on another device.")]
     async fn fleet_stop(
         &self,
         Extension(parts): Extension<http::request::Parts>,

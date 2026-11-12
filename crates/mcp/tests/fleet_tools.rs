@@ -15,9 +15,10 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use serde_json::{Value, json};
 use theodore_domain::{AgentId, FindingId, PrId, RunId};
 use theodore_mcp::{
-    AppStatus, BackendError, CheckOutcome, FLEET_TOOL_NAMES, GroupWithHunks, LogTail, McpServer,
-    NewFinding, NewPatch, PrContext, ReviewToolsBackend, RunContext, SpaceCommandName, SpaceInfo,
-    SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    AppStatus, BackendError, CheckOutcome, FLEET_STEER_TOOL_NAMES, FLEET_TOOL_NAMES, FleetTools,
+    GroupWithHunks, LogTail, McpServer, NewFinding, NewPatch, PrContext, ReviewToolsBackend,
+    RunContext, SpaceCommandName, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
+    ToolSet, TurnMode,
 };
 use theodore_ports::{FleetToolDevice, FleetToolSpace, FleetToolWait};
 
@@ -114,15 +115,15 @@ impl SpaceToolsBackend for FakeFleet {
     async fn fleet_start_space(
         &self,
         space: &str,
+        turn: TurnMode,
         device: &str,
         project: &str,
         goal: &str,
         mode: &str,
     ) -> Result<FleetToolSpace, SpaceToolError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("start {space} {device} {project} {goal} {mode}"));
+        self.calls.lock().unwrap().push(format!(
+            "start {space} {turn:?} {device} {project} {goal} {mode}"
+        ));
         Ok(tool_space("rs_1", "starting"))
     }
     async fn fleet_wait(
@@ -143,6 +144,10 @@ impl SpaceToolsBackend for FakeFleet {
 }
 
 fn run(tools: ToolSet) -> RunContext {
+    turn(tools, TurnMode::Edit, FleetTools::Steer)
+}
+
+fn turn(tools: ToolSet, mode: TurnMode, fleet: FleetTools) -> RunContext {
     RunContext {
         run_id: RunId::new("space:s1:m1"),
         pr: PrId::new("space:s1"),
@@ -150,6 +155,8 @@ fn run(tools: ToolSet) -> RunContext {
         space: Some("s1".into()),
         tools,
         code: theodore_mcp::CodeTools::Off,
+        mode: Some(mode),
+        fleet,
     }
 }
 
@@ -228,11 +235,47 @@ async fn fleet_tools_are_listed_only_while_connected() {
         *fleet.calls.lock().unwrap(),
         [
             "devices s1",
-            "start s1 mac1 app Port it plan",
+            "start s1 Edit mac1 app Port it plan",
             "wait s1 rs_1 600000",
         ]
     );
     drop(client);
+
+    // An Ask or Plan turn, or a space hosted here for another device, only
+    // reads: start, send and stop are neither listed nor callable.
+    let read_only: Vec<String> = {
+        let mut v: Vec<String> = FLEET_TOOL_NAMES
+            .iter()
+            .filter(|t| !FLEET_STEER_TOOL_NAMES.contains(t))
+            .map(|s| s.to_string())
+            .collect();
+        v.sort();
+        v
+    };
+    for ctx in [
+        turn(ToolSet::Space, TurnMode::Ask, FleetTools::Steer),
+        turn(ToolSet::Space, TurnMode::Plan, FleetTools::Steer),
+        turn(ToolSet::Space, TurnMode::Run, FleetTools::Read),
+    ] {
+        let endpoint = handle.register_run(ctx.clone());
+        let client = connect(&endpoint.url, &endpoint.token).await;
+        assert_eq!(fleet_names(&client).await, read_only, "{ctx:?}");
+        for tool in FLEET_STEER_TOOL_NAMES {
+            let mut req = CallToolRequestParams::new(tool.to_string());
+            if let Value::Object(map) = json!({"device": "mac1", "project": "app", "goal": "x", "space": "rs_1", "text": "go"})
+            {
+                req = req.with_arguments(map);
+            }
+            let refused = client.call_tool(req).await;
+            assert!(refused.is_err(), "{tool} for {ctx:?}: {refused:?}");
+        }
+        drop(client);
+    }
+    assert_eq!(
+        fleet.calls.lock().unwrap().len(),
+        3,
+        "nothing reached the backend"
+    );
 
     // A review run never gets them.
     let review = handle.register_run(run(ToolSet::Review));

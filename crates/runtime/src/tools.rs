@@ -6,17 +6,18 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use theodore_app::{CodeEdits, CodeRoot, CodeScope, Core, RunTools};
-use theodore_contract::FileRequest;
+use theodore_contract::{FileRequest, SpaceMode};
 use theodore_domain::{
     AgentId, Anchor, Finding, FindingId, FindingState, Fix, FixStatus, Patch, PrId, RunId, Side,
     SkillId,
 };
 use theodore_mcp::{
     AppStatus, BackendError, BaseChange, CheckOutcome, CodeEditOutcome, CodeTools,
-    CodeToolsBackend, FileSummary, GroupSummary, GroupWithHunks, LogTail, McpHandle, McpServer,
-    NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReportRequest, ReportScope,
-    ReviewItem, ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction, SpaceCommandName,
-    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    CodeToolsBackend, FileSummary, FleetTools, GroupSummary, GroupWithHunks, LogTail, McpHandle,
+    McpServer, NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReportRequest,
+    ReportScope, ReviewItem, ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction,
+    SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
+    ToolSet, TurnMode,
 };
 use theodore_ports::{
     Answer, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic, LanguageStatus, McpEndpoint, Position,
@@ -343,51 +344,57 @@ impl SpaceToolsBackend for CoreTools {
     async fn fleet_start_space(
         &self,
         space: &str,
+        turn: TurnMode,
         device: &str,
         project: &str,
         goal: &str,
         mode: &str,
     ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
         self.space_core()?
-            .fleet_tool_start(space, device, project, goal, mode)
+            .fleet_tool_start(space, space_mode(turn), device, project, goal, mode)
             .await
     }
 
     async fn fleet_send(
         &self,
-        _space: &str,
+        space: &str,
+        turn: TurnMode,
         target: &str,
         text: &str,
     ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
-        self.space_core()?.fleet_tool_send(target, text).await
+        self.space_core()?
+            .fleet_tool_send(space, space_mode(turn), target, text)
+            .await
     }
 
     async fn fleet_wait(
         &self,
-        _space: &str,
+        space: &str,
         targets: &[String],
         timeout_ms: u64,
     ) -> Result<theodore_ports::FleetToolWait, SpaceToolError> {
         self.space_core()?
-            .fleet_tool_wait(targets, timeout_ms)
+            .fleet_tool_wait(space, targets, timeout_ms)
             .await
     }
 
     async fn fleet_read(
         &self,
-        _space: &str,
+        space: &str,
         target: &str,
         since: u64,
     ) -> Result<theodore_ports::FleetToolRead, SpaceToolError> {
-        self.space_core()?.fleet_tool_read(target, since).await
+        self.space_core()?
+            .fleet_tool_read(space, target, since)
+            .await
     }
 
     async fn fleet_stop(
         &self,
-        _space: &str,
+        space: &str,
         target: &str,
     ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
-        self.space_core()?.fleet_tool_stop(target).await
+        self.space_core()?.fleet_tool_stop(space, target).await
     }
 }
 
@@ -638,6 +645,31 @@ impl CodeToolsBackend for RootCodeTools {
     }
 }
 
+fn turn_mode(m: SpaceMode) -> TurnMode {
+    match m {
+        SpaceMode::Ask => TurnMode::Ask,
+        SpaceMode::Plan => TurnMode::Plan,
+        SpaceMode::Edit => TurnMode::Edit,
+        SpaceMode::Run => TurnMode::Run,
+    }
+}
+
+fn space_mode(m: TurnMode) -> SpaceMode {
+    match m {
+        TurnMode::Ask => SpaceMode::Ask,
+        TurnMode::Plan => SpaceMode::Plan,
+        TurnMode::Edit => SpaceMode::Edit,
+        TurnMode::Run => SpaceMode::Run,
+    }
+}
+
+fn mcp_fleet(f: theodore_app::FleetTools) -> FleetTools {
+    match f {
+        theodore_app::FleetTools::Read => FleetTools::Read,
+        theodore_app::FleetTools::Steer => FleetTools::Steer,
+    }
+}
+
 fn mcp_code(code: theodore_app::CodeTools) -> CodeTools {
     match code {
         theodore_app::CodeTools::Off => CodeTools::Off,
@@ -709,6 +741,8 @@ impl RunTools for McpRunTools {
         space: &str,
         agent: AgentId,
         code: theodore_app::CodeTools,
+        mode: SpaceMode,
+        fleet: theodore_app::FleetTools,
     ) -> McpEndpoint {
         self.register_ctx(RunContext {
             run_id: RunId(run_id.into()),
@@ -717,6 +751,8 @@ impl RunTools for McpRunTools {
             space: Some(space.to_string()),
             tools: ToolSet::Space,
             code: mcp_code(code),
+            mode: Some(turn_mode(mode)),
+            fleet: mcp_fleet(fleet),
         })
     }
 
@@ -750,7 +786,14 @@ mod tests {
             .unwrap();
         let pr = PrId("github:o/r#1".into());
         let off = theodore_app::CodeTools::Off;
-        let space = tools.register_space("space:s1:m1", "s1", AgentId::Claude, off);
+        let space = tools.register_space(
+            "space:s1:m1",
+            "s1",
+            AgentId::Claude,
+            off,
+            SpaceMode::Edit,
+            theodore_app::FleetTools::Steer,
+        );
         let on_space_pr = tools.register("r1", &pr, AgentId::Claude, Some("s1"), off);
         let plain = tools.register("r2", &pr, AgentId::Claude, None, off);
         assert_eq!(space.name, "space-tools");

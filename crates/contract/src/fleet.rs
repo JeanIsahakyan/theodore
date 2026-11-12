@@ -4,7 +4,7 @@
 //! `theodore-fleet-protocol`; these are the UI's.
 //!
 //! Commands: `fleet_status`, `fleet_set_settings`, `fleet_trust_device`,
-//! `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
+//! `fleet_remove_device`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
 //! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`.
 //! Ephemerals: `fleet_status`, `fleet_space`, `fleet_space_line`,
 //! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`.

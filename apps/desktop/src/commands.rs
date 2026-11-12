@@ -1180,6 +1180,17 @@ pub async fn fleet_trust_device(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn fleet_remove_device(
+    op: crate::op::Op,
+    device_id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_remove_device(device_id).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn fleet_start_space(
     op: crate::op::Op,
     req: theodore_contract::FleetStartRequest,

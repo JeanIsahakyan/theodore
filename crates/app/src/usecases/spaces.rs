@@ -43,8 +43,21 @@ pub(crate) const HISTORY_MESSAGES: usize = 12;
 /// Per replayed message.
 const HISTORY_CHARS: usize = 2_000;
 
+/// Told about a new space once its row exists, before its goal is sent.
+pub(crate) type OnSpaceCreated = Box<dyn FnOnce(&Space) + Send>;
+
 impl Core {
-    pub async fn create_space(&self, mut req: CreateSpaceRequest) -> AppResult<Space> {
+    pub async fn create_space(&self, req: CreateSpaceRequest) -> AppResult<Space> {
+        self.create_space_then(req, None).await
+    }
+
+    /// `create_space`; `created` hears of the space before its first turn
+    /// starts (a fleet start marks it hosted, so that turn's tools know).
+    pub(crate) async fn create_space_then(
+        &self,
+        mut req: CreateSpaceRequest,
+        created: Option<OnSpaceCreated>,
+    ) -> AppResult<Space> {
         let project = self
             .project_row(&req.project)
             .await?
@@ -271,6 +284,9 @@ impl Core {
         })
         .await?;
 
+        if let Some(created) = created {
+            created(&space);
+        }
         let setup_status = space.setup.as_ref().map(|s| s.status);
         if setup_status == Some(theodore_contract::SetupStatus::Running) {
             // The goal waits for setup (`goal_pending`).
@@ -1522,7 +1538,13 @@ async fn drive_turn(core: &Core, turn: Turn) {
         code,
     } = turn;
     // The space's commands as tools, for this turn only.
-    // A kept process keeps its endpoint: it now serves this turn.
+    // A kept process keeps its endpoint: it now serves this turn (its mode
+    // is the process's, `CliKey`).
+    let fleet_tools = if attach.is_none() && core.fleet_hosts_local(&space.id).await {
+        crate::deps::FleetTools::Read
+    } else {
+        crate::deps::FleetTools::Steer
+    };
     let mcp = match &attach {
         Some(live) => {
             if let (Some(tools), Some(mcp)) = (&core.0.deps.tools, &live.mcp) {
@@ -1535,7 +1557,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             .deps
             .tools
             .as_ref()
-            .map(|t| t.register_space(&run_id, &space.id, agent, code)),
+            .map(|t| t.register_space(&run_id, &space.id, agent, code, mode, fleet_tools)),
     };
     let mut tools_guard = crate::usecases::agents::ToolsGuard {
         core,

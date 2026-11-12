@@ -3,12 +3,16 @@
 //! questions the cloud routes here.
 //!
 //! ```text
-//! fleet_start_space ─▶ rs_<uuid> + req_id ─▶ seal(device key) ─▶ request
-//!   ─▶ tracked `starting`, subscribe{since 0} ─▶ reply ok ─▶ name, branch
-//!                                            └▶ reply err ─▶ failed + error
-//! space_event ─▶ status, last reply, question ─▶ FleetSpace + FleetSpaceLine
+//! fleet_start_space (a device pinned here) ─▶ rs_<uuid> + req_id
+//!   ─▶ seal(device key) ─▶ request ─▶ tracked `starting` (host = the target,
+//!   for good), subscribe{since 0} ─▶ reply ok ─▶ name, branch
+//!                                  └▶ reply err ─▶ failed + error
+//! space_event ─▶ open_as(host's pinned key, Event) ─▶ status, last reply,
+//!   question ─▶ FleetSpace + FleetSpaceLine          else dropped
+//! space_gap ─▶ a gap line, nothing else
 //! reconnect ─▶ subscribe{since: last seq seen}
-//! ask{ask, via} ─▶ FleetAsk        dismiss ─▶ FleetAskDismissed
+//! ask ─▶ open_as(asker's pinned key, Ask) ─▶ FleetAsk "<pin> · <started name>"
+//! dismiss ─▶ FleetAskDismissed
 //! ```
 
 use std::collections::VecDeque;
@@ -19,8 +23,8 @@ use theodore_contract::{
     FleetSendRequest, FleetSpaceLine, FleetSpaceStatus, FleetStartRequest, SpaceMode,
 };
 use theodore_fleet_protocol::{
-    AskVia, ClientMessage, RemoteAsk, RemoteOp, RemoteRequest, RemoteSpaceEvent, RemoteSpaceStatus,
-    ReplyOutcome, SignedEnvelope, StartedSpace, TurnOutcome,
+    AskVia, ClientMessage, Domain, RemoteAsk, RemoteOp, RemoteRequest, RemoteSpaceEvent,
+    RemoteSpaceStatus, ReplyOutcome, SignedEnvelope, SpaceEventBody, StartedSpace, TurnOutcome,
 };
 use tokio::sync::oneshot;
 
@@ -108,12 +112,17 @@ pub(crate) fn line_of(seq: u64, ev: &RemoteSpaceEvent) -> FleetSpaceLine {
             FleetLineKind::Question,
             "Question answered or withdrawn".into(),
         ),
-        RemoteSpaceEvent::Gap { from, to } => (
-            FleetLineKind::Gap,
-            format!("Events {from}–{to} are no longer available"),
-        ),
     };
     FleetSpaceLine { seq, kind, text }
+}
+
+/// The cloud's word that events `from..=to` are gone (`space_gap`).
+pub(crate) fn gap_line(from: u64, to: u64) -> FleetSpaceLine {
+    FleetSpaceLine {
+        seq: from,
+        kind: FleetLineKind::Gap,
+        text: format!("Events {from}–{to} are no longer available"),
+    }
 }
 
 fn via_word(v: AskVia) -> &'static str {
@@ -247,6 +256,17 @@ impl Core {
             .find(|d| d.device_id == device)
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("device {device} isn't in the fleet")))?;
+        // Only a device trusted here, with the key it had when trusted:
+        // its events and questions are checked against that key.
+        let pinned = match self.fleet_pinned(device).await {
+            Some(p) if p.public_key == target.public_key => p,
+            _ => {
+                return Err(AppError::Invalid(format!(
+                    "{} isn't trusted on this device: trust it in Settings → Devices first",
+                    target.info.name
+                )));
+            }
+        };
         let project_name = target
             .info
             .projects
@@ -257,7 +277,8 @@ impl Core {
         let view = FleetRemoteSpace {
             space: space.clone(),
             host_device: target.device_id.clone(),
-            host_name: target.info.name.clone(),
+            // As pinned here: who the user trusted, not what it says now.
+            host_name: pinned.name,
             origin_device: me,
             project_name,
             name: String::new(),
@@ -276,6 +297,7 @@ impl Core {
             space.clone(),
             Outbound {
                 view: view.clone(),
+                started_name: None,
                 lines: VecDeque::new(),
                 last_seq: 0,
                 started_by,
@@ -445,8 +467,64 @@ impl Core {
         }
     }
 
-    /// An event of a space this device follows.
-    pub(crate) fn fleet_on_event(&self, space: &str, seq: u64, event: RemoteSpaceEvent) {
+    /// An event of a space this device follows: only as its host signed
+    /// it, checked against the host's key pinned here.
+    pub(crate) async fn fleet_on_event(&self, envelope: SignedEnvelope) {
+        let Ok(peeked) = envelope.peek_as::<SpaceEventBody>() else {
+            tracing::debug!("dropped an unreadable fleet event");
+            return;
+        };
+        let Some(host) = self
+            .fleet()
+            .outbound
+            .get(&peeked.space)
+            .map(|o| o.view.host_device.clone())
+        else {
+            tracing::debug!(space = %peeked.space, "dropped an event of a space not followed here");
+            return;
+        };
+        if envelope.device_id != host {
+            tracing::debug!(space = %peeked.space, "dropped an event not from the space's host");
+            return;
+        }
+        let Some(pinned) = self.fleet_pinned(&host).await else {
+            tracing::debug!(space = %peeked.space, "dropped an event from a host not trusted here");
+            return;
+        };
+        let body = match envelope.open_as::<SpaceEventBody>(&pinned.public_key, Domain::Event) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::debug!(space = %peeked.space, error = %e, "dropped an event that doesn't verify");
+                return;
+            }
+        };
+        self.fleet_apply_event(&body.space, body.seq, body.event);
+    }
+
+    /// The cloud lost events of a space followed here: a line, nothing more.
+    pub(crate) fn fleet_on_gap(&self, space: &str, from: u64, to: u64) {
+        let line = gap_line(from, to);
+        {
+            let mut mem = self.fleet();
+            let Some(o) = mem.outbound.get_mut(space) else {
+                return;
+            };
+            if o.lines.iter().any(|l| *l == line) {
+                return;
+            }
+            o.lines.push_back(line.clone());
+            while o.lines.len() > LINES_KEPT {
+                o.lines.pop_front();
+            }
+        }
+        self.emit(Ephemeral::FleetSpaceLine {
+            space: space.to_string(),
+            line,
+        });
+    }
+
+    /// A verified event of a space this device follows.
+    fn fleet_apply_event(&self, space: &str, seq: u64, event: RemoteSpaceEvent) {
         let (view, line) = {
             let mut mem = self.fleet();
             let Some(o) = mem.outbound.get_mut(space) else {
@@ -456,25 +534,25 @@ impl Core {
                 return;
             }
             o.last_seq = seq;
+            if let RemoteSpaceEvent::Started { name, .. } = &event {
+                o.started_name = Some(name.clone());
+            }
+            let started_name = o.started_name.clone().unwrap_or_default();
             let v = &mut o.view;
             match &event {
+                // Host, parent and depth stay what this device asked for,
+                // whatever the event says.
                 RemoteSpaceEvent::Started {
-                    host_device,
                     project_name,
                     name,
                     branch,
                     mode,
-                    parent,
-                    depth,
                     ..
                 } => {
-                    v.host_device = host_device.clone();
                     v.project_name = project_name.clone();
                     v.name = name.clone();
                     v.branch = branch.clone();
                     v.mode = space_mode(*mode);
-                    v.parent = parent.clone();
-                    v.depth = *depth;
                     if v.status == FleetSpaceStatus::Starting {
                         v.status = FleetSpaceStatus::Running;
                     }
@@ -485,7 +563,11 @@ impl Core {
                     v.question = Some(FleetQuestion {
                         ask_id: ask_id.clone(),
                         space: space.to_string(),
-                        from: format!("{} · {}", v.host_name, v.name),
+                        from: if started_name.is_empty() {
+                            v.host_name.clone()
+                        } else {
+                            format!("{} · {started_name}", v.host_name)
+                        },
                         questions: ui_questions(questions),
                         via: None,
                     });
@@ -497,8 +579,7 @@ impl Core {
                 }
                 RemoteSpaceEvent::TurnStarted { .. }
                 | RemoteSpaceEvent::Tool { .. }
-                | RemoteSpaceEvent::TurnEnded { .. }
-                | RemoteSpaceEvent::Gap { .. } => {}
+                | RemoteSpaceEvent::TurnEnded { .. } => {}
             }
             let line = line_of(seq, &event);
             o.lines.push_back(line.clone());
@@ -515,12 +596,40 @@ impl Core {
         self.0.fleet.changed.notify_waiters();
     }
 
-    /// A question from a space elsewhere, routed to this device.
-    pub(crate) fn fleet_on_ask(&self, ask: RemoteAsk, via: AskVia) {
+    /// A question from a space elsewhere, routed to this device: only as
+    /// a device pinned here signed it. Who asks is told from the pin and
+    /// the space's signed `started` event, never the ask's own words.
+    pub(crate) async fn fleet_on_ask(&self, envelope: SignedEnvelope, via: AskVia) {
+        let Some(pinned) = self.fleet_pinned(&envelope.device_id).await else {
+            tracing::debug!("dropped a question from a device not trusted here");
+            return;
+        };
+        let ask = match envelope.open_as::<RemoteAsk>(&pinned.public_key, Domain::Ask) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::debug!(error = %e, "dropped a question that doesn't verify");
+                return;
+            }
+        };
+        let started_name = {
+            let mem = self.fleet();
+            match mem.outbound.get(&ask.space) {
+                Some(o) if o.view.host_device != ask.host_device => {
+                    tracing::debug!(space = %ask.space, "dropped a question not from the space's host");
+                    return;
+                }
+                Some(o) => o.started_name.clone(),
+                None => None,
+            }
+        };
+        let from = match started_name {
+            Some(n) if !n.is_empty() => format!("{} · {n}", pinned.name),
+            _ => pinned.name.clone(),
+        };
         let question = FleetQuestion {
             ask_id: ask.ask_id.clone(),
             space: ask.space.clone(),
-            from: ask.from.clone(),
+            from,
             questions: ui_questions(&ask.questions),
             via: Some(via_word(via).to_string()),
         };

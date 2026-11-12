@@ -15,10 +15,10 @@ use theodore_contract::{
 };
 use theodore_domain::{Sha, Usage};
 use theodore_fleet_protocol::{
-    ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, FleetMode,
-    ProjectRef, REQUEST_WINDOW_MS, RemoteOp, RemoteQuestion, RemoteRequest, RemoteSpaceEvent,
-    RemoteSpaceStatus, ReplyOutcome, ServerMessage, SignedEnvelope, StartedSpace, TurnOutcome,
-    codes, fingerprint, fresh,
+    ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, Domain, FleetMode,
+    ProjectRef, REQUEST_WINDOW_MS, RemoteAsk, RemoteOp, RemoteQuestion, RemoteRequest,
+    RemoteSpaceEvent, RemoteSpaceStatus, ReplyOutcome, ServerMessage, SignedEnvelope,
+    SpaceEventBody, StartedSpace, TurnOutcome, codes, fingerprint, fresh,
 };
 use theodore_ports::{
     AccountSession, AgentEvent, Clock, FleetHostedRow, FleetInbound, Secrets, Store, UserQuestion,
@@ -76,6 +76,7 @@ fn start(f: &Fixtures) -> (Core, Receivers) {
     let deps = Deps {
         account_client_id: Some("client_01TEST".into()),
         account_cloud_url: Some(CLOUD.into()),
+        tools: Some(f.tools.clone()),
         ..f.deps_with_fleet()
     };
     Core::start(deps)
@@ -129,8 +130,19 @@ fn settings(accept: bool) -> FleetSettingsRequest {
 
 /// The fleet on, link 0 connected as `ME`, the user's devices listed.
 async fn connect(f: &Fixtures, core: &Core, accept: bool, devices: Vec<DeviceSummary>) {
+    connect_nth(f, core, accept, devices, 1).await
+}
+
+/// `connect`, for the `links`th link of these fixtures (a restarted core).
+async fn connect_nth(
+    f: &Fixtures,
+    core: &Core,
+    accept: bool,
+    devices: Vec<DeviceSummary>,
+    links: usize,
+) {
     core.fleet_set_settings(settings(accept)).await.unwrap();
-    wait_until("a link", || f.fleet.starts() == 1).await;
+    wait_until("a link", || f.fleet.starts() == links).await;
     f.fleet.push(FleetInbound::Connected {
         device_id: ME.into(),
         generation: GENERATION,
@@ -146,13 +158,41 @@ async fn connect(f: &Fixtures, core: &Core, accept: bool, devices: Vec<DeviceSum
     .await;
 }
 
+/// Trusts `device` with the key the status shows for it.
 async fn trust(core: &Core, device: &str) {
+    let key = core
+        .fleet_status()
+        .await
+        .unwrap()
+        .devices
+        .into_iter()
+        .find(|d| d.device_id == device)
+        .expect("listed")
+        .public_key;
     core.fleet_trust_device(FleetTrustRequest {
         device_id: device.into(),
         trusted: true,
+        public_key: Some(key),
     })
     .await
     .unwrap();
+}
+
+/// This device's public key, as its links sign with it.
+fn my_key(f: &Fixtures) -> String {
+    f.fleet.connect(0).public_key
+}
+
+/// A hosted space's event as sent: it must verify with this device's key.
+fn sent_event(f: &Fixtures, m: &ClientMessage) -> Option<SpaceEventBody> {
+    match m {
+        ClientMessage::SpaceEvent { envelope } => Some(
+            envelope
+                .open_as(&my_key(f), Domain::Event)
+                .expect("signed by this device as the host"),
+        ),
+        _ => None,
+    }
 }
 
 fn now(f: &Fixtures) -> u64 {
@@ -248,15 +288,10 @@ fn start_with(
 fn events(f: &Fixtures, space: &str) -> Vec<(u64, RemoteSpaceEvent)> {
     f.fleet
         .sent()
-        .into_iter()
-        .filter_map(|m| match m {
-            ClientMessage::SpaceEvent {
-                space: s,
-                seq,
-                event,
-            } if s == space => Some((seq, event)),
-            _ => None,
-        })
+        .iter()
+        .filter_map(|m| sent_event(f, m))
+        .filter(|b| b.space == space)
+        .map(|b| (b.seq, b.event))
         .collect()
 }
 
@@ -597,17 +632,17 @@ async fn a_started_space_is_mapped_and_its_events_journaled_in_order() {
     });
     let last = evs.len() as u64;
     wait_until("the replay", || {
-        f.fleet.sent()[before..].iter().any(
-            |m| matches!(m, ClientMessage::SpaceEvent { space, seq, .. } if space == "rs_1" && *seq == last),
-        )
+        f.fleet.sent()[before..]
+            .iter()
+            .filter_map(|m| sent_event(&f, m))
+            .any(|b| b.space == "rs_1" && b.seq == last)
     })
     .await;
     let replayed: Vec<u64> = f.fleet.sent()[before..]
         .iter()
-        .filter_map(|m| match m {
-            ClientMessage::SpaceEvent { space, seq, .. } if space == "rs_1" => Some(*seq),
-            _ => None,
-        })
+        .filter_map(|m| sent_event(&f, m))
+        .filter(|b| b.space == "rs_1")
+        .map(|b| b.seq)
         .collect();
     assert_eq!(replayed, (3..=last).collect::<Vec<_>>());
 }
@@ -697,12 +732,17 @@ fn which_store() -> Vec<UserQuestion> {
     }]
 }
 
-fn asks(f: &Fixtures) -> Vec<theodore_fleet_protocol::RemoteAsk> {
+/// Questions sent: each must verify with this device's key.
+fn asks(f: &Fixtures) -> Vec<RemoteAsk> {
     f.fleet
         .sent()
         .into_iter()
         .filter_map(|m| match m {
-            ClientMessage::Ask { ask } => Some(ask),
+            ClientMessage::Ask { envelope } => Some(
+                envelope
+                    .open_as(&my_key(f), Domain::Ask)
+                    .expect("signed by this device as the host"),
+            ),
             _ => None,
         })
         .collect()
@@ -825,13 +865,40 @@ fn requests(f: &Fixtures) -> Vec<SignedEnvelope> {
         .collect()
 }
 
-fn remote_event(f: &Fixtures, space: &str, seq: u64, event: RemoteSpaceEvent) {
-    f.fleet
-        .push(FleetInbound::Message(ServerMessage::SpaceEvent {
-            space: space.into(),
-            seq,
-            event,
-        }));
+/// An event of `space` as `host` (key `key`) signs it.
+fn signed_event(
+    key: &DeviceKey,
+    host: &str,
+    space: &str,
+    seq: u64,
+    event: RemoteSpaceEvent,
+) -> ServerMessage {
+    ServerMessage::SpaceEvent {
+        envelope: SignedEnvelope::seal_as(
+            &SpaceEventBody {
+                space: space.into(),
+                seq,
+                host_device: host.into(),
+                event,
+            },
+            key,
+            Domain::Event,
+        ),
+    }
+}
+
+/// An event from `TARGET`, signed with `key`.
+fn remote_event(f: &Fixtures, key: &DeviceKey, space: &str, seq: u64, event: RemoteSpaceEvent) {
+    f.fleet.push(FleetInbound::Message(signed_event(
+        key, TARGET, space, seq, event,
+    )));
+}
+
+fn signed_ask(key: &DeviceKey, ask: RemoteAsk) -> ServerMessage {
+    ServerMessage::Ask {
+        envelope: SignedEnvelope::seal_as(&ask, key, Domain::Ask),
+        via: theodore_fleet_protocol::AskVia::Active,
+    }
 }
 
 async fn view(core: &Core, space: &str) -> theodore_contract::FleetRemoteSpace {
@@ -859,6 +926,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
         vec![summary(TARGET, &other, "mac1", vec![app])],
     )
     .await;
+    trust(&core, TARGET).await;
 
     let started = core
         .fleet_start_space(FleetStartRequest {
@@ -927,6 +995,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
 
     remote_event(
         &f,
+        &other,
         &started.space,
         1,
         RemoteSpaceEvent::Reply {
@@ -936,6 +1005,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
     );
     remote_event(
         &f,
+        &other,
         &started.space,
         2,
         RemoteSpaceEvent::Question {
@@ -949,6 +1019,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
     );
     remote_event(
         &f,
+        &other,
         &started.space,
         3,
         RemoteSpaceEvent::Status {
@@ -958,6 +1029,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
     // A duplicate is dropped.
     remote_event(
         &f,
+        &other,
         &started.space,
         2,
         RemoteSpaceEvent::Status {
@@ -1047,18 +1119,26 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
 async fn an_ask_routed_here_is_shown_and_dismissed() {
     let f = fixtures();
     let (core, mut recv) = start(&f);
-    connect(&f, &core, false, vec![]).await;
+    let other = DeviceKey::generate().unwrap();
+    connect(
+        &f,
+        &core,
+        false,
+        vec![summary(TARGET, &other, "mac1", vec![])],
+    )
+    .await;
+    trust(&core, TARGET).await;
     while recv.ephemeral.try_recv().is_ok() {}
-    f.fleet.push(FleetInbound::Message(ServerMessage::Ask {
-        ask: theodore_fleet_protocol::RemoteAsk {
+    f.fleet.push(FleetInbound::Message(signed_ask(
+        &other,
+        RemoteAsk {
             ask_id: "q9".into(),
             space: "rs_9".into(),
             host_device: TARGET.into(),
             from: "mac1 · fix-login".into(),
             questions: vec![],
         },
-        via: theodore_fleet_protocol::AskVia::Active,
-    }));
+    )));
     f.fleet.push(FleetInbound::Message(ServerMessage::Dismiss {
         ask_id: "q9".into(),
         reason: theodore_fleet_protocol::DismissReason::AnsweredElsewhere,
@@ -1239,57 +1319,89 @@ fn hosted_row(space: &str, local: &str, depth: u32) -> FleetHostedRow {
     }
 }
 
+fn app_project() -> ProjectRef {
+    ProjectRef {
+        id: "local:app".into(),
+        name: "app".into(),
+    }
+}
+
+/// Answers start request `n` (0-based) with its space named `name`.
+async fn answer_start(f: &Fixtures, n: usize, name: &str) -> RemoteRequest {
+    wait_until("the request", || requests(f).len() > n).await;
+    let req = requests(f).remove(n).peek().unwrap();
+    f.fleet.push(FleetInbound::Message(ServerMessage::Reply {
+        req_id: req.req_id.clone(),
+        outcome: ReplyOutcome::Ok {
+            value: serde_json::to_value(StartedSpace {
+                space: req.op.space().to_string(),
+                name: name.into(),
+                branch: format!("ada/{name}"),
+            })
+            .unwrap(),
+        },
+    }));
+    req
+}
+
 #[tokio::test]
-async fn the_fleet_tools_follow_the_connection_and_nest_spaces() {
+async fn the_fleet_tools_follow_the_connection_and_start_under_a_stable_parent() {
     let f = fixtures();
-    f.store
-        .fleet_hosted_put(&hosted_row("rs_h", "loc1", 1))
-        .unwrap();
-    f.store
-        .fleet_hosted_put(&hosted_row("rs_deep", "loc2", 2))
-        .unwrap();
     let (core, _recv) = start(&f);
     assert!(!core.fleet_tools_available());
     assert!(core.fleet_tool_devices().await.is_err());
     let other = DeviceKey::generate().unwrap();
     let me = DeviceKey::generate().unwrap();
-    let app = ProjectRef {
-        id: "local:app".into(),
-        name: "app".into(),
-    };
+    let stranger = DeviceKey::generate().unwrap();
     connect(
         &f,
         &core,
         false,
         vec![
-            summary(TARGET, &other, "mac1", vec![app]),
+            summary(TARGET, &other, "mac1", vec![app_project()]),
             summary(ME, &me, "mac2", vec![]),
+            summary("dev_u", &stranger, "macU", vec![app_project()]),
         ],
     )
     .await;
+    trust(&core, TARGET).await;
     assert!(core.fleet_tools_available());
     let devices = core.fleet_tool_devices().await.unwrap();
-    assert_eq!(devices.len(), 1, "others that take spaces: {devices:?}");
+    assert_eq!(
+        devices.len(),
+        1,
+        "others, trusted, taking spaces: {devices:?}"
+    );
     assert_eq!(
         (devices[0].name.as_str(), devices[0].max_mode.as_str()),
         ("mac1", "edit")
     );
 
-    // From a space hosted here for the fleet: its child, one deeper.
+    // A device not trusted here isn't one, by id or by name.
+    for d in ["dev_u", "macU"] {
+        let e = core
+            .fleet_tool_start("mine", SpaceMode::Edit, d, "app", "Look", "ask")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("no trusted device"), "{e}");
+    }
+
+    // From a space of this device's own: a child at depth 1, under the
+    // space's stable fleet id, in the mode asked.
     let starting = tokio::spawn({
         let core = core.clone();
         async move {
-            core.fleet_tool_start("loc1", "mac1", "app", "Split it", "plan")
+            core.fleet_tool_start("mine", SpaceMode::Edit, "mac1", "app", "Split it", "plan")
                 .await
         }
     });
-    wait_until("the request", || !requests(&f).is_empty()).await;
-    let req = requests(&f).remove(0).peek().unwrap();
+    let req = answer_start(&f, 0, "split-it").await;
+    let parent_id = core.fleet_parent_id("mine").await;
+    assert!(parent_id.starts_with("rs_"));
     let RemoteOp::StartSpace {
         parent,
         depth,
         mode,
-        space,
         ..
     } = &req.op
     else {
@@ -1297,52 +1409,27 @@ async fn the_fleet_tools_follow_the_connection_and_nest_spaces() {
     };
     assert_eq!(
         (parent.as_deref(), *depth, *mode),
-        (Some("rs_h"), 2, FleetMode::Plan)
+        (Some(parent_id.as_str()), 1, FleetMode::Plan)
     );
-    f.fleet.push(FleetInbound::Message(ServerMessage::Reply {
-        req_id: req.req_id.clone(),
-        outcome: ReplyOutcome::Ok {
-            value: serde_json::to_value(StartedSpace {
-                space: space.clone(),
-                name: "split-it".into(),
-                branch: "ada/split-it".into(),
-            })
-            .unwrap(),
-        },
-    }));
     let made = starting.await.unwrap().unwrap();
     assert_eq!(
         (made.name.as_str(), made.status.as_str()),
         ("split-it", "running")
     );
 
-    // Already at the deepest: refused here.
-    let deep = core
-        .fleet_tool_start("loc2", "mac1", "app", "Deeper", "edit")
-        .await
-        .unwrap_err();
-    assert!(deep.to_string().contains("deep"), "{deep}");
-
-    // From a space of this device's own: a child at depth 1, no parent.
+    // A refusal is the agent's to hear; by id works as well as by name.
     let plain = tokio::spawn({
         let core = core.clone();
         async move {
-            core.fleet_tool_start("mine", TARGET, "local:app", "Look", "ask")
+            core.fleet_tool_start("mine", SpaceMode::Run, TARGET, "local:app", "Look", "ask")
                 .await
         }
     });
     wait_until("the second request", || requests(&f).len() == 2).await;
     let req = requests(&f).remove(1).peek().unwrap();
     assert!(
-        matches!(
-            &req.op,
-            RemoteOp::StartSpace {
-                parent: None,
-                depth: 1,
-                ..
-            }
-        ),
-        "{req:?}"
+        matches!(&req.op, RemoteOp::StartSpace { parent: Some(p), depth: 1, .. } if *p == parent_id),
+        "the same parent: {req:?}"
     );
     f.fleet.push(FleetInbound::Message(ServerMessage::Reply {
         req_id: req.req_id.clone(),
@@ -1356,12 +1443,13 @@ async fn the_fleet_tools_follow_the_connection_and_nest_spaces() {
 
     // Wait: settles on the host's word; a timeout says it didn't.
     let waited = core
-        .fleet_tool_wait(std::slice::from_ref(&made.space), 30)
+        .fleet_tool_wait("mine", std::slice::from_ref(&made.space), 30)
         .await
         .unwrap();
     assert!(!waited.settled);
     remote_event(
         &f,
+        &other,
         &made.space,
         1,
         RemoteSpaceEvent::Status {
@@ -1369,18 +1457,661 @@ async fn the_fleet_tools_follow_the_connection_and_nest_spaces() {
         },
     );
     let waited = core
-        .fleet_tool_wait(std::slice::from_ref(&made.space), 5_000)
+        .fleet_tool_wait("mine", std::slice::from_ref(&made.space), 5_000)
         .await
         .unwrap();
     assert!(waited.settled, "{waited:?}");
-    let read = core.fleet_tool_read(&made.space, 0).await.unwrap();
+    let read = core.fleet_tool_read("mine", &made.space, 0).await.unwrap();
     assert_eq!(read.lines.len(), 1);
     assert_eq!(read.lines[0].kind, "status");
+
+    // The parent id outlives the process: the cloud keeps counting.
+    drop(core);
+    let (core, _recv) = start(&f);
+    assert_eq!(core.fleet_parent_id("mine").await, parent_id);
+    assert_ne!(core.fleet_parent_id("theirs").await, parent_id);
 
     f.fleet.push(FleetInbound::Disconnected {
         reason: "gone".into(),
         retry_in_ms: 500,
     });
-    wait_until("off", || !core.fleet_tools_available()).await;
-    assert!(core.fleet_tool_devices().await.is_err());
+}
+
+#[tokio::test]
+async fn fleet_tools_dont_steer_from_a_hosted_space_or_a_read_only_turn() {
+    let f = fixtures();
+    f.store
+        .fleet_hosted_put(&hosted_row("rs_h", "loc1", 1))
+        .unwrap();
+    let (core, _recv) = start(&f);
+    let other = DeviceKey::generate().unwrap();
+    connect(
+        &f,
+        &core,
+        false,
+        vec![summary(TARGET, &other, "mac1", vec![app_project()])],
+    )
+    .await;
+    trust(&core, TARGET).await;
+
+    // Hosted here for another device: no trust passes through it.
+    let e = core
+        .fleet_tool_start("loc1", SpaceMode::Run, "mac1", "app", "Split it", "edit")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("another device"), "{e}");
+    assert!(
+        core.fleet_tool_stop("loc1", "rs_x")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("another device")
+    );
+    assert!(
+        core.fleet_tool_send("loc1", SpaceMode::Run, "rs_x", "go")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("another device")
+    );
+
+    // Ask and Plan turns only read.
+    for turn in [SpaceMode::Ask, SpaceMode::Plan] {
+        let e = core
+            .fleet_tool_start("mine", turn, "mac1", "app", "Look", "ask")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("needs Edit or Run"), "{e}");
+    }
+    // Never above the turn's own mode.
+    let e = core
+        .fleet_tool_start("mine", SpaceMode::Edit, "mac1", "app", "Run it", "run")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("above this turn's mode"), "{e}");
+    assert!(requests(&f).is_empty(), "nothing was asked of mac1");
+
+    // A send runs at most in the turn's mode, never above the space's own.
+    let starting = tokio::spawn({
+        let core = core.clone();
+        async move {
+            core.fleet_tool_start("mine", SpaceMode::Run, "mac1", "app", "Do it", "run")
+                .await
+        }
+    });
+    answer_start(&f, 0, "do-it").await;
+    let made = starting.await.unwrap().unwrap();
+    remote_event(
+        &f,
+        &other,
+        &made.space,
+        1,
+        RemoteSpaceEvent::Status {
+            status: RemoteSpaceStatus::Idle,
+        },
+    );
+    for (turn, want) in [
+        (SpaceMode::Edit, FleetMode::Edit),
+        (SpaceMode::Run, FleetMode::Run),
+    ] {
+        let n = requests(&f).len();
+        let sending = tokio::spawn({
+            let (core, space) = (core.clone(), made.space.clone());
+            async move { core.fleet_tool_send("mine", turn, &space, "next").await }
+        });
+        wait_until("the send", || requests(&f).len() > n).await;
+        let req = requests(&f).remove(n).peek().unwrap();
+        assert!(
+            matches!(&req.op, RemoteOp::Send { mode: Some(m), .. } if *m == want),
+            "{turn:?}: {req:?}"
+        );
+        f.fleet.push(FleetInbound::Message(ServerMessage::Reply {
+            req_id: req.req_id,
+            outcome: ReplyOutcome::Ok { value: json!({}) },
+        }));
+        sending.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn an_agent_reaches_only_the_spaces_its_own_space_started() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let other = DeviceKey::generate().unwrap();
+    connect(
+        &f,
+        &core,
+        false,
+        vec![summary(TARGET, &other, "mac1", vec![app_project()])],
+    )
+    .await;
+    trust(&core, TARGET).await;
+
+    // One the user started from the UI, one an agent in "mine" did.
+    let by_user = core
+        .fleet_start_space(FleetStartRequest {
+            device_id: TARGET.into(),
+            project_id: "local:app".into(),
+            goal: "Mine, not the agent's".into(),
+            mode: SpaceMode::Edit,
+        })
+        .await
+        .unwrap();
+    answer_start(&f, 0, "users").await;
+    let starting = tokio::spawn({
+        let core = core.clone();
+        async move {
+            core.fleet_tool_start("mine", SpaceMode::Edit, TARGET, "app", "Split", "edit")
+                .await
+        }
+    });
+    answer_start(&f, 1, "agents").await;
+    let by_agent = starting.await.unwrap().unwrap();
+
+    assert!(
+        core.fleet_tool_read("mine", &by_agent.space, 0)
+            .await
+            .is_ok()
+    );
+    for (caller, space) in [
+        ("mine", by_user.space.as_str()),
+        ("another", by_agent.space.as_str()),
+    ] {
+        let known = |e: theodore_ports::SpaceToolError| {
+            assert!(e.to_string().contains("started by this space"), "{e}");
+        };
+        known(core.fleet_tool_read(caller, space, 0).await.unwrap_err());
+        known(
+            core.fleet_tool_wait(caller, &[space.to_string()], 10)
+                .await
+                .unwrap_err(),
+        );
+        known(
+            core.fleet_tool_send(caller, SpaceMode::Edit, space, "hijack")
+                .await
+                .unwrap_err(),
+        );
+        known(core.fleet_tool_stop(caller, space).await.unwrap_err());
+    }
+    assert_eq!(requests(&f).len(), 2, "nothing more was sent");
+}
+
+#[tokio::test]
+async fn fleet_start_space_needs_a_unique_name_among_trusted_devices() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let (a, b) = (
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    connect(
+        &f,
+        &core,
+        false,
+        vec![
+            summary("dev_a", &a, "mac", vec![app_project()]),
+            summary("dev_b", &b, "mac", vec![app_project()]),
+        ],
+    )
+    .await;
+    trust(&core, "dev_a").await;
+    trust(&core, "dev_b").await;
+    let e = core
+        .fleet_tool_start("mine", SpaceMode::Edit, "mac", "app", "Look", "ask")
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("several trusted devices"), "{e}");
+    let by_id = tokio::spawn({
+        let core = core.clone();
+        async move {
+            core.fleet_tool_start("mine", SpaceMode::Edit, "dev_b", "app", "Look", "ask")
+                .await
+        }
+    });
+    let req = answer_start(&f, 0, "look").await;
+    assert_eq!(req.target_device, "dev_b");
+    by_id.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_hosted_spaces_turn_gets_only_the_read_only_fleet_tools() {
+    let f = fixtures();
+    let (_core, _recv, project, origin) = target(&f).await;
+    f.agents.push_script(done("ok"));
+    run(&f, &origin, start_op(&project.id, "rs_1")).await;
+    let local = local_of(&f, "rs_1");
+    wait_until("its turn registered", || {
+        f.tools
+            .registered()
+            .iter()
+            .any(|r| r.space.as_deref() == Some(local.as_str()))
+    })
+    .await;
+    let reg = f
+        .tools
+        .registered()
+        .into_iter()
+        .find(|r| r.space.as_deref() == Some(local.as_str()))
+        .unwrap();
+    assert_eq!(reg.mode, Some(SpaceMode::Edit));
+    assert_eq!(reg.fleet, Some(crate::deps::FleetTools::Read));
+}
+
+// ── trust, verification, replays ──────────────────────────────────────────
+
+fn ephemerals(recv: &mut Receivers) -> Vec<Ephemeral> {
+    let mut out = Vec::new();
+    while let Ok(e) = recv.ephemeral.try_recv() {
+        out.push(e);
+    }
+    out
+}
+
+#[tokio::test]
+async fn trusting_pins_exactly_the_key_compared() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let origin = DeviceKey::generate().unwrap();
+    connect(
+        &f,
+        &core,
+        false,
+        vec![summary(ORIGIN, &origin, "mac1", vec![])],
+    )
+    .await;
+    let req = |key: Option<String>| FleetTrustRequest {
+        device_id: ORIGIN.into(),
+        trusted: true,
+        public_key: key,
+    };
+    let e = core.fleet_trust_device(req(None)).await.unwrap_err();
+    assert!(e.to_string().contains("the key you compared"), "{e}");
+    let shown = DeviceKey::generate().unwrap().public_key();
+    let e = core.fleet_trust_device(req(Some(shown))).await.unwrap_err();
+    assert!(e.to_string().contains("key changed"), "{e}");
+    assert!(core.fleet_settings().await.trusted_devices.is_empty());
+
+    let status = core
+        .fleet_trust_device(req(Some(origin.public_key())))
+        .await
+        .unwrap();
+    let d = status
+        .devices
+        .iter()
+        .find(|d| d.device_id == ORIGIN)
+        .unwrap();
+    assert!(d.trusted);
+    assert_eq!(d.public_key, origin.public_key());
+    assert_eq!(d.fingerprint, fingerprint(&origin.public_key()));
+    assert_eq!(d.fingerprint.split(' ').count(), 8, "{}", d.fingerprint);
+    assert_eq!(
+        core.fleet_settings().await.trusted_devices[0].public_key,
+        origin.public_key()
+    );
+
+    // The cloud lists another key now: untrusted again, and the old one
+    // can't be trusted against it.
+    let swapped = DeviceKey::generate().unwrap();
+    f.fleet.push(FleetInbound::Message(ServerMessage::Devices {
+        devices: vec![summary(ORIGIN, &swapped, "mac1", vec![])],
+    }));
+    eventually("untrusted", || async {
+        !core.fleet_status().await.unwrap().devices[0].trusted
+    })
+    .await;
+    assert!(
+        core.fleet_trust_device(req(Some(origin.public_key())))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn the_origin_takes_events_and_asks_only_as_a_pinned_host_signed_them() {
+    let f = fixtures();
+    let (core, mut recv) = start(&f);
+    let other = DeviceKey::generate().unwrap();
+    let stranger = DeviceKey::generate().unwrap();
+    connect(
+        &f,
+        &core,
+        false,
+        vec![
+            summary(TARGET, &other, "mac1", vec![app_project()]),
+            summary("dev_u", &stranger, "macU", vec![app_project()]),
+        ],
+    )
+    .await;
+    trust(&core, TARGET).await;
+
+    // Not trusted here: no target, from the UI either.
+    let e = core
+        .fleet_start_space(FleetStartRequest {
+            device_id: "dev_u".into(),
+            project_id: "local:app".into(),
+            goal: "Look".into(),
+            mode: SpaceMode::Ask,
+        })
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("isn't trusted"), "{e}");
+
+    let started = core
+        .fleet_start_space(FleetStartRequest {
+            device_id: TARGET.into(),
+            project_id: "local:app".into(),
+            goal: "Port it".into(),
+            mode: SpaceMode::Edit,
+        })
+        .await
+        .unwrap();
+    let space = started.space.clone();
+    let reply = |seq: u64, text: &str| {
+        (
+            seq,
+            RemoteSpaceEvent::Reply {
+                turn: 1,
+                text: text.into(),
+            },
+        )
+    };
+
+    // The host's signed `started`: names it, but never moves the host.
+    remote_event(
+        &f,
+        &other,
+        &space,
+        1,
+        RemoteSpaceEvent::Started {
+            host_device: "dev_u".into(),
+            origin_device: ME.into(),
+            project_id: "local:app".into(),
+            project_name: "app".into(),
+            name: "port-it".into(),
+            branch: "ada/port-it".into(),
+            mode: FleetMode::Edit,
+            parent: Some("rs_elsewhere".into()),
+            depth: 2,
+        },
+    );
+    eventually("started", || async {
+        view(&core, &space).await.name == "port-it"
+    })
+    .await;
+    let v = view(&core, &space).await;
+    assert_eq!(
+        (v.host_device.as_str(), v.host_name.as_str()),
+        (TARGET, "mac1")
+    );
+    assert_eq!((v.parent.as_deref(), v.depth), (None, 0));
+
+    // Dropped: another key as the host, the right key for another
+    // purpose, another trusted-or-not device as the signer.
+    let forged = DeviceKey::generate().unwrap();
+    let (seq, ev) = reply(2, "forged key");
+    remote_event(&f, &forged, &space, seq, ev);
+    let (seq, ev) = reply(2, "wrong domain");
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::SpaceEvent {
+            envelope: SignedEnvelope::seal_as(
+                &SpaceEventBody {
+                    space: space.clone(),
+                    seq,
+                    host_device: TARGET.into(),
+                    event: ev,
+                },
+                &other,
+                Domain::Ask,
+            ),
+        }));
+    let (seq, ev) = reply(2, "not the host");
+    f.fleet.push(FleetInbound::Message(signed_event(
+        &stranger, "dev_u", &space, seq, ev,
+    )));
+    // The cloud's gap: a line, nothing else.
+    f.fleet.push(FleetInbound::Message(ServerMessage::SpaceGap {
+        space: space.clone(),
+        from: 3,
+        to: 4,
+    }));
+    eventually("the gap line", || async {
+        core.fleet_space_lines(&space, 0).await.unwrap().len() == 2
+    })
+    .await;
+    let lines = core.fleet_space_lines(&space, 0).await.unwrap();
+    assert_eq!(lines[1].kind, theodore_contract::FleetLineKind::Gap);
+    let v = view(&core, &space).await;
+    assert_eq!(v.last_reply, None, "no forged event landed");
+    assert_eq!(v.status, FleetSpaceStatus::Running);
+
+    // The real one does.
+    let (seq, ev) = reply(2, "real");
+    remote_event(&f, &other, &space, seq, ev);
+    eventually("the reply", || async {
+        view(&core, &space).await.last_reply.as_deref() == Some("real")
+    })
+    .await;
+
+    // Asks: shown only as a pinned device signed them, named from the pin
+    // and the signed `started`, never the ask's own words.
+    ephemerals(&mut recv);
+    let ask = |id: &str, host: &str| RemoteAsk {
+        ask_id: id.into(),
+        space: space.clone(),
+        host_device: host.into(),
+        from: "Your bank · urgent".into(),
+        questions: vec![],
+    };
+    f.fleet.push(FleetInbound::Message(signed_ask(
+        &forged,
+        ask("q_forged", TARGET),
+    )));
+    f.fleet.push(FleetInbound::Message(signed_ask(
+        &stranger,
+        ask("q_stranger", "dev_u"),
+    )));
+    f.fleet.push(FleetInbound::Message(signed_ask(
+        &other,
+        ask("q_real", TARGET),
+    )));
+    let mut shown = Vec::new();
+    for _ in 0..200 {
+        for e in ephemerals(&mut recv) {
+            if let Ephemeral::FleetAsk { question } = e {
+                shown.push(question);
+            }
+        }
+        if !shown.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    for e in ephemerals(&mut recv) {
+        if let Ephemeral::FleetAsk { question } = e {
+            shown.push(question);
+        }
+    }
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].ask_id, "q_real");
+    assert_eq!(shown[0].from, "mac1 · port-it");
+}
+
+/// A request that came back after it ran is a replay even after a
+/// restart; one whose claim was still open is claimed again.
+#[tokio::test]
+async fn seen_requests_survive_a_restart() {
+    let f = fixtures();
+    let (core, _recv, project, origin) = target(&f).await;
+    let (ran, ran_env) = sealed(&origin, start_op(&project.id, "rs_1"), now(&f));
+    deliver(&f, ran_env.clone());
+    wait_until("the claim", || claimed(&f, &ran)).await;
+    claim_result(&f, &ran, true);
+    wait_until("the reply", || reply_of(&f, &ran).is_some()).await;
+    let (open, open_env) = sealed(&origin, start_op(&project.id, "rs_2"), now(&f));
+    deliver(&f, open_env.clone());
+    wait_until("the open claim", || claimed(&f, &open)).await;
+    drop(core);
+
+    let (core, _recv) = start(&f);
+    connect_nth(
+        &f,
+        &core,
+        true,
+        vec![summary(ORIGIN, &origin, "mac1", vec![])],
+        2,
+    )
+    .await;
+    let before = f.fleet.sent().len();
+    let after = |id: &str| {
+        f.fleet.sent()[before..].iter().find_map(|m| match m {
+            ClientMessage::Reply { req_id, outcome } if req_id == id => Some(outcome.clone()),
+            _ => None,
+        })
+    };
+    deliver(&f, ran_env);
+    wait_until("refused", || after(&ran).is_some()).await;
+    assert!(
+        matches!(after(&ran), Some(ReplyOutcome::Err { code, .. }) if code == codes::STALE_REQUEST),
+        "{:?}",
+        after(&ran)
+    );
+    deliver(&f, open_env);
+    wait_until("claimed again", || {
+        f.fleet.sent()[before..]
+            .iter()
+            .any(|m| matches!(m, ClientMessage::Claim { req_id, .. } if *req_id == open))
+    })
+    .await;
+    assert_eq!(after(&open), None);
+}
+
+/// Between the gate and the claim result the settings may change: the run
+/// checks them again (accepting, the same pin, the mode — a send's as
+/// resolved at the gate).
+#[tokio::test]
+async fn a_claimed_request_is_checked_again_right_before_it_runs() {
+    let f = fixtures();
+    let (core, _recv, project, origin) = target(&f).await;
+
+    let (id, env) = sealed(&origin, start_op(&project.id, "rs_1"), now(&f));
+    deliver(&f, env);
+    wait_until("the claim", || claimed(&f, &id)).await;
+    core.fleet_set_settings(settings(false)).await.unwrap();
+    claim_result(&f, &id, true);
+    assert_eq!(refusal(&f, &id).await, codes::REMOTE_OFF);
+    core.fleet_set_settings(settings(true)).await.unwrap();
+
+    let (id, env) = sealed(&origin, start_op(&project.id, "rs_2"), now(&f));
+    deliver(&f, env);
+    wait_until("the claim", || claimed(&f, &id)).await;
+    core.fleet_trust_device(FleetTrustRequest {
+        device_id: ORIGIN.into(),
+        trusted: false,
+        public_key: None,
+    })
+    .await
+    .unwrap();
+    claim_result(&f, &id, true);
+    assert_eq!(refusal(&f, &id).await, codes::UNTRUSTED_DEVICE);
+    assert!(core.list_spaces(None).await.unwrap().is_empty());
+    trust(&core, ORIGIN).await;
+
+    f.agents.push_script(done("one"));
+    run(&f, &origin, start_op(&project.id, "rs_3")).await;
+    let local = local_of(&f, "rs_3");
+    wait_until("idle", || space(&f, &local).status == SpaceStatus::Idle).await;
+    let (id, env) = sealed(
+        &origin,
+        RemoteOp::Send {
+            space: "rs_3".into(),
+            text: "next".into(),
+            mode: None,
+        },
+        now(&f),
+    );
+    deliver(&f, env);
+    wait_until("the claim", || claimed(&f, &id)).await;
+    core.fleet_set_settings(FleetSettingsRequest {
+        enabled: None,
+        accept_remote: None,
+        max_mode: Some(SpaceMode::Plan),
+        name: None,
+    })
+    .await
+    .unwrap();
+    claim_result(&f, &id, true);
+    assert_eq!(refusal(&f, &id).await, codes::MODE_NOT_ALLOWED);
+    assert_eq!(space(&f, &local).turns, 1, "the send didn't run");
+}
+
+#[tokio::test]
+async fn removing_a_device_tells_the_cloud_and_unpins_it() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let (origin, me) = (
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    connect(
+        &f,
+        &core,
+        false,
+        vec![
+            summary(ORIGIN, &origin, "mac1", vec![]),
+            summary(ME, &me, "mac2", vec![]),
+        ],
+    )
+    .await;
+    trust(&core, ORIGIN).await;
+    let e = core.fleet_remove_device(ME).await.unwrap_err();
+    assert!(e.to_string().contains("can't remove itself"), "{e}");
+    assert!(core.fleet_remove_device("dev_ghost").await.is_err());
+    let status = core.fleet_remove_device(ORIGIN).await.unwrap();
+    assert!(
+        f.fleet
+            .sent()
+            .iter()
+            .any(|m| matches!(m, ClientMessage::RemoveDevice { device_id } if device_id == ORIGIN))
+    );
+    assert!(
+        !status
+            .devices
+            .iter()
+            .find(|d| d.device_id == ORIGIN)
+            .unwrap()
+            .trusted
+    );
+    assert!(core.fleet_settings().await.trusted_devices.is_empty());
+}
+
+#[tokio::test]
+async fn removed_from_the_fleet_joins_again_as_a_new_device() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    connect(&f, &core, false, vec![]).await;
+    f.fleet.push(FleetInbound::Fatal {
+        code: codes::REMOVED.into(),
+        message: "removed by another of your devices".into(),
+    });
+    eventually("the error", || async {
+        core.fleet_status()
+            .await
+            .unwrap()
+            .error
+            .is_some_and(|e| e.contains("removed this one"))
+    })
+    .await;
+    // Off and on: a new link, with no device id to reuse.
+    core.fleet_set_settings(FleetSettingsRequest {
+        enabled: Some(false),
+        accept_remote: None,
+        max_mode: None,
+        name: None,
+    })
+    .await
+    .unwrap();
+    core.fleet_set_settings(settings(false)).await.unwrap();
+    wait_until("redialed", || f.fleet.starts() == 2).await;
+    assert_eq!(f.fleet.connect(1).device_id, None);
 }

@@ -657,10 +657,17 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::FleetStatus, CommandError> {
         Err(not_ready())
     }
-    /// Pins (or unpins) a device's current key on this device.
+    /// Pins (or unpins) a device's key on this device: the one compared.
     async fn fleet_trust_device(
         &self,
         _req: theodore_contract::FleetTrustRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Removes another of the user's devices from the fleet.
+    async fn fleet_remove_device(
+        &self,
+        _device_id: String,
     ) -> Result<theodore_contract::FleetStatus, CommandError> {
         Err(not_ready())
     }

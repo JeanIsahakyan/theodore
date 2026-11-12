@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use theodore_contract::TokenSource;
+use theodore_contract::{SpaceMode, TokenSource};
 use theodore_domain::grouping::RepoContext;
 use theodore_domain::{AgentId, Grouping, PrDetail, PrId, Revision};
 use theodore_ports::{
@@ -73,6 +73,19 @@ pub enum CodeTools {
     Edit,
 }
 
+/// What a space turn may do with the fleet tools (docs/fleet.md "Agents
+/// use it too").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FleetTools {
+    /// Only `fleet_devices`, `fleet_read`, `fleet_wait`: a space hosted
+    /// here for another device, so no trust passes through it.
+    #[default]
+    Read,
+    /// Also start, send to and stop spaces elsewhere (in Edit or Run, at
+    /// most the turn's mode): a space of this device's own.
+    Steer,
+}
+
 /// Per-run MCP tools for agents (plan §8.3). Implemented over the MCP
 /// server by whoever wires `Deps`.
 pub trait RunTools: Send + Sync {
@@ -88,13 +101,16 @@ pub trait RunTools: Send + Sync {
         code: CodeTools,
     ) -> McpEndpoint;
     /// `space-tools` for a space's agent turn (docs/spaces.md "Tools the
-    /// agent gets").
+    /// agent gets"), in the turn's `mode`; `fleet`: what its fleet tools
+    /// may do.
     fn register_space(
         &self,
         run_id: &str,
         space: &str,
         agent: AgentId,
         code: CodeTools,
+        mode: SpaceMode,
+        fleet: FleetTools,
     ) -> McpEndpoint;
     /// The endpoint now serves `run_id`'s turn: the same CLI process kept
     /// between turns.

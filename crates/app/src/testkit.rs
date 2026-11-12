@@ -86,6 +86,8 @@ struct StoreState {
     fleet_hosted: Vec<theodore_ports::FleetHostedRow>,
     /// By space: `(seq, event)`, oldest first.
     fleet_journal: HashMap<String, Vec<(u64, serde_json::Value)>>,
+    /// `req_id` → `(issued_at, done)`.
+    fleet_seen: HashMap<String, (i64, bool)>,
 }
 
 type ReadHook = Box<dyn FnOnce() + Send>;
@@ -135,6 +137,34 @@ impl Store for FakeStore {
         let drop = j.len().saturating_sub(keep);
         j.drain(..drop);
         Ok(())
+    }
+
+    fn fleet_seen_put(
+        &self,
+        req_id: &str,
+        issued_at_ms: i64,
+        done: bool,
+        forget_before_ms: i64,
+    ) -> StoreResult<()> {
+        let mut s = self.0.lock().unwrap();
+        s.fleet_seen.retain(|_, (at, _)| *at >= forget_before_ms);
+        let e = s
+            .fleet_seen
+            .entry(req_id.to_string())
+            .or_insert((issued_at_ms, false));
+        e.1 |= done;
+        Ok(())
+    }
+
+    fn fleet_seen_all(&self) -> StoreResult<Vec<(String, i64, bool)>> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .fleet_seen
+            .iter()
+            .map(|(id, (at, done))| (id.clone(), *at, *done))
+            .collect())
     }
 
     fn fleet_journal_since(
@@ -3308,6 +3338,9 @@ pub struct ToolRegistration {
     pub space: Option<String>,
     /// The code tools it lists.
     pub code: crate::deps::CodeTools,
+    /// A space turn's mode and fleet tools.
+    pub mode: Option<theodore_contract::SpaceMode>,
+    pub fleet: Option<crate::deps::FleetTools>,
 }
 
 /// `RunTools` fake: records registrations, hands out one-off tokens.
@@ -3365,6 +3398,8 @@ impl crate::deps::RunTools for FakeRunTools {
             pr: Some(pr.clone()),
             space: space.map(str::to_string),
             code,
+            mode: None,
+            fleet: None,
         })
     }
 
@@ -3374,6 +3409,8 @@ impl crate::deps::RunTools for FakeRunTools {
         space: &str,
         _agent: AgentId,
         code: crate::deps::CodeTools,
+        mode: theodore_contract::SpaceMode,
+        fleet: crate::deps::FleetTools,
     ) -> theodore_ports::McpEndpoint {
         self.add(ToolRegistration {
             run_id: run_id.into(),
@@ -3381,6 +3418,8 @@ impl crate::deps::RunTools for FakeRunTools {
             pr: None,
             space: Some(space.into()),
             code,
+            mode: Some(mode),
+            fleet: Some(fleet),
         })
     }
 

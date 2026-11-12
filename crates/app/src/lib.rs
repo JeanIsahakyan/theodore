@@ -95,7 +95,9 @@ mod spaces_tests;
 pub use agent_defaults::AgentDefaults;
 pub use config::global_limits as code_intel_limits;
 pub use core::{Core, Receivers};
-pub use deps::{CodeTools, Deps, Grouper, GroupingAgent, OnPartial, RunTools, TokenStatus};
+pub use deps::{
+    CodeTools, Deps, FleetTools, Grouper, GroupingAgent, OnPartial, RunTools, TokenStatus,
+};
 pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::account::{AccountGate, resolve_client_id};

@@ -67,6 +67,11 @@ pub const FLEET_TOOL_NAMES: &[&str] = &[
     "fleet_stop",
 ];
 
+/// The fleet tools that act on another device: a space turn in Edit or
+/// Run of a space of this device's own only ([`RunContext::fleet_steers`]).
+/// The rest (`fleet_devices`, `fleet_read`, `fleet_wait`) only read.
+pub const FLEET_STEER_TOOL_NAMES: &[&str] = &["fleet_start_space", "fleet_send", "fleet_stop"];
+
 /// Drafts a problem report about the run's chat (docs/telemetry.md
 /// "Report from a chat"): a space turn's, or an AI panel question's —
 /// never a skill or fix run's ([`RunContext::is_chat`]).
@@ -102,6 +107,29 @@ pub enum CodeTools {
     Edit,
 }
 
+/// The mode of the space turn calling (docs/spaces.md "Modes"), least to
+/// most power: a cap is a comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TurnMode {
+    Ask,
+    Plan,
+    Edit,
+    Run,
+}
+
+/// What a space turn may do with the fleet tools (docs/fleet.md "Agents
+/// use it too").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum FleetTools {
+    /// `fleet_devices`, `fleet_read`, `fleet_wait`: a space hosted here for
+    /// another device (no trust passes through it), and any turn by default.
+    #[default]
+    Read,
+    /// Also start, send to and stop spaces elsewhere, within the turn's
+    /// mode: a space of this device's own, in Edit or Run.
+    Steer,
+}
+
 /// Identifies the agent run calling the MCP server: which PR, which agent, which
 /// invocation. One token maps to exactly one `RunContext` (see [`crate::McpHandle::register_run`]).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -115,6 +143,9 @@ pub struct RunContext {
     pub space: Option<String>,
     pub tools: ToolSet,
     pub code: CodeTools,
+    /// A space turn's mode; `None` for any other run.
+    pub mode: Option<TurnMode>,
+    pub fleet: FleetTools,
 }
 
 impl RunContext {
@@ -127,6 +158,8 @@ impl RunContext {
             space: None,
             tools: ToolSet::Review,
             code: CodeTools::Off,
+            mode: None,
+            fleet: FleetTools::Read,
         }
     }
 
@@ -155,6 +188,9 @@ impl RunContext {
         if tool == REPORT_TOOL {
             return self.is_chat();
         }
+        if FLEET_STEER_TOOL_NAMES.contains(&tool) {
+            return self.fleet_steers();
+        }
         match self.tools {
             ToolSet::Review => {
                 REVIEW_TOOL_NAMES.contains(&tool)
@@ -166,6 +202,15 @@ impl RunContext {
             }
             ToolSet::Code => false,
         }
+    }
+
+    /// May start, send to and stop spaces on other devices: a space turn
+    /// in Edit or Run, of a space that isn't hosted here for the fleet.
+    pub fn fleet_steers(&self) -> bool {
+        self.tools == ToolSet::Space
+            && self.space.is_some()
+            && self.fleet == FleetTools::Steer
+            && self.mode.is_some_and(|m| m >= TurnMode::Edit)
     }
 
     /// A chat with the user: a space's turn, or an AI panel question
@@ -458,25 +503,30 @@ pub trait SpaceToolsBackend: Send + Sync {
         Err(no_fleet())
     }
     /// Starts a space on `device` (id or name) in `project` (id or name);
-    /// `space` is the caller, its parent.
+    /// `space` is the caller, its parent. `turn` is the calling turn's
+    /// mode: the new space's `mode` is at most that.
     async fn fleet_start_space(
         &self,
         space: &str,
+        turn: TurnMode,
         device: &str,
         project: &str,
         goal: &str,
         mode: &str,
     ) -> Result<FleetToolSpace, SpaceToolError> {
-        let _ = (space, device, project, goal, mode);
+        let _ = (space, turn, device, project, goal, mode);
         Err(no_fleet())
     }
+    /// A message to `target`, a space `space` started; it runs at most in
+    /// `turn`'s mode.
     async fn fleet_send(
         &self,
         space: &str,
+        turn: TurnMode,
         target: &str,
         text: &str,
     ) -> Result<FleetToolSpace, SpaceToolError> {
-        let _ = (space, target, text);
+        let _ = (space, turn, target, text);
         Err(no_fleet())
     }
     async fn fleet_wait(

@@ -4,14 +4,18 @@
 //!
 //! ```text
 //! request ─▶ peek: for this device? ─▶ accept_remote ─▶ origin pinned?
-//!   ─▶ open(pinned key) ─▶ fresh + not replayed ─▶ op fits (mode, project,
-//!   depth, space, answers) ─▶ claim ─▶ claim_result{claimed} ─▶ run ─▶ reply
+//!   ─▶ open(pinned key) ─▶ fresh + not replayed (seen, kept in the store)
+//!   ─▶ op fits (mode, project, depth, space, answers) ─▶ claim
+//!   ─▶ claim_result{claimed} ─▶ seen done ─▶ accept_remote, same pin,
+//!      max_mode again ─▶ run ─▶ reply
 //!   any refusal ─▶ reply{err:{code}}            not claimed ─▶ nothing runs
 //!
 //! observer (one task): sync frames + run steps of hosted spaces
 //!   ─▶ diff the space row against what was last reported
-//!   ─▶ RemoteSpaceEvent, seq+1 ─▶ journal (last 2000) ─▶ space_event
-//!   question set / cleared ─▶ also ask / ask_resolved
+//!   ─▶ RemoteSpaceEvent, seq+1 ─▶ journal (last 2000)
+//!   ─▶ space_event{seal_as(SpaceEventBody, Domain::Event)}
+//!   question set / cleared ─▶ also ask{seal_as(RemoteAsk, Domain::Ask)} /
+//!   ask_resolved
 //! welcome{resume} ─▶ replay the journal after the cloud's seq, re-ask
 //! ```
 //!
@@ -28,16 +32,18 @@ use theodore_contract::{
 };
 use theodore_domain::{AgentId, Author};
 use theodore_fleet_protocol::{
-    ClientMessage, DEVICE_JOURNAL, FleetMode, MAX_CHILDREN, MAX_DEPTH, REPLAY_MEMORY_MS, RemoteAsk,
-    RemoteOp, RemoteQuestion, RemoteRequest, RemoteSpaceEvent, RemoteSpaceStatus, ReplyOutcome,
-    SignedEnvelope, StartedSpace, TurnOutcome, codes, fingerprint, fresh,
+    ClientMessage, DEVICE_JOURNAL, Domain, FleetMode, MAX_CHILDREN, MAX_DEPTH, RemoteAsk, RemoteOp,
+    RemoteQuestion, RemoteRequest, RemoteSpaceEvent, RemoteSpaceStatus, ReplyOutcome,
+    SignedEnvelope, SpaceEventBody, StartedSpace, TurnOutcome, codes, fingerprint, fresh,
 };
 use theodore_ports::FleetHostedRow;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::core::Core;
 use crate::error::AppError;
-use crate::usecases::fleet::{Hosted, Seen, fleet_mode, mode_str, space_mode};
+use crate::usecases::fleet::{
+    Claimed, FleetSettings, Hosted, Seen, fleet_mode, mode_str, space_mode,
+};
 use crate::usecases::fleet_origin::{line_of, truncate};
 use crate::usecases::spaces::space_chat_key;
 
@@ -92,6 +98,12 @@ pub(crate) enum ObserverCmd {
 }
 
 const ENDED_KEPT: usize = 64;
+
+/// What a pass sends besides events, after them.
+enum Outgoing {
+    Ask(RemoteAsk),
+    Resolved(String),
+}
 
 pub(crate) fn remote_status(s: &Space) -> RemoteSpaceStatus {
     match s.status {
@@ -199,11 +211,11 @@ impl Core {
             }
         };
         match self.fleet_gate(&envelope, &peeked).await {
-            Ok(req) => {
-                let req_id = req.req_id.clone();
+            Ok(claimed) => {
+                let req_id = claimed.req.req_id.clone();
                 let generation = {
                     let mut mem = self.fleet();
-                    mem.claims.insert(req_id.clone(), req);
+                    mem.claims.insert(req_id.clone(), claimed);
                     mem.generation
                 };
                 self.fleet_send_msg(ClientMessage::Claim { req_id, generation });
@@ -212,13 +224,13 @@ impl Core {
         }
     }
 
-    /// docs/fleet.md "Trust", in order. `Ok`: verified, fresh, fits; still
-    /// to be claimed before anything runs.
+    /// docs/fleet.md "Trust", in order. `Ok`: verified, fresh, fits (a
+    /// send's mode resolved); still to be claimed before anything runs.
     async fn fleet_gate(
         &self,
         envelope: &SignedEnvelope,
         peeked: &RemoteRequest,
-    ) -> Result<RemoteRequest, Refusal> {
+    ) -> Result<Claimed, Refusal> {
         let me = self.fleet().device_id.clone();
         if me.as_deref() != Some(peeked.target_device.as_str()) {
             return Err(refuse(
@@ -255,6 +267,10 @@ impl Core {
                         .as_ref()
                         .map(|d| fingerprint(&d.public_key))
                         .unwrap_or_default(),
+                    public_key: listed
+                        .as_ref()
+                        .map(|d| d.public_key.clone())
+                        .unwrap_or_default(),
                 },
             });
             return Err(refuse(
@@ -262,7 +278,7 @@ impl Core {
                 format!("{name} isn't trusted on this device"),
             ));
         };
-        let req = envelope.open(&pinned.public_key).map_err(|_| {
+        let mut req = envelope.open(&pinned.public_key).map_err(|_| {
             refuse(
                 codes::BAD_SIGNATURE,
                 "the request's signature doesn't check out",
@@ -275,33 +291,35 @@ impl Core {
                 "the request is too old, or this device's clock is off",
             ));
         }
-        {
-            let mut mem = self.fleet();
-            mem.seen
-                .retain(|_, (at, _)| now.saturating_sub(*at as u64) <= REPLAY_MEMORY_MS);
-            if let Some((_, Seen::Done)) = mem.seen.get(&req.req_id) {
-                return Err(refuse(
-                    codes::STALE_REQUEST,
-                    "this request was seen already",
-                ));
-            }
-            mem.seen
-                .insert(req.req_id.clone(), (now as i64, Seen::Claiming));
+        // Seen before, here or before a restart: a re-delivery of a claim
+        // still open is claimed again; anything else is a replay.
+        self.fleet_load_seen().await;
+        let issued_at = req.issued_at_ms as i64;
+        if let Some((_, Seen::Done)) = self.fleet().seen.get(&req.req_id) {
+            return Err(refuse(
+                codes::STALE_REQUEST,
+                "this request was seen already",
+            ));
         }
-        if let Err(refusal) = self.fleet_check_op(&req, &s).await {
-            self.fleet()
-                .seen
-                .insert(req.req_id.clone(), (now as i64, Seen::Done));
+        self.fleet_mark_seen(&req.req_id, issued_at, Seen::Claiming)
+            .await;
+        if let Err(refusal) = self.fleet_check_op(&mut req, &s).await {
+            self.fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
+                .await;
             return Err(refusal);
         }
-        Ok(req)
+        Ok(Claimed {
+            req,
+            key: pinned.public_key.clone(),
+        })
     }
 
-    /// What the op itself must fit, checked before the claim.
+    /// What the op itself must fit, checked before the claim. A send
+    /// without a mode gets the space's (what the cap was checked against).
     async fn fleet_check_op(
         &self,
-        req: &RemoteRequest,
-        s: &crate::usecases::fleet::FleetSettings,
+        req: &mut RemoteRequest,
+        s: &FleetSettings,
     ) -> Result<(), Refusal> {
         let above = |m: FleetMode| {
             refuse(
@@ -314,7 +332,7 @@ impl Core {
             )
         };
         let unknown = || refuse(codes::UNKNOWN_SPACE, "no such space on this device");
-        match &req.op {
+        match &mut req.op {
             RemoteOp::StartSpace {
                 space,
                 project_id,
@@ -378,6 +396,7 @@ impl Core {
                 if m > s.max_mode {
                     return Err(above(m));
                 }
+                *mode = Some(m);
                 Ok(())
             }
             RemoteOp::Stop { space } => self
@@ -393,7 +412,7 @@ impl Core {
                 let questions = self.pending_questions(&local, ask_id).ok_or_else(|| {
                     refuse(codes::UNKNOWN_SPACE, "this question is no longer waiting")
                 })?;
-                let items = answer_items(&questions, answers);
+                let items = answer_items(&questions, answers.as_slice());
                 match crate::usecases::space_questions::invalid_answers(&questions, &items) {
                     Some(why) => Err(refuse(codes::INVALID, why)),
                     None => Ok(()),
@@ -404,14 +423,14 @@ impl Core {
 
     /// The cloud's word on a claim: only `claimed` runs anything.
     pub(crate) fn fleet_on_claim(&self, req_id: &str, claimed: bool, rejection: Option<String>) {
-        let req = {
+        let c = {
             let mut mem = self.fleet();
             if let Some((_, seen)) = mem.seen.get_mut(req_id) {
                 *seen = Seen::Done;
             }
             mem.claims.remove(req_id)
         };
-        let Some(req) = req else {
+        let Some(c) = c else {
             return;
         };
         if !claimed {
@@ -420,16 +439,74 @@ impl Core {
                 rejection = rejection.as_deref().unwrap_or(""),
                 "a fleet claim was rejected; nothing runs"
             );
-            return;
         }
         let core = self.clone();
-        tokio::spawn(async move { core.fleet_run(req).await });
+        tokio::spawn(async move {
+            // Done in the store before anything runs: after a restart it's
+            // a replay, never a second run.
+            core.fleet_mark_seen(&c.req.req_id, c.req.issued_at_ms as i64, Seen::Done)
+                .await;
+            if claimed {
+                core.fleet_run(c).await;
+            }
+        });
+    }
+
+    /// The gate's settings checks once more, right before a claimed
+    /// request runs: still accepting, the origin still pinned with the key
+    /// it verified against, the mode still allowed.
+    async fn fleet_recheck(&self, c: &Claimed) -> Result<(), Refusal> {
+        let s = self.fleet_settings().await;
+        if !s.accept_remote {
+            return Err(refuse(
+                codes::REMOTE_OFF,
+                "this device doesn't take remote requests",
+            ));
+        }
+        if !s
+            .trusted_devices
+            .iter()
+            .any(|t| t.device_id == c.req.origin_device && t.public_key == c.key)
+        {
+            return Err(refuse(
+                codes::UNTRUSTED_DEVICE,
+                "the requesting device isn't trusted on this device any more",
+            ));
+        }
+        let mode = match &c.req.op {
+            RemoteOp::StartSpace { mode, .. } => Some(*mode),
+            RemoteOp::Send { mode, .. } => *mode,
+            RemoteOp::Stop { .. } | RemoteOp::Answer { .. } => None,
+        };
+        if let Some(m) = mode
+            && m > s.max_mode
+        {
+            return Err(refuse(
+                codes::MODE_NOT_ALLOWED,
+                format!(
+                    "{} is above what this device allows ({})",
+                    mode_str(m),
+                    mode_str(s.max_mode)
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Runs a claimed request and replies.
-    async fn fleet_run(&self, req: RemoteRequest) {
-        let outcome = match req.op.clone() {
-            RemoteOp::StartSpace { .. } => self.fleet_host_start(&req).await,
+    async fn fleet_run(&self, c: Claimed) {
+        let checked = self.fleet_recheck(&c).await;
+        let req = c.req;
+        let outcome = match checked {
+            Err(refusal) => Err(refusal),
+            Ok(()) => self.fleet_run_op(&req).await,
+        };
+        self.fleet_reply(req, outcome);
+    }
+
+    async fn fleet_run_op(&self, req: &RemoteRequest) -> Result<serde_json::Value, Refusal> {
+        match req.op.clone() {
+            RemoteOp::StartSpace { .. } => self.fleet_host_start(req).await,
             RemoteOp::Send { space, text, mode } => match self.fleet_hosted_local(&space) {
                 Some(local) => self
                     .space_send(SpaceSendRequest {
@@ -473,7 +550,10 @@ impl Core {
                 }
                 None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
             },
-        };
+        }
+    }
+
+    fn fleet_reply(&self, req: RemoteRequest, outcome: Result<serde_json::Value, Refusal>) {
         let outcome = match outcome {
             Ok(value) => ReplyOutcome::Ok { value },
             Err((code, message)) => {
@@ -506,19 +586,28 @@ impl Core {
             return Err(refuse(codes::INTERNAL, "not a start"));
         };
         let agent = agent.and_then(|a| AgentId::ALL.into_iter().find(|x| x.as_str() == a));
+        // Marked hosted before its first turn starts: that turn's tools
+        // must already be a hosted space's.
+        let core = self.clone();
+        let mark: crate::usecases::spaces::OnSpaceCreated = Box::new(move |s: &Space| {
+            core.fleet().hosting.insert(s.id.clone());
+        });
         let space = self
-            .create_space(CreateSpaceRequest {
-                project: project_id.clone(),
-                goal,
-                name: None,
-                branch: None,
-                base: None,
-                agent,
-                model,
-                start_from: None,
-                effort: None,
-                mode: Some(space_mode(mode)),
-            })
+            .create_space_then(
+                CreateSpaceRequest {
+                    project: project_id.clone(),
+                    goal,
+                    name: None,
+                    branch: None,
+                    base: None,
+                    agent,
+                    model,
+                    start_from: None,
+                    effort: None,
+                    mode: Some(space_mode(mode)),
+                },
+                Some(mark),
+            )
             .await
             .map_err(|e| refuse(codes::INTERNAL, e.to_string()))?;
         let project_name = self
@@ -552,6 +641,7 @@ impl Core {
             let view = hosted_view(&row, &data, &me, &name);
             mem.hosted
                 .insert(remote.clone(), Hosted { row, data, view });
+            mem.hosting.remove(&space.id);
         }
         tracing::info!(space = %space.id, remote = %remote, origin = %req.origin_device, "started a space for another device");
         self.fleet_observe(ObserverCmd::Hosted(remote.clone()));
@@ -899,7 +989,7 @@ impl Core {
                 events.push(RemoteSpaceEvent::QuestionCleared {
                     ask_id: old.clone(),
                 });
-                asks.push(ClientMessage::AskResolved { ask_id: old });
+                asks.push(Outgoing::Resolved(old));
             }
             if let Some(q) = &space.question {
                 let questions = remote_questions(&q.questions);
@@ -907,15 +997,13 @@ impl Core {
                     ask_id: q.id.clone(),
                     questions: questions.clone(),
                 });
-                asks.push(ClientMessage::Ask {
-                    ask: RemoteAsk {
-                        ask_id: q.id.clone(),
-                        space: remote.to_string(),
-                        host_device: me.clone(),
-                        from: format!("{device_name} · {}", space.name),
-                        questions,
-                    },
-                });
+                asks.push(Outgoing::Ask(RemoteAsk {
+                    ask_id: q.id.clone(),
+                    space: remote.to_string(),
+                    host_device: me.clone(),
+                    from: format!("{device_name} · {}", space.name),
+                    questions,
+                }));
             }
             track.question = qid;
         }
@@ -933,7 +1021,12 @@ impl Core {
             self.fleet_journal(remote, &mut track, event).await;
         }
         for msg in asks {
-            self.fleet_send_msg(msg);
+            match msg {
+                Outgoing::Ask(ask) => self.fleet_send_ask(&ask).await,
+                Outgoing::Resolved(ask_id) => {
+                    self.fleet_send_msg(ClientMessage::AskResolved { ask_id });
+                }
+            }
         }
         let (row, view) = {
             let mut mem = self.fleet();
@@ -981,10 +1074,43 @@ impl Core {
             space: remote.to_string(),
             line: line_of(seq, &event),
         });
-        self.fleet_send_msg(ClientMessage::SpaceEvent {
+        self.fleet_send_event(remote, seq, event).await;
+    }
+
+    /// Sends event `seq` of hosted space `remote`, signed as its host.
+    async fn fleet_send_event(&self, remote: &str, seq: u64, event: RemoteSpaceEvent) {
+        let Some(me) = self.fleet().device_id.clone() else {
+            return;
+        };
+        let key = match self.fleet_key().await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(error.code = e.code(), error = %e, "no fleet key to sign an event");
+                return;
+            }
+        };
+        let body = SpaceEventBody {
             space: remote.to_string(),
             seq,
+            host_device: me,
             event,
+        };
+        self.fleet_send_msg(ClientMessage::SpaceEvent {
+            envelope: SignedEnvelope::seal_as(&body, &key, Domain::Event),
+        });
+    }
+
+    /// Sends a question of a hosted space, signed as its host.
+    async fn fleet_send_ask(&self, ask: &RemoteAsk) {
+        let key = match self.fleet_key().await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(error.code = e.code(), error = %e, "no fleet key to sign a question");
+                return;
+            }
+        };
+        self.fleet_send_msg(ClientMessage::Ask {
+            envelope: SignedEnvelope::seal_as(ask, &key, Domain::Ask),
         });
     }
 
@@ -1022,25 +1148,20 @@ impl Core {
                     let Ok(event) = serde_json::from_value::<RemoteSpaceEvent>(value) else {
                         continue;
                     };
-                    self.fleet_send_msg(ClientMessage::SpaceEvent {
-                        space: remote.clone(),
-                        seq,
-                        event,
-                    });
+                    self.fleet_send_event(&remote, seq, event).await;
                 }
             }
             if let Ok(space) = self.space_row(&local).await
                 && let Some(q) = &space.question
             {
-                self.fleet_send_msg(ClientMessage::Ask {
-                    ask: RemoteAsk {
-                        ask_id: q.id.clone(),
-                        space: remote.clone(),
-                        host_device: me.clone(),
-                        from: format!("{device_name} · {}", space.name),
-                        questions: remote_questions(&q.questions),
-                    },
-                });
+                self.fleet_send_ask(&RemoteAsk {
+                    ask_id: q.id.clone(),
+                    space: remote.clone(),
+                    host_device: me.clone(),
+                    from: format!("{device_name} · {}", space.name),
+                    questions: remote_questions(&q.questions),
+                })
+                .await;
             }
         }
     }

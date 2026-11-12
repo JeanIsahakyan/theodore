@@ -26,7 +26,8 @@ use theodore_contract::{
 use theodore_domain::HostKind;
 use theodore_fleet_protocol::{
     ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, FleetMode,
-    ProjectRef, RemoteRequest, ReplyOutcome, ServerMessage, SpaceCursor, fingerprint,
+    ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ReplyOutcome, ServerMessage, SpaceCursor, codes,
+    fingerprint,
 };
 use theodore_ports::{FleetCommand, FleetConnect, FleetHostedRow, FleetInbound};
 use tokio::sync::{mpsc, oneshot};
@@ -42,8 +43,14 @@ fn device_id_key(org: &str) -> String {
     format!("fleet.device_id:{org}")
 }
 
-/// A pinned device (`fleet.trusted_devices`): its key as the cloud listed
-/// it when trust was given here.
+/// The fleet id a local space's agent starts children under: stable per
+/// space (kept in kv), so the cloud counts them across restarts.
+fn parent_id_key(local: &str) -> String {
+    format!("fleet.parent:{local}")
+}
+
+/// A pinned device (`fleet.trusted_devices`): the key the user compared
+/// when trust was given here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TrustedDevice {
     pub device_id: String,
@@ -119,7 +126,8 @@ pub(crate) struct Link {
     pub token: String,
 }
 
-/// A request seen from another device, kept `REPLAY_MEMORY_MS`.
+/// A request seen from another device, kept `REPLAY_MEMORY_MS` after its
+/// `issued_at` (in the store too, so a restart doesn't forget it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Seen {
     /// Verified and claimed, no claim result yet: a re-delivery (after a
@@ -144,9 +152,19 @@ pub(crate) struct Hosted {
     pub view: FleetRemoteSpace,
 }
 
+/// A verified request waiting for its claim result, with the origin key
+/// it verified against (checked again right before it runs).
+pub(crate) struct Claimed {
+    pub req: RemoteRequest,
+    pub key: String,
+}
+
 /// A space on another device, started from here (or by an agent here).
+/// `view.host_device` is the start's target and never changes.
 pub(crate) struct Outbound {
     pub view: FleetRemoteSpace,
+    /// Its name as the host's signed `started` event gives it.
+    pub started_name: Option<String>,
     pub lines: VecDeque<FleetSpaceLine>,
     pub last_seq: u64,
     /// The local space whose agent started it (`fleet_start_space` tool).
@@ -163,14 +181,18 @@ pub(crate) struct FleetMem {
     pub error: Option<String>,
     /// A `Fatal` for (account generation, org): no new link for those.
     pub fatal_at: Option<(u64, String)>,
+    /// By `req_id`: `(issued_at, state)`.
     pub seen: HashMap<String, (i64, Seen)>,
     /// Verified requests waiting for their claim result.
-    pub claims: HashMap<String, RemoteRequest>,
+    pub claims: HashMap<String, Claimed>,
     /// By remote id.
     pub hosted: HashMap<String, Hosted>,
+    /// Local spaces being made for another device, not mapped yet.
+    pub hosting: std::collections::HashSet<String>,
     pub outbound: HashMap<String, Outbound>,
     pub replies: HashMap<String, PendingReply>,
-    /// Questions from elsewhere routed here, by ask id.
+    /// Questions from elsewhere routed here, by ask id, with the (pinned,
+    /// verified) device that asked.
     pub asks: HashMap<String, (FleetQuestion, String)>,
 }
 
@@ -185,6 +207,8 @@ pub struct FleetState {
     /// Read-modify-write of the settings.
     settings_lock: tokio::sync::Mutex<()>,
     pub(crate) hosted_loaded: tokio::sync::OnceCell<()>,
+    /// The persisted seen requests, read once.
+    pub(crate) seen_loaded: tokio::sync::OnceCell<()>,
     pub(crate) observer:
         std::sync::OnceLock<mpsc::UnboundedSender<crate::usecases::fleet_host::ObserverCmd>>,
     /// Wakes `fleet_wait` on any change to a remote space.
@@ -388,13 +412,17 @@ impl Core {
         Ok(status)
     }
 
-    /// Pins (or unpins) a device's key as the cloud lists it right now.
+    /// Pins (or unpins) a device's key. Trusting pins exactly the key the
+    /// user compared (`req.public_key`), and only while the cloud still
+    /// lists that key for the device.
     pub async fn fleet_trust_device(&self, req: FleetTrustRequest) -> AppResult<FleetStatus> {
         {
             let _g = self.0.fleet.settings_lock.lock().await;
             let mut s = self.fleet_settings().await;
-            s.trusted_devices.retain(|t| t.device_id != req.device_id);
-            if req.trusted {
+            let pin = if req.trusted {
+                let compared = req.public_key.as_deref().ok_or_else(|| {
+                    AppError::Invalid("trusting a device needs the key you compared".into())
+                })?;
                 let listed = self
                     .fleet()
                     .devices
@@ -407,16 +435,25 @@ impl Core {
                             req.device_id
                         ))
                     })?;
-                if theodore_fleet_protocol::unb64(&listed.public_key).is_none_or(|k| k.len() != 32)
-                {
+                if listed.public_key != compared {
+                    return Err(AppError::Invalid(format!(
+                        "{}'s key changed since you compared its fingerprint: compare it again",
+                        listed.info.name
+                    )));
+                }
+                if theodore_fleet_protocol::unb64(compared).is_none_or(|k| k.len() != 32) {
                     return Err(AppError::Invalid("that device's key is malformed".into()));
                 }
-                s.trusted_devices.push(TrustedDevice {
+                Some(TrustedDevice {
                     device_id: listed.device_id,
-                    public_key: listed.public_key,
+                    public_key: compared.to_string(),
                     name: listed.info.name,
-                });
-            }
+                })
+            } else {
+                None
+            };
+            s.trusted_devices.retain(|t| t.device_id != req.device_id);
+            s.trusted_devices.extend(pin);
             self.fleet_save_settings(&s).await?;
         }
         tracing::info!(device = %req.device_id, trusted = req.trusted, "fleet trust changed");
@@ -425,6 +462,142 @@ impl Core {
             status: status.clone(),
         });
         Ok(status)
+    }
+
+    /// Forgets another of the user's devices (lost, replaced): the cloud
+    /// drops it and signs it out, and it's no longer trusted here.
+    pub async fn fleet_remove_device(&self, device_id: &str) -> AppResult<FleetStatus> {
+        let me = self.fleet_ready()?;
+        if me == device_id {
+            return Err(AppError::Invalid(
+                "this device can't remove itself: turn the fleet off instead".into(),
+            ));
+        }
+        if !self
+            .fleet()
+            .devices
+            .iter()
+            .any(|d| d.device_id == device_id)
+        {
+            return Err(AppError::NotFound(format!(
+                "device {device_id} isn't in this organization's fleet"
+            )));
+        }
+        {
+            let _g = self.0.fleet.settings_lock.lock().await;
+            let mut s = self.fleet_settings().await;
+            s.trusted_devices.retain(|t| t.device_id != device_id);
+            self.fleet_save_settings(&s).await?;
+        }
+        if !self.fleet_send_msg(ClientMessage::RemoveDevice {
+            device_id: device_id.to_string(),
+        }) {
+            return Err(AppError::Invalid("not connected to the fleet".into()));
+        }
+        tracing::info!(device = %device_id, "asked the fleet to remove a device");
+        let status = self.fleet_status().await?;
+        self.emit(Ephemeral::FleetStatus {
+            status: status.clone(),
+        });
+        Ok(status)
+    }
+
+    /// The pin of `device`, if this device trusts it.
+    pub(crate) async fn fleet_pinned(&self, device: &str) -> Option<TrustedDevice> {
+        self.fleet_settings()
+            .await
+            .trusted_devices
+            .into_iter()
+            .find(|t| t.device_id == device)
+    }
+
+    /// Whether `local` is a space hosted here for another device.
+    pub(crate) async fn fleet_hosts_local(&self, local: &str) -> bool {
+        {
+            let mem = self.fleet();
+            if mem.hosting.contains(local)
+                || mem.hosted.values().any(|h| h.row.local_space == local)
+            {
+                return true;
+            }
+        }
+        let store = self.0.deps.store.clone();
+        tokio::task::spawn_blocking(move || store.fleet_hosted_all())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .is_some_and(|rows| rows.iter().any(|r| r.local_space == local))
+    }
+
+    /// The stable fleet id spaces started by local space `local`'s agent
+    /// have as their parent (made once, then kept).
+    pub(crate) async fn fleet_parent_id(&self, local: &str) -> String {
+        let store = self.0.deps.store.clone();
+        let key = parent_id_key(local);
+        tokio::task::spawn_blocking(move || {
+            if let Ok(Some(v)) = store.kv_get(&key)
+                && let Some(id) = v.as_str()
+            {
+                return id.to_string();
+            }
+            let id = format!("rs_{}", uuid::Uuid::new_v4().simple());
+            if let Err(e) = store.kv_set(&key, &serde_json::json!(id)) {
+                tracing::warn!(error.code = e.code(), error = %e, "couldn't keep a fleet parent id");
+            }
+            id
+        })
+        .await
+        .unwrap_or_else(|_| format!("rs_{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    // ── replays ─────────────────────────────────────────────────────────
+
+    /// Reads the persisted seen requests once per process.
+    pub(crate) async fn fleet_load_seen(&self) {
+        self.0
+            .fleet
+            .seen_loaded
+            .get_or_init(|| async {
+                let store = self.0.deps.store.clone();
+                let rows = tokio::task::spawn_blocking(move || store.fleet_seen_all())
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+                let mut mem = self.fleet();
+                for (req_id, at, done) in rows {
+                    let state = if done { Seen::Done } else { Seen::Claiming };
+                    mem.seen.entry(req_id).or_insert((at, state));
+                }
+            })
+            .await;
+    }
+
+    /// Records `req_id` as `state`, here and in the store.
+    pub(crate) async fn fleet_mark_seen(&self, req_id: &str, issued_at: i64, state: Seen) {
+        let now = self.0.deps.clock.now();
+        let forget_before = now.saturating_sub(REPLAY_MEMORY_MS as i64);
+        {
+            let mut mem = self.fleet();
+            mem.seen.retain(|_, (at, _)| *at >= forget_before);
+            let e = mem
+                .seen
+                .entry(req_id.to_string())
+                .or_insert((issued_at, state));
+            if state == Seen::Done {
+                e.1 = Seen::Done;
+            }
+        }
+        let store = self.0.deps.store.clone();
+        let id = req_id.to_string();
+        let done = state == Seen::Done;
+        let kept = tokio::task::spawn_blocking(move || {
+            store.fleet_seen_put(&id, issued_at, done, forget_before)
+        })
+        .await;
+        if let Ok(Err(e)) = kept {
+            tracing::warn!(error.code = e.code(), error = %e, "couldn't keep a seen fleet request");
+        }
     }
 
     // ── status ──────────────────────────────────────────────────────────
@@ -482,6 +655,7 @@ impl Core {
                 accepts_remote: d.info.accepts_remote,
                 max_mode: space_mode(d.info.max_mode),
                 fingerprint: fingerprint(&d.public_key),
+                public_key: d.public_key.clone(),
                 trusted: s
                     .trusted_devices
                     .iter()
@@ -722,6 +896,20 @@ impl Core {
             }
             FleetInbound::Fatal { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet refused this device");
+                let message = if code == codes::REMOVED {
+                    // Gone from the cloud: the next link joins as a new device.
+                    let store = self.0.deps.store.clone();
+                    let key = device_id_key(org);
+                    let _ = tokio::task::spawn_blocking(move || {
+                        store.kv_set(&key, &serde_json::Value::Null)
+                    })
+                    .await;
+                    "another of your devices removed this one from the fleet: turn the fleet \
+                     off and on to join again as a new device"
+                        .to_string()
+                } else {
+                    message
+                };
                 {
                     let mut mem = self.fleet();
                     mem.link = None;
@@ -756,10 +944,9 @@ impl Core {
                 rejection,
             } => self.fleet_on_claim(&req_id, claimed, rejection),
             ServerMessage::Reply { req_id, outcome } => self.fleet_on_reply(&req_id, outcome),
-            ServerMessage::SpaceEvent { space, seq, event } => {
-                self.fleet_on_event(&space, seq, event)
-            }
-            ServerMessage::Ask { ask, via } => self.fleet_on_ask(ask, via),
+            ServerMessage::SpaceEvent { envelope } => self.fleet_on_event(envelope).await,
+            ServerMessage::SpaceGap { space, from, to } => self.fleet_on_gap(&space, from, to),
+            ServerMessage::Ask { envelope, via } => self.fleet_on_ask(envelope, via).await,
             ServerMessage::Dismiss { ask_id, .. } => {
                 self.fleet().asks.remove(&ask_id);
                 self.emit(Ephemeral::FleetAskDismissed { ask_id });

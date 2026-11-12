@@ -167,6 +167,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::fleet_status,
             commands::fleet_set_settings,
             commands::fleet_trust_device,
+            commands::fleet_remove_device,
             commands::fleet_start_space,
             commands::fleet_send,
             commands::fleet_stop,
