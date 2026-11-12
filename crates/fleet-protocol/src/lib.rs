@@ -28,7 +28,7 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// How long a target remembers `req_id`s to refuse replays.
@@ -146,6 +146,10 @@ pub struct RemoteRequest {
     pub req_id: String,
     pub origin_device: DeviceId,
     pub target_device: DeviceId,
+    /// The target's public key as pinned on the origin. The target runs a
+    /// request only if this is its own key: the cloud assigns device ids,
+    /// so an id alone can't say which machine a request was signed for.
+    pub target_key: String,
     /// Unix ms at the origin.
     pub issued_at_ms: u64,
     pub op: RemoteOp,
@@ -209,7 +213,7 @@ pub enum EnvelopeError {
     OriginMismatch { envelope: String, body: String },
 }
 
-/// What a signature is for. Each kind signs `"theodore-fleet-<kind>-v2\0" ‖
+/// What a signature is for. Each kind signs `"theodore-fleet-<kind>-v3\0" ‖
 /// bytes`, so a signature made for one purpose never verifies as another
 /// (a hello nonce can't be turned into a request).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,15 +226,18 @@ pub enum Domain {
     Event,
     /// A [`RemoteAsk`] from the space's host.
     Ask,
+    /// A [`ReplyBody`] from a request's target.
+    Reply,
 }
 
 impl Domain {
     pub fn tag(self) -> &'static [u8] {
         match self {
-            Domain::Hello => b"theodore-fleet-hello-v2\0",
-            Domain::Request => b"theodore-fleet-request-v2\0",
-            Domain::Event => b"theodore-fleet-event-v2\0",
-            Domain::Ask => b"theodore-fleet-ask-v2\0",
+            Domain::Hello => b"theodore-fleet-hello-v3\0",
+            Domain::Request => b"theodore-fleet-request-v3\0",
+            Domain::Event => b"theodore-fleet-event-v3\0",
+            Domain::Ask => b"theodore-fleet-ask-v3\0",
+            Domain::Reply => b"theodore-fleet-reply-v3\0",
         }
     }
 
@@ -271,6 +278,12 @@ impl Signer for RemoteRequest {
 impl Signer for SpaceEventBody {
     fn signer(&self) -> &str {
         &self.host_device
+    }
+}
+
+impl Signer for ReplyBody {
+    fn signer(&self) -> &str {
+        &self.target_device
     }
 }
 
@@ -353,6 +366,17 @@ pub enum ReplyOutcome {
         code: String,
         message: String,
     },
+}
+
+/// A target's answer to a request, signed by the target
+/// ([`Domain::Reply`]). Only a verified one may change what the origin shows
+/// or tells an agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ReplyBody {
+    pub req_id: String,
+    pub origin_device: DeviceId,
+    pub target_device: DeviceId,
+    pub outcome: ReplyOutcome,
 }
 
 /// `reply.value` for a `start_space`.
@@ -564,9 +588,9 @@ pub enum ClientMessage {
         req_id: String,
         generation: u64,
     },
+    /// A [`ReplyBody`] signed by this device as the request's target.
     Reply {
-        req_id: String,
-        outcome: ReplyOutcome,
+        envelope: SignedEnvelope,
     },
     /// A [`SpaceEventBody`] signed by this device as the space's host.
     SpaceEvent {
@@ -626,10 +650,18 @@ pub enum ServerMessage {
         #[serde(default)]
         rejection: Option<String>,
     },
-    /// The answer to a request this device sent.
+    /// The target's signed [`ReplyBody`] to a request this device sent,
+    /// forwarded unchanged.
     Reply {
+        envelope: SignedEnvelope,
+    },
+    /// The cloud couldn't deliver or route a request (`fleet.offline`,
+    /// `fleet.not_yours`, `fleet.depth`, …). Unsigned: the origin shows the
+    /// code, never hands `message` to an agent.
+    Refused {
         req_id: String,
-        outcome: ReplyOutcome,
+        code: String,
+        message: String,
     },
     /// A host's signed [`SpaceEventBody`], forwarded unchanged.
     SpaceEvent {
@@ -664,6 +696,7 @@ pub fn types() -> specta::Types {
         .register::<ServerMessage>()
         .register::<RemoteRequest>()
         .register::<SpaceEventBody>()
+        .register::<ReplyBody>()
         .register::<RemoteAsk>()
         .register::<StartedSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below

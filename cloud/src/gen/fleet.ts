@@ -23,7 +23,9 @@ spaces: SpaceCursor[] } |
 /**  Ms since the last input in this app. */
 idle_ms: number } |
 /**  The device's info changed (projects, settings). */
-{ type: "announce"; info: DeviceInfo } | { type: "request"; envelope: SignedEnvelope } | { type: "claim"; req_id: string; generation: number } | { type: "reply"; req_id: string; outcome: ReplyOutcome } |
+{ type: "announce"; info: DeviceInfo } | { type: "request"; envelope: SignedEnvelope } | { type: "claim"; req_id: string; generation: number } |
+/**  A [`ReplyBody`] signed by this device as the request's target. */
+{ type: "reply"; envelope: SignedEnvelope } |
 /**  A [`SpaceEventBody`] signed by this device as the space's host. */
 { type: "space_event"; envelope: SignedEnvelope } |
 /**  A [`RemoteAsk`] signed by this device as the space's host. */
@@ -126,6 +128,12 @@ export type RemoteRequest = {
 	req_id: string,
 	origin_device: string,
 	target_device: string,
+	/**
+	 *  The target's public key as pinned on the origin. The target runs a
+	 *  request only if this is its own key: the cloud assigns device ids,
+	 *  so an id alone can't say which machine a request was signed for.
+	 */
+	target_key: string,
 	/**  Unix ms at the origin. */
 	issued_at_ms: number,
 	op: RemoteOp,
@@ -149,6 +157,18 @@ export type RemoteSpaceStatus = "running" |
 /**  A question waits for an answer. */
 "waiting" | "stopped" | "failed";
 
+/**
+ *  A target's answer to a request, signed by the target
+ *  ([`Domain::Reply`]). Only a verified one may change what the origin shows
+ *  or tells an agent.
+ */
+export type ReplyBody = {
+	req_id: string,
+	origin_device: string,
+	target_device: string,
+	outcome: ReplyOutcome,
+};
+
 export type ReplyOutcome = { outcome: "ok"; value: unknown } | { outcome: "err"; code: string; message: string };
 
 /**  Device ⇄ cloud, cloud side. */
@@ -166,8 +186,17 @@ resume: { [key in string]: number } } |
 { type: "devices"; devices: DeviceSummary[] } |
 /**  A request for this device to verify, claim and run. */
 { type: "request"; envelope: SignedEnvelope; generation: number } | { type: "claim_result"; req_id: string; claimed: boolean; rejection?: string | null } |
-/**  The answer to a request this device sent. */
-{ type: "reply"; req_id: string; outcome: ReplyOutcome } |
+/**
+ *  The target's signed [`ReplyBody`] to a request this device sent,
+ *  forwarded unchanged.
+ */
+{ type: "reply"; envelope: SignedEnvelope } |
+/**
+ *  The cloud couldn't deliver or route a request (`fleet.offline`,
+ *  `fleet.not_yours`, `fleet.depth`, …). Unsigned: the origin shows the
+ *  code, never hands `message` to an agent.
+ */
+{ type: "refused"; req_id: string; code: string; message: string } |
 /**  A host's signed [`SpaceEventBody`], forwarded unchanged. */
 { type: "space_event"; envelope: SignedEnvelope } |
 /**

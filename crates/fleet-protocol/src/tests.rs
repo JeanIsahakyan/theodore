@@ -5,6 +5,7 @@ fn req(origin: &str) -> RemoteRequest {
         req_id: "r1".into(),
         origin_device: origin.into(),
         target_device: "dev_b".into(),
+        target_key: "key_b".into(),
         issued_at_ms: 1_000,
         op: RemoteOp::StartSpace {
             space: "rs_1".into(),
@@ -197,4 +198,29 @@ fn a_signature_is_bound_to_its_domain() {
         lying.open_as::<SpaceEventBody>(&key.public_key(), Domain::Event),
         Err(EnvelopeError::OriginMismatch { .. })
     ));
+}
+
+#[test]
+fn a_reply_is_signed_by_its_target() {
+    let key = DeviceKey::generate().unwrap();
+    let body = ReplyBody {
+        req_id: "r1".into(),
+        origin_device: "dev_a".into(),
+        target_device: "dev_b".into(),
+        outcome: ReplyOutcome::Err {
+            code: "fleet.remote_off".into(),
+            message: "no".into(),
+        },
+    };
+    let env = SignedEnvelope::seal_as(&body, &key, Domain::Reply);
+    assert_eq!(env.device_id, "dev_b");
+    assert_eq!(
+        env.open_as::<ReplyBody>(&key.public_key(), Domain::Reply)
+            .unwrap(),
+        body
+    );
+    assert_eq!(
+        env.open_as::<ReplyBody>(&key.public_key(), Domain::Event),
+        Err(EnvelopeError::BadSignature)
+    );
 }
