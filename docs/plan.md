@@ -602,7 +602,7 @@ is no Theodore server yet.
 | --- | --- | --- |
 | Hosted AuthKit page + PKCE, code exchange with `code_verifier` | yes | the secret is required only when no verifier is sent |
 | Device authorization (RFC 8628) | yes | `POST /user_management/authorize/device` with `client_id` only |
-| Refresh token grant | yes | `client_id` + `refresh_token`; the refresh token rotates and is single-use |
+| Refresh token grant | yes | `client_id` + `refresh_token`; the refresh token rotates and is single-use; optional `organization_id` |
 | JWKS (`/sso/jwks/<client_id>`), logout redirect | yes | public endpoints |
 | Magic Auth API (send a code, then verify it) | **no** | needs the API key |
 | Email + password grant | **no** | needs the API key |
@@ -698,6 +698,37 @@ Settings → Account / Onboarding
   - If the JWKS can't be reached at all, the claims are still checked. The
     token came straight from the provider over TLS, so the signature is
     defense in depth there.
+
+#### Organizations
+
+The provider side is in place; there is no UI or cloud use of it yet. A
+user with zero or one organization sees no change.
+
+```
+access token claims   sub · sid · org_id · role · permissions · exp
+                      role and permissions only when an org is selected
+                      ─▶ AccountSession.role / .permissions
+                         (serde default: older keychain sessions still load)
+
+sign-in ──▶ authenticate ──▶ 4xx organization_selection_required
+                               pending_authentication_token + organizations[{id,name}]
+                               ─▶ AccountError::OrganizationSelectionRequired
+                                  (code account.org_selection_required;
+                                   the pending token is never logged)
+        ──▶ AccountPort::select_organization(pending, org_id)
+              authenticate  organization-selection grant ─▶ session
+
+switch  ──▶ AccountPort::refresh(refresh_token, Some(org_id))
+              refresh_token grant + organization_id ─▶ token in that org
+background refresher: refresh(.., None) ─▶ the session's org is kept
+```
+
+- The org-selection grant is sent like the other grants: `client_id`, no
+  secret. The docs list a secret for it; whether it works without one is
+  unverified.
+- A refresh that asks for a specific org and is rejected must not sign the
+  user out. Only the background refresher ends a session, and it never asks
+  for an org.
 
 #### Sign-in required
 

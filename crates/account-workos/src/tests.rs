@@ -3,7 +3,9 @@
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use theodore_ports::{AccountConfig, AccountError, AccountPort, DeviceSignInPoll};
+use theodore_ports::{
+    AccountConfig, AccountError, AccountPort, DeviceSignInPoll, OrganizationChoice,
+};
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -305,7 +307,7 @@ async fn the_jwks_is_fetched_once_and_cached() {
         .await;
     let a = account(&server);
     a.exchange_code(&cfg(), "c1", "v").await.unwrap();
-    a.refresh(&cfg(), "rt").await.unwrap();
+    a.refresh(&cfg(), "rt", None).await.unwrap();
 }
 
 #[tokio::test]
@@ -342,7 +344,10 @@ async fn refresh_rotates_the_refresh_token_without_a_secret() {
         .expect(1)
         .mount(&server)
         .await;
-    let s = account(&server).refresh(&cfg(), "rt_old").await.unwrap();
+    let s = account(&server)
+        .refresh(&cfg(), "rt_old", None)
+        .await
+        .unwrap();
     assert_eq!(s.refresh_token, "rt_new");
 }
 
@@ -357,7 +362,7 @@ async fn a_revoked_refresh_token_is_rejected() {
         })))
         .mount(&server)
         .await;
-    match account(&server).refresh(&cfg(), "rt").await {
+    match account(&server).refresh(&cfg(), "rt", None).await {
         Err(AccountError::Rejected(m)) => assert!(m.contains("Session has already ended")),
         other => panic!("expected Rejected, got {other:?}"),
     }
@@ -383,7 +388,7 @@ async fn a_4xx_that_is_not_the_providers_error_is_a_network_failure() {
         .await;
     let a = account(&server);
     for rt in ["portal", "proxy"] {
-        match a.refresh(&cfg(), rt).await {
+        match a.refresh(&cfg(), rt, None).await {
             Err(AccountError::Network(m)) => assert!(m.contains("without a provider error"), "{m}"),
             other => panic!("{rt}: expected Network, got {other:?}"),
         }
@@ -504,9 +509,205 @@ async fn sign_out_ends_the_session_by_id() {
         expires_at: 0,
         session_id: Some("session_01".into()),
         organization_id: None,
+        role: None,
+        permissions: Vec::new(),
     };
     a.sign_out(&cfg(), &session).await.unwrap();
     // No session id: nothing to end remotely.
     session.session_id = None;
     a.sign_out(&cfg(), &session).await.unwrap();
+}
+
+fn org_token(server: &MockServer, org: &str) -> String {
+    testing::token(&json!({
+        "iss": server.uri(),
+        "sub": "user_01",
+        "sid": "session_01",
+        "org_id": org,
+        "role": "admin",
+        "permissions": ["widgets:create", "widgets:read"],
+        "exp": now_secs() + 300,
+        "iat": now_secs(),
+    }))
+}
+
+fn auth_body_in_org(server: &MockServer, refresh: &str, org: &str) -> serde_json::Value {
+    let mut body = auth_body(server, refresh);
+    body["organization_id"] = json!(org);
+    body["access_token"] = json!(org_token(server, org));
+    body
+}
+
+#[tokio::test]
+async fn refresh_with_an_organization_sends_it() {
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .and(body_string_contains("refresh_token=rt_old"))
+        .and(body_string_contains("organization_id=org_02"))
+        .and(no_secret)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(auth_body_in_org(&server, "rt_new", "org_02")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let s = account(&server)
+        .refresh(&cfg(), "rt_old", Some("org_02"))
+        .await
+        .unwrap();
+    assert_eq!(s.organization_id.as_deref(), Some("org_02"));
+}
+
+#[tokio::test]
+async fn refresh_without_an_organization_does_not_send_the_field() {
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(|req: &Request| !String::from_utf8_lossy(&req.body).contains("organization_id"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(auth_body(&server, "rt_new")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    account(&server)
+        .refresh(&cfg(), "rt_old", None)
+        .await
+        .unwrap();
+}
+
+fn selection_required(token: &str) -> ResponseTemplate {
+    ResponseTemplate::new(400).set_body_json(json!({
+        "code": "organization_selection_required",
+        "message": "The user must choose an organization to continue signing in.",
+        "pending_authentication_token": token,
+        "organizations": [
+            {"id": "org_01", "name": "Acme"},
+            {"id": "org_02", "name": "Globex"},
+        ],
+        "user": {"id": "user_01", "email": "ada@example.com"},
+    }))
+}
+
+#[tokio::test]
+async fn organization_selection_required_carries_the_choices() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .respond_with(selection_required("pending_secret_1"))
+        .mount(&server)
+        .await;
+    let err = account(&server)
+        .exchange_code(&cfg(), "code_1", "verifier_1")
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "account.org_selection_required");
+    assert!(!err.to_string().contains("pending_secret_1"));
+    assert!(!format!("{err:?}").contains("pending_secret_1"));
+    let AccountError::OrganizationSelectionRequired(sel) = err else {
+        panic!("expected OrganizationSelectionRequired, got {err:?}");
+    };
+    assert_eq!(sel.pending_authentication_token, "pending_secret_1");
+    assert_eq!(
+        sel.organizations,
+        vec![
+            OrganizationChoice {
+                id: "org_01".into(),
+                name: "Acme".into()
+            },
+            OrganizationChoice {
+                id: "org_02".into(),
+                name: "Globex".into()
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn organization_selection_without_a_pending_token_is_a_protocol_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "code": "organization_selection_required",
+            "message": "pick one",
+        })))
+        .mount(&server)
+        .await;
+    assert!(matches!(
+        account(&server).exchange_code(&cfg(), "c", "v").await,
+        Err(AccountError::Protocol(_))
+    ));
+}
+
+#[tokio::test]
+async fn select_organization_sends_the_grant_and_finishes_the_sign_in() {
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains(
+            "grant_type=urn%3Aworkos%3Aoauth%3Agrant-type%3Aorganization-selection",
+        ))
+        .and(body_string_contains(format!("client_id={CLIENT}")))
+        .and(body_string_contains(
+            "pending_authentication_token=pending_1",
+        ))
+        .and(body_string_contains("organization_id=org_02"))
+        .and(no_secret)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(auth_body_in_org(&server, "rt_1", "org_02")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let s = account(&server)
+        .select_organization(&cfg(), "pending_1", "org_02")
+        .await
+        .unwrap();
+    assert_eq!(s.organization_id.as_deref(), Some("org_02"));
+    assert_eq!(s.refresh_token, "rt_1");
+}
+
+#[tokio::test]
+async fn role_and_permissions_land_in_the_session() {
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains("code=in_org"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(auth_body_in_org(&server, "rt_1", "org_01")),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains("code=no_org"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(testing_no_org_body(&server)))
+        .mount(&server)
+        .await;
+    let a = account(&server);
+    let s = a.exchange_code(&cfg(), "in_org", "v").await.unwrap();
+    assert_eq!(s.role.as_deref(), Some("admin"));
+    assert_eq!(s.permissions, vec!["widgets:create", "widgets:read"]);
+
+    // A token without those claims (no organization selected) leaves them empty.
+    let s = a.exchange_code(&cfg(), "no_org", "v").await.unwrap();
+    assert_eq!(s.role, None);
+    assert!(s.permissions.is_empty());
+}
+
+fn testing_no_org_body(server: &MockServer) -> serde_json::Value {
+    let mut body = auth_body(server, "rt_2");
+    body["access_token"] = json!(testing::token(&json!({
+        "iss": server.uri(),
+        "sub": "user_01",
+        "sid": "session_01",
+        "exp": now_secs() + 300,
+        "iat": now_secs(),
+    })));
+    body
 }

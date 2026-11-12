@@ -36,6 +36,11 @@ pub struct Claims {
     pub exp: i64,
     pub sid: Option<String>,
     pub org_id: Option<String>,
+    /// Role slug; only when an organization is selected.
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub permissions: Vec<String>,
     pub client_id: Option<String>,
 }
 

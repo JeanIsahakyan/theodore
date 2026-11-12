@@ -9,7 +9,13 @@
 //! device   POST /user_management/authorize/device ─▶ user_code
 //!            └─▶ poll /user_management/authenticate  device_code grant
 //! refresh  POST /user_management/authenticate  refresh_token grant (rotates)
+//!            └─▶ + organization_id: the new token is authorized in that org
+//! orgs     authenticate ─▶ 4xx organization_selection_required
+//!            (pending_authentication_token, organizations[])
+//!            └─▶ POST /user_management/authenticate  organization-selection
+//!                grant + pending token + organization_id
 //! validate GET  /sso/jwks/<client_id> ─▶ RS256, iss, exp, sub
+//!            claims carried into the session: sid, org_id, role, permissions
 //! ```
 
 pub mod jwt;
@@ -23,7 +29,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use theodore_ports::{
     AccountConfig, AccountError, AccountPort, AccountProfile, AccountResult, AccountSession,
-    BrowserSignIn, CallbackListener, DeviceSignIn, DeviceSignInPoll, is_loopback_redirect,
+    BrowserSignIn, CallbackListener, DeviceSignIn, DeviceSignInPoll, OrganizationChoice,
+    OrganizationSelection, is_loopback_redirect,
 };
 use url::Url;
 
@@ -32,6 +39,8 @@ pub const DEFAULT_API_BASE: &str = "https://api.workos.com/";
 const GRANT_CODE: &str = "authorization_code";
 const GRANT_REFRESH: &str = "refresh_token";
 const GRANT_DEVICE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+const GRANT_ORG_SELECTION: &str = "urn:workos:oauth:grant-type:organization-selection";
+const ORG_SELECTION_REQUIRED: &str = "organization_selection_required";
 
 pub struct WorkosAccount {
     http: reqwest::Client,
@@ -145,12 +154,18 @@ impl WorkosAccount {
                 "{path} failed ({status}) without a provider error"
             )));
         };
+        let message = match (err.error_description, err.message) {
+            (Some(m), _) | (None, Some(m)) => m,
+            // The raw body of an org-selection answer holds the pending
+            // token: never echo it.
+            (None, None) if code == ORG_SELECTION_REQUIRED => String::new(),
+            (None, None) => text.chars().take(200).collect(),
+        };
         Ok(Reply::Err {
             code,
-            message: err
-                .error_description
-                .or(err.message)
-                .unwrap_or_else(|| text.chars().take(200).collect()),
+            message,
+            pending_authentication_token: err.pending_authentication_token,
+            organizations: err.organizations,
         })
     }
 
@@ -161,9 +176,16 @@ impl WorkosAccount {
     ) -> AccountResult<AccountSession> {
         match self.post_form("user_management/authenticate", form).await? {
             Reply::Ok(body) => self.session_from(cfg, &body).await,
-            Reply::Err { code, message } => {
-                Err(AccountError::Rejected(format!("{code}: {message}")))
-            }
+            Reply::Err {
+                code,
+                message,
+                pending_authentication_token,
+                organizations,
+            } => Err(if code == ORG_SELECTION_REQUIRED {
+                org_selection_error(pending_authentication_token, organizations)
+            } else {
+                AccountError::Rejected(format!("{code}: {message}"))
+            }),
         }
     }
 
@@ -186,6 +208,8 @@ impl WorkosAccount {
             expires_at: claims.exp.saturating_mul(1000),
             session_id: claims.sid,
             organization_id: resp.organization_id.or(claims.org_id),
+            role: claims.role.filter(|s| !s.is_empty()),
+            permissions: claims.permissions,
         })
     }
 
@@ -259,9 +283,39 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// `organization_selection_required` without a usable pending token or
+/// organization list is a protocol problem, not something to pick from.
+fn org_selection_error(
+    pending_authentication_token: Option<String>,
+    organizations: Vec<OrganizationBody>,
+) -> AccountError {
+    match pending_authentication_token.filter(|t| !t.is_empty()) {
+        Some(pending_authentication_token) if !organizations.is_empty() => {
+            AccountError::OrganizationSelectionRequired(OrganizationSelection {
+                pending_authentication_token,
+                organizations: organizations
+                    .into_iter()
+                    .map(|o| OrganizationChoice {
+                        id: o.id,
+                        name: o.name,
+                    })
+                    .collect(),
+            })
+        }
+        _ => AccountError::Protocol(
+            "organization selection required without a pending token or organizations".into(),
+        ),
+    }
+}
+
 enum Reply {
     Ok(String),
-    Err { code: String, message: String },
+    Err {
+        code: String,
+        message: String,
+        pending_authentication_token: Option<String>,
+        organizations: Vec<OrganizationBody>,
+    },
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -270,6 +324,16 @@ struct ErrorBody {
     error_description: Option<String>,
     code: Option<String>,
     message: Option<String>,
+    pending_authentication_token: Option<String>,
+    #[serde(default)]
+    organizations: Vec<OrganizationBody>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrganizationBody {
+    id: String,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,7 +440,7 @@ impl AccountPort for WorkosAccount {
                     interval: d.interval.unwrap_or(5).max(1),
                 })
             }
-            Reply::Err { code, message } => {
+            Reply::Err { code, message, .. } => {
                 Err(AccountError::Rejected(format!("{code}: {message}")))
             }
         }
@@ -400,7 +464,7 @@ impl AccountPort for WorkosAccount {
             Reply::Ok(body) => Ok(DeviceSignInPoll::Done(Box::new(
                 self.session_from(cfg, &body).await?,
             ))),
-            Reply::Err { code, message } => match code.as_str() {
+            Reply::Err { code, message, .. } => match code.as_str() {
                 "authorization_pending" => Ok(DeviceSignInPoll::Pending),
                 // RFC 8628 §3.5: every slow_down adds 5 seconds.
                 "slow_down" => Ok(DeviceSignInPoll::SlowDown {
@@ -417,13 +481,32 @@ impl AccountPort for WorkosAccount {
         &self,
         cfg: &AccountConfig,
         refresh_token: &str,
+        organization_id: Option<&str>,
+    ) -> AccountResult<AccountSession> {
+        let mut form = vec![
+            ("grant_type", GRANT_REFRESH),
+            ("client_id", cfg.client_id.as_str()),
+            ("refresh_token", refresh_token),
+        ];
+        if let Some(org) = organization_id {
+            form.push(("organization_id", org));
+        }
+        self.authenticate(cfg, &form).await
+    }
+
+    async fn select_organization(
+        &self,
+        cfg: &AccountConfig,
+        pending_authentication_token: &str,
+        organization_id: &str,
     ) -> AccountResult<AccountSession> {
         self.authenticate(
             cfg,
             &[
-                ("grant_type", GRANT_REFRESH),
+                ("grant_type", GRANT_ORG_SELECTION),
                 ("client_id", &cfg.client_id),
-                ("refresh_token", refresh_token),
+                ("pending_authentication_token", pending_authentication_token),
+                ("organization_id", organization_id),
             ],
         )
         .await

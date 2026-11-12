@@ -870,7 +870,10 @@ impl Core {
             .0
             .deps
             .account
-            .refresh(&cfg, &current.refresh_token)
+            // No organization: the provider keeps the session's current
+            // one. Asking for a specific org belongs to an explicit switch,
+            // whose rejection must not end the session.
+            .refresh(&cfg, &current.refresh_token, None)
             .await
         {
             Ok(next) => {

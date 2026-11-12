@@ -2724,6 +2724,7 @@ pub struct FakeAccount {
     enabled: Mutex<bool>,
     exchanges: Mutex<VecDeque<AccountResult<AccountSession>>>,
     refreshes: Mutex<VecDeque<AccountResult<AccountSession>>>,
+    org_selections: Mutex<VecDeque<AccountResult<AccountSession>>>,
     device_polls: Mutex<VecDeque<AccountResult<DeviceSignInPoll>>>,
     callbacks: Mutex<Option<tokio::sync::mpsc::Sender<IncomingCallback>>>,
     calls: Mutex<Vec<String>>,
@@ -2757,6 +2758,8 @@ pub fn sample_account_session(refresh: &str, expires_at: Millis) -> AccountSessi
         expires_at,
         session_id: Some("session_01".into()),
         organization_id: None,
+        role: None,
+        permissions: Vec::new(),
     }
 }
 
@@ -2766,6 +2769,7 @@ impl FakeAccount {
             enabled: Mutex::new(true),
             exchanges: Mutex::new(VecDeque::new()),
             refreshes: Mutex::new(VecDeque::new()),
+            org_selections: Mutex::new(VecDeque::new()),
             device_polls: Mutex::new(VecDeque::new()),
             callbacks: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
@@ -2782,6 +2786,10 @@ impl FakeAccount {
 
     pub fn push_refresh(&self, r: AccountResult<AccountSession>) {
         self.refreshes.lock().unwrap().push_back(r);
+    }
+
+    pub fn push_org_selection(&self, r: AccountResult<AccountSession>) {
+        self.org_selections.lock().unwrap().push_back(r);
     }
 
     pub fn push_device_poll(&self, r: AccountResult<DeviceSignInPoll>) {
@@ -2905,13 +2913,33 @@ impl AccountPort for FakeAccount {
         &self,
         _cfg: &AccountConfig,
         refresh_token: &str,
+        organization_id: Option<&str>,
     ) -> AccountResult<AccountSession> {
-        self.call(format!("refresh:{refresh_token}"));
+        match organization_id {
+            Some(org) => self.call(format!("refresh:{refresh_token}:{org}")),
+            None => self.call(format!("refresh:{refresh_token}")),
+        }
         self.refreshes
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Err(AccountError::Network("no refresh scripted".into())))
+    }
+
+    async fn select_organization(
+        &self,
+        _cfg: &AccountConfig,
+        pending_authentication_token: &str,
+        organization_id: &str,
+    ) -> AccountResult<AccountSession> {
+        self.call(format!(
+            "select_organization:{pending_authentication_token}:{organization_id}"
+        ));
+        self.org_selections
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(AccountError::Rejected("no org selection scripted".into())))
     }
 
     async fn sign_out(&self, _cfg: &AccountConfig, session: &AccountSession) -> AccountResult<()> {
