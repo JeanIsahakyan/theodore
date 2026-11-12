@@ -167,6 +167,21 @@ all but one tester.
 The login is real, so the app can see every repo it can. Sticking to
 `THEODORE_QA_REPO` is on the tester.
 
+## Two devices (fleet)
+
+A fleet run needs two copies signed in as one user, each with its own
+session and device key. A dev build reads `THEODORE_KEYCHAIN_SERVICE`
+(`app.theodore.secrets.dev.<name>`; ignored by every other build), so the
+second copy gets its own vault and signs in once on its own:
+
+```sh
+QA=/tmp/theodore-qa/b _qa_launch THEODORE_KEYCHAIN_SERVICE=app.theodore.secrets.dev.b \
+  THEODORE_WORKOS_CLIENT_ID=<staging client> THEODORE_CLOUD_URL=<staging cloud>
+```
+
+Two copies sharing one vault share one refresh token; the first refresh
+signs the other out.
+
 ## Limits and workarounds
 
 | Limit | Do |

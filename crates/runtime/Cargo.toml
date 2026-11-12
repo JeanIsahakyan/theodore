@@ -10,6 +10,7 @@ theodore-domain.workspace = true
 theodore-ports.workspace = true
 theodore-contract.workspace = true
 theodore-app.workspace = true
+theodore-fleet.workspace = true
 theodore-host-http.workspace = true
 theodore-host-github.workspace = true
 theodore-host-gitlab = { path = "../host-gitlab" }

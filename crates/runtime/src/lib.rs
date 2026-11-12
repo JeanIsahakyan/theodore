@@ -153,7 +153,10 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         .with_context(|| format!("creating {}", cfg.data_dir.display()))?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let secrets: Arc<dyn Secrets> = Arc::new(theodore_secrets::KeychainSecrets::with_service(
-        identity::keychain_service(cfg.build_env),
+        identity::keychain_service_with(
+            cfg.build_env,
+            std::env::var("THEODORE_KEYCHAIN_SERVICE").ok().as_deref(),
+        ),
     ));
     let token = Arc::new(HostToken::new(secrets.clone()));
     let github = Arc::new(theodore_host_github::GithubAdapter::new(
@@ -315,9 +318,12 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
             worktree_locks.clone(),
         )),
         code_intel: code_intel(cfg).await,
-        // The socket adapter is wired in once it lands; until then the
-        // fleet is hidden.
-        fleet: Arc::new(theodore_ports::NoFleet),
+        // Fixture and sandbox modes have no account, so no fleet.
+        fleet: if cfg.fixtures.is_none() && cfg.sandbox.is_none() {
+            Arc::new(theodore_fleet::WsFleet::new())
+        } else {
+            Arc::new(theodore_ports::NoFleet)
+        },
     };
     let (core, receivers) = Core::start(deps);
     if let Some(sb) = &sandbox {

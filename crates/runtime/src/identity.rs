@@ -92,6 +92,24 @@ pub fn keychain_service(env: BuildEnv) -> String {
     suffixed(theodore_secrets::VAULT_SERVICE, '.', env)
 }
 
+/// `THEODORE_KEYCHAIN_SERVICE`: a dev build may use its own vault, named
+/// `<dev service>.<anything>`, so a second copy on one machine has its own
+/// account session and fleet device key — two devices for a fleet test
+/// (docs/live-qa.md). Ignored by every other build, and if malformed.
+pub fn keychain_service_with(env: BuildEnv, requested: Option<&str>) -> String {
+    let base = keychain_service(env);
+    match requested.map(str::trim) {
+        Some(r)
+            if env == BuildEnv::Dev
+                && r.len() > base.len() + 1
+                && r.starts_with(&format!("{base}.")) =>
+        {
+            r.to_string()
+        }
+        _ => base,
+    }
+}
+
 /// The URL scheme the bundle registers: `theodore[-<env>]`. `None` for
 /// dev: a bare binary can't receive one.
 pub fn url_scheme(env: BuildEnv) -> Option<String> {
@@ -115,6 +133,28 @@ fn suffixed(base: &str, sep: char, env: BuildEnv) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn only_a_dev_build_takes_its_own_vault() {
+        let dev = keychain_service(BuildEnv::Dev);
+        let own = format!("{dev}.b");
+        assert_eq!(keychain_service_with(BuildEnv::Dev, Some(&own)), own);
+        assert_eq!(keychain_service_with(BuildEnv::Dev, None), dev);
+        assert_eq!(
+            keychain_service_with(BuildEnv::Dev, Some("app.theodore.secrets")),
+            dev
+        );
+        assert_eq!(
+            keychain_service_with(BuildEnv::Dev, Some(&format!("{dev}."))),
+            dev
+        );
+        let prod = keychain_service(BuildEnv::Production);
+        assert_eq!(
+            keychain_service_with(BuildEnv::Production, Some(&format!("{prod}.b"))),
+            prod
+        );
+    }
+
     use super::*;
     use BuildEnv::*;
 
