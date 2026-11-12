@@ -31,6 +31,49 @@ pub enum AccountError {
     Config(String),
     #[error("protocol: {0}")]
     Protocol(String),
+    /// The user belongs to several organizations and the provider wants
+    /// one picked before it issues a session. Finish it with
+    /// [`AccountPort::select_organization`]. The message never carries the
+    /// pending token.
+    #[error("organization selection required ({} organizations)", .0.organizations.len())]
+    OrganizationSelectionRequired(OrganizationSelection),
+}
+
+/// One organization the user can sign in to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrganizationChoice {
+    pub id: String,
+    pub name: String,
+}
+
+/// One of the signed-in user's organizations, as the Theodore cloud lists
+/// them (`GET /v1/orgs`): active memberships, the personal one first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountOrganization {
+    pub id: String,
+    pub name: String,
+    /// The user's role slug in it, when the membership has one.
+    pub role: Option<String>,
+    /// The user's own personal organization (created by the cloud).
+    pub personal: bool,
+}
+
+/// What the provider hands back when a sign-in needs an organization.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OrganizationSelection {
+    /// Short-lived, single-use credential for the pending sign-in; a secret,
+    /// so [`Debug`](std::fmt::Debug) redacts it.
+    pub pending_authentication_token: String,
+    pub organizations: Vec<OrganizationChoice>,
+}
+
+impl std::fmt::Debug for OrganizationSelection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OrganizationSelection")
+            .field("pending_authentication_token", &"<redacted>")
+            .field("organizations", &self.organizations)
+            .finish()
+    }
 }
 
 impl AccountError {
@@ -43,6 +86,7 @@ impl AccountError {
             AccountError::InvalidToken(_) => "account.invalid_token",
             AccountError::Config(_) => "account.config",
             AccountError::Protocol(_) => "account.protocol",
+            AccountError::OrganizationSelectionRequired(_) => "account.org_selection_required",
         }
     }
 }
@@ -57,6 +101,10 @@ pub struct AccountConfig {
     /// an app URL scheme, e.g. `theodore://callback`, which the OS hands to
     /// the app (see [`is_loopback_redirect`]).
     pub redirect_uri: String,
+    /// The Theodore cloud (docs/cloud.md), without a trailing `/`, e.g.
+    /// `https://theodore-cloud.example.workers.dev`. `None`: this build has
+    /// no cloud, so no organizations; signing in works without it.
+    pub cloud_url: Option<String>,
 }
 
 /// `http`/`https` redirects are caught by a loopback listener the adapter
@@ -88,6 +136,13 @@ pub struct AccountSession {
     /// The access token's `sid`, used to end the session on sign-out.
     pub session_id: Option<String>,
     pub organization_id: Option<String>,
+    /// The access token's `role` slug; present only with an organization.
+    /// Stored sessions from before organizations lack it.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// The access token's `permissions`; empty when it carries none.
+    #[serde(default)]
+    pub permissions: Vec<String>,
 }
 
 /// Query of the redirect the browser lands on.
@@ -111,6 +166,9 @@ pub enum CallbackPage {
     /// Not this sign-in's callback (stale tab, wrong `state`): the listener
     /// keeps waiting for the real one.
     Ignored,
+    /// The sign-in went through but needs an organization picked: the tab
+    /// sends the user back to the app, where the picker is.
+    ChooseOrganization,
 }
 
 /// One request that reached the loopback redirect path. `reply` picks the
@@ -196,11 +254,43 @@ pub trait AccountPort: Send + Sync {
     ) -> AccountResult<DeviceSignInPoll>;
 
     /// Trades the refresh token for a new session (rotated refresh token).
+    /// `organization_id: Some(..)` asks for the new access token to be
+    /// authorized in that organization; `None` keeps the session's current
+    /// one.
     async fn refresh(
         &self,
         cfg: &AccountConfig,
         refresh_token: &str,
+        organization_id: Option<&str>,
     ) -> AccountResult<AccountSession>;
+
+    /// Finishes a sign-in that failed with
+    /// [`AccountError::OrganizationSelectionRequired`]. Needs the client
+    /// secret, so it goes through the Theodore cloud
+    /// (`POST /v1/auth/select-organization`); the session it returns is
+    /// validated like a code exchange's. No cloud: `Config`.
+    async fn select_organization(
+        &self,
+        cfg: &AccountConfig,
+        pending_authentication_token: &str,
+        organization_id: &str,
+    ) -> AccountResult<AccountSession>;
+
+    /// The caller's personal organization, created by the cloud on first
+    /// use (`POST /v1/orgs/personal`); returns its id. Idempotent. No
+    /// cloud: `Config`.
+    async fn ensure_personal_organization(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<String>;
+
+    /// The caller's organizations (`GET /v1/orgs`). No cloud: `Config`.
+    async fn organizations(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<Vec<AccountOrganization>>;
 
     /// Ends the session at the provider. Best effort: the local sign-out
     /// happens whatever this returns.
@@ -246,7 +336,30 @@ impl AccountPort for LocalAccount {
         &self,
         _cfg: &AccountConfig,
         _refresh_token: &str,
+        _organization_id: Option<&str>,
     ) -> AccountResult<AccountSession> {
+        Err(AccountError::Unavailable)
+    }
+    async fn select_organization(
+        &self,
+        _cfg: &AccountConfig,
+        _pending_authentication_token: &str,
+        _organization_id: &str,
+    ) -> AccountResult<AccountSession> {
+        Err(AccountError::Unavailable)
+    }
+    async fn ensure_personal_organization(
+        &self,
+        _cfg: &AccountConfig,
+        _access_token: &str,
+    ) -> AccountResult<String> {
+        Err(AccountError::Unavailable)
+    }
+    async fn organizations(
+        &self,
+        _cfg: &AccountConfig,
+        _access_token: &str,
+    ) -> AccountResult<Vec<AccountOrganization>> {
         Err(AccountError::Unavailable)
     }
     async fn sign_out(&self, _cfg: &AccountConfig, _session: &AccountSession) -> AccountResult<()> {
@@ -256,7 +369,7 @@ impl AccountPort for LocalAccount {
 
 #[cfg(test)]
 mod tests {
-    use super::is_loopback_redirect;
+    use super::*;
 
     #[test]
     fn http_redirects_are_loopback_and_app_schemes_are_not() {
@@ -264,5 +377,33 @@ mod tests {
         assert!(is_loopback_redirect("HTTPS://example.com/cb"));
         assert!(!is_loopback_redirect("theodore://callback"));
         assert!(!is_loopback_redirect("not a url"));
+    }
+
+    #[test]
+    fn a_session_stored_before_organizations_still_loads() {
+        let old = r#"{
+            "user": {"id": "u", "email": "a@b.c", "first_name": null,
+                     "last_name": null, "avatar_url": null},
+            "access_token": "at", "refresh_token": "rt", "expires_at": 1,
+            "session_id": "s", "organization_id": "org_1"
+        }"#;
+        let s: AccountSession = serde_json::from_str(old).unwrap();
+        assert_eq!(s.organization_id.as_deref(), Some("org_1"));
+        assert_eq!(s.role, None);
+        assert!(s.permissions.is_empty());
+    }
+
+    #[test]
+    fn the_pending_token_stays_out_of_display_and_debug() {
+        let e = AccountError::OrganizationSelectionRequired(OrganizationSelection {
+            pending_authentication_token: "pending-secret".into(),
+            organizations: vec![OrganizationChoice {
+                id: "org_1".into(),
+                name: "Acme".into(),
+            }],
+        });
+        assert_eq!(e.code(), "account.org_selection_required");
+        assert!(!e.to_string().contains("pending-secret"));
+        assert!(!format!("{e:?}").contains("pending-secret"));
     }
 }

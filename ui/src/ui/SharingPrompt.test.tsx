@@ -68,6 +68,7 @@ const signedIn = {
   required: true,
   user: { id: 'user_01ABC', email: 'a@b.c', name: null, avatar_url: null },
   session_ended: false,
+  organization: null,
 };
 
 describe('SharingPrompt', () => {

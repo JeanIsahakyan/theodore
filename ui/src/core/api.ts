@@ -2,6 +2,7 @@
 import { getTransport } from './transport';
 import { ACCOUNT_REQUIRED } from './accountGate';
 import type {
+  AccountOrganization,
   AccountSignInRequest,
   AccountSignInStart,
   AccountSignInState,
@@ -487,6 +488,26 @@ export const api = {
     call<AccountSignInState>('account_sign_in_poll', undefined, true),
   accountSignInCancel: () => call<null>('account_sign_in_cancel'),
   accountSignOut: () => call<AccountStatus>('account_sign_out'),
+  /** Finishes a sign-in that stopped at the organization list. Quiet: the
+   *  sign-in screen shows the failure. */
+  accountSignInChooseOrganization: (organizationId: string) =>
+    call<AccountSignInState>(
+      'account_sign_in_choose_organization',
+      { organizationId },
+      true,
+    ),
+  /** Switches the session into another organization. Quiet: Settings
+   *  shows the failure next to the switcher; the old one stays. */
+  accountSwitchOrganization: (organizationId: string) =>
+    call<AccountStatus>(
+      'account_switch_organization',
+      { organizationId },
+      true,
+    ),
+  /** The signed-in user's organizations, the personal one first. Quiet:
+   *  without the list the switcher just stays hidden. */
+  accountOrganizations: () =>
+    call<AccountOrganization[]>('account_organizations', undefined, true),
   /** Brings the window forward after the browser hands the sign-in back.
    *  Cosmetic: a failure is ignored, never toasted. */
   focusWindow: (): Promise<null> =>

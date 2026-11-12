@@ -31,3 +31,9 @@ pre-push:
       run: '[ ! -f ui/package.json ] || pnpm -C ui typecheck'
     ui-lint:
       run: '[ ! -f ui/package.json ] || pnpm -C ui lint'
+    cloud-typecheck:
+      run: '[ ! -f cloud/package.json ] || pnpm -C cloud typecheck'
+    cloud-lint:
+      run: '[ ! -f cloud/package.json ] || pnpm -C cloud lint'
+    cloud-test:
+      run: '[ ! -f cloud/package.json ] || pnpm -C cloud test'

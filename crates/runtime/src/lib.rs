@@ -43,6 +43,13 @@ const WORKTREE_GC_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// Ignored in fixture and sandbox modes, which have no account provider.
 pub const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("THEODORE_WORKOS_CLIENT_ID");
 
+/// The Theodore cloud (docs/cloud.md) for this channel, baked in when the
+/// build ran with `THEODORE_CLOUD_URL` set (`build.yml`'s `cloud-url`
+/// input). Same order as the client id: the env var at run time, then the
+/// `account.cloud_url` setting, then this. Without one, a build signs in as
+/// before but has no organizations.
+pub const BUILT_IN_CLOUD_URL: Option<&str> = option_env!("THEODORE_CLOUD_URL");
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     /// The build's own data dir by default (`identity::default_data_dir`):
@@ -299,6 +306,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         device_login: a.device_login,
         account: a.account,
         account_client_id: BUILT_IN_CLIENT_ID.map(str::to_string),
+        account_cloud_url: BUILT_IN_CLOUD_URL.map(str::to_string),
         claude_home,
         commands: Arc::new(theodore_agents::ShellRunner::new()),
         terminals: Arc::new(theodore_agents::PtyRunner::new()),

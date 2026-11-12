@@ -177,6 +177,16 @@ mod tests {
                 "account.rejected",
             ),
             (AccountError::Network("x".into()).into(), "account.network"),
+            (
+                AccountError::OrganizationSelectionRequired(
+                    theodore_ports::OrganizationSelection {
+                        pending_authentication_token: "pending".into(),
+                        organizations: Vec::new(),
+                    },
+                )
+                .into(),
+                "account.org_selection_required",
+            ),
             (AppError::AccountRequired, "account.required"),
             (AppError::OfflineNotCached, "app.offline_not_cached"),
             (AppError::Offline, "app.offline"),

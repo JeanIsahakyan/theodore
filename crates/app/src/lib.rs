@@ -26,6 +26,8 @@ mod tests;
 #[cfg(test)]
 mod account_gate_tests;
 #[cfg(test)]
+mod account_org_tests;
+#[cfg(test)]
 mod account_tests;
 #[cfg(test)]
 mod activity_tests;

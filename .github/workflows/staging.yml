@@ -14,7 +14,8 @@ name: Staging
 # never `releases/latest`. No `v*` tag or release is touched here.
 #
 # Variables: THEODORE_WORKOS_CLIENT_ID_STAGING, the staging account's
-# client id, baked into the build. Secrets and the telemetry variables:
+# client id, and THEODORE_CLOUD_URL_STAGING, the staging cloud (optional),
+# both baked into the build. Secrets and the telemetry variables:
 # build.yml.
 
 on:
@@ -39,6 +40,7 @@ jobs:
       version-suffix: -staging.${{ github.run_number }}
       release-tag: channel-staging
       workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID_STAGING }}
+      cloud-url: ${{ vars.THEODORE_CLOUD_URL_STAGING }}
     secrets: inherit
 
   publish:

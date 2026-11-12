@@ -203,6 +203,7 @@ async fn signed_out_until_a_session_exists() {
             required: true,
             user: None,
             session_ended: false,
+            organization: None,
         }
     );
 }

@@ -12,7 +12,8 @@ name: Release
 # pushed by hand (docs/releasing.md "Cutting a production release").
 #
 # Variables: THEODORE_WORKOS_CLIENT_ID, the production account's client id,
-# baked into the build (unset: no account). Secrets and the telemetry
+# baked into the build (unset: no account), and THEODORE_CLOUD_URL, the
+# production cloud (optional; unset: no organizations). Secrets and the telemetry
 # variables: build.yml.
 
 on:
@@ -32,6 +33,7 @@ jobs:
     with:
       build-env: production
       workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
+      cloud-url: ${{ vars.THEODORE_CLOUD_URL }}
     secrets: inherit
 
   publish:

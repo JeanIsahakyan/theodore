@@ -1,6 +1,8 @@
 //! Theodore account (plan "Theodore account"): an identity with Theodore
 //! itself, separate from the host tokens; required wherever it's configured. `account_status`,
-//! `account_sign_in_start` / `_poll` / `_cancel`, `account_sign_out`.
+//! `account_sign_in_start` / `_poll` / `_cancel` / `_choose_organization`,
+//! `account_sign_out`, `account_switch_organization`,
+//! `account_organizations`.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -29,6 +31,37 @@ pub struct AccountStatus {
     /// maximum session length reached), not by the user: the sign-in
     /// screen says so. Cleared by the next sign-in or sign-out.
     pub session_ended: bool,
+    /// The organization the session is authorized in. `None` while
+    /// signed out, in a build without the Theodore cloud, or until the
+    /// personal one is set up (right after a first sign-in).
+    pub organization: Option<AccountOrganizationRef>,
+}
+
+/// The session's organization, as its access token says.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AccountOrganizationRef {
+    pub id: String,
+    /// The user's role slug in it (`admin`, `member`, …).
+    pub role: Option<String>,
+}
+
+/// One organization a sign-in can finish in
+/// (`AccountSignInState::ChooseOrganization`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AccountOrganizationChoice {
+    pub id: String,
+    pub name: String,
+}
+
+/// `account_organizations`: one of the signed-in user's organizations,
+/// the personal one first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AccountOrganization {
+    pub id: String,
+    pub name: String,
+    pub role: Option<String>,
+    /// The user's own personal organization.
+    pub personal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -80,5 +113,11 @@ pub enum AccountSignInState {
     },
     Done {
         status: AccountStatus,
+    },
+    /// The user is in several organizations: pick one and finish with
+    /// `account_sign_in_choose_organization`. Reported until then (or a
+    /// cancel); nothing is stored yet.
+    ChooseOrganization {
+        organizations: Vec<AccountOrganizationChoice>,
     },
 }

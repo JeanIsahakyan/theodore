@@ -114,6 +114,38 @@ jobs:
         if: steps.ui.outputs.present != 'true'
         run: echo "ui/ not scaffolded yet, skipping"
 
+  cloud:
+    # The Worker in cloud/ (docs/cloud.md). Own lockfile, so its own install;
+    # tests run against a fake WorkOS, no network and no secrets.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: cloud/pnpm-lock.yaml
+
+      - name: install
+        run: pnpm -C cloud install --frozen-lockfile
+
+      - name: typecheck
+        run: pnpm -C cloud typecheck
+
+      - name: lint
+        run: pnpm -C cloud lint
+
+      - name: format
+        run: pnpm -C cloud format:check
+
+      - name: test
+        run: pnpm -C cloud test
+
   ui-e2e:
     # `tauri-driver` only speaks WebDriver to WebKitWebDriver (Linux) or
     # Edge WebDriver (Windows) — there is no WKWebView (macOS) backend, so
