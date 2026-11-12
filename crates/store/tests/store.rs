@@ -138,6 +138,32 @@ fn the_fleet_journal_keeps_the_last_events_per_space() {
     assert_eq!(store.fleet_journal_since("rs_2", 0, 10).unwrap().len(), 1);
 }
 
+/// Seen fleet requests outlive the process; done never goes back to
+/// claiming, and old ones are forgotten.
+#[test]
+fn fleet_seen_requests_survive_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("theodore.db");
+    {
+        let store = SqliteStore::open(&path).unwrap();
+        store.fleet_seen_put("r_old", 100, true, 0).unwrap();
+        store.fleet_seen_put("r1", 1_000, false, 0).unwrap();
+        store.fleet_seen_put("r1", 1_000, true, 0).unwrap();
+        store.fleet_seen_put("r1", 1_000, false, 0).unwrap();
+        store.fleet_seen_put("r2", 2_000, false, 500).unwrap();
+    }
+    let store = SqliteStore::open(&path).unwrap();
+    let mut all = store.fleet_seen_all().unwrap();
+    all.sort();
+    assert_eq!(
+        all,
+        vec![
+            ("r1".to_string(), 1_000, true),
+            ("r2".to_string(), 2_000, false)
+        ]
+    );
+}
+
 fn insert(store: &SqliteStore, model: &str, id: &str, data: serde_json::Value) -> u64 {
     let actions = store
         .apply(vec![NewAction {

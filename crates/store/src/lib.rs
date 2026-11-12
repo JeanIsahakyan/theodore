@@ -331,6 +331,45 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn fleet_seen_put(
+        &self,
+        req_id: &str,
+        issued_at_ms: i64,
+        done: bool,
+        forget_before_ms: i64,
+    ) -> StoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM fleet_seen WHERE issued_at < ?1",
+            params![forget_before_ms],
+        )
+        .map_err(de)?;
+        conn.execute(
+            "INSERT INTO fleet_seen (req_id, issued_at, done) VALUES (?1, ?2, ?3)
+             ON CONFLICT (req_id) DO UPDATE SET done = MAX(done, ?3)",
+            params![req_id, issued_at_ms, done as i64],
+        )
+        .map_err(de)?;
+        Ok(())
+    }
+
+    fn fleet_seen_all(&self) -> StoreResult<Vec<(String, i64, bool)>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT req_id, issued_at, done FROM fleet_seen")
+            .map_err(de)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                ))
+            })
+            .map_err(de)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(de)
+    }
+
     fn fleet_journal_since(
         &self,
         space: &str,

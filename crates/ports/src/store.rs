@@ -213,6 +213,23 @@ pub trait Store: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Records a verified fleet request (`done`: run, refused or its claim
+    /// lost) and forgets every one issued before `forget_before_ms`.
+    fn fleet_seen_put(
+        &self,
+        _req_id: &str,
+        _issued_at_ms: i64,
+        _done: bool,
+        _forget_before_ms: i64,
+    ) -> StoreResult<()> {
+        Ok(())
+    }
+
+    /// Every recorded fleet request: `(req_id, issued_at_ms, done)`.
+    fn fleet_seen_all(&self) -> StoreResult<Vec<(String, i64, bool)>> {
+        Ok(Vec::new())
+    }
+
     fn kv_get(&self, key: &str) -> StoreResult<Option<serde_json::Value>>;
     fn kv_set(&self, key: &str, value: &serde_json::Value) -> StoreResult<()>;
 
