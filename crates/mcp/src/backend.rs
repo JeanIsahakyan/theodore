@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use theodore_domain::{AgentId, Commit, FileStatus, FindingId, Group, Hunk, PrId, RunId, Severity};
 pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
-    LanguageStatus, LogTail, NewReviewComment, Position, ProgressStep, ProgressStepState,
-    ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
-    SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
+    FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LogTail,
+    NewReviewComment, Position, ProgressStep, ProgressStepState, ReviewItem, ShipOutcome,
+    ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail,
+    UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -53,6 +54,17 @@ pub const SPACE_TOOL_NAMES: &[&str] = &[
     "set_base",
     "update_progress",
     "ask_user",
+];
+
+/// The fleet tools (docs/fleet.md "Agents use it too"): `space-tools`
+/// only, and listed only while [`SpaceToolsBackend::fleet_available`].
+pub const FLEET_TOOL_NAMES: &[&str] = &[
+    "fleet_devices",
+    "fleet_start_space",
+    "fleet_send",
+    "fleet_wait",
+    "fleet_read",
+    "fleet_stop",
 ];
 
 /// Drafts a problem report about the run's chat (docs/telemetry.md
@@ -148,7 +160,10 @@ impl RunContext {
                 REVIEW_TOOL_NAMES.contains(&tool)
                     || (self.space.is_some() && REVIEW_SPACE_TOOL_NAMES.contains(&tool))
             }
-            ToolSet::Space => self.space.is_some() && SPACE_TOOL_NAMES.contains(&tool),
+            ToolSet::Space => {
+                self.space.is_some()
+                    && (SPACE_TOOL_NAMES.contains(&tool) || FLEET_TOOL_NAMES.contains(&tool))
+            }
             ToolSet::Code => false,
         }
     }
@@ -430,6 +445,70 @@ pub trait SpaceToolsBackend: Send + Sync {
         let _ = (space, run_id, questions);
         Err(unavailable())
     }
+
+    // ── the fleet; listed only while `fleet_available` ──
+
+    /// The fleet is on and connected right now: the fleet tools are listed.
+    fn fleet_available(&self) -> bool {
+        false
+    }
+    /// The user's other devices that take remote spaces now.
+    async fn fleet_devices(&self, space: &str) -> Result<Vec<FleetToolDevice>, SpaceToolError> {
+        let _ = space;
+        Err(no_fleet())
+    }
+    /// Starts a space on `device` (id or name) in `project` (id or name);
+    /// `space` is the caller, its parent.
+    async fn fleet_start_space(
+        &self,
+        space: &str,
+        device: &str,
+        project: &str,
+        goal: &str,
+        mode: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let _ = (space, device, project, goal, mode);
+        Err(no_fleet())
+    }
+    async fn fleet_send(
+        &self,
+        space: &str,
+        target: &str,
+        text: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let _ = (space, target, text);
+        Err(no_fleet())
+    }
+    async fn fleet_wait(
+        &self,
+        space: &str,
+        targets: &[String],
+        timeout_ms: u64,
+    ) -> Result<FleetToolWait, SpaceToolError> {
+        let _ = (space, targets, timeout_ms);
+        Err(no_fleet())
+    }
+    async fn fleet_read(
+        &self,
+        space: &str,
+        target: &str,
+        since: u64,
+    ) -> Result<FleetToolRead, SpaceToolError> {
+        let _ = (space, target, since);
+        Err(no_fleet())
+    }
+    async fn fleet_stop(
+        &self,
+        space: &str,
+        target: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let _ = (space, target);
+        Err(no_fleet())
+    }
+}
+
+fn no_fleet() -> SpaceToolError {
+    SpaceToolError::Unavailable("the fleet isn't available here".into())
 }
 
 /// For servers started without spaces (tests, the CLI): every call fails.

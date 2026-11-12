@@ -1161,6 +1161,7 @@ configured commands, never a shell of the agent's choosing.
 | `update_progress` | the turn's plan as steps (pending · active · done) above the composer |
 | `ask_user` | asks you 1–3 multiple-choice questions and waits for the answer (§5 Questions) |
 | `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
+| `fleet_devices`, `fleet_start_space`, `fleet_send`, `fleet_wait`, `fleet_read`, `fleet_stop` | spaces on your other devices: list them, start one (this space is its parent), message, wait for, read, stop. Only while the fleet is on and connected (docs/fleet.md "Agents use it too") |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …

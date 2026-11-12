@@ -14,15 +14,16 @@ pub mod approve;
 pub mod backend;
 pub mod bridge;
 pub mod code_server;
+pub mod fleet;
 pub mod server;
 pub mod space_agent;
 pub mod tools;
 
 pub use backend::{
     AppStatus, BackendError, BaseChange, CODE_EDIT_TOOL_NAMES, CODE_TOOL_NAMES, CheckOutcome,
-    CodeEditOutcome, CodeTools, CodeToolsBackend, FileSummary, GroupSummary, GroupWithHunks,
-    LogTail, NewFinding, NewPatch, NewReviewComment, NoCodeTools, NoReviewTools, NoSpaceTools,
-    PrContext, ProgressStep, ProgressStepState, REPORT_TOOL, REVIEW_SPACE_TOOL_NAMES,
+    CodeEditOutcome, CodeTools, CodeToolsBackend, FLEET_TOOL_NAMES, FileSummary, GroupSummary,
+    GroupWithHunks, LogTail, NewFinding, NewPatch, NewReviewComment, NoCodeTools, NoReviewTools,
+    NoSpaceTools, PrContext, ProgressStep, ProgressStepState, REPORT_TOOL, REVIEW_SPACE_TOOL_NAMES,
     REVIEW_TOOL_NAMES, ReportRequest, ReportScope, ReviewItem, ReviewToolsBackend, RunContext,
     SPACE_TOOL_NAMES, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
     SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,

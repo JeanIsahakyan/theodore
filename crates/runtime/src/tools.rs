@@ -328,6 +328,67 @@ impl SpaceToolsBackend for CoreTools {
             .space_tool_ask(space, &run_id.0, questions)
             .await
     }
+
+    fn fleet_available(&self) -> bool {
+        self.core.get().is_some_and(|c| c.fleet_tools_available())
+    }
+
+    async fn fleet_devices(
+        &self,
+        _space: &str,
+    ) -> Result<Vec<theodore_ports::FleetToolDevice>, SpaceToolError> {
+        self.space_core()?.fleet_tool_devices().await
+    }
+
+    async fn fleet_start_space(
+        &self,
+        space: &str,
+        device: &str,
+        project: &str,
+        goal: &str,
+        mode: &str,
+    ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
+        self.space_core()?
+            .fleet_tool_start(space, device, project, goal, mode)
+            .await
+    }
+
+    async fn fleet_send(
+        &self,
+        _space: &str,
+        target: &str,
+        text: &str,
+    ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
+        self.space_core()?.fleet_tool_send(target, text).await
+    }
+
+    async fn fleet_wait(
+        &self,
+        _space: &str,
+        targets: &[String],
+        timeout_ms: u64,
+    ) -> Result<theodore_ports::FleetToolWait, SpaceToolError> {
+        self.space_core()?
+            .fleet_tool_wait(targets, timeout_ms)
+            .await
+    }
+
+    async fn fleet_read(
+        &self,
+        _space: &str,
+        target: &str,
+        since: u64,
+    ) -> Result<theodore_ports::FleetToolRead, SpaceToolError> {
+        self.space_core()?.fleet_tool_read(target, since).await
+    }
+
+    async fn fleet_stop(
+        &self,
+        _space: &str,
+        target: &str,
+    ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
+        self.space_core()?.fleet_tool_stop(target).await
+    }
 }
 
 /// The worktree a run's code tools work on: its space's on a space turn,
