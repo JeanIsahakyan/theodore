@@ -16,6 +16,7 @@ Why it exists:
 | Route | Auth | Does |
 | --- | --- | --- |
 | `GET /v1/health` | none | `{ "ok": true }` |
+| `GET /v1/orgs` | bearer access JWT | the caller's active organizations, personal first: `{ organizations: [{ id, name, role, personal }] }` |
 | `POST /v1/orgs/personal` | bearer access JWT | the caller's personal org, created once: `{ organization_id, created }` |
 | `POST /v1/auth/select-organization` | none (the pending token is the credential) | finishes a sign-in that needs an org picked: `{ user, organization_id, access_token, refresh_token }` |
 
@@ -55,6 +56,34 @@ switch org
 `/v1/orgs/personal` is idempotent and race-safe: two concurrent calls end
 with one org and one membership. A deactivated membership is not undone
 (`409 cloud.membership_inactive`).
+
+## App side
+
+The app (`crates/account-workos`, `usecases/account.rs`) calls the cloud
+only with a cloud URL configured (plan §6.12 "Organizations"):
+`THEODORE_CLOUD_URL` env, the `account.cloud_url` setting, or the one
+compiled in per channel (`build.yml` input `cloud-url`). No URL: sign-in
+works as before, no organizations.
+
+| App call | Goes to |
+| --- | --- |
+| sign-in (code, device), refresh, switch org (`refresh` + `organization_id`) | WorkOS directly |
+| ensure the personal org (after sign-in, at start, while the session has no org) | cloud `POST /v1/orgs/personal` |
+| list orgs (`account_organizations`) | cloud `GET /v1/orgs` |
+| finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself |
+
+| Cloud answer | App error |
+| --- | --- |
+| no connection, 5xx, 429, a 4xx without `{ error: { code } }` | `account.network` |
+| `400 cloud.rejected` | `account.rejected` |
+| any other 4xx | `account.protocol` (`code: message`) |
+
+**The never-sign-out rule.** No cloud error and no org-scoped refresh ever
+signs the user out or clears the session: the org step warns and retries at
+the next start; a failed switch returns its error with the session
+untouched. Only the background refresher, which never asks for an org,
+ends a session. The access token and the pending token never land in an
+error or a log.
 
 ## Verified against staging WorkOS
 

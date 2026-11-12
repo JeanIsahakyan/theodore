@@ -24,18 +24,34 @@
 //! session  refresher wakes 60 s before `exp` ─▶ rotate ─▶ keychain
 //!            └─ rejected ─▶ signed out ─▶ emit
 //! ```
+//!
+//! Organizations (plan §6.12 "Organizations", docs/cloud.md "App side"),
+//! only with a Theodore cloud configured:
+//!
+//! ```text
+//! signed in, no org ─▶ background: cloud ensure personal ─▶ refresh(Some(org))
+//!   (sign-in, start)     ─▶ keychain ─▶ emit; any failure: warn, session kept
+//! sign-in ─▶ OrganizationSelectionRequired ─▶ Pending::Organization (memory)
+//!   ─▶ poll: ChooseOrganization ─▶ account_sign_in_choose_organization(id)
+//!   ─▶ cloud select ─▶ signed in
+//! switch ─▶ refresh(Some(id)) ─▶ keychain ─▶ emit; an error leaves the session
+//! ```
+//!
+//! Only the background refresher (`refresh(.., None)`) ever ends a session.
+//! No cloud error and no org-scoped refresh does.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use theodore_contract::{
-    AccountSignInMethod, AccountSignInRequest, AccountSignInStart, AccountSignInState,
-    AccountStatus, AccountUser, Ephemeral,
+    AccountOrganization, AccountOrganizationChoice, AccountOrganizationRef, AccountSignInMethod,
+    AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus, AccountUser,
+    Ephemeral,
 };
 use theodore_ports::{
     AccountConfig, AccountError, AccountResult, AccountSession, BrowserSignIn, CallbackListener,
-    CallbackPage, CallbackParams, DeviceSignInPoll, IncomingCallback,
+    CallbackPage, CallbackParams, DeviceSignInPoll, IncomingCallback, OrganizationSelection,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -56,6 +72,10 @@ pub const REDIRECT_SETTING: &str = "account.workos.redirect_uri";
 /// run, a bare binary). Must be registered as a redirect URI on the WorkOS
 /// application.
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:47823/callback";
+/// The Theodore cloud (docs/cloud.md): env, else setting, else the build's
+/// own (`Deps::account_cloud_url`). None anywhere: no organizations.
+pub const CLOUD_URL_ENV: &str = "THEODORE_CLOUD_URL";
+pub const CLOUD_URL_SETTING: &str = "account.cloud_url";
 
 /// Refresh this long before the access token's `exp`.
 pub(crate) const REFRESH_SKEW_MS: i64 = 60_000;
@@ -112,6 +132,47 @@ pub fn resolve_client_id(
         .map(str::to_string)
 }
 
+/// `raw` as a usable cloud URL, without a trailing `/`: `https://`, or
+/// `http://` on `127.0.0.1` / `localhost` (`wrangler dev`). No credentials
+/// in it. `None` for anything else.
+pub fn valid_cloud_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let url = Url::parse(trimmed).ok()?;
+    let host = url.host_str()?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    let ok = match url.scheme() {
+        "https" => !host.is_empty(),
+        "http" => host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost"),
+        _ => false,
+    };
+    ok.then(|| trimmed.to_string())
+}
+
+/// The cloud URL: the first of env, setting, built-in that is set and
+/// valid. A set but invalid one is skipped and handed to `invalid` (for a
+/// warning). Blank values don't count.
+pub fn resolve_cloud_url(
+    env: Option<&str>,
+    setting: Option<&str>,
+    built_in: Option<&str>,
+    mut invalid: impl FnMut(&str),
+) -> Option<String> {
+    for raw in [env, setting, built_in]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        match valid_cloud_url(raw) {
+            Some(url) => return Some(url),
+            None => invalid(raw),
+        }
+    }
+    None
+}
+
 enum Pending {
     Browser {
         id: u64,
@@ -126,6 +187,31 @@ enum Pending {
         device_code: String,
         interval: u32,
     },
+    /// Either method ended in `OrganizationSelectionRequired`: waits for
+    /// `account_sign_in_choose_organization`. The pending token lives only
+    /// here, in memory, never in the keychain or a log.
+    Organization { selection: OrganizationSelection },
+}
+
+fn choices(selection: &OrganizationSelection) -> AccountSignInState {
+    AccountSignInState::ChooseOrganization {
+        organizations: selection
+            .organizations
+            .iter()
+            .map(|o| AccountOrganizationChoice {
+                id: o.id.clone(),
+                name: o.name.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The session's organization for the status, if it has one.
+pub(crate) fn organization_of(s: &AccountSession) -> Option<AccountOrganizationRef> {
+    s.organization_id.as_ref().map(|id| AccountOrganizationRef {
+        id: id.clone(),
+        role: s.role.clone(),
+    })
 }
 
 /// One browser sign-in, as its flow task sees it.
@@ -172,6 +258,11 @@ pub(crate) struct AccountState {
     /// Bumped on every sign-in and sign-out, so a refresh that raced one
     /// never writes a stale session back.
     generation: AtomicU64,
+    /// Held around every "check `generation`, write keychain + memory":
+    /// a sign-out can't land between a refresh's check and its write.
+    write_lock: tokio::sync::Mutex<()>,
+    /// The last invalid cloud URL warned about, so it's said once.
+    cloud_url_warned: std::sync::Mutex<Option<String>>,
     next_id: AtomicU64,
     /// The app URL scheme redirect the shell can receive, if any
     /// (`Core::set_account_app_redirect`).
@@ -321,6 +412,7 @@ fn unavailable() -> AccountStatus {
         required: false,
         user: None,
         session_ended: false,
+        organization: None,
     }
 }
 
@@ -353,10 +445,39 @@ impl Core {
             .expect("account lock")
             .clone();
         let redirect_uri = choose_redirect(configured, app.as_deref());
+        let cloud_url = self.account_cloud_url().await;
         Some(AccountConfig {
             client_id,
             redirect_uri,
+            cloud_url,
         })
+    }
+
+    /// `resolve_cloud_url` over `THEODORE_CLOUD_URL`, `account.cloud_url`
+    /// and the build's own; an invalid one is warned about once.
+    async fn account_cloud_url(&self) -> Option<String> {
+        let env = std::env::var(CLOUD_URL_ENV).ok();
+        let setting = self.setting_string(CLOUD_URL_SETTING, "").await;
+        resolve_cloud_url(
+            env.as_deref(),
+            Some(&setting),
+            self.0.deps.account_cloud_url.as_deref(),
+            |raw| {
+                let mut warned = self
+                    .0
+                    .account
+                    .cloud_url_warned
+                    .lock()
+                    .expect("account lock");
+                if warned.as_deref() != Some(raw) {
+                    tracing::warn!(
+                        error.code = "account.config",
+                        "ignored the Theodore cloud URL {raw:?}: it must be https://, or http:// on 127.0.0.1 or localhost"
+                    );
+                    *warned = Some(raw.to_string());
+                }
+            },
+        )
     }
 
     /// Called by the shell when it receives its URL scheme (an installed app
@@ -387,11 +508,13 @@ impl Core {
     }
 
     fn account_status_now(&self) -> AccountStatus {
+        let session = self.account_session();
         AccountStatus {
             available: true,
             required: true,
-            user: self.account_session().as_ref().map(user_of),
+            user: session.as_ref().map(user_of),
             session_ended: self.0.account.session_ended.load(Ordering::SeqCst),
+            organization: session.as_ref().and_then(organization_of),
         }
     }
 
@@ -487,7 +610,9 @@ impl Core {
     }
 
     /// Spawned by `Core::start`: loads the stored session and keeps it
-    /// fresh, so it doesn't lapse while the app runs.
+    /// fresh, so it doesn't lapse while the app runs. A session still
+    /// without an organization (the org step failed last time, or it's
+    /// from before organizations) gets another go.
     pub(crate) async fn account_resume(&self) {
         if self.account_config().await.is_none() {
             return;
@@ -495,7 +620,160 @@ impl Core {
         self.account_load().await;
         if self.account_session().is_some() {
             self.account_schedule_refresh();
+            let since = self.0.account.generation.load(Ordering::SeqCst);
+            self.account_org_step(since).await;
         }
+    }
+
+    /// Best effort: puts a session without an organization into the user's
+    /// personal one (cloud `ensure`, then an org-scoped refresh). Needs a
+    /// cloud. Never signs out: any failure is a warning, the session stays
+    /// as it is, and the next start tries again. Dropped when a sign-in or
+    /// sign-out happened since `since`.
+    pub(crate) async fn account_org_step(&self, since: u64) {
+        let Some(cfg) = self.account_config().await else {
+            return;
+        };
+        if cfg.cloud_url.is_none() {
+            return;
+        }
+        match self.account_session() {
+            Some(s) if s.organization_id.is_none() => {}
+            _ => return,
+        }
+        match self.account_join_personal(&cfg, since).await {
+            Ok(Some(org)) => {
+                tracing::info!(organization = %org, "the account session is in its personal organization");
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                error.code = e.code(),
+                error = %e,
+                "couldn't put the account in its personal organization; trying again at the next start"
+            ),
+        }
+    }
+
+    async fn account_join_personal(
+        &self,
+        cfg: &AccountConfig,
+        since: u64,
+    ) -> AppResult<Option<String>> {
+        // A plain token read: refreshes (without an org) only when it's
+        // about to expire, like any other caller.
+        let Some(token) = self.account_access_token().await? else {
+            return Ok(None);
+        };
+        if self.0.account.generation.load(Ordering::SeqCst) != since {
+            return Ok(None);
+        }
+        let org = self
+            .0
+            .deps
+            .account
+            .ensure_personal_organization(cfg, &token)
+            .await?;
+        Ok(self
+            .account_refresh_in_org(cfg, &org, since)
+            .await?
+            .map(|_| org))
+    }
+
+    /// Refreshes the session into `organization_id` and stores it, under
+    /// the refresh lock (refresh tokens are single-use). An error leaves the
+    /// session exactly as it was: never signs out. `Ok(None)`: no session,
+    /// or a sign-in or sign-out since `since`; the result is dropped.
+    async fn account_refresh_in_org(
+        &self,
+        cfg: &AccountConfig,
+        organization_id: &str,
+        since: u64,
+    ) -> AppResult<Option<AccountSession>> {
+        let _one_at_a_time = self.0.account.refresh_lock.lock().await;
+        if self.0.account.generation.load(Ordering::SeqCst) != since {
+            return Ok(None);
+        }
+        // Read under the lock: a refresh just before may have rotated it.
+        let Some(current) = self.account_session() else {
+            return Ok(None);
+        };
+        let next = self
+            .0
+            .deps
+            .account
+            .refresh(cfg, &current.refresh_token, Some(organization_id))
+            .await?;
+        if !self.account_commit(since, &next).await? {
+            return Ok(None);
+        }
+        self.emit(Ephemeral::AccountStatus {
+            status: self.account_status_now(),
+        });
+        Ok(Some(next))
+    }
+
+    /// Stores `next` (keychain, then memory) unless a sign-in or sign-out
+    /// happened since `since`. `false`: dropped.
+    async fn account_commit(&self, since: u64, next: &AccountSession) -> AppResult<bool> {
+        let _write = self.0.account.write_lock.lock().await;
+        if self.0.account.generation.load(Ordering::SeqCst) != since {
+            return Ok(false);
+        }
+        self.account_persist(Some(next)).await?;
+        theodore_telemetry::set_account(Some(&next.user.id));
+        *self.0.account.session.lock().expect("account lock") = Some(next.clone());
+        Ok(true)
+    }
+
+    /// Moves the session to another of the user's organizations (an
+    /// org-scoped refresh). On any error the session is untouched and still
+    /// signed in; the error is returned.
+    pub async fn account_switch_organization(
+        &self,
+        organization_id: &str,
+    ) -> AppResult<AccountStatus> {
+        let cfg = self.account_config().await.ok_or_else(not_configured)?;
+        let organization_id = organization_id.trim();
+        if organization_id.is_empty() {
+            return Err(AppError::Invalid("no organization given".into()));
+        }
+        self.account_load().await;
+        let since = self.0.account.generation.load(Ordering::SeqCst);
+        if self.account_session().is_none() {
+            return Err(AppError::AccountRequired);
+        }
+        match self
+            .account_refresh_in_org(&cfg, organization_id, since)
+            .await
+        {
+            Ok(Some(_)) => Ok(self.account_status_now()),
+            Ok(None) => Err(AppError::Invalid(
+                "the account changed while switching organizations".into(),
+            )),
+            Err(e) => {
+                tracing::warn!(error.code = e.code(), error = %e, "couldn't switch organization");
+                Err(e)
+            }
+        }
+    }
+
+    /// The signed-in user's organizations, from the cloud.
+    pub async fn account_organizations(&self) -> AppResult<Vec<AccountOrganization>> {
+        let cfg = self.account_config().await.ok_or_else(not_configured)?;
+        let token = self
+            .account_access_token()
+            .await?
+            .ok_or(AppError::AccountRequired)?;
+        let orgs = self.0.deps.account.organizations(&cfg, &token).await?;
+        Ok(orgs
+            .into_iter()
+            .map(|o| AccountOrganization {
+                id: o.id,
+                name: o.name,
+                role: o.role,
+                personal: o.personal,
+            })
+            .collect())
     }
 
     pub async fn account_sign_in_start(
@@ -606,6 +884,7 @@ impl Core {
         } = attempt;
         let deadline = tokio::time::sleep(BROWSER_TIMEOUT);
         tokio::pin!(deadline);
+        let mut selection = None;
         let outcome = loop {
             let incoming = tokio::select! {
                 _ = cancel.cancelled() => return,
@@ -641,12 +920,21 @@ impl Core {
                         .deps
                         .account
                         .exchange_code(&cfg, &code, &code_verifier)
-                        .await
-                        .map_err(AppError::from);
+                        .await;
                     let result = match exchanged {
-                        Ok(_) if cancel.is_cancelled() => return,
+                        Ok(_) | Err(AccountError::OrganizationSelectionRequired(_))
+                            if cancel.is_cancelled() =>
+                        {
+                            return;
+                        }
                         Ok(session) => self.account_signed_in(session).await,
-                        Err(e) => Err(e),
+                        Err(AccountError::OrganizationSelectionRequired(s)) => {
+                            let _ = incoming.reply.send(CallbackPage::ChooseOrganization);
+                            let outcome = choices(&s);
+                            selection = Some(s);
+                            break outcome;
+                        }
+                        Err(e) => Err(e.into()),
                     };
                     match result {
                         Ok(status) => {
@@ -675,17 +963,27 @@ impl Core {
         }) = pending.as_mut()
             && *current == id
         {
-            *slot = Some(outcome);
+            match selection {
+                Some(selection) => *pending = Some(Pending::Organization { selection }),
+                None => *slot = Some(outcome),
+            }
         }
     }
 
-    /// Stores a fresh session, starts its refresher, tells the UI.
+    /// Stores a fresh session, starts its refresher, tells the UI. Without
+    /// an organization, the org step follows in the background.
     async fn account_signed_in(&self, session: AccountSession) -> AppResult<AccountStatus> {
         self.account_load().await;
-        self.account_persist(Some(&session)).await?;
-        self.0.account.generation.fetch_add(1, Ordering::SeqCst);
-        theodore_telemetry::set_account(Some(&session.user.id));
-        *self.0.account.session.lock().expect("account lock") = Some(session);
+        let since = {
+            let _write = self.0.account.write_lock.lock().await;
+            self.account_persist(Some(&session)).await?;
+            let since = self.0.account.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            theodore_telemetry::set_account(Some(&session.user.id));
+            *self.0.account.session.lock().expect("account lock") = Some(session);
+            since
+        };
+        let core = self.clone();
+        tokio::spawn(async move { core.account_org_step(since).await });
         self.0.account.session_ended.store(false, Ordering::SeqCst);
         self.account_gate().await;
         self.account_schedule_refresh();
@@ -711,6 +1009,8 @@ impl Core {
             let mut pending = self.0.account.pending.lock().expect("account lock");
             match pending.as_ref() {
                 None => return Err(AppError::Invalid("no sign-in in progress".into())),
+                // Reported until an organization is chosen or it's cancelled.
+                Some(Pending::Organization { selection }) => return Ok(choices(selection)),
                 Some(Pending::Browser { outcome: None, .. }) => Next::Browser(None),
                 Some(Pending::Browser { .. }) => match pending.take() {
                     Some(Pending::Browser { outcome, .. }) => Next::Browser(outcome),
@@ -728,12 +1028,29 @@ impl Core {
             Next::Device(id, code, interval) => (id, code, interval),
         };
         let cfg = self.account_config().await.ok_or_else(not_configured)?;
-        let polled = self
+        let polled = match self
             .0
             .deps
             .account
             .poll_device(&cfg, &device_code, interval)
-            .await?;
+            .await
+        {
+            Ok(polled) => polled,
+            Err(AccountError::OrganizationSelectionRequired(selection)) => {
+                let state = choices(&selection);
+                let mut pending = self.0.account.pending.lock().expect("account lock");
+                if matches!(pending.as_ref(), Some(Pending::Device { id: current, .. }) if *current == id)
+                {
+                    *pending = Some(Pending::Organization { selection });
+                    return Ok(state);
+                }
+                // Cancelled or replaced meanwhile.
+                return Ok(AccountSignInState::Failed {
+                    message: "this sign-in was cancelled".into(),
+                });
+            }
+            Err(e) => return Err(e.into()),
+        };
         let finish = |core: &Core| {
             let mut pending = core.0.account.pending.lock().expect("account lock");
             if matches!(pending.as_ref(), Some(Pending::Device { id: current, .. }) if *current == id)
@@ -777,8 +1094,67 @@ impl Core {
         }
     }
 
+    /// Finishes a sign-in that reported `ChooseOrganization`, in
+    /// `organization_id` (one of the offered ones). The pending token is
+    /// single-use: whatever the outcome, this sign-in is then over.
+    pub async fn account_sign_in_choose_organization(
+        &self,
+        organization_id: &str,
+    ) -> AppResult<AccountSignInState> {
+        let cfg = self.account_config().await.ok_or_else(not_configured)?;
+        let selection = {
+            let mut pending = self.0.account.pending.lock().expect("account lock");
+            match pending.as_ref() {
+                Some(Pending::Organization { selection })
+                    if selection
+                        .organizations
+                        .iter()
+                        .any(|o| o.id == organization_id) => {}
+                Some(Pending::Organization { .. }) => {
+                    return Err(AppError::Invalid(
+                        "that organization isn't one this sign-in offered".into(),
+                    ));
+                }
+                _ => {
+                    return Err(AppError::Invalid(
+                        "no sign-in is waiting for an organization".into(),
+                    ));
+                }
+            }
+            match pending.take() {
+                Some(Pending::Organization { selection }) => selection,
+                _ => unreachable!("checked above"),
+            }
+        };
+        let selected = self
+            .0
+            .deps
+            .account
+            .select_organization(
+                &cfg,
+                &selection.pending_authentication_token,
+                organization_id,
+            )
+            .await
+            .map_err(AppError::from);
+        let signed_in = match selected {
+            Ok(session) => self.account_signed_in(session).await,
+            Err(e) => Err(e),
+        };
+        Ok(match signed_in {
+            Ok(status) => AccountSignInState::Done { status },
+            Err(e) => {
+                tracing::warn!(error.code = e.code(), error = %e, "the organization sign-in failed");
+                AccountSignInState::Failed {
+                    message: e.to_string(),
+                }
+            }
+        })
+    }
+
     /// Drops the sign-in in progress, if any (frees the loopback port; an
-    /// app URL scheme redirect arriving later is ignored).
+    /// app URL scheme redirect arriving later is ignored; a pending
+    /// organization choice is forgotten).
     pub fn account_sign_in_cancel(&self) {
         let pending = self.0.account.pending.lock().expect("account lock").take();
         if let Some(Pending::Browser { cancel, .. }) = pending {
@@ -823,13 +1199,16 @@ impl Core {
         {
             t.cancel();
         }
-        self.0.account.generation.fetch_add(1, Ordering::SeqCst);
-        let old = self.0.account.session.lock().expect("account lock").take();
+        let (old, persisted) = {
+            let _write = self.0.account.write_lock.lock().await;
+            self.0.account.generation.fetch_add(1, Ordering::SeqCst);
+            let old = self.0.account.session.lock().expect("account lock").take();
+            (old, self.account_persist(None).await)
+        };
         theodore_telemetry::set_account(None);
         if old.is_some() {
             tracing::info!("signed out of the Theodore account");
         }
-        let persisted = self.account_persist(None).await;
         self.account_gate().await;
         persisted?;
         Ok(old)
@@ -878,13 +1257,11 @@ impl Core {
         {
             Ok(next) => {
                 self.0.account.refresh_failures.store(0, Ordering::SeqCst);
-                if self.0.account.generation.load(Ordering::SeqCst) != generation {
+                if !self.account_commit(generation, &next).await? {
                     return Ok(self.account_session());
                 }
-                self.account_persist(Some(&next)).await?;
-                let changed = user_of(&next) != user_of(&current);
-                theodore_telemetry::set_account(Some(&next.user.id));
-                *self.0.account.session.lock().expect("account lock") = Some(next.clone());
+                let changed = user_of(&next) != user_of(&current)
+                    || organization_of(&next) != organization_of(&current);
                 if changed {
                     self.emit(Ephemeral::AccountStatus {
                         status: self.account_status_now(),

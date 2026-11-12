@@ -59,6 +59,9 @@ export type AccountFlowEvent =
 
 export const BROWSER_POLL_MS = 1000;
 
+export const CHOOSE_ORG_UNSUPPORTED =
+  "Your account is in several organizations, and this version of Theodore can't choose one yet.";
+
 export const initialFlow: AccountFlow = {
   phase: 'idle',
   method: null,
@@ -133,6 +136,10 @@ export function reduceFlow(
           return { ...flow, phase: 'error', error: s.message };
         case 'done':
           return { ...flow, phase: 'done', status: s.status };
+        // The organization picker is the next UI step; until it lands, a
+        // sign-in that needs one ends here (and stops polling).
+        case 'choose_organization':
+          return { ...flow, phase: 'error', error: CHOOSE_ORG_UNSUPPORTED };
       }
     }
   }

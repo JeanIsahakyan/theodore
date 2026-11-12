@@ -16,6 +16,7 @@ const signedIn: AccountStatus = {
   available: true,
   required: true,
   session_ended: false,
+  organization: null,
   user: { id: 'u', email: 'ada@example.com', name: null, avatar_url: null },
 };
 

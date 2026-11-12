@@ -4,9 +4,10 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use theodore_ports::{
-    AccountConfig, AccountError, AccountPort, DeviceSignInPoll, OrganizationChoice,
+    AccountConfig, AccountError, AccountOrganization, AccountPort, DeviceSignInPoll,
+    OrganizationChoice,
 };
-use wiremock::matchers::{body_string_contains, method, path, query_param};
+use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 use super::*;
@@ -18,6 +19,7 @@ fn cfg() -> AccountConfig {
     AccountConfig {
         client_id: CLIENT.into(),
         redirect_uri: "http://127.0.0.1:0/callback".into(),
+        cloud_url: None,
     }
 }
 
@@ -642,20 +644,34 @@ async fn organization_selection_without_a_pending_token_is_a_protocol_error() {
     ));
 }
 
+// ── the Theodore cloud ───────────────────────────────────────────────────
+
+/// The cloud on the same mock server, under a path prefix (a trailing `/`
+/// in the configured URL doesn't matter).
+fn cloud_cfg(server: &MockServer) -> AccountConfig {
+    AccountConfig {
+        cloud_url: Some(format!("{}/cloud/", server.uri())),
+        ..cfg()
+    }
+}
+
+fn cloud_error(status: u16, code: &str, message: &str) -> ResponseTemplate {
+    ResponseTemplate::new(status).set_body_json(json!({
+        "error": {"code": code, "message": message},
+    }))
+}
+
 #[tokio::test]
-async fn select_organization_sends_the_grant_and_finishes_the_sign_in() {
+async fn select_organization_goes_through_the_cloud_and_validates_the_session() {
     let server = MockServer::start().await;
     mount_jwks(&server, 1).await;
     Mock::given(method("POST"))
-        .and(path("/user_management/authenticate"))
-        .and(body_string_contains(
-            "grant_type=urn%3Aworkos%3Aoauth%3Agrant-type%3Aorganization-selection",
-        ))
-        .and(body_string_contains(format!("client_id={CLIENT}")))
-        .and(body_string_contains(
-            "pending_authentication_token=pending_1",
-        ))
-        .and(body_string_contains("organization_id=org_02"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(json!({
+            "pending_authentication_token": "pending_1",
+            "organization_id": "org_02",
+        })))
         .and(no_secret)
         .respond_with(
             ResponseTemplate::new(200).set_body_json(auth_body_in_org(&server, "rt_1", "org_02")),
@@ -663,12 +679,224 @@ async fn select_organization_sends_the_grant_and_finishes_the_sign_in() {
         .expect(1)
         .mount(&server)
         .await;
+    // Never the provider's grant itself: it needs the secret.
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
     let s = account(&server)
-        .select_organization(&cfg(), "pending_1", "org_02")
+        .select_organization(&cloud_cfg(&server), "pending_1", "org_02")
         .await
         .unwrap();
     assert_eq!(s.organization_id.as_deref(), Some("org_02"));
+    assert_eq!(s.role.as_deref(), Some("admin"));
     assert_eq!(s.refresh_token, "rt_1");
+}
+
+#[tokio::test]
+async fn a_selected_session_for_another_user_is_refused() {
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    let mut body = auth_body_in_org(&server, "rt_1", "org_02");
+    body["access_token"] = json!(access_token(&server, "user_other", now_secs() + 300));
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+    assert!(matches!(
+        account(&server)
+            .select_organization(&cloud_cfg(&server), "pending_1", "org_02")
+            .await,
+        Err(AccountError::InvalidToken(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_used_pending_token_is_rejected_and_never_echoed() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .respond_with(cloud_error(
+            400,
+            "cloud.rejected",
+            "invalid_grant: the pending authentication token was already used",
+        ))
+        .mount(&server)
+        .await;
+    let err = account(&server)
+        .select_organization(&cloud_cfg(&server), "pending_secret_9", "org_02")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AccountError::Rejected(_)), "{err:?}");
+    assert!(err.to_string().contains("cloud.rejected"));
+    assert!(!err.to_string().contains("pending_secret_9"));
+    assert!(!format!("{err:?}").contains("pending_secret_9"));
+}
+
+#[tokio::test]
+async fn ensure_personal_organization_sends_the_bearer_and_returns_the_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/orgs/personal"))
+        .and(header("authorization", "Bearer at_secret_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "organization_id": "org_personal",
+            "created": true,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let id = account(&server)
+        .ensure_personal_organization(&cloud_cfg(&server), "at_secret_1")
+        .await
+        .unwrap();
+    assert_eq!(id, "org_personal");
+}
+
+#[tokio::test]
+async fn organizations_are_listed_with_role_and_personal() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/cloud/v1/orgs"))
+        .and(header("authorization", "Bearer at_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "organizations": [
+                {"id": "org_p", "name": "Personal (ada@example.com)", "role": "admin", "personal": true},
+                {"id": "org_a", "name": "Acme", "role": null, "personal": false},
+            ],
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let orgs = account(&server)
+        .organizations(&cloud_cfg(&server), "at_1")
+        .await
+        .unwrap();
+    assert_eq!(
+        orgs,
+        vec![
+            AccountOrganization {
+                id: "org_p".into(),
+                name: "Personal (ada@example.com)".into(),
+                role: Some("admin".into()),
+                personal: true,
+            },
+            AccountOrganization {
+                id: "org_a".into(),
+                name: "Acme".into(),
+                role: None,
+                personal: false,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cloud_errors_map_to_network_rejected_or_protocol() {
+    let server = MockServer::start().await;
+    let cases: [(&str, ResponseTemplate); 6] = [
+        (
+            "t_unauthorized",
+            cloud_error(401, "cloud.unauthorized", "bad token"),
+        ),
+        (
+            "t_inactive",
+            cloud_error(409, "cloud.membership_inactive", "inactive"),
+        ),
+        ("t_rejected", cloud_error(400, "cloud.rejected", "no")),
+        (
+            "t_down",
+            cloud_error(503, "cloud.jwks_unavailable", "later"),
+        ),
+        ("t_busy", ResponseTemplate::new(429)),
+        (
+            "t_portal",
+            ResponseTemplate::new(403).set_body_string("<html>"),
+        ),
+    ];
+    for (token, reply) in cases {
+        Mock::given(method("POST"))
+            .and(path("/cloud/v1/orgs/personal"))
+            .and(header("authorization", format!("Bearer {token}")))
+            .respond_with(reply)
+            .mount(&server)
+            .await;
+    }
+    let a = account(&server);
+    let c = cloud_cfg(&server);
+    let err = |t: &'static str| {
+        let (a, c) = (&a, &c);
+        async move { a.ensure_personal_organization(c, t).await.unwrap_err() }
+    };
+    let e = err("t_unauthorized").await;
+    assert_eq!(
+        e,
+        AccountError::Protocol("cloud.unauthorized: bad token".into())
+    );
+    assert!(matches!(err("t_inactive").await, AccountError::Protocol(_)));
+    assert!(matches!(err("t_rejected").await, AccountError::Rejected(_)));
+    for t in ["t_down", "t_busy", "t_portal"] {
+        let e = err(t).await;
+        assert!(matches!(e, AccountError::Network(_)), "{t}: {e:?}");
+        assert!(!e.to_string().contains(t), "the token stays out: {e}");
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_cloud_is_a_network_failure() {
+    let c = AccountConfig {
+        // Nothing listens on port 9 (discard) on loopback.
+        cloud_url: Some("http://127.0.0.1:9".into()),
+        ..cfg()
+    };
+    let e = WorkosAccount::new()
+        .ensure_personal_organization(&c, "at_secret")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, AccountError::Network(_)), "{e:?}");
+    assert!(!e.to_string().contains("at_secret"));
+}
+
+#[tokio::test]
+async fn no_cloud_is_a_config_error_and_calls_nothing() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let a = account(&server);
+    let no_cloud = AccountError::Config("no Theodore cloud configured".into());
+    assert_eq!(
+        a.ensure_personal_organization(&cfg(), "at").await,
+        Err(no_cloud.clone())
+    );
+    assert_eq!(a.organizations(&cfg(), "at").await, Err(no_cloud.clone()));
+    assert_eq!(
+        a.select_organization(&cfg(), "p", "org").await,
+        Err(no_cloud)
+    );
+}
+
+#[tokio::test]
+async fn a_device_poll_needing_an_organization_carries_the_choices() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/user_management/authenticate"))
+        .and(body_string_contains("device_code=dc_orgs"))
+        .respond_with(selection_required("pending_dev"))
+        .mount(&server)
+        .await;
+    match account(&server).poll_device(&cfg(), "dc_orgs", 5).await {
+        Err(AccountError::OrganizationSelectionRequired(sel)) => {
+            assert_eq!(sel.pending_authentication_token, "pending_dev");
+            assert_eq!(sel.organizations.len(), 2);
+        }
+        other => panic!("expected OrganizationSelectionRequired, got {other:?}"),
+    }
 }
 
 #[tokio::test]

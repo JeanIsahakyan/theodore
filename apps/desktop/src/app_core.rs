@@ -1267,6 +1267,29 @@ impl CoreApi for AppCore {
     async fn account_sign_out(&self) -> Result<AccountStatus, CommandError> {
         self.core.account_sign_out().await.map_err(err)
     }
+    async fn account_sign_in_choose_organization(
+        &self,
+        organization_id: String,
+    ) -> Result<AccountSignInState, CommandError> {
+        self.core
+            .account_sign_in_choose_organization(&organization_id)
+            .await
+            .map_err(err)
+    }
+    async fn account_switch_organization(
+        &self,
+        organization_id: String,
+    ) -> Result<AccountStatus, CommandError> {
+        self.core
+            .account_switch_organization(&organization_id)
+            .await
+            .map_err(err)
+    }
+    async fn account_organizations(
+        &self,
+    ) -> Result<Vec<theodore_contract::AccountOrganization>, CommandError> {
+        self.core.account_organizations().await.map_err(err)
+    }
     async fn account_sign_in_callback(&self, url: String) -> bool {
         !matches!(
             self.core.account_sign_in_callback(&url).await,

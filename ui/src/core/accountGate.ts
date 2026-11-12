@@ -21,6 +21,7 @@ export const NO_ACCOUNT: AccountStatus = {
   required: false,
   user: null,
   session_ended: false,
+  organization: null,
 };
 
 export function accountGate(status: AccountStatus | null): AccountGate {

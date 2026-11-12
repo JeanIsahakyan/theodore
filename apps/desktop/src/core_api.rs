@@ -617,6 +617,28 @@ pub trait CoreApi: Send + Sync {
     /// Drops the sign-in in progress (frees the loopback port).
     async fn account_sign_in_cancel(&self) -> Result<(), CommandError>;
     async fn account_sign_out(&self) -> Result<AccountStatus, CommandError>;
+    /// Finishes a sign-in that reported `choose_organization`, in one of
+    /// the offered organizations. Allowed signed out.
+    async fn account_sign_in_choose_organization(
+        &self,
+        _organization_id: String,
+    ) -> Result<AccountSignInState, CommandError> {
+        Err(not_ready())
+    }
+    /// Moves the session to another of the user's organizations. On error
+    /// the session is untouched.
+    async fn account_switch_organization(
+        &self,
+        _organization_id: String,
+    ) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// The signed-in user's organizations (from the Theodore cloud).
+    async fn account_organizations(
+        &self,
+    ) -> Result<Vec<theodore_contract::AccountOrganization>, CommandError> {
+        Err(not_ready())
+    }
     /// A `theodore://callback?…` sign-in redirect the OS opened the app
     /// with. Not a command: the shell's URL-scheme handler calls it. `true`
     /// when it belonged to the sign-in in progress (signed in or failed),

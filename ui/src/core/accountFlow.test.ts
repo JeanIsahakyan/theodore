@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accountLabel,
   BROWSER_POLL_MS,
+  CHOOSE_ORG_UNSUPPORTED,
   initialFlow,
   isWaiting,
   looksLikeEmail,
@@ -17,6 +18,7 @@ const signedIn: AccountStatus = {
   available: true,
   required: true,
   session_ended: false,
+  organization: null,
   user: {
     id: 'user_01',
     email: 'ada@example.com',
@@ -96,6 +98,35 @@ describe('reduceFlow — browser', () => {
     });
     expect(failed.phase).toBe('error');
     expect(failed.error).toBe('invalid_grant');
+  });
+
+  it('stops at an organization choice it cannot make yet', () => {
+    const waiting = run(
+      { type: 'start', method: 'device_code' },
+      {
+        type: 'started',
+        attempt: 1,
+        start: {
+          method: 'device_code',
+          user_code: 'C',
+          verification_uri: 'v',
+          verification_uri_complete: null,
+          expires_in: 300,
+          interval: 5,
+        },
+      },
+    );
+    const f = reduceFlow(waiting, {
+      type: 'poll',
+      attempt: 1,
+      state: {
+        state: 'choose_organization',
+        organizations: [{ id: 'org_a', name: 'Acme' }],
+      },
+    });
+    expect(f.phase).toBe('error');
+    expect(f.error).toBe(CHOOSE_ORG_UNSUPPORTED);
+    expect(nextPollDelay(f)).toBeNull();
   });
 
   it('a start that fails goes to error', () => {

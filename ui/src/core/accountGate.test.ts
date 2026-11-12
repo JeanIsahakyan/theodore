@@ -13,6 +13,7 @@ const status = (s: Partial<AccountStatus>): AccountStatus => ({
   required: true,
   user: null,
   session_ended: false,
+  organization: null,
   ...s,
 });
 

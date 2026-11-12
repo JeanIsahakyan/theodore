@@ -146,6 +146,11 @@ pub struct Deps {
     /// (`usecases::account::resolve_client_id`). `None` in tests, the CLI
     /// and any build made without one.
     pub account_client_id: Option<String>,
+    /// The Theodore cloud URL compiled into this build, if any: the lowest
+    /// priority source, below `THEODORE_CLOUD_URL` and the `account.cloud_url`
+    /// setting (`usecases::account::resolve_cloud_url`). `None`: no
+    /// organizations, signing in works as before.
+    pub account_cloud_url: Option<String>,
     /// Runs a space's `setup` / `run` / `check` / `archive` commands
     /// (docs/config.md).
     pub commands: Arc<dyn CommandPort>,

@@ -701,34 +701,64 @@ Settings → Account / Onboarding
 
 #### Organizations
 
-The provider side is in place; there is no UI or cloud use of it yet. A
-user with zero or one organization sees no change.
+Every signed-in user ends up in an organization: alone, a personal one the
+Theodore cloud creates (docs/cloud.md). Needs a cloud URL; without one a
+build signs in exactly as before and has no organizations. The core and the
+commands are in place; the picker and switcher UI come next.
 
 ```
 access token claims   sub · sid · org_id · role · permissions · exp
                       role and permissions only when an org is selected
                       ─▶ AccountSession.role / .permissions
                          (serde default: older keychain sessions still load)
+                      ─▶ AccountStatus.organization {id, role}
 
-sign-in ──▶ authenticate ──▶ 4xx organization_selection_required
-                               pending_authentication_token + organizations[{id,name}]
-                               ─▶ AccountError::OrganizationSelectionRequired
-                                  (code account.org_selection_required;
-                                   the pending token is never logged)
-        ──▶ AccountPort::select_organization(pending, org_id)
-              authenticate  organization-selection grant ─▶ session
+sign-in ─▶ session, no org ─▶ stored, signed in (as before)
+   └─▶ background: cloud POST /v1/orgs/personal ─▶ org id
+         ─▶ refresh(Some(org)) ─▶ keychain ─▶ account_status event
+         └─ any failure: warning, session kept; again at the next start
+start   ─▶ stored session, no org ─▶ same background step
 
-switch  ──▶ AccountPort::refresh(refresh_token, Some(org_id))
-              refresh_token grant + organization_id ─▶ token in that org
+sign-in ─▶ 4xx organization_selection_required (user in 2+ orgs)
+             pending_authentication_token + organizations[{id,name}]
+   ─▶ poll: ChooseOrganization {organizations}   (token in memory only)
+   ─▶ account_sign_in_choose_organization(id)    (must be an offered id)
+   ─▶ cloud POST /v1/auth/select-organization ─▶ session validated
+      like a code exchange ─▶ Done | Failed      (cancel drops the choice)
+
+switch  ─▶ account_switch_organization(id) ─▶ refresh(Some(id))
+             ─▶ keychain ─▶ event;  error: returned, session untouched
+list    ─▶ account_organizations ─▶ cloud GET /v1/orgs (current token)
 background refresher: refresh(.., None) ─▶ the session's org is kept
 ```
 
-- The org-selection grant is sent like the other grants: `client_id`, no
-  secret. The docs list a secret for it; whether it works without one is
-  unverified.
-- A refresh that asks for a specific org and is rejected must not sign the
-  user out. Only the background refresher ends a session, and it never asks
-  for an org.
+- **Never signed out by an org step.** No cloud error and no org-scoped
+  refresh ends a session. Only the background refresher (which never asks
+  for an org) signs out, on the provider's rejection.
+- **Races.** The org step and a switch refresh under the same lock as the
+  refresher (refresh tokens are single-use) and drop their result when a
+  sign-in or sign-out happened meanwhile (the `generation` counter).
+- **Allowed signed out:** `account_sign_in_choose_organization` (no session
+  yet). `account_switch_organization` and `account_organizations` are gated.
+
+Verified live against the staging WorkOS environment:
+
+| Fact | Result |
+| --- | --- |
+| `refresh_token` grant + `organization_id`, public client, no secret | works; the token carries `org_id`, `role`, `permissions`; a plain refresh after keeps the org |
+| organization-selection grant without `client_secret` | `400 invalid_client`: goes through the cloud |
+| sign-in of a user in 2+ orgs | `403 organization_selection_required` |
+| the pending token | single use |
+
+| Cloud URL source, in order | |
+| --- | --- |
+| env `THEODORE_CLOUD_URL` | run time |
+| setting `account.cloud_url` (scope `user`) | |
+| compiled in (`option_env!`, `theodore-runtime`) | `build.yml` input `cloud-url`: `vars.THEODORE_CLOUD_URL_STAGING` (staging), `vars.THEODORE_CLOUD_URL` (release); optional, not a release key |
+
+`https://` only, plus `http://127.0.0.1:*` / `http://localhost:*` for
+`wrangler dev`; anything else is ignored with a warning and the next source
+is tried.
 
 #### Sign-in required
 
@@ -757,8 +787,8 @@ sign in ─▶ open: the app comes back where it was; held work starts
 
 - **Allowed while signed out**: `bootstrap`, `catch_up`, `app_info`,
   `check_update`, `install_update`, `account_status`,
-  `account_sign_in_start` / `_poll` / `_cancel`, `account_sign_out`,
-  `focus_window`. Every other command is gated, new ones included (deny by
+  `account_sign_in_start` / `_poll` / `_cancel` / `_choose_organization`,
+  `account_sign_out`, `focus_window`. Every other command is gated, new ones included (deny by
   default; the list and its test live in `apps/desktop/src/gate.rs`).
 - **Offline.** A stored session keeps the app usable with no network: a
   refresh that fails on the network, a timeout, a 5xx or a 4xx without the
@@ -781,7 +811,9 @@ ui  SignInGate (whole window, signed out) · AccountStep (Onboarding, first)
     AccountCard (Settings → Account, top) · accountGate.ts (routing, pure)
      └─ useAccountSignIn ─▶ reduceFlow (pure, vitest)
 commands  account_status · account_sign_in_start · account_sign_in_poll ·
-          account_sign_in_cancel · account_sign_out · focus_window (shell)
+          account_sign_in_cancel · account_sign_in_choose_organization ·
+          account_sign_out · account_switch_organization ·
+          account_organizations · focus_window (shell)
 desktop  gate.rs             allow-list; every other command asks the gate
 app  usecases/account.rs   config, gate, state check, keychain, refresher, events
 ports  AccountPort          LocalAccount = no provider (fixtures, sandbox, CLI)
@@ -807,6 +839,7 @@ hide it.
 | Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | the build's own in the app bundle (`theodore://callback`, `theodore-staging://…`, `theodore-nightly://…`), else `http://127.0.0.1:47823/callback` |
 | API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
 | Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
+| Theodore cloud | `THEODORE_CLOUD_URL` | `account.cloud_url` | the one compiled in, else none: no organizations ("Organizations") |
 
 Accepted issuers: the API base itself, or `<API base>/user_management/client_…`
 with any client id. An app signing in through one of the environment's

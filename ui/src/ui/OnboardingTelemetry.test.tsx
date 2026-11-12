@@ -111,6 +111,7 @@ describe('Onboarding: Help improve Theodore', () => {
       required: true,
       user: { id: 'user_01ABC', email: 'a@b.c', name: null, avatar_url: null },
       session_ended: false,
+      organization: null,
     });
     await render();
     expect(m!.host.textContent).toContain('Step 1 of 6');

@@ -1112,6 +1112,41 @@ pub async fn account_sign_out(
     op.run(async move { core.account_sign_out().await }).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_in_choose_organization(
+    op: crate::op::Op,
+    organization_id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountSignInState, CommandError> {
+    op.run(async move {
+        core.account_sign_in_choose_organization(organization_id)
+            .await
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_switch_organization(
+    op: crate::op::Op,
+    organization_id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_switch_organization(organization_id).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_organizations(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::AccountOrganization>, CommandError> {
+    op.run(async move { core.account_organizations().await })
+        .await
+}
+
 /// Brings the main window forward: the browser sign-in finishes in another
 /// app, and the user should land back in Theodore without hunting for it.
 #[tauri::command]

@@ -104,6 +104,11 @@ compiled in, from `THEODORE_WORKOS_CLIENT_ID` in the build's environment:
   sign-in screen, no account card.
 - At run time the same env var or the `account.workos.client_id` setting
   still wins over the compiled-in id (staging, a test environment).
+- The Theodore cloud URL is baked in the same way, optionally:
+  `THEODORE_CLOUD_URL` (`release.yml`) and `THEODORE_CLOUD_URL_STAGING`
+  (`staging.yml`), passed as `build.yml`'s `cloud-url`. Not a required
+  release key: without it a build has no organizations (docs/cloud.md
+  "App side").
 
 ## Error reports: New Relic
 

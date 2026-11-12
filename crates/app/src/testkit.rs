@@ -14,14 +14,14 @@ use theodore_domain::{
     Revision, Sha, Side,
 };
 use theodore_ports::{
-    AccountConfig, AccountError, AccountPort, AccountProfile, AccountResult, AccountSession,
-    AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun, BranchInfo,
-    BrowserSignIn, CallbackListener, CallbackPage, CallbackParams, Capabilities, Changes, Clock,
-    CommitLog, ConflictEntry, DeviceCodeStart, DeviceLoginPort, DevicePoll, DeviceSignIn,
-    DeviceSignInPoll, DiffOptions, Fetched, GitError, GitPort, GitResult, HostAdapter, HostError,
-    HostResult, InboxSection, IncomingCallback, MergeMethod, MergeStatus, ModelRow, NewAction,
-    OutboxItem, OutboxStatus, ReviewSubmission, Secrets, SecretsError, Store, StoreError,
-    StoreResult, SubmittedReview, SyncAction, SyncActionCode, TrackedIssue, Worktree,
+    AccountConfig, AccountError, AccountOrganization, AccountPort, AccountProfile, AccountResult,
+    AccountSession, AgentError, AgentEvent, AgentInfo, AgentPort, AgentRequest, AgentRun,
+    BranchInfo, BrowserSignIn, CallbackListener, CallbackPage, CallbackParams, Capabilities,
+    Changes, Clock, CommitLog, ConflictEntry, DeviceCodeStart, DeviceLoginPort, DevicePoll,
+    DeviceSignIn, DeviceSignInPoll, DiffOptions, Fetched, GitError, GitPort, GitResult,
+    HostAdapter, HostError, HostResult, InboxSection, IncomingCallback, MergeMethod, MergeStatus,
+    ModelRow, NewAction, OutboxItem, OutboxStatus, ReviewSubmission, Secrets, SecretsError, Store,
+    StoreError, StoreResult, SubmittedReview, SyncAction, SyncActionCode, TrackedIssue, Worktree,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -2726,8 +2726,12 @@ pub struct FakeAccount {
     refreshes: Mutex<VecDeque<AccountResult<AccountSession>>>,
     org_selections: Mutex<VecDeque<AccountResult<AccountSession>>>,
     device_polls: Mutex<VecDeque<AccountResult<DeviceSignInPoll>>>,
+    ensures: Mutex<VecDeque<AccountResult<String>>>,
+    org_lists: Mutex<VecDeque<AccountResult<Vec<AccountOrganization>>>>,
     callbacks: Mutex<Option<tokio::sync::mpsc::Sender<IncomingCallback>>>,
     calls: Mutex<Vec<String>>,
+    /// `hold`: the next call starting with the prefix waits for a release.
+    holds: Mutex<Vec<(String, tokio::sync::oneshot::Receiver<()>)>>,
 }
 
 pub const FAKE_ACCOUNT_STATE: &str = "state-1";
@@ -2771,9 +2775,45 @@ impl FakeAccount {
             refreshes: Mutex::new(VecDeque::new()),
             org_selections: Mutex::new(VecDeque::new()),
             device_polls: Mutex::new(VecDeque::new()),
+            ensures: Mutex::new(VecDeque::new()),
+            org_lists: Mutex::new(VecDeque::new()),
             callbacks: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
+            holds: Mutex::new(Vec::new()),
         })
+    }
+
+    /// The cloud's `ensure_personal_organization` answer (default: a
+    /// network error).
+    pub fn push_ensure(&self, r: AccountResult<String>) {
+        self.ensures.lock().unwrap().push_back(r);
+    }
+
+    /// The cloud's `organizations` answer (default: a network error).
+    pub fn push_organizations(&self, r: AccountResult<Vec<AccountOrganization>>) {
+        self.org_lists.lock().unwrap().push_back(r);
+    }
+
+    /// The next call recorded as starting with `prefix` (e.g.
+    /// `"refresh:rt_1:org_p"`) is recorded, then waits until the returned
+    /// sender fires or is dropped: lets a test act mid-call.
+    pub fn hold(&self, prefix: &str) -> tokio::sync::oneshot::Sender<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.holds.lock().unwrap().push((prefix.to_string(), rx));
+        tx
+    }
+
+    async fn wait_if_held(&self, call: &str) {
+        let held = {
+            let mut holds = self.holds.lock().unwrap();
+            holds
+                .iter()
+                .position(|(p, _)| call.starts_with(p.as_str()))
+                .map(|i| holds.remove(i).1)
+        };
+        if let Some(rx) = held {
+            let _ = rx.await;
+        }
     }
 
     pub fn set_enabled(&self, on: bool) {
@@ -2915,10 +2955,12 @@ impl AccountPort for FakeAccount {
         refresh_token: &str,
         organization_id: Option<&str>,
     ) -> AccountResult<AccountSession> {
-        match organization_id {
-            Some(org) => self.call(format!("refresh:{refresh_token}:{org}")),
-            None => self.call(format!("refresh:{refresh_token}")),
-        }
+        let call = match organization_id {
+            Some(org) => format!("refresh:{refresh_token}:{org}"),
+            None => format!("refresh:{refresh_token}"),
+        };
+        self.call(call.clone());
+        self.wait_if_held(&call).await;
         self.refreshes
             .lock()
             .unwrap()
@@ -2940,6 +2982,41 @@ impl AccountPort for FakeAccount {
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Err(AccountError::Rejected("no org selection scripted".into())))
+    }
+
+    async fn ensure_personal_organization(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<String> {
+        let call = format!("ensure_personal_organization:{access_token}");
+        self.call(call.clone());
+        // Like the real adapter: nothing to call without a cloud.
+        if cfg.cloud_url.is_none() {
+            return Err(AccountError::Config("no Theodore cloud configured".into()));
+        }
+        self.wait_if_held(&call).await;
+        self.ensures
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(AccountError::Network("no ensure scripted".into())))
+    }
+
+    async fn organizations(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<Vec<AccountOrganization>> {
+        self.call(format!("organizations:{access_token}"));
+        if cfg.cloud_url.is_none() {
+            return Err(AccountError::Config("no Theodore cloud configured".into()));
+        }
+        self.org_lists
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(AccountError::Network("no organizations scripted".into())))
     }
 
     async fn sign_out(&self, _cfg: &AccountConfig, session: &AccountSession) -> AccountResult<()> {
@@ -3579,6 +3656,7 @@ impl Fixtures {
             worktree_lease: self.worktree_lease.clone(),
             account: self.account.clone(),
             account_client_id: None,
+            account_cloud_url: None,
             commands: self.commands.clone(),
             terminals: self.terminals.clone(),
             data_dir: self.data_dir.path().to_path_buf(),

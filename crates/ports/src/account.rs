@@ -46,6 +46,18 @@ pub struct OrganizationChoice {
     pub name: String,
 }
 
+/// One of the signed-in user's organizations, as the Theodore cloud lists
+/// them (`GET /v1/orgs`): active memberships, the personal one first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountOrganization {
+    pub id: String,
+    pub name: String,
+    /// The user's role slug in it, when the membership has one.
+    pub role: Option<String>,
+    /// The user's own personal organization (created by the cloud).
+    pub personal: bool,
+}
+
 /// What the provider hands back when a sign-in needs an organization.
 #[derive(Clone, PartialEq, Eq)]
 pub struct OrganizationSelection {
@@ -89,6 +101,10 @@ pub struct AccountConfig {
     /// an app URL scheme, e.g. `theodore://callback`, which the OS hands to
     /// the app (see [`is_loopback_redirect`]).
     pub redirect_uri: String,
+    /// The Theodore cloud (docs/cloud.md), without a trailing `/`, e.g.
+    /// `https://theodore-cloud.example.workers.dev`. `None`: this build has
+    /// no cloud, so no organizations; signing in works without it.
+    pub cloud_url: Option<String>,
 }
 
 /// `http`/`https` redirects are caught by a loopback listener the adapter
@@ -150,6 +166,9 @@ pub enum CallbackPage {
     /// Not this sign-in's callback (stale tab, wrong `state`): the listener
     /// keeps waiting for the real one.
     Ignored,
+    /// The sign-in went through but needs an organization picked: the tab
+    /// sends the user back to the app, where the picker is.
+    ChooseOrganization,
 }
 
 /// One request that reached the loopback redirect path. `reply` picks the
@@ -246,13 +265,32 @@ pub trait AccountPort: Send + Sync {
     ) -> AccountResult<AccountSession>;
 
     /// Finishes a sign-in that failed with
-    /// [`AccountError::OrganizationSelectionRequired`].
+    /// [`AccountError::OrganizationSelectionRequired`]. Needs the client
+    /// secret, so it goes through the Theodore cloud
+    /// (`POST /v1/auth/select-organization`); the session it returns is
+    /// validated like a code exchange's. No cloud: `Config`.
     async fn select_organization(
         &self,
         cfg: &AccountConfig,
         pending_authentication_token: &str,
         organization_id: &str,
     ) -> AccountResult<AccountSession>;
+
+    /// The caller's personal organization, created by the cloud on first
+    /// use (`POST /v1/orgs/personal`); returns its id. Idempotent. No
+    /// cloud: `Config`.
+    async fn ensure_personal_organization(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<String>;
+
+    /// The caller's organizations (`GET /v1/orgs`). No cloud: `Config`.
+    async fn organizations(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<Vec<AccountOrganization>>;
 
     /// Ends the session at the provider. Best effort: the local sign-out
     /// happens whatever this returns.
@@ -308,6 +346,20 @@ impl AccountPort for LocalAccount {
         _pending_authentication_token: &str,
         _organization_id: &str,
     ) -> AccountResult<AccountSession> {
+        Err(AccountError::Unavailable)
+    }
+    async fn ensure_personal_organization(
+        &self,
+        _cfg: &AccountConfig,
+        _access_token: &str,
+    ) -> AccountResult<String> {
+        Err(AccountError::Unavailable)
+    }
+    async fn organizations(
+        &self,
+        _cfg: &AccountConfig,
+        _access_token: &str,
+    ) -> AccountResult<Vec<AccountOrganization>> {
         Err(AccountError::Unavailable)
     }
     async fn sign_out(&self, _cfg: &AccountConfig, _session: &AccountSession) -> AccountResult<()> {
