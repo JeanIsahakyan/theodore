@@ -461,6 +461,25 @@ function useOrganizations(
 
 const orgLabel = (o: AccountOrganization) => (o.personal ? 'Personal' : o.name);
 
+/** A failed switch, said plainly. The core's message carries its layers
+ *  (`account: rejected: organization_not_found: Organization not found.`):
+ *  keep the provider's sentence, drop the lowercase `area:` prefixes. */
+export function switchErrorText(raw: string): string {
+  let s = raw.trim();
+  if (/^account: network\b/.test(s)) {
+    return "Couldn't switch organization: no connection. Try again.";
+  }
+  for (
+    let m = /^[a-z][a-z_]*\s*:\s*/.exec(s);
+    m;
+    m = /^[a-z][a-z_]*\s*:\s*/.exec(s)
+  ) {
+    s = s.slice(m[0].length);
+  }
+  if (!s) return "Couldn't switch organization.";
+  return `Couldn't switch organization. ${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+}
+
 /** "admin" → "Admin". */
 const roleLabel = (role: string) =>
   role.charAt(0).toUpperCase() + role.slice(1).replace(/[_-]+/g, ' ');
@@ -490,7 +509,7 @@ const OrganizationRow = observer(function OrganizationRow({
     void api
       .accountSwitchOrganization(id)
       .then((s) => store.ephemeral.setAccount(s))
-      .catch((e) => setError(String(e?.message ?? e)))
+      .catch((e) => setError(switchErrorText(String(e?.message ?? e))))
       .finally(() => setSwitching(false));
   };
 
@@ -568,7 +587,7 @@ export const AccountCard = observer(function AccountCard() {
     void api
       .accountSignOut()
       .then((s) => store.ephemeral.setAccount(s))
-      .catch((e) => setError(String(e?.message ?? e)))
+      .catch((e) => setError(switchErrorText(String(e?.message ?? e))))
       .finally(() => setBusy(false));
   };
 

@@ -10,7 +10,7 @@ import type { AccountOrganization, AccountStatus } from '../gen/contract';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
-import { AccountCard, SignInView } from './AccountCard';
+import { AccountCard, SignInView, switchErrorText } from './AccountCard';
 
 // jsdom has no `CSS.escape`; an open react-aria popover calls it.
 (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS ??= {};
@@ -218,7 +218,8 @@ describe('Settings → Account organization', () => {
     transport.onCall('account_switch_organization', () => {
       throw Object.assign(new Error('x'), {
         code: 'account',
-        message: 'not a member of that organization',
+        message:
+          'account: rejected: organization_membership_not_found: User is not a member of the organization.',
       });
     });
     await render(status({ id: 'org_me', role: 'admin' }));
@@ -228,11 +229,28 @@ describe('Settings → Account organization', () => {
     await settle();
     expect(
       m!.host.querySelector('.account-organization-error')?.textContent,
-    ).toContain('not a member of that organization');
+    ).toBe(
+      "Couldn't switch organization. User is not a member of the organization.",
+    );
     expect(store.ephemeral.account?.organization?.id).toBe('org_me');
     expect(row()?.textContent).toContain('Personal');
     // Still signed in, the switcher still there.
     expect(store.ephemeral.account?.user).not.toBeNull();
     expect(m!.host.querySelector('.account-organization-switch')).toBeTruthy();
   });
+});
+
+describe('switchErrorText', () => {
+  it.each([
+    [
+      'account: rejected: organization_not_found: Organization not found.',
+      "Couldn't switch organization. Organization not found.",
+    ],
+    [
+      'account: network: error sending request',
+      "Couldn't switch organization: no connection. Try again.",
+    ],
+    ['account: rejected: ', "Couldn't switch organization."],
+    ['something odd', "Couldn't switch organization. Something odd"],
+  ])('%s', (raw, said) => expect(switchErrorText(raw)).toBe(said));
 });
