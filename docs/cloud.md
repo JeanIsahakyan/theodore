@@ -94,6 +94,9 @@ error or a log.
 | second sign-in of a user in 2+ orgs | `403 organization_selection_required` with `pending_authentication_token` and `organizations` |
 | the pending token | single use |
 | org-scoped access token | carries `org_id`, `role`, `permissions` |
+| refresh into an org the user isn't in | `400 organization_membership_not_found`; the same refresh token still works afterwards (not burned), so a failed switch keeps the session |
+| a plain refresh after an org-scoped one | keeps the org |
+| membership objects | carry `organization_name` (the list needs no extra call per org) |
 
 ## Error codes
 

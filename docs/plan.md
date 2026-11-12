@@ -14,7 +14,7 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D2 | UI = React + HeroUI | decided |
 | D3 | Shell = Tauri 2; no Node sidecar | decided |
 | D4 | UI ⇄ core is local-first sync: transactions up, sync log deltas down | decided |
-| D5 | No server in v1. The "backend" is the local Rust core | decided |
+| D5 | The app's backend is the local Rust core. One server exists, the Theodore cloud (D23), for what a public client can't do; the app works without it | revised 2026-11-11 |
 | D6 | Code hosts behind a `HostAdapter` with capabilities; GitHub first | decided |
 | D7 | Own HTTP client for hosts (`reqwest` + `cynic`); `gh` only as a token source | decided |
 | D8 | Agents = the user's installed CLIs (`claude`, `codex`, `gemini`), spawned by core | decided |
@@ -27,11 +27,12 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D15 | Agent per task is a setting (grouping, chat, skills, fixes), default Claude | decided |
 | D16 | Auto-update from this repo's GitHub Releases, built in from the first version | decided |
 | D17 | Data lives in `~/.theodore` (other builds: `~/.theodore-<env>`) | decided |
-| D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in itself is D21), Linux and Windows | decided |
+| D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in is D21, organizations D23), Linux and Windows | revised 2026-11-11 |
 | D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
 | D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
-| D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE, redirect to `theodore://callback` in the app bundle and to a loopback listener elsewhere, device code as fallback; no secret in the app, no server yet (§6.12) | decided |
+| D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE, redirect to `theodore://callback` in the app bundle and to a loopback listener elsewhere, device code as fallback; no secret in the app; what needs the secret goes through the cloud (D23, §6.12) | decided |
 | D22 | Telemetry = one `tracing` stream, one redaction step, sinks by setting: a local JSON-lines log always; OTLP error reports and PostHog product events only when configured and opted into (two separate choices, recorded before anything is sent), both keyed by a random install id — never the account (docs/telemetry.md) | decided |
+| D23 | Theodore cloud = one Cloudflare Worker per channel (`cloud/`, docs/cloud.md) holding the WorkOS API key: personal organizations, org selection at sign-in. Every user is in an organization, alone a personal one, so later cloud state (fleet) keys by `org_id` | decided 2026-11-11 |
 
 ---
 
@@ -593,8 +594,10 @@ come (sync, teams, licensing, enterprise SSO). Wherever it's configured,
 signing in is required to use the app (see "Sign-in required" below). It is
 not a code host and never touches the host tokens of §6.8; signing in or out
 of one leaves the other alone. Identity provider: WorkOS AuthKit, used as a
-**public client** — no client secret or API key ships in the app, and there
-is no Theodore server yet.
+**public client** — no client secret or API key ships in the app. The few
+calls that need the secret go through the Theodore cloud (D23,
+docs/cloud.md); without one configured the account works, minus
+organizations.
 
 #### What a public client can do today
 
