@@ -12,7 +12,7 @@ use pretty_assertions::assert_eq;
 use theodore_fleet::{FleetTiming, OUTBOX_LIMIT, WsFleet};
 use theodore_fleet_protocol::{
     ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, FleetMode, MAX_FRAME_BYTES,
-    PROTOCOL_VERSION, ReplyOutcome, ServerMessage, SpaceCursor, b64, codes, verify,
+    PROTOCOL_VERSION, ReplyOutcome, ServerMessage, SpaceCursor, b64, codes, verify, verify_hello,
 };
 use theodore_ports::fleet::{FleetCommand, FleetConnect, FleetInbound, FleetLink, FleetPort};
 use tokio::net::{TcpListener, TcpStream};
@@ -124,6 +124,17 @@ impl Conn {
             .map(|r| r.unwrap())
     }
 
+    /// The device ends the socket without another text frame.
+    async fn dropped(&mut self) -> bool {
+        loop {
+            match timeout(WAIT, self.ws.next()).await.expect("in time") {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return true,
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                Some(Ok(_)) => return false,
+            }
+        }
+    }
+
     /// The next client message, skipping pings.
     async fn recv(&mut self) -> ClientMessage {
         loop {
@@ -157,8 +168,12 @@ impl Conn {
         };
         assert_eq!(protocol, PROTOCOL_VERSION);
         assert!(
-            verify(&public_key, &NONCE, &signature),
-            "hello signs the nonce"
+            verify_hello(&public_key, &NONCE, &signature),
+            "hello signs the nonce, for hello"
+        );
+        assert!(
+            !verify(&public_key, &NONCE, &signature),
+            "never the bare nonce"
         );
         self.send(&ServerMessage::Welcome {
             device_id: device_id.into(),
@@ -316,6 +331,61 @@ async fn handshake_signs_the_nonce_and_reports_resume() {
     send(&link, presence());
     assert_eq!(conn.recv().await, presence());
     drop(key);
+}
+
+/// The cloud gets nothing signed but a 32-byte nonce: anything else (say,
+/// a request body passed off as a challenge) drops the socket unsigned.
+#[tokio::test]
+async fn a_challenge_that_isnt_a_32_byte_nonce_is_never_signed() {
+    let cloud = Cloud::new().await;
+    let (mut link, _key) = start(&cloud, timing());
+    for nonce in [
+        b64(br#"{"req_id":"r1","origin_device":"dev_1"}"#),
+        b64(&[7; 31]),
+        b64(&[7; 33]),
+        "not base64!".to_string(),
+    ] {
+        let mut conn = cloud.accept().await;
+        conn.send(&ServerMessage::Challenge { nonce }).await;
+        assert!(conn.dropped().await, "no hello for a bad nonce");
+        assert!(disconnected(&mut link).await.contains("32-byte"));
+    }
+    // A good nonce on the next dial still connects.
+    let mut conn = cloud.accept().await;
+    conn.handshake("dev_1", 1, BTreeMap::new()).await;
+    connected(&mut link).await;
+}
+
+/// One challenge per connection: a second one, before or after the
+/// welcome, drops the socket without signing it.
+#[tokio::test]
+async fn a_second_challenge_drops_the_socket() {
+    let cloud = Cloud::new().await;
+    let (mut link, _key) = start(&cloud, timing());
+
+    // Before the welcome.
+    let mut conn = cloud.accept().await;
+    conn.send(&ServerMessage::Challenge { nonce: b64(&NONCE) })
+        .await;
+    assert!(matches!(conn.recv().await, ClientMessage::Hello { .. }));
+    conn.send(&ServerMessage::Challenge {
+        nonce: b64(&[9; 32]),
+    })
+    .await;
+    assert!(conn.dropped().await, "no second hello");
+    assert!(disconnected(&mut link).await.contains("second challenge"));
+
+    // After the welcome.
+    let mut conn = cloud.accept().await;
+    conn.handshake("dev_1", 1, BTreeMap::new()).await;
+    connected(&mut link).await;
+    conn.send(&ServerMessage::Challenge {
+        nonce: b64(&[9; 32]),
+    })
+    .await;
+    assert!(conn.dropped().await, "no second hello");
+    assert!(disconnected(&mut link).await.contains("second challenge"));
+    assert!(cloud.redials(WAIT).await, "and redials");
 }
 
 #[tokio::test]

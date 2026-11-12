@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use theodore_fleet::WsFleet;
 use theodore_fleet_protocol::{
-    AskVia, ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DismissReason, FleetMode,
-    ProjectRef, RemoteAsk, RemoteOp, RemoteQuestion, RemoteRequest, RemoteSpaceEvent,
-    RemoteSpaceStatus, ReplyOutcome, ServerMessage, SignedEnvelope,
+    AskVia, ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DismissReason, Domain,
+    FleetMode, ProjectRef, RemoteAsk, RemoteOp, RemoteQuestion, RemoteRequest, RemoteSpaceEvent,
+    RemoteSpaceStatus, ReplyOutcome, ServerMessage, SignedEnvelope, SpaceEventBody,
 };
 use theodore_ports::fleet::{FleetCommand, FleetConnect, FleetInbound, FleetLink, FleetPort};
 
@@ -236,7 +236,29 @@ async fn two_devices_through_the_real_hub() {
         parent: None,
         depth: 0,
     };
-    for (seq, event) in [
+    // Signed by b as the host; the cloud forwards the envelope unchanged.
+    let event = |seq: u64, event: RemoteSpaceEvent| ClientMessage::SpaceEvent {
+        envelope: SignedEnvelope::seal_as(
+            &SpaceEventBody {
+                space: space.clone(),
+                seq,
+                host_device: dev_b.clone(),
+                event,
+            },
+            &key_b,
+            Domain::Event,
+        ),
+    };
+    let event_seq = |m: &ServerMessage| match m {
+        ServerMessage::SpaceEvent { envelope } => {
+            let body: SpaceEventBody = envelope
+                .open_as(&key_b.public_key(), Domain::Event)
+                .expect("the event verifies with b's key");
+            (body.space == space).then_some(body.seq)
+        }
+        _ => None,
+    };
+    for (seq, ev) in [
         (1, started),
         (
             2,
@@ -245,14 +267,7 @@ async fn two_devices_through_the_real_hub() {
             },
         ),
     ] {
-        send(
-            &b,
-            ClientMessage::SpaceEvent {
-                space: space.clone(),
-                seq,
-                event,
-            },
-        );
+        send(&b, event(seq, ev));
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
     send(
@@ -264,31 +279,41 @@ async fn two_devices_through_the_real_hub() {
     );
     let mut seqs = vec![];
     while seqs.len() < 2 {
-        let s = wait_for(&mut a, "history", |m| match m {
-            ServerMessage::SpaceEvent { space: s, seq, .. } if *s == space => Some(*seq),
-            _ => None,
-        })
-        .await;
+        let s = wait_for(&mut a, "history", event_seq).await;
         seqs.push(s);
     }
     send(
         &b,
-        ClientMessage::SpaceEvent {
-            space: space.clone(),
-            seq: 3,
-            event: RemoteSpaceEvent::Status {
+        event(
+            3,
+            RemoteSpaceEvent::Status {
                 status: RemoteSpaceStatus::Idle,
             },
-        },
+        ),
     );
-    let live = wait_for(&mut a, "live event", |m| match m {
-        ServerMessage::SpaceEvent { space: s, seq, .. } if *s == space => Some(*seq),
+    let live = wait_for(&mut a, "live event", event_seq).await;
+    seqs.push(live);
+    assert_eq!(seqs, vec![1, 2, 3]);
+    println!("PASS events: history 1,2 then live 3, in order, signed by b");
+
+    // A hole in b's seqs: the cloud says so, unsigned, then the event.
+    send(
+        &b,
+        event(
+            5,
+            RemoteSpaceEvent::Status {
+                status: RemoteSpaceStatus::Running,
+            },
+        ),
+    );
+    let gap = wait_for(&mut a, "gap", |m| match m {
+        ServerMessage::SpaceGap { space: s, from, to } if *s == space => Some((*from, *to)),
         _ => None,
     })
     .await;
-    seqs.push(live);
-    assert_eq!(seqs, vec![1, 2, 3]);
-    println!("PASS events: history 1,2 then live 3, in order");
+    assert_eq!(gap, (4, 4));
+    assert_eq!(wait_for(&mut a, "event after the gap", event_seq).await, 5);
+    println!("PASS gap: space_gap 4..4, then 5");
 
     // Question from b's space goes to a (focused, active).
     send(
@@ -312,21 +337,30 @@ async fn two_devices_through_the_real_hub() {
     send(
         &b,
         ClientMessage::Ask {
-            ask: RemoteAsk {
-                ask_id: ask_id.clone(),
-                space: space.clone(),
-                host_device: dev_b.clone(),
-                from: "live-b · live".into(),
-                questions: vec![RemoteQuestion {
-                    question: "Which one?".into(),
-                    options: vec!["one".into(), "two".into()],
-                    multi: false,
-                }],
-            },
+            envelope: SignedEnvelope::seal_as(
+                &RemoteAsk {
+                    ask_id: ask_id.clone(),
+                    space: space.clone(),
+                    host_device: dev_b.clone(),
+                    from: "live-b · live".into(),
+                    questions: vec![RemoteQuestion {
+                        question: "Which one?".into(),
+                        options: vec!["one".into(), "two".into()],
+                        multi: false,
+                    }],
+                },
+                &key_b,
+                Domain::Ask,
+            ),
         },
     );
     let via = wait_for(&mut a, "ask at a", |m| match m {
-        ServerMessage::Ask { ask, via } if ask.ask_id == ask_id => Some(*via),
+        ServerMessage::Ask { envelope, via } => {
+            let ask: RemoteAsk = envelope
+                .open_as(&key_b.public_key(), Domain::Ask)
+                .expect("the ask verifies with b's key");
+            (ask.ask_id == ask_id).then_some(*via)
+        }
         _ => None,
     })
     .await;

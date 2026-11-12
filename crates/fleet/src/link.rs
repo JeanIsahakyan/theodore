@@ -6,7 +6,7 @@ use std::sync::Arc;
 use futures::{SinkExt, StreamExt};
 use theodore_fleet_protocol::{
     ClientMessage, DeviceInfo, DeviceKey, MAX_FRAME_BYTES, PROTOCOL_VERSION, ServerMessage,
-    SpaceCursor, codes, unb64,
+    SpaceCursor, codes, sign_hello,
 };
 use theodore_ports::fleet::{FleetCommand, FleetConnect, FleetInbound};
 use tokio::net::TcpStream;
@@ -265,7 +265,9 @@ impl Link {
             self.timing.ping_every,
         );
         ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut hello_sent = false;
+        // One challenge per socket: a second one is a cloud trying to get
+        // something else signed, and the socket goes.
+        let mut challenged = false;
         loop {
             let deadline = last_frame + self.timing.silence;
             tokio::select! {
@@ -334,15 +336,22 @@ impl Link {
                         ServerMessage::Error { code, message } if !s.welcomed => {
                             return End::Lost(format!("{code}: {message}"));
                         }
-                        ServerMessage::Challenge { nonce } if !s.welcomed => {
-                            let Some(bytes) = unb64(&nonce) else {
-                                return End::Lost("the challenge isn't base64".into());
+                        ServerMessage::Challenge { .. } if challenged => {
+                            warn!("fleet: a second challenge on one socket, dropped it");
+                            return End::Lost("a second challenge".into());
+                        }
+                        ServerMessage::Challenge { nonce } => {
+                            challenged = true;
+                            // Exactly a 32-byte nonce, signed for hello only.
+                            let Some(signature) = sign_hello(&self.key, &nonce) else {
+                                warn!("fleet: the challenge isn't a 32-byte nonce, dropped the socket");
+                                return End::Lost("the challenge isn't a 32-byte nonce".into());
                             };
                             let hello = ClientMessage::Hello {
                                 protocol: PROTOCOL_VERSION,
                                 device_id: self.device_id.clone(),
                                 public_key: self.key.public_key(),
-                                signature: self.key.sign(&bytes),
+                                signature,
                                 info: self.info.clone(),
                                 spaces: self.spaces.clone(),
                             };
@@ -350,10 +359,9 @@ impl Link {
                             if let Err(end) = self.send(&mut ws, hello).await {
                                 return end;
                             }
-                            hello_sent = true;
                         }
                         ServerMessage::Welcome { device_id, generation, resume } if !s.welcomed => {
-                            if !hello_sent {
+                            if !challenged {
                                 return End::Lost("welcome before hello".into());
                             }
                             s.welcomed = true;
@@ -368,8 +376,8 @@ impl Link {
                         }
                         // Anything else before the welcome isn't for the core.
                         _ if !s.welcomed => {}
-                        ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {
-                            debug!("fleet: second handshake frame ignored");
+                        ServerMessage::Welcome { .. } => {
+                            debug!("fleet: second welcome ignored");
                         }
                         msg => {
                             if self.events.send(FleetInbound::Message(msg)).is_err() {
@@ -502,6 +510,7 @@ fn kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::AskResolved { .. } => "ask_resolved",
         ClientMessage::Subscribe { .. } => "subscribe",
         ClientMessage::Unsubscribe { .. } => "unsubscribe",
+        ClientMessage::RemoveDevice { .. } => "remove_device",
     }
 }
 
@@ -514,6 +523,7 @@ fn server_kind(msg: &ServerMessage) -> &'static str {
         ServerMessage::ClaimResult { .. } => "claim_result",
         ServerMessage::Reply { .. } => "reply",
         ServerMessage::SpaceEvent { .. } => "space_event",
+        ServerMessage::SpaceGap { .. } => "space_gap",
         ServerMessage::Ask { .. } => "ask",
         ServerMessage::Dismiss { .. } => "dismiss",
         ServerMessage::Error { .. } => "error",

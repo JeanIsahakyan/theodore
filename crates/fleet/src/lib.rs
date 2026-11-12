@@ -6,7 +6,8 @@
 //! start ─▶ task ─dial─▶ GET wss://<cloud>/v1/fleet/ws  (Bearer token, UA theodore)
 //!             │           401/403 ─▶ Fatal fleet.unauthorized
 //!             ◀── challenge{nonce}
-//!             ──▶ hello{protocol, device_id?, public_key, sign(nonce), info, spaces}
+//!             ──▶ hello{protocol, device_id?, public_key, sign_hello(nonce), info, spaces}
+//!                 (only a 32-byte nonce, one challenge per socket: else drop, redial)
 //!             ◀── welcome ─▶ Connected{device_id, generation, resume}
 //!             ──▶ reauth / announce if they changed during the handshake
 //!             ──▶ outbox (reply, ask_resolved)
