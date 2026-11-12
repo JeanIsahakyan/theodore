@@ -1,0 +1,17 @@
+# Theodore cloud (docs/cloud.md). One Worker per channel; each talks to its
+# own WorkOS environment. Secrets are never in this file:
+#   wrangler secret put WORKOS_API_KEY --env staging
+#   wrangler secret put WORKOS_API_KEY --env production
+# Local `wrangler dev` reads WORKOS_API_KEY from .dev.vars (gitignored).
+name = "theodore-cloud"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[env.staging]
+name = "theodore-cloud-staging"
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com" }
+
+[env.production]
+name = "theodore-cloud"
+vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com" }
