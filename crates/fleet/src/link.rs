@@ -26,12 +26,13 @@ use crate::{FleetTiming, OUTBOX_LIMIT};
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// Cloud error codes that end the link for good.
-const FATAL_CODES: [&str; 5] = [
+const FATAL_CODES: [&str; 6] = [
     codes::UNAUTHORIZED,
     codes::NO_ORG,
     codes::KEY_MISMATCH,
     codes::VERSION,
     codes::TOO_MANY_DEVICES,
+    codes::REMOVED,
 ];
 /// Close codes that end the link for good (unauthorized, forbidden).
 const FATAL_CLOSE: [u16; 2] = [4001, 4003];

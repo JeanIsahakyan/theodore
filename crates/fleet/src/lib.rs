@@ -16,7 +16,7 @@
 //!   lost ─────┤ socket error | close | 45 s without a frame
 //!             └─▶ Disconnected{reason, retry_in_ms} ─▶ wait ─▶ dial
 //!                 (0.5 s doubling to 30 s, ±25 %, reset by a welcome)
-//!   fatal ────▶ error{fleet.unauthorized|no_org|key_mismatch|version}
+//!   fatal ────▶ error{fleet.unauthorized|no_org|key_mismatch|version|too_many_devices|removed}
 //!               | close 4001/4003 ─▶ Fatal, the task ends
 //!   Close, or the core drops the command sender ─▶ the task ends
 //! ```

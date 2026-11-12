@@ -390,6 +390,13 @@ pub mod codes {
     pub const NOT_YOURS: &str = "fleet.not_yours";
     pub const BAD_MESSAGE: &str = "fleet.bad_message";
     pub const TOO_MANY_DEVICES: &str = "fleet.too_many_devices";
+    /// Another of the user's devices removed this one (close 4003): it
+    /// joins again only as a new device.
+    pub const REMOVED: &str = "fleet.removed";
+    /// Too many spaces for this user (close 1008, redial).
+    pub const TOO_MANY_SPACES: &str = "fleet.too_many_spaces";
+    /// Too many open connections for this user (close 1008, redial).
+    pub const TOO_MANY_CONNECTIONS: &str = "fleet.too_many_connections";
     pub const UPGRADE_REQUIRED: &str = "fleet.upgrade_required";
     // the device adapter's own
     pub const BAD_URL: &str = "fleet.bad_url";

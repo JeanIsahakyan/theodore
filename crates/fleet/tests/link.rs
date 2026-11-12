@@ -593,6 +593,47 @@ async fn close_4001_is_fatal() {
     assert!(!cloud.redials(Duration::from_millis(300)).await);
 }
 
+/// Removed by another of the user's devices: fatal, with its own code.
+#[tokio::test]
+async fn close_4003_removed_is_fatal_as_removed() {
+    let cloud = Cloud::new().await;
+    let (mut link, _key) = start(&cloud, timing());
+    let mut conn = cloud.accept().await;
+    conn.handshake("dev_1", 1, BTreeMap::new()).await;
+    connected(&mut link).await;
+    conn.ws
+        .close(Some(CloseFrame {
+            code: CloseCode::from(4003),
+            reason: codes::REMOVED.into(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(fatal(&mut link).await, codes::REMOVED);
+    ended(&mut link).await;
+    assert!(!cloud.redials(Duration::from_millis(300)).await);
+}
+
+/// Too many connections or spaces: a policy close, not the end.
+#[tokio::test]
+async fn too_many_connections_redials() {
+    let cloud = Cloud::new().await;
+    let (mut link, _key) = start(&cloud, timing());
+    for code in [codes::TOO_MANY_CONNECTIONS, codes::TOO_MANY_SPACES] {
+        let mut conn = cloud.accept().await;
+        conn.handshake("dev_1", 1, BTreeMap::new()).await;
+        connected(&mut link).await;
+        conn.ws
+            .close(Some(CloseFrame {
+                code: CloseCode::Policy,
+                reason: code.into(),
+            }))
+            .await
+            .unwrap();
+        assert!(disconnected(&mut link).await.contains(code));
+    }
+    assert!(cloud.redials(WAIT).await);
+}
+
 #[tokio::test]
 async fn http_401_on_upgrade_is_fatal() {
     let cloud = Cloud::new().await;
