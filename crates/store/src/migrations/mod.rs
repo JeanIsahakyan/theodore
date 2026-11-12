@@ -31,6 +31,16 @@ pub static MIGRATIONS: &[Migration] = &[
         name: "0003_tool_payloads",
         sql: include_str!("0003_tool_payloads.sql"),
     },
+    Migration {
+        version: 4,
+        name: "0004_fleet",
+        sql: include_str!("0004_fleet.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "0005_fleet_seen",
+        sql: include_str!("0005_fleet_seen.sql"),
+    },
 ];
 
 /// How many backup copies of the database to keep around a migration run.

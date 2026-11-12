@@ -646,6 +646,71 @@ pub trait CoreApi: Send + Sync {
     async fn account_sign_in_callback(&self, _url: String) -> bool {
         false
     }
+    /// Fleet (docs/fleet.md): this device's settings, connection and the
+    /// user's devices.
+    async fn fleet_status(&self) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_set_settings(
+        &self,
+        _req: theodore_contract::FleetSettingsRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Pins (or unpins) a device's key on this device: the one compared.
+    async fn fleet_trust_device(
+        &self,
+        _req: theodore_contract::FleetTrustRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Removes another of the user's devices from the fleet.
+    async fn fleet_remove_device(
+        &self,
+        _device_id: String,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Starts a space on another device; tracked as `starting`.
+    async fn fleet_start_space(
+        &self,
+        _req: theodore_contract::FleetStartRequest,
+    ) -> Result<theodore_contract::FleetRemoteSpace, CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_send(
+        &self,
+        _req: theodore_contract::FleetSendRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_stop(&self, _space: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_answer(
+        &self,
+        _req: theodore_contract::FleetAnswerRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Spaces started from here, and hosted here for other devices.
+    async fn fleet_spaces(&self) -> Result<Vec<theodore_contract::FleetRemoteSpace>, CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_space_lines(
+        &self,
+        _space: String,
+        _since: u64,
+    ) -> Result<Vec<theodore_contract::FleetSpaceLine>, CommandError> {
+        Err(not_ready())
+    }
+    /// Whether you're at this device: where questions go.
+    async fn fleet_presence(
+        &self,
+        _req: theodore_contract::FleetPresenceRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
 }
 
 fn not_sandbox() -> CommandError {

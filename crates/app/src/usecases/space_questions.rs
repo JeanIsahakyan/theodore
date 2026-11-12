@@ -181,6 +181,18 @@ impl Core {
             .map_err(|_| AppError::NotFound("this question is no longer waiting".into()))
     }
 
+    /// The questions of set `id` while it waits in `space`.
+    pub(crate) fn pending_questions(
+        &self,
+        space: &str,
+        id: &str,
+    ) -> Option<Vec<SpaceQuestionItem>> {
+        self.questions()
+            .get(id)
+            .filter(|p| p.space == space)
+            .map(|p| p.questions.clone())
+    }
+
     /// The turn `run` waits on your answer.
     pub(crate) fn asking(&self, run: &str) -> bool {
         self.questions().values().any(|p| p.run == run)
@@ -215,7 +227,10 @@ impl Core {
 }
 
 /// Why `answers` don't answer `questions`, `None` when they do.
-fn invalid_answers(questions: &[SpaceQuestionItem], answers: &[SpaceAnswerItem]) -> Option<String> {
+pub(crate) fn invalid_answers(
+    questions: &[SpaceQuestionItem],
+    answers: &[SpaceAnswerItem],
+) -> Option<String> {
     if answers.len() != questions.len() {
         return Some(format!("answer all {} questions", questions.len()));
     }

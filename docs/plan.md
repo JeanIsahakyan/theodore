@@ -1094,7 +1094,8 @@ Claude runner; the others follow in M4 behind the same runner trait.
 - SQLite via `rusqlite` (WAL), migrations in `store`, applied on start; one DB
   per user profile.
 - Tables: models from §4 + `sync_log(id, model, model_id, action, data)` +
-  `outbox(id, op, payload, attempts, status, last_error)`.
+  `outbox(id, op, payload, attempts, status, last_error)` + the fleet's
+  `fleet_spaces` and `fleet_events` (docs/fleet.md "App side").
 - Keychain: one item for all Theodore secrets (one prompt). On macOS through
   `/usr/bin/security` so the prompt survives rebuilds; secret passed on stdin,
   not as an argument.

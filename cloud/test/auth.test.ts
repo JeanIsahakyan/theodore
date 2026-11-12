@@ -28,6 +28,7 @@ describe('verifyAccessToken', async () => {
       organizationId: 'org_1',
       role: 'admin',
       permissions: ['fleet:run'],
+      expiresAt: expect.any(Number),
     });
   });
 

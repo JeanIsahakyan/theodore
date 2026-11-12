@@ -1,0 +1,20 @@
+[package]
+name = "theodore-fleet-protocol"
+description = "Fleet wire types (device ⇄ cloud), signed envelopes and device keys (docs/fleet.md). TS for the Worker exported with specta."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+specta.workspace = true
+specta-typescript.workspace = true
+specta-serde.workspace = true
+specta-util.workspace = true
+ring = "0.17"
+base64 = "0.22"
+
+[lints]
+workspace = true

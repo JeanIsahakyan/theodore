@@ -1296,6 +1296,67 @@ impl CoreApi for AppCore {
             theodore_ports::CallbackPage::Ignored
         )
     }
+    async fn fleet_status(&self) -> Result<theodore_contract::FleetStatus, CommandError> {
+        self.core.fleet_status().await.map_err(err)
+    }
+    async fn fleet_set_settings(
+        &self,
+        req: theodore_contract::FleetSettingsRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        self.core.fleet_set_settings(req).await.map_err(err)
+    }
+    async fn fleet_trust_device(
+        &self,
+        req: theodore_contract::FleetTrustRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        self.core.fleet_trust_device(req).await.map_err(err)
+    }
+    async fn fleet_remove_device(
+        &self,
+        device_id: String,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        self.core.fleet_remove_device(&device_id).await.map_err(err)
+    }
+    async fn fleet_start_space(
+        &self,
+        req: theodore_contract::FleetStartRequest,
+    ) -> Result<theodore_contract::FleetRemoteSpace, CommandError> {
+        self.core.fleet_start_space(req).await.map_err(err)
+    }
+    async fn fleet_send(
+        &self,
+        req: theodore_contract::FleetSendRequest,
+    ) -> Result<(), CommandError> {
+        self.core.fleet_send(req).await.map_err(err)
+    }
+    async fn fleet_stop(&self, space: String) -> Result<(), CommandError> {
+        self.core.fleet_stop(&space).await.map_err(err)
+    }
+    async fn fleet_answer(
+        &self,
+        req: theodore_contract::FleetAnswerRequest,
+    ) -> Result<(), CommandError> {
+        self.core.fleet_answer(req).await.map_err(err)
+    }
+    async fn fleet_spaces(&self) -> Result<Vec<theodore_contract::FleetRemoteSpace>, CommandError> {
+        self.core.fleet_spaces().await.map_err(err)
+    }
+    async fn fleet_space_lines(
+        &self,
+        space: String,
+        since: u64,
+    ) -> Result<Vec<theodore_contract::FleetSpaceLine>, CommandError> {
+        self.core
+            .fleet_space_lines(&space, since)
+            .await
+            .map_err(err)
+    }
+    async fn fleet_presence(
+        &self,
+        req: theodore_contract::FleetPresenceRequest,
+    ) -> Result<(), CommandError> {
+        self.core.fleet_presence(req).await.map_err(err)
+    }
 }
 
 #[cfg(test)]

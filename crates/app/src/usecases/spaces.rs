@@ -43,8 +43,21 @@ pub(crate) const HISTORY_MESSAGES: usize = 12;
 /// Per replayed message.
 const HISTORY_CHARS: usize = 2_000;
 
+/// Told about a new space once its row exists, before its goal is sent.
+pub(crate) type OnSpaceCreated = Box<dyn FnOnce(&Space) + Send>;
+
 impl Core {
-    pub async fn create_space(&self, mut req: CreateSpaceRequest) -> AppResult<Space> {
+    pub async fn create_space(&self, req: CreateSpaceRequest) -> AppResult<Space> {
+        self.create_space_then(req, None).await
+    }
+
+    /// `create_space`; `created` hears of the space before its first turn
+    /// starts (a fleet start marks it hosted, so that turn's tools know).
+    pub(crate) async fn create_space_then(
+        &self,
+        mut req: CreateSpaceRequest,
+        created: Option<OnSpaceCreated>,
+    ) -> AppResult<Space> {
         let project = self
             .project_row(&req.project)
             .await?
@@ -271,6 +284,9 @@ impl Core {
         })
         .await?;
 
+        if let Some(created) = created {
+            created(&space);
+        }
         let setup_status = space.setup.as_ref().map(|s| s.status);
         if setup_status == Some(theodore_contract::SetupStatus::Running) {
             // The goal waits for setup (`goal_pending`).
@@ -592,11 +608,15 @@ impl Core {
                 .space_review_rules(&space, &project, &wt.path)
                 .await
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
-                    system_prompt(
-                        &space,
-                        self.0.deps.tools.is_some(),
-                        code,
-                        self.user_mcp_allowed().await,
+                    with_fleet_tools(
+                        system_prompt(
+                            &space,
+                            self.0.deps.tools.is_some(),
+                            code,
+                            !self.fleet_hosts_local(&space.id).await
+                                && self.user_mcp_allowed().await,
+                        ),
+                        self.0.deps.tools.is_some() && self.fleet_tools_available(),
                     ),
                     mode,
                 )))
@@ -1519,7 +1539,16 @@ async fn drive_turn(core: &Core, turn: Turn) {
         code,
     } = turn;
     // The space's commands as tools, for this turn only.
-    // A kept process keeps its endpoint: it now serves this turn.
+    // A kept process keeps its endpoint: it now serves this turn (its mode
+    // is the process's, `CliKey`).
+    // Hosted here for another device: no user MCP servers either (that
+    // device's trust doesn't reach the user's own connectors).
+    let hosted = core.fleet_hosts_local(&space.id).await;
+    let fleet_tools = if hosted {
+        crate::deps::FleetTools::Hosted
+    } else {
+        crate::deps::FleetTools::Steer
+    };
     let mcp = match &attach {
         Some(live) => {
             if let (Some(tools), Some(mcp)) = (&core.0.deps.tools, &live.mcp) {
@@ -1532,7 +1561,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             .deps
             .tools
             .as_ref()
-            .map(|t| t.register_space(&run_id, &space.id, agent, code)),
+            .map(|t| t.register_space(&run_id, &space.id, agent, code, mode, fleet_tools)),
     };
     let mut tools_guard = crate::usecases::agents::ToolsGuard {
         core,
@@ -1561,7 +1590,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         effort,
         stall_after_ms: core.stall_after_ms().await,
         env,
-        user_mcp: core.user_mcp_allowed().await,
+        user_mcp: !hosted && core.user_mcp_allowed().await,
         attachments,
         resume,
         stream_text: true,
@@ -2133,6 +2162,16 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
 const USER_MCP_PROMPT: &str = "The user's own MCP servers (Linear, GitHub, docs and \
      the like, as connected in their agent CLI) are available too: use them when the \
      task points at an issue, a thread or a document there.";
+
+/// The fleet tools' line (docs/fleet.md "Agents use it too"), when the
+/// turn has them.
+fn with_fleet_tools(mut prompt: String, fleet: bool) -> String {
+    if fleet {
+        prompt.push('\n');
+        prompt.push_str(crate::usecases::fleet_tools::FLEET_TOOLS_PROMPT);
+    }
+    prompt
+}
 
 fn system_prompt(space: &Space, tools: bool, code: CodeTools, user_mcp: bool) -> String {
     let mut prompt = base_system_prompt(space);

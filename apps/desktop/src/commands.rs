@@ -1147,6 +1147,120 @@ pub async fn account_organizations(
         .await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_status(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_status().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_set_settings(
+    op: crate::op::Op,
+    req: theodore_contract::FleetSettingsRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_set_settings(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_trust_device(
+    op: crate::op::Op,
+    req: theodore_contract::FleetTrustRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_trust_device(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_remove_device(
+    op: crate::op::Op,
+    device_id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_remove_device(device_id).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_start_space(
+    op: crate::op::Op,
+    req: theodore_contract::FleetStartRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetRemoteSpace, CommandError> {
+    op.run(async move { core.fleet_start_space(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_send(
+    op: crate::op::Op,
+    req: theodore_contract::FleetSendRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.fleet_send(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_stop(
+    op: crate::op::Op,
+    space: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.fleet_stop(space).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_answer(
+    op: crate::op::Op,
+    req: theodore_contract::FleetAnswerRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.fleet_answer(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_spaces(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::FleetRemoteSpace>, CommandError> {
+    op.run(async move { core.fleet_spaces().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_space_lines(
+    op: crate::op::Op,
+    space: String,
+    since: u64,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::FleetSpaceLine>, CommandError> {
+    op.run(async move { core.fleet_space_lines(space, since).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_presence(
+    op: crate::op::Op,
+    req: theodore_contract::FleetPresenceRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.fleet_presence(req).await }).await
+}
+
 /// Brings the main window forward: the browser sign-in finishes in another
 /// app, and the user should land back in Theodore without hunting for it.
 #[tauri::command]

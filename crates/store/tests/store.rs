@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::thread;
 
 use serde_json::json;
-use theodore_ports::{NewAction, OutboxStatus, Store, StoreError, SyncActionCode, ToolCallKey};
+use theodore_ports::{
+    FleetHostedRow, NewAction, OutboxStatus, Store, StoreError, SyncActionCode, ToolCallKey,
+};
 use theodore_store::SqliteStore;
 
 fn call(run: &str, call: &str, space: &str) -> ToolCallKey {
@@ -89,6 +91,77 @@ fn deleting_a_space_takes_its_payloads_with_it() {
     assert_eq!(store.tool_payloads_delete_space("s1").unwrap(), 1);
     assert!(store.tool_payload_get("r", "a").unwrap().is_none());
     assert!(store.tool_payload_get("r", "b").unwrap().is_some());
+}
+
+#[test]
+fn a_hosted_fleet_space_is_upserted_and_listed() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut row = FleetHostedRow {
+        space: "rs_1".into(),
+        local_space: "s1".into(),
+        origin_device: "dev_a".into(),
+        parent: None,
+        depth: 0,
+        created_at: 5,
+        data: json!({"turn": 0}),
+    };
+    store.fleet_hosted_put(&row).unwrap();
+    row.data = json!({"turn": 2});
+    row.parent = Some("rs_0".into());
+    store.fleet_hosted_put(&row).unwrap();
+    assert_eq!(store.fleet_hosted_all().unwrap(), vec![row]);
+    assert_eq!(store.last_sync_id().unwrap(), 0);
+}
+
+#[test]
+fn the_fleet_journal_keeps_the_last_events_per_space() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    for seq in 1..=5 {
+        store
+            .fleet_journal_append("rs_1", seq, &json!({"n": seq}), 3)
+            .unwrap();
+    }
+    store
+        .fleet_journal_append("rs_2", 1, &json!({"n": 1}), 3)
+        .unwrap();
+    let seqs: Vec<u64> = store
+        .fleet_journal_since("rs_1", 0, 10)
+        .unwrap()
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect();
+    assert_eq!(seqs, vec![3, 4, 5]);
+    assert_eq!(
+        store.fleet_journal_since("rs_1", 4, 10).unwrap(),
+        vec![(5, json!({"n": 5}))]
+    );
+    assert_eq!(store.fleet_journal_since("rs_2", 0, 10).unwrap().len(), 1);
+}
+
+/// Seen fleet requests outlive the process; done never goes back to
+/// claiming, and old ones are forgotten.
+#[test]
+fn fleet_seen_requests_survive_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("theodore.db");
+    {
+        let store = SqliteStore::open(&path).unwrap();
+        store.fleet_seen_put("r_old", 100, true, 0).unwrap();
+        store.fleet_seen_put("r1", 1_000, false, 0).unwrap();
+        store.fleet_seen_put("r1", 1_000, true, 0).unwrap();
+        store.fleet_seen_put("r1", 1_000, false, 0).unwrap();
+        store.fleet_seen_put("r2", 2_000, false, 500).unwrap();
+    }
+    let store = SqliteStore::open(&path).unwrap();
+    let mut all = store.fleet_seen_all().unwrap();
+    all.sort();
+    assert_eq!(
+        all,
+        vec![
+            ("r1".to_string(), 1_000, true),
+            ("r2".to_string(), 2_000, false)
+        ]
+    );
 }
 
 fn insert(store: &SqliteStore, model: &str, id: &str, data: serde_json::Value) -> u64 {

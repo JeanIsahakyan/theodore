@@ -30,6 +30,8 @@ pub const BITBUCKET_TOKEN: &str = "bitbucket.token";
 pub const LINEAR_TOKEN: &str = "linear.token";
 /// The Theodore account session (JSON: tokens + profile).
 pub const THEODORE_ACCOUNT: &str = "theodore.account";
+/// This device's fleet key (docs/fleet.md "Trust"): ed25519 PKCS#8, base64.
+pub const FLEET_DEVICE_KEY: &str = "fleet.device_key";
 
 /// Trait to abstract command invocation for testability.
 trait CommandRunner: Send + Sync {

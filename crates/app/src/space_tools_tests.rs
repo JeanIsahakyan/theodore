@@ -361,8 +361,16 @@ async fn a_space_turn_gets_space_tools_and_is_told_about_them() {
         pr,
         space,
         code,
+        mode,
+        fleet,
     } = regs[0].clone();
     assert!(run_id.starts_with(&format!("space:{}:", s.id)), "{run_id}");
+    assert_eq!(mode, Some(s.mode), "the turn's mode");
+    assert_eq!(
+        fleet,
+        Some(crate::deps::FleetTools::Steer),
+        "a space of this device's own"
+    );
     assert_eq!(name, "space-tools");
     assert_eq!(pr, None);
     assert_eq!(space.as_deref(), Some(s.id.as_str()));

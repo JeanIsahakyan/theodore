@@ -455,7 +455,7 @@ impl Core {
 
     /// `resolve_cloud_url` over `THEODORE_CLOUD_URL`, `account.cloud_url`
     /// and the build's own; an invalid one is warned about once.
-    async fn account_cloud_url(&self) -> Option<String> {
+    pub(crate) async fn account_cloud_url(&self) -> Option<String> {
         let env = std::env::var(CLOUD_URL_ENV).ok();
         let setting = self.setting_string(CLOUD_URL_SETTING, "").await;
         resolve_cloud_url(
@@ -569,8 +569,14 @@ impl Core {
         }
     }
 
-    fn account_session(&self) -> Option<AccountSession> {
+    pub(crate) fn account_session(&self) -> Option<AccountSession> {
         self.0.account.session.lock().expect("account lock").clone()
+    }
+
+    /// Bumped on every sign-in and sign-out (the fleet restarts its link on
+    /// a change).
+    pub(crate) fn account_generation(&self) -> u64 {
+        self.0.account.generation.load(Ordering::SeqCst)
     }
 
     /// Reads the stored session once per process.
@@ -722,6 +728,8 @@ impl Core {
         self.account_persist(Some(next)).await?;
         theodore_telemetry::set_account(Some(&next.user.id));
         *self.0.account.session.lock().expect("account lock") = Some(next.clone());
+        // A fresh token (reauth) or another organization (a new link).
+        self.fleet_account_changed();
         Ok(true)
     }
 
@@ -982,6 +990,7 @@ impl Core {
             *self.0.account.session.lock().expect("account lock") = Some(session);
             since
         };
+        self.fleet_account_changed();
         let core = self.clone();
         tokio::spawn(async move { core.account_org_step(since).await });
         self.0.account.session_ended.store(false, Ordering::SeqCst);
@@ -1206,6 +1215,7 @@ impl Core {
             (old, self.account_persist(None).await)
         };
         theodore_telemetry::set_account(None);
+        self.fleet_account_changed();
         if old.is_some() {
             tracing::info!("signed out of the Theodore account");
         }
