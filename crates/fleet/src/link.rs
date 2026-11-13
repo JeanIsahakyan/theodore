@@ -523,6 +523,7 @@ fn server_kind(msg: &ServerMessage) -> &'static str {
         ServerMessage::Request { .. } => "request",
         ServerMessage::ClaimResult { .. } => "claim_result",
         ServerMessage::Reply { .. } => "reply",
+        ServerMessage::Refused { .. } => "refused",
         ServerMessage::SpaceEvent { .. } => "space_event",
         ServerMessage::SpaceGap { .. } => "space_gap",
         ServerMessage::Ask { .. } => "ask",

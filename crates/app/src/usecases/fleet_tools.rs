@@ -6,6 +6,10 @@
 //! ```text
 //! caller hosted here for the fleet ─▶ fleet_devices / read / wait only:
 //!                                     no trust passes through it
+//! results carry no unsigned free text: device names are the pins',
+//!   project ids pass a strict pattern (names never), space names,
+//!   branches, replies and questions come from signed events or replies,
+//!   errors are a verified code + ≤ 200 chars, or the cloud's code alone
 //! caller of this device's own, turn in Edit or Run
 //!   ─▶ fleet_start_space on a device pinned here, mode ≤ the turn's,
 //!      parent = the caller's stable fleet id, depth 1, ≤ MAX_CHILDREN
@@ -18,13 +22,13 @@ use std::time::Duration;
 use theodore_contract::{FleetRemoteSpace, FleetSendRequest, FleetSpaceStatus, SpaceMode};
 use theodore_fleet_protocol::{DeviceSummary, MAX_CHILDREN, MAX_DEPTH};
 use theodore_ports::{
-    FLEET_WAIT_MAX_MS, FleetToolDevice, FleetToolLine, FleetToolProject, FleetToolRead,
-    FleetToolSpace, FleetToolWait, SpaceToolError,
+    FLEET_WAIT_MAX_MS, FleetToolDevice, FleetToolLine, FleetToolRead, FleetToolSpace,
+    FleetToolWait, SpaceToolError,
 };
 
 use crate::core::Core;
 use crate::error::AppError;
-use crate::usecases::fleet::{FleetMem, FleetSettings, mode_str};
+use crate::usecases::fleet::{FleetMem, FleetSettings, TrustedDevice, mode_str};
 use crate::usecases::fleet_origin::settled;
 
 /// How long `fleet_start_space` waits for the other device to say yes.
@@ -102,11 +106,20 @@ fn mode_word(m: SpaceMode) -> &'static str {
     mode_str(crate::usecases::fleet::fleet_mode(m))
 }
 
-/// Pinned here with the key the cloud lists now.
-fn trusted(d: &DeviceSummary, s: &FleetSettings) -> bool {
+/// The pin of `d`, when it's pinned here with the key the cloud lists now.
+fn pin_of<'a>(d: &DeviceSummary, s: &'a FleetSettings) -> Option<&'a TrustedDevice> {
     s.trusted_devices
         .iter()
-        .any(|t| t.device_id == d.device_id && t.public_key == d.public_key)
+        .find(|t| t.device_id == d.device_id && t.public_key == d.public_key)
+}
+
+/// A project id as an agent may see it: `^[A-Za-z0-9._:/@+-]{1,200}$`
+/// (`local:app`, `github.com/acme/app`); anything else is dropped.
+pub(crate) fn safe_project_id(id: &str) -> bool {
+    (1..=200).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".:_/@+-".contains(&b))
 }
 
 /// Whether `space` (followed here) was started by `caller`'s agent, or by
@@ -173,24 +186,27 @@ impl Core {
         let s = self.fleet_settings().await;
         let mem = self.fleet();
         let me = mem.device_id.clone();
+        // The cloud's listing is unsigned: the name is the pin's, project
+        // ids pass only in a strict shape, and project names never.
         Ok(mem
             .devices
             .iter()
-            .filter(|d| d.online && d.info.accepts_remote && trusted(d, &s))
+            .filter(|d| d.online && d.info.accepts_remote)
             .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
-            .map(|d| FleetToolDevice {
-                device_id: d.device_id.clone(),
-                name: d.info.name.clone(),
-                projects: d
-                    .info
-                    .projects
-                    .iter()
-                    .map(|p| FleetToolProject {
-                        id: p.id.clone(),
-                        name: p.name.clone(),
-                    })
-                    .collect(),
-                max_mode: mode_str(d.info.max_mode).into(),
+            .filter_map(|d| {
+                let pin = pin_of(d, &s)?;
+                Some(FleetToolDevice {
+                    device_id: d.device_id.clone(),
+                    name: pin.name.clone(),
+                    projects: d
+                        .info
+                        .projects
+                        .iter()
+                        .map(|p| p.id.clone())
+                        .filter(|id| safe_project_id(id))
+                        .collect(),
+                    max_mode: mode_str(d.info.max_mode).into(),
+                })
             })
             .collect())
     }
@@ -220,21 +236,22 @@ impl Core {
         let (device_id, project_id, children) = {
             let mem = self.fleet();
             let me = mem.device_id.clone();
-            let candidates: Vec<&DeviceSummary> = mem
+            let candidates: Vec<(&DeviceSummary, &TrustedDevice)> = mem
                 .devices
                 .iter()
-                .filter(|d| me.as_deref() != Some(d.device_id.as_str()) && trusted(d, &s))
+                .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
+                .filter_map(|d| pin_of(d, &s).map(|p| (d, p)))
                 .collect();
-            // By id; else by a name no other trusted device has.
-            let d = match candidates.iter().find(|d| d.device_id == device) {
-                Some(d) => *d,
+            // By id; else by a pinned name no other trusted device has.
+            let (d, pin) = match candidates.iter().find(|(d, _)| d.device_id == device) {
+                Some(c) => *c,
                 None => {
-                    let named: Vec<&&DeviceSummary> = candidates
+                    let named: Vec<&(&DeviceSummary, &TrustedDevice)> = candidates
                         .iter()
-                        .filter(|d| d.info.name.eq_ignore_ascii_case(device))
+                        .filter(|(_, p)| p.name.eq_ignore_ascii_case(device))
                         .collect();
                     match named.as_slice() {
-                        [d] => **d,
+                        [c] => **c,
                         [] => {
                             return Err(refused(format!(
                                 "no trusted device {device:?} in the fleet; fleet_devices lists them"
@@ -249,15 +266,16 @@ impl Core {
                     }
                 }
             };
+            // By id only: names are the cloud's word.
             let p = d
                 .info
                 .projects
                 .iter()
-                .find(|p| p.id == project || p.name.eq_ignore_ascii_case(project))
+                .find(|p| p.id == project && safe_project_id(&p.id))
                 .ok_or_else(|| {
                     refused(format!(
-                        "{} has no project {project:?}; fleet_devices lists them",
-                        d.info.name
+                        "{} has no project {project:?}; fleet_devices lists their ids",
+                        pin.name
                     ))
                 })?;
             let children = mem
@@ -289,7 +307,7 @@ impl Core {
             .map_err(unavailable)?;
         // A refusal is the agent's to hear; no word in time, it's starting.
         if let Err(AppError::Refused(why)) = Self::fleet_await(rx, START_WAIT).await {
-            return Err(refused(format!("the other device refused: {why}")));
+            return Err(refused(why));
         }
         Ok(self
             .fleet_tool_view(&view.space)

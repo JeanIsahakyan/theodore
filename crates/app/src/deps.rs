@@ -77,10 +77,13 @@ pub enum CodeTools {
 /// use it too").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FleetTools {
-    /// Only `fleet_devices`, `fleet_read`, `fleet_wait`: a space hosted
-    /// here for another device, so no trust passes through it.
+    /// A space hosted here for another device: only `fleet_devices`,
+    /// `fleet_read`, `fleet_wait` (no trust passes through it), no
+    /// `approve_tool`, and `run_check` / `start_app` only in Run, `ship`
+    /// only in Edit or Run (the core checks again: docs/fleet.md "What a
+    /// hosted space's agent may do").
     #[default]
-    Read,
+    Hosted,
     /// Also start, send to and stop spaces elsewhere (in Edit or Run, at
     /// most the turn's mode): a space of this device's own.
     Steer,

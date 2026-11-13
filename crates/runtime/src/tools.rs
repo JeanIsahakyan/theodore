@@ -665,7 +665,7 @@ fn space_mode(m: TurnMode) -> SpaceMode {
 
 fn mcp_fleet(f: theodore_app::FleetTools) -> FleetTools {
     match f {
-        theodore_app::FleetTools::Read => FleetTools::Read,
+        theodore_app::FleetTools::Hosted => FleetTools::Hosted,
         theodore_app::FleetTools::Steer => FleetTools::Steer,
     }
 }

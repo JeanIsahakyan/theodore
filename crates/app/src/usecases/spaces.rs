@@ -613,7 +613,8 @@ impl Core {
                             &space,
                             self.0.deps.tools.is_some(),
                             code,
-                            self.user_mcp_allowed().await,
+                            !self.fleet_hosts_local(&space.id).await
+                                && self.user_mcp_allowed().await,
                         ),
                         self.0.deps.tools.is_some() && self.fleet_tools_available(),
                     ),
@@ -1540,8 +1541,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // The space's commands as tools, for this turn only.
     // A kept process keeps its endpoint: it now serves this turn (its mode
     // is the process's, `CliKey`).
-    let fleet_tools = if attach.is_none() && core.fleet_hosts_local(&space.id).await {
-        crate::deps::FleetTools::Read
+    // Hosted here for another device: no user MCP servers either (that
+    // device's trust doesn't reach the user's own connectors).
+    let hosted = core.fleet_hosts_local(&space.id).await;
+    let fleet_tools = if hosted {
+        crate::deps::FleetTools::Hosted
     } else {
         crate::deps::FleetTools::Steer
     };
@@ -1586,7 +1590,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         effort,
         stall_after_ms: core.stall_after_ms().await,
         env,
-        user_mcp: core.user_mcp_allowed().await,
+        user_mcp: !hosted && core.user_mcp_allowed().await,
         attachments,
         resume,
         stream_text: true,

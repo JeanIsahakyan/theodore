@@ -255,7 +255,12 @@ const DeviceRow = observer(function DeviceRow({
               size="sm"
               variant="ghost"
               className="fleet-remove"
-              isDisabled={confirm !== null}
+              isDisabled={confirm !== null || device.online}
+              aria-describedby={
+                device.online
+                  ? `fleet-remove-why-${device.device_id}`
+                  : undefined
+              }
               onPress={() => setConfirm('remove')}
             >
               Remove
@@ -263,6 +268,15 @@ const DeviceRow = observer(function DeviceRow({
           </div>
         )}
       </div>
+      {!device.this_device && device.online && (
+        <span
+          id={`fleet-remove-why-${device.device_id}`}
+          className="fleet-remove-why text-xs text-muted"
+        >
+          Only an offline device can be removed: quit Theodore on it, or turn
+          its fleet off, first.
+        </span>
+      )}
       {confirm === 'trust' && (
         <TrustConfirm
           deviceId={device.device_id}
@@ -280,8 +294,8 @@ const DeviceRow = observer(function DeviceRow({
           className="fleet-remove-confirm flex flex-col gap-2 rounded-lg border border-danger/40 p-3"
         >
           <span className="text-sm">
-            Remove <span className="font-medium">{device.name}</span>? It's
-            signed out of the fleet and has to join again as a new device.
+            Remove <span className="font-medium">{device.name}</span>? It leaves
+            the fleet and has to join again as a new device.
           </span>
           <div className="flex justify-end gap-2">
             <Button

@@ -47,7 +47,7 @@ impl FleetModeParam {
 pub struct FleetStartParams {
     /// The device's id or name, as `fleet_devices` lists it.
     pub device: String,
-    /// One of that device's projects: id or name.
+    /// One of that device's project ids, as `fleet_devices` lists them.
     pub project: String,
     /// What the new space should do: its first message.
     pub goal: String,
@@ -95,7 +95,7 @@ const DEFAULT_WAIT_MS: u64 = 300_000;
 #[tool_router(router = fleet_router, vis = "pub(crate)")]
 impl ReviewToolsServer {
     #[tool(
-        description = "The user's other devices that take spaces from this one right now: id, name, their projects and the highest mode they allow (ask, plan, edit, run)."
+        description = "The user's other devices that take spaces from this one right now: id, the name trusted here, their project ids and the highest mode they allow (ask, plan, edit, run)."
     )]
     async fn fleet_devices(
         &self,
@@ -129,7 +129,7 @@ impl ReviewToolsServer {
     }
 
     #[tool(
-        description = "Send a message to a space this one started on another device (it runs as that space's next turn, at most in this turn's mode). Returns its status."
+        description = "Send a message to a space this one started on another device (it runs as that space's next turn, at most in this turn's mode). Only once it has settled: a running space refuses it (fleet.busy), so fleet_wait first. Returns its status."
     )]
     async fn fleet_send(
         &self,

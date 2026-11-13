@@ -23,6 +23,7 @@ use theodore_ports::{
 
 use crate::core::Core;
 use crate::deps::CodeTools;
+use crate::usecases::fleet_host::HostedTool;
 use crate::usecases::space_commands::{STOP_WAIT, SpaceConfig, describe_failure, kind_name};
 
 fn kind_of(name: SpaceCommandName) -> SpaceCommandKind {
@@ -81,6 +82,7 @@ impl Core {
         if space.status == SpaceStatus::Archived {
             return Err(unavailable("this space is archived"));
         }
+        self.fleet_hosted_may(&space, HostedTool::RunCheck).await?;
         let Some(script) = gated(&cfg, SpaceCommandKind::Check)? else {
             return Ok(CheckOutcome {
                 ran: false,
@@ -129,6 +131,7 @@ impl Core {
         if row.status == SpaceStatus::Archived {
             return Err(unavailable("this space is archived"));
         }
+        self.fleet_hosted_may(&row, HostedTool::StartApp).await?;
         if gated(&cfg, SpaceCommandKind::Run)?.is_none() {
             return self.space_tool_status(&row.id).await;
         }

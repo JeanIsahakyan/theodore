@@ -310,12 +310,26 @@ describe('the device list', () => {
     expect(q('.fleet-trust')).not.toBeNull();
   });
 
-  it('Remove asks first, then signs the device out', async () => {
+  it('Remove is off while the device is online, and says why', async () => {
     await render();
+    const remove = q<HTMLButtonElement>('[data-device="d2"] .fleet-remove')!;
+    expect(remove.disabled).toBe(true);
+    expect(q('[data-device="d2"] .fleet-remove-why')!.textContent).toContain(
+      'Only an offline device can be removed',
+    );
+    await click(remove);
+    expect(q('.fleet-remove-confirm')).toBeNull();
+  });
+
+  it('Remove asks first, then removes the offline device', async () => {
+    await render(
+      status({ devices: [thisDevice(), device({ online: false })] }),
+    );
     expect(q('[data-device="d1"] .fleet-remove')).toBeNull();
+    expect(q('.fleet-remove-why')).toBeNull();
     await click(q('[data-device="d2"] .fleet-remove'));
     expect(q('.fleet-remove-confirm')!.textContent).toContain(
-      "Remove Studio Mac? It's signed out of the fleet and has to join again as a new device.",
+      'Remove Studio Mac? It leaves the fleet and has to join again as a new device.',
     );
     expect(
       transport.calls.filter((c) => c.cmd === 'fleet_remove_device'),
@@ -330,7 +344,9 @@ describe('the device list', () => {
   });
 
   it('cancelling Remove removes nothing', async () => {
-    await render();
+    await render(
+      status({ devices: [thisDevice(), device({ online: false })] }),
+    );
     await click(q('[data-device="d2"] .fleet-remove'));
     await click(q('.fleet-remove-cancel'));
     expect(q('.fleet-remove-confirm')).toBeNull();

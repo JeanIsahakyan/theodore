@@ -4,9 +4,12 @@
 //!
 //! ```text
 //! fleet_start_space (a device pinned here) ─▶ rs_<uuid> + req_id
-//!   ─▶ seal(device key) ─▶ request ─▶ tracked `starting` (host = the target,
-//!   for good), subscribe{since 0} ─▶ reply ok ─▶ name, branch
-//!                                  └▶ reply err ─▶ failed + error
+//!   ─▶ seal(device key, target_key = the target's pin) ─▶ request
+//!   ─▶ tracked `starting` (host = the target, for good), subscribe{since 0}
+//!   ─▶ reply ─▶ open_as(that pin, Reply) ─▶ ok ─▶ name, branch
+//!                │                       └▶ err ─▶ failed + code, ≤ 200 chars
+//!                └▶ doesn't verify ─▶ dropped (the request times out)
+//!   ─▶ refused (the cloud's, unsigned) ─▶ failed + its code only
 //! space_event ─▶ open_as(host's pinned key, Event) ─▶ status, last reply,
 //!   question ─▶ FleetSpace + FleetSpaceLine          else dropped
 //! space_gap ─▶ a gap line, nothing else
@@ -24,17 +27,37 @@ use theodore_contract::{
 };
 use theodore_fleet_protocol::{
     AskVia, ClientMessage, Domain, RemoteAsk, RemoteOp, RemoteRequest, RemoteSpaceEvent,
-    RemoteSpaceStatus, ReplyOutcome, SignedEnvelope, SpaceEventBody, StartedSpace, TurnOutcome,
+    RemoteSpaceStatus, ReplyBody, ReplyOutcome, SignedEnvelope, SpaceEventBody, StartedSpace,
+    TurnOutcome,
 };
 use tokio::sync::oneshot;
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
-use crate::usecases::fleet::{Outbound, PendingReply, fleet_mode, space_mode};
+use crate::usecases::fleet::{
+    Answer, ERROR_TEXT_MAX, Outbound, PendingReply, fleet_mode, safe_code, space_mode,
+};
 use crate::usecases::fleet_host::{ui_questions, ui_status};
 
 /// History kept per remote space in memory.
 const LINES_KEPT: usize = 500;
+/// Most characters of a space name or branch taken from a signed reply.
+const NAME_MAX: usize = 200;
+
+/// A refusal as the UI and an agent may read it: a verified target's code
+/// and words, or the cloud's code alone. `None` for a success.
+pub(crate) fn answer_error(answer: &Answer) -> Option<String> {
+    match answer {
+        Answer::Ok(_) => None,
+        Answer::Err { code, message } if message.is_empty() => {
+            Some(format!("the other device refused: {code}"))
+        }
+        Answer::Err { code, message } => {
+            Some(format!("the other device refused: {code}: {message}"))
+        }
+        Answer::Refused { code } => Some(format!("refused by the cloud: {code}")),
+    }
+}
 /// How long a send, stop or answer waits for the other device's word.
 pub(crate) const REPLY_WAIT: Duration = Duration::from_secs(15);
 /// Replies never heard back are forgotten past this many.
@@ -159,19 +182,27 @@ impl Core {
     }
 
     /// Signs `op` for `target` and sends it; the receiver gets its reply.
+    /// Only to a target pinned here: the request names the pinned key
+    /// (`target_key`), and only a reply signed by it counts.
     async fn fleet_request(
         &self,
         target: &str,
         op: RemoteOp,
         start: bool,
-    ) -> AppResult<oneshot::Receiver<ReplyOutcome>> {
+    ) -> AppResult<oneshot::Receiver<Answer>> {
         let me = self.fleet_ready()?;
+        let pinned = self.fleet_pinned(target).await.ok_or_else(|| {
+            AppError::Invalid(format!(
+                "device {target} isn't trusted on this device: trust it in Settings → Devices first"
+            ))
+        })?;
         let key = self.fleet_key().await?;
         let space = op.space().to_string();
         let req = RemoteRequest {
             req_id: uuid::Uuid::new_v4().to_string(),
             origin_device: me,
             target_device: target.to_string(),
+            target_key: pinned.public_key.clone(),
             issued_at_ms: self.0.deps.clock.now().max(0) as u64,
             op,
         };
@@ -187,6 +218,8 @@ impl Core {
                 PendingReply {
                     space,
                     start,
+                    target: target.to_string(),
+                    target_key: pinned.public_key,
                     tx: Some(tx),
                 },
             );
@@ -198,16 +231,17 @@ impl Core {
         Ok(rx)
     }
 
-    /// The other device's word on a request, within `wait`.
+    /// The other device's word on a request, within `wait`. A refusal is
+    /// `AppError::Refused` with what may reach an agent: the verified
+    /// target's code and words (cut to `ERROR_TEXT_MAX`), or only the
+    /// cloud's code.
     pub(crate) async fn fleet_await(
-        rx: oneshot::Receiver<ReplyOutcome>,
+        rx: oneshot::Receiver<Answer>,
         wait: Duration,
     ) -> AppResult<serde_json::Value> {
         match tokio::time::timeout(wait, rx).await {
-            Ok(Ok(ReplyOutcome::Ok { value })) => Ok(value),
-            Ok(Ok(ReplyOutcome::Err { code, message })) => {
-                Err(AppError::Refused(format!("{message} ({code})")))
-            }
+            Ok(Ok(Answer::Ok(value))) => Ok(value),
+            Ok(Ok(answer)) => Err(AppError::Refused(answer_error(&answer).unwrap_or_default())),
             Ok(Err(_)) => Err(AppError::Invalid("the request got no reply".into())),
             Err(_) => Err(AppError::Invalid(
                 "the other device didn't answer in time".into(),
@@ -243,7 +277,7 @@ impl Core {
         parent: Option<String>,
         depth: u32,
         started_by: Option<String>,
-    ) -> AppResult<(FleetRemoteSpace, oneshot::Receiver<ReplyOutcome>)> {
+    ) -> AppResult<(FleetRemoteSpace, oneshot::Receiver<Answer>)> {
         let me = self.fleet_ready()?;
         let goal = goal.trim();
         if goal.is_empty() {
@@ -428,7 +462,59 @@ impl Core {
         Ok(())
     }
 
-    pub(crate) fn fleet_on_reply(&self, req_id: &str, outcome: ReplyOutcome) {
+    /// A target's reply: only as the target signed it, against the key
+    /// pinned for it when the request went out; anything else is dropped
+    /// and the request keeps waiting.
+    pub(crate) async fn fleet_on_reply(&self, envelope: SignedEnvelope) {
+        let Ok(peeked) = envelope.peek_as::<ReplyBody>() else {
+            tracing::debug!("dropped an unreadable fleet reply");
+            return;
+        };
+        let me = self.fleet().device_id.clone();
+        let body = {
+            let mem = self.fleet();
+            let Some(pending) = mem.replies.get(&peeked.req_id) else {
+                tracing::debug!("dropped a reply to no request waiting here");
+                return;
+            };
+            if envelope.device_id != pending.target {
+                tracing::debug!("dropped a reply not from the request's target");
+                return;
+            }
+            match envelope.open_as::<ReplyBody>(&pending.target_key, Domain::Reply) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::debug!(error = %e, "dropped a reply that doesn't verify");
+                    return;
+                }
+            }
+        };
+        if me.as_deref() != Some(body.origin_device.as_str()) {
+            tracing::debug!("dropped a reply to another device's request");
+            return;
+        }
+        let answer = match body.outcome {
+            ReplyOutcome::Ok { value } => Answer::Ok(value),
+            ReplyOutcome::Err { code, message } => Answer::Err {
+                code: safe_code(&code),
+                message: truncate(message.trim(), ERROR_TEXT_MAX),
+            },
+        };
+        self.fleet_answered(&body.req_id, answer);
+    }
+
+    /// The cloud's own refusal of a request sent from here: unsigned, so
+    /// only its code is kept.
+    pub(crate) fn fleet_on_refused(&self, req_id: &str, code: &str) {
+        self.fleet_answered(
+            req_id,
+            Answer::Refused {
+                code: safe_code(code),
+            },
+        );
+    }
+
+    fn fleet_answered(&self, req_id: &str, answer: Answer) {
         let Some(mut pending) = self.fleet().replies.remove(req_id) else {
             return;
         };
@@ -438,23 +524,19 @@ impl Core {
                 let Some(o) = mem.outbound.get_mut(&pending.space) else {
                     return;
                 };
-                match &outcome {
-                    ReplyOutcome::Ok { value } => {
+                match &answer {
+                    Answer::Ok(value) => {
                         if let Ok(started) = serde_json::from_value::<StartedSpace>(value.clone()) {
-                            o.view.name = started.name;
-                            o.view.branch = started.branch;
+                            o.view.name = truncate(&started.name, NAME_MAX);
+                            o.view.branch = truncate(&started.branch, NAME_MAX);
                         }
                         if o.view.status == FleetSpaceStatus::Starting {
                             o.view.status = FleetSpaceStatus::Running;
                         }
                     }
-                    ReplyOutcome::Err { code, message } => {
+                    Answer::Err { .. } | Answer::Refused { .. } => {
                         o.view.status = FleetSpaceStatus::Failed;
-                        o.view.error = Some(if message.is_empty() {
-                            code.clone()
-                        } else {
-                            message.clone()
-                        });
+                        o.view.error = answer_error(&answer);
                     }
                 }
                 o.view.clone()
@@ -463,7 +545,7 @@ impl Core {
             self.0.fleet.changed.notify_waiters();
         }
         if let Some(tx) = pending.tx.take() {
-            let _ = tx.send(outcome);
+            let _ = tx.send(answer);
         }
     }
 

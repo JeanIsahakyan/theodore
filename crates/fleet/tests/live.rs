@@ -14,7 +14,7 @@ use theodore_fleet::WsFleet;
 use theodore_fleet_protocol::{
     AskVia, ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DismissReason, Domain,
     FleetMode, ProjectRef, RemoteAsk, RemoteOp, RemoteQuestion, RemoteRequest, RemoteSpaceEvent,
-    RemoteSpaceStatus, ReplyOutcome, ServerMessage, SignedEnvelope, SpaceEventBody,
+    RemoteSpaceStatus, ReplyBody, ReplyOutcome, ServerMessage, SignedEnvelope, SpaceEventBody,
 };
 use theodore_ports::fleet::{FleetCommand, FleetConnect, FleetInbound, FleetLink, FleetPort};
 
@@ -126,10 +126,12 @@ async fn two_devices_through_the_real_hub() {
     println!("PASS devices: a sees b online with b's real public key");
 
     // A asks B to start a space: forwarded unchanged, claimed, replied.
+    // Bound to b's key as a pins it (here: as the cloud listed it).
     let req = RemoteRequest {
         req_id: format!("live-{}", now_ms()),
         origin_device: dev_a.clone(),
         target_device: dev_b.clone(),
+        target_key: b_listed.public_key.clone(),
         issued_at_ms: now_ms(),
         op: RemoteOp::StartSpace {
             space: format!("rs_live_{}", now_ms()),
@@ -159,8 +161,14 @@ async fn two_devices_through_the_real_hub() {
     })
     .await;
     assert_eq!(got, sealed, "the cloud must forward the envelope unchanged");
-    assert_eq!(got.open(&key_a.public_key()).unwrap(), req);
-    println!("PASS route: envelope arrived byte-identical and verifies with a's key");
+    let opened = got.open(&key_a.public_key()).unwrap();
+    assert_eq!(opened, req);
+    assert_eq!(
+        opened.target_key,
+        key_b.public_key(),
+        "signed for b's own key"
+    );
+    println!("PASS route: envelope arrived byte-identical, verifies with a's key, bound to b's");
 
     send(
         &b,
@@ -207,22 +215,48 @@ async fn two_devices_through_the_real_hub() {
     assert_eq!(twice.as_deref(), Some("already_claimed"));
     println!("PASS claim: claimed once, a second claim is already_claimed");
 
-    send(
-        &b,
-        ClientMessage::Reply {
+    // b signs its reply as the target; a opens it with b's key.
+    let sealed_reply = SignedEnvelope::seal_as(
+        &ReplyBody {
             req_id: req.req_id.clone(),
+            origin_device: dev_a.clone(),
+            target_device: dev_b.clone(),
             outcome: ReplyOutcome::Ok {
                 value: serde_json::json!({"space": space, "name": "live", "branch": "live"}),
             },
         },
+        &key_b,
+        Domain::Reply,
     );
-    let reply = wait_for(&mut a, "reply at a", |m| match m {
-        ServerMessage::Reply { req_id, outcome } if *req_id == req.req_id => Some(outcome.clone()),
+    send(
+        &b,
+        ClientMessage::Reply {
+            envelope: sealed_reply.clone(),
+        },
+    );
+    let (got_reply, body) = wait_for(&mut a, "reply at a", |m| match m {
+        ServerMessage::Reply { envelope } => {
+            let body: ReplyBody = envelope
+                .open_as(&key_b.public_key(), Domain::Reply)
+                .expect("the reply verifies with b's key");
+            (body.req_id == req.req_id).then(|| (envelope.clone(), body))
+        }
         _ => None,
     })
     .await;
-    assert!(matches!(reply, ReplyOutcome::Ok { .. }));
-    println!("PASS reply: b's reply reached a");
+    assert_eq!(
+        got_reply, sealed_reply,
+        "the cloud must forward the reply unchanged"
+    );
+    assert!(
+        got_reply
+            .open_as::<ReplyBody>(&key_a.public_key(), Domain::Reply)
+            .is_err(),
+        "only b's key opens it"
+    );
+    assert_eq!(body.origin_device, dev_a);
+    assert!(matches!(body.outcome, ReplyOutcome::Ok { .. }));
+    println!("PASS reply: b's signed reply reached a unchanged and verifies with b's key");
 
     // Events: b hosts, a subscribes and gets history then live.
     let started = RemoteSpaceEvent::Started {
@@ -384,6 +418,7 @@ async fn two_devices_through_the_real_hub() {
         req_id: format!("forged-{}", now_ms()),
         origin_device: dev_b.clone(),
         target_device: dev_b.clone(),
+        target_key: key_b.public_key(),
         issued_at_ms: now_ms(),
         op: RemoteOp::Stop {
             space: space.clone(),
@@ -397,15 +432,42 @@ async fn two_devices_through_the_real_hub() {
     );
     let code = wait_for(&mut a, "not_yours", |m| match m {
         ServerMessage::Error { code, .. } => Some(code.clone()),
-        ServerMessage::Reply {
-            req_id,
-            outcome: ReplyOutcome::Err { code, .. },
-        } if *req_id == forged.req_id => Some(code.clone()),
+        ServerMessage::Refused { req_id, code, .. } if *req_id == forged.req_id => {
+            Some(code.clone())
+        }
         _ => None,
     })
     .await;
     assert_eq!(code, "fleet.not_yours");
     println!("PASS spoof: a request posing as another origin is refused (fleet.not_yours)");
+
+    // A request bound to a key that isn't b's: the cloud's own refusal,
+    // unsigned, as `refused`.
+    let wrong_key = RemoteRequest {
+        req_id: format!("wrong-key-{}", now_ms()),
+        origin_device: dev_a.clone(),
+        target_device: dev_b.clone(),
+        target_key: key_a.public_key(),
+        issued_at_ms: now_ms(),
+        op: RemoteOp::Stop {
+            space: space.clone(),
+        },
+    };
+    send(
+        &a,
+        ClientMessage::Request {
+            envelope: SignedEnvelope::seal(&wrong_key, &key_a),
+        },
+    );
+    let code = wait_for(&mut a, "refused", |m| match m {
+        ServerMessage::Refused { req_id, code, .. } if *req_id == wrong_key.req_id => {
+            Some(code.clone())
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(code, "fleet.not_yours");
+    println!("PASS target key: a request bound to another key is refused (refused, not_yours)");
 
     a.commands.send(FleetCommand::Close).unwrap();
     b.commands.send(FleetCommand::Close).unwrap();

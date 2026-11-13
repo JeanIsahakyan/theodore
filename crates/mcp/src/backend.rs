@@ -121,14 +121,24 @@ pub enum TurnMode {
 /// use it too").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum FleetTools {
-    /// `fleet_devices`, `fleet_read`, `fleet_wait`: a space hosted here for
-    /// another device (no trust passes through it), and any turn by default.
+    /// `fleet_devices`, `fleet_read`, `fleet_wait`: any run by default.
     #[default]
     Read,
+    /// A space hosted here for another device: `Read`, and no
+    /// `approve_tool`; `run_check` / `start_app` only in Run, `ship` only in
+    /// Edit or Run ([`RunContext::hosted_allows`]; the core checks again).
+    Hosted,
     /// Also start, send to and stop spaces elsewhere, within the turn's
     /// mode: a space of this device's own, in Edit or Run.
     Steer,
 }
+
+/// The `space-tools` a space hosted here for another device gets only in
+/// Run mode: they run the project's commands.
+pub const HOSTED_RUN_TOOL_NAMES: &[&str] = &["run_check", "start_app"];
+/// The `space-tools` a space hosted here for another device gets only in
+/// Edit or Run mode.
+pub const HOSTED_EDIT_TOOL_NAMES: &[&str] = &["ship"];
 
 /// Identifies the agent run calling the MCP server: which PR, which agent, which
 /// invocation. One token maps to exactly one `RunContext` (see [`crate::McpHandle::register_run`]).
@@ -176,8 +186,13 @@ impl RunContext {
     pub fn allows(&self, tool: &str) -> bool {
         // The CLI's permission prompts, on every app server
         // (`crate::approve`); `code-tools` is never the prompt tool.
+        // Never for a hosted space: its run has no user MCP servers to
+        // approve.
         if tool == theodore_ports::APPROVE_TOOL {
-            return self.tools != ToolSet::Code;
+            return self.tools != ToolSet::Code && self.fleet != FleetTools::Hosted;
+        }
+        if !self.hosted_allows(tool) {
+            return false;
         }
         if CODE_TOOL_NAMES.contains(&tool) {
             return self.code != CodeTools::Off;
@@ -202,6 +217,21 @@ impl RunContext {
             }
             ToolSet::Code => false,
         }
+    }
+
+    /// What a space hosted here for another device may not list in its
+    /// turn's mode; `true` for any other run.
+    pub fn hosted_allows(&self, tool: &str) -> bool {
+        if self.fleet != FleetTools::Hosted {
+            return true;
+        }
+        if HOSTED_RUN_TOOL_NAMES.contains(&tool) {
+            return self.mode == Some(TurnMode::Run);
+        }
+        if HOSTED_EDIT_TOOL_NAMES.contains(&tool) {
+            return self.mode.is_some_and(|m| m >= TurnMode::Edit);
+        }
+        true
     }
 
     /// May start, send to and stop spaces on other devices: a space turn

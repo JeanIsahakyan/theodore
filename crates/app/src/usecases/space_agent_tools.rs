@@ -72,6 +72,9 @@ impl Core {
         action: ShipToolAction,
         title: Option<String>,
     ) -> Result<ShipOutcome, SpaceToolError> {
+        let row = self.space_row(space).await.map_err(refusal)?;
+        self.fleet_hosted_may(&row, crate::usecases::fleet_host::HostedTool::Ship(action))
+            .await?;
         let action_req = match action {
             ShipToolAction::OpenPr => ShipAction::OpenPr,
             ShipToolAction::OpenDraftPr => ShipAction::OpenDraftPr,

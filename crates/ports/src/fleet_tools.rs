@@ -7,18 +7,14 @@ use serde::Serialize;
 /// Most a `fleet_wait` may wait.
 pub const FLEET_WAIT_MAX_MS: u64 = 600_000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct FleetToolProject {
-    pub id: String,
-    pub name: String,
-}
-
-/// Another of the user's devices that takes remote spaces right now.
+/// Another of the user's devices that takes remote spaces right now. No
+/// unsigned free text: the name is the one pinned on this device, the
+/// projects are ids in a strict shape (`local:app`, `github.com/acme/app`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FleetToolDevice {
     pub device_id: String,
     pub name: String,
-    pub projects: Vec<FleetToolProject>,
+    pub projects: Vec<String>,
     /// The highest mode it allows: `ask`, `plan`, `edit` or `run`.
     pub max_mode: String,
 }

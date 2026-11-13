@@ -12,7 +12,8 @@ use pretty_assertions::assert_eq;
 use theodore_fleet::{FleetTiming, OUTBOX_LIMIT, WsFleet};
 use theodore_fleet_protocol::{
     ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, FleetMode, MAX_FRAME_BYTES,
-    PROTOCOL_VERSION, ReplyOutcome, ServerMessage, SpaceCursor, b64, codes, verify, verify_hello,
+    PROTOCOL_VERSION, ReplyBody, ReplyOutcome, ServerMessage, SignedEnvelope, SpaceCursor, b64,
+    codes, verify, verify_hello,
 };
 use theodore_ports::fleet::{FleetCommand, FleetConnect, FleetInbound, FleetLink, FleetPort};
 use tokio::net::{TcpListener, TcpStream};
@@ -252,13 +253,26 @@ fn send(link: &FleetLink, msg: ClientMessage) {
     link.commands.send(FleetCommand::Send(msg)).unwrap();
 }
 
-fn reply(req_id: &str) -> ClientMessage {
-    ClientMessage::Reply {
+/// A reply as the core hands it over: signed already (the adapter only
+/// carries it), so any envelope does here.
+fn reply_with(req_id: &str, value: serde_json::Value) -> ClientMessage {
+    let body = ReplyBody {
         req_id: req_id.into(),
-        outcome: ReplyOutcome::Ok {
-            value: serde_json::json!({}),
+        origin_device: "dev_o".into(),
+        target_device: "dev_1".into(),
+        outcome: ReplyOutcome::Ok { value },
+    };
+    ClientMessage::Reply {
+        envelope: SignedEnvelope {
+            device_id: "dev_1".into(),
+            body: serde_json::to_string(&body).unwrap(),
+            signature: "c2ln".into(),
         },
     }
+}
+
+fn reply(req_id: &str) -> ClientMessage {
+    reply_with(req_id, serde_json::json!({}))
 }
 
 fn presence() -> ClientMessage {
@@ -740,15 +754,7 @@ async fn oversize_frames_are_not_sent_or_read() {
     connected(&mut link).await;
 
     let big = "x".repeat(MAX_FRAME_BYTES);
-    send(
-        &link,
-        ClientMessage::Reply {
-            req_id: "big".into(),
-            outcome: ReplyOutcome::Ok {
-                value: serde_json::json!(big),
-            },
-        },
-    );
+    send(&link, reply_with("big", serde_json::json!(big)));
     send(&link, presence());
     assert_eq!(conn.recv().await, presence());
 
@@ -762,6 +768,30 @@ async fn oversize_frames_are_not_sent_or_read() {
         next(&mut link).await,
         FleetInbound::Message(ServerMessage::Devices { .. })
     ));
+}
+
+/// The cloud's own refusal is a message for the core like any other, and
+/// no reason to drop the socket.
+#[tokio::test]
+async fn a_refused_request_reaches_the_core_and_the_link_stays() {
+    let cloud = Cloud::new().await;
+    let (mut link, _key) = start(&cloud, timing());
+    let mut conn = cloud.accept().await;
+    conn.handshake("dev_1", 1, BTreeMap::new()).await;
+    connected(&mut link).await;
+
+    let refused = ServerMessage::Refused {
+        req_id: "r9".into(),
+        code: codes::OFFLINE.into(),
+        message: "the target isn't connected".into(),
+    };
+    conn.send(&refused).await;
+    match next(&mut link).await {
+        FleetInbound::Message(m) => assert_eq!(m, refused),
+        other => panic!("{other:?}"),
+    }
+    send(&link, presence());
+    assert_eq!(conn.recv().await, presence());
 }
 
 #[tokio::test]

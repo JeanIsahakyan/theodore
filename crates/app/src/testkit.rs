@@ -88,6 +88,8 @@ struct StoreState {
     fleet_journal: HashMap<String, Vec<(u64, serde_json::Value)>>,
     /// `req_id` → `(issued_at, done)`.
     fleet_seen: HashMap<String, (i64, bool)>,
+    /// `fleet_seen_put` of a done request fails (a full disk, say).
+    fail_seen_done: bool,
 }
 
 type ReadHook = Box<dyn FnOnce() + Send>;
@@ -102,6 +104,11 @@ impl FakeStore {
     /// Runs `hook` just before the next `query`: a write racing a read.
     pub fn before_next_read(&self, hook: ReadHook) {
         *self.1.lock().unwrap() = Some(hook);
+    }
+
+    /// From now on, recording a fleet request as done fails.
+    pub fn fail_fleet_seen_done(&self) {
+        self.0.lock().unwrap().fail_seen_done = true;
     }
 
     /// Test-only inspection, not part of `Store`.
@@ -147,6 +154,9 @@ impl Store for FakeStore {
         forget_before_ms: i64,
     ) -> StoreResult<()> {
         let mut s = self.0.lock().unwrap();
+        if done && s.fail_seen_done {
+            return Err(theodore_ports::StoreError::Db("disk full".into()));
+        }
         s.fleet_seen.retain(|_, (at, _)| *at >= forget_before_ms);
         let e = s
             .fleet_seen

@@ -23,15 +23,20 @@ The cloud never makes a device run anything on its own word.
 | Guard | Where | Holds even if the cloud is compromised |
 | --- | --- | --- |
 | Device key: ed25519, made on first use, kept in the keychain (`fleet.device_key`) | device | the cloud only ever sees the public half |
-| Every signature has a purpose: it signs `"theodore-fleet-<hello\|request\|event\|ask>-v2\0" ‖ bytes` (`Domain`), so one made for one purpose never verifies as another | every device | yes |
+| Every signature has a purpose: it signs `"theodore-fleet-<hello\|request\|event\|ask\|reply>-v3\0" ‖ bytes` (`Domain`), so one made for one purpose never verifies as another | every device | yes |
 | Hello signs only a 32-byte nonce, one challenge per socket (another, or a nonce of any other length ─▶ the socket is dropped unsigned) | adapter | yes: the cloud can't get a request signed |
 | Every request (start, send, stop, answer) is a `SignedEnvelope` by the origin device's key over the exact body bytes (`Domain::Request`) | origin core | yes |
+| Every request names its target's public key as pinned on the origin (`target_key`, under the signature); the target runs it only if that is its own key (`fleet.not_yours` otherwise): the cloud assigns device ids, so an id alone can't say which machine a request was signed for | origin + target core | yes |
+| Every reply (`ReplyBody{req_id, origin_device, target_device, outcome}`) is signed by the target (`Domain::Reply`); the origin opens it against the key it pinned for the target when it sent the request, and drops one that doesn't verify (the request then times out) | target + origin core | yes |
+| The cloud's own refusals (offline, not yours, depth, busy, too many spaces, expiry…) come as `refused{req_id, code, message}`, unsigned: the origin keeps only the code, and only if it looks like one (`fleet.unknown` otherwise); `message` never reaches the UI or an agent | origin core | yes |
 | Every event of a hosted space (`SpaceEventBody`) and every question (`RemoteAsk`) is signed by its host (`Domain::Event`, `Domain::Ask`); the origin keeps only those that verify against the host's key pinned there, and the host of a space is the start's target for good | host + origin core | yes |
 | A device accepts requests, events and questions only from devices it trusts: their public key pinned locally (`fleet.trusted_devices`), trust given on that device, for exactly the key whose fingerprint (128 bits, 8 groups) the user compared | every core | yes |
-| Only trusted devices are targets: the start dialog, `fleet_devices` and `fleet_start_space` list and reach only devices pinned here | origin core | yes |
-| `issued_at` within 5 min, `req_id` never seen in the last 10 min — kept in the store (`fleet_seen`), so a request that ran is a replay after a restart too | target core | yes |
+| Only trusted devices are targets: the start dialog, `fleet_devices` and `fleet_start_space` list and reach only devices pinned here, and no request (start, send, stop, answer) is signed for a device that isn't pinned | origin core | yes |
+| `issued_at` within 5 min, `req_id` never seen in the last 10 min — kept in the store (`fleet_seen`), so a request that ran is a replay after a restart too; a request the store couldn't record as done doesn't run (`fleet.internal`) | target core | yes |
 | `fleet.accept_remote` off by default; `fleet.max_mode` caps the mode (default Edit; Run only if set to Run); both and the pin are checked again right before a claimed request runs | target core | yes |
 | Agents act within their turn: start, send and stop only from a turn in Edit or Run, at most in its mode, and only on spaces that space started; never from a space hosted here for another device | origin core + MCP | yes |
+| What reaches an agent carries no unsigned free text: device names are the pins', project ids pass a strict pattern (names never), space names, branches, replies and questions come from signed events and replies, errors are a verified code plus ≤ 200 characters, or the cloud's code alone | origin core | yes |
+| A space hosted here for another device runs commands only in Run, ships only in Edit or Run, never merges into the local folder, and gets neither the user's MCP servers nor `approve_tool` | host core + MCP | yes |
 | Claim with the connection's `generation` before running: one execution per request | cloud + target | — |
 | Access JWT (WorkOS, with `org_id`) on connect and on every refresh (`reauth`) | cloud | — |
 
@@ -44,7 +49,7 @@ for repo commands, secrets stripped).
 ```
 core ─GET wss://<cloud>/v1/fleet/ws, Authorization: Bearer <access JWT with org_id>
 cloud ─▶ challenge{nonce}
-core  ─▶ hello{protocol: 2, device_id?, public_key, sign_hello(nonce), info, spaces:[{space, seq}]}
+core  ─▶ hello{protocol: 3, device_id?, public_key, sign_hello(nonce), info, spaces:[{space, seq}]}
 cloud: device_id known ─▶ its pinned public key must match, same user; new ─▶ register
 cloud ─▶ welcome{device_id, generation, resume:{space → last seq the cloud has}}
 core  ─▶ adapter flushes its outbox (replies, ask_resolved), core replays its journal after `resume`
@@ -59,7 +64,8 @@ and redial.
 | Refusal | Cloud sends | Device |
 | --- | --- | --- |
 | bad or expired token, no `org_id` | `error{fleet.unauthorized \| fleet.no_org}`, close 4001, reason = the code | stops; a new link after the next sign-in |
-| key mismatch, protocol version, too many devices, removed by another device | `error{fleet.key_mismatch \| fleet.version \| fleet.too_many_devices \| fleet.removed}`, close 4003 | stops (removed: the stored device id is dropped; turning the fleet off and on joins as a new device) |
+| key mismatch, protocol version, too many devices | `error{fleet.key_mismatch \| fleet.version \| fleet.too_many_devices}`, close 4003 | stops (a `fleet.removed` from an older cloud is still handled: the stored device id is dropped; turning the fleet off and on joins as a new device) |
+| an event over the per-user byte budget | `error{fleet.busy}`, the event isn't stored | keeps its journal; the event goes out again from `welcome.resume` |
 | HTTP 401/403 on the upgrade | — | stops |
 | no hello in 10 s, a frame before hello, bad signature, too many connections or spaces | close 1008 `fleet.bad_message` / `fleet.bad_signature` / `fleet.too_many_connections` / `fleet.too_many_spaces` | redials |
 | a challenge that isn't 32 bytes, or a second one | — (the device drops the socket) | redials |
@@ -68,28 +74,39 @@ and redial.
 ## Start a space on another device
 
 ```
-mac1 core ─sign─▶ request{envelope: RemoteRequest{op: StartSpace}} ─▶ cloud
-cloud ─▶ mac2: request{envelope, generation}
-mac2 core: verify signature, trust, freshness, accept_remote, mode ≤ max_mode, project known
+mac1 core ─sign─▶ request{envelope: RemoteRequest{target_key: mac2's pin, op: StartSpace}} ─▶ cloud
+cloud ─▶ mac2: request{envelope, generation}       (or ─▶ mac1: refused{req_id, code, message})
+mac2 core: verify signature, trust, target_key = own key, freshness, accept_remote,
+           mode ≤ max_mode, project known
          ─▶ claim{req_id, generation} ─▶ claim_result{claimed}
-         ─▶ create_space(...) ─▶ reply{req_id, ok:{space, name}} ─▶ cloud ─▶ mac1
+         ─▶ create_space(...) ─▶ reply{seal_as(ReplyBody{req_id, origin, target, ok:{space, name}}, Reply)}
+         ─▶ cloud, unchanged ─▶ mac1: open_as(mac2's pin, Reply) ─▶ UI
 mac2: space events ─▶ space_event{seal_as(SpaceEventBody{space, seq, host_device, event}, Event)}
          ─▶ cloud ─▶ mac1 (origin) ─▶ verified with mac2's pinned key ─▶ UI
 ```
 
-Refusals come back as `reply{err:{code, message}}`:
+Two kinds of refusal, told apart on the wire:
 
-| Code | When |
-| --- | --- |
-| `fleet.remote_off` | `fleet.accept_remote` is off on the target |
-| `fleet.untrusted_device` | origin's key isn't pinned on the target: the target shows "Trust <device>?" |
-| `fleet.bad_signature` | signature or body doesn't check out |
-| `fleet.stale_request` | `issued_at` out of window or `req_id` seen |
-| `fleet.mode_not_allowed` | mode above `fleet.max_mode` |
-| `fleet.unknown_project` / `fleet.unknown_space` | not on the target |
-| `fleet.depth` | deeper than 2 or more than 5 children |
-| `fleet.invalid` | the op doesn't fit what it acts on (answers that don't answer the set, an empty message) |
-| `fleet.offline` | target not connected within 10 s grace |
+| | Comes as | Origin keeps |
+| --- | --- | --- |
+| the target's | `reply{envelope}`: a signed `ReplyBody` with `err:{code, message}` | the code, and the message cut to 200 characters |
+| the cloud's | `refused{req_id, code, message}`, unsigned | the code only (`fleet.unknown` if it doesn't look like one) |
+
+| Code | From | When |
+| --- | --- | --- |
+| `fleet.remote_off` | target | `fleet.accept_remote` is off on the target |
+| `fleet.untrusted_device` | target | origin's key isn't pinned on the target: the target shows "Trust <device>?" |
+| `fleet.bad_signature` | target | signature or body doesn't check out |
+| `fleet.not_yours` | target, cloud | `target_key` isn't the target's own key, or the request is for another device |
+| `fleet.stale_request` | target | `issued_at` out of window or `req_id` seen |
+| `fleet.mode_not_allowed` | target | mode above `fleet.max_mode` |
+| `fleet.unknown_project` / `fleet.unknown_space` | target | not on the target |
+| `fleet.depth` | target, cloud | deeper than 2 or more than 5 children (starts in flight count) |
+| `fleet.invalid` | target, cloud | the op doesn't fit what it acts on (answers that don't answer the set, an empty message, a space id started already); origin = target |
+| `fleet.busy` | target, cloud | a send to a space whose turn is running |
+| `fleet.internal` | target | the target couldn't record the request, so it didn't run it |
+| `fleet.offline` | cloud | target not connected within 10 s grace |
+| `fleet.too_many_spaces` | cloud | the user's 200 spaces |
 
 ## Events and history
 
@@ -123,17 +140,18 @@ here that trust this one, within their `max_mode` and its own turn's mode.
 
 | Tool | Does | Who gets it |
 | --- | --- | --- |
-| `fleet_devices` | other devices online, trusted here, that take remote spaces: projects, `max_mode` | every space turn |
-| `fleet_start_space` | a space on `device` (id, or a name only one trusted device has) in `project` with a `goal` and `mode` ≤ the turn's; returns its `rs_` id | a turn in Edit or Run, of a space not hosted for another device |
-| `fleet_send` / `fleet_stop` | a message as its next turn (at most in the turn's mode, never above the space's own) / stop its turn | same as `fleet_start_space` |
+| `fleet_devices` | other devices online, trusted here, that take remote spaces: id, the name pinned here, project ids, `max_mode` | every space turn |
+| `fleet_start_space` | a space on `device` (id, or a pinned name only one trusted device has) in `project` (an id) with a `goal` and `mode` ≤ the turn's; returns its `rs_` id | a turn in Edit or Run, of a space not hosted for another device |
+| `fleet_send` / `fleet_stop` | a message as its next turn, once the space settled (at most in the turn's mode, never above the space's own) / stop its turn | same as `fleet_start_space` |
 | `fleet_wait` | until each space is idle, waiting, stopped or failed (≤ 10 min) | every space turn |
 | `fleet_read` | status, last reply, question, history after `since` | every space turn |
 
 Every tool that names a space works only on spaces the calling space (or
 one of its children) started: not ones the user started from the UI, not
 another space's. The run context carries the turn's mode and whether the
-space is hosted here (`FleetTools::Read` / `Steer`); the MCP server neither
-lists nor runs what it doesn't allow, and the core checks again.
+space is hosted here (`FleetTools::Hosted` / `Steer`; `Read` for runs that
+aren't space turns); the MCP server neither lists nor runs what it doesn't
+allow, and the core checks again.
 
 ```
 space of this device's own, Edit/Run turn ─▶ children at depth 1 under its
@@ -144,6 +162,33 @@ space hosted here for another device ─▶ read-only tools: a device trusted by
 
 Listed only while the fleet is on and connected; the system prompt names
 them then.
+
+Nothing an agent reads from these tools is unsigned free text:
+
+| Field | Source |
+| --- | --- |
+| device name | the pin here (`fleet.trusted_devices`), never the cloud's listing |
+| project | its id, only if it matches `^[A-Za-z0-9._:/@+-]{1,200}$`; names never |
+| space name, branch, replies, questions, history | the host's signed `started` / events, or its verified reply |
+| error | a verified reply's code, plus its words cut to 200 characters; or `refused by the cloud: <code>` |
+
+### What a hosted space's agent may do
+
+A space hosted here for another device runs on this machine with the
+origin's goal. Its own space tools are limited by the space's mode, in the
+core (`Core::fleet_hosted_may`, `space_tool_check` / `space_tool_start` /
+`space_tool_ship`), and by the MCP listing (`RunContext::hosted_allows`):
+
+| Tool | Ask · Plan | Edit | Run |
+| --- | --- | --- | --- |
+| `run_check`, `start_app` | refused | refused | allowed |
+| `ship` (open PR, push, keep branch) | refused | allowed | allowed |
+| `ship` `merge_locally` | refused | refused | refused |
+| user MCP servers (`agents.user_mcp`), `approve_tool` | off | off | off |
+
+`merge_locally` writes into the user's own checkout, which is never the
+origin's to change; push or a PR is. The limits are the agent's: you can
+still ship a hosted space from its page here.
 
 ## Settings (per device)
 
@@ -165,8 +210,10 @@ Devices page / "Trust <device>?" notice ─▶ Trust ─▶ confirm: the full
   ─▶ fleet_trust_device{device_id, trusted, public_key: the key shown}
   ─▶ refused unless the cloud still lists exactly that key ─▶ pinned
 a later key change ─▶ untrusted again; trust has to be given again
-Remove (another device) ─▶ confirm ─▶ fleet_remove_device ─▶ remove_device
-  ─▶ the cloud drops it and signs it out; unpinned here
+Remove (another device, offline only) ─▶ confirm ─▶ fleet_remove_device
+  ─▶ remove_device ─▶ the cloud drops it; unpinned here
+  online ─▶ refused here ("only an offline device can be removed"); the
+  cloud's own error{fleet.invalid} ─▶ a toast saying the same
 ```
 
 ## App side
@@ -188,15 +235,30 @@ The cloud-assigned device id is kept per organization (kv
 
 ```
 request ─▶ for this device ─▶ accept_remote ─▶ origin pinned (else TrustNeeded)
-  ─▶ open(pinned key) ─▶ fresh + req_id unseen (store) ─▶ op fits ─▶ claim
-claim_result{claimed: true} ─▶ seen done (store) ─▶ accept_remote, same pin,
-  mode ≤ max_mode again ─▶ run ─▶ reply           not claimed ─▶ nothing runs
+  ─▶ open(pinned key) ─▶ target_key = this device's key ─▶ fresh + req_id
+  unseen (store) ─▶ op fits (a start reserves its slot) ─▶ claim
+claim_result{claimed: true} ─▶ seen done kept in the store (else fleet.internal,
+  nothing runs) ─▶ accept_remote, same pin, mode ≤ max_mode again ─▶ run
+  ─▶ reply, signed (Reply)                        not claimed ─▶ nothing runs,
+                                                  the slot is released
 ```
 
 - "Op fits": start — mode ≤ `max_mode`, project here, depth ≤ 2, < 5
-  children of its parent hosted here; send — space hosted, mode ≤ cap
+  children of its parent hosted or starting here, the space id not hosted or
+  starting; send — space hosted and not running (`fleet.busy`), mode ≤ cap
   (the space's own when none given, and that mode is what runs); answer —
   the question set waits and the answers fit it (`fleet.invalid` otherwise).
+- Starts in flight: a start that passes the gate reserves its slot in
+  memory (children cap, space id) under the same lock as the check, so
+  concurrent starts can't all pass. The slot goes when the start ends —
+  hosted, failed, refused on the recheck, its claim rejected, or the
+  connection lost before its claim result.
+- Sends never queue: a send to a hosted space whose turn is running is
+  refused (`fleet.busy`), at the gate and again under the space's queue
+  lock right before it runs. A queued message would run later, past any
+  change to the trust, the pin or `max_mode` made meanwhile; refusing is
+  simpler than checking all of them again at dequeue. The origin waits
+  (`fleet_wait`) and sends again.
 - A request re-delivered while its claim is open is claimed again, after a
   restart too; once run, refused or rejected it's a replay
   (`fleet.stale_request`), after a restart too (`fleet_seen`, 10 min past
@@ -240,9 +302,13 @@ Per question, the options picked, or one text that isn't an option for
 ### This device as the origin
 
 ```
-fleet_start_space (target pinned here) ─▶ rs_<uuid> ─▶ seal(device key)
-  ─▶ request ─▶ `starting` (host = target, name = its pin's, for good)
-  + subscribe{since 0}   reply ok ─▶ name, branch   reply err ─▶ failed + why
+fleet_start_space (target pinned here) ─▶ rs_<uuid>
+  ─▶ seal(device key, target_key = the target's pin) ─▶ request
+  ─▶ `starting` (host = target, name = its pin's, for good) + subscribe{since 0}
+reply{envelope} ─▶ signer is the target, open_as(the pin sent, Reply)
+  ─▶ ok ─▶ name, branch      err ─▶ failed + code: ≤ 200 chars
+  └▶ doesn't verify ─▶ dropped (debug log); the request times out
+refused{code} (the cloud's) ─▶ failed + "refused by the cloud: <code>"
 space_event ─▶ signer is the host, open_as(host's pin, Event) ─▶ status, last
   reply, question ─▶ FleetSpace + FleetSpaceLine     else ─▶ dropped (debug log)
   (`started` names it; host, parent and depth stay what was asked)
@@ -255,8 +321,8 @@ the UI renders it without loading images or making links.
 
 Spaces started from here and their lines (last 500) live in memory only: a
 restart forgets them. `fleet_send`/`fleet_stop`/`fleet_answer` wait up to
-15 s for the host's reply and return its refusal; not connected, they fail
-here without sending.
+15 s for the host's reply and return its refusal; not connected, or the
+host no longer pinned here, they fail here without sending.
 
 ## Cloud
 

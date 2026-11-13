@@ -26,8 +26,7 @@ use theodore_contract::{
 use theodore_domain::HostKind;
 use theodore_fleet_protocol::{
     ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, FleetMode,
-    ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ReplyOutcome, ServerMessage, SpaceCursor, codes,
-    fingerprint,
+    ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor, codes, fingerprint,
 };
 use theodore_ports::{FleetCommand, FleetConnect, FleetHostedRow, FleetInbound};
 use tokio::sync::{mpsc, oneshot};
@@ -141,7 +140,52 @@ pub(crate) enum Seen {
 pub(crate) struct PendingReply {
     pub space: String,
     pub start: bool,
-    pub tx: Option<oneshot::Sender<ReplyOutcome>>,
+    /// The target, and its key as pinned here when the request was signed
+    /// (the request's `target_key`): only a reply that verifies against
+    /// exactly this key counts.
+    pub target: String,
+    pub target_key: String,
+    pub tx: Option<oneshot::Sender<Answer>>,
+}
+
+/// What came back for a request sent from here. Only `Ok` and `Err` were
+/// signed by the target; of a `Refused` nothing but its code is kept.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Answer {
+    /// The target's verified reply.
+    Ok(serde_json::Value),
+    /// The target's verified refusal: its code (`safe_code`) and its
+    /// words, at most [`ERROR_TEXT_MAX`] characters.
+    Err { code: String, message: String },
+    /// The cloud's own unsigned refusal (`refused`): its code only.
+    Refused { code: String },
+}
+
+/// Most characters of a verified refusal's words that reach the UI or an
+/// agent.
+pub(crate) const ERROR_TEXT_MAX: usize = 200;
+
+/// A refusal code as it may be shown: `fleet.offline`-like, else
+/// `fleet.unknown` (an unsigned `refused` carries the cloud's free text).
+pub(crate) fn safe_code(code: &str) -> String {
+    let ok = !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'.');
+    if ok {
+        code.to_string()
+    } else {
+        "fleet.unknown".to_string()
+    }
+}
+
+/// A start past the gate and not hosted yet: counted with the hosted
+/// spaces (children cap, duplicate id) so concurrent starts can't all
+/// pass. Released when the start ends, either way.
+pub(crate) struct Reserved {
+    pub req_id: String,
+    pub parent: Option<String>,
 }
 
 /// A space this device hosts for the fleet: the stored row plus what the
@@ -185,6 +229,8 @@ pub(crate) struct FleetMem {
     pub seen: HashMap<String, (i64, Seen)>,
     /// Verified requests waiting for their claim result.
     pub claims: HashMap<String, Claimed>,
+    /// Starts past the gate, not hosted yet, by remote id.
+    pub reserved: HashMap<String, Reserved>,
     /// By remote id.
     pub hosted: HashMap<String, Hosted>,
     /// Local spaces being made for another device, not mapped yet.
@@ -194,6 +240,22 @@ pub(crate) struct FleetMem {
     /// Questions from elsewhere routed here, by ask id, with the (pinned,
     /// verified) device that asked.
     pub asks: HashMap<String, (FleetQuestion, String)>,
+}
+
+impl FleetMem {
+    /// Forgets the claims still waiting for their result (the connection
+    /// went), and the slots they reserved.
+    pub(crate) fn drop_claims(&mut self) {
+        let claims = std::mem::take(&mut self.claims);
+        self.reserved.retain(|_, r| !claims.contains_key(&r.req_id));
+    }
+
+    /// Releases `space`'s slot, if `req_id` reserved it.
+    pub(crate) fn release(&mut self, space: &str, req_id: &str) {
+        if self.reserved.get(space).is_some_and(|r| r.req_id == req_id) {
+            self.reserved.remove(space);
+        }
+    }
 }
 
 /// One per `Core`.
@@ -465,7 +527,9 @@ impl Core {
     }
 
     /// Forgets another of the user's devices (lost, replaced): the cloud
-    /// drops it and signs it out, and it's no longer trusted here.
+    /// drops it, and it's no longer trusted here. Only an offline one: the
+    /// cloud refuses an online device (`fleet.invalid`), so it's refused
+    /// here first, saying why.
     pub async fn fleet_remove_device(&self, device_id: &str) -> AppResult<FleetStatus> {
         let me = self.fleet_ready()?;
         if me == device_id {
@@ -473,14 +537,22 @@ impl Core {
                 "this device can't remove itself: turn the fleet off instead".into(),
             ));
         }
-        if !self
+        let listed = self
             .fleet()
             .devices
             .iter()
-            .any(|d| d.device_id == device_id)
-        {
-            return Err(AppError::NotFound(format!(
-                "device {device_id} isn't in this organization's fleet"
+            .find(|d| d.device_id == device_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "device {device_id} isn't in this organization's fleet"
+                ))
+            })?;
+        if listed.online {
+            return Err(AppError::Invalid(format!(
+                "{} is online: only an offline device can be removed (quit Theodore on it, or \
+                 turn its fleet off, first)",
+                listed.info.name
             )));
         }
         {
@@ -573,8 +645,10 @@ impl Core {
             .await;
     }
 
-    /// Records `req_id` as `state`, here and in the store.
-    pub(crate) async fn fleet_mark_seen(&self, req_id: &str, issued_at: i64, state: Seen) {
+    /// Records `req_id` as `state`, here and in the store; `false` when
+    /// the store didn't keep it (then nothing may run on it).
+    #[must_use]
+    pub(crate) async fn fleet_mark_seen(&self, req_id: &str, issued_at: i64, state: Seen) -> bool {
         let now = self.0.deps.clock.now();
         let forget_before = now.saturating_sub(REPLAY_MEMORY_MS as i64);
         {
@@ -595,8 +669,16 @@ impl Core {
             store.fleet_seen_put(&id, issued_at, done, forget_before)
         })
         .await;
-        if let Ok(Err(e)) = kept {
-            tracing::warn!(error.code = e.code(), error = %e, "couldn't keep a seen fleet request");
+        match kept {
+            Ok(Ok(())) => true,
+            Ok(Err(e)) => {
+                tracing::warn!(error.code = e.code(), error = %e, "couldn't keep a seen fleet request");
+                false
+            }
+            Err(e) => {
+                tracing::warn!(error.code = "app.internal", error = %e, "couldn't keep a seen fleet request");
+                false
+            }
         }
     }
 
@@ -791,7 +873,7 @@ impl Core {
         // Another organization's hub gives another id.
         mem.device_id = None;
         mem.devices.clear();
-        mem.claims.clear();
+        mem.drop_claims();
         mem.error = None;
         self.0.fleet.tools_on.store(false, Ordering::SeqCst);
     }
@@ -888,7 +970,7 @@ impl Core {
                 {
                     let mut mem = self.fleet();
                     mem.connected = false;
-                    mem.claims.clear();
+                    mem.drop_claims();
                     mem.error = Some(reason);
                 }
                 self.0.fleet.tools_on.store(false, Ordering::SeqCst);
@@ -914,7 +996,7 @@ impl Core {
                     let mut mem = self.fleet();
                     mem.link = None;
                     mem.connected = false;
-                    mem.claims.clear();
+                    mem.drop_claims();
                     mem.error = Some(if message.is_empty() {
                         code
                     } else {
@@ -943,7 +1025,8 @@ impl Core {
                 claimed,
                 rejection,
             } => self.fleet_on_claim(&req_id, claimed, rejection),
-            ServerMessage::Reply { req_id, outcome } => self.fleet_on_reply(&req_id, outcome),
+            ServerMessage::Reply { envelope } => self.fleet_on_reply(envelope).await,
+            ServerMessage::Refused { req_id, code, .. } => self.fleet_on_refused(&req_id, &code),
             ServerMessage::SpaceEvent { envelope } => self.fleet_on_event(envelope).await,
             ServerMessage::SpaceGap { space, from, to } => self.fleet_on_gap(&space, from, to),
             ServerMessage::Ask { envelope, via } => self.fleet_on_ask(envelope, via).await,
@@ -955,6 +1038,18 @@ impl Core {
             ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}
             ServerMessage::Error { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet cloud reported an error");
+                // The cloud's text is unsigned: the user hears our words.
+                // `fleet.invalid` after the welcome is a refused removal (an
+                // online device); `fleet.busy` an event over the budget,
+                // replayed from the journal on the next welcome.
+                if code == codes::INVALID {
+                    self.emit(Ephemeral::Toast {
+                        level: theodore_contract::ToastLevel::Warn,
+                        text: "The fleet refused that (fleet.invalid): a device can be removed \
+                               only while it's offline"
+                            .into(),
+                    });
+                }
             }
         }
     }

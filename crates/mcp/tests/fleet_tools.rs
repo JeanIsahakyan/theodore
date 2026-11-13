@@ -16,9 +16,9 @@ use serde_json::{Value, json};
 use theodore_domain::{AgentId, FindingId, PrId, RunId};
 use theodore_mcp::{
     AppStatus, BackendError, CheckOutcome, FLEET_STEER_TOOL_NAMES, FLEET_TOOL_NAMES, FleetTools,
-    GroupWithHunks, LogTail, McpServer, NewFinding, NewPatch, PrContext, ReviewToolsBackend,
-    RunContext, SpaceCommandName, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
-    ToolSet, TurnMode,
+    GroupWithHunks, HOSTED_EDIT_TOOL_NAMES, HOSTED_RUN_TOOL_NAMES, LogTail, McpServer, NewFinding,
+    NewPatch, PrContext, ReviewToolsBackend, RunContext, SpaceCommandName, SpaceInfo,
+    SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet, TurnMode,
 };
 use theodore_ports::{FleetToolDevice, FleetToolSpace, FleetToolWait};
 
@@ -256,6 +256,7 @@ async fn fleet_tools_are_listed_only_while_connected() {
         turn(ToolSet::Space, TurnMode::Ask, FleetTools::Steer),
         turn(ToolSet::Space, TurnMode::Plan, FleetTools::Steer),
         turn(ToolSet::Space, TurnMode::Run, FleetTools::Read),
+        turn(ToolSet::Space, TurnMode::Run, FleetTools::Hosted),
     ] {
         let endpoint = handle.register_run(ctx.clone());
         let client = connect(&endpoint.url, &endpoint.token).await;
@@ -283,4 +284,31 @@ async fn fleet_tools_are_listed_only_while_connected() {
     assert!(fleet_names(&client).await.is_empty());
     drop(client);
     handle.shutdown().await;
+}
+
+/// A space hosted here for another device: its commands only in Run, ship
+/// only in Edit or Run, never `approve_tool` (the core checks again).
+#[test]
+fn a_hosted_space_lists_commands_only_in_run_and_ship_only_in_edit_or_run() {
+    for (mode, commands, ship) in [
+        (TurnMode::Ask, false, false),
+        (TurnMode::Plan, false, false),
+        (TurnMode::Edit, false, true),
+        (TurnMode::Run, true, true),
+    ] {
+        let hosted = turn(ToolSet::Space, mode, FleetTools::Hosted);
+        for t in HOSTED_RUN_TOOL_NAMES {
+            assert_eq!(hosted.allows(t), commands, "{t} in {mode:?}");
+        }
+        for t in HOSTED_EDIT_TOOL_NAMES {
+            assert_eq!(hosted.allows(t), ship, "{t} in {mode:?}");
+        }
+        assert!(!hosted.allows(theodore_ports::APPROVE_TOOL), "{mode:?}");
+        assert!(hosted.allows("stop_app") && hosted.allows("read_logs"));
+        assert!(!hosted.fleet_steers());
+        // A space of this device's own keeps them all.
+        let own = turn(ToolSet::Space, mode, FleetTools::Steer);
+        assert!(own.allows("run_check") && own.allows("ship"));
+        assert!(own.allows(theodore_ports::APPROVE_TOOL));
+    }
 }
