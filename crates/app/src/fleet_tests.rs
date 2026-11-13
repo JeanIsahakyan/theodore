@@ -33,8 +33,14 @@ const ORIGIN: &str = "dev_o";
 const TARGET: &str = "dev_t";
 const GENERATION: u64 = 7;
 
+/// How long a test waits for something the core does in the background.
+/// Generous: a loaded CI runner can take seconds to schedule a task, and a
+/// passing test returns as soon as the condition holds.
+const WAIT: Duration = Duration::from_secs(20);
+
 async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
-    for _ in 0..600 {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while tokio::time::Instant::now() < deadline {
         if cond() {
             return;
         }
@@ -48,7 +54,8 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    for _ in 0..600 {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while tokio::time::Instant::now() < deadline {
         if cond().await {
             return;
         }
