@@ -260,12 +260,54 @@ describe('fleet routing', () => {
       'fleet.bad_signature',
     ]);
     expect(replies(mac1)).toEqual([]);
-    // Nothing recorded: the space isn't mac2's to report on yet.
+    // The claimed host may already report on the space (it runs it before
+    // replying); the forged replies changed nothing about that.
     await mac2.emit('rs_1', 1, { kind: 'status', status: 'running' });
-    expect(mac2.take('error')[0]?.code).toBe('fleet.not_yours');
+    expect(mac2.take('error')).toEqual([]);
     // The real one still goes through.
     await mac2.reply(reqId, ok);
     expect(replies(mac1)).toEqual(['ok']);
+  });
+
+  it('keeps a claimed start’s early events for the origin to subscribe to', async () => {
+    const { mac1, mac2 } = await pair();
+    const { reqId } = await mac1.request(mac2.id!, startOp('rs_e'));
+    // Before the claim the space is nobody's.
+    await mac2.emit('rs_e', 1, { kind: 'status', status: 'running' });
+    expect(mac2.take('error')[0]?.code).toBe('fleet.not_yours');
+    await mac2.send({
+      type: 'claim',
+      req_id: reqId,
+      generation: mac2.generation,
+    });
+    // Claimed: the host's events before its reply are kept…
+    await mac2.emit('rs_e', 1, { kind: 'status', status: 'running' });
+    await mac2.emit('rs_e', 2, { kind: 'status', status: 'idle' });
+    expect(mac2.take('error')).toEqual([]);
+    await mac2.reply(reqId, {
+      outcome: 'ok',
+      value: { space: 'rs_e', name: 'S', branch: 'b' },
+    });
+    // …and the origin, subscribing on the ok, gets them all.
+    await mac1.send({ type: 'subscribe', space: 'rs_e', since: 0 });
+    expect(mac1.take('space_event').length).toBe(2);
+  });
+
+  it('forgets a start the host refused', async () => {
+    const { mac1, mac2 } = await pair();
+    const { reqId } = await mac1.request(mac2.id!, startOp('rs_r'));
+    await mac2.send({
+      type: 'claim',
+      req_id: reqId,
+      generation: mac2.generation,
+    });
+    await mac2.reply(reqId, {
+      outcome: 'err',
+      code: 'fleet.invalid',
+      message: 'no',
+    });
+    await mac2.emit('rs_r', 1, { kind: 'status', status: 'running' });
+    expect(mac2.take('error')[0]?.code).toBe('fleet.not_yours');
   });
 
   it('refuses a reply naming another origin', async () => {

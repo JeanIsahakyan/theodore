@@ -680,11 +680,16 @@ export class Hub {
     ) {
       rejection = 'stale_generation';
     }
-    if (!rejection) {
+    if (!rejection && p) {
       this.store.run(
         'UPDATE pending SET claimed = 1 WHERE req_id = ?',
         msg.req_id,
       );
+      // The host starts emitting the space's events as soon as it runs the
+      // claimed start, before its reply: know the space from now on, so
+      // those events are kept and the origin can subscribe. A refused start
+      // forgets it again (`reply`).
+      if (p.op === 'start_space') this.recordSpace(p);
     }
     this.send(r.conn, {
       type: 'claim_result',
@@ -734,19 +739,9 @@ export class Hub {
     }
     if (!r.conn.open) return;
     this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
-    if (p.op === 'start_space' && ok) {
-      this.store.run(
-        `INSERT INTO spaces
-         (space, user_id, host_device, origin_device, parent, depth, last_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (space) DO NOTHING`,
-        p.space,
-        p.user_id,
-        p.target_device,
-        p.origin_device,
-        p.parent,
-        p.depth,
-        this.env.now(),
-      );
+    if (p.op === 'start_space') {
+      if (ok) this.recordSpace(p);
+      else this.forgetSpaces([p.space]);
     }
     if (p.op === 'answer' && p.ask_id && ok) {
       const a = this.store.ask(p.ask_id);
@@ -768,6 +763,21 @@ export class Hub {
       type: 'reply',
       envelope: forwardOf(envelope),
     });
+  }
+
+  private recordSpace(p: PendingRow) {
+    this.store.run(
+      `INSERT INTO spaces
+       (space, user_id, host_device, origin_device, parent, depth, last_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (space) DO NOTHING`,
+      p.space,
+      p.user_id,
+      p.target_device,
+      p.origin_device,
+      p.parent,
+      p.depth,
+      this.env.now(),
+    );
   }
 
   /** A reply or refusal to the origin, or held 2 min while it's away. */

@@ -1023,9 +1023,13 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             depth: 0,
         }
     );
-    assert!(f.fleet.sent().iter().any(
-        |m| matches!(m, ClientMessage::Subscribe { space, since: 0 } if *space == started.space)
-    ));
+    // Not subscribed yet: the cloud only knows the space once the host
+    // has it (claim, then the signed ok).
+    assert!(
+        !f.fleet.sent().iter().any(
+            |m| matches!(m, ClientMessage::Subscribe { space, .. } if *space == started.space)
+        )
+    );
 
     // The reply names it; events move it along.
     f.fleet.push(signed_reply(
@@ -1050,6 +1054,10 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
         (v.branch.as_str(), v.status),
         ("ada/port-it", FleetSpaceStatus::Running)
     );
+    // Subscribed on the verified ok, from the start.
+    assert!(f.fleet.sent().iter().any(
+        |m| matches!(m, ClientMessage::Subscribe { space, since: 0 } if *space == started.space)
+    ));
 
     remote_event(
         &f,
@@ -1360,6 +1368,24 @@ async fn accepting_remote_announces_this_devices_projects() {
         commands(&f, 0).iter().any(|c| {
             matches!(c, FakeFleetCommand::Update { info, .. }
                 if info.accepts_remote && info.projects.iter().any(|p| p.id == project.id))
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_project_added_later_is_announced() {
+    // Found in a two-device run: a project added after "accept remote" was
+    // on stayed unknown to the others until a setting changed.
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    connect(&f, &core, false, vec![]).await;
+    core.fleet_set_settings(settings(true)).await.unwrap();
+    let project = project(&f, &core).await;
+    wait_until("announced", || {
+        commands(&f, 0).iter().any(|c| {
+            matches!(c, FakeFleetCommand::Update { info, .. }
+                if info.projects.iter().any(|p| p.id == project.id))
         })
     })
     .await;

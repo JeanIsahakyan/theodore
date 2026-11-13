@@ -360,10 +360,8 @@ impl Core {
                 return Err(e);
             }
         };
-        self.fleet_send_msg(ClientMessage::Subscribe {
-            space: space.clone(),
-            since: 0,
-        });
+        // Subscribed once the host's signed ok arrives (`fleet_answered`):
+        // before that the cloud doesn't know the space and refuses it.
         self.emit(Ephemeral::FleetSpace {
             space: view.clone(),
         });
@@ -519,6 +517,7 @@ impl Core {
             return;
         };
         if pending.start {
+            let mut subscribe = false;
             let view = {
                 let mut mem = self.fleet();
                 let Some(o) = mem.outbound.get_mut(&pending.space) else {
@@ -533,6 +532,7 @@ impl Core {
                         if o.view.status == FleetSpaceStatus::Starting {
                             o.view.status = FleetSpaceStatus::Running;
                         }
+                        subscribe = true;
                     }
                     Answer::Err { .. } | Answer::Refused { .. } => {
                         o.view.status = FleetSpaceStatus::Failed;
@@ -541,6 +541,12 @@ impl Core {
                 }
                 o.view.clone()
             };
+            if subscribe {
+                self.fleet_send_msg(ClientMessage::Subscribe {
+                    space: pending.space.clone(),
+                    since: 0,
+                });
+            }
             self.emit(Ephemeral::FleetSpace { space: view });
             self.0.fleet.changed.notify_waiters();
         }
