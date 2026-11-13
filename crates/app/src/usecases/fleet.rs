@@ -430,6 +430,11 @@ impl Core {
     /// Tells the cloud what changed about this device (projects, settings,
     /// hosted spaces); also what the next hello says.
     pub(crate) async fn fleet_announce(&self) {
+        // Nothing to tell without a link (fleet off, or not connected yet:
+        // the next hello carries the info anyway).
+        if self.fleet().link.is_none() {
+            return;
+        }
         let s = self.fleet_settings().await;
         let info = self.fleet_info(&s).await;
         let spaces = self.fleet_cursors();

@@ -947,7 +947,7 @@ impl Core {
     async fn fleet_observe_frame(&self, frame: &SyncFrame) {
         // A project added, removed or made ready changes what this device
         // offers: tell the cloud (a no-op unless remote requests are on).
-        if frame.actions.iter().any(|a| a.model == models::PROJECT) {
+        if self.fleet().link.is_some() && frame.actions.iter().any(|a| a.model == models::PROJECT) {
             let core = self.clone();
             tokio::spawn(async move { core.fleet_announce().await });
         }
