@@ -37,6 +37,7 @@ describe('runMenu behind the account gate', () => {
     required: true,
     user: null,
     session_ended: false,
+    organization: null,
   };
 
   it('does nothing that reaches the app', () => {

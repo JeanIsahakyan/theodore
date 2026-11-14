@@ -29,6 +29,8 @@ export type SettingsPage =
   | 'account'
   | 'appearance'
   | 'agents'
+  /** Settings → Devices (docs/fleet.md); listed only where a fleet exists. */
+  | 'devices'
   | 'integrations'
   /** Old id: it is the same page as `about`. */
   | 'updates'
@@ -74,7 +76,10 @@ export type Route =
   | { name: 'new'; id: string }
   /** A space (docs/spaces.md): chat with the agent + the live diff. Only
    *  reachable with build mode on. */
-  | { name: 'space'; id: string };
+  | { name: 'space'; id: string }
+  /** A space on another device (docs/fleet.md): its lines, composer and
+   *  question. `id` is the fleet id (`rs_…`). */
+  | { name: 'fleet-space'; id: string };
 
 export type ModalName =
   | 'help'
@@ -93,7 +98,9 @@ export type ModalName =
   /** The list of usage events and what is never sent. */
   | 'whats-collected'
   /** Build mode only. */
-  | 'new-space';
+  | 'new-space'
+  /** Start a space on another device (docs/fleet.md). */
+  | 'fleet-start';
 
 export const sameRoute = (a: Route, b: Route): boolean =>
   JSON.stringify(a) === JSON.stringify(b);

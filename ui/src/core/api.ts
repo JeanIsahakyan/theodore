@@ -2,6 +2,7 @@
 import { getTransport } from './transport';
 import { ACCOUNT_REQUIRED } from './accountGate';
 import type {
+  AccountOrganization,
   AccountSignInRequest,
   AccountSignInStart,
   AccountSignInState,
@@ -28,6 +29,15 @@ import type {
   FilePreviewRequest,
   FileRequest,
   FindSymbolRequest,
+  FleetAnswerRequest,
+  FleetPresenceRequest,
+  FleetRemoteSpace,
+  FleetSendRequest,
+  FleetSettingsRequest,
+  FleetSpaceLine,
+  FleetStartRequest,
+  FleetStatus,
+  FleetTrustRequest,
   GetBlobRequest,
   HostAuthStatus,
   HostKind,
@@ -474,6 +484,28 @@ export const api = {
    *  `null` when there is none. Never toasted: hovering is incidental. */
   codeIntelHover: (req: CodeHoverRequest) =>
     call<CodeHover | null>('code_intel_hover', { req }, true),
+  /** Fleet (docs/fleet.md): spaces across your devices. The status and
+   *  list reads are quiet: with no fleet they just leave it hidden. */
+  fleetStatus: () => call<FleetStatus>('fleet_status', undefined, true),
+  fleetSetSettings: (req: FleetSettingsRequest) =>
+    call<FleetStatus>('fleet_set_settings', { req }),
+  fleetTrustDevice: (req: FleetTrustRequest) =>
+    call<FleetStatus>('fleet_trust_device', { req }),
+  /** Signs a device of this account out of the fleet: it has to join again
+   *  as a new device. */
+  fleetRemoveDevice: (deviceId: string) =>
+    call<FleetStatus>('fleet_remove_device', { deviceId }),
+  fleetStartSpace: (req: FleetStartRequest) =>
+    call<FleetRemoteSpace>('fleet_start_space', { req }),
+  fleetSend: (req: FleetSendRequest) => call<null>('fleet_send', { req }),
+  fleetStop: (space: string) => call<null>('fleet_stop', { space }),
+  fleetAnswer: (req: FleetAnswerRequest) => call<null>('fleet_answer', { req }),
+  fleetSpaces: () => call<FleetRemoteSpace[]>('fleet_spaces', undefined, true),
+  fleetSpaceLines: (space: string, since: number) =>
+    call<FleetSpaceLine[]>('fleet_space_lines', { space, since }, true),
+  /** Where you are, for routing questions: never toasted. */
+  fleetPresence: (req: FleetPresenceRequest): Promise<null> =>
+    quietCall('fleet_presence', { req }),
   globalConfig: () => call<GlobalConfigInfo>('global_config'),
   /** Creates the global config from a template when missing, then opens
    *  it in the default editor. */
@@ -487,6 +519,26 @@ export const api = {
     call<AccountSignInState>('account_sign_in_poll', undefined, true),
   accountSignInCancel: () => call<null>('account_sign_in_cancel'),
   accountSignOut: () => call<AccountStatus>('account_sign_out'),
+  /** Finishes a sign-in that stopped at the organization list. Quiet: the
+   *  sign-in screen shows the failure. */
+  accountSignInChooseOrganization: (organizationId: string) =>
+    call<AccountSignInState>(
+      'account_sign_in_choose_organization',
+      { organizationId },
+      true,
+    ),
+  /** Switches the session into another organization. Quiet: Settings
+   *  shows the failure next to the switcher; the old one stays. */
+  accountSwitchOrganization: (organizationId: string) =>
+    call<AccountStatus>(
+      'account_switch_organization',
+      { organizationId },
+      true,
+    ),
+  /** The signed-in user's organizations, the personal one first. Quiet:
+   *  without the list the switcher just stays hidden. */
+  accountOrganizations: () =>
+    call<AccountOrganization[]>('account_organizations', undefined, true),
   /** Brings the window forward after the browser hands the sign-in back.
    *  Cosmetic: a failure is ignored, never toasted. */
   focusWindow: (): Promise<null> =>

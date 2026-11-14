@@ -34,6 +34,21 @@ stacked) and on pushes to both branches. Both also have a manual **Run
 workflow** (`workflow_dispatch`); from any other branch it builds and
 publishes nothing.
 
+### The cloud rides the same branches
+
+The Worker in `cloud/` (`docs/cloud.md`) is not part of the app build:
+no version bump, no tag, no release. `cloud.yml` deploys it on the same
+branch flow, only when the push touches `cloud/**`:
+
+```
+push staging ─ cloud/** ─▶ theodore-cloud-staging
+push main    ─ cloud/** ─▶ theodore-cloud
+```
+
+It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets;
+the WorkOS API key is a Worker secret, never in CI. Setup and details:
+`docs/cloud.md`.
+
 ## One-time: updater signing key (required before any release works)
 
 Done on 2026-10-25: the public key is in `tauri.conf.json`, both secrets are
@@ -89,6 +104,11 @@ compiled in, from `THEODORE_WORKOS_CLIENT_ID` in the build's environment:
   sign-in screen, no account card.
 - At run time the same env var or the `account.workos.client_id` setting
   still wins over the compiled-in id (staging, a test environment).
+- The Theodore cloud URL is baked in the same way, optionally:
+  `THEODORE_CLOUD_URL` (`release.yml`) and `THEODORE_CLOUD_URL_STAGING`
+  (`staging.yml`), passed as `build.yml`'s `cloud-url`. Not a required
+  release key: without it a build has no organizations (docs/cloud.md
+  "App side").
 
 ## Error reports: New Relic
 

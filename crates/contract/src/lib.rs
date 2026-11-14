@@ -41,6 +41,8 @@ mod config;
 pub use config::*;
 mod account;
 pub use account::*;
+mod fleet;
+pub use fleet::*;
 mod attachments;
 pub use attachments::*;
 mod reports;
@@ -627,6 +629,31 @@ pub enum Ephemeral {
     AccountStatus {
         status: AccountStatus,
     },
+    /// Fleet connection, settings or the device list changed (docs/fleet.md).
+    FleetStatus {
+        status: FleetStatus,
+    },
+    /// A fleet space appeared or changed (status, last reply, question).
+    FleetSpace {
+        space: FleetRemoteSpace,
+    },
+    /// One new line of a fleet space's history.
+    FleetSpaceLine {
+        space: String,
+        line: FleetSpaceLine,
+    },
+    /// A question from a space elsewhere, routed to this device.
+    FleetAsk {
+        question: FleetQuestion,
+    },
+    /// Answered elsewhere, moved, or resolved: drop it.
+    FleetAskDismissed {
+        ask_id: String,
+    },
+    /// A device that isn't trusted here asked for something.
+    FleetTrustNeeded {
+        request: FleetTrustNeeded,
+    },
     /// One line of a space command's output (docs/config.md); the last
     /// lines are kept per space and returned by `space_logs`.
     SpaceLog {
@@ -1203,6 +1230,20 @@ pub fn types() -> specta::Types {
         .register::<AccountSignInRequest>()
         .register::<AccountSignInStart>()
         .register::<AccountSignInState>()
+        .register::<AccountOrganizationRef>()
+        .register::<AccountOrganizationChoice>()
+        .register::<AccountOrganization>()
+        .register::<FleetStatus>()
+        .register::<FleetSettingsRequest>()
+        .register::<FleetTrustRequest>()
+        .register::<FleetStartRequest>()
+        .register::<FleetSendRequest>()
+        .register::<FleetAnswerRequest>()
+        .register::<FleetPresenceRequest>()
+        .register::<FleetRemoteSpace>()
+        .register::<FleetSpaceLine>()
+        .register::<FleetQuestion>()
+        .register::<FleetTrustNeeded>()
         .register::<ClientLog>()
         .register::<ClientLogLevel>()
         .register::<UiEvent>()

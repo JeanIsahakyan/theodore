@@ -253,6 +253,20 @@ export const commands = {
 	accountSignInPoll: () => typedError<AccountSignInState, CommandError>(__TAURI_INVOKE("account_sign_in_poll")),
 	accountSignInCancel: () => typedError<null, CommandError>(__TAURI_INVOKE("account_sign_in_cancel")),
 	accountSignOut: () => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_sign_out")),
+	accountSignInChooseOrganization: (organizationId: string) => typedError<AccountSignInState, CommandError>(__TAURI_INVOKE("account_sign_in_choose_organization", { organizationId })),
+	accountSwitchOrganization: (organizationId: string) => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_switch_organization", { organizationId })),
+	accountOrganizations: () => typedError<AccountOrganization[], CommandError>(__TAURI_INVOKE("account_organizations")),
+	fleetStatus: () => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_status")),
+	fleetSetSettings: (req: FleetSettingsRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_set_settings", { req })),
+	fleetTrustDevice: (req: FleetTrustRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_trust_device", { req })),
+	fleetRemoveDevice: (deviceId: string) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_remove_device", { deviceId })),
+	fleetStartSpace: (req: FleetStartRequest) => typedError<FleetRemoteSpace, CommandError>(__TAURI_INVOKE("fleet_start_space", { req })),
+	fleetSend: (req: FleetSendRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_send", { req })),
+	fleetStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_stop", { space })),
+	fleetAnswer: (req: FleetAnswerRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_answer", { req })),
+	fleetSpaces: () => typedError<FleetRemoteSpace[], CommandError>(__TAURI_INVOKE("fleet_spaces")),
+	fleetSpaceLines: (space: string, since: number) => typedError<FleetSpaceLine[], CommandError>(__TAURI_INVOKE("fleet_space_lines", { space, since })),
+	fleetPresence: (req: FleetPresenceRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_presence", { req })),
 	/**
 	 *  Brings the main window forward: the browser sign-in finishes in another
 	 *  app, and the user should land back in Theodore without hunting for it.
@@ -311,6 +325,34 @@ export const commands = {
 };
 
 /* Types */
+/**
+ *  `account_organizations`: one of the signed-in user's organizations,
+ *  the personal one first.
+ */
+export type AccountOrganization = {
+	id: string,
+	name: string,
+	role: string | null,
+	/**  The user's own personal organization. */
+	personal: boolean,
+};
+
+/**
+ *  One organization a sign-in can finish in
+ *  (`AccountSignInState::ChooseOrganization`).
+ */
+export type AccountOrganizationChoice = {
+	id: string,
+	name: string,
+};
+
+/**  The session's organization, as its access token says. */
+export type AccountOrganizationRef = {
+	id: string,
+	/**  The user's role slug in it (`admin`, `member`, …). */
+	role: string | null,
+};
+
 export type AccountSignInMethod =
 /**
  *  Hosted sign-in page in the system browser, back to the app through
@@ -335,7 +377,13 @@ verification_uri_complete: string | null; expires_in: number; interval: number }
 /**  `account_sign_in_poll`'s response. */
 export type AccountSignInState = { state: "pending" } |
 /**  Device code only: poll again no sooner than `interval` seconds. */
-{ state: "slow_down"; interval: number } | { state: "expired" } | { state: "denied" } | { state: "failed"; message: string } | { state: "done"; status: AccountStatus };
+{ state: "slow_down"; interval: number } | { state: "expired" } | { state: "denied" } | { state: "failed"; message: string } | { state: "done"; status: AccountStatus } |
+/**
+ *  The user is in several organizations: pick one and finish with
+ *  `account_sign_in_choose_organization`. Reported until then (or a
+ *  cancel); nothing is stored yet.
+ */
+{ state: "choose_organization"; organizations: AccountOrganizationChoice[] };
 
 /**
  *  `available: false` hides the whole feature (no client id configured,
@@ -357,6 +405,12 @@ export type AccountStatus = {
 	 *  screen says so. Cleared by the next sign-in or sign-out.
 	 */
 	session_ended: boolean,
+	/**
+	 *  The organization the session is authorized in. `None` while
+	 *  signed out, in a build without the Theodore cloud, or until the
+	 *  personal one is set up (right after a first sign-in).
+	 */
+	organization: AccountOrganizationRef | null,
 };
 
 export type AccountUser = {
@@ -962,6 +1016,18 @@ background?: boolean } |
 server_trouble?: boolean } |
 /**  The Theodore account signed in, signed out, or its session ended. */
 { type: "account_status"; status: AccountStatus } |
+/**  Fleet connection, settings or the device list changed (docs/fleet.md). */
+{ type: "fleet_status"; status: FleetStatus } |
+/**  A fleet space appeared or changed (status, last reply, question). */
+{ type: "fleet_space"; space: FleetRemoteSpace } |
+/**  One new line of a fleet space's history. */
+{ type: "fleet_space_line"; space: string; line: FleetSpaceLine } |
+/**  A question from a space elsewhere, routed to this device. */
+{ type: "fleet_ask"; question: FleetQuestion } |
+/**  Answered elsewhere, moved, or resolved: drop it. */
+{ type: "fleet_ask_dismissed"; ask_id: string } |
+/**  A device that isn't trusted here asked for something. */
+{ type: "fleet_trust_needed"; request: FleetTrustNeeded } |
 /**
  *  One line of a space command's output (docs/config.md); the last
  *  lines are kept per space and returned by `space_logs`.
@@ -1097,6 +1163,176 @@ export type FindSymbolRequest = {
 	 *  positions only: a `Base` click goes by name.
 	 */
 	side?: DiffSide | null,
+};
+
+export type FleetAnswerRequest = {
+	space: string,
+	ask_id: string,
+	/**  One entry per question: the chosen options, or one free text. */
+	answers: string[][],
+};
+
+export type FleetDevice = {
+	device_id: string,
+	name: string,
+	os: FleetOs,
+	/**  `desktop` or `daemon`. */
+	kind: string,
+	online: boolean,
+	/**  Unix ms; 0 if never. */
+	last_seen_ms: number,
+	/**
+	 *  Projects it lets trusted devices start spaces in (empty unless it
+	 *  accepts remote requests).
+	 */
+	projects: FleetProject[],
+	accepts_remote: boolean,
+	max_mode: SpaceMode,
+	/**
+	 *  8 groups of 4 hex ("a1b2 c3d4 … 0718"): compare with what that device
+	 *  shows for itself.
+	 */
+	fingerprint: string,
+	/**
+	 *  The key the fingerprint is of; trusting sends it back so exactly this
+	 *  key is pinned, whatever the cloud lists by then.
+	 */
+	public_key: string,
+	/**  This device trusts it (its key is pinned here). */
+	trusted: boolean,
+	this_device: boolean,
+};
+
+export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
+
+export type FleetOs = "macos" | "linux";
+
+export type FleetPresenceRequest = {
+	focused: boolean,
+	/**  Ms since the last input in the app. */
+	idle_ms: number,
+};
+
+export type FleetProject = {
+	id: string,
+	name: string,
+};
+
+export type FleetQuestion = {
+	ask_id: string,
+	space: string,
+	/**  "<device> · <space name>". */
+	from: string,
+	questions: FleetQuestionItem[],
+	/**  `active`, `origin`, `escalated`, `moved`; `None` on the host itself. */
+	via: string | null,
+};
+
+export type FleetQuestionItem = {
+	question: string,
+	options: string[],
+	multi: boolean,
+};
+
+/**
+ *  A space in the fleet: hosted on another device and started from here,
+ *  or hosted here for another device.
+ */
+export type FleetRemoteSpace = {
+	/**  The fleet id (`rs_…`). */
+	space: string,
+	host_device: string,
+	host_name: string,
+	origin_device: string,
+	project_name: string,
+	name: string,
+	branch: string,
+	status: FleetSpaceStatus,
+	mode: SpaceMode,
+	depth: number,
+	parent: string | null,
+	last_reply: string | null,
+	question: FleetQuestion | null,
+	/**  Hosted on this device (then `local_space` is its local id). */
+	hosted_here: boolean,
+	local_space: string | null,
+	/**  Why it failed to start, if it did. */
+	error: string | null,
+};
+
+export type FleetSendRequest = {
+	space: string,
+	text: string,
+	mode?: SpaceMode | null,
+};
+
+export type FleetSettingsRequest = {
+	enabled?: boolean | null,
+	accept_remote?: boolean | null,
+	max_mode?: SpaceMode | null,
+	name?: string | null,
+};
+
+export type FleetSpaceLine = {
+	seq: number,
+	kind: FleetLineKind,
+	text: string,
+};
+
+export type FleetSpaceStatus =
+/**  Asked for, no reply from the host yet. */
+"starting" | "running" | "idle" | "waiting" | "stopped" | "failed";
+
+export type FleetStartRequest = {
+	device_id: string,
+	project_id: string,
+	goal: string,
+	mode: SpaceMode,
+};
+
+export type FleetStatus = {
+	/**  A cloud and an account are configured; `false` hides the feature. */
+	available: boolean,
+	/**  `fleet.enabled`: connect at all. */
+	enabled: boolean,
+	connected: boolean,
+	/**  Set once the cloud has registered this device. */
+	device_id: string | null,
+	/**  This device's name as others see it. */
+	name: string,
+	/**  This device's key fingerprint. */
+	fingerprint: string,
+	/**  `fleet.accept_remote`. */
+	accept_remote: boolean,
+	/**  `fleet.max_mode`. */
+	max_mode: SpaceMode,
+	/**  The user's devices in the current organization, this one included. */
+	devices: FleetDevice[],
+	/**  Why it isn't connected, when enabled and not connected. */
+	error: string | null,
+};
+
+/**  A request from `device_id` was refused because it isn't trusted here. */
+export type FleetTrustNeeded = {
+	device_id: string,
+	device_name: string,
+	fingerprint: string,
+	public_key: string,
+};
+
+/**
+ *  Trust or distrust a device: its current public key (as the cloud lists
+ *  it) is pinned here, or unpinned.
+ */
+export type FleetTrustRequest = {
+	device_id: string,
+	trusted: boolean,
+	/**
+	 *  Required to trust: the key the user compared (`FleetDevice::public_key`
+	 *  or `FleetTrustNeeded::public_key`). Refused if the cloud now lists
+	 *  another key for the device.
+	 */
+	public_key?: string | null,
 };
 
 export type GetBlobRequest = {

@@ -18,7 +18,8 @@ name: Build
 #                              remote telemetry sinks (optional, docs/telemetry.md)
 # Secrets (telemetry, optional):
 #   THEODORE_OTLP_HEADERS      e.g. `api-key=<New Relic license key>`
-# The WorkOS client id is an input: each caller picks its environment's.
+# The WorkOS client id and the Theodore cloud URL are inputs: each caller
+# picks its environment's.
 
 on:
   workflow_call:
@@ -39,6 +40,11 @@ on:
         default: ""
       workos-client-id:
         description: "the account's client id, baked in (empty: no account)"
+        required: false
+        type: string
+        default: ""
+      cloud-url:
+        description: "the Theodore cloud URL, baked in (empty: no organizations; docs/cloud.md)"
         required: false
         type: string
         default: ""
@@ -164,6 +170,9 @@ jobs:
           THEODORE_VERSION: ${{ steps.version.outputs.version }}
           # Compiled in as the lowest-priority client id (docs/releasing.md).
           THEODORE_WORKOS_CLIENT_ID: ${{ inputs.workos-client-id }}
+          # The Theodore cloud for this channel, the lowest-priority source
+          # (docs/cloud.md "App side"). Optional: not a release key.
+          THEODORE_CLOUD_URL: ${{ inputs.cloud-url }}
           # "Sign in with GitHub" (device flow): the GitHub OAuth App's
           # client id, public, the same for every build.
           THEODORE_GITHUB_CLIENT_ID: ${{ vars.THEODORE_GITHUB_CLIENT_ID }}

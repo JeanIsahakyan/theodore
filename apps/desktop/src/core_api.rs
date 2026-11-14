@@ -617,12 +617,99 @@ pub trait CoreApi: Send + Sync {
     /// Drops the sign-in in progress (frees the loopback port).
     async fn account_sign_in_cancel(&self) -> Result<(), CommandError>;
     async fn account_sign_out(&self) -> Result<AccountStatus, CommandError>;
+    /// Finishes a sign-in that reported `choose_organization`, in one of
+    /// the offered organizations. Allowed signed out.
+    async fn account_sign_in_choose_organization(
+        &self,
+        _organization_id: String,
+    ) -> Result<AccountSignInState, CommandError> {
+        Err(not_ready())
+    }
+    /// Moves the session to another of the user's organizations. On error
+    /// the session is untouched.
+    async fn account_switch_organization(
+        &self,
+        _organization_id: String,
+    ) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// The signed-in user's organizations (from the Theodore cloud).
+    async fn account_organizations(
+        &self,
+    ) -> Result<Vec<theodore_contract::AccountOrganization>, CommandError> {
+        Err(not_ready())
+    }
     /// A `theodore://callback?…` sign-in redirect the OS opened the app
     /// with. Not a command: the shell's URL-scheme handler calls it. `true`
     /// when it belonged to the sign-in in progress (signed in or failed),
     /// `false` when ignored.
     async fn account_sign_in_callback(&self, _url: String) -> bool {
         false
+    }
+    /// Fleet (docs/fleet.md): this device's settings, connection and the
+    /// user's devices.
+    async fn fleet_status(&self) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_set_settings(
+        &self,
+        _req: theodore_contract::FleetSettingsRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Pins (or unpins) a device's key on this device: the one compared.
+    async fn fleet_trust_device(
+        &self,
+        _req: theodore_contract::FleetTrustRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Removes another of the user's devices from the fleet.
+    async fn fleet_remove_device(
+        &self,
+        _device_id: String,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Starts a space on another device; tracked as `starting`.
+    async fn fleet_start_space(
+        &self,
+        _req: theodore_contract::FleetStartRequest,
+    ) -> Result<theodore_contract::FleetRemoteSpace, CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_send(
+        &self,
+        _req: theodore_contract::FleetSendRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_stop(&self, _space: String) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_answer(
+        &self,
+        _req: theodore_contract::FleetAnswerRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// Spaces started from here, and hosted here for other devices.
+    async fn fleet_spaces(&self) -> Result<Vec<theodore_contract::FleetRemoteSpace>, CommandError> {
+        Err(not_ready())
+    }
+    async fn fleet_space_lines(
+        &self,
+        _space: String,
+        _since: u64,
+    ) -> Result<Vec<theodore_contract::FleetSpaceLine>, CommandError> {
+        Err(not_ready())
+    }
+    /// Whether you're at this device: where questions go.
+    async fn fleet_presence(
+        &self,
+        _req: theodore_contract::FleetPresenceRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
     }
 }
 

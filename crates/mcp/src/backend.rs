@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use theodore_domain::{AgentId, Commit, FileStatus, FindingId, Group, Hunk, PrId, RunId, Severity};
 pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
-    LanguageStatus, LogTail, NewReviewComment, Position, ProgressStep, ProgressStepState,
-    ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
-    SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
+    FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LogTail,
+    NewReviewComment, Position, ProgressStep, ProgressStepState, ReviewItem, ShipOutcome,
+    ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail,
+    UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -55,6 +56,22 @@ pub const SPACE_TOOL_NAMES: &[&str] = &[
     "ask_user",
 ];
 
+/// The fleet tools (docs/fleet.md "Agents use it too"): `space-tools`
+/// only, and listed only while [`SpaceToolsBackend::fleet_available`].
+pub const FLEET_TOOL_NAMES: &[&str] = &[
+    "fleet_devices",
+    "fleet_start_space",
+    "fleet_send",
+    "fleet_wait",
+    "fleet_read",
+    "fleet_stop",
+];
+
+/// The fleet tools that act on another device: a space turn in Edit or
+/// Run of a space of this device's own only ([`RunContext::fleet_steers`]).
+/// The rest (`fleet_devices`, `fleet_read`, `fleet_wait`) only read.
+pub const FLEET_STEER_TOOL_NAMES: &[&str] = &["fleet_start_space", "fleet_send", "fleet_stop"];
+
 /// Drafts a problem report about the run's chat (docs/telemetry.md
 /// "Report from a chat"): a space turn's, or an AI panel question's —
 /// never a skill or fix run's ([`RunContext::is_chat`]).
@@ -90,6 +107,39 @@ pub enum CodeTools {
     Edit,
 }
 
+/// The mode of the space turn calling (docs/spaces.md "Modes"), least to
+/// most power: a cap is a comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TurnMode {
+    Ask,
+    Plan,
+    Edit,
+    Run,
+}
+
+/// What a space turn may do with the fleet tools (docs/fleet.md "Agents
+/// use it too").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum FleetTools {
+    /// `fleet_devices`, `fleet_read`, `fleet_wait`: any run by default.
+    #[default]
+    Read,
+    /// A space hosted here for another device: `Read`, and no
+    /// `approve_tool`; `run_check` / `start_app` only in Run, `ship` only in
+    /// Edit or Run ([`RunContext::hosted_allows`]; the core checks again).
+    Hosted,
+    /// Also start, send to and stop spaces elsewhere, within the turn's
+    /// mode: a space of this device's own, in Edit or Run.
+    Steer,
+}
+
+/// The `space-tools` a space hosted here for another device gets only in
+/// Run mode: they run the project's commands.
+pub const HOSTED_RUN_TOOL_NAMES: &[&str] = &["run_check", "start_app"];
+/// The `space-tools` a space hosted here for another device gets only in
+/// Edit or Run mode.
+pub const HOSTED_EDIT_TOOL_NAMES: &[&str] = &["ship"];
+
 /// Identifies the agent run calling the MCP server: which PR, which agent, which
 /// invocation. One token maps to exactly one `RunContext` (see [`crate::McpHandle::register_run`]).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -103,6 +153,9 @@ pub struct RunContext {
     pub space: Option<String>,
     pub tools: ToolSet,
     pub code: CodeTools,
+    /// A space turn's mode; `None` for any other run.
+    pub mode: Option<TurnMode>,
+    pub fleet: FleetTools,
 }
 
 impl RunContext {
@@ -115,6 +168,8 @@ impl RunContext {
             space: None,
             tools: ToolSet::Review,
             code: CodeTools::Off,
+            mode: None,
+            fleet: FleetTools::Read,
         }
     }
 
@@ -131,8 +186,13 @@ impl RunContext {
     pub fn allows(&self, tool: &str) -> bool {
         // The CLI's permission prompts, on every app server
         // (`crate::approve`); `code-tools` is never the prompt tool.
+        // Never for a hosted space: its run has no user MCP servers to
+        // approve.
         if tool == theodore_ports::APPROVE_TOOL {
-            return self.tools != ToolSet::Code;
+            return self.tools != ToolSet::Code && self.fleet != FleetTools::Hosted;
+        }
+        if !self.hosted_allows(tool) {
+            return false;
         }
         if CODE_TOOL_NAMES.contains(&tool) {
             return self.code != CodeTools::Off;
@@ -143,14 +203,44 @@ impl RunContext {
         if tool == REPORT_TOOL {
             return self.is_chat();
         }
+        if FLEET_STEER_TOOL_NAMES.contains(&tool) {
+            return self.fleet_steers();
+        }
         match self.tools {
             ToolSet::Review => {
                 REVIEW_TOOL_NAMES.contains(&tool)
                     || (self.space.is_some() && REVIEW_SPACE_TOOL_NAMES.contains(&tool))
             }
-            ToolSet::Space => self.space.is_some() && SPACE_TOOL_NAMES.contains(&tool),
+            ToolSet::Space => {
+                self.space.is_some()
+                    && (SPACE_TOOL_NAMES.contains(&tool) || FLEET_TOOL_NAMES.contains(&tool))
+            }
             ToolSet::Code => false,
         }
+    }
+
+    /// What a space hosted here for another device may not list in its
+    /// turn's mode; `true` for any other run.
+    pub fn hosted_allows(&self, tool: &str) -> bool {
+        if self.fleet != FleetTools::Hosted {
+            return true;
+        }
+        if HOSTED_RUN_TOOL_NAMES.contains(&tool) {
+            return self.mode == Some(TurnMode::Run);
+        }
+        if HOSTED_EDIT_TOOL_NAMES.contains(&tool) {
+            return self.mode.is_some_and(|m| m >= TurnMode::Edit);
+        }
+        true
+    }
+
+    /// May start, send to and stop spaces on other devices: a space turn
+    /// in Edit or Run, of a space that isn't hosted here for the fleet.
+    pub fn fleet_steers(&self) -> bool {
+        self.tools == ToolSet::Space
+            && self.space.is_some()
+            && self.fleet == FleetTools::Steer
+            && self.mode.is_some_and(|m| m >= TurnMode::Edit)
     }
 
     /// A chat with the user: a space's turn, or an AI panel question
@@ -430,6 +520,75 @@ pub trait SpaceToolsBackend: Send + Sync {
         let _ = (space, run_id, questions);
         Err(unavailable())
     }
+
+    // ── the fleet; listed only while `fleet_available` ──
+
+    /// The fleet is on and connected right now: the fleet tools are listed.
+    fn fleet_available(&self) -> bool {
+        false
+    }
+    /// The user's other devices that take remote spaces now.
+    async fn fleet_devices(&self, space: &str) -> Result<Vec<FleetToolDevice>, SpaceToolError> {
+        let _ = space;
+        Err(no_fleet())
+    }
+    /// Starts a space on `device` (id or name) in `project` (id or name);
+    /// `space` is the caller, its parent. `turn` is the calling turn's
+    /// mode: the new space's `mode` is at most that.
+    async fn fleet_start_space(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        device: &str,
+        project: &str,
+        goal: &str,
+        mode: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let _ = (space, turn, device, project, goal, mode);
+        Err(no_fleet())
+    }
+    /// A message to `target`, a space `space` started; it runs at most in
+    /// `turn`'s mode.
+    async fn fleet_send(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        text: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let _ = (space, turn, target, text);
+        Err(no_fleet())
+    }
+    async fn fleet_wait(
+        &self,
+        space: &str,
+        targets: &[String],
+        timeout_ms: u64,
+    ) -> Result<FleetToolWait, SpaceToolError> {
+        let _ = (space, targets, timeout_ms);
+        Err(no_fleet())
+    }
+    async fn fleet_read(
+        &self,
+        space: &str,
+        target: &str,
+        since: u64,
+    ) -> Result<FleetToolRead, SpaceToolError> {
+        let _ = (space, target, since);
+        Err(no_fleet())
+    }
+    async fn fleet_stop(
+        &self,
+        space: &str,
+        target: &str,
+    ) -> Result<FleetToolSpace, SpaceToolError> {
+        let _ = (space, target);
+        Err(no_fleet())
+    }
+}
+
+fn no_fleet() -> SpaceToolError {
+    SpaceToolError::Unavailable("the fleet isn't available here".into())
 }
 
 /// For servers started without spaces (tests, the CLI): every call fails.

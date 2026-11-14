@@ -16,15 +16,19 @@ import {
   setCommandFailureHandler,
 } from '../core/api';
 import { EphemeralStore } from './EphemeralStore';
+import { FleetStore } from './FleetStore';
 import { UiStore } from './UiStore';
 import { WorkspaceStore } from './WorkspaceStore';
 import { ALL } from '../core/workspaces';
 import { watchSpaceTurns } from '../ui/space/mode';
+import { watchPresence } from '../ui/fleet/presence';
 
 export class RootStore {
   readonly sync = new SyncClient();
   readonly models: ModelAccessors = modelAccessors(this.sync.pool);
   readonly ephemeral = new EphemeralStore();
+  /** Spaces across your devices (docs/fleet.md). */
+  readonly fleet = new FleetStore();
   readonly ui = new UiStore();
   readonly workspaces = new WorkspaceStore(this.models, this.ui);
 
@@ -46,6 +50,7 @@ export class RootStore {
   private disposeGoneWorkspace: (() => void) | undefined;
   private disposeSpaceTurns: (() => void) | undefined;
   private disposeGateOpen: (() => void) | undefined;
+  private disposePresence: (() => void) | undefined;
 
   async start(): Promise<void> {
     setCommandFailureHandler((f) =>
@@ -56,10 +61,11 @@ export class RootStore {
     setAccountRequiredHandler(() => void loadAccount(this));
     this.unlistenEphemeral = await getTransport().listen<Ephemeral>(
       'ephemeral',
-      (e) =>
-        e.type === 'report_draft'
-          ? this.reportDrafted(e.draft)
-          : this.ephemeral.handle(e),
+      (e) => {
+        if (this.fleet.handle(e)) return;
+        if (e.type === 'report_draft') this.reportDrafted(e.draft);
+        else this.ephemeral.handle(e);
+      },
     );
     // The shell downloaded and installed an update: offer the restart.
     this.unlistenUpdate = await getTransport().listen<UpdateInfo>(
@@ -81,12 +87,18 @@ export class RootStore {
     await this.sync.start();
     // Spaces (docs/spaces.md): a no-op with build mode off.
     this.disposeSpaceTurns = watchSpaceTurns(this);
+    // Where you are, for the fleet: a no-op until it is enabled.
+    this.disposePresence = watchPresence(this);
     // Host calls wait for the account gate: at once without a required
     // sign-in, else on signing in.
     this.disposeGateOpen = reaction(
       () => this.ephemeral.accountGate === 'open',
       (open) => {
-        if (open) void loadViewer(this);
+        if (open) {
+          void loadViewer(this);
+          // The fleet needs the account; its status says if it exists.
+          void this.fleet.load();
+        }
       },
       { fireImmediately: true },
     );
@@ -143,5 +155,6 @@ export class RootStore {
     this.disposeGoneWorkspace?.();
     this.disposeSpaceTurns?.();
     this.disposeGateOpen?.();
+    this.disposePresence?.();
   }
 }

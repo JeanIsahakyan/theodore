@@ -9,8 +9,21 @@
 //! device   POST /user_management/authorize/device ─▶ user_code
 //!            └─▶ poll /user_management/authenticate  device_code grant
 //! refresh  POST /user_management/authenticate  refresh_token grant (rotates)
+//!            └─▶ + organization_id: the new token is authorized in that org
+//! orgs     authenticate ─▶ 4xx organization_selection_required
+//!            (pending_authentication_token, organizations[])
+//!            └─▶ cloud POST /v1/auth/select-organization (the grant needs
+//!                the client secret, which only the cloud holds)
+//!                ─▶ session, validated like a code exchange
+//! cloud    POST /v1/orgs/personal  (Bearer access token) ─▶ organization_id
+//!          GET  /v1/orgs           (Bearer access token) ─▶ organizations[]
 //! validate GET  /sso/jwks/<client_id> ─▶ RS256, iss, exp, sub
+//!            claims carried into the session: sid, org_id, role, permissions
 //! ```
+//!
+//! Cloud errors: transport, 5xx, 429 or a 4xx without the cloud's JSON error
+//! ─▶ `Network`; `400 cloud.rejected` ─▶ `Rejected`; any other 4xx ─▶
+//! `Protocol("code: message")`. No token ever lands in an error.
 
 pub mod jwt;
 pub mod loopback;
@@ -22,8 +35,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use serde::Deserialize;
 use theodore_ports::{
-    AccountConfig, AccountError, AccountPort, AccountProfile, AccountResult, AccountSession,
-    BrowserSignIn, CallbackListener, DeviceSignIn, DeviceSignInPoll, is_loopback_redirect,
+    AccountConfig, AccountError, AccountOrganization, AccountPort, AccountProfile, AccountResult,
+    AccountSession, BrowserSignIn, CallbackListener, DeviceSignIn, DeviceSignInPoll,
+    OrganizationChoice, OrganizationSelection, is_loopback_redirect,
 };
 use url::Url;
 
@@ -32,6 +46,11 @@ pub const DEFAULT_API_BASE: &str = "https://api.workos.com/";
 const GRANT_CODE: &str = "authorization_code";
 const GRANT_REFRESH: &str = "refresh_token";
 const GRANT_DEVICE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+const ORG_SELECTION_REQUIRED: &str = "organization_selection_required";
+/// The cloud's code for "WorkOS refused" (a used pending token, an org the
+/// user isn't in): the grant's answer, like a provider rejection.
+const CLOUD_REJECTED: &str = "cloud.rejected";
+const NO_CLOUD: &str = "no Theodore cloud configured";
 
 pub struct WorkosAccount {
     http: reqwest::Client,
@@ -145,12 +164,84 @@ impl WorkosAccount {
                 "{path} failed ({status}) without a provider error"
             )));
         };
+        let message = match (err.error_description, err.message) {
+            (Some(m), _) | (None, Some(m)) => m,
+            // The raw body of an org-selection answer holds the pending
+            // token: never echo it.
+            (None, None) if code == ORG_SELECTION_REQUIRED => String::new(),
+            (None, None) => text.chars().take(200).collect(),
+        };
         Ok(Reply::Err {
             code,
-            message: err
-                .error_description
-                .or(err.message)
-                .unwrap_or_else(|| text.chars().take(200).collect()),
+            message,
+            pending_authentication_token: err.pending_authentication_token,
+            organizations: err.organizations,
+        })
+    }
+
+    /// One call to the Theodore cloud (`cfg.cloud_url`). `bearer` is the
+    /// access token and the JSON `body` may hold a pending token: neither is
+    /// ever put in an error or a log.
+    async fn cloud(
+        &self,
+        cfg: &AccountConfig,
+        method: reqwest::Method,
+        path: &str,
+        bearer: Option<&str>,
+        body: Option<serde_json::Value>,
+    ) -> AccountResult<String> {
+        let base = cfg
+            .cloud_url
+            .as_deref()
+            .map(|b| b.trim().trim_end_matches('/'))
+            .filter(|b| !b.is_empty())
+            .ok_or_else(|| AccountError::Config(NO_CLOUD.into()))?;
+        let url = Url::parse(&format!("{base}/{path}"))
+            .map_err(|e| AccountError::Config(format!("bad Theodore cloud URL: {e}")))?;
+        let mut req = self
+            .http
+            .request(method, url)
+            .header("accept", "application/json")
+            .header("user-agent", "theodore");
+        if let Some(token) = bearer {
+            req = req.bearer_auth(token);
+        }
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| AccountError::Network(format!("cloud {path}: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| AccountError::Network(format!("cloud {path}: {e}")))?;
+        if status.is_server_error() || status.as_u16() == 429 {
+            return Err(AccountError::Network(format!(
+                "cloud {path} failed ({status})"
+            )));
+        }
+        if status.is_success() {
+            return Ok(text);
+        }
+        // As with the provider: only the cloud's own JSON error is an
+        // answer; a 4xx without one came from something in between.
+        let Some(CloudErrorDetail { code, message }) =
+            serde_json::from_str::<CloudErrorBody>(&text)
+                .unwrap_or_default()
+                .error
+        else {
+            return Err(AccountError::Network(format!(
+                "cloud {path} failed ({status}) without a cloud error"
+            )));
+        };
+        let message: String = message.chars().take(200).collect();
+        Err(if status.as_u16() == 400 && code == CLOUD_REJECTED {
+            AccountError::Rejected(format!("{code}: {message}"))
+        } else {
+            AccountError::Protocol(format!("{code}: {message}"))
         })
     }
 
@@ -161,9 +252,16 @@ impl WorkosAccount {
     ) -> AccountResult<AccountSession> {
         match self.post_form("user_management/authenticate", form).await? {
             Reply::Ok(body) => self.session_from(cfg, &body).await,
-            Reply::Err { code, message } => {
-                Err(AccountError::Rejected(format!("{code}: {message}")))
-            }
+            Reply::Err {
+                code,
+                message,
+                pending_authentication_token,
+                organizations,
+            } => Err(if code == ORG_SELECTION_REQUIRED {
+                org_selection_error(pending_authentication_token, organizations)
+            } else {
+                AccountError::Rejected(format!("{code}: {message}"))
+            }),
         }
     }
 
@@ -186,6 +284,8 @@ impl WorkosAccount {
             expires_at: claims.exp.saturating_mul(1000),
             session_id: claims.sid,
             organization_id: resp.organization_id.or(claims.org_id),
+            role: claims.role.filter(|s| !s.is_empty()),
+            permissions: claims.permissions,
         })
     }
 
@@ -259,9 +359,39 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// `organization_selection_required` without a usable pending token or
+/// organization list is a protocol problem, not something to pick from.
+fn org_selection_error(
+    pending_authentication_token: Option<String>,
+    organizations: Vec<OrganizationBody>,
+) -> AccountError {
+    match pending_authentication_token.filter(|t| !t.is_empty()) {
+        Some(pending_authentication_token) if !organizations.is_empty() => {
+            AccountError::OrganizationSelectionRequired(OrganizationSelection {
+                pending_authentication_token,
+                organizations: organizations
+                    .into_iter()
+                    .map(|o| OrganizationChoice {
+                        id: o.id,
+                        name: o.name,
+                    })
+                    .collect(),
+            })
+        }
+        _ => AccountError::Protocol(
+            "organization selection required without a pending token or organizations".into(),
+        ),
+    }
+}
+
 enum Reply {
     Ok(String),
-    Err { code: String, message: String },
+    Err {
+        code: String,
+        message: String,
+        pending_authentication_token: Option<String>,
+        organizations: Vec<OrganizationBody>,
+    },
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -270,6 +400,49 @@ struct ErrorBody {
     error_description: Option<String>,
     code: Option<String>,
     message: Option<String>,
+    pending_authentication_token: Option<String>,
+    #[serde(default)]
+    organizations: Vec<OrganizationBody>,
+}
+
+/// The cloud's error shape: `{ "error": { "code", "message" } }`.
+#[derive(Debug, Default, Deserialize)]
+struct CloudErrorBody {
+    error: Option<CloudErrorDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudErrorDetail {
+    code: String,
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EnsuredOrganization {
+    organization_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrganizationsResponse {
+    organizations: Vec<OrganizationEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrganizationEntry {
+    id: String,
+    #[serde(default)]
+    name: String,
+    role: Option<String>,
+    #[serde(default)]
+    personal: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrganizationBody {
+    id: String,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,7 +549,7 @@ impl AccountPort for WorkosAccount {
                     interval: d.interval.unwrap_or(5).max(1),
                 })
             }
-            Reply::Err { code, message } => {
+            Reply::Err { code, message, .. } => {
                 Err(AccountError::Rejected(format!("{code}: {message}")))
             }
         }
@@ -400,7 +573,16 @@ impl AccountPort for WorkosAccount {
             Reply::Ok(body) => Ok(DeviceSignInPoll::Done(Box::new(
                 self.session_from(cfg, &body).await?,
             ))),
-            Reply::Err { code, message } => match code.as_str() {
+            Reply::Err {
+                code,
+                pending_authentication_token,
+                organizations,
+                ..
+            } if code == ORG_SELECTION_REQUIRED => Err(org_selection_error(
+                pending_authentication_token,
+                organizations,
+            )),
+            Reply::Err { code, message, .. } => match code.as_str() {
                 "authorization_pending" => Ok(DeviceSignInPoll::Pending),
                 // RFC 8628 §3.5: every slow_down adds 5 seconds.
                 "slow_down" => Ok(DeviceSignInPoll::SlowDown {
@@ -417,16 +599,90 @@ impl AccountPort for WorkosAccount {
         &self,
         cfg: &AccountConfig,
         refresh_token: &str,
+        organization_id: Option<&str>,
     ) -> AccountResult<AccountSession> {
-        self.authenticate(
-            cfg,
-            &[
-                ("grant_type", GRANT_REFRESH),
-                ("client_id", &cfg.client_id),
-                ("refresh_token", refresh_token),
-            ],
-        )
-        .await
+        let mut form = vec![
+            ("grant_type", GRANT_REFRESH),
+            ("client_id", cfg.client_id.as_str()),
+            ("refresh_token", refresh_token),
+        ];
+        if let Some(org) = organization_id {
+            form.push(("organization_id", org));
+        }
+        self.authenticate(cfg, &form).await
+    }
+
+    async fn select_organization(
+        &self,
+        cfg: &AccountConfig,
+        pending_authentication_token: &str,
+        organization_id: &str,
+    ) -> AccountResult<AccountSession> {
+        let body = self
+            .cloud(
+                cfg,
+                reqwest::Method::POST,
+                "v1/auth/select-organization",
+                None,
+                Some(serde_json::json!({
+                    "pending_authentication_token": pending_authentication_token,
+                    "organization_id": organization_id,
+                })),
+            )
+            .await?;
+        self.session_from(cfg, &body).await
+    }
+
+    async fn ensure_personal_organization(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<String> {
+        let body = self
+            .cloud(
+                cfg,
+                reqwest::Method::POST,
+                "v1/orgs/personal",
+                Some(access_token),
+                Some(serde_json::json!({})),
+            )
+            .await?;
+        let ensured: EnsuredOrganization = serde_json::from_str(&body)
+            .map_err(|e| AccountError::Protocol(format!("decode personal organization: {e}")))?;
+        if ensured.organization_id.is_empty() {
+            return Err(AccountError::Protocol(
+                "the cloud returned an empty organization id".into(),
+            ));
+        }
+        Ok(ensured.organization_id)
+    }
+
+    async fn organizations(
+        &self,
+        cfg: &AccountConfig,
+        access_token: &str,
+    ) -> AccountResult<Vec<AccountOrganization>> {
+        let body = self
+            .cloud(
+                cfg,
+                reqwest::Method::GET,
+                "v1/orgs",
+                Some(access_token),
+                None,
+            )
+            .await?;
+        let list: OrganizationsResponse = serde_json::from_str(&body)
+            .map_err(|e| AccountError::Protocol(format!("decode organizations: {e}")))?;
+        Ok(list
+            .organizations
+            .into_iter()
+            .map(|o| AccountOrganization {
+                id: o.id,
+                name: o.name,
+                role: o.role.filter(|r| !r.is_empty()),
+                personal: o.personal,
+            })
+            .collect())
     }
 
     async fn sign_out(&self, _cfg: &AccountConfig, session: &AccountSession) -> AccountResult<()> {

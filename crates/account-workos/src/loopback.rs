@@ -217,6 +217,15 @@ async fn serve(
         CallbackPage::Failed { message } => {
             respond(&mut stream, 400, "Sign-in failed", &message).await
         }
+        CallbackPage::ChooseOrganization => {
+            respond(
+                &mut stream,
+                200,
+                "Almost there",
+                "Go back to Theodore and choose an organization to finish signing in. You can close this tab.",
+            )
+            .await
+        }
         CallbackPage::Ignored => {
             respond(
                 &mut stream,

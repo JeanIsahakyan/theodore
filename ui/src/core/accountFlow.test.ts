@@ -17,6 +17,7 @@ const signedIn: AccountStatus = {
   available: true,
   required: true,
   session_ended: false,
+  organization: null,
   user: {
     id: 'user_01',
     email: 'ada@example.com',
@@ -144,6 +145,112 @@ describe('reduceFlow — device code', () => {
       state: { state: 'slow_down', interval: 3 },
     });
     expect(nextPollDelay(f)).toBe(10_000);
+  });
+});
+
+describe('reduceFlow — organization choice', () => {
+  const orgs = [
+    { id: 'org_a', name: 'Acme' },
+    { id: 'org_b', name: 'Ada' },
+  ];
+  const deviceStart: AccountFlowEvent = {
+    type: 'started',
+    attempt: 1,
+    start: {
+      method: 'device_code',
+      user_code: 'C',
+      verification_uri: 'v',
+      verification_uri_complete: null,
+      expires_in: 300,
+      interval: 5,
+    },
+  };
+  const choose = (): AccountFlow =>
+    run({ type: 'start', method: 'device_code' }, deviceStart, {
+      type: 'poll',
+      attempt: 1,
+      state: { state: 'choose_organization', organizations: orgs },
+    });
+
+  it('a poll that needs a pick shows the list and stops polling', () => {
+    const f = choose();
+    expect(f.phase).toBe('choose_organization');
+    expect(f.organizations).toEqual(orgs);
+    expect(f.choosing).toBe(false);
+    expect(f.status).toBeNull();
+    expect(isWaiting(f)).toBe(false);
+    expect(nextPollDelay(f)).toBeNull();
+  });
+
+  it('picking disables the list, then done finishes the sign-in', () => {
+    const picking = reduceFlow(choose(), { type: 'choose', attempt: 1 });
+    expect(picking.phase).toBe('choose_organization');
+    expect(picking.choosing).toBe(true);
+    // A second pick while one is running changes nothing.
+    expect(reduceFlow(picking, { type: 'choose', attempt: 1 })).toBe(picking);
+    const done = reduceFlow(picking, {
+      type: 'poll',
+      attempt: 1,
+      state: { state: 'done', status: signedIn },
+    });
+    expect(done.phase).toBe('done');
+    expect(done.status).toEqual(signedIn);
+    expect(done.choosing).toBe(false);
+  });
+
+  it('picking, then failed, ends in error with the message', () => {
+    const picking = reduceFlow(choose(), { type: 'choose', attempt: 1 });
+    const failed = reduceFlow(picking, {
+      type: 'poll',
+      attempt: 1,
+      state: { state: 'failed', message: 'not a member' },
+    });
+    expect(failed.phase).toBe('error');
+    expect(failed.error).toBe('not a member');
+    expect(failed.choosing).toBe(false);
+    // The command itself failing lands in the same place.
+    const thrown = reduceFlow(picking, {
+      type: 'failed',
+      attempt: 1,
+      error: 'account: network: timed out',
+    });
+    expect(thrown.phase).toBe('error');
+    expect(thrown.choosing).toBe(false);
+  });
+
+  it('a reply that is not final puts the list back', () => {
+    const picking = reduceFlow(choose(), { type: 'choose', attempt: 1 });
+    const back = reduceFlow(picking, {
+      type: 'poll',
+      attempt: 1,
+      state: { state: 'pending' },
+    });
+    expect(back.phase).toBe('choose_organization');
+    expect(back.choosing).toBe(false);
+    expect(back.polls).toBe(picking.polls);
+  });
+
+  it('cancel from the list goes back to idle', () => {
+    const f = reduceFlow(choose(), { type: 'cancel' });
+    expect(f.phase).toBe('idle');
+    expect(f.organizations).toEqual([]);
+    expect(f.choosing).toBe(false);
+  });
+
+  it('a late pick reply after a cancel is dropped', () => {
+    const picking = reduceFlow(choose(), { type: 'choose', attempt: 1 });
+    const cancelled = reduceFlow(picking, { type: 'cancel' });
+    const late = reduceFlow(cancelled, {
+      type: 'poll',
+      attempt: 1,
+      state: { state: 'done', status: signedIn },
+    });
+    expect(late).toBe(cancelled);
+  });
+
+  it('a pick outside the list is ignored', () => {
+    const f = run({ type: 'start', method: 'browser' });
+    expect(reduceFlow(f, { type: 'choose', attempt: 1 })).toBe(f);
   });
 });
 

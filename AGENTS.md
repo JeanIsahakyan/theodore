@@ -170,6 +170,7 @@ Read the doc before changing its area; keep it true when the change lands.
 | Click-testing the real app from a script | `docs/live-qa.md` | `scripts/qa/`, `apps/desktop/src/qa_driver.rs` |
 | Grouping quality and speed evals | `docs/grouping-eval.md`, `docs/eval/` | `crates/grouping`, `apps/cli` (`theodore eval`) |
 | Code intelligence: symbols, LSP, grammars (design) | `docs/code-intel.md` | `crates/code-intel` (planned) |
+| Cloud (account server, later fleet) | `docs/cloud.md` | `cloud/` |
 
 Code layout:
 
@@ -181,6 +182,7 @@ crates/domain  types and rules; crates/contract  IPC types → ui/src/gen (gener
 crates/agents  Claude Code / Codex / Gemini runners; crates/grouping  grouping pipeline
 crates/git, host-*  git and code hosts; crates/store  SQLite; crates/runtime  wiring
 ui/            React + HeroUI v3 + MobX; never edit ui/src/gen by hand
+cloud/         Cloudflare Worker (TypeScript, pnpm): account server, later the fleet
 ```
 
 ## Shipping: staging first, then main

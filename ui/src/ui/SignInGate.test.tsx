@@ -36,6 +36,7 @@ const signedOut: AccountStatus = {
   required: true,
   user: null,
   session_ended: false,
+  organization: null,
 };
 const signedIn: AccountStatus = {
   ...signedOut,
@@ -217,6 +218,7 @@ describe('Onboarding behind the account gate', () => {
       required: false,
       user: null,
       session_ended: false,
+      organization: null,
     });
     await render();
     expect(host.textContent).toContain('Step 1 of 5');

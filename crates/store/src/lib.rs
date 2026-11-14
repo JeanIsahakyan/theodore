@@ -12,8 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use theodore_ports::{
-    ModelRow, NewAction, OutboxItem, OutboxStatus, Store, StoreError, StoreResult, SyncAction,
-    SyncActionCode, ToolCallKey,
+    FleetHostedRow, ModelRow, NewAction, OutboxItem, OutboxStatus, Store, StoreError, StoreResult,
+    SyncAction, SyncActionCode, ToolCallKey,
 };
 
 pub struct SqliteStore {
@@ -247,6 +247,153 @@ impl Store for SqliteStore {
             .execute("DELETE FROM tool_payloads WHERE space = ?1", params![space])
             .map_err(de)?;
         Ok(gone as u64)
+    }
+
+    fn fleet_hosted_put(&self, row: &FleetHostedRow) -> StoreResult<()> {
+        let data = serde_json::to_string(&row.data).map_err(se)?;
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO fleet_spaces (space, local_space, origin_device, parent, depth, created_at, data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (space) DO UPDATE SET
+               local_space = ?2, origin_device = ?3, parent = ?4, depth = ?5, data = ?7",
+            params![
+                row.space,
+                row.local_space,
+                row.origin_device,
+                row.parent,
+                row.depth,
+                row.created_at,
+                data
+            ],
+        )
+        .map_err(de)?;
+        Ok(())
+    }
+
+    fn fleet_hosted_all(&self) -> StoreResult<Vec<FleetHostedRow>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT space, local_space, origin_device, parent, depth, created_at, data
+                 FROM fleet_spaces ORDER BY created_at, space",
+            )
+            .map_err(de)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, u32>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, String>(6)?,
+                ))
+            })
+            .map_err(de)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (space, local_space, origin_device, parent, depth, created_at, data) =
+                row.map_err(de)?;
+            out.push(FleetHostedRow {
+                space,
+                local_space,
+                origin_device,
+                parent,
+                depth,
+                created_at,
+                data: serde_json::from_str(&data).map_err(se)?,
+            });
+        }
+        Ok(out)
+    }
+
+    fn fleet_journal_append(
+        &self,
+        space: &str,
+        seq: u64,
+        event: &serde_json::Value,
+        keep: usize,
+    ) -> StoreResult<()> {
+        let json = serde_json::to_string(event).map_err(se)?;
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO fleet_events (space, seq, event) VALUES (?1, ?2, ?3)",
+            params![space, seq as i64, json],
+        )
+        .map_err(de)?;
+        conn.execute(
+            "DELETE FROM fleet_events WHERE space = ?1 AND seq <= ?2",
+            params![space, seq as i64 - keep as i64],
+        )
+        .map_err(de)?;
+        Ok(())
+    }
+
+    fn fleet_seen_put(
+        &self,
+        req_id: &str,
+        issued_at_ms: i64,
+        done: bool,
+        forget_before_ms: i64,
+    ) -> StoreResult<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM fleet_seen WHERE issued_at < ?1",
+            params![forget_before_ms],
+        )
+        .map_err(de)?;
+        conn.execute(
+            "INSERT INTO fleet_seen (req_id, issued_at, done) VALUES (?1, ?2, ?3)
+             ON CONFLICT (req_id) DO UPDATE SET done = MAX(done, ?3)",
+            params![req_id, issued_at_ms, done as i64],
+        )
+        .map_err(de)?;
+        Ok(())
+    }
+
+    fn fleet_seen_all(&self) -> StoreResult<Vec<(String, i64, bool)>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT req_id, issued_at, done FROM fleet_seen")
+            .map_err(de)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                ))
+            })
+            .map_err(de)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(de)
+    }
+
+    fn fleet_journal_since(
+        &self,
+        space: &str,
+        since: u64,
+        limit: usize,
+    ) -> StoreResult<Vec<(u64, serde_json::Value)>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT seq, event FROM fleet_events WHERE space = ?1 AND seq > ?2
+                 ORDER BY seq LIMIT ?3",
+            )
+            .map_err(de)?;
+        let rows = stmt
+            .query_map(params![space, since as i64, limit as i64], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(de)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (seq, text) = row.map_err(de)?;
+            out.push((seq as u64, serde_json::from_str(&text).map_err(se)?));
+        }
+        Ok(out)
     }
 
     fn apply(&self, actions: Vec<NewAction>) -> StoreResult<Vec<SyncAction>> {

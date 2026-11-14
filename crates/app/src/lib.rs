@@ -26,6 +26,8 @@ mod tests;
 #[cfg(test)]
 mod account_gate_tests;
 #[cfg(test)]
+mod account_org_tests;
+#[cfg(test)]
 mod account_tests;
 #[cfg(test)]
 mod activity_tests;
@@ -33,6 +35,8 @@ mod activity_tests;
 mod attachments_tests;
 #[cfg(test)]
 mod code_intel_tests;
+#[cfg(test)]
+mod fleet_tests;
 
 #[cfg(test)]
 mod git_integration_tests;
@@ -91,7 +95,9 @@ mod spaces_tests;
 pub use agent_defaults::AgentDefaults;
 pub use config::global_limits as code_intel_limits;
 pub use core::{Core, Receivers};
-pub use deps::{CodeTools, Deps, Grouper, GroupingAgent, OnPartial, RunTools, TokenStatus};
+pub use deps::{
+    CodeTools, Deps, FleetTools, Grouper, GroupingAgent, OnPartial, RunTools, TokenStatus,
+};
 pub use error::{AppError, AppResult, GrouperError};
 pub use snapshot::PrSnapshot;
 pub use usecases::account::{AccountGate, resolve_client_id};

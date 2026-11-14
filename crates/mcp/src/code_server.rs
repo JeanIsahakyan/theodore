@@ -40,6 +40,8 @@ pub fn code_run(agent: theodore_domain::AgentId, edits: bool) -> RunContext {
         } else {
             CodeTools::Read
         },
+        mode: None,
+        fleet: crate::FleetTools::Read,
     }
 }
 

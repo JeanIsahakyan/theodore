@@ -195,6 +195,8 @@ fn space(code: CodeTools) -> RunContext {
         space: Some("s1".into()),
         tools: ToolSet::Space,
         code,
+        mode: Some(theodore_mcp::TurnMode::Edit),
+        fleet: theodore_mcp::FleetTools::Steer,
     }
 }
 

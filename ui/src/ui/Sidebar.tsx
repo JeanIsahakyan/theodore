@@ -31,11 +31,13 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
-import type { Space } from '../gen/contract';
+import type { FleetSpaceStatus, Space } from '../gen/contract';
+import type { RootStore } from '../stores/RootStore';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, type Route, type UiStore } from '../stores/UiStore';
 import { api } from '../core/api';
 import { SpaceMark } from './AgentMark';
+import { spaceTitle as fleetSpaceTitle } from './fleet/fleet';
 import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ListSearchBar } from './ListSearchBar';
@@ -132,6 +134,48 @@ interface NavGroup {
 }
 
 const routeKey = (r: Route) => JSON.stringify(r);
+
+const FLEET_DOT: Record<FleetSpaceStatus, string> = {
+  starting: 'text-muted',
+  running: 'text-accent',
+  idle: 'text-success',
+  waiting: 'text-warning',
+  stopped: 'text-muted',
+  failed: 'text-danger',
+};
+
+/** Spaces on other devices (docs/fleet.md), under the Spaces group: only
+ *  where a fleet exists and is on (or has spaces left to look at). */
+function fleetGroup(store: RootStore, ui: UiStore): NavGroup[] {
+  const f = store.fleet;
+  if (!f.available || (!f.enabled && f.spaces.size === 0)) return [];
+  return [
+    {
+      id: 'fleet',
+      title: 'Other devices',
+      items: [
+        ...f.spaceList.map((s): NavItem => {
+          const route: Route = { name: 'fleet-space', id: s.space };
+          const where = s.hosted_here
+            ? `for ${f.device(s.origin_device)?.name ?? 'another device'}`
+            : s.host_name;
+          return {
+            key: routeKey(route),
+            icon: <CircleFill className={`size-2.5 ${FLEET_DOT[s.status]}`} />,
+            label: `${fleetSpaceTitle(s)} · ${where}`,
+            route,
+          };
+        }),
+        {
+          key: 'fleet-start',
+          icon: <Plus />,
+          label: 'Run on another device',
+          onPress: () => ui.openModal('fleet-start'),
+        },
+      ],
+    },
+  ];
+}
 
 /** A space's mark when no agent shows on it: unread, failed, idle
  *  (docs/spaces.md §3). `SpaceMark` draws running and waiting. */
@@ -330,6 +374,8 @@ export const Sidebar = observer(function Sidebar() {
           },
         ]
       : []),
+    // Spaces on your other devices (docs/fleet.md): only with a fleet.
+    ...fleetGroup(store, ui),
   ];
   const items = groups.flatMap((g) => g.items);
   // ── /workspaces ─────────────────────────────────────────────────────────

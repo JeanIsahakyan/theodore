@@ -34,6 +34,8 @@ import { showToast } from './shell/toasts';
 import { isBuildMode } from './space/mode';
 import { isHostOn } from './settings/labs';
 import { SpacePage } from './space/SpacePage';
+import { FleetNotices } from './fleet/FleetNotices';
+import { FleetSpacePage } from './fleet/FleetSpacePage';
 import { useWelcome, Welcome } from './Welcome';
 
 /** Fallback for any surface with no menu of its own: inputs get Cut/Copy/
@@ -208,6 +210,8 @@ export const App = observer(function App() {
               buildMode ? (
                 <SpacePage key={r.id} id={r.id} />
               ) : null
+            ) : r.name === 'fleet-space' ? (
+              <FleetSpacePage key={r.id} id={r.id} />
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}
@@ -225,6 +229,7 @@ export const App = observer(function App() {
           )}
           {/* The update prompt floats above the hint bar: appearing or
               clearing never moves the page, nor covers the header. */}
+          <FleetNotices />
           <div className="pointer-events-none absolute inset-x-0 bottom-14 z-30 flex flex-col items-center gap-2 px-4 [&>*]:pointer-events-auto">
             <UpdateReady inline />
           </div>

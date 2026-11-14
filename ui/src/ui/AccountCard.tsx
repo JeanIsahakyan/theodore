@@ -8,18 +8,25 @@ import {
   Display,
   Envelope,
   Person,
+  Persons,
 } from '@gravity-ui/icons';
 import {
   Button,
   Card,
   Input,
   Label,
+  ListBox,
   Modal,
+  Select,
   TextField,
   Typography,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AccountStatus, AccountUser } from '../gen/contract';
+import type {
+  AccountOrganization,
+  AccountStatus,
+  AccountUser,
+} from '../gen/contract';
 import { api } from '../core/api';
 import {
   accountLabel,
@@ -125,7 +132,7 @@ export function SignInView({
   /** The provider ended the last session: say so on the first stage. */
   ended?: boolean;
 }) {
-  const { flow, start, cancel, reopen } = signIn;
+  const { flow, start, cancel, chooseOrganization, reopen } = signIn;
   const [email, setEmail] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -236,6 +243,37 @@ export function SignInView({
         </Button>
         <Button variant="ghost" onPress={cancel}>
           Back
+        </Button>
+      </Stage>
+    );
+  }
+
+  if (flow.phase === 'choose_organization') {
+    return (
+      <Stage
+        mark={roundMark(<Persons />)}
+        title="Choose an organization"
+        text="You can switch later in Settings."
+      >
+        <div className="organization-choices flex flex-col gap-2">
+          {flow.organizations.map((o) => (
+            <Button
+              key={o.id}
+              variant="secondary"
+              isDisabled={flow.choosing}
+              onPress={() => chooseOrganization(o.id)}
+            >
+              <span className="truncate">{o.name}</span>
+            </Button>
+          ))}
+        </div>
+        {flow.choosing && (
+          <div className="flex items-center justify-center gap-2 py-1 text-sm text-muted">
+            <Spinner /> Signing you in…
+          </div>
+        )}
+        <Button variant="ghost" onPress={cancel}>
+          Cancel
         </Button>
       </Stage>
     );
@@ -393,6 +431,142 @@ export const SignInModal = observer(function SignInModal() {
   );
 });
 
+/** The signed-in user's organizations, re-read whenever the user or the
+ *  session's organization changes (sign-in, switch). `null` while loading
+ *  and when the core can't say — callers then show no switcher. */
+function useOrganizations(
+  userId: string | null,
+  organizationId: string | null,
+): AccountOrganization[] | null {
+  const key = userId && organizationId ? `${userId}/${organizationId}` : null;
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    list: AccountOrganization[];
+  } | null>(null);
+  useEffect(() => {
+    if (!key) return;
+    let live = true;
+    void api
+      .accountOrganizations()
+      .then((list) => live && setLoaded({ key, list }))
+      .catch(() => {
+        // the switcher stays hidden
+      });
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  return key && loaded?.key === key ? loaded.list : null;
+}
+
+const orgLabel = (o: AccountOrganization) => (o.personal ? 'Personal' : o.name);
+
+/** A failed switch, said plainly. The core's message carries its layers
+ *  (`account: rejected: organization_not_found: Organization not found.`):
+ *  keep the provider's sentence, drop the lowercase `area:` prefixes. */
+export function switchErrorText(raw: string): string {
+  let s = raw.trim();
+  if (/^account: network\b/.test(s)) {
+    return "Couldn't switch organization: no connection. Try again.";
+  }
+  for (
+    let m = /^[a-z][a-z_]*\s*:\s*/.exec(s);
+    m;
+    m = /^[a-z][a-z_]*\s*:\s*/.exec(s)
+  ) {
+    s = s.slice(m[0].length);
+  }
+  if (!s) return "Couldn't switch organization.";
+  return `Couldn't switch organization. ${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+}
+
+/** "admin" → "Admin". */
+const roleLabel = (role: string) =>
+  role.charAt(0).toUpperCase() + role.slice(1).replace(/[_-]+/g, ' ');
+
+/** The session's organization under the account row: its name and the
+ *  user's role in it, and — in 2+ organizations — a switcher. Nothing
+ *  until the session has an organization. A failed switch is said here and
+ *  the old organization stays selected. */
+const OrganizationRow = observer(function OrganizationRow({
+  status,
+}: {
+  status: AccountStatus;
+}) {
+  const store = useRootStore();
+  const current = status.organization;
+  const orgs = useOrganizations(status.user?.id ?? null, current?.id ?? null);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!current) return null;
+  const known = orgs?.find((o) => o.id === current.id);
+
+  const switchTo = (id: string) => {
+    if (id === current.id || switching) return;
+    setSwitching(true);
+    setError(null);
+    void api
+      .accountSwitchOrganization(id)
+      .then((s) => store.ephemeral.setAccount(s))
+      .catch((e) => setError(switchErrorText(String(e?.message ?? e))))
+      .finally(() => setSwitching(false));
+  };
+
+  return (
+    <>
+      <Card
+        variant="secondary"
+        className="account-organization flex-row items-center gap-3 px-4 py-3"
+      >
+        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-default">
+          <Persons className="size-4 text-muted" />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm font-medium">
+            {known ? orgLabel(known) : 'Organization'}
+          </span>
+          <span className="truncate text-xs text-muted">
+            {[known && 'Organization', current.role && roleLabel(current.role)]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </div>
+        {switching && <Spinner />}
+        {orgs && orgs.length > 1 && (
+          <Select
+            aria-label="Switch organization"
+            value={current.id}
+            isDisabled={switching}
+            onChange={(v) => v != null && switchTo(String(v))}
+            className="account-organization-switch w-44"
+          >
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox selectionMode="single">
+                {orgs.map((o) => (
+                  <ListBox.Item key={o.id} id={o.id} textValue={orgLabel(o)}>
+                    {orgLabel(o)}
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+        )}
+      </Card>
+      {error && (
+        <span className="account-organization-error text-xs text-danger">
+          {error}
+        </span>
+      )}
+    </>
+  );
+});
+
 /** Settings → Account: one row for the Theodore account, above the host
  *  cards — who you are and Sign out (which brings back the sign-in
  *  screen), or a Sign in button that opens the dialog. Hidden while the
@@ -413,7 +587,7 @@ export const AccountCard = observer(function AccountCard() {
     void api
       .accountSignOut()
       .then((s) => store.ephemeral.setAccount(s))
-      .catch((e) => setError(String(e?.message ?? e)))
+      .catch((e) => setError(switchErrorText(String(e?.message ?? e))))
       .finally(() => setBusy(false));
   };
 
@@ -465,6 +639,7 @@ export const AccountCard = observer(function AccountCard() {
         )}
       </Card>
       {error && <span className="text-xs text-danger">{error}</span>}
+      {user && <OrganizationRow status={status} />}
     </section>
   );
 });

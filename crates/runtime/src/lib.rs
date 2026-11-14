@@ -43,6 +43,13 @@ const WORKTREE_GC_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// Ignored in fixture and sandbox modes, which have no account provider.
 pub const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("THEODORE_WORKOS_CLIENT_ID");
 
+/// The Theodore cloud (docs/cloud.md) for this channel, baked in when the
+/// build ran with `THEODORE_CLOUD_URL` set (`build.yml`'s `cloud-url`
+/// input). Same order as the client id: the env var at run time, then the
+/// `account.cloud_url` setting, then this. Without one, a build signs in as
+/// before but has no organizations.
+pub const BUILT_IN_CLOUD_URL: Option<&str> = option_env!("THEODORE_CLOUD_URL");
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     /// The build's own data dir by default (`identity::default_data_dir`):
@@ -146,7 +153,10 @@ fn real_adapters(cfg: &RuntimeConfig) -> anyhow::Result<Adapters> {
         .with_context(|| format!("creating {}", cfg.data_dir.display()))?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let secrets: Arc<dyn Secrets> = Arc::new(theodore_secrets::KeychainSecrets::with_service(
-        identity::keychain_service(cfg.build_env),
+        identity::keychain_service_with(
+            cfg.build_env,
+            std::env::var("THEODORE_KEYCHAIN_SERVICE").ok().as_deref(),
+        ),
     ));
     let token = Arc::new(HostToken::new(secrets.clone()));
     let github = Arc::new(theodore_host_github::GithubAdapter::new(
@@ -299,6 +309,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         device_login: a.device_login,
         account: a.account,
         account_client_id: BUILT_IN_CLIENT_ID.map(str::to_string),
+        account_cloud_url: BUILT_IN_CLOUD_URL.map(str::to_string),
         claude_home,
         commands: Arc::new(theodore_agents::ShellRunner::new()),
         terminals: Arc::new(theodore_agents::PtyRunner::new()),
@@ -307,6 +318,12 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
             worktree_locks.clone(),
         )),
         code_intel: code_intel(cfg).await,
+        // Fixture and sandbox modes have no account, so no fleet.
+        fleet: if cfg.fixtures.is_none() && cfg.sandbox.is_none() {
+            Arc::new(theodore_fleet::WsFleet::new())
+        } else {
+            Arc::new(theodore_ports::NoFleet)
+        },
     };
     let (core, receivers) = Core::start(deps);
     if let Some(sb) = &sandbox {

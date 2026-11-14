@@ -16,6 +16,8 @@ export interface AccountSignIn {
   flow: AccountFlow;
   start: (method: AccountSignInMethod, email?: string) => void;
   cancel: () => void;
+  /** Picks an organization from the list the sign-in stopped at. */
+  chooseOrganization: (organizationId: string) => void;
   /** Re-opens the hosted page (the browser tab got closed). */
   reopen: () => void;
 }
@@ -85,9 +87,18 @@ export function useAccountSignIn(
     void api.accountSignInCancel().catch(() => {});
   }, []);
 
+  const chooseOrganization = useCallback((organizationId: string) => {
+    const attempt = attemptRef.current;
+    dispatch({ type: 'choose', attempt });
+    void api
+      .accountSignInChooseOrganization(organizationId)
+      .then((state) => dispatch({ type: 'poll', attempt, state }))
+      .catch((e) => dispatch({ type: 'failed', attempt, error: message(e) }));
+  }, []);
+
   const reopen = useCallback(() => {
     if (flow.url) openExternal(flow.url);
   }, [flow.url]);
 
-  return { flow, start, cancel, reopen };
+  return { flow, start, cancel, chooseOrganization, reopen };
 }

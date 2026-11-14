@@ -28,6 +28,7 @@ import {
   Eye,
   FileText,
   Folder,
+  Display,
   FolderPlus,
   Gear,
   Keyboard,
@@ -58,6 +59,7 @@ import { toggleTheme } from '../stores/UiStore';
 import { ALL, projectSettingsRoute } from '../core/workspaces';
 import { Avatar, K } from './bits';
 import { projectLabel } from './Projects';
+import { spaceTitle as fleetSpaceTitle } from './fleet/fleet';
 import { refreshProjectTracked } from './project/freshness';
 import { markSpaceUnseen, spaceSeen } from './space/seen';
 import { Sparkles } from '@gravity-ui/icons';
@@ -534,6 +536,24 @@ export const CommandMenu = observer(function CommandMenu() {
     ...prItems,
     ...thisSpaceItems,
     ...spaceItems,
+    // Spaces on your other devices (docs/fleet.md).
+    ...(store.fleet.enabled
+      ? [
+          {
+            group: 'Spaces',
+            label: 'Run on another device',
+            icon: <Plus />,
+            run: () => ui.openModal('fleet-start'),
+          } satisfies Item,
+          ...store.fleet.spaceList.map((sp): Item => ({
+            group: 'Spaces',
+            label: fleetSpaceTitle(sp),
+            sub: sp.hosted_here ? `for ${sp.host_name}` : sp.host_name,
+            icon: <Display />,
+            run: () => ui.go({ name: 'fleet-space', id: sp.space }),
+          })),
+        ]
+      : []),
     {
       group: 'Go to',
       label: 'New tab — paste a PR link',

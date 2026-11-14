@@ -136,6 +136,8 @@ pub(crate) struct Inner {
     pub reports: std::sync::Mutex<Option<crate::usecases::reports::ReportsFollow>>,
     /// Chat reports drafted for the report window (`usecases::report`).
     pub report_drafts: crate::usecases::report::ReportDrafts,
+    /// The fleet: link, devices, hosted and remote spaces (`usecases::fleet`).
+    pub fleet: crate::usecases::fleet::FleetState,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -194,6 +196,7 @@ impl Core {
             questions: std::sync::Mutex::new(HashMap::new()),
             reports: std::sync::Mutex::new(None),
             report_drafts: Default::default(),
+            fleet: Default::default(),
         });
 
         let core = Core(inner.clone());
@@ -231,6 +234,10 @@ impl Core {
         {
             let core = core.clone();
             tokio::spawn(async move { core.account_resume().await });
+        }
+        {
+            let core = core.clone();
+            tokio::spawn(async move { core.fleet_resume().await });
         }
 
         (

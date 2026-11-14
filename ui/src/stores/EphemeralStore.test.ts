@@ -80,6 +80,7 @@ describe('EphemeralStore account', () => {
         available: true,
         required: true,
         session_ended: false,
+        organization: null,
         user: {
           id: 'u',
           email: 'ada@example.com',
@@ -96,6 +97,7 @@ describe('EphemeralStore account', () => {
         required: true,
         user: null,
         session_ended: true,
+        organization: null,
       },
     });
     expect(e.account?.user).toBeNull();
@@ -108,6 +110,7 @@ describe('EphemeralStore account', () => {
       required: false,
       user: null,
       session_ended: false,
+      organization: null,
     });
     expect(e.account?.available).toBe(false);
   });
@@ -120,6 +123,7 @@ describe('EphemeralStore account', () => {
       required: true,
       user: null,
       session_ended: false,
+      organization: null,
     };
     e.setAccount(out);
     expect(e.accountGate).toBe('locked');
