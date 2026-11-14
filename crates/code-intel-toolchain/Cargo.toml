@@ -23,7 +23,7 @@ tree-sitter.workspace = true
 serde_yaml = "0.9"
 flate2 = "1"
 tar = "0.4"
-zip = { version = "4", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 libloading = "0.9"
 tree-sitter-language = "0.1"
 

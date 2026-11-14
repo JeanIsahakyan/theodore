@@ -23,6 +23,14 @@ Why it exists:
 
 Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`.
 
+Rate limits (Cloudflare rate-limiting bindings, separate counters per
+environment; over: `429 cloud.rate_limited`):
+
+| Bucket | Key | Limit | Routes |
+| --- | --- | --- | --- |
+| `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws` |
+| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal` |
+
 ## Auth
 
 ```
@@ -71,7 +79,7 @@ works as before, no organizations.
 | sign-in (code, device), refresh, switch org (`refresh` + `organization_id`) | WorkOS directly |
 | ensure the personal org (after sign-in, at start, while the session has no org) | cloud `POST /v1/orgs/personal` |
 | list orgs (`account_organizations`) | cloud `GET /v1/orgs` |
-| finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself |
+| finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself: signature always checked (JWKS unreachable ─▶ `account.network`, never skipped), and the session's `organization_id` and the token's `org_id` must both be the org picked (else `account.invalid_token`, nothing stored) |
 
 | Cloud answer | App error |
 | --- | --- |
@@ -116,6 +124,7 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | `cloud.method` | 405 | method not allowed on that route |
 | `cloud.membership_inactive` | 409 | the caller's personal-org membership is inactive or pending |
 | `cloud.config` | 500 | `WORKOS_API_KEY` or `WORKOS_CLIENT_ID` missing |
+| `cloud.rate_limited` | 429 | over a rate limit (above) |
 | `cloud.internal` | 500 | anything unexpected; the log names the error kind, never the request |
 
 ## Environments and secrets
@@ -182,6 +191,7 @@ from `crates/fleet-protocol`.
 ```
 device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ verify JWT ─▶ no org_id: 403 fleet.no_org   bad token: 401 fleet.unauthorized
+                  JWKS unreachable: 503 cloud.jwks_unavailable (the device redials)
   ─▶ OrgHub(idFromName(org_id)) + x-theodore-fleet-caller {userId, orgId, sessionId, expMs}
      (incoming header replaced, Authorization dropped)
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
@@ -229,6 +239,8 @@ it belongs to:
 | moving between origin and host | follows you (`moved`); presence elsewhere changes nothing |
 | `answer` request | routed like any request; the question is dismissed elsewhere (`answered_elsewhere`) only after the host's signed `reply` with `ok` for it, a refusal leaves it open |
 | a request whose target is its origin | `refused{fleet.invalid}` |
+| a `start_space` whose space id is known, or has a start pending | `refused{fleet.invalid}`; the space that exists is untouched |
+| a start the host refused | forgets the space only if this request made its row (at its claim): same host, origin and `req_id` |
 
 `remove_device{device_id}` forgets one of the caller's other devices, only
 while that device is offline:
@@ -250,14 +262,14 @@ Storage (DO SQLite):
 | Table | Holds |
 | --- | --- |
 | `devices` | device_id, user, pinned public key, info, generation, last seen |
-| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event bytes |
+| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event bytes, the start request (`req_id`) that made it |
 | `events` | the host's signed envelope and its body's bytes, the newest 500 / 4 MiB per space (gaps are what's missing) |
 | `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
 | `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
 | `asks` | an open question (the host's envelope): where it shows, via, escalated |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
-| `meta` | `schema` = 3; on any other value every table but `devices` and `conns` is dropped (older rows carry older signatures) |
+| `meta` | `schema` = 4; on any other value every table but `devices` and `conns` is dropped (older rows carry older signatures) |
 
 Limits:
 
@@ -276,7 +288,7 @@ Limits:
 | stored event bytes per space (body length) | 4 MiB, and 500 events | its oldest events go |
 | stored event bytes per user (body length; a `started` body twice: ring and kept copy) | 64 MiB | the oldest events of finished (stopped/failed) spaces go, oldest space first; none left: `error{fleet.busy}`, the event not stored (the host keeps it in its journal and resumes from `last_seq`) |
 | hello after connect | 10 s | `fleet.bad_message`, close 1008 |
-| token | exp + 60 s without `reauth` | `fleet.unauthorized`, close 4001 |
+| token | exp + 60 s without a `reauth` that verified | `fleet.unauthorized`, close 4001; if the last `reauth` couldn't be checked (JWKS unreachable): `fleet.unavailable`, close 1011 (redial) |
 
 The burst is above the 200 first planned so a journal replay after a
 reconnect isn't cut off.
@@ -291,10 +303,17 @@ the socket with the code as the reason:
 
 | Close | Codes | Device adapter |
 | --- | --- | --- |
-| 4001 | `fleet.unauthorized`, `fleet.no_org` (incl. expired token) | fatal, no redial |
+| 4001 | `fleet.unauthorized`, `fleet.no_org` (incl. expired token): only a token refused for what it is (signature, claims, user, org) | fatal, no redial |
 | 4003 | `fleet.key_mismatch`, `fleet.version`, `fleet.too_many_devices` | fatal, no redial |
 | 4000 | a newer connection of the same device took over | — |
 | 1008 / 1009 | `fleet.bad_signature`, `fleet.bad_message` before hello, `fleet.too_many_connections`, `fleet.too_large` | redial |
+| 1011 | `fleet.unavailable`: the token couldn't be checked (JWKS unreachable) | redial with backoff |
+
+A `reauth` the cloud can't check (JWKS down) gets no answer: the old
+deadline stands and its close is the non-fatal 1011, so an outage of
+WorkOS's key endpoint never ends a device's fleet for good. A `reauth`
+refused for what the token is: `error{fleet.unauthorized}` (fatal on the
+device).
 
 HTTP on the upgrade: 401/403 fatal, 5xx redial, 426 `fleet.upgrade_required`
 without `Upgrade: websocket`.

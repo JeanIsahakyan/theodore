@@ -368,10 +368,21 @@ async fn core_review_round_trip_through_a_push_and_a_skill_run() {
     .await;
     assert_eq!(dismissed.state, ViewedState::Dismissed);
 
-    let reads = pr_rows::<HunkRead>(&core, &pr, models::HUNK_READ).await;
+    // The read is cleared in its own write, which can land after the file
+    // shows as dismissed (the host's viewed state can dismiss it first):
+    // wait for it rather than expecting both in one frame.
+    let reads = wait_for(&mut receivers, &mut watcher, || {
+        let core = core.clone();
+        let pr = pr.clone();
+        async move {
+            let reads = pr_rows::<HunkRead>(&core, &pr, models::HUNK_READ).await;
+            reads.is_empty().then_some(reads)
+        }
+    })
+    .await;
     assert!(
         reads.is_empty(),
-        "the only read was of the changed hunk; it must be cleared, got {reads:?}"
+        "the only read was of the changed hunk; it must be cleared"
     );
 
     // Regroup: the unchanged groups (and their unchanged hunks) survive;

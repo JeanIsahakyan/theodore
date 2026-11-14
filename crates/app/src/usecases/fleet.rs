@@ -9,7 +9,8 @@
 //! enabled + signed in + cloud URL + org ─▶ FleetPort::start ─▶ link
 //!   account refresh ─▶ Reauth(token)       org switch ─▶ Close, new link
 //!   sign-out / disable ─▶ Close            Fatal ─▶ error, no redial until
-//!                                            sign-in, org or settings change
+//!                                            sign-in, org or settings change,
+//!                                            or a new access token
 //! link ─▶ Connected | Message | Disconnected | Fatal ─▶ fleet_inbound
 //! ```
 
@@ -48,8 +49,40 @@ fn parent_id_key(local: &str) -> String {
     format!("fleet.parent:{local}")
 }
 
+/// A device id as the cloud issues it (`dev_` + a UUID,
+/// cloud/src/fleet/hub.ts): `^dev_[0-9a-f-]{36}$`. Ids are unsigned and
+/// reach agents, so a listed device with any other id is dropped.
+pub(crate) fn valid_device_id(id: &str) -> bool {
+    id.strip_prefix("dev_").is_some_and(|rest| {
+        rest.len() == 36
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-')
+    })
+}
+
+/// Longest pinned device name.
+const PIN_NAME_MAX: usize = 40;
+
+/// A device name as pinned here: only `[A-Za-z0-9 ._()-]` kept, at most 40
+/// characters, `device` when nothing is left. The name comes from the
+/// cloud's unsigned listing and reaches agents.
+pub(crate) fn pin_name(name: &str) -> String {
+    let kept: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || " ._()-".contains(*c))
+        .take(PIN_NAME_MAX)
+        .collect();
+    let kept = kept.trim();
+    if kept.is_empty() {
+        "device".to_string()
+    } else {
+        kept.to_string()
+    }
+}
+
 /// A pinned device (`fleet.trusted_devices`): the key the user compared
-/// when trust was given here.
+/// when trust was given here, and its name as `pin_name` left it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TrustedDevice {
     pub device_id: String,
@@ -213,6 +246,9 @@ pub(crate) struct Outbound {
     pub last_seq: u64,
     /// The local space whose agent started it (`fleet_start_space` tool).
     pub started_by: Option<String>,
+    /// Why it failed, as an agent may read it: the refusal's code alone
+    /// (`view.error`, with the target's words, is the UI's).
+    pub agent_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -297,13 +333,18 @@ impl Core {
 
     pub(crate) async fn fleet_settings(&self) -> FleetSettings {
         let store = self.0.deps.store.clone();
-        tokio::task::spawn_blocking(move || store.kv_get(SETTINGS_KEY))
+        let mut s: FleetSettings = tokio::task::spawn_blocking(move || store.kv_get(SETTINGS_KEY))
             .await
             .ok()
             .and_then(Result::ok)
             .flatten()
             .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Pins made before names were sanitized at pinning.
+        for t in &mut s.trusted_devices {
+            t.name = pin_name(&t.name);
+        }
+        s
     }
 
     async fn fleet_save_settings(&self, s: &FleetSettings) -> AppResult<()> {
@@ -514,7 +555,7 @@ impl Core {
                 Some(TrustedDevice {
                     device_id: listed.device_id,
                     public_key: compared.to_string(),
-                    name: listed.info.name,
+                    name: pin_name(&listed.info.name),
                 })
             } else {
                 None
@@ -1020,7 +1061,15 @@ impl Core {
 
     async fn fleet_message(&self, m: ServerMessage) {
         match m {
-            ServerMessage::Devices { devices } => {
+            ServerMessage::Devices { mut devices } => {
+                let listed = devices.len();
+                devices.retain(|d| valid_device_id(&d.device_id));
+                if devices.len() < listed {
+                    tracing::warn!(
+                        dropped = listed - devices.len(),
+                        "dropped fleet devices whose id isn't one the cloud issues"
+                    );
+                }
                 self.fleet().devices = devices;
                 self.fleet_emit_status().await;
             }

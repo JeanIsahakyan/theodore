@@ -111,7 +111,7 @@ fn unzip(sink: &mut Sink<'_>, file: File) -> io::Result<()> {
     let mut zip = zip::ZipArchive::new(file).map_err(io::Error::other)?;
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).map_err(io::Error::other)?;
-        let name = f.name().to_string();
+        let name = f.name().map_err(io::Error::other)?.to_string();
         if name.contains('\\') {
             return Err(unsafe_entry(format!("{name}: backslash in path")));
         }

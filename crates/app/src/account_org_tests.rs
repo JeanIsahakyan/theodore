@@ -513,6 +513,32 @@ async fn a_device_sign_in_needing_an_org_reports_the_choice_and_a_failed_select_
 }
 
 #[tokio::test]
+async fn a_selected_session_in_another_org_than_the_one_chosen_is_refused() {
+    let f = fixtures();
+    let (core, _recv) = start(&f, true).await;
+    core.account_sign_in_start(device()).await.unwrap();
+    f.account
+        .push_device_poll(Err(selection_required("pending_m")));
+    assert_eq!(core.account_sign_in_poll().await.unwrap(), offered());
+
+    // Chose org_b; the cloud hands back a session in org_a.
+    f.account
+        .push_org_selection(Ok(in_org(&f, "rt_m", "org_a")));
+    match core
+        .account_sign_in_choose_organization("org_b")
+        .await
+        .unwrap()
+    {
+        AccountSignInState::Failed { message } => {
+            assert!(message.contains("another organization"), "{message}");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert!(stored(&f).is_none(), "nothing stored");
+    assert!(core.account_session().is_none());
+}
+
+#[tokio::test]
 async fn cancel_forgets_the_pending_choice() {
     let f = fixtures();
     let (core, _recv) = start(&f, true).await;
