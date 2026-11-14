@@ -19,6 +19,7 @@ import {
   type ConnState,
   type VerifiedToken,
 } from '../src/fleet/hub';
+import { CloudError } from '../src/errors';
 import { PROTOCOL_VERSION } from '../src/fleet/limits';
 import { b64, signedBytes, unb64, type Domain } from '../src/fleet/wire';
 
@@ -276,6 +277,8 @@ export class Harness {
   now = T0;
   conns: FakeConn[] = [];
   tokens = new Map<string, VerifiedToken>();
+  /** `verify` can't reach the signing keys (as `verifyAccessToken` throws). */
+  jwksDown = false;
   hub: Hub;
   scheduled: (number | null)[] = [];
 
@@ -291,8 +294,15 @@ export class Harness {
           (c) => c.open && c.user && (user === undefined || c.user === user),
         ),
       verify: async (t) => {
+        if (this.jwksDown) {
+          throw new CloudError(
+            503,
+            'cloud.jwks_unavailable',
+            'signing keys unavailable',
+          );
+        }
         const v = this.tokens.get(t);
-        if (!v) throw new Error('bad token');
+        if (!v) throw new CloudError(401, 'cloud.unauthorized', 'bad token');
         return v;
       },
       schedule: (at) => {

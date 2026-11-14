@@ -730,7 +730,19 @@ impl Core {
         }
         self.account_persist(Some(next)).await?;
         theodore_telemetry::set_account(Some(&next.user.id));
-        *self.0.account.session.lock().expect("account lock") = Some(next.clone());
+        let previous = self
+            .0
+            .account
+            .session
+            .lock()
+            .expect("account lock")
+            .replace(next.clone());
+        // A new access token: a fleet link that failed for good (a token
+        // the cloud refused, or a cloud that judged a JWKS outage fatal)
+        // gets one more try with it (docs/fleet.md "App side").
+        if previous.is_none_or(|p| p.access_token != next.access_token) {
+            self.fleet().fatal_at = None;
+        }
         // A fresh token (reauth) or another organization (a new link).
         self.fleet_account_changed();
         Ok(true)
@@ -1149,8 +1161,15 @@ impl Core {
             )
             .await
             .map_err(AppError::from);
+        // The session must be the one chosen: the cloud hands it over, so
+        // a session in any other organization is refused, never stored.
         let signed_in = match selected {
-            Ok(session) => self.account_signed_in(session).await,
+            Ok(session) if session.organization_id.as_deref() == Some(organization_id) => {
+                self.account_signed_in(session).await
+            }
+            Ok(_) => Err(AppError::Invalid(
+                "the sign-in came back in another organization than the one chosen".into(),
+            )),
             Err(e) => Err(e),
         };
         Ok(match signed_in {

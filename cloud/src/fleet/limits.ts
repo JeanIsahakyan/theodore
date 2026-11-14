@@ -72,6 +72,8 @@ export const codes = {
   TOO_MANY_DEVICES: 'fleet.too_many_devices',
   TOO_MANY_SPACES: 'fleet.too_many_spaces',
   TOO_MANY_CONNECTIONS: 'fleet.too_many_connections',
+  /** The cloud couldn't check a token (signing keys unreachable): redial. */
+  UNAVAILABLE: 'fleet.unavailable',
 } as const;
 
 /**
@@ -88,6 +90,8 @@ export const close = {
   AUTH: 4001,
   /** Forbidden: key_mismatch, version, too_many_devices. */
   FORBIDDEN: 4003,
+  /** The cloud couldn't check the token (JWKS down): not fatal, redial. */
+  UNAVAILABLE: 1011,
 } as const;
 
 /** The close code a refusal ends the connection with. */
@@ -103,6 +107,8 @@ export function closeCodeFor(code: string): number {
       return close.FORBIDDEN;
     case codes.TOO_LARGE:
       return close.TOO_BIG;
+    case codes.UNAVAILABLE:
+      return close.UNAVAILABLE;
     default:
       return close.POLICY;
   }

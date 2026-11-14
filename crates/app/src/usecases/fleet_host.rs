@@ -9,9 +9,10 @@
 //!   ─▶ op fits (mode, project, depth, space, not busy, answers; a start
 //!      reserves its slot) ─▶ claim
 //!   ─▶ claim_result{claimed} ─▶ seen done kept (else internal, no run)
-//!      ─▶ accept_remote, same pin, max_mode again ─▶ run ─▶ reply
+//!      ─▶ fresh, accept_remote, same pin, max_mode again ─▶ run ─▶ reply
 //!   every reply ─▶ seal_as(ReplyBody, Domain::Reply)
 //!   any refusal ─▶ reply{err:{code}}            not claimed ─▶ nothing runs
+//!   (before `open`: static words only, never what the sender claimed)
 //!
 //! observer (one task): sync frames + run steps of hosted spaces
 //!   ─▶ diff the space row against what was last reported
@@ -311,6 +312,9 @@ impl Core {
 
     /// docs/fleet.md "Trust", in order. `Ok`: verified, fresh, fits (a
     /// send's mode resolved); still to be claimed before anything runs.
+    /// Every refusal before `open` succeeds carries static words only: the
+    /// reply is signed by this device, so it must not echo anything the
+    /// sender claimed but didn't prove.
     async fn fleet_gate(
         &self,
         envelope: &SignedEnvelope,
@@ -358,11 +362,12 @@ impl Core {
                         .unwrap_or_default(),
                 },
             });
-            // Its id, not the name the cloud lists: the reply goes back to
-            // the origin's agent.
+            // Static words: nothing read before `open` goes into a reply
+            // this device signs (the envelope's device id is the sender's
+            // claim, free text until verified).
             return Err(refuse(
                 codes::UNTRUSTED_DEVICE,
-                format!("device {} isn't trusted on this device", envelope.device_id),
+                "the requesting device isn't trusted on this device",
             ));
         };
         let mut req = envelope.open(&pinned.public_key).map_err(|_| {
@@ -597,10 +602,18 @@ impl Core {
         });
     }
 
-    /// The gate's settings checks once more, right before a claimed
-    /// request runs: still accepting, the origin still pinned with the key
-    /// it verified against, the mode still allowed.
+    /// The gate's checks once more, right before a claimed request runs:
+    /// still fresh (a claim result can come late), still accepting, the
+    /// origin still pinned with the key it verified against, the mode
+    /// still allowed.
     async fn fleet_recheck(&self, c: &Claimed) -> Result<(), Refusal> {
+        let now = self.0.deps.clock.now().max(0) as u64;
+        if !fresh(c.req.issued_at_ms, now) {
+            return Err(refuse(
+                codes::STALE_REQUEST,
+                "the request is too old, or this device's clock is off",
+            ));
+        }
         let s = self.fleet_settings().await;
         if !s.accept_remote {
             return Err(refuse(

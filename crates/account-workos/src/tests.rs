@@ -715,6 +715,79 @@ async fn a_selected_session_for_another_user_is_refused() {
 }
 
 #[tokio::test]
+async fn a_selected_session_in_another_organization_is_refused() {
+    // The body says org_02 but the token is for org_01, then both say org_01.
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    let mut mixed = auth_body_in_org(&server, "rt_1", "org_02");
+    mixed["access_token"] = json!(org_token(&server, "org_01"));
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mixed))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(auth_body_in_org(&server, "rt_2", "org_01")),
+        )
+        .mount(&server)
+        .await;
+    let a = account(&server);
+    for _ in 0..2 {
+        let e = a
+            .select_organization(&cloud_cfg(&server), "pending_1", "org_02")
+            .await
+            .unwrap_err();
+        assert!(matches!(e, AccountError::InvalidToken(_)), "{e:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_selected_session_without_an_org_claim_is_refused() {
+    let server = MockServer::start().await;
+    mount_jwks(&server, 1).await;
+    // The body names the org; the token (no org_id) doesn't.
+    let mut body = testing_no_org_body(&server);
+    body["organization_id"] = json!("org_02");
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+    let e = account(&server)
+        .select_organization(&cloud_cfg(&server), "pending_1", "org_02")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, AccountError::InvalidToken(_)), "{e:?}");
+}
+
+/// A token the cloud handed over is never taken unsigned: no JWKS, no
+/// session (a network error, so the sign-in can be tried again).
+#[tokio::test]
+async fn a_selected_session_is_refused_when_the_jwks_is_unreachable() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/sso/jwks/{CLIENT}")))
+        .respond_with(ResponseTemplate::new(502))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/cloud/v1/auth/select-organization"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(auth_body_in_org(&server, "rt_1", "org_02")),
+        )
+        .mount(&server)
+        .await;
+    let e = account(&server)
+        .select_organization(&cloud_cfg(&server), "pending_1", "org_02")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, AccountError::Network(_)), "{e:?}");
+}
+
+#[tokio::test]
 async fn a_used_pending_token_is_rejected_and_never_echoed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

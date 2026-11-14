@@ -310,6 +310,44 @@ describe('fleet routing', () => {
     expect(mac2.take('error')[0]?.code).toBe('fleet.not_yours');
   });
 
+  it('refuses a second start of a space, keeping the space', async () => {
+    const { mac1, mac2 } = await pair();
+    await startSpace(mac1, mac2, 'rs_d');
+    await mac1.request(mac2.id!, startOp('rs_d'));
+    expect(refusals(mac1)).toEqual(['fleet.invalid']);
+    expect(mac2.take('request')).toEqual([]);
+    // Still known: its host's events are kept.
+    await mac2.emit('rs_d', 1, { kind: 'status', status: 'running' });
+    expect(mac2.take('error')).toEqual([]);
+
+    // A start still pending counts too.
+    await mac1.request(mac2.id!, startOp('rs_p'));
+    await mac1.request(mac2.id!, startOp('rs_p'));
+    expect(refusals(mac1)).toEqual(['fleet.invalid']);
+    expect(mac2.take('request').length).toBe(1);
+  });
+
+  it('a refused start forgets only the row it made', async () => {
+    const { h, mac1, mac2 } = await pair();
+    const { reqId } = await mac1.request(mac2.id!, startOp('rs_z'));
+    // A row this request didn't make (another start's).
+    h.db
+      .prepare(
+        `INSERT INTO spaces (space, user_id, host_device, origin_device,
+           parent, depth, last_ms, req_id)
+         VALUES ('rs_z', 'user_1', ?, ?, NULL, 0, 0, 'req_other')`,
+      )
+      .all(mac2.id!, mac1.id!);
+    await mac2.reply(reqId, {
+      outcome: 'err',
+      code: 'fleet.invalid',
+      message: 'started already',
+    });
+    expect(
+      h.db.prepare(`SELECT space FROM spaces WHERE space = 'rs_z'`).all(),
+    ).toEqual([{ space: 'rs_z' }]);
+  });
+
   it('refuses a reply naming another origin', async () => {
     const { h, mac1, mac2 } = await pair();
     const mac3 = await h.device('user_1', 'mac3');

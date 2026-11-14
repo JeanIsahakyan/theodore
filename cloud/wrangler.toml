@@ -15,6 +15,18 @@ workers_dev = true
 name = "ORG_HUB"
 class_name = "OrgHub"
 
+# Rate limits (src/index.ts): per client IP for the routes without a session,
+# per user for the org routes. Each environment has its own counters.
+[[ratelimits]]
+name = "RL_PUBLIC"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "RL_USER"
+namespace_id = "1002"
+simple = { limit = 120, period = 60 }
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["OrgHub"]
@@ -23,8 +35,16 @@ new_sqlite_classes = ["OrgHub"]
 name = "theodore-cloud-staging"
 vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
+ratelimits = [
+  { name = "RL_PUBLIC", namespace_id = "1101", simple = { limit = 30, period = 60 } },
+  { name = "RL_USER", namespace_id = "1102", simple = { limit = 120, period = 60 } },
+]
 
 [env.production]
 name = "theodore-cloud"
 vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
+ratelimits = [
+  { name = "RL_PUBLIC", namespace_id = "1201", simple = { limit = 30, period = 60 } },
+  { name = "RL_USER", namespace_id = "1202", simple = { limit = 120, period = 60 } },
+]

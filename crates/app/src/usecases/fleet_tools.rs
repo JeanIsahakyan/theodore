@@ -6,10 +6,11 @@
 //! ```text
 //! caller hosted here for the fleet ─▶ fleet_devices / read / wait only:
 //!                                     no trust passes through it
-//! results carry no unsigned free text: device names are the pins',
-//!   project ids pass a strict pattern (names never), space names,
-//!   branches, replies and questions come from signed events or replies,
-//!   errors are a verified code + ≤ 200 chars, or the cloud's code alone
+//! results carry no unsigned free text: device ids as the cloud issues
+//!   them, device names are the pins' (sanitized), project ids pass a
+//!   strict pattern (names never), space names, branches, replies and
+//!   questions come from signed events or replies, a refusal is its code
+//!   alone (a verified target's words stay in the UI)
 //! caller of this device's own, turn in Edit or Run
 //!   ─▶ fleet_start_space on a device pinned here, mode ≤ the turn's,
 //!      parent = the caller's stable fleet id, depth 1, ≤ MAX_CHILDREN
@@ -29,7 +30,7 @@ use theodore_ports::{
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet::{FleetMem, FleetSettings, TrustedDevice, mode_str};
-use crate::usecases::fleet_origin::settled;
+use crate::usecases::fleet_origin::{FleetFail, agent_error, settled};
 
 /// How long `fleet_start_space` waits for the other device to say yes.
 const START_WAIT: Duration = Duration::from_secs(20);
@@ -62,7 +63,10 @@ fn status_word(s: FleetSpaceStatus) -> &'static str {
     }
 }
 
-pub(crate) fn tool_space(v: &FleetRemoteSpace) -> FleetToolSpace {
+/// A space as an agent reads it. `error` is `Outbound::agent_error` (a
+/// refusal's code alone), never `v.error`, which carries the target's words
+/// for the UI.
+pub(crate) fn tool_space(v: &FleetRemoteSpace, error: Option<&str>) -> FleetToolSpace {
     FleetToolSpace {
         space: v.space.clone(),
         device: v.host_name.clone(),
@@ -77,7 +81,7 @@ pub(crate) fn tool_space(v: &FleetRemoteSpace) -> FleetToolSpace {
                 .collect::<Vec<_>>()
                 .join(" / ")
         }),
-        error: v.error.clone(),
+        error: error.map(str::to_string),
     }
 }
 
@@ -113,13 +117,22 @@ fn pin_of<'a>(d: &DeviceSummary, s: &'a FleetSettings) -> Option<&'a TrustedDevi
         .find(|t| t.device_id == d.device_id && t.public_key == d.public_key)
 }
 
-/// A project id as an agent may see it: `^[A-Za-z0-9._:/@+-]{1,200}$`
-/// (`local:app`, `github.com/acme/app`); anything else is dropped.
+/// Longest project id an agent may see.
+const PROJECT_ID_MAX: usize = 100;
+/// Most `:` in a project id an agent may see (`local:app` has one).
+const PROJECT_ID_COLONS_MAX: usize = 4;
+
+/// A project id as an agent may see it: `^[A-Za-z0-9._:/@+-]{1,100}$` with
+/// at most 4 `:` (`local:app`, `github.com/acme/app`); anything else is
+/// dropped. The pattern keeps out spaces and punctuation; the length and
+/// colon caps keep a hostile listing from smuggling a sentence through
+/// in `key:value` form.
 pub(crate) fn safe_project_id(id: &str) -> bool {
-    (1..=200).contains(&id.len())
+    (1..=PROJECT_ID_MAX).contains(&id.len())
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b".:_/@+-".contains(&b))
+        && id.bytes().filter(|&b| b == b':').count() <= PROJECT_ID_COLONS_MAX
 }
 
 /// Whether `space` (followed here) was started by `caller`'s agent, or by
@@ -305,20 +318,21 @@ impl Core {
             )
             .await
             .map_err(unavailable)?;
-        // A refusal is the agent's to hear; no word in time, it's starting.
-        if let Err(AppError::Refused(why)) = Self::fleet_await(rx, START_WAIT).await {
-            return Err(refused(why));
+        // A refusal is the agent's to hear, by its code; no word in time,
+        // it's starting.
+        if let Err(FleetFail::Refused(answer)) = Self::fleet_await(rx, START_WAIT).await {
+            return Err(refused(agent_error(&answer).unwrap_or_default()));
         }
         Ok(self
             .fleet_tool_view(&view.space)
-            .unwrap_or_else(|| tool_space(&view)))
+            .unwrap_or_else(|| tool_space(&view, None)))
     }
 
     fn fleet_tool_view(&self, space: &str) -> Option<FleetToolSpace> {
         self.fleet()
             .outbound
             .get(space)
-            .map(|o| tool_space(&o.view))
+            .map(|o| tool_space(&o.view, o.agent_error.as_deref()))
     }
 
     /// `space` as `caller`'s agent may see it: only one it started (or
@@ -330,7 +344,9 @@ impl Core {
     ) -> Result<FleetToolSpace, SpaceToolError> {
         let mem = self.fleet();
         match mem.outbound.get(space) {
-            Some(o) if started_by(&mem, space, caller) => Ok(tool_space(&o.view)),
+            Some(o) if started_by(&mem, space, caller) => {
+                Ok(tool_space(&o.view, o.agent_error.as_deref()))
+            }
             _ => Err(refused(format!(
                 "no fleet space {space} started by this space"
             ))),
@@ -354,13 +370,13 @@ impl Core {
             .get(space)
             .map_or(turn, |o| o.view.mode);
         let mode = if rank(own) <= rank(turn) { own } else { turn };
-        self.fleet_send(FleetSendRequest {
+        self.fleet_send_req(FleetSendRequest {
             space: space.to_string(),
             text: text.to_string(),
             mode: Some(mode),
         })
         .await
-        .map_err(unavailable)?;
+        .map_err(|e| unavailable(e.for_agent()))?;
         self.fleet_tool_known(caller, space)
     }
 
@@ -378,7 +394,9 @@ impl Core {
             ));
         }
         self.fleet_tool_known(caller, space)?;
-        self.fleet_stop(space).await.map_err(unavailable)?;
+        self.fleet_stop_req(space)
+            .await
+            .map_err(|e| unavailable(e.for_agent()))?;
         self.fleet_tool_known(caller, space)
     }
 
@@ -404,16 +422,21 @@ impl Core {
             let changed = self.0.fleet.changed.notified();
             let (all, views) = {
                 let mem = self.fleet();
-                let views: Vec<FleetRemoteSpace> = spaces
+                let views: Vec<FleetToolSpace> = spaces
                     .iter()
-                    .filter_map(|s| mem.outbound.get(s).map(|o| o.view.clone()))
+                    .filter_map(|s| mem.outbound.get(s))
+                    .map(|o| tool_space(&o.view, o.agent_error.as_deref()))
                     .collect();
-                (views.iter().all(|v| settled(v.status)), views)
+                let all = spaces
+                    .iter()
+                    .filter_map(|s| mem.outbound.get(s))
+                    .all(|o| settled(o.view.status));
+                (all, views)
             };
             if all || tokio::time::Instant::now() >= deadline {
                 return Ok(FleetToolWait {
                     settled: all,
-                    spaces: views.iter().map(tool_space).collect(),
+                    spaces: views,
                 });
             }
             tokio::select! {

@@ -5,7 +5,8 @@
  * ```text
  * devices  device_id ─ user, pinned public key, info, generation, last seen
  * spaces   space ─ user, host, origin, parent, depth, last seq, status,
- *          last activity, the started event's envelope, stored event bytes
+ *          last activity, the started event's envelope, stored event bytes,
+ *          the start request that made it
  * events   (space, seq) ─ the host's signed envelope and its body's bytes;
  *          the newest CLOUD_RING / MAX_SPACE_EVENT_BYTES per space
  * pending  req_id ─ a routed request until its reply (or 2 min)
@@ -27,7 +28,7 @@ export interface Sql {
   exec(query: string, ...binds: SqlValue[]): Record<string, unknown>[];
 }
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Relay state that a schema change throws away; devices stay pinned. */
 const RESET = ['spaces', 'events', 'pending', 'replies', 'asks', 'subs'];
@@ -54,7 +55,8 @@ const SCHEMA = [
     started TEXT,
     started_seq INTEGER,
     bytes INTEGER NOT NULL DEFAULT 0,
-    started_bytes INTEGER NOT NULL DEFAULT 0)`,
+    started_bytes INTEGER NOT NULL DEFAULT 0,
+    req_id TEXT)`,
   `CREATE INDEX IF NOT EXISTS spaces_host ON spaces (host_device)`,
   `CREATE INDEX IF NOT EXISTS spaces_user ON spaces (user_id, last_ms)`,
   `CREATE INDEX IF NOT EXISTS spaces_parent ON spaces (parent)`,
@@ -135,6 +137,8 @@ export interface SpaceRow {
   bytes: number;
   /** Body bytes of `started`. */
   started_bytes: number;
+  /** The start request that made the row (its claim). */
+  req_id: string | null;
 }
 
 export interface PendingRow {

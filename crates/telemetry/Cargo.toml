@@ -20,7 +20,7 @@ dirs.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
 reqwest.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "logs"] }

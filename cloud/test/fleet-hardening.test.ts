@@ -44,6 +44,55 @@ describe('fleet reauth', () => {
     expect(mac.conn.open).toBe(false);
   });
 
+  it('closes a JWKS outage at the deadline as unavailable, not unauthorized', async () => {
+    const { h, mac } = await one(T(10_000));
+    h.tokens.set('fresh', {
+      userId: 'user_1',
+      organizationId: 'org_1',
+      expiresAt: (T(0) + 3_600_000) / 1000,
+    });
+    h.jwksDown = true;
+    await mac.send({ type: 'reauth', access_token: 'fresh' });
+    // Nothing the device would take as fatal.
+    expect(mac.take('error')).toEqual([]);
+    expect(mac.conn.open).toBe(true);
+    await h.tick(71_000);
+    expect(mac.sent.at(-1)).toMatchObject({ code: 'fleet.unavailable' });
+    expect(mac.conn.closedWith).toEqual({
+      code: 1011,
+      reason: 'fleet.unavailable',
+    });
+  });
+
+  it('a reauth that verifies after an outage keeps the connection', async () => {
+    const { h, mac } = await one(T(10_000));
+    h.tokens.set('fresh', {
+      userId: 'user_1',
+      organizationId: 'org_1',
+      expiresAt: (T(0) + 3_600_000) / 1000,
+    });
+    h.jwksDown = true;
+    await mac.send({ type: 'reauth', access_token: 'fresh' });
+    h.jwksDown = false;
+    await mac.send({ type: 'reauth', access_token: 'fresh' });
+    await h.tick(120_000);
+    expect(mac.conn.open).toBe(true);
+  });
+
+  it('a bad token after an outage is fatal again', async () => {
+    const { h, mac } = await one(T(10_000));
+    h.jwksDown = true;
+    await mac.send({ type: 'reauth', access_token: 'junk' });
+    h.jwksDown = false;
+    await mac.send({ type: 'reauth', access_token: 'junk' });
+    expect(mac.take('error')[0]?.code).toBe('fleet.unauthorized');
+    await h.tick(71_000);
+    expect(mac.conn.closedWith).toEqual({
+      code: 4001,
+      reason: 'fleet.unauthorized',
+    });
+  });
+
   it('closes on a token for another user or org', async () => {
     const { h, mac } = await one();
     h.tokens.set('other_user', { userId: 'user_2', organizationId: 'org_1' });
