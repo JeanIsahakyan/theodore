@@ -12,7 +12,7 @@
   Your own agent CLIs — Claude Code, Codex, Gemini CLI — run on your machine.<br>
   Agents never post to the PR — you decide what goes out.<br>
   One inbox for your GitHub pull requests.<br>
-  macOS · local-first · keyboard-first
+  macOS · Linux · local-first · keyboard-first
 </p>
 
 Theodore is a desktop app for code review. It pulls your pull requests into one
@@ -33,12 +33,20 @@ From then on it updates itself.
 
 Phone and web: an Expo app (`mobile/`) follows and answers your computers' spaces; see [docs/mobile.md](docs/mobile.md).
 
-**Linux** (work in progress, built from source): needs a login shell (`$SHELL`, else bash),
-`git`, `ps` and `kill` (procps), WebKitGTK 4.1 and GTK 3 (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
-`libayatana-appindicator3-dev`, `librsvg2-dev` on Debian/Ubuntu), and a Secret Service provider
-(libsecret with GNOME Keyring or KWallet) for stored tokens. The app takes your login shell's
-`PATH` at start, so `claude`, `codex`, `gemini` and `gh` are found wherever your shell finds them.
-Links and folders open through `xdg-open`.
+### Linux
+
+x86_64 or aarch64, glibc 2.35+ (Ubuntu 22.04+, Debian 12+). From the same release page, either:
+
+- **AppImage** (`Theodore_<version>_x86_64.AppImage`, `_aarch64`): put it somewhere you can write,
+  e.g. `~/Applications`, then `chmod +x` it and run it. It updates itself in place. If it won't
+  start, install FUSE 2 (`sudo apt install libfuse2`, `libfuse2t64` on Ubuntu 24.04).
+- **.deb** (`Theodore_<version>_amd64.deb`, `_arm64`): `sudo apt install ./Theodore_<version>_amd64.deb`;
+  it pulls in WebKitGTK 4.1 and git. Updates install through `dpkg` and ask for your password.
+
+What it relies on: `git`, `ps` and `kill` (procps), a login shell (`$SHELL`, else bash) whose
+`PATH` finds `claude`, `codex`, `gemini` and `gh`, and a Secret Service provider (libsecret with
+GNOME Keyring or KWallet) for stored tokens; without one, tokens go to a 0600 file in
+`$XDG_DATA_HOME/theodore`. Links and folders open through `xdg-open`.
 
 Building from source is for developing Theodore, not for using it. A local build has no sign-in and
 no diagnostics: the release's client id and keys are added only by the release pipeline, so the app
@@ -469,8 +477,7 @@ Git hooks (`lefthook install` once per clone):
 
 - Notarization and a Developer ID (the release workflow has the steps, no secrets yet); builds are
   ad-hoc signed.
-- Linux release builds and Windows — releases are macOS (Apple Silicon) only; Linux builds from
-  source.
+- Windows builds — macOS (Apple Silicon) and Linux only.
 - GitLab OAuth/PKCE sign-in — personal access token only.
 - A Theodore server: the account sign-in is client-only; billing and sync need one.
 - Spaces: feedback tracked as tasks, a "Drafting" group in My PRs, a per-turn diff view, deleting a

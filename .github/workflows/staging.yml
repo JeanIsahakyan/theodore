@@ -7,7 +7,8 @@ name: Staging
 #
 #   push staging ──▶ build 0.3.0-staging.57 ──▶ channel-staging:
 #                                                 dmg, .app.tar.gz + .sig,
-#                                                 latest.json (→ this tarball)
+#                                                 .AppImage + .sig, .deb + .sig,
+#                                                 latest.json (→ these)
 #
 # A staging build polls only channel-staging/latest.json (apps/desktop/src/
 # updater.rs); production builds never see it. Being a pre-release, it is
@@ -99,7 +100,8 @@ jobs:
         if: steps.newer.outputs.publish == 'true'
         run: |
           gh release upload "$CHANNEL_TAG" --clobber \
-            dist/*.dmg dist/*.app.tar.gz dist/*.app.tar.gz.sig
+            dist/*.dmg dist/*.app.tar.gz dist/*.app.tar.gz.sig \
+            dist/*.AppImage dist/*.AppImage.sig dist/*.deb dist/*.deb.sig
           gh release upload "$CHANNEL_TAG" --clobber dist/latest.json
           keep=$(cd dist && ls)
           gh release view "$CHANNEL_TAG" --json assets --jq '.assets[].name' |
