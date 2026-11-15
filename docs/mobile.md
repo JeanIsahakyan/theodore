@@ -97,8 +97,11 @@ requests still need the host's own trust in the phone's key.
 
 ```
 mobile/
-  app/                 expo-router screens: (auth)/sign-in, (app)/spaces, space/[id], start, devices, settings
-  src/auth/            AuthKit PKCE (expo-auth-session), session + refresh, org select/switch via cloud
+  app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
+                       (app)/ tabs index (Spaces), devices, settings + space/[id], start
+  src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
+  src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
+                       (not src/app: expo-router would take src/app as the routes root)
   src/fleet/           pure TS client: socket, hello, seal/verify (domain tags), pins, journal of lines
   src/keys/            DeviceKey: secure-store (iOS/Android) | WebCrypto + IndexedDB (web)
   src/push/            expo-notifications: register, categories, background answer
@@ -113,6 +116,32 @@ mobile/
   non-extractable WebCrypto key in IndexedDB.
 - Redirect URIs to register in WorkOS: `theodore://callback` (native, per
   channel scheme) and the web origin's `/callback`.
+
+### Sign-in
+
+The desktop's flow (plan §6.12), in TypeScript (`src/auth`):
+
+```
+Sign in ─▶ PKCE S256 + 256-bit state ─▶ hosted AuthKit page
+   native: ASWebAuthenticationSession / Custom Tab ─▶ theodore://callback
+   web:    popup ─▶ <origin>/callback ─▶ root layout posts the URL to the opener
+ ─▶ state matches ─▶ POST /user_management/authenticate (code + verifier, no secret)
+ ─▶ RS256 vs JWKS, iss, exp (60 s), client_id, sub ─▶ secure store ─▶ (app)
+     └─ organization_selection_required ─▶ choose-organization ─▶ cloud select-organization
+     └─ no org ─▶ background: cloud POST /v1/orgs/personal ─▶ refresh into it
+refresher: 60 s before exp; offline ─▶ retry 30 s doubling to 10 min; rejected ─▶ signed out
+```
+
+| | Native | Web |
+| --- | --- | --- |
+| Session | `expo-secure-store`, Keychain after first unlock (notification actions answer in the background) | `localStorage`: readable by any script on the origin (no third-party scripts ship) |
+| Several instances | one | tabs share one refresh token: refresh under a Web Lock, re-read before and after, adopt another tab's rotation |
+| JWKS fetch | direct | needs WorkOS CORS for the origin; unreachable: a token from WorkOS keeps its claim checks, one from the cloud fails |
+
+- RS256 is verified in plain TS (BigInt + `@noble/hashes`): Hermes has no
+  WebCrypto `subtle`, so `jose` can't run there.
+- The web origin must also be an allowed web origin (CORS) in the WorkOS
+  dashboard, or the browser can't read `/user_management/authenticate`.
 
 ## Desktop changes
 
