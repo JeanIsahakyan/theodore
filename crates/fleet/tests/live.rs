@@ -330,24 +330,59 @@ async fn two_devices_through_the_real_hub() {
     assert_eq!(seqs, vec![1, 2, 3]);
     println!("PASS events: history 1,2 then live 3, in order, signed by b");
 
-    // A hole in b's seqs: the cloud says so, unsigned, then the event.
+    // Mirrored rows: the cloud keeps the latest per row, relays a live
+    // step without keeping it, and the holes that leaves aren't gaps.
+    let mirror = |model: &str, id: &str, text: &str| RemoteSpaceEvent::Mirror {
+        model: model.into(),
+        id: id.into(),
+        data: Some(serde_json::json!({ "text": text })),
+    };
+    send(&b, event(4, mirror("chat_message", "m1", "first")));
+    send(&b, event(5, mirror("chat_message", "m1", "second")));
     send(
         &b,
         event(
-            5,
-            RemoteSpaceEvent::Status {
-                status: RemoteSpaceStatus::Running,
-            },
+            6,
+            mirror("turn_step", &format!("space:{space}:m1:0"), "live"),
         ),
     );
-    let gap = wait_for(&mut a, "gap", |m| match m {
-        ServerMessage::SpaceGap { space: s, from, to } if *s == space => Some((*from, *to)),
-        _ => None,
-    })
-    .await;
-    assert_eq!(gap, (4, 4));
-    assert_eq!(wait_for(&mut a, "event after the gap", event_seq).await, 5);
-    println!("PASS gap: space_gap 4..4, then 5");
+    let mut live = vec![];
+    while live.len() < 3 {
+        live.push(wait_for(&mut a, "live mirrors", event_seq).await);
+    }
+    assert_eq!(live, vec![4, 5, 6]);
+    send(
+        &a,
+        ClientMessage::Unsubscribe {
+            space: space.clone(),
+        },
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    send(
+        &a,
+        ClientMessage::Subscribe {
+            space: space.clone(),
+            since: 0,
+        },
+    );
+    let mut history = vec![];
+    while history.len() < 4 {
+        let m = next(&mut a, "mirror history").await;
+        if let FleetInbound::Message(m) = &m {
+            if let ServerMessage::SpaceGap { space: s, .. } = m
+                && *s == space
+            {
+                panic!("a compacted row was reported as a gap");
+            }
+            if let Some(seq) = event_seq(m) {
+                history.push(seq);
+            }
+        }
+    }
+    assert_eq!(history, vec![1, 2, 3, 5]);
+    println!(
+        "PASS mirrors: live 4,5,6; history keeps 5 (latest of m1), not 4 nor the step, no gap"
+    );
 
     // Question from b's space goes to a (focused, active).
     send(
